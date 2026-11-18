@@ -754,6 +754,11 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The faces of `select_faces` / `hud_select_faces` picked with the
+    /// build tool's Select face mode: they also get the face-select
+    /// pattern laid along their texture mapping (LLFace::renderSelected).
+    pub select_pattern: Vec<DrawCmd>,
+    pub hud_select_pattern: Vec<DrawCmd>,
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
@@ -829,6 +834,8 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
@@ -886,6 +893,8 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.select_pattern.clone_from(&src.select_pattern);
+        self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
@@ -945,6 +954,8 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
@@ -1162,6 +1173,11 @@ pub struct SnapshotSpec {
     /// tiles of different sizes, at full and half resolution side by
     /// side, would differ along their border.
     pub photo: (u32, u32),
+    /// A face of a 360° capture: the capture camera's step
+    /// (`CAPTURE_CAMERAS`). The frame is copied into the capture's cube on
+    /// the GPU and answers nothing; the main thread does not wait for it, and
+    /// the faces share one set of render targets (equirect.rs).
+    pub cube: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1487,9 +1503,25 @@ pub struct RainLook {
     /// The lying snow's detail texture (normal and height): its bindless
     /// slot, 0 for none.
     pub snow_detail: u32,
+    /// How far the weather lying on the ground is drawn at most (m): the
+    /// farther of the puddles' and the snow's distances. The wetness
+    /// memory's square covers it (128, 256 or 512 m).
+    pub memory_reach: f32,
+    /// How far the snow lying on the ground is drawn (m), whatever falls
+    /// now: while it snows and while it melts after (it was twice the
+    /// puddles' distance then, past what the memory covers: the snow
+    /// stopped in a line). `memory_reach` covers it while it settles.
+    pub snow_distance: f32,
+    /// Deep snow's reach around my avatar at High weather quality (m, 10 to
+    /// 40); Low and Medium keep their share of it (two thirds, 13/15).
+    pub deep_reach: f32,
     /// How deep snow lies in the open at least (0..1): a region's weather
     /// gives its whole history (who comes in late sees what has built up).
     pub snow_lying: f32,
+    /// Snow lying on the ground is drawn ("Snow settles"), whatever falls
+    /// now: off, none at once, nor while what lay melts after the weather
+    /// turned to rain or cleared (the memory keeps it, unseen).
+    pub snow_settles: bool,
     /// Footprints are kept in the lying snow.
     pub footprints: bool,
     /// Their map: how wide (m, 32 to 64: the wider, the coarser) and where
@@ -1539,7 +1571,11 @@ impl Default for RainLook {
             quality: 2,
             snow: 0.0,
             snow_detail: 0,
+            memory_reach: 60.0,
+            snow_distance: 60.0,
+            deep_reach: 15.0,
             snow_lying: 0.0,
+            snow_settles: true,
             footprints: false,
             trail_extent: 32.0,
             trail_centre: [0.0; 2],
@@ -1592,6 +1628,10 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// Texture slot of the face-select pattern (the grid asset
+    /// IMG_FACE_SELECT) once it is loaded; 0 while it loads and offline,
+    /// where the shader draws its procedural stand-in.
+    pub face_select_texture: u32,
     /// The poser's hovered part (Aurora's own): bit j for the skeleton's
     /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
     /// as a selection's halo with a light tint inside.
@@ -1691,6 +1731,15 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The flat color (linear RGB) the live view of a cut-out frame shows
+    /// where nothing is drawn, instead of the checkerboard: a key color to
+    /// film against (the Director's green screen). A snapshot keeps its
+    /// alpha whatever this says.
+    pub cutout_key: Option<[f32; 3]>,
+    /// The live view of a cut-out frame keeps its coverage in its alpha, as
+    /// a snapshot does (straight color over black on the screen): a film
+    /// recorded from it has a transparent background.
+    pub cutout_alpha: bool,
     /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
     pub rain: f32,
     /// Aurora Weather: the footprints kept in the region, each x, y (m),
@@ -1710,6 +1759,24 @@ pub struct FrameParams {
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// Volumetric clouds in the place of the Legacy Viewer's flat layer
+    /// (clouds.rs); None: the Legacy layer, with nothing else running.
+    pub clouds: Option<CloudsFrame>,
+}
+
+/// The volumetric clouds' inputs that are not in the sky: where the camera
+/// is on the grid, which the pattern is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloudsFrame {
+    /// The south-west corner of the region the camera's position is relative
+    /// to (metres on the grid): positions stay continuous across regions.
+    pub region_origin: [f64; 2],
+    /// Size of the cloud texture as loaded so far (it grows while it loads;
+    /// the weather map is drawn again for it).
+    pub texture_size: (u32, u32),
+    /// Revision of the cloud texture's texels (`Textures::revision_of`):
+    /// a reload of the same size changes it, and the weather map follows.
+    pub texture_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1930,6 +1997,9 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the volumetric clouds' compute passes and weather map
+    /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
+    pub gpu_clouds: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
@@ -2223,6 +2293,8 @@ mod tests {
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
+        scene.select_pattern.push(cmd(30));
+        scene.hud_select_pattern.push(cmd(31));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -2275,6 +2347,8 @@ mod tests {
         assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
+        assert_eq!(packet.select_pattern[0].record, 30);
+        assert_eq!(packet.hud_select_pattern[0].record, 31);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -2297,6 +2371,8 @@ mod tests {
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
+        assert!(scene.select_pattern.is_empty());
+        assert!(scene.hud_select_pattern.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());

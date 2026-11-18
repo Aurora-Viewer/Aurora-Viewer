@@ -15,6 +15,7 @@
 //! same for each landmark they show (LLRemoteParcelInfoProcessor).
 
 use super::{SearchAction, SearchUi, WebEnv, aurora_details, combo, event_categories, place_categories, status_text, unix_now};
+use crate::settings::ClockZone;
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::Ctx;
@@ -165,23 +166,37 @@ impl Aurora {
     }
 }
 
-/// "Today · 19:00 SLT", "Tomorrow · …", or the weekday and date, in SLT
-/// like the event dates of the directory.
-fn event_when(unix: i64, now: i64) -> String {
-    let (y, m, d, weekday, h, min, _) = crate::ui::land::slt_parts(unix);
-    let same = |t: i64| {
-        let (ty, tm, td, ..) = crate::ui::land::slt_parts(t);
-        (ty, tm, td) == (y, m, d)
+/// "Today · 19:00 SLT", "Tomorrow · …", or the weekday and date, in the
+/// clock's zone: SLT like the event dates of the directory, or local time
+/// with its zone ("Today · 04:00 CET", #1754).
+fn event_when(unix: i64, now: i64, zone: ClockZone) -> String {
+    let now = crate::ui::bars::clock::clock_timestamp(zone, now);
+    let name = match zone {
+        ClockZone::Slt => None,
+        ClockZone::Local => Some(crate::ui::bars::clock::zone_name(zone, unix)),
     };
-    let day = if same(now) {
-        aurora_i18n::tr!("search-events-today").to_owned()
-    } else if same(now + 86_400) {
-        aurora_i18n::tr!("search-aurora-tomorrow").to_owned()
-    } else {
-        let date = aurora_i18n::tr!("search-events-date", month = m as i64, day = d);
-        format!("{} {date}", crate::ui::land::weekdays()[weekday])
+    event_when_at(unix, now, |t| crate::ui::bars::clock::offset(zone, t), name.as_deref())
+}
+
+/// `event_when` with the zone's offset at a time, and its name (none:
+/// SLT, which the line's own text names).
+fn event_when_at(unix: i64, now: i64, offset: impl Fn(i64) -> i64, zone: Option<&str>) -> String {
+    let local = unix + offset(unix);
+    let (_, m, d, weekday, h, min, _) = crate::ui::land::parts_at(local, 0);
+    let days_ahead = local.div_euclid(86_400) - (now + offset(now)).div_euclid(86_400);
+    let day = match days_ahead {
+        0 => aurora_i18n::tr!("search-events-today").to_owned(),
+        1 => aurora_i18n::tr!("search-aurora-tomorrow").to_owned(),
+        _ => {
+            let date = aurora_i18n::tr!("search-events-date", month = m as i64, day = d);
+            format!("{} {date}", crate::ui::land::weekdays()[weekday])
+        }
     };
-    aurora_i18n::tr!("search-aurora-event-time", day = day, time = format!("{h:02}:{min:02}"))
+    let time = format!("{h:02}:{min:02}");
+    match zone {
+        None => aurora_i18n::tr!("search-aurora-event-time", day = day, time = time),
+        Some(zone) => aurora_i18n::tr!("search-aurora-event-time-zone", day = day, time = time, zone = zone),
+    }
 }
 
 /// The user name of a directory row: "First Last" → "first.last", a
@@ -413,16 +428,11 @@ impl SearchUi {
             } else {
                 aurora_i18n::tr!("search-aurora-hint")
             };
-            let clear = if self.aurora.text.is_empty() { 0.0 } else { 28.0 };
-            let field = widgets::search_box(ui, p, &mut self.aurora.text, hint, ui.available_width() - clear);
+            let field = widgets::clearable_search_box(ui, p, &mut self.aurora.text, hint, ui.available_width());
             if std::mem::take(&mut self.focus) {
                 field.request_focus();
             }
             find |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if clear > 0.0 && widgets::icon_button(ui, p, "x", aurora_i18n::tr!("search-aurora-clear"), true) {
-                self.aurora.text.clear();
-                self.focus = true;
-            }
         });
         ui.add_space(6.0);
         // Counts and translated labels can exceed the minimum width. Wrap
@@ -609,7 +619,7 @@ impl SearchUi {
                                 self.events_day -= 1;
                                 find = true;
                             }
-                            let (_, month, day, weekday, ..) = crate::ui::land::slt_parts(unix_now() + self.events_day as i64 * 86_400);
+                            let (month, day, weekday) = super::directory_day(unix_now(), self.events_day);
                             let date = aurora_i18n::tr!("search-events-date", month = month as i64, day = day);
                             let label = format!("{} {date}", crate::ui::land::weekdays()[weekday]);
                             ui.label(RichText::new(label).size(12.0).color(p.ink));
@@ -923,25 +933,30 @@ impl SearchUi {
                 })
             }
             (Tab::Events, _) => {
-                let unix = match row.values.first() {
-                    Some(Value::Dated { unix, .. }) => *unix as i64,
-                    _ => 0,
+                let (listed, server) = match row.values.first() {
+                    Some(value @ Value::Dated { text, .. }) => (Some(value), text.as_str()),
+                    _ => (None, ""),
                 };
+                let start = super::event_start(0, listed);
                 let now = unix_now();
-                let (_, month, day, ..) = crate::ui::land::slt_parts(unix);
-                let mon = crate::ui::land::months()[(month.max(1) - 1).min(11)]
-                    .trim_end_matches('.')
-                    .to_uppercase();
-                let day = day.to_string();
+                let zone = crate::ui::bars::clock::zone();
+                let date = start.map(|unix| {
+                    let (_, month, day, ..) = super::event_parts(unix, zone);
+                    (
+                        crate::ui::land::months()[month - 1].trim_end_matches('.').to_uppercase(),
+                        day.to_string(),
+                    )
+                });
                 let (violet, ink) = (p.violet_light, p.ink);
                 let font = semibold.clone();
                 let paint = move |painter: &egui::Painter, rect: Rect| {
+                    let Some((mon, day)) = &date else { return };
                     let m = painter.layout_no_wrap(mon.clone(), FontId::new(9.5, font.clone()), violet);
                     widgets::paint_ink_centered(painter, m, rect.center() - Vec2::new(0.0, 8.0), violet);
                     let d = painter.layout_no_wrap(day.clone(), FontId::new(16.0, font.clone()), ink);
                     widgets::paint_ink_centered(painter, d, rect.center() + Vec2::new(0.0, 6.0), ink);
                 };
-                let subtitle = if unix > 0 { event_when(unix, now) } else { String::new() };
+                let subtitle = start.map_or_else(|| server.to_owned(), |unix| event_when(unix, now, zone));
                 let card = place_card::Row {
                     thumb: Thumb::Paint(&paint),
                     title: &row.name,
@@ -950,7 +965,7 @@ impl SearchUi {
                     selected,
                 };
                 place_card::row(ui, p, size, &card, |ui| {
-                    if unix > 0 && unix <= now {
+                    if start.is_some_and(|unix| unix <= now) {
                         started_pill(ui, p);
                     }
                 })
@@ -1022,11 +1037,13 @@ impl SearchUi {
             (Tab::People, Key::Id(id)) => {
                 // LLAvatarActions::showProfile on a double click;
                 // gFSAvatarSearchMenu on a right click
+                // (FSFloaterSearch has no `@shownames` test: its results
+                // name their residents, `NameScope::Roster`)
                 if resp.double_clicked() {
-                    crate::ui::profile::request_open(ui.ctx(), id);
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(id));
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    crate::ui::context::avatar_list_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
+                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
                 });
             }
             (Tab::Groups, Key::Id(id)) if resp.double_clicked() => crate::ui::group_profile::request_open(ui.ctx(), id),
@@ -1199,11 +1216,123 @@ mod tests {
         let base = 1_791_475_200;
         let (.., h, min, sec) = crate::ui::land::slt_parts(base);
         let now = base - h * 3600 - min * 60 - sec + 10 * 3600;
-        assert!(event_when(now + 3600, now).starts_with(aurora_i18n::tr!("search-events-today")));
-        assert!(event_when(now + 86_400, now).starts_with(aurora_i18n::tr!("search-aurora-tomorrow")));
+        assert!(event_when(now + 3600, now, ClockZone::Slt).starts_with(aurora_i18n::tr!("search-events-today")));
+        assert!(event_when(now + 86_400, now, ClockZone::Slt).starts_with(aurora_i18n::tr!("search-aurora-tomorrow")));
         assert_eq!(event_rating(RowIcon::EventAdult), aurora_i18n::tr!("common-adult"));
         assert_eq!(Kind::of(Tab::Classifieds).tab(), Some(Tab::Classifieds));
         assert_eq!(Kind::All.tabs(), SECTIONS.to_vec());
         assert!(Kind::Web.tabs().is_empty());
+    }
+
+    /// Independent calendar reference for Pacific cards, including the two days
+    /// of 2026 that have 23 or 25 hours.
+    fn pacific_event_when(unix: i64, now: i64) -> String {
+        use chrono::{Datelike, TimeZone, Timelike};
+        let pacific = chrono_tz::America::Los_Angeles;
+        let event = pacific.timestamp_opt(unix, 0).single().unwrap();
+        let today = pacific.timestamp_opt(now, 0).single().unwrap().date_naive();
+        let day = match (event.date_naive() - today).num_days() {
+            0 => aurora_i18n::tr!("search-events-today").to_owned(),
+            1 => aurora_i18n::tr!("search-aurora-tomorrow").to_owned(),
+            _ => {
+                let date = aurora_i18n::tr!("search-events-date", month = i64::from(event.month()), day = i64::from(event.day()));
+                format!(
+                    "{} {date}",
+                    crate::ui::land::weekdays()[event.weekday().num_days_from_sunday() as usize]
+                )
+            }
+        };
+        aurora_i18n::tr!(
+            "search-aurora-event-time",
+            day = day,
+            time = format!("{:02}:{:02}", event.hour(), event.minute())
+        )
+    }
+
+    #[test]
+    fn event_cards_in_slt_follow_the_pacific_calendar() {
+        for now in (1_767_225_600..1_798_761_600_i64).step_by(3600) {
+            for ahead in [0, 3600, 7 * 3600, 20 * 3600, 30 * 3600, 3 * 86_400] {
+                assert_eq!(
+                    event_when(now + ahead, now, ClockZone::Slt),
+                    pacific_event_when(now + ahead, now),
+                    "{now} +{ahead}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_tomorrow_uses_the_next_calendar_date_across_dst() {
+        use chrono::{Offset, TimeZone};
+        let zone = chrono_tz::Europe::Paris;
+        let offset = |unix| i64::from(zone.timestamp_opt(unix, 0).unwrap().offset().fix().local_minus_utc());
+        for ((month, day, hour), (next_month, next_day), abbreviation) in [((3, 28, 23), (3, 29), "CEST"), ((10, 25, 0), (10, 26), "CET")] {
+            let now = zone.with_ymd_and_hms(2026, month, day, hour, 30, 0).unwrap().timestamp();
+            let start = zone.with_ymd_and_hms(2026, next_month, next_day, 11, 0, 0).unwrap().timestamp();
+            assert_eq!(
+                event_when_at(start, now, offset, Some(abbreviation)),
+                aurora_i18n::tr!(
+                    "search-aurora-event-time-zone",
+                    day = aurora_i18n::tr!("search-aurora-tomorrow"),
+                    time = "11:00",
+                    zone = abbreviation
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn event_ranges_name_both_sides_of_a_clock_change() {
+        use chrono::{Offset, TimeZone};
+        use chrono_tz::OffsetName;
+        let zone = chrono_tz::Europe::Paris;
+        let offset = |unix| i64::from(zone.timestamp_opt(unix, 0).unwrap().offset().fix().local_minus_utc());
+        let start = zone.with_ymd_and_hms(2026, 3, 29, 1, 30, 0).unwrap().timestamp();
+        assert_eq!(super::super::event_hours_at(start, 60, offset), "01:30–03:30");
+
+        let name = |unix| zone.timestamp_opt(unix, 0).unwrap().offset().abbreviation().unwrap().to_owned();
+        assert_eq!(
+            super::super::event_zone_range(start, 60, name),
+            aurora_i18n::tr!("search-event-zone-range", from = "CET", to = "CEST")
+        );
+        let fall = zone.with_ymd_and_hms(2026, 10, 25, 2, 30, 0).earliest().unwrap().timestamp();
+        assert_eq!(super::super::event_hours_at(fall, 60, offset), "02:30–02:30");
+        assert_eq!(
+            super::super::event_zone_range(fall, 60, name),
+            aurora_i18n::tr!("search-event-zone-range", from = "CEST", to = "CET")
+        );
+        assert_eq!(super::super::event_zone_range(fall, 0, name), "CEST");
+        assert_eq!(super::super::event_zone_range(fall, 5, name), "CEST");
+    }
+
+    /// #1754, the clock in local time: the hour and the day are local
+    /// time's, and its zone ends the line.
+    #[test]
+    fn event_cards_in_local_time() {
+        // now 2026-11-04 12:00 UTC, the event at 2026-11-05 03:00 UTC: 19:00
+        // today in SLT, 12:00 tomorrow in Tokyo
+        let (now, start) = (1_793_793_600, 1_793_847_600);
+        let today = aurora_i18n::tr!("search-events-today");
+        let tomorrow = aurora_i18n::tr!("search-aurora-tomorrow");
+        assert_eq!(
+            event_when(start, now, ClockZone::Slt),
+            aurora_i18n::tr!("search-aurora-event-time", day = today, time = "19:00")
+        );
+        assert_eq!(
+            event_when_at(start, now, |_| 9 * 3600, Some("JST")),
+            aurora_i18n::tr!("search-aurora-event-time-zone", day = tomorrow, time = "12:00", zone = "JST")
+        );
+        // Paris: 04:00 tomorrow
+        assert_eq!(
+            event_when_at(start, now, |_| 3600, Some("CET")),
+            aurora_i18n::tr!("search-aurora-event-time-zone", day = tomorrow, time = "04:00", zone = "CET")
+        );
+        // the machine's own zone, as the clock names it
+        let name = crate::ui::bars::clock::zone_name(ClockZone::Local, start);
+        assert_eq!(
+            event_when(start, now, ClockZone::Local),
+            event_when_at(start, now, |t| crate::ui::bars::clock::offset(ClockZone::Local, t), Some(&name))
+        );
     }
 }

@@ -116,7 +116,8 @@ fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let width = text_width(ui, &line.text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
+    let text = super::system_text(&line.text);
+    let width = text_width(ui, &text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -131,8 +132,9 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                         p,
                         env.emoji,
                         world,
+                        env.names,
                         env.want_names,
-                        &line.text,
+                        &text,
                         chat_size(ui.ctx(), 12.0),
                         tone.unwrap_or(p.muted),
                         true,
@@ -193,7 +195,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let name = super::sender_name(world, env.own_name, line);
+    let name = super::sender_name(world, env.names, env.own_name, line);
     // a history line's sender is known when its name was cached
     // (world/transcripts.rs): its picture shows, dimmed
     let avatar = if object {
@@ -226,10 +228,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let col = super::super::colors::contact_sender_color(line, world)
                 .or(tone)
                 .unwrap_or_else(|| super::super::colors::sender_color(line));
+            // a moderator's name style (`conversation_options::moderator`)
+            let emphasis = super::moderator_look(env, line).map(|(n, _)| n).unwrap_or_default();
             let r = ui.add(
                 super::super::widgets::elided_label(
                     ui,
-                    RichText::new(&name).size(chat_size(ui.ctx(), 11.5)).strong().color(col),
+                    emphasis.rich_text(ui.ctx(), &name, chat_size(ui.ctx(), 11.5), col).strong(),
                     max_bubble,
                 )
                 .sense(egui::Sense::click()),
@@ -254,7 +258,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
-    let text = world.rlva_filter_text(&text).into_owned();
+    let emphasis = super::line_emphasis(env, line, italics);
+    let text = world.rlva_filter_text_in(env.names, &text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
@@ -297,11 +302,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                         p,
                         env.emoji,
                         world,
+                        env.names,
                         env.want_names,
                         &visible,
                         size,
                         text_color,
-                        super::message_emphasis(line.kind, italics),
+                        emphasis,
                         mark,
                     );
                 }
@@ -434,6 +440,8 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(1),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         let day = 86_400;
         // yesterday's two lines, then today's
@@ -481,6 +489,8 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         let mut list_top = 0.0;
         let mut output = ctx.run_ui(
@@ -496,6 +506,7 @@ mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -505,13 +516,16 @@ mod tests {
                     menu: None,
                     bubbles: Some(true),
                     previews: None,
+                    moderators: None,
                 };
                 draw(ui, &mut env, &line, look, None, true);
             },
         );
         output.textures_delta.clear();
         let shapes: Vec<&egui::Shape> = output.shapes.iter().map(|c| &c.shape).collect();
-        // the ink of each text, glyph by glyph as the tessellator places them
+        // the ink of each text, glyph by glyph as the tessellator places them;
+        // Latin letters and digits only, as a kanji's ink rises above a
+        // capital's (a Japanese date marker reads 2020年1月1日)
         let texts = shapes
             .iter()
             .filter_map(|s| match s {
@@ -524,7 +538,7 @@ mod tests {
                     .rows
                     .iter()
                     .flat_map(|row| row.row.glyphs.iter().map(move |g| (row.pos.y, g)))
-                    .filter(|(_, g)| !g.uv_rect.is_nothing())
+                    .filter(|(_, g)| !g.uv_rect.is_nothing() && g.chr.is_ascii())
                     .map(|(row_y, g)| {
                         let top = t.pos.y + row_y + (g.pos.y + g.uv_rect.offset.y).round();
                         (top, top + g.uv_rect.size.y)

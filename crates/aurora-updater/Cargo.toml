@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 directories = "6.0.0"
 log = "0.4.34"

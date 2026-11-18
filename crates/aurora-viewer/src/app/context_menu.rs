@@ -125,6 +125,25 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // the animation editor's mirror of us is no one: no menu on it nor
+        // on what it wears
+        if picked
+            .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
+            .is_some_and(|id| self.world.is_mirror(&id))
+        {
+            return;
+        }
+        // LLToolPie::handleRightClickPick shows no menu on what @interact or
+        // @fartouch keeps out of the selection, with UISndInvalidOp on an
+        // avatar or an object (not on the land)
+        if !picked.map_or(self.world.rlva_can_designate_land(), |idx| {
+            self.world.rlva_can_designate(idx, Some(point))
+        }) {
+            if picked.is_some() {
+                self.world.ui_sounds.push(UiSound::InvalidOp);
+            }
+            return;
+        }
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())
@@ -236,6 +255,9 @@ impl App {
         let refused = |command: NetCommand| !w.rlva_allows_command(&command, uuid::Uuid::nil());
         f.ground_sit_blocked = refused(NetCommand::OneShotControl(aurora_net::control::SIT_ON_GROUND));
         f.stand_blocked = refused(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+        // what `toggle_fly` itself answers
+        f.fly_blocked = !w.agent.flying && !crate::autopilot::can_takeoff(w);
+        f.build_blocked = !self.build.open && !w.rlva_can_build();
         if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
             f.object_sit_blocked = refused(NetCommand::RequestSit {
                 handle: key.region,
@@ -250,6 +272,15 @@ impl App {
                 }
                 if matches!(self.context_menu.as_ref().map(|m| &m.target), Some(Target::Object { .. })) {
                     f.attach_points = self.attach_choices();
+                    if w.rlva.enabled() {
+                        f.wear_default_blocked = !w.rlva_can_attach_object(0);
+                        f.wear_blocked_points = f
+                            .attach_points
+                            .iter()
+                            .map(|c| c.id)
+                            .filter(|&point| !w.rlva_can_attach_object(point))
+                            .collect();
+                    }
                 }
             }
             Some(Target::Avatar { id, .. }) => {
@@ -269,6 +300,7 @@ impl App {
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.im_blocked = !w.rlva_can_start_im(*id);
+                f.pay_blocked = !crate::ui::context::can_pay_resident(w) || !w.rlva_can_name(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
@@ -345,6 +377,17 @@ impl App {
             f.hud_move_locked = w.hud_locks.locked(root.full_id);
         }
         self.object_menu_facts(idx, &mut f);
+        // enable_object_touch, enable_attachment_touch, enable_buy_object
+        // and enable_pay_object (indra/newview/llviewermenu.cpp): greyed
+        // out when RLVa would refuse them. Touch asks the send boundary
+        // about what `menu_touch` would send, the surface the right click
+        // picked included, so the entry never disagrees with the send.
+        if w.rlva.enabled() {
+            f.touch &= w.rlva_allows_command(&self.menu_touch_command(o.key), Uuid::nil());
+            let buy = !w.rlva.has("buy");
+            f.pay &= buy;
+            f.buy &= buy;
+        }
         // the right click selected the object (or kept the selection)
         f.save_to_contents = self.build.save_to_contents_target(w).is_some();
         f.local_preview = o.is_editable_preview();
@@ -669,6 +712,9 @@ impl App {
                 }
             }
             CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            CtxAction::RosterProfile(id) => {
+                self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+            }
             CtxAction::ToggleBlock(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
                 if let Err(e) = self.world.toggle_block_avatar(id, &name) {
@@ -805,7 +851,7 @@ impl App {
                     self.flush_build();
                 }
             }
-            CtxAction::PayResident(id) => self.pay_ui.open(id, false),
+            CtxAction::PayResident(id) => self.open_pay(id, false),
             CtxAction::Pay(id) | CtxAction::Buy(id) | CtxAction::Open(id) => {
                 let action = match act {
                     CtxAction::Pay(_) => Action::Pay,
@@ -861,6 +907,8 @@ impl App {
                 self.settings.save();
                 self.flush_build();
             }
+            // LLToolMgr::canEdit: not under @edit and @rez together
+            CtxAction::Build if !self.build.open && !self.world.rlva_can_build() => {}
             CtxAction::Build => self.build.open_build(crate::build::Tool::Create),
             CtxAction::EditTerrain => self.build.open_build(crate::build::Tool::Land),
             CtxAction::SetRender(id, mode) => {
@@ -964,12 +1012,18 @@ impl App {
             CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.start_group_chat(id);
+                self.world.start_group_chat(id, true);
                 self.show_conversations();
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
             CtxAction::NewContactSet(ids) => self.contacts_ui.ask_new_set_for(ids),
+            CtxAction::MarkAvatars(ids, rgb) => self.world.avatar_marks.set(&ids, rgb),
+            CtxAction::MarkCustom { ids, source } => {
+                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last, source));
+            }
+            CtxAction::ClearMarks(ids) => self.world.avatar_marks.clear(&ids),
+            CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
                 self.history_ui.show_file(title, file);

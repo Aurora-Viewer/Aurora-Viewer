@@ -12,9 +12,9 @@ aurora-i18n = { version = "0.1.0", path = "../aurora-i18n" }
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 aurora-msg = { version = "0.1.0", path = "../aurora-msg" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 base64 = "0.23.1"
-bitflags = "2.13.2"
 crossbeam-channel = "0.5.17"
 glam = "0.34.1"
 log = "0.4.34"
@@ -33,6 +33,11 @@ webpki-root-certs = "1.0.9"
 
 [dev-dependencies]
 rcgen = "0.14.10"
+
+# rustls-webpki is used: its library is named `webpki` (sim_tls.rs), which
+# cargo-machete does not see from the package name
+[package.metadata.cargo-machete]
+ignored = ["rustls-webpki"]
 
 [lints]
 workspace = true

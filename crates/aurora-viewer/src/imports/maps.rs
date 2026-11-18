@@ -38,6 +38,12 @@ impl Imports {
         self.map_picker
             .open_with_defaults(aurora_i18n::tr!("import-texture"), current.unwrap_or_default(), None, true);
         self.map_picker.allow_local = true;
+        // The same maps as the material editor takes
+        // (LLMaterialEditor::postBuild's setFilterPermissionMasks).
+        self.map_picker.required_permissions = {
+            use crate::world::inventory::actions;
+            actions::COPY | actions::TRANSFER
+        };
     }
 
     pub fn show_map_picker(
@@ -62,7 +68,10 @@ impl Imports {
                     entry.model = None;
                     entry.preview_error = None;
                 }
-            } else if let Some(asset) = chosen {
+            } else if let Some(asset) = chosen
+                && (self.entries.iter().any(|entry| entry.id == asset && entry.local)
+                    || crate::ui::texture_library::map_allowed(world, asset))
+            {
                 self.select_map(id, slot, asset);
             }
         }
@@ -206,6 +215,11 @@ mod tests {
         };
         imports.open_map_picker(material_id, 1);
         assert!(imports.map_picker.allow_local);
+        // the material editor's filter (LLMaterialEditor::postBuild)
+        assert_eq!(imports.map_picker.required_permissions, {
+            use crate::world::inventory::actions;
+            actions::COPY | actions::TRANSFER
+        });
         imports.select_map(material_id, 1, texture_id);
         let Some(Source::Material { value, images }) = &imports.entries[1].source else {
             panic!("material")

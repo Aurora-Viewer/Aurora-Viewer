@@ -39,6 +39,9 @@ pub(super) struct Tools {
     pub file_job: Option<files::Job>,
     pub file_snapshot: String,
     pub external: Option<files::Watch>,
+    /// The external editor is being launched: the script stays followed
+    /// by the editor sync while its watch is replaced.
+    pub external_starting: bool,
     pub external_snapshot: String,
     pub incoming: Option<String>,
     incoming_external: bool,
@@ -106,7 +109,10 @@ fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
         Command::Reload => e.can_read && !e.dirty() && e.saving.is_none() && e.loading.is_none(),
         Command::Revert => editable && e.dirty(),
         Command::Open | Command::External => editable && e.tools.file_job.is_none(),
-        Command::Export => e.loaded && (e.can_read || !e.source.is_empty()) && e.tools.file_job.is_none(),
+        // a read-only editor saves no file (LLTextEditor::canLoadOrSaveToFile,
+        // indra/llui/lltexteditor.cpp: !mReadOnly, set from is_modifiable in
+        // LLPreviewLSL::loadAsset, indra/newview/llpreviewscript.cpp)
+        Command::Export => e.loaded && e.can_edit && e.tools.file_job.is_none(),
         Command::Cut => editable && selection,
         Command::Copy => e.loaded && selection,
         Command::Paste => editable,
@@ -155,8 +161,13 @@ fn run(
         Command::Preferences => prefs.preferences.open = true,
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
+            // the script takes the same file again: the watch of the last
+            // launch ends now, not once the new one has written it
+            e.tools.external = None;
+            e.tools.external_starting = true;
             e.tools.file_job = Some(files::external(
                 e.name.clone(),
+                aurora_editor_sync::subscriptions::script_id(e.target.object, e.target.item),
                 e.source.clone(),
                 settings.external_editor.clone(),
                 settings.convert_tabs,
@@ -973,6 +984,7 @@ pub(super) fn search(
 fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSettings, actions: &mut Vec<Action>) {
     if let Some(done) = e.tools.file_job.as_ref().and_then(|j| j.0.try_recv().ok()) {
         e.tools.file_job = None;
+        e.tools.external_starting = false;
         match done {
             files::Done::Opened(source) if e.can_edit && e.loaded && e.saving.is_none() && e.source == e.tools.file_snapshot => {
                 let end = e.source.chars().count();
@@ -1301,11 +1313,13 @@ mod tests {
         editing::select(&ctx, id, 0..2, false);
         assert!(enabled(Command::Copy, e, &ctx, id));
         assert!(!enabled(Command::Cut, e, &ctx, id));
+        assert!(!enabled(Command::Export, e, &ctx, id), "a read-only script saves no file");
         run(Command::Cut, e, &ctx, id, &settings, &mut prefs, &mut actions);
         run(Command::Paste, e, &ctx, id, &settings, &mut prefs, &mut actions);
         assert_eq!(e.source, "éあ original");
         assert!(actions.is_empty());
         e.can_edit = true;
+        assert!(enabled(Command::Export, e, &ctx, id), "an editable script saves to a file");
         e.tools.processed = true;
         e.tools.processed_source = "generated source with different length".into();
         run(Command::SelectAll, e, &ctx, id, &settings, &mut prefs, &mut actions);

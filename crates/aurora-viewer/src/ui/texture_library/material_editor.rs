@@ -482,17 +482,7 @@ impl Editor {
             && let Some(slot) = self.map_slot
             && self.saving.is_none()
         {
-            let allowed = self.picker.cancelled()
-                || asset.is_nil()
-                || crate::scene::avatar::bake_slot_for(&asset).is_some()
-                || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
-                || world.local_assets.get(&asset).is_some_and(|(_, material)| !material)
-                || world
-                    .inventory
-                    .items
-                    .values()
-                    .any(|it| it.asset_id == asset && map_source(&world.inventory, it, world.god_level > 0));
-            if allowed {
+            if self.picker.cancelled() || map_allowed(world, asset) {
                 let mut value = (*self.draft).clone();
                 *map_mut(&mut value, slot) = (!asset.is_nil()).then_some(asset);
                 self.draft = Arc::new(value);
@@ -530,8 +520,22 @@ fn is_texture(item: &aurora_net::inventory::InvItem) -> bool {
 }
 /// LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER,
 /// for the picker and for drops alike, except for a god.
-fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> bool {
+pub(crate) fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> bool {
     is_texture(item) && (god || rules::held(inv, item) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+}
+/// Whether a picker's choice may fill a map of a material being edited or
+/// imported: no map, a built-in texture, one of the user's local textures,
+/// or the texture of an inventory item `map_source` takes.
+pub(crate) fn map_allowed(world: &World, asset: Uuid) -> bool {
+    asset.is_nil()
+        || crate::scene::avatar::bake_slot_for(&asset).is_some()
+        || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
+        || world.local_assets.get(&asset).is_some_and(|(_, material)| !material)
+        || world
+            .inventory
+            .items
+            .values()
+            .any(|it| it.asset_id == asset && map_source(&world.inventory, it, world.god_level > 0))
 }
 fn scalar(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     ui.label(label);
@@ -872,6 +876,35 @@ mod tests {
         assert!(!map_source(&Default::default(), &texture(7, full), false));
         // a god's picker takes any texture (LLMaterialEditor::postBuild)
         assert!(map_source(&Default::default(), &texture(0, rules::MODIFY), true));
+    }
+    #[test]
+    fn a_picker_choice_fills_a_map_under_the_same_rule() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let item = |n: u128, owner_mask| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(0xe100 + n),
+            asset_id: Uuid::from_u128(0xe200 + n),
+            asset_type: 0,
+            owner_mask,
+            ..Default::default()
+        };
+        let open = item(0, rules::COPY | rules::TRANSFER);
+        let kept = item(1, rules::COPY | rules::MODIFY);
+        for item in [&open, &kept] {
+            world.inventory.items.insert(item.id, item.clone());
+        }
+        let (local, local_material) = (Uuid::from_u128(0xe300), Uuid::from_u128(0xe301));
+        world.local_assets.insert(local, ("Local map.png".into(), false));
+        world.local_assets.insert(local_material, ("Local material".into(), true));
+        assert!(map_allowed(&world, Uuid::nil()));
+        assert!(map_allowed(&world, aurora_prim::te::BLANK_TEXTURE));
+        assert!(map_allowed(&world, aurora_prim::te::TRANSPARENT_TEXTURE));
+        assert!(map_allowed(&world, local));
+        assert!(!map_allowed(&world, local_material));
+        assert!(map_allowed(&world, open.asset_id));
+        assert!(!map_allowed(&world, kept.asset_id));
+        assert!(!map_allowed(&world, Uuid::from_u128(0xe400)), "an id no item gives");
+        world.god_level = 1;
+        assert!(map_allowed(&world, kept.asset_id));
     }
     #[test]
     fn a_map_upload_finishing_during_save_is_kept_as_a_new_draft() {

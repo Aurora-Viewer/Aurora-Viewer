@@ -209,6 +209,8 @@ pub struct Renderer {
     prev_palette_buffer: wgpu::Buffer,
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
+    /// `shift_world`'s moves not yet sent with a frame.
+    world_shift: [f32; 2],
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -279,12 +281,31 @@ pub struct Renderer {
     pub capture_scene: bool,
     /// Last captured frame (width, height, RGBA8).
     pub captured: Option<(u32, u32, Vec<u8>)>,
+    /// A frame of a film for the next frame (film_readback.rs): not waited
+    /// for, its pixels come in `films` with a later frame. A photo asked
+    /// meanwhile goes first.
+    pub film_request: Option<crate::FilmRequest>,
+    /// The film frames read back, in the order they were asked: the
+    /// caller takes them.
+    pub films: Vec<crate::FilmFrame>,
+    /// Film frames sent and answered, for `films_in_flight`.
+    films_sent: u64,
+    films_answered: u64,
     /// A photo for the next frame: it is drawn offscreen at its own size
-    /// (see `frame_size`), waited for, and its image put in `snapshot`.
+    /// (see `frame_size`), waited for, and its image put in `snapshot`. A
+    /// face of a 360° capture (`SnapshotSpec::cube`) is not waited for: it is
+    /// taken out of this slot when the frame carrying it is sent, and stays
+    /// on the GPU.
     pub snapshot_request: Option<crate::SnapshotSpec>,
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// The panorama to project from the six faces the cube holds, with the
+    /// next frame (equirect.rs); it comes in `equirect` a few frames later.
+    pub equirect_request: Option<Box<crate::EquirectJob>>,
+    /// The answer to the last panorama asked (width, height, RGBA8), or
+    /// None when it could not be made.
+    pub equirect: Option<crate::EquirectAnswer>,
     /// The photo asked left with a frame the GPU had not finished within
     /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
     /// draw it again (a second answer would be taken for the next part).
@@ -296,6 +317,12 @@ pub struct Renderer {
     pub histogram_request: Option<f32>,
     /// The last histogram counted, from black to white.
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// A small picture of the next frame's 3D view without the interface,
+    /// tagged by the caller; it comes in `thumbnails` a few frames later
+    /// (thumbnail.rs), or never when it could not be made.
+    pub thumbnail_request: Option<u64>,
+    /// The small pictures made, until the caller takes them.
+    pub thumbnails: Vec<crate::Thumbnail>,
     /// Set by the device-lost callback (device_lost.rs).
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
@@ -742,6 +769,7 @@ impl Renderer {
             palette_buffer,
             prev_palette_buffer,
             motion_cut: false,
+            world_shift: [0.0; 2],
             palettes_uploaded: 0,
             vertices_uploaded: 0,
             geometry_uploaded: 0,
@@ -781,12 +809,20 @@ impl Renderer {
             capture_request: false,
             capture_scene: false,
             captured: None,
+            film_request: None,
+            films: Vec::new(),
+            films_sent: 0,
+            films_answered: 0,
             snapshot_request: None,
             snapshot: None,
+            equirect_request: None,
+            equirect: None,
             snapshot_sent: false,
             snapshot_dropped: false,
             histogram_request: None,
             histogram: None,
+            thumbnail_request: None,
+            thumbnails: Vec::new(),
             lost,
             // one of the list for each renderer of the run (a recovery's
             // counts its frames from 0 again)
@@ -932,6 +968,17 @@ impl Renderer {
     /// ones as the previous ones before drawing it.
     pub fn cut_motion_history(&mut self) {
         self.motion_cut = true;
+    }
+
+    /// Every position moved by `by` (a border crossing: they are relative
+    /// to the new region now). What the renderer keeps in world positions
+    /// from frame to frame (the wetness and snow memory, the footprints'
+    /// map) moves with them, so the crossing changes nothing on the ground:
+    /// left where it was, the memory read 256 m off, and all of it was new
+    /// to it (the snow and the wet ground started again, in a hard line).
+    pub fn shift_world(&mut self, by: Vec3) {
+        self.world_shift[0] += by.x;
+        self.world_shift[1] += by.y;
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -1287,6 +1334,14 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
+        // (a caller that stopped taking them keeps the last few only)
+        self.thumbnails.append(&mut r.thumbnails);
+        if self.thumbnails.len() > KEPT {
+            self.thumbnails.drain(..self.thumbnails.len() - KEPT);
+        }
+        if let Some(e) = r.equirect.take() {
+            self.equirect = Some(e);
+        }
         if r.snapshot && std::mem::take(&mut self.snapshot_dropped) {
             // the answer of a photo given up: a photo asked since is drawn
             // with the next frame
@@ -1300,11 +1355,19 @@ impl Renderer {
             self.capture_request = false;
             self.capture_scene = false;
         }
+        self.films_answered += r.films.len() as u64;
+        self.films.append(&mut r.films);
         self.last_stats = r.stats;
         self.fresh = true;
         if self.spare.len() < SPARE_PACKETS {
             self.spare.push(r.spent);
         }
+    }
+
+    /// Film frames asked (`film_request`) whose pixels have not come back:
+    /// a film asks for no more than a few at a time.
+    pub fn films_in_flight(&self) -> u64 {
+        self.films_sent.saturating_sub(self.films_answered) + u64::from(self.film_request.is_some())
     }
 
     fn fail(&mut self) {
@@ -1488,8 +1551,29 @@ impl Renderer {
         // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
             Some(_) if self.snapshot_sent => None,
+            // a face of a 360° capture is sent and forgotten: nothing comes
+            // back for it, the next face can be asked at once
+            Some(s) if s.cube.is_some() => {
+                self.snapshot_request = None;
+                Some(crate::packet::Capture::Snapshot(s))
+            }
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
-            None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            // a film's frame next, sent and not waited for (film_readback.rs)
+            None => match self.film_request.take() {
+                Some(film) => {
+                    self.films_sent += 1;
+                    let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
+                        width,
+                        height,
+                        interface: false,
+                        huds: film.huds,
+                        photo: (width, height),
+                        cube: None,
+                    });
+                    Some(crate::packet::Capture::Film(film.tag, spec))
+                }
+                None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            },
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
@@ -1513,8 +1597,11 @@ impl Renderer {
             picks: std::mem::take(&mut self.pick_requests),
             drawn: std::mem::take(&mut self.drawn_requests),
             capture,
+            equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
+            thumbnail: self.thumbnail_request.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
+            world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
         };
         self.frames += 1;
@@ -1538,7 +1625,10 @@ impl Renderer {
                     }
                     Err(_) => gone = true,
                 }
-                if capture.is_some() && !gone {
+                // (nor a film's frame: its pixels come back with a later frame)
+                let cube_face = matches!(capture, Some(crate::packet::Capture::Snapshot(s)) if s.cube.is_some())
+                    || matches!(capture, Some(crate::packet::Capture::Film(..)));
+                if capture.is_some() && !cube_face && !gone {
                     // the capture is read right after this call; a GPU that
                     // stops answering in it leaves it for a later frame
                     let t = Instant::now();
@@ -1589,6 +1679,7 @@ impl Renderer {
                 gpu_depth: self.last_stats.gpu_depth,
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
+                gpu_clouds: self.last_stats.gpu_clouds,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
                 gpu_weather: self.last_stats.gpu_weather,

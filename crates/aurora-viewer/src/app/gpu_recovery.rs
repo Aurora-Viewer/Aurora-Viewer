@@ -15,7 +15,7 @@ pub(super) struct WindowPlan {
 }
 
 impl App {
-    pub(super) fn open_window(&self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
+    pub(super) fn open_window(&mut self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
             // Metal needs a visible layer to present its first drawable.
@@ -31,6 +31,7 @@ impl App {
             attrs = attrs.with_position(position);
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
+        self.current_window = Arc::downgrade(&window);
         crate::window_hold::install(&window);
         crate::slurl_handoff::window_ready(&window);
         Ok(window)
@@ -287,7 +288,7 @@ impl App {
                 return None;
             }
         };
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());

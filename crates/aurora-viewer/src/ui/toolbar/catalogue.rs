@@ -37,6 +37,7 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "inventory_dual", "columns-2-filled", "inventory-dual-panel", true;
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
@@ -82,8 +83,12 @@ pub const COMMANDS: &[Command] = commands![
     "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Aurora's own: the Director, a camera track to film with
+    "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
+    "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet
-    "avatar", "user-circle", "toolbar-command-avatar", false;
+    "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
@@ -102,17 +107,17 @@ pub const COMMANDS: &[Command] = commands![
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
-    "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
+    "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
+    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
-    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
+    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", true;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
-    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
-    "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;
+    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", true;
+    "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
 ];
 
 impl Command {

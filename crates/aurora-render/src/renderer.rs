@@ -40,6 +40,9 @@ use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
+/// Index in `FrameU::features` of the face-select pattern's texture slot
+/// (common.wgsl FEATURE_FACE_SELECT_SLOT).
+const FEATURE_FACE_SELECT_SLOT: usize = 2;
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -218,6 +221,9 @@ struct FrameU {
     tex_lod: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
+    /// x: how far the snow lying is drawn (m), whatever falls
+    /// (`RainLook::snow_distance`); yzw unused.
+    snow_far: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -248,11 +254,15 @@ struct PostU {
     tonemap_mix: f32,
     /// Written on the GPU by `Exposure::encode`; 1 until then.
     auto_exposure: f32,
-    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
+    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view over
+    /// its checkerboard, 3 the live view over `cutout_key`.
     cutout: f32,
     _pad: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    /// The key color of a cut-out live view (`FrameParams::cutout_key`),
+    /// linear RGB.
+    cutout_key: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -536,7 +546,7 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
@@ -549,20 +559,20 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [
     // projectors' (`projector_shadows::shelter_slot`), so that none of them
     // loses its shadow; the last projector's only at the full budget. No
     // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
-    if let Some(slot) = shelter.filter(|&k| k < SPOT_SHADOWS) {
+    if let Some((slot, vp)) = shelter.filter(|&(k, _)| k < SPOT_SHADOWS) {
         views[slot] = Some((
             SpotShadow {
                 light: u32::MAX,
                 fade: 0.0,
             },
-            rain_shelter_matrix(f.camera_pos),
+            vp,
         ));
     }
     views
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
-/// the camera stays in its metre (what is built or moved under a roof shows
+/// the camera stays in its texel (what is built or moved under a roof shows
 /// within it).
 const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 
@@ -571,15 +581,26 @@ const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 const RAIN_SHELTER_LIGHT: i32 = -2;
 
 /// The shelter map: 80 m square around the camera, from 60 m above it to
-/// 60 m below, looking straight down; snapped to whole metres so that its
-/// texels do not crawl as the camera moves.
-fn rain_shelter_matrix(camera: Vec3) -> Mat4 {
+/// 60 m below, looking straight down, `map_px` texels a side; snapped to
+/// whole texels on the world's grid, so that a texel covers the same ground
+/// whatever the camera does. Snapped to whole metres (3.2 texels of a 256 px
+/// map, 6.4 of a 512 px one), every step moved the whole map onto a grid
+/// shifted by part of a texel: the edges of the lying snow, of the cover
+/// over it and of deep snow popped as the camera moved or orbited.
+fn rain_shelter_matrix(camera: Vec3, map_px: u32) -> Mat4 {
     // looking down -Z with +Y up, the view is a plain translation; the
     // orthographic projection (right-handed, depth 0 at the top to 1 at
     // the bottom, like the projectors' maps) then scales it
     const HALF: f32 = 40.0;
     const DEPTH: f32 = 120.0;
-    let (cx, cy, top) = (camera.x.round(), camera.y.round(), camera.z.round() + DEPTH * 0.5);
+    // (HALF is a whole number of texels at any power-of-two size: the map's
+    // edges, and so every texel boundary, fall on multiples of a texel)
+    let texel = 2.0 * HALF / map_px.max(2) as f32;
+    let (cx, cy, top) = (
+        (camera.x / texel).round() * texel,
+        (camera.y / texel).round() * texel,
+        camera.z.round() + DEPTH * 0.5,
+    );
     Mat4::from_cols(
         Vec4::new(1.0 / HALF, 0.0, 0.0, 0.0),
         Vec4::new(0.0, 1.0 / HALF, 0.0, 0.0),
@@ -989,6 +1010,8 @@ struct Pipelines {
     hud_debug_red: wgpu::RenderPipeline,
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
+    /// The volumetric clouds' weather map (env.wgsl `fs_cloud_weather`).
+    clouds_weather: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     /// PBR terrain (vs_terrain_pbr / fs_terrain_pbr), masked or not.
     terrain_pbr: wgpu::RenderPipeline,
@@ -1083,6 +1106,11 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
+    /// The face-select pattern over the selected HUD faces (selection.rs).
+    selection_pattern: wgpu::RenderPipeline,
+    /// The face-select pattern over the selected world faces, blended into
+    /// the HDR scene with the debug overlays (selection.rs).
+    selection_pattern_hdr: wgpu::RenderPipeline,
     /// The poser's hovered part on the subject's skinned faces.
     part_mask: wgpu::RenderPipeline,
     /// The visible part of the subject's faces (part_pick.rs).
@@ -1127,6 +1155,13 @@ struct Pipelines {
     /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
     /// the other casters keep `fs_shadow` without the terrain's inputs.
     shadow_terrain: wgpu::RenderPipeline,
+    /// The rain's shelter map: `shadow` and `shadow_terrain` without the
+    /// depth bias. It is a height map, not a shadow: the slope's bias set
+    /// each slope's surface lower than it is, by twice its rise over a
+    /// texel (12 cm on a gentle 20 % slope at 31 cm texels), and the snow,
+    /// lying on what the map says, left every slope bare.
+    shelter: wgpu::RenderPipeline,
+    shelter_terrain: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1176,6 +1211,8 @@ struct GpuTimer {
     last_ssao: Option<f32>,
     /// Last time of the contact shadows (ms).
     last_contact: Option<f32>,
+    /// Last time of the volumetric clouds' compute (ms).
+    last_clouds: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
@@ -1256,7 +1293,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 37;
+const GPU_MARKS: u32 = 38;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1341,6 +1378,9 @@ const MARK_ST_ALPHA_END: u32 = 35;
 const MARK_ST_DEPTH_END: u32 = 36;
 const MARK_ST_ACCUM_END: u32 = 37;
 const MARK_ST_COMPOSITE_END: u32 = 38;
+/// After the volumetric clouds' compute (clouds.rs), which follow
+/// `MARK_DEPTH_MSAA_END`; inside the terrain and sky element's range.
+const MARK_CLOUDS_END: u32 = 39;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1453,6 +1493,7 @@ impl GpuTimer {
             last_depth: None,
             last_ssao: None,
             last_contact: None,
+            last_clouds: None,
             last_bloom: None,
             st_sum: [0.0; 4],
             st_n: 0,
@@ -1487,6 +1528,7 @@ impl GpuTimer {
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
+                            self.last_clouds = Some(ms(MARK_DEPTH_MSAA_END, MARK_CLOUDS_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_st = None;
                             if self.slot_st[slot].get() {
@@ -1885,6 +1927,22 @@ pub(crate) struct Backend {
     part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
+    /// The 360° snapshot's panorama pass (equirect.rs), made on first use.
+    equirect: Option<crate::equirect::Equirect>,
+    /// The faces of the 360° capture in progress, on the GPU (equirect.rs).
+    cube: Option<crate::equirect::CubeTarget>,
+    /// The panoramas being read back, asked in order (equirect.rs).
+    equirect_reads: crate::equirect::Readbacks,
+    /// The Director's film frames on their way back (film_readback.rs).
+    film_reads: crate::film_readback::FilmReads,
+    /// The six faces of a 360° capture are drawn one after the other: the
+    /// snapshot size stays (the render targets are made once, not twice per
+    /// face) from the first face to the frame after the last.
+    cube_hold: bool,
+    /// The frame in hand draws a face that is not the last: the hold goes on.
+    cube_keep: bool,
+    /// The capture camera (its step) of the face the frame in hand draws.
+    cube_step: Option<usize>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1907,6 +1965,10 @@ pub(crate) struct Backend {
     /// The Milky Way map (stars.rs milky_way_texels), made once.
     milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
+    /// The volumetric clouds (clouds.rs), made while the setting is on.
+    clouds: Option<crate::clouds::Clouds>,
+    /// This frame draws the volumetric clouds over the sky.
+    clouds_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -1924,6 +1986,8 @@ pub(crate) struct Backend {
     exposure: crate::exposure::Exposure,
     /// The photo viewfinder's luminance histogram (histogram.rs).
     histogram: crate::histogram::Histogram,
+    /// The small pictures of the view asked for (thumbnail.rs).
+    thumbnails: crate::thumbnail::Thumbnails,
     /// The glow was drawn last frame: its image is there for the exposure.
     glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
@@ -1959,8 +2023,11 @@ pub(crate) struct Backend {
     shelter_slot: usize,
     /// With the shadows off, the shelter map drawn alone: its matrix and
     /// when (kept in the atlas, which nothing else draws then; drawn again
-    /// when the camera crosses a metre, or after `SHELTER_REFRESH`).
+    /// when it follows the camera, or after `SHELTER_REFRESH`).
     shelter_drawn: Option<(Mat4, Instant)>,
+    /// Where the shelter map is centred (`follow_shelter`): the camera when
+    /// it last went a metre from it.
+    shelter_centre: Option<Vec3>,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -2022,6 +2089,9 @@ pub(crate) struct Backend {
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// The pipeline workers still running, a set no longer wanted included:
+    /// waited for when the renderer is dropped (`wait_pipeline_workers`).
+    pipeline_workers: Vec<std::thread::JoinHandle<()>>,
     /// Rain prototype's wetness memory bookkeeping.
     rain_wet: RainWet,
     snow_trail: SnowTrail,
@@ -2069,6 +2139,7 @@ impl Drop for Backend {
             log::warn!("GPU device lost: the window surface is left to the process");
             return;
         }
+        self.wait_pipeline_workers();
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -2480,7 +2551,7 @@ fn begin_scene_b_on<'a>(
 }
 
 /// Rain prototype: the wetness memory's bookkeeping. The memory covers
-/// [`RAIN_WET_EXTENT`] m around the camera, its corner snapped to
+/// a square around the camera ([`wet_extent_for`]), its corner snapped to
 /// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
 /// the last one at the same places). `soak`: how wet a place new to it is
 /// (it rises as the rain goes on, then dries); the ground is drawn wet
@@ -2504,7 +2575,94 @@ struct RainWet {
     snow_cover: [f32; 4],
 }
 
-const RAIN_WET_EXTENT: f32 = 128.0;
+/// Deep snow's grid (env.wgsl `vs_snow_mesh`, which takes it from the frame:
+/// `snow_trail_step.zw`) at a weather quality and a reach set (m at High).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DeepSnowMesh {
+    /// Cells a side of each of its nested squares.
+    cells: u32,
+    /// How many squares, each twice as coarse as the one inside it, from
+    /// the finest (`SNOW_MESH_FIRST`, 5.12 m across).
+    levels: u32,
+    /// How far it reaches from my avatar (m): this quality's share of the
+    /// reach set.
+    reach: f32,
+}
+
+/// The finest square's side (m, env.wgsl `SNOW_MESH_FIRST`).
+const SNOW_MESH_FIRST: f32 = 5.12;
+/// Where deep snow has thinned to nothing toward its reach (a share of it,
+/// env.wgsl `SNOW_MESH_EDGE_END`): no square has to reach past it.
+const SNOW_MESH_EDGE_END: f32 = 0.98;
+
+impl DeepSnowMesh {
+    /// The grid at weather `quality` (0 Low, 1 Medium, 2 High) for a reach
+    /// of `reach` m at High: Low and Medium keep less of it, and coarser
+    /// cells, as before the reach could be set. As many squares as cover
+    /// where the snow still shows, whichever cell the outermost is snapped
+    /// to (its centre on twice its own cell: two cells of margin).
+    fn new(quality: u32, reach: f32) -> Self {
+        let (cells, share) = match quality {
+            0 => (64u32, 10.0 / 15.0),
+            1 => (96, 13.0 / 15.0),
+            _ => (128, 1.0),
+        };
+        let reach = reach.clamp(1.0, 60.0) * share;
+        let mut levels = 1u32;
+        loop {
+            let s = SNOW_MESH_FIRST / cells as f32 * (1u32 << (levels - 1)) as f32;
+            let half = cells as f32 * 0.5 * s;
+            if half - 2.0 * s >= reach * SNOW_MESH_EDGE_END || levels >= 8 {
+                return Self { cells, levels, reach };
+            }
+            levels += 1;
+        }
+    }
+
+    /// For the frame (`snow_trail_step.zw`): the reach, and the cells a
+    /// side times 16 plus the levels (both exact in an f32).
+    fn uniform(&self) -> [f32; 2] {
+        [self.reach, (self.cells * 16 + self.levels) as f32]
+    }
+
+    /// The vertices of its draw: six a cell, every square whole (the
+    /// cells another square covers, or past the reach, are dropped in the
+    /// vertex stage).
+    fn vertices(&self) -> u32 {
+        self.levels * self.cells * self.cells * 6
+    }
+}
+
+/// The wetness memory's square (m) for the weather drawn `reach` metres
+/// away (`RainLook::memory_reach`): 128 m by default, 256 m or 512 m for
+/// farther puddles or snow, always 4 texels a metre (512 to 2048 a side:
+/// 8 to 128 MB for its two textures). Its square must reach as far as
+/// what is drawn whichever way the camera looks: beyond it no puddle or
+/// snow shows. Its centre is snapped to `RAIN_WET_SNAP` (`rain_wet_origin`),
+/// so it reaches at least half its side less half a snap from the camera.
+/// Past 252 m (the slider's last 4 m) the largest square ends just short,
+/// within the last 2 % of the distance's fade, where nearly nothing shows.
+fn wet_extent_for(reach: f32) -> f32 {
+    [128.0, 256.0, 512.0]
+        .into_iter()
+        .find(|e| e * 0.5 - RAIN_WET_SNAP * 0.5 >= reach)
+        .unwrap_or(512.0)
+}
+
+/// The memory's square (m) to keep: `wet_extent_for` while `busy` (rain or
+/// snow falls, or the memory still holds some), the smallest while it is
+/// empty, so that a far distance holds no video memory in clear weather.
+fn wet_extent_wanted(reach: f32, busy: bool) -> f32 {
+    if busy { wet_extent_for(reach) } else { wet_extent_for(0.0) }
+}
+
+/// The wetness memory's corner for the camera at `at`: its centre the
+/// nearest multiple of `RAIN_WET_SNAP` (it moves only after the camera has),
+/// so the camera is never more than half a snap off its centre.
+fn rain_wet_origin(at: Vec2, extent: f32) -> Vec2 {
+    (at / RAIN_WET_SNAP).round() * RAIN_WET_SNAP - Vec2::splat(extent * 0.5)
+}
+const RAIN_WET_TEXELS_PER_M: f32 = 4.0;
 const RAIN_WET_SNAP: f32 = 8.0;
 const RAIN_WET_DRY: f32 = 0.02;
 /// How fast a place soaks while it rains (s, at full rain), and dries
@@ -2562,6 +2720,14 @@ impl SnowTrail {
     fn active(&self) -> bool {
         self.last.is_some()
     }
+
+    /// Every position moved by `by` (a border crossing): the map stays on
+    /// the ground it covers.
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
 }
 
 impl RainWet {
@@ -2572,9 +2738,25 @@ impl RainWet {
         (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY || self.step[2] < 0.0) && self.last.is_some()
     }
 
+    /// Every position moved by `by` (a border crossing): the memory stays
+    /// on the ground it covers (left in place, it was read 256 m off).
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
+
+    /// Its texels start again (a new size of its square): every place is
+    /// new to it, as wet and as snowed on as the open is now (`soak`, the
+    /// standing water and the snow so far are kept, so the ground does
+    /// not dry or melt at once).
+    fn restart_texels(&mut self) {
+        self.origin = None;
+    }
+
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
     /// `at`; `ice`: puddles freeze in the snow.
-    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool) {
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool, extent: f32) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
@@ -2594,15 +2776,9 @@ impl RainWet {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let snow = snow.clamp(0.0, 1.0);
-        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
-        // snows (demo captures, without waiting for it to build)
-        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
-        if snow > 0.0
-            && let Some(v) = lying
-        {
-            self.snow = self.snow.max(v.clamp(0.0, 1.0));
-        }
+        // (AURORA_SNOW_LYING reaches it as `RainLook::snow_lying`, the floor
+        // set before this step: the app reads it, and drops it with "Snow
+        // settles" off)
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
@@ -2616,11 +2792,11 @@ impl RainWet {
             *self = RainWet::default();
             return;
         }
-        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(RAIN_WET_EXTENT * 0.5);
+        let origin = rain_wet_origin(at, extent);
         self.origin = Some(origin);
         let fresh = was.is_none() || self.last.is_none();
         let prev = was.unwrap_or(origin);
-        self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
+        self.uniform = [origin.x, origin.y, extent, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
         // z: 1 while rain melts the snow, + 2 while puddles may freeze, + 4
         // deep snow (parallax)
@@ -2639,9 +2815,56 @@ impl Backend {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 
-    /// The projector map the shelter is drawn into this frame, if it is.
-    fn rain_shelter_map(&self, f: &FrameParams) -> Option<usize> {
-        self.rain_shelter(f).then_some(self.shelter_slot)
+    /// The projector map the shelter is drawn into this frame, if it is,
+    /// and its view-projection.
+    fn rain_shelter_map(&self, f: &FrameParams) -> Option<(usize, Mat4)> {
+        self.rain_shelter(f).then(|| (self.shelter_slot, self.shelter_matrix()))
+    }
+
+    /// The shelter map's view-projection this frame: around where it was
+    /// last centred (`follow_shelter`), on its own texels (`shadow_size / 2`
+    /// a side, as the projectors' maps). Every view of the frame reads it
+    /// (reflections, probe faces), as the one map drawn.
+    fn shelter_matrix(&self) -> Mat4 {
+        rain_shelter_matrix(self.shelter_centre.unwrap_or(Vec3::ZERO), self.shadow_size / 2)
+    }
+
+    /// The shelter map follows the camera once it has gone a metre from
+    /// where the map was centred (in any direction, height too), as it did
+    /// when it was snapped to whole metres: with the shadows off it is drawn
+    /// again only then (or after `SHELTER_REFRESH`). Snapped to its own
+    /// texels it would move, and be drawn again, every few centimetres.
+    fn follow_shelter(&mut self, camera: Vec3) {
+        if let Some(c) = shelter_centre_after(self.shelter_centre, camera) {
+            self.shelter_centre = Some(c);
+        }
+    }
+
+    /// A border crossing (`Renderer::shift_world`, `by` m): what this
+    /// renderer keeps in world positions moves with every position, once.
+    fn shift_weather(&mut self, by: [f32; 2]) {
+        if by == [0.0; 2] {
+            return;
+        }
+        let by = Vec2::from(by);
+        self.rain_wet.shift(by);
+        self.snow_trail.shift(by);
+        if let Some(c) = &mut self.shelter_centre {
+            *c += by.extend(0.0);
+        }
+    }
+}
+
+/// How far the camera goes from the shelter map's centre before the map
+/// follows it (m).
+const SHELTER_FOLLOW: f32 = 1.0;
+
+/// The shelter map's new centre for the camera at `camera`, if it moves
+/// (`Backend::follow_shelter`): none yet, or the camera a metre or more away.
+fn shelter_centre_after(centre: Option<Vec3>, camera: Vec3) -> Option<Vec3> {
+    match centre {
+        Some(c) if (camera - c).abs().max_element() < SHELTER_FOLLOW => None,
+        _ => Some(camera),
     }
 }
 
@@ -2662,14 +2885,14 @@ fn rain_share(quality: u32) -> f32 {
 }
 
 /// Rain prototype: `AURORA_RAIN_DEBUG=1`, the wet pass showing the wetness
-/// memory.
+/// memory; `=snow`, why the snow lies or not (env.wgsl `snow_debug_color`).
 fn rain_constants() -> &'static [(&'static str, f64)] {
     static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
     CONSTANTS.get_or_init(|| {
-        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") {
-            1.0
-        } else {
-            0.0
+        let debug = match std::env::var("AURORA_RAIN_DEBUG").as_deref() {
+            Ok("1") => 1.0,
+            Ok("snow") => 2.0,
+            _ => 0.0,
         };
         [("rain_debug", debug)]
     })
@@ -2881,6 +3104,39 @@ fn extra<T>(
     let (made, refused) = crate::gpu_alloc::scoped(device, || make(device));
     // (a lost device's refusals are the device-loss path's, `lost`)
     (!first_use(oom, what, false, refused && !lost)).then_some(made)
+}
+
+/// Whether the volumetric clouds are asked for this frame: over the sky of
+/// the main view when it is drawn (not hidden by the debug filter), not
+/// under the water (the sky is seen through its fog), nor in a cut-out
+/// photo (no sky).
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
+    !cutout && !hide_sky && camera_z >= water_level
+}
+
+/// The clouds' size-bound targets for `size` (and a still's) are made,
+/// checked: false while refused or waiting (the frame draws the Legacy
+/// layer, like `dof_targets`).
+fn cloud_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    clouds: &mut crate::clouds::Clouds,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    still: bool,
+    lost: bool,
+) -> bool {
+    if clouds.has_targets(size, still) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || clouds.ensure_targets(device, size, still));
+    if first_use(oom, "volumetric clouds", false, refused && !lost) {
+        clouds.release_targets();
+        return false;
+    }
+    true
 }
 
 /// The depth of field's targets for `size` are made, checked: false while
@@ -3388,6 +3644,7 @@ struct Ranges {
     physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    select_pattern: (u64, u32),
     part_faces: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
@@ -4134,6 +4391,13 @@ impl Backend {
             previews: Default::default(),
             selection: None,
             cutout: None,
+            equirect: None,
+            cube: None,
+            equirect_reads: Default::default(),
+            film_reads: Default::default(),
+            cube_hold: false,
+            cube_keep: false,
+            cube_step: None,
             hud_selection: None,
             part: None,
             part_depth: None,
@@ -4153,6 +4417,8 @@ impl Backend {
             stars,
             milky_way,
             contact,
+            clouds: None,
+            clouds_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -4160,6 +4426,7 @@ impl Backend {
             bloom,
             exposure,
             histogram,
+            thumbnails: crate::thumbnail::Thumbnails::new(),
             glow_drawn: false,
             frame_buffer,
             refl_buffers,
@@ -4184,6 +4451,7 @@ impl Backend {
             shadow_count: 2,
             shelter_slot: 2,
             shelter_drawn: None,
+            shelter_centre: None,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -4222,6 +4490,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
@@ -4644,6 +4913,17 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Always,
             gbuf: ssr,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
+        });
+        let clouds_weather = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            depth_format: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
             gbuf: ssr,
@@ -5253,6 +5533,36 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
+        // The face-select pattern (LLPipeline::renderSelectedFaces) of the
+        // world's faces: blended into the HDR scene like the debug overlays,
+        // before exposure, tone mapping and gamma, as LL's renderHighlights
+        // runs in renderGeomPostDeferred, before renderFinalize. The scene
+        // alpha (the glow) is left alone.
+        let selection_pattern_hdr = pipe(PipeDesc {
+            cull: None,
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            ..base("selected face pattern", "vs_main", "fs_selection_pattern_hdr")
+        });
+        // The HUDs' pattern: blended over the finished HUD image in the
+        // surface format (LL draws the HUDs after renderFinalize), with the
+        // coverage pass's depth state.
+        let selection_pattern = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: Some(surface_format),
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            depth_write: false,
+            depth_bias: wgpu::DepthBiasState {
+                constant: 1,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+            constants: &hud_constants,
+            ..base("selected HUD face pattern", "vs_main", "fs_selection_pattern")
+        });
         // The poser's hovered part: the subject's skinned faces kept where
         // their weights are the part's joints (`vs_part_mask`)
         let part_mask = pipe(part_desc(
@@ -5550,6 +5860,30 @@ impl Backend {
                 ..shadow_desc("shadow terrain", Some("fs_shadow_terrain"))
             },
         );
+        let level = wgpu::DepthBiasState {
+            constant: 0,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        };
+        let shelter = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                depth_bias: level,
+                ..shadow_desc("rain shelter", Some("fs_shadow"))
+            },
+        );
+        let shelter_terrain = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                vs: "vs_shadow_terrain",
+                depth_bias: level,
+                ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -5594,6 +5928,7 @@ impl Backend {
             hud_debug_red,
             hud_debug_blue,
             sky,
+            clouds_weather,
             terrain,
             terrain_pbr,
             pre_terrain,
@@ -5648,6 +5983,8 @@ impl Backend {
             select_root_wire,
             select_child_wire,
             selection_mask,
+            selection_pattern,
+            selection_pattern_hdr,
             part_mask,
             part_pick,
             ssr: ssr_pipe,
@@ -5672,6 +6009,8 @@ impl Backend {
             shadow,
             shadow_depth,
             shadow_terrain,
+            shelter,
+            shelter_terrain,
             post,
             pick,
             pick_terrain,
@@ -6278,27 +6617,13 @@ impl Backend {
         let show = t.gtao.is_some() && (gtao || t.ao.is_none());
         if show != t.gtao_shown {
             self.targets.gtao_shown = show;
-            self.groups = Self::make_frame_groups(
-                &self.device,
-                &self.frame_layout,
-                &self.frame_buffer,
-                &self.refl_buffers,
-                &self.shadow_view,
-                &self.probe_shadow_view,
-                &self.shadow_sampler,
-                &self.lin_clamp,
-                &self.dummies,
-                &self.targets,
-                &self.probes,
-                &self.water_effects,
-                &self.stars,
-                &self.milky_way,
-            );
+            self.remake_frame_groups();
         }
     }
 
-    /// Recreate every bind group that references size- or setting-dependent targets.
-    fn rebuild_bind_groups(&mut self) {
+    /// The frame groups made again, bound to the targets and memories as
+    /// they are now: alone, when only one of these changed.
+    fn remake_frame_groups(&mut self) {
         self.groups = Self::make_frame_groups(
             &self.device,
             &self.frame_layout,
@@ -6315,6 +6640,11 @@ impl Backend {
             &self.stars,
             &self.milky_way,
         );
+    }
+
+    /// Recreate every bind group that references size- or setting-dependent targets.
+    fn rebuild_bind_groups(&mut self) {
+        self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
@@ -6571,7 +6901,10 @@ impl Backend {
                 if s.ssr { "on" } else { "off" },
                 if s.gbuffer() { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer()));
+            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer());
+            self.pipeline_workers.retain(|w| !w.is_finished());
+            self.pipeline_workers.extend(worker);
+            self.pipeline_build = Some(build);
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -6628,7 +6961,7 @@ impl Backend {
     }
 
     /// Compile the pipelines for `samples` and `ssr` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> PipelineBuild {
+    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -6649,16 +6982,63 @@ impl Backend {
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
-        if let Err(e) = spawned {
-            // the receiver reports the worker gone: compiled on this thread
-            log::error!("cannot start the pipeline worker: {e}");
-        }
-        PipelineBuild {
+        let worker = spawned
+            .inspect_err(|e| {
+                // the receiver reports the worker gone: compiled on this thread
+                log::error!("cannot start the pipeline worker: {e}");
+            })
+            .ok();
+        let build = PipelineBuild {
             samples,
             ssr,
             started: std::time::Instant::now(),
             done,
+        };
+        (build, worker)
+    }
+
+    /// Take over `other`'s pipeline workers, to wait for them when this one
+    /// goes: a backend dropped while the viewer goes on (a remade renderer,
+    /// the VR eyes) must not hold the frame for them.
+    fn adopt_pipeline_workers(&mut self, other: &mut Backend) {
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        self.pipeline_workers.append(&mut other.pipeline_workers);
+    }
+
+    /// The VR eye backends' workers, before the XR world is dropped.
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    fn adopt_eye_workers(&mut self, world: &mut XrWorld) {
+        for eye in &mut world.backends {
+            self.adopt_pipeline_workers(eye);
         }
+    }
+
+    /// Wait for the pipeline workers still compiling, as the renderer goes.
+    /// A set still compiling when the process ran `exit` crashed it with the
+    /// NVIDIA driver: the main thread in the driver's teardown
+    /// (libGLX_nvidia), the `aurora-pipelines` worker segfaulting in its
+    /// compiler (libnvidia-glcore). Rain starting or the ground drying starts
+    /// a set, as the weather turning to the user's own at a quit did.
+    /// Bounded: a driver that never returns does not hold the viewer open.
+    fn wait_pipeline_workers(&mut self) {
+        const LONGEST: std::time::Duration = std::time::Duration::from_secs(60);
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        if self.pipeline_workers.is_empty() {
+            return;
+        }
+        log::info!("waiting for {} pipeline worker(s) before closing", self.pipeline_workers.len());
+        let started = Instant::now();
+        while self.pipeline_workers.iter().any(|w| !w.is_finished()) {
+            if started.elapsed() >= LONGEST {
+                log::warn!("pipeline worker still compiling after {} s: left to the process", LONGEST.as_secs());
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for worker in self.pipeline_workers.drain(..) {
+            let _ = worker.join();
+        }
+        log::info!("pipeline workers done in {} ms", started.elapsed().as_millis());
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
@@ -7022,17 +7402,26 @@ impl Backend {
         u.rain_wet_step = self.rain_wet.step;
         u.snow_cover = self.rain_wet.snow_cover;
         u.snow_cover[3] = f.rain_look.snow_detail as f32;
+        // + 8: "Snow settles" off, no lying snow drawn (env.wgsl
+        // `snow_hidden`)
+        if !f.rain_look.snow_settles {
+            u.snow_cover[2] += 8.0;
+        }
         u.snow_trail = self.snow_trail.uniform;
         // my avatar: deep snow's grid centred on it, not on the camera (an
         // orbiting camera would move it, and its cells resample what they
         // cover: narrow strips spiking as it pans)
-        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], 0.0, 0.0];
+        // zw: deep snow's grid (`DeepSnowMesh::uniform`, env.wgsl
+        // `snow_mesh_grid`), the draw's own
+        let [reach, grid] = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach).uniform();
+        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], reach, grid];
         u.snow_stamps = f.rain_look.snow_stamps;
         for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
             u.snow_stamp_z[i / 4][i % 4] = *z;
         }
         u.lightning = f.rain_look.lightning;
         u.aurora = f.rain_look.aurora;
+        u.snow_far = [f.rain_look.snow_distance, 0.0, 0.0, 0.0];
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -7045,6 +7434,8 @@ impl Backend {
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
+        // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
+        u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
         u.part_joints = [
             [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
             [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
@@ -7147,7 +7538,7 @@ impl Backend {
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         // Aurora Weather: the shelter map's slot + 1, 0 when it is not drawn
         // (env.wgsl `rain_shelter_on`)
-        u.features[1] = self.rain_shelter_map(f).map_or(0, |k| k as u32 + 1);
+        u.features[1] = self.rain_shelter_map(f).map_or(0, |(k, _)| k as u32 + 1);
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -7252,7 +7643,17 @@ impl Backend {
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
     fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
-        let snapshot = self.end_snapshot();
+        let cube_face = std::mem::take(&mut self.cube_step).is_some();
+        // (a face of a 360° capture is answered by nothing: it stays on the
+        // GPU, and the main thread did not wait for it)
+        // (a film frame drawn at its size is no photo: its pixels come back
+        // in `films`, a later frame's result once the GPU is done)
+        let film = self.film_reads.end_frame();
+        let snapshot = self.end_snapshot() && !cube_face && !film;
+        if self.film_reads.busy() {
+            self.lost.poll(&self.device);
+        }
+        let films = self.film_reads.answers();
         FrameResult {
             index,
             stats,
@@ -7263,32 +7664,81 @@ impl Backend {
             cull: self.cull.last,
             captured,
             snapshot,
+            equirect: None,
             histogram: self.histogram.take(),
+            thumbnails: self.thumbnails.take(),
+            films,
             spent,
         }
     }
 
     /// A photo frame draws every pass at the photo's size: the render size
     /// (`config`, which every pass reads) takes it for this frame, the
-    /// swapchain keeps the window's (it is not reconfigured).
+    /// swapchain keeps the window's (it is not reconfigured). The faces of a
+    /// 360° capture (`SnapshotSpec::cube`) share one set of targets: they are
+    /// made for the first face and kept until the frame after the last.
     fn begin_snapshot(&mut self, s: SnapshotSpec) {
-        self.snapshot_window = Some((self.config.width, self.config.height));
+        let held = self.cube_hold && self.snapshot_window.is_some();
+        if !held {
+            self.snapshot_window = Some((self.config.width, self.config.height));
+        }
+        let same = held && (self.config.width, self.config.height) == (s.width, s.height);
         // the stochastic transparency's targets go before the photo's memory
-        // is taken: its tiles draw the sorted order
+        // is taken: its tiles (and the 360° faces) draw the sorted order
         if let Some(st) = &mut self.st {
             st.release();
         }
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
-        self.rebuild_targets();
+        self.cube_step = s.cube.map(usize::from);
+        if self.cube_step == Some(0)
+            && let Some(cube) = &mut self.cube
+        {
+            // (a face lost before it was drawn must not pass for the last
+            // capture's)
+            cube.reset();
+        }
+        self.cube_keep = s
+            .cube
+            .is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
+        if same {
+            // the face before left its images in the history of the passes
+            // that remember the last frame: each face starts afresh (the
+            // targets made again do that by themselves)
+            self.occlusion.invalidate();
+            self.depth_pick.scene_changed();
+            self.prev_view_proj = None;
+            self.prev_motion_view = None;
+            if let Some(taa) = &mut self.taa {
+                taa.reset = true;
+            }
+        } else {
+            self.rebuild_targets();
+        }
     }
 
-    /// Back to the window's size after a photo frame, however it ended.
-    /// True when the frame was one.
+    /// Back to the window's size after a photo frame, however it ended; a
+    /// face of a 360° capture that is not the last keeps the targets for the
+    /// next one. True when the frame was a photo's.
     fn end_snapshot(&mut self) -> bool {
-        let Some((w, h)) = self.snapshot_window.take() else {
+        if self.snapshot_window.is_none() {
             return false;
+        }
+        if std::mem::take(&mut self.cube_keep) {
+            self.cube_hold = true;
+            return true;
+        }
+        self.release_snapshot();
+        true
+    }
+
+    /// The window's size again, the targets made for it.
+    fn release_snapshot(&mut self) {
+        self.cube_hold = false;
+        self.cube_keep = false;
+        let Some((w, h)) = self.snapshot_window.take() else {
+            return;
         };
         // the video memory at the photo's peak (its targets still alive)
         let live = self.device.get_internal_counters().hal;
@@ -7304,7 +7754,6 @@ impl Backend {
         self.config.height = h;
         self.gtao.photo = None;
         self.rebuild_targets();
-        true
     }
 
     /// End of a frame that cannot be drawn (no swapchain image, or its
@@ -7397,6 +7846,15 @@ impl Backend {
         let Some(mut world) = self.xr_world.take() else {
             return Err(Box::new(packet));
         };
+        // a border crossing moves each renderer's weather memory once: both
+        // eyes' (each keeps its own) and the window's, idle while the
+        // headset draws and drawing again after it or on a frame the
+        // headset skips (the packet goes on without it, never applied twice)
+        let shift = std::mem::take(&mut packet.world_shift);
+        for eye in &mut world.backends {
+            eye.shift_weather(shift);
+        }
+        self.shift_weather(shift);
         if !self.vr.wanted() {
             world.session.request_stop();
         }
@@ -7422,6 +7880,7 @@ impl Backend {
             }
             Err(e) => {
                 log::info!("XR world ended: {e}");
+                self.adopt_eye_workers(&mut world);
                 if world.session.runtime_lost {
                     log::warn!("XR runtime closing: VR ends, the viewer goes on without it");
                     self.vr.lose_runtime();
@@ -7479,8 +7938,12 @@ impl Backend {
             picks: Vec::new(),
             drawn: Vec::new(),
             capture: None,
+            equirect: None,
             histogram: None,
+            thumbnail: None,
             motion_cut: packet.motion_cut,
+            // (moved above, every renderer once)
+            world_shift: [0.0; 2],
             input_at: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
@@ -7538,6 +8001,7 @@ impl Backend {
         );
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
+            self.adopt_eye_workers(&mut world);
             self.vr.finish(true);
             self.motion_cut = true;
             crate::present::configure(&self.surface, &self.device, &self.config);
@@ -7547,7 +8011,29 @@ impl Backend {
         Ok(first)
     }
 
-    pub fn render(&mut self, packet: FramePacket) -> FrameResult {
+    pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
+        // the 360° snapshot's panorama, before the frame: projected from the
+        // cube the faces filled, its readback begun and answered by a later
+        // frame (equirect.rs). The cube is let go once the GPU has the job.
+        if let Some(job) = packet.equirect.take() {
+            let pass = self.equirect.get_or_insert_with(|| crate::equirect::Equirect::new(&self.device));
+            pass.start(
+                &self.device,
+                &self.queue,
+                &self.lost,
+                packet.index,
+                self.cube.as_ref(),
+                *job,
+                &mut self.equirect_reads,
+            );
+            self.cube = None;
+        }
+        let mut result = self.render_frame(packet);
+        result.equirect = self.equirect_reads.poll();
+        result
+    }
+
+    fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
             self.vr.finish(false);
@@ -7634,10 +8120,14 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                // (a set still compiling is the new one's to wait for: the
+                // old one's drop would hold this frame for it)
+                fresh.adopt_pipeline_workers(self);
                 *self = fresh;
             }
-            Ok(_) => {
+            Ok(mut refused) => {
                 log::info!("renderer: try refused ({took} ms)");
+                self.adopt_pipeline_workers(&mut refused);
                 self.oom.targets_failed(Instant::now());
             }
             // (a lost device, which ends the viewer: egui's renderer stays
@@ -7686,12 +8176,21 @@ impl Backend {
             picks,
             drawn,
             capture: wanted,
+            // (taken by `render` before the frame)
+            equirect: _,
             histogram,
+            thumbnail,
             motion_cut,
+            world_shift,
             input_at,
         } = packet;
         let external_output = output.is_some();
+        self.film_reads.begin(match wanted {
+            Some(Capture::Film(tag, _)) => Some(tag),
+            _ => None,
+        });
         self.motion_cut |= motion_cut;
+        self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
             t.harvest();
@@ -7721,8 +8220,21 @@ impl Backend {
             self.last_inv_vp,
             picks,
         );
+        // a 360° capture's faces share the snapshot targets; any other frame
+        // ends the hold (the capture was given up, or it is over)
+        let cube_face = matches!(&wanted, Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 && s.cube.is_some());
+        if self.cube_hold && !cube_face {
+            // the capture was given up between its faces: no projection will
+            // come for these
+            self.release_snapshot();
+            self.cube = None;
+        }
         // the window and the settings as the main thread had them for this frame
-        self.apply_surface(surface);
+        // (the window's size and the swapchain are as they were: the faces
+        // draw at their own size until the hold ends)
+        if !self.cube_hold {
+            self.apply_surface(surface);
+        }
         if self.rlva_resolution_divisor != params.rlva_resolution_divisor {
             self.rlva_resolution_divisor = params.rlva_resolution_divisor;
             self.rebuild_targets();
@@ -7747,7 +8259,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -8128,9 +8640,35 @@ impl Backend {
             self.rain_wet = RainWet::default();
             self.rain_wet.snow = 1.0;
         }
+        // the memory's square, as far as the weather is drawn, while there
+        // is weather to keep (falling, or still on the ground); the
+        // smallest while it is empty, which loses nothing. A new size makes
+        // its textures anew (the old ones kept if video memory refuses
+        // them, tried again later) and starts its texels again from the
+        // open's wetness and snow so far
+        let busy = rain > 0.0 || snow > 0.0 || f.rain_look.snow_lying > 0.0 || self.rain_wet.origin.is_some();
+        let wet_texels = (wet_extent_wanted(f.rain_look.memory_reach, busy) * RAIN_WET_TEXELS_PER_M) as u32;
+        if wet_texels != self.water_effects.rain_wet_size {
+            let lost = self.lost.get();
+            let made = extra(&mut self.oom, &self.device, lost, "weather memory, a new size", |d| {
+                crate::water_effects::wet_textures(d, wet_texels)
+            });
+            if let Some(made) = made {
+                log::info!(
+                    "weather memory: {} m square ({wet_texels} texels a side)",
+                    wet_texels as f32 / RAIN_WET_TEXELS_PER_M
+                );
+                self.water_effects.install_wet(made, wet_texels);
+                // (only the frame groups bind it: the TAA history stays)
+                self.remake_frame_groups();
+                self.rain_wet.restart_texels();
+            }
+        }
+        let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
+        self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet
-            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);
+            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted
         let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
         let trail_extent = f.rain_look.trail_extent.clamp(16.0, 128.0);
@@ -8354,6 +8892,56 @@ impl Backend {
         if specular_aa_now(self.settings.specular_aa) {
             main.light_sets.mode[2] |= 0x8000;
         }
+        // ---- volumetric clouds (clouds.rs): over the sky of the main view
+        // when the setting is on and the Legacy layer would draw something;
+        // not under the water (the sky is seen through its fog), nor in a
+        // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
+        // is traced once in full (clouds.rs `StillSpec`), with no history.
+        // Until the noise is made the sky shader keeps the Legacy layer.
+        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+            let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
+            crate::clouds::StillSpec {
+                origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
+            }
+        });
+        let cloud_params = f
+            .clouds
+            .as_ref()
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
+            .and_then(|c| {
+                let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
+                crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
+            });
+        match (&f.clouds, &mut self.clouds) {
+            (None, clouds) => *clouds = None,
+            (Some(_), clouds @ None) => {
+                // (checked: refused, the Legacy layer stays and it is tried
+                // again later; the noise file is read once it is made)
+                *clouds = extra(
+                    &mut self.oom,
+                    &self.device,
+                    self.lost.get(),
+                    "volumetric clouds",
+                    crate::clouds::Clouds::new,
+                );
+                if let Some(c) = clouds {
+                    c.start_noise_read();
+                }
+            }
+            _ => {}
+        }
+        // (the targets are made before the decision: refused, this frame
+        // draws the Legacy layer)
+        let cloud_size = (self.targets.color_tex.width().max(2), self.targets.color_tex.height().max(2));
+        let cloud_targets_ok = match (&mut self.clouds, &cloud_params) {
+            (Some(c), Some(_)) if c.ready() => cloud_targets(&mut self.oom, c, &self.device, cloud_size, still.is_some(), self.lost.get()),
+            _ => false,
+        };
+        self.clouds_now = cloud_params.is_some() && cloud_targets_ok;
+        if self.clouds_now {
+            // (env.wgsl, features.w: the sky pass leaves the clouds to clouds.rs)
+            main.features[3] = 1;
+        }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -8546,7 +9134,7 @@ impl Backend {
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|k| i == CASCADES + k)), 0, 0, 0],
+                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
@@ -8625,13 +9213,15 @@ impl Backend {
                 f.tonemap_mix.clamp(0.0, 1.0)
             },
             auto_exposure: 1.0,
-            cutout: match (f.cutout, snapshot.is_some()) {
-                (false, _) => 0.0,
-                (true, true) => 1.0,
-                (true, false) => 2.0,
+            cutout: match (f.cutout, snapshot.is_some() || f.cutout_alpha, f.cutout_key) {
+                (false, ..) => 0.0,
+                (true, true, _) => 1.0,
+                (true, false, None) => 2.0,
+                (true, false, Some(_)) => 3.0,
             },
             _pad: 0.0,
             photo_part: photo_part(f.photo_tile),
+            cutout_key: f.cutout_key.map_or([0.0; 4], |[r, g, b]| [r, g, b, 1.0]),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -8776,7 +9366,7 @@ impl Backend {
             let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
             // the shelter map: what stands still, glass too (as the GPU's
             // shelter bin), not the shadows' casters
-            let casters = if shelter_map == Some(k) {
+            let casters = if shelter_map.is_some_and(|(s, _)| s == k) {
                 &lists.shelter_casters
             } else {
                 &lists.shadow_casters
@@ -8919,6 +9509,7 @@ impl Backend {
         let hud_debug_red_range = push(cpu, &lists.hud_debug_red);
         let hud_debug_blue_range = push(cpu, &lists.hud_debug_blue);
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
+        let hud_select_pattern_range = push(cpu, &lists.hud_select_pattern);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.land_overlay = push(cpu, &lists.land_overlay);
         rg.debug_blue = push(cpu, &lists.debug_blue);
@@ -8929,6 +9520,7 @@ impl Backend {
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.select_pattern = push(cpu, &lists.select_pattern);
         rg.part_faces = push(cpu, &lists.part_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
@@ -9220,11 +9812,11 @@ impl Backend {
         let shelter_kept = shelter_only
             && self
                 .shelter_drawn
-                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos) && at.elapsed() < SHELTER_REFRESH);
+                .is_some_and(|(m, at)| m == self.shelter_matrix() && at.elapsed() < SHELTER_REFRESH);
         if f.shadows || !shelter {
             self.shelter_drawn = None;
         } else if shelter_only && !shelter_kept {
-            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos), Instant::now()));
+            self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
@@ -9346,12 +9938,17 @@ impl Backend {
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.spot_terrain[k]);
+                                let (objects, terrain) = if shelter && k == self.shelter_slot {
+                                    (&self.pipelines.shelter, &self.pipelines.shelter_terrain)
+                                } else {
+                                    (&self.pipelines.shadow, &self.pipelines.shadow_terrain)
+                                };
+                                draw(&mut pass, terrain, rg.spot_terrain[k]);
                                 let (off, count) = rg.spot[k];
                                 if count == 0 && !gpu_on {
                                     continue;
                                 }
-                                pass.set_pipeline(&self.pipelines.shadow);
+                                pass.set_pipeline(objects);
                                 if count > 0 {
                                     pass.multi_draw_indexed_indirect(&self.indirect, off, count);
                                     calls.set(calls.get() + 1);
@@ -10007,6 +10604,53 @@ impl Backend {
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_prepass[slot].set(prepass_wanted);
         }
+        // ---- volumetric clouds: the weather map when its parameters changed,
+        // the noise slice, the trace and the reconstruction (clouds.rs)
+        let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
+        let scene_gbuf = self.targets.gbuf.is_some();
+        // (until the noise is made `encode` generates it and allocates
+        // nothing; after, it needs the targets made above)
+        let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
+        if let (Some(clouds), Some(p), true) = (&mut self.clouds, &cloud_params, clouds_encode) {
+            if clouds.weather_stale(p.weather_key) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("cloud weather"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: clouds.weather_target(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipelines.clouds_weather);
+                pass.set_bind_group(0, &self.groups.a, &[]);
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.draw(0..3, 0..1);
+                drop(pass);
+                clouds.weather_drawn(p.weather_key);
+            }
+            clouds.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                p,
+                &self.targets.depth_ss,
+                cloud_size,
+                still,
+            );
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+        } else if let Some(clouds) = &mut self.clouds {
+            clouds.skipped(still.is_some());
+        }
+        mark(&mut encoder, MARK_CLOUDS_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -10081,6 +10725,14 @@ impl Backend {
             if !f.cutout && !f.hide_sky {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
+                // the clouds over the sky: dst * T + L
+                if self.clouds_now
+                    && let Some(clouds) = &self.clouds
+                {
+                    clouds.draw(&mut pass, scene_samples, scene_gbuf);
+                    // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
@@ -10150,8 +10802,8 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             let size = wgpu::Extent3d {
-                width: crate::water_effects::RAIN_WET_SIZE,
-                height: crate::water_effects::RAIN_WET_SIZE,
+                width: self.water_effects.rain_wet_size,
+                height: self.water_effects.rain_wet_size,
                 depth_or_array_layers: 1,
             };
             encoder.copy_texture_to_texture(
@@ -10497,6 +11149,10 @@ impl Backend {
                 }
                 blended(pass, blend_pipe, rest_from, bn);
             }
+            // the face-select pattern, whatever "Show highlight" gives the
+            // halo: LL's renderHighlights calls renderSelectedFaces without
+            // reading RenderHighlightSelections, right before renderDebug
+            draw(pass, &self.pipelines.selection_pattern_hdr, rg.select_pattern);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -10569,15 +11225,11 @@ impl Backend {
             // it); it writes the depth, so the frame group without it
             let snow_on = f.rain_look.snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY;
             if f.rain_look.deep_snow && snow_on && !f.cutout && self.rain_shelter(f) {
-                let cells: u32 = match f.rain_look.quality {
-                    0 => 128,
-                    1 => 192,
-                    _ => 256,
-                };
+                let mesh = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach);
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "deep snow", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
                 pass.set_pipeline(&self.pipelines.snow_mesh);
-                pass.draw(0..cells * cells * 6, 0..1);
+                pass.draw(0..mesh.vertices(), 0..1);
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -10647,6 +11299,8 @@ impl Backend {
                 draw_sided(&mut pass, &pipes.alpha[0], rigged, 0);
                 draw_sided(&mut pass, &pipes.alpha[1], others, n_depth);
             }
+            // (the tiles with a blended face: what follows runs on those)
+            st.mark_tiles(&mut encoder, resolve);
             mark(&mut encoder, MARK_ST_ALPHA_END);
             // 3 and 4: the stochastic depth, then the accumulation
             st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
@@ -11611,6 +12265,24 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
+        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+            // a live film's frame: the same view, read back without a wait
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            let bgra = matches!(
+                source.format(),
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+            self.film_reads.encode(&self.device, &mut encoder, source, bgra, f.cutout);
+        }
+        // the Director's keyframe thumbnail: the same view, read back later
+        if let Some(tag) = thumbnail
+            && snapshot.is_none()
+            && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            let (width, height, format) = (self.config.width, self.config.height, source.format());
+            self.thumbnails
+                .encode(&self.device, &mut encoder, source, width, height, format, tag);
         }
         let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
@@ -11651,6 +12323,20 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
             draw(&mut pass, &self.pipelines.hud_debug_red, hud_debug_red_range);
             draw(&mut pass, &self.pipelines.hud_debug_blue, hud_debug_blue_range);
+        }
+        // the HUD faces' pattern, whatever "Show highlight" says (as the world's
+        // in the scene pass); only when
+        // the HUD pass ran, which clears the HUD depth. With the halo off this pass
+        // carries no timestamp, so its time is not in the GPU total.
+        if draw_huds
+            && hud_select_pattern_range.1 > 0
+            && let Some((_, _, depth)) = &self.hud_depth
+        {
+            let mut pass = crate::selection::begin_pattern(&mut encoder, &surface_view, depth);
+            bind_mesh(&mut pass, &self.groups.refl[5]);
+            draw(&mut pass, &self.pipelines.selection_pattern, hud_select_pattern_range);
+            drop(pass);
+            calls.set(calls.get() + 1);
         }
         if hud_select_faces_range.1 > 0
             && let (Some(selection), Some((_, _, depth))) = (&self.hud_selection, &self.hud_depth)
@@ -11703,6 +12389,25 @@ impl Backend {
         }
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
+        } else if let (Some(step), Some(_)) = (self.cube_step, snapshot) {
+            // a face of a 360° capture stays on the GPU: copied into its
+            // layer of the cube, never read back
+            let (size, format) = (self.config.width, surface_tex.texture().format());
+            if self.cube.as_ref().is_none_or(|cube| !cube.fits(size, format)) {
+                self.cube = crate::equirect::CubeTarget::new(&self.device, size, format);
+            }
+            if let Some(cube) = &mut self.cube {
+                cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
+        } else if snapshot.is_some() && self.film_reads.carried() {
+            // an offline render's frame, drawn at its size: read back
+            // without a wait, answered by a later frame
+            let texture = surface_tex.texture();
+            let bgra = matches!(
+                texture.format(),
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+            self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
         } else if snapshot.is_some() {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), true);
         }
@@ -11757,7 +12462,10 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
+        // (a face of a 360° capture is on the GPU, with nothing to read)
         let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
+        // a film frame's copy is submitted: its mapping can begin
+        self.film_reads.map();
 
         if let (Some(t), Some(slot)) = (&mut self.timer, timer_slot) {
             let ready = t.readback[slot].1.clone();
@@ -11774,8 +12482,12 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        if let Some(st) = &self.st {
+            st.after_submit();
+        }
         self.exposure.after_submit();
         self.histogram.after_submit();
+        self.thumbnails.after_submit();
         self.drawn_pick.after_submit();
         self.part_pick.after_submit();
         prof.mark("submit");
@@ -11824,6 +12536,7 @@ impl Backend {
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
+        stats.gpu_clouds = self.timer.as_ref().and_then(|t| t.last_clouds).filter(|_| self.clouds_now);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
@@ -11996,6 +12709,185 @@ impl Backend {
 mod tests {
     use super::*;
 
+    #[test]
+    fn deep_snow_has_enough_levels_for_its_reach() {
+        // High at the default 15 m: four squares (the finest 5.12 m across,
+        // the fourth 41 m), as many cells as the one warped grid had
+        let high = DeepSnowMesh::new(2, 15.0);
+        assert_eq!((high.cells, high.levels, high.reach), (128, 4, 15.0));
+        assert_eq!(high.vertices(), 256 * 256 * 6);
+        // 40 m: five (the fifth reaches 39.68 m whatever its snap, past
+        // 39.2 m, where the snow has thinned to nothing): a quarter more
+        // vertices than at 15 m, not half more
+        let far = DeepSnowMesh::new(2, 40.0);
+        assert_eq!((far.cells, far.levels), (128, 5));
+        assert_eq!(far.vertices() * 4, high.vertices() * 5);
+        // Low and Medium keep their share of the reach, coarser
+        assert_eq!(DeepSnowMesh::new(0, 15.0).reach, 10.0);
+        assert_eq!(DeepSnowMesh::new(1, 15.0).cells, 96);
+        // the outermost square reaches where the snow still shows, whatever
+        // its snap, and a morph ends before each square's edge (10 % of a
+        // half side is at least two cells)
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 25.0, 40.0] {
+                let m = DeepSnowMesh::new(q, reach);
+                let s = SNOW_MESH_FIRST / m.cells as f32 * (1u32 << (m.levels - 1)) as f32;
+                let share = [10.0 / 15.0, 13.0 / 15.0, 1.0][q as usize];
+                assert_eq!(m.reach, reach * share);
+                assert!(m.cells as f32 * 0.5 * s - 2.0 * s >= m.reach * SNOW_MESH_EDGE_END, "{q} {reach}");
+                assert!(0.1 * m.cells as f32 * 0.5 >= 2.0);
+                // one fewer would not do: no square drawn for nothing
+                let s = s * 0.5;
+                assert!(
+                    m.levels == 1 || m.cells as f32 * 0.5 * s - 2.0 * s < m.reach * SNOW_MESH_EDGE_END,
+                    "{q} {reach}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_shader_reads_deep_snows_grid_as_the_draw_has_it() {
+        // env.wgsl `snow_mesh_grid`: cells = w / 16, levels = w % 16, reach z
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 40.0] {
+                let m = DeepSnowMesh::new(q, reach);
+                let [z, w] = m.uniform();
+                let packed = (w + 0.5) as u32;
+                assert_eq!((packed / 16, packed % 16, z), (m.cells, m.levels, m.reach));
+                assert!(m.levels < 16);
+            }
+        }
+    }
+
+    #[test]
+    fn the_shelter_map_follows_the_camera_a_metre_at_a_time() {
+        // walking 10 m in 1 cm steps: drawn again (with the shadows off)
+        // about once a metre, as when it was snapped to whole metres; on
+        // its texels it would have moved 32 times at 256 px, 128 at 1024 px
+        let mut centre = None;
+        let mut moves = 0;
+        for step in 0..=1000 {
+            let camera = Vec3::new(100.0 + step as f32 * 0.01, 60.0, 30.0);
+            if let Some(c) = shelter_centre_after(centre, camera) {
+                centre = Some(c);
+                moves += 1;
+            }
+            let c = centre.expect("centred on the first frame");
+            assert!((camera - c).abs().max_element() < SHELTER_FOLLOW);
+        }
+        // (the first frame centres it)
+        assert!((10..=11).contains(&moves), "{moves}");
+        // turning, or going up and down less than a metre, moves nothing
+        let c = Vec3::new(10.0, 10.0, 22.0);
+        assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.4, -0.6, 0.9)), None);
+        assert_eq!(
+            shelter_centre_after(Some(c), c + Vec3::new(0.0, 0.0, 1.2)),
+            Some(c + Vec3::new(0.0, 0.0, 1.2))
+        );
+    }
+
+    #[test]
+    fn the_shelter_map_keeps_its_texels_on_the_ground() {
+        // a point on the ground keeps its place in its texel (the part of
+        // a texel it is at) wherever the camera goes: the map's texels do
+        // not crawl over the ground, nothing sampled from them pops
+        for px in [256u32, 512, 1024] {
+            let ground = Vec3::new(123.37, 77.91, 20.0);
+            let within = |camera: Vec3| {
+                let p = rain_shelter_matrix(camera, px).project_point3(ground);
+                let u = (p.x * 0.5 + 0.5) * px as f32;
+                let v = (0.5 - p.y * 0.5) * px as f32;
+                (u.rem_euclid(1.0), v.rem_euclid(1.0))
+            };
+            let first = within(Vec3::new(100.0, 60.0, 30.0));
+            for step in 1..60 {
+                let camera = Vec3::new(100.0 + step as f32 * 0.37, 60.0 + step as f32 * 0.23, 30.0 + step as f32 * 0.11);
+                let (u, v) = within(camera);
+                assert!(
+                    (u - first.0).abs() < 2e-3 && (v - first.1).abs() < 2e-3,
+                    "{px} px, step {step}: {u},{v} vs {first:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_weather_memory_covers_what_is_drawn() {
+        // today's defaults (puddles 38 m, snow 60 m): the same 128 m as before
+        assert_eq!(wet_extent_for(60.0), 128.0);
+        assert_eq!(wet_extent_for(61.0), 256.0);
+        assert_eq!(wet_extent_for(124.0), 256.0);
+        assert_eq!(wet_extent_for(125.0), 512.0);
+        assert_eq!(wet_extent_for(256.0), 512.0);
+        // never more than 512 m (2048 texels)
+        assert_eq!(wet_extent_for(1000.0), 512.0);
+        assert_eq!((wet_extent_for(256.0) * RAIN_WET_TEXELS_PER_M) as u32, 2048);
+        // the square reaches that far on every side, wherever the camera is
+        // in its snap (with the corner floored, it fell 8 m short on the
+        // east and north sides: 56 m for the default 60 m)
+        for reach in [20.0f32, 38.0, 60.0, 61.0, 100.0, 124.0, 125.0, 200.0, 252.0] {
+            let extent = wet_extent_for(reach);
+            for i in 0..=160 {
+                let at = Vec2::new(-40.0 + i as f32 * 0.1, 300.0 - i as f32 * 0.07);
+                let o = rain_wet_origin(at, extent);
+                let near = (at - o).min(o + Vec2::splat(extent) - at).min_element();
+                assert!(near >= reach - 1e-3, "{reach} m at {at}: {near}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_weather_memory_is_small_while_empty() {
+        // a far distance holds no video memory in clear weather (8 MB, not
+        // 128): the memory grows when rain or snow comes, nothing in it lost
+        assert_eq!(wet_extent_wanted(256.0, false), 128.0);
+        assert_eq!(wet_extent_wanted(256.0, true), 512.0);
+        assert_eq!(wet_extent_wanted(60.0, true), 128.0);
+    }
+
+    #[test]
+    fn a_new_size_keeps_the_weather_so_far() {
+        let mut wet = RainWet::default();
+        for _ in 0..3 {
+            wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 128.0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (soak, level) = (wet.soak, wet.level);
+        assert!(soak > 0.0 && level > 0.0);
+        assert!(wet.step[2] >= 0.0);
+        // the texels start again (every place new to it, `step.z` -1),
+        // as wet as the open is: not dried, not drained
+        wet.restart_texels();
+        wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 256.0);
+        assert_eq!(wet.step[2], -1.0);
+        assert!(wet.soak >= soak && wet.level >= level);
+        assert_eq!(wet.step[3], wet.soak);
+        assert_eq!(wet.uniform[2], 256.0);
+    }
+
+    #[test]
+    fn a_border_crossing_moves_the_weathers_memories() {
+        // a crossing to the east neighbour: every position 256 m less in x;
+        // the memories move with them, so the next frame reads the same
+        // ground (not fresh, the old corner where the new one is)
+        let at = Vec2::new(250.0, 40.0);
+        let mut wet = RainWet::default();
+        wet.advance(1.0, 0.0, at, false, false, 128.0);
+        let mut trail = SnowTrail::default();
+        trail.advance(true, 1.0, at, 0.0, 32.0);
+        let by = Vec2::new(-256.0, 0.0);
+        wet.shift(by);
+        trail.shift(by);
+        std::thread::sleep(Duration::from_millis(2));
+        wet.advance(1.0, 0.0, at + by, false, false, 128.0);
+        trail.advance(true, 1.0, at + by, 0.0, 32.0);
+        assert!(wet.step[2] >= 0.0);
+        assert_eq!([wet.step[0], wet.step[1]], [wet.uniform[0], wet.uniform[1]]);
+        assert!(trail.step[2] >= 0.0);
+        assert_eq!([trail.step[0], trail.step[1]], [trail.uniform[0], trail.uniform[1]]);
+    }
+
     /// The mirror's blended faces: those it does not see left out, the rigged
     /// first in their own order, then the others back to front from the
     /// mirror's camera (#3479).
@@ -12055,6 +12947,7 @@ mod tests {
         MARK_SCENE_BEGIN,
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
+        MARK_CLOUDS_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,
@@ -12122,6 +13015,15 @@ mod tests {
             inside(part, GpuElement::Effects);
         }
         inside(&[(MARK_BLOOM_BEGIN, MARK_BLOOM_END)], GpuElement::Post);
+    }
+
+    #[test]
+    fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
+        assert!(clouds_wanted(false, false, 30.0, 20.0));
+        assert!(clouds_wanted(false, false, 20.0, 20.0));
+        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
     }
 
     /// The occlusion's table is read by index against the main view's

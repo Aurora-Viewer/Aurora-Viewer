@@ -94,7 +94,28 @@ impl Editor {
         let name = rig.canonical_names.get(bone).map_or("", String::as_str);
         ui.add_space(ui.spacing().item_spacing.y);
         let pole = self.control == Control::Pole;
-        ui.strong(if pole { self.pole_label(rig, bone, name) } else { name });
+        let title = if pole { self.pole_label(rig, bone, name) } else { name };
+        widgets::section_header(ui, palette, "bone-filled", title);
+        // the joints selected with it (Shift or Ctrl + click), as in the pose editor
+        let followers = self.clip_followers();
+        if !followers.is_empty() {
+            let names = followers
+                .iter()
+                .filter_map(|b| rig.canonical_names.get(*b).map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len())).color(palette.teal))
+                    .on_hover_text(names);
+                if ui
+                    .button(aurora_i18n::text("poser-together-clear"))
+                    .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                    .clicked()
+                {
+                    self.clip.together.clear();
+                }
+            });
+        }
         self.chain_mode_ui(ui, palette, rig, frame, bone);
         if self.control == Control::Pole {
             ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
@@ -125,13 +146,47 @@ impl Editor {
                 self.commit_manipulation(rig, frame, rotated);
             }
         }
+        // how to pick several joints, switch the tool and go finer
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("anim-edit-fine-hint"))
+                .small()
+                .color(palette.muted),
+        );
         ui.add_space(ui.spacing().item_spacing.y);
         self.clip_bone_track_ui(ui, palette, bone);
-        ui.horizontal(|ui| {
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-bone")).clicked() {
+        ui.add_space(ui.spacing().item_spacing.y);
+        let width = clip::equal_width(
+            ui,
+            2,
+            &[
+                ("restore", aurora_i18n::tr!("ik-edit-reset-bone")),
+                ("refresh", aurora_i18n::tr!("ik-edit-reset-all")),
+            ],
+        );
+        let size = egui::vec2(width, ui.spacing().interact_size.y);
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button(
+                ui,
+                palette,
+                "restore",
+                aurora_i18n::tr!("ik-edit-reset-bone"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
                 self.reset_bone(bone, rig);
             }
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-all")).clicked() {
+            if widgets::action_button(
+                ui,
+                palette,
+                "refresh",
+                aurora_i18n::tr!("ik-edit-reset-all"),
+                widgets::ActionKind::FlatDanger,
+                size,
+            )
+            .clicked()
+            {
                 self.reset_pose();
             }
         });

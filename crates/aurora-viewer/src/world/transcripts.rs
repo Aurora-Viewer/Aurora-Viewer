@@ -18,7 +18,9 @@
 //!   between the file's history and the new lines, without those the file
 //!   already has.
 
+use super::chat_log::conversations::{self, Conversation, Kind};
 use super::chat_log::{Entry, Loaded, format, import, names};
+use super::names::NameScope;
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -210,13 +212,18 @@ impl World {
     }
 
     /// Sender and text of a line as its transcript has them
-    /// (LLIMModel::logToFile: the complete name of an avatar).
-    fn transcript_text(&self, line: &ChatLine) -> (String, String) {
+    /// (LLIMModel::logToFile: the complete name of an avatar). `scope`: the
+    /// nearby chat's transcript hides what the chat hides under RLVa's
+    /// `@shownames` (`NameScope::World`), a conversation's names its
+    /// residents (`NameScope::Roster`).
+    fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
         let names = &self.social.avatar_names;
         let from = match line.kind {
             ChatKind::System => String::new(),
             ChatKind::Own(_) => names.complete(&self.agent_id).unwrap_or_else(|| line.from.clone()),
-            ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => names.complete(&line.source).unwrap_or_else(|| line.from.clone()),
+            ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => {
+                names.complete_in(scope, &line.source).unwrap_or_else(|| line.from.clone())
+            }
             _ => line.from.clone(),
         };
         // the verbs Firestorm puts before what is shouted or whispered
@@ -225,10 +232,10 @@ impl World {
             Some(ChatType::Whisper) => "whispers: ",
             _ => "",
         };
-        let text = format::encode_mentions(&line.text, |id| self.social.name_of(&id));
+        let text = format::encode_mentions(&line.text, |id| self.social.name_in(scope, &id));
         (
-            self.rlva_filter_text(&from).into_owned(),
-            self.rlva_filter_text(&format!("{verb}{text}")).into_owned(),
+            self.rlva_filter_text_in(scope, &from).into_owned(),
+            self.rlva_filter_text_in(scope, &format!("{verb}{text}")).into_owned(),
         )
     }
 
@@ -237,8 +244,12 @@ impl World {
     pub(super) fn conversation_push(&mut self, session: Uuid, line: ChatLine, unread: bool) {
         self.session_lines(session);
         self.ensure_transcript(session);
+        // LLConversationLog::onNewMessageReceived
+        if line.origin == Origin::Live {
+            self.log_conversation(session, false);
+        }
         if line.origin == Origin::Live && self.chat_log.cfg.log_im && self.chat_log.identity().is_some() {
-            let (from, text) = self.transcript_text(&line);
+            let (from, text) = self.transcript_text(NameScope::Roster, &line);
             let s = self.session_lines(session);
             match s.log.stem.clone() {
                 Some(stem) => self.chat_log.append(&stem, line.time, &from, &text),
@@ -266,7 +277,7 @@ impl World {
         let Some(stem) = self.transcript_stem(&other) else {
             return;
         };
-        let (from, text) = self.transcript_text(line);
+        let (from, text) = self.transcript_text(NameScope::Roster, line);
         self.chat_log.append(&stem, line.time, &from, &text);
     }
 
@@ -300,17 +311,162 @@ impl World {
 
     /// A line of the nearby chat, written when the nearby chat is logged
     /// (LogNearbyChat). Instant messages shown there are not
-    /// (FSLogIMInChatHistory is off by default), those of objects are.
+    /// (FSLogIMInChatHistory is off by default), those of objects are; a
+    /// blocked resident's never (FSFloaterNearbyChat::addMessage returns
+    /// before logging a muted line).
     pub(super) fn log_nearby(&mut self, line: &ChatLine) {
-        if line.origin != Origin::Live || !self.chat_log.cfg.log_nearby || line.kind == ChatKind::Im || self.chat_log.identity().is_none() {
+        if line.origin != Origin::Live
+            || line.blocked
+            || !self.chat_log.cfg.log_nearby
+            || line.kind == ChatKind::Im
+            || self.chat_log.identity().is_none()
+        {
             return;
         }
-        let (from, text) = self.transcript_text(line);
+        let (from, text) = self.transcript_text(NameScope::World, line);
         self.chat_log.append(names::NEARBY, line.time, &from, &text);
+    }
+
+    /// The conversation log's entry of a conversation as it is now
+    /// (LLConversation from an LLIMSession): a group chat, a conference or
+    /// an instant message with a resident; never with ourselves.
+    fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
+        if key.is_nil() || key == self.agent_id {
+            return None;
+        }
+        let info = self.groups.sessions.get(&key);
+        let stem = self
+            .social
+            .ims
+            .iter()
+            .find(|s| s.other == key)
+            .and_then(|s| s.log.stem().map(str::to_owned));
+        let group = self.groups.group(&key);
+        let (kind, name, participant, session, history_file) = if group.is_some() || info.is_some_and(|i| i.group) {
+            let name = group.map(|g| g.name.clone()).or(info.map(|i| i.name.clone())).unwrap_or_default();
+            (Kind::Group, name, key, key, stem.or_else(|| self.transcript_stem(&key)))
+        } else if let Some(info) = info {
+            // the one who invited us, or the first we invited
+            let participant = info
+                .participants
+                .iter()
+                .copied()
+                .find(|id| *id != self.agent_id)
+                .unwrap_or_default();
+            // a conference's file is only known once it is named
+            (Kind::Conference, self.session_title(&key), participant, key, stem)
+        } else {
+            let name = self
+                .social
+                .avatar_names
+                .complete_in(NameScope::Roster, &key)
+                .or_else(|| self.social.names.get(&key).cloned())
+                .unwrap_or_default();
+            let session = conversations::private_session(self.agent_id, key);
+            (Kind::Private, name, key, session, stem.or_else(|| self.transcript_stem(&key)))
+        };
+        Some(Conversation {
+            time: conversations::now(),
+            kind,
+            name,
+            history_file: history_file.unwrap_or_default(),
+            session,
+            participant,
+            offline: false,
+        })
+    }
+
+    /// LLConversationLog::logConversation: a conversation opened, or a
+    /// message entered it; `offline` when it opened on messages kept while
+    /// we were logged out.
+    pub(super) fn log_conversation(&mut self, key: Uuid, offline: bool) {
+        if !self.chat_log.conversations.logging {
+            return;
+        }
+        let Some(mut c) = self.conversation_entry(key) else {
+            return;
+        };
+        c.offline = offline;
+        if c.kind == Kind::Private && self.social.avatar_names.complete_in(NameScope::Roster, &key).is_none() {
+            self.chat_log.conversations.unnamed.insert(key);
+        }
+        self.chat_log.conversations.log(c);
+    }
+
+    /// Every frame: the conversation log follows the conversations: one
+    /// that opened is logged (sessionAdded), a resident's complete name
+    /// once known replaces the one it was logged with (onAvatarNameCache),
+    /// and a conversation read loses its unread offline mark
+    /// (onIMFloaterShown: here, no unread line left).
+    fn poll_conversation_log(&mut self) {
+        self.chat_log.poll_conversations();
+        if !self.chat_log.conversations.logging {
+            return;
+        }
+        let open: std::collections::HashSet<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
+        let opened: Vec<Uuid> = open.difference(&self.chat_log.conversations.known).copied().collect();
+        self.chat_log.conversations.known = open;
+        for key in opened {
+            self.log_conversation(key, false);
+        }
+        if !self.chat_log.conversations.unnamed.is_empty() {
+            let named: Vec<(Uuid, String)> = self
+                .chat_log
+                .conversations
+                .unnamed
+                .iter()
+                .filter_map(|id| Some((*id, self.social.avatar_names.complete_in(NameScope::Roster, id)?)))
+                .collect();
+            for (id, name) in named {
+                self.chat_log.conversations.unnamed.remove(&id);
+                self.chat_log
+                    .conversations
+                    .rename(conversations::private_session(self.agent_id, id), &name);
+            }
+        }
+        if self.chat_log.conversations.list.iter().any(|c| c.offline) {
+            let read: Vec<Uuid> = self
+                .social
+                .ims
+                .iter()
+                .filter(|s| s.unread == 0)
+                .filter_map(|s| self.conversation_entry(s.other).map(|c| c.session))
+                .collect();
+            for session in read {
+                self.chat_log.conversations.read(session);
+            }
+        }
+    }
+
+    /// The name an entry of the conversation log shows: the logged one,
+    /// under RLVa's `@shownames` too (LLConversationLogList and the
+    /// transcripts have no test of it: a conversation names its resident).
+    pub fn conversation_display_name(&self, c: &Conversation) -> String {
+        c.name.clone()
+    }
+
+    /// Title and transcript of a conversation log's entry, for the History
+    /// window: the file of the resident or group as it is named now, else
+    /// the one the entry was logged with (a conference's, an import's).
+    pub fn logged_transcript(&self, c: &Conversation) -> (String, Option<std::path::PathBuf>) {
+        let file = match c.kind {
+            // a group's session is the group (its participant in the
+            // Legacy Viewer's file may be whoever wrote first)
+            Kind::Group => self.transcript_of(Some(c.session)).1,
+            Kind::Private => self.transcript_of(Some(c.participant)).1,
+            _ => None,
+        };
+        let file = file.or_else(|| {
+            (!c.history_file.trim().is_empty())
+                .then(|| self.chat_log.history_file_of(&c.history_file))
+                .flatten()
+        });
+        (self.conversation_display_name(c), file)
     }
 
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
+        self.poll_conversation_log();
         if self.chat_log.identity().is_none() {
             return;
         }
@@ -336,6 +492,7 @@ impl World {
         }
         if let Some(report) = self.chat_log.take_imported() {
             self.history_imported(&report.changed);
+            self.chat_log.conversations.imported(report.conversations.clone());
             self.import_report = Some(report);
         }
     }
@@ -414,6 +571,8 @@ impl World {
                     kind,
                     source,
                     origin: Origin::Log,
+                    blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect()
@@ -507,6 +666,8 @@ impl World {
                     kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
+                    blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect();
@@ -517,7 +678,7 @@ impl World {
         // the file (target_from and target_message empty in Firestorm)
         let to_log = self.groups.sessions.get(&session).is_some_and(|i| i.started_by_us) && self.chat_log.cfg.log_im;
         let written: Vec<(String, String)> = if to_log {
-            older.iter().map(|l| self.transcript_text(l)).collect()
+            older.iter().map(|l| self.transcript_text(NameScope::Roster, l)).collect()
         } else {
             Vec::new()
         };
@@ -562,6 +723,50 @@ mod tests {
         w.agent_id = agent;
         w.chat_log.login(agent);
         w
+    }
+
+    #[test]
+    fn the_conversation_log_follows_the_conversations() {
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let jane = Uuid::from_u128(0x1A4E);
+        let john = Uuid::from_u128(0x10B);
+        let mut w = world(&root, me);
+        assert!(w.chat_log.flush(WAIT));
+        w.poll_transcripts();
+        // a message kept while we were offline opens the conversation
+        let mut offline = im(jane, "Jane Doe", "while you were away");
+        offline.offline = true;
+        w.on_im(offline);
+        w.poll_transcripts();
+        let log = &w.chat_log.conversations;
+        assert_eq!(log.list.len(), 1);
+        let entry = &log.list[0];
+        assert_eq!(entry.kind, Kind::Private);
+        assert_eq!(entry.participant, jane);
+        assert_eq!(entry.session, conversations::private_session(me, jane));
+        assert_eq!(entry.name, "Jane Doe");
+        assert!(entry.offline);
+        // read: the mark goes
+        w.social.session_mut(jane).unread = 0;
+        w.poll_transcripts();
+        assert!(!w.chat_log.conversations.list[0].offline);
+        // a conversation opened without a message is logged too, once
+        w.social.session_mut(john);
+        w.poll_transcripts();
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        // never ourselves
+        w.social.session_mut(me);
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        // off: nothing more is logged
+        w.chat_log.cfg.log_conversations = false;
+        w.poll_transcripts();
+        w.social.session_mut(Uuid::from_u128(0xC0C0));
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        clean(&w, &root);
     }
 
     fn im(from: Uuid, name: &str, text: &str) -> InstantMessage {
@@ -711,6 +916,8 @@ mod tests {
             kind: ChatKind::Local(ChatType::Shout),
             source: Uuid::from_u128(2),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -797,7 +1004,7 @@ mod tests {
         w.chat_log.append(&stem, t0 - Duration::from_secs(3600), "Jane Doe", "old news");
         w.chat_log.append(&stem, t0, "Jane Doe", "same minute, in the file");
         assert!(w.chat_log.flush(WAIT));
-        w.start_group_chat(group);
+        w.start_group_chat(group, false);
         let unix = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
         let line = |time: u32, text: &str| HistoryLine {
             from_id: jane,
@@ -847,8 +1054,9 @@ mod tests {
         settle(&mut w);
         let line = &w.social.ims[0].lines[0];
         // "(Saved <date>) " then the text; shown and written as received now
-        assert!(line.text.ends_with(") see you tomorrow"), "{}", line.text);
-        assert!(line.text.starts_with('(') && line.text.contains("09:30") && line.text.contains("2026"));
+        // (the brackets and the date's order are the language's)
+        let saved = line.text.strip_suffix(" see you tomorrow").unwrap_or_default();
+        assert!(saved.contains("09:30") && saved.contains("2026"), "{}", line.text);
         assert!(line.time > sent + Duration::from_secs(3600));
         assert_eq!(line.origin, Origin::Live);
         assert_eq!(w.social.ims[0].unread, 1);
@@ -1141,7 +1349,13 @@ mod tests {
         let jane = Uuid::from_u128(2);
         let bob = Uuid::from_u128(3);
         let mut w = world(&root, Uuid::from_u128(1));
-        let link = |id: Uuid| format!("secondlife:///app/agent/{id}/completename");
+        // the notice names the avatar where the language puts the name
+        let offer = |id: Uuid| {
+            aurora_i18n::tr!(
+                "common-teleport-offer-sent",
+                name = format!("secondlife:///app/agent/{id}/completename")
+            )
+        };
         // a conversation with Jane is open: the notice goes in it, not unread
         w.on_im(im(jane, "Jane Doe", "hello"));
         let unread = w.social.ims[0].unread;
@@ -1149,7 +1363,7 @@ mod tests {
         let s = &w.social.ims[0];
         let notice = s.lines.back().unwrap();
         assert!(notice.kind == ChatKind::System);
-        assert!(notice.text.ends_with(&link(jane)), "{}", notice.text);
+        assert!(notice.text.ends_with(&offer(jane)), "{}", notice.text);
         assert_eq!(s.unread, unread);
         // none with Bob: none opens, the notice is only in his transcript
         w.social.names.insert(bob, "Bob Builder".into());
@@ -1160,7 +1374,7 @@ mod tests {
         let bob_file = file_texts(&w, "Bob Builder");
         assert_eq!(bob_file.len(), 1);
         assert_eq!(bob_file[0].0, format::SYSTEM_FROM);
-        assert!(bob_file[0].1.ends_with(&link(bob)), "{}", bob_file[0].1);
+        assert!(bob_file[0].1.ends_with(&offer(bob)), "{}", bob_file[0].1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 2);
         clean(&w, &root);
     }
@@ -1185,6 +1399,47 @@ mod tests {
         // the notice of each invitee: in Jane's conversation, none opened for Bob
         assert!(w.social.ims[0].lines.back().unwrap().kind == ChatKind::System);
         assert_eq!(w.social.ims.len(), 1);
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn the_conversation_log_names_a_private_conversation_under_shownames() {
+        use aurora_net::{ChatMessage, ChatSourceType, ChatType};
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let jane = Uuid::from_u128(0x1A4E);
+        let group = Uuid::from_u128(0x6A00);
+        let mut w = world(&root, me);
+        let entry = |kind, participant, name: &str| Conversation {
+            time: 100,
+            kind,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::from_u128(77),
+            participant,
+            offline: false,
+        };
+        let private = entry(Kind::Private, jane, "Jane Doe");
+        let own = entry(Kind::Private, me, "Me Resident");
+        let chat = entry(Kind::Group, group, "Some Group");
+        // RLVa off: the real names
+        assert_eq!(w.conversation_display_name(&private), "Jane Doe");
+        w.rlva.configure(true);
+        let restrict = ChatMessage {
+            from_name: "RLVa test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".to_owned(),
+            region: None,
+        };
+        assert!(w.rlva.receive(&restrict));
+        // LLConversationLogList has no `@shownames` test
+        assert_eq!(w.conversation_display_name(&private), "Jane Doe");
+        assert_eq!(w.conversation_display_name(&chat), "Some Group");
+        assert_eq!(w.conversation_display_name(&own), "Me Resident");
         clean(&w, &root);
     }
 }

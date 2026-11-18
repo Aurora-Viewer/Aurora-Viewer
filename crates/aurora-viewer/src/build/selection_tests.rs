@@ -595,9 +595,12 @@ fn face_highlights_replace_whole_object_outlines_only_in_face_mode() {
     assert!(tool.silhouette_selection(&world, &settings).is_empty());
     settings.show_highlight = false;
     assert!(tool.face_selection(&world, &settings).is_empty());
+    // the face-select pattern is not gated by Show highlight
+    assert_eq!(tool.face_picks(&world)[&idx], (1 << 1) | (1 << 3));
     settings.show_highlight = true;
     tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
     assert!(tool.face_selection(&world, &settings).is_empty());
+    assert!(tool.face_picks(&world).is_empty());
     assert!(tool.faces.is_empty());
 }
 
@@ -1631,6 +1634,32 @@ fn right_click_outside_build_selects_one_object_at_a_time() {
     assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
     assert_eq!(selected(&tool), [99612]);
     assert_eq!(tool.menu_roots(&world, b), [b]);
+}
+
+#[test]
+fn select_same_faces_picks_the_matching_faces_of_the_whole_linkset() {
+    let (mut world, mut tool, settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = family(&world, root)[1];
+    let (other, wanted) = (uuid::Uuid::from_u128(5), uuid::Uuid::from_u128(77));
+    for (idx, face) in [(root, 0), (child, 1)] {
+        let o = world.objects.get_mut(idx).unwrap();
+        let mut te = o.te.as_deref().unwrap().clone();
+        te.faces.resize(aurora_prim::te::MAX_TES, te.faces[0]);
+        te.faces.iter_mut().for_each(|f| f.texture = other);
+        te.faces[face].texture = wanted;
+        o.te = Some(Arc::new(te));
+    }
+    tool.click_select(&mut world, &settings, Some(child), false);
+    let diffuse = |_: &mut BuildTool, w: &World, idx: usize, f: u8| w.objects.get(idx)?.te.as_ref().map(|te| te.face(f as usize).texture);
+    tool.select_same_faces(&world, uuid::Uuid::from_u128(404), diffuse);
+    assert_eq!(selected(&tool), [950], "no matching face keeps the selection");
+    tool.select_same_faces(&world, wanted, diffuse);
+    let (root_key, child_key) = (world.objects.get(root).unwrap().key, world.objects.get(child).unwrap().key);
+    assert_eq!(tool.selection, [root_key, child_key], "the root stays primary");
+    assert!(tool.selection_linked);
+    assert_eq!(tool.faces[&root_key], [0]);
+    assert_eq!(tool.faces[&child_key], [1]);
 }
 
 #[test]

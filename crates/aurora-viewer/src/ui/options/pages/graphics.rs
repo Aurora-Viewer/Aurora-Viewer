@@ -118,10 +118,14 @@ fn weather(cx: &mut Cx) {
             ],
         );
         // the puddles, and behind their cog how far the wet ground goes
+        // and whether they freeze
         cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
         let no_puddles = !cx.s.weather.puddles;
         cx.subs(no_puddles, |cx| {
-            cx.slider_whole(
+            // live with the puddles off: the wet ground is drawn in any rain
+            // (env.wgsl `rain_wet_surface`; the switch gates only the
+            // puddles), and it goes as far as this
+            cx.live(true).slider_whole(
                 tr!("ui-weather-distance"),
                 tr!("ui-weather-distance-tip"),
                 &field!(weather.puddle_distance),
@@ -156,6 +160,18 @@ fn weather(cx: &mut Cx) {
                 tr!("ui-weather-deep-snow-tip"),
                 &field!(weather.snow_deep),
             );
+            // right under it, greyed while it is off: a cog behind a cog
+            // is not how the other options read
+            let no_deep = !cx.s.weather.snow_deep;
+            cx.greyed(no_deep);
+            cx.slider_whole(
+                tr!("ui-weather-deep-snow-reach"),
+                tr!("ui-weather-deep-snow-reach-tip"),
+                &field!(weather.snow_deep_reach),
+                crate::weather::DEEP_SNOW_REACH,
+                " m",
+            );
+            cx.greyed(false);
         });
         cx.toggle(
             tr!("ui-weather-avatar-snow"),
@@ -390,6 +406,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-gpu-recovery"),
             tr!("ui-options-gpu-recovery-tip"),
             &field!(gpu_recovery),
+        );
+        cx.unfolded().toggle(
+            tr!("ui-options-gaming-mode-leave-on-focus"),
+            tr!("ui-options-gaming-mode-leave-on-focus-tip"),
+            &field!(gaming_mode_leave_on_focus),
         );
     });
 }

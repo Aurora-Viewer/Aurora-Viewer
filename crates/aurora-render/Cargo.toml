@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 bytemuck = { version = "1.25.2", features = ["derive"] }
-# the Milky Way map's zlib (stars.rs), already built for aurora-assets
+# the cloud noise file's zlib and checksum (clouds_noise.rs) and the Milky Way map's zlib (stars.rs), already built for aurora-assets
 flate2 = "1.1.10"
 egui = { version = "0.37.0", features = ["monochrome_emoji_fonts"] }
 egui-wgpu = "0.37.0"
@@ -18,7 +18,6 @@ log = "0.4.34"
 parking_lot = "0.13.0"
 pollster = "1.0.1"
 thiserror = "2.0.21"
-uuid = "1.27.0"
 # counters: bytes of the live textures and buffers, for the memory budget (vram.rs)
 wgpu = { version = "30.0.1", features = ["counters"] }
 # naga at wgpu's version (one copy in Cargo.lock): the sample-mask SPIR-V
@@ -67,6 +66,7 @@ xr-static-loader = ["openxr/static"]
 # the sample mask route, oit_stochastic.rs)
 naga = { version = "30.0.1", features = ["wgsl-in", "spv-out", "msl-out", "hlsl-out"] }
 aurora-assets = { path = "../aurora-assets" }
+# (the cloud noise's tests and its generate_cloud_noise example)
 rayon = "1.12.0"
 
 [lints]
