@@ -2207,3 +2207,10 @@ fn the_system_font_search_filters_and_resets() {
 fn the_system_font_search_resets_above_its_button() {
     font_search(420.0);
 }
+
+#[test]
+fn every_page_icon_is_built_in() {
+    for page in Page::ALL {
+        assert!(crate::ui::icons::embedded(page.icon()), "{page:?}: {}", page.icon());
+    }
+}
