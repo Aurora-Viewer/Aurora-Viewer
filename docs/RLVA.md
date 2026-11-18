@@ -221,20 +221,28 @@ script authors; the command lists below describe this branch specifically.
   filenames stay intact. Hidden-name avatar menus expose the reference's
   limited actions. The right-click menu of an avatar in the world (and of what
   they wear) greys View profile, Become friends, Add to contact set, Send IM,
-  Give my calling card, Voice call, Invite to group and Offer teleport while
-  `@shownames` hides that resident (`RLV.CanShowName`, menu_avatar_other.xml);
-  a name-plate click that would run one of them does nothing. Only that
-  in-world menu is restricted: a conversation (an IM, a group chat, its
+  Give my calling card, Voice call, Invite to group, Ignore and Offer teleport
+  while `@shownames` hides that resident (`RLV.CanShowName`,
+  `Avatar.EnableAddFriend`, `Avatar.EnableCall` and `Object.EnableMute`,
+  menu_avatar_other.xml); Block voice follows Ignore and a name-plate click
+  that would run one of them does nothing (both stricter than the Legacy
+  Viewer, which has neither). A conversation (an IM, a group chat, its
   members and header), the notices about them (an IM, a friendship offer),
-  the friends, group and search lists, the group profile, the inventory
-  properties, About Land and the estate and region windows name their
-  people whoever is around, so their menus and clicks keep the profile,
-  teleport offers and requests, friendship offer, history and copies. A
-  speaker the restriction hides in the nearby chat gets none of them, teleport
-  offer and request included. A link to
-  a resident in chat keeps the name it shows, as the Legacy Viewer does not
-  test it (LLUrlEntryAgent): `@shownames` rewrites the names of the text around
-  the link and a `/mention` link, not the link's label. Application links and place details filter labels and
+  the friends, group and search lists, the group profile, About Land and the
+  estate and region windows name their people whoever is around, and a click
+  on such a name opens the profile. The menu of a name greys View profile and
+  Zoom in while `@shownames` is set (FSCommon::checkIsActionEnabled) and keeps
+  the friendship offer, the history and the copies; the people lists offer no
+  friendship to a hidden resident (PeopleContextMenu). A speaker the
+  restriction hides in the nearby chat gets none of them, teleport offer and
+  request included. The owner and the creator of an inventory item follow
+  LLSidepanelItemInfo: the owner is hidden unless excepted, the creator when
+  they also own the item or stand nearby, and a hidden one is a plain
+  stand-in that opens no profile. A bare link to a resident in chat keeps the
+  name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
+  label of a labelled link is filtered like the text around it
+  (RlvUtil::filterNames and filterLocation) and a `/mention` link is
+  rewritten. Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure
