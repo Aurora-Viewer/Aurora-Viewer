@@ -300,7 +300,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                         .iter()
                         .map(|e| {
                             world.social.want_name(e.id);
-                            (*e, world.social.name_of(&e.id))
+                            (*e, world.social.name_in(crate::world::names::NameScope::Roster, &e.id))
                         })
                         .collect();
                     rows.sort_by_key(|r| crate::natural_order::key(&r.1));
@@ -356,7 +356,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                                             }
                                         }
                                         if r.double_clicked() {
-                                            super::super::profile::request_open(ui.ctx(), e.id);
+                                            super::super::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, e.id);
                                         }
                                     }
                                 });
@@ -422,7 +422,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         world.land.send_lists(kind);
     }
     if let Some((file, list)) = export {
-        let csv = export_csv(&list, |id| world.social.name_of(id));
+        let csv = export_csv(&list, |id| world.social.name_in(crate::world::names::NameScope::Roster, id));
         s.file_job = Some(super::files::save(file, csv));
     }
     if let Some(kind) = import {

@@ -713,7 +713,11 @@ fn an_unread_folder_under_a_read_parent_is_asked_again_a_few_times_only() {
                     fetch.on_reply_at(&mut inv, request, &[], outcome, now);
                 }
             }
-            commands = if fetch.is_idle() { Vec::new() } else { fetch.pump_at(&mut inv, AGENT, now) };
+            commands = if fetch.is_idle() {
+                Vec::new()
+            } else {
+                fetch.pump_at(&mut inv, AGENT, now)
+            };
         }
         assert!(fetch.is_idle(), "every read answered");
     }

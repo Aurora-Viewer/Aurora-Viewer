@@ -94,7 +94,7 @@ impl Default for NameOptions {
 ///
 /// A lookup that names no scope is `World`: stricter than the Legacy Viewer
 /// where that one asks nothing, never looser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameScope {
     /// Someone met in the world: name tag, local chat, radar and nearby
     /// lists, mini-map, hover tip, avatar menus, the notices that are not
@@ -139,6 +139,41 @@ impl NameScope {
                 NameScope::Creator { owner } => owner != *id && !nearby(),
                 NameScope::Roster => true,
             }
+    }
+}
+
+/// A text about to be shown under RLVa's `@shownames` and `@showloc`: the
+/// names its avatar links and mentions give (`names`), and whether what is
+/// written in it is rewritten (the names of the residents around, the
+/// regions and the parcel replaced by their stand-ins).
+///
+/// The Legacy Viewer rewrites what no resident typed: an object's chat and
+/// instant messages, the system's messages, its own notices
+/// (LLFloaterIMNearbyChatHandler::processChat tests
+/// `CHAT_SOURCE_AGENT != mSourceType` before RlvUtil::filterNames and
+/// filterLocation, llfloaterimnearbychathandler.cpp; process_alert_core,
+/// llviewermessage.cpp). What a resident typed is shown as typed, in the
+/// nearby chat as in an IM session ("avatar => filter only their name",
+/// process_chat_from_simulator; process_improved_im runs neither filter),
+/// and so is what a script wrote in its dialog, its text box or its link
+/// prompt (process_script_dialog and process_load_url have no RLVa test).
+/// A scope alone (`NameScope::into`) is a rewritten text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextScope {
+    pub names: NameScope,
+    pub rewritten: bool,
+}
+
+impl TextScope {
+    /// A text shown as written, its links named as `names` names them.
+    pub fn verbatim(names: NameScope) -> Self {
+        Self { names, rewritten: false }
+    }
+}
+
+impl From<NameScope> for TextScope {
+    fn from(names: NameScope) -> Self {
+        Self { names, rewritten: true }
     }
 }
 

@@ -8,7 +8,7 @@
 use super::view::{Source, View};
 use super::{LineEnv, Mark, find};
 use crate::theme::Palette;
-use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript};
+use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript, contains_ci};
 use crate::world::transcripts::LineClock;
 use crate::world::{ChatLine, World};
 use egui::RichText;
@@ -34,6 +34,18 @@ pub struct HistoryUi {
     search: Option<Search>,
     /// Counts the searches: answers to an older one are dropped.
     searches: u64,
+    /// A direct conversation under the Chat Service: its stitched history,
+    /// read once and paged in memory (LLFloaterConversationPreview with
+    /// loadStitchedHistory, LL viewer 26.5).
+    stitched: Option<Stitched>,
+}
+
+struct Stitched {
+    resident: uuid::Uuid,
+    /// None while the read runs.
+    entries: Option<Vec<crate::world::chat_log::Entry>>,
+    /// The transcripts' folder, for its button.
+    folder: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -79,6 +91,80 @@ impl HistoryUi {
         }
     }
 
+    /// Show the stitched history of a direct conversation, read by the
+    /// World (`World::open_direct_preview`); `path`: its transcript file.
+    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, path: Option<PathBuf>) {
+        *self = HistoryUi {
+            open: true,
+            title,
+            searches: self.searches,
+            stitched: Some(Stitched {
+                resident,
+                entries: None,
+                folder: path.and_then(|p| p.parent().map(PathBuf::from)),
+            }),
+            ..Default::default()
+        };
+    }
+
+    /// A delete invalidated the stitched history: the window closes.
+    pub fn close_stitched(&mut self) {
+        if self.stitched.is_some() {
+            self.open = false;
+        }
+    }
+
+    /// The resident whose stitched read the window waits for.
+    pub fn stitched_waiting(&self) -> Option<uuid::Uuid> {
+        self.stitched
+            .as_ref()
+            .filter(|s| self.open && s.entries.is_none())
+            .map(|s| s.resident)
+    }
+
+    /// The stitched read came, oldest first: the most recent page shows.
+    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>) {
+        let Some(s) = self.stitched.as_mut() else {
+            return;
+        };
+        let messages = entries.len();
+        s.entries = Some(entries);
+        if messages == 0 {
+            self.index = Some(None);
+            return;
+        }
+        let pages = messages.div_ceil(PAGE).max(1);
+        self.index = Some(Some(Index {
+            pages,
+            messages: messages as u64,
+            bytes: 0,
+        }));
+        self.loaded = None;
+        self.go_to(pages - 1);
+        if self.search.is_some() {
+            self.start_search();
+        }
+    }
+
+    /// The match after (or before) `from` in the stitched history; `None`
+    /// starts from the end.
+    fn stitched_step(&self, needle: &str, from: Option<Spot>, forward: bool) -> Option<Spot> {
+        let entries = self.stitched.as_ref()?.entries.as_ref()?;
+        let hit = |e: &crate::world::chat_log::Entry| contains_ci(&e.text, needle) || contains_ci(&e.from, needle);
+        let at = from.map(|s| s.page * PAGE + s.message);
+        let found = if forward {
+            let start = at.map_or(0, |i| i + 1);
+            (start..entries.len()).find(|&i| hit(&entries[i]))
+        } else {
+            let end = at.unwrap_or(entries.len());
+            (0..end).rev().find(|&i| hit(&entries[i]))
+        }?;
+        Some(Spot {
+            page: found / PAGE,
+            message: found % PAGE,
+        })
+    }
+
     /// An import merged these transcripts: a page's place in the file is no
     /// longer the same, so the one shown is read again from the start.
     pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
@@ -109,6 +195,17 @@ impl HistoryUi {
         s.id = self.searches;
         (s.total, s.counted, s.current, s.rank, s.at_end) = (0, false, None, None, false);
         s.walking = false;
+        if let Some(entries) = self.stitched.as_ref().and_then(|st| st.entries.as_ref()) {
+            let needle = s.text.to_lowercase();
+            s.total = entries
+                .iter()
+                .filter(|e| contains_ci(&e.text, &needle) || contains_ci(&e.from, &needle))
+                .count() as u64;
+            s.counted = true;
+            let found = self.stitched_step(&needle, None, false);
+            self.stitched_found(found);
+            return;
+        }
         if let Some(f) = self.file.as_ref().filter(|_| self.index.flatten().is_some()) {
             let needle = s.text.to_lowercase();
             f.search(s.id, needle.clone());
@@ -120,7 +217,35 @@ impl HistoryUi {
         }
     }
 
+    /// A match of the stitched history was found (or none): shown like a
+    /// file's `Reply::Found`.
+    fn stitched_found(&mut self, spot: Option<Spot>) {
+        let Some(s) = self.search.as_mut() else {
+            return;
+        };
+        s.walking = false;
+        s.at_end = spot.is_none();
+        let Some(spot) = spot else {
+            return;
+        };
+        s.current = Some(spot);
+        s.rank = None;
+        if self.loaded == Some(spot.page) && self.page == spot.page {
+            self.view.scroll_to(spot.message);
+        } else {
+            self.go_to(spot.page);
+        }
+    }
+
     fn step(&mut self, forward: bool) {
+        if self.stitched.is_some() {
+            let Some(s) = self.search.as_ref().filter(|s| !s.text.is_empty()) else {
+                return;
+            };
+            let found = self.stitched_step(&s.text.to_lowercase(), s.current, forward);
+            self.stitched_found(found);
+            return;
+        }
         let (Some(s), Some(f)) = (self.search.as_mut(), self.file.as_ref()) else {
             return;
         };
@@ -132,6 +257,18 @@ impl HistoryUi {
     }
 
     fn poll(&mut self, world: &World) {
+        if let Some(entries) = self.stitched.as_ref().and_then(|s| s.entries.as_ref())
+            && self.loaded != Some(self.page)
+        {
+            let page: Vec<_> = entries.iter().skip(self.page * PAGE).take(PAGE).cloned().collect();
+            self.lines = world.history_lines(page, false, true, None).into();
+            self.clock = LineClock::default();
+            self.loaded = Some(self.page);
+            self.selection.clear();
+            if let Some(spot) = self.search.as_ref().and_then(|s| s.current).filter(|s| s.page == self.page) {
+                self.view.scroll_to(spot.message);
+            }
+        }
         let Some(file) = &self.file else {
             return;
         };
@@ -198,7 +335,7 @@ impl HistoryUi {
     ) -> Option<HistoryAction> {
         if !self.open {
             // the thread and its file handle go with the window
-            if self.file.is_some() {
+            if self.file.is_some() || self.stitched.is_some() {
                 *self = HistoryUi {
                     searches: self.searches,
                     ..Default::default()
@@ -299,7 +436,11 @@ impl HistoryUi {
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(dir) = self.file.as_ref().and_then(|f| f.path.parent())
+                if let Some(dir) = self
+                    .file
+                    .as_ref()
+                    .and_then(|f| f.path.parent())
+                    .or_else(|| self.stitched.as_ref().and_then(|s| s.folder.as_deref()))
                     && icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("ui-options-chat-logs-open"), true)
                 {
                     *action = Some(HistoryAction::OpenFolder(dir.to_path_buf()));
@@ -484,7 +625,7 @@ impl HistoryUi {
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+                super::super::context::chat_sender_menu(ui, p, world, avatar, crate::world::names::NameScope::World, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);
