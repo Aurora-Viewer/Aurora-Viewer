@@ -19,6 +19,7 @@ pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
+pub mod chat_service;
 pub mod collisions;
 pub mod complexity_notice;
 pub mod contact_markers;
