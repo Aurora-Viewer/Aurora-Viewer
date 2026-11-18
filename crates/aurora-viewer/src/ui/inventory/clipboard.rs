@@ -167,6 +167,16 @@ pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
 pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
+    // a click in the explorer's empty space selects nothing, as in a file
+    // manager (Ctrl or Shift keep the selection)
+    if response.clicked()
+        && st.aurora.is_some_and(|frame| frame.explorer)
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
+    {
+        st.selection.clear();
+        st.selected = None;
+        st.focus = None;
+    }
     let leaving = ui.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
             || i.key_pressed(egui::Key::Tab)

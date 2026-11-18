@@ -620,6 +620,8 @@ pub struct InventoryUi {
     focus: Option<Uuid>,
     /// The letters typed to find a row (`select_keys`).
     type_ahead: select_keys::TypeAhead,
+    /// The explorer's rubber band (`aurora::marquee`).
+    marquee: aurora::Marquee,
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,

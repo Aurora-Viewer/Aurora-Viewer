@@ -15,6 +15,7 @@ mod columns;
 mod details;
 mod gallery;
 mod history;
+pub(super) mod marquee;
 mod rights;
 pub(super) mod rows;
 mod sidebar;
@@ -23,6 +24,7 @@ mod toolbar;
 
 pub(super) use breadcrumb::PathEdit;
 pub(super) use history::History;
+pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
 
@@ -525,6 +527,11 @@ fn explorer_list(
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
+        // a band drawn from the empty space selects rows or tiles
+        let banded = shown != view::ExplorerView::Combination;
+        if banded {
+            marquee::begin(ui, st, list_rect);
+        }
         let out = match shown {
             view::ExplorerView::List => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
                 list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
@@ -536,6 +543,9 @@ fn explorer_list(
                 gallery::combination(ui, p, icons, inv, st, prefs, facts, images, actions, list_rect, list_id, browse)
             }
         };
+        if banded {
+            marquee::end(ui, p, st, list_rect, out.id, out.inner_rect);
+        }
         if let Some(frame) = &mut st.aurora {
             frame.explorer = false;
         }

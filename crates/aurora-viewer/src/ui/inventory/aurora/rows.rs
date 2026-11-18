@@ -390,6 +390,9 @@ pub(in super::super) fn item(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
+    if frame.explorer {
+        super::marquee::record(st, id, rect);
+    }
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon_name, icon_center, tint);
@@ -529,6 +532,9 @@ pub(in super::super) fn folder(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
+    if frame.explorer {
+        super::marquee::record(st, id, rect);
+    }
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon, icon_center, tint);

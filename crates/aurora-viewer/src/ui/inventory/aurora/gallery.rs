@@ -636,6 +636,7 @@ fn tile(
     };
     let key = if item.is_some() { "inv_item" } else { "inv_folder" };
     let r = ui.interact(rect, ui.make_persistent_id((key, id)), sense);
+    super::marquee::record(st, id, rect);
     #[cfg(test)]
     row::tests::record(ui, id, rect);
     fill(ui);
