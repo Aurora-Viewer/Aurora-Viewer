@@ -6484,7 +6484,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
-| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
+| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -9700,7 +9700,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -9728,6 +9728,25 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
+  - `service`: the Chat Service's history of the direct conversations (LL
+    viewer 26.5). The demo answers `PersistentChatConversationsRequest` and
+    `PersistentChatHistoryRequest` (`demo://chat-service/…`) itself, in
+    pages of 100 rows; the service's own folder,
+    `config\demo\accounts\<demo account uuid>\chat_service\demo\`, starts
+    empty at each launch. Nova's transcript is written as for `im`, and the
+    three offline messages of `offline` open her conversation. What to see:
+    "Loading history…" with a spinner under Nova's conversation while the pages
+    come in, then her history in grey, with no separator line before the live ones:
+    the weeks before the transcript (118 numbered rows, more than one
+    page), the transcript's lines and the offline messages each once, the
+    live offline messages last. No unread count, toast or sound comes
+    from the history. History (the conversation's menu) shows the same
+    stitched history, searchable. The Conversation log (toolbar) lists
+    Orion, who has no open conversation, and Tess. Preferences › Chat ›
+    History, "Chat Service history" off at the next login shows no service rows
+    (the transcript alone) while the requests still run. Erase (Delete
+    Transcripts) removes the transcripts and the service's archives; a
+    failure shows the LL notice and keeps the history hidden.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving
