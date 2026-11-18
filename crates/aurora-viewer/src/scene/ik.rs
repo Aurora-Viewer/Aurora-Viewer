@@ -220,6 +220,14 @@ impl Pose {
                 result.positions[rig.pelvis] -= pelvis;
             }
             if !self.edit.animations.is_empty() {
+                // A clip without a pelvis position key stands where a zero
+                // key would (`animations::apply`: the rig's pelvis plus the
+                // key), never on the shaped rest pelvis: a worn mesh's
+                // pelvis override can sit metres up, and the uploaded clip
+                // leaves the pelvis to the avatar's other animations anyway.
+                if self.edit.suppress_live && !animations::keys_position(rig.pelvis, &self.edit.animations) {
+                    result.positions[rig.pelvis] = rig.local_pos[rig.pelvis] - pelvis;
+                }
                 animations::apply(rig, &mut result, pelvis, &self.edit.animations);
             }
             self.keep_edit_base(rig, &result, pelvis);

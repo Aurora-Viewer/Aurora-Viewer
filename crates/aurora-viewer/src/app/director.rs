@@ -170,10 +170,18 @@ impl App {
     /// installed while the viewer runs is found by "Look again", without a
     /// restart.
     fn director_find_ffmpeg(&mut self) {
-        let chosen = self.settings.director_record.ffmpeg.clone();
+        let pack_only = crate::director_ffmpeg::pack_only();
+        let chosen = (!pack_only).then(|| self.settings.director_record.ffmpeg.clone()).flatten();
+        if pack_only {
+            log::info!("director: AURORA_DIRECTOR_FFMPEG=pack, only the ffmpeg pack is looked for");
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let folders = crate::director_ffmpeg::search_folders();
+            let folders = if pack_only {
+                Vec::new()
+            } else {
+                crate::director_ffmpeg::search_folders()
+            };
             let found = crate::director_ffmpeg::candidates(chosen, &folders, crate::director_ffmpeg::pack_program());
             let mut answer = Err("no ffmpeg found".to_owned());
             for path in found {

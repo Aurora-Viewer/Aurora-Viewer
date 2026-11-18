@@ -13,14 +13,33 @@ pub(super) enum Action {
     Load,
     LoadProject,
     SaveProject,
-    Save { last_key_only: bool },
-    Import { last_key_only: bool },
+    Save {
+        last_key_only: bool,
+    },
+    /// Write the clip as a `.bvh` file, for Blender and other BVH tools.
+    ExportBvh {
+        last_key_only: bool,
+    },
+    Import {
+        last_key_only: bool,
+    },
 }
 impl Action {
     /// Opening a file brings a document in and needs none to start from.
     pub(super) fn loads(self) -> bool {
         matches!(self, Self::Load | Self::LoadProject)
     }
+    /// Reading or writing a BVH file needs the avatar's skeleton.
+    pub(super) fn needs_skeleton(self) -> bool {
+        matches!(self, Self::Load | Self::ExportBvh { .. })
+    }
+}
+/// Couple mode's save or export: both people's documents, written beside
+/// each other with the note of where B stands from A.
+pub(super) struct CoupleFiles {
+    pub(super) a: Arc<Document>,
+    pub(super) b: Arc<Document>,
+    pub(super) note: String,
 }
 pub(super) enum Output {
     Preview {
@@ -101,10 +120,14 @@ pub(super) fn start(
     action: Action,
     rig: Arc<Rig>,
     skeleton: Option<Arc<aurora_assets::Skeleton>>,
+    couple: Option<CoupleFiles>,
 ) {
     let ctx = ctx.clone();
     jobs.execute(move || {
         let work = || -> Result<Output, String> {
+            if let Some(couple) = couple {
+                return write_couple(couple, action, skeleton.as_deref());
+            }
             if matches!(action, Action::Load) {
                 let Some(path) = rfd::FileDialog::new()
                     .add_filter(aurora_i18n::tr!("anim-edit-file-filter"), &["anim"])
@@ -144,18 +167,32 @@ pub(super) fn start(
                 return Ok(Output::Saved(path));
             }
             let last_key_only = match action {
-                Action::Save { last_key_only } | Action::Import { last_key_only } => last_key_only,
+                Action::Save { last_key_only } | Action::ExportBvh { last_key_only } | Action::Import { last_key_only } => last_key_only,
                 _ => false,
             };
             let animation = document
                 .animation_for_export(last_key_only)
                 .map_err(|k| aurora_i18n::text(k).to_owned())?;
+            if matches!(action, Action::ExportBvh { .. }) {
+                let skeleton = skeleton.ok_or_else(|| aurora_i18n::text("anim-edit-bvh-export-unavailable").to_owned())?;
+                let text = aurora_assets::import_animation::encode_bvh(&animation, &skeleton, document.fps).map_err(|e| e.to_string())?;
+                let Some(path) = rfd::FileDialog::new()
+                    .add_filter(aurora_i18n::tr!("anim-edit-bvh-filter"), &["bvh"])
+                    .set_file_name(format!("{}.bvh", basename(&document.name)))
+                    .save_file()
+                else {
+                    return Ok(Output::Cancelled);
+                };
+                write_atomic(&path, text.as_bytes())?;
+                return Ok(Output::Saved(path));
+            }
             let bytes = aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())?;
             let animation = aurora_assets::anim::parse_animation_upload(&bytes).map_err(|e| e.to_string())?;
             let name = basename(&document.name);
             Ok(match action {
                 Action::Load => unreachable!("file loading returned above"),
                 Action::LoadProject | Action::SaveProject => unreachable!("project file operation returned above"),
+                Action::ExportBvh { .. } => unreachable!("BVH export returned above"),
                 Action::Import { .. } => Output::Prepared(Prepared {
                     name,
                     bytes: Arc::new(bytes),
@@ -178,4 +215,39 @@ pub(super) fn start(
         let _ = tx.send(output);
         ctx.request_repaint();
     });
+}
+
+/// The two people's files in one folder: `<name> A` and `<name> B` (.anim,
+/// or .bvh for an export), with `<name> placement.txt`. Both are encoded
+/// before anything is written, so a failure leaves no half pair.
+fn write_couple(couple: CoupleFiles, action: Action, skeleton: Option<&aurora_assets::Skeleton>) -> Result<Output, String> {
+    let (bvh, last_key_only) = match action {
+        Action::ExportBvh { last_key_only } => (true, last_key_only),
+        Action::Save { last_key_only } => (false, last_key_only),
+        _ => return Err(aurora_i18n::text("anim-edit-invalid").to_owned()),
+    };
+    let encode = |document: &Document| -> Result<Vec<u8>, String> {
+        let animation = document
+            .animation_for_export(last_key_only)
+            .map_err(|k| aurora_i18n::text(k).to_owned())?;
+        if bvh {
+            let skeleton = skeleton.ok_or_else(|| aurora_i18n::text("anim-edit-bvh-export-unavailable").to_owned())?;
+            aurora_assets::import_animation::encode_bvh(&animation, skeleton, document.fps)
+                .map(String::into_bytes)
+                .map_err(|e| e.to_string())
+        } else {
+            aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())
+        }
+    };
+    let a = encode(&couple.a)?;
+    let b = encode(&couple.b)?;
+    let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+        return Ok(Output::Cancelled);
+    };
+    let name = basename(&couple.a.name);
+    let extension = if bvh { "bvh" } else { "anim" };
+    write_atomic(&folder.join(format!("{name} A.{extension}")), &a)?;
+    write_atomic(&folder.join(format!("{name} B.{extension}")), &b)?;
+    write_atomic(&folder.join(format!("{name} placement.txt")), couple.note.as_bytes())?;
+    Ok(Output::Saved(folder))
 }

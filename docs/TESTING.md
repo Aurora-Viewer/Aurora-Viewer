@@ -36,6 +36,25 @@ build about three times faster; its tests take about 1.6 times longer to
 run (21 s instead of 13 on an idle PC), and a failing test keeps files and
 lines in its backtrace (`RUST_BACKTRACE=1`).
 
+**Keyboard focus**: in demo mode, `AURORA_DEMO_OPTIONS=1` opens Preferences.
+Click its search field, then use Tab and Shift+Tab: the focused field,
+navigation entry, button or switch has a contrasting outline. Enter and
+Space keep their usual actions; typing still edits the focused field.
+Moving the pointer keeps the outline, pressing a mouse button hides it,
+and the next Tab shows it again. Repeat in another floater and on the
+login screen, with a larger interface scale and high contrast. A scrolled
+control's outline stays inside its visible pane, a covering window remains
+above it, and a hidden/disabled control or inactive native window has no
+outline. Targeted regressions: `cargo test --workspace keyboard_focus`.
+For an offline visual check without opening a native window or sending
+desktop input, run `cargo test --workspace capture_controls_offscreen --
+--ignored --nocapture`. It draws the real widgets and fonts into
+`.scratch/keyboard-focus-captures/`, in dark and light palettes. Check the
+field, navigation row, button, switch, clickable label and link, including
+sized buttons and the height slider: the outline leaves every glyph
+readable. Where a layout wrapper leaves no room for an outside outline,
+a thin inset indicator remains visible inside the control's clipped bounds.
+
 **Search/filter clear buttons**: type a query in People, Conversations and
 Contacts, Places, the resource library, inventory destination/thumbnail
 pickers, construction Contents, Appearance, Poser/IK, scripts, group lists,
@@ -1072,6 +1091,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
+| `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1181,6 +1201,14 @@ when unfocused") is ignored during a screenshot.
   and quality through the computer's own ffmpeg, each film read back by it
   (its frames, their size, their colors, the transparency):
   `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
+  `AURORA_DIRECTOR_FFMPEG=pack` (with or without the demo) leaves out the
+  ffmpeg chosen by hand and those of the PATH and the usual folders
+  (`director: AURORA_DIRECTOR_FFMPEG=pack, only the ffmpeg pack is looked
+  for`): until the pack is installed, Output shows the help with "Download
+  ffmpeg", which asks first with the size, downloads the pack of this
+  system from the release `ffmpeg-<n>`, checks its size and SHA-256 and
+  installs it next to the media plugins (`director: ffmpeg pack installed,
+  <file>`); the next look finds it there.
   `orbit` locks the view on our avatar's neck and replaces the track by
   the Shots section's orbit (`director demo: an orbit of 25 keyframes round
   our avatar, 10.0 s`): one turn 6 m away and 1 m above the neck, a
@@ -3951,6 +3979,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
+| `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
@@ -4146,6 +4175,24 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
+- **`AURORA_DEMO_COUPLE=1|leave|clip|hover|mirror`**: Nova stands beside you from frame 400
+  and accepts an Ask 1.5 s later, as a resident would. Open the animation
+  editor (Avatar Studio › Animate), Clip page: Ask Nova, then Use as B. The
+  timeline shows Person A (violet) and Person B (amber) lanes; a click on the
+  other person's name or lanes edits them, and each keeps their own keys and
+  undo. Save or Export BVH writes `<name> A`, `<name> B` and `<name>
+  placement.txt` in the folder chosen. `leave`: 10 s after Nova becomes
+  Person B her avatar is killed, as on a teleport; she must stay drawn and
+  posable until couple mode ends, then go.
+  `clip` and `hover`, with `AURORA_DEMO_AVATAR_STUDIO=animation-editor`, need
+  no clicks, for screenshots: Nova is asked from frame 860 and becomes Person
+  B face to face, with the Clip page and the timeline open (both people's
+  lanes, B's amber joint dots, the Move Person B fields); `hover` also gives
+  B a hover of their own and opens the Hover menu on Person B at frame 1300.
+  `mirror` presses Mirror yourself instead: a copy of your avatar, with what
+  you wear but not your HUDs, stands 1 m in front of you facing you as Person
+  B, with no name tag, and goes when couple mode ends. The scripted modes turn
+  the view to the side once B is there. Capture from frame 1400.
 - **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
@@ -11403,6 +11450,17 @@ separate searches enabled and disabled; that preference controls only the text.
   closes), then Right at 700 (it opens again). Capture at 690 (the folder
   closed and selected) and 720 (open). The log reports the selection and
   the folder's state at both points.
+- `keyboard-down`, `aurora-keyboard-down`: click the demo object at frame
+  650, then press Down eight times, every four frames from 660 to 688: the
+  selection passes the bottom of the list, which scrolls to it. Capture at
+  720; the log reports the selected row and whether it was drawn whole
+  inside the list. Run it with Preferences › Font scale above 1 too.
+- `keyboard-click-top`, `keyboard-click-bottom` (also with the `aurora-`
+  prefix): at frame 620, leave demo item 1000 half clipped at the chosen
+  edge of a long folder, with nothing selected. Click its visible part:
+  it becomes selected and wholly visible, without scrolling sideways.
+  A fully visible row must not move. Repeat at font scales 1, 1.5 and 2;
+  drag the scroll bar afterwards: it must stay where released.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and
