@@ -247,8 +247,8 @@ pub struct ClothingDrawing {
     pub drawing: Option<&'static [u8]>,
 }
 
-/// Pants, Skirt and Underpants have no Tabler symbol of their own: their
-/// icons are drawn by hand. Their link icons are made by
+/// Pants, Skirt, Underpants and Undershirt have no Tabler symbol of their
+/// own: their icons are drawn by hand. Their link icons are made by
 /// scripts/generate-inventory-icons.py (`LINKS`).
 pub const CLOTHING_DRAWINGS: &[ClothingDrawing] = &[
     ClothingDrawing {
@@ -265,6 +265,11 @@ pub const CLOTHING_DRAWINGS: &[ClothingDrawing] = &[
         item: "Inv_Underpants",
         stand_in: "diaper",
         drawing: Some(include_bytes!("../../../../../assets/icons/aurora/clothing/underpants.svg")),
+    },
+    ClothingDrawing {
+        item: "Inv_Undershirt",
+        stand_in: "shirt-sport",
+        drawing: Some(include_bytes!("../../../../../assets/icons/aurora/clothing/undershirt.svg")),
     },
 ];
 

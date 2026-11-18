@@ -559,7 +559,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_Socks", "sock"),
     ("Inv_Jacket", "jacket"),
     ("Inv_Gloves", "hand-stop"),
-    ("Inv_Undershirt", "shirt-sport"),
     ("Inv_Alpha", "layers-subtract"),
     ("Inv_Tattoo", "needle"),
     ("Inv_Physics", "wave-sine"),
@@ -655,7 +654,7 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Undershirt_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/shirt-sport-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/undershirt-link.svg"),
     ),
     (
         "Inv_Underpants_Link",

@@ -54,7 +54,7 @@ FOLDERS = {
 # Icons of items that get a link variant here (the older ones were made by
 # hand in assets/tabler-icons/*/*-link.svg): Tabler names, or `clothing/x`
 # for the hand-drawn clothing icons of assets/icons/aurora/clothing/.
-LINKS = ["cloud-filled", "ripple", "sun-moon", "sphere", "clothing/pants", "clothing/skirt", "clothing/underpants"]
+LINKS = ["cloud-filled", "ripple", "sun-moon", "sphere", "clothing/pants", "clothing/skirt", "clothing/underpants", "clothing/undershirt"]
 
 # The symbol's size against the folder (24 units), and where its centre
 # goes: the middle of the folder's body below the tab (closed), the middle
