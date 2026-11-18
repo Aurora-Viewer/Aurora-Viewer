@@ -2015,6 +2015,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_RENDER_TYPES=<kinds>` | Advanced › Rendering types: those kinds hidden from the start |
 | `AURORA_DEMO_RELEASE_KEYS=1` | A vehicle script takes the movement keys: Advanced › Release keys enabled |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
+| `AURORA_DEMO_DEEP_PERMS=1\|run\|run-replace\|run-refuse` | Content permissions with objects inside objects: a chest of nested boxes |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
 | `AURORA_DEMO_BUILD_HANDLES=<percent>` | Size of the edit handles |
@@ -3531,6 +3532,30 @@ Sustained run/feedback follow-up (2026-10-15): the human measured about 5.1 m/s 
 Smooth run follow-up (2026-10-15): the human confirms v1.10 accelerates but is jerky and excessive already at x2. Protocol 1.11 keeps continuous horizontal force with legacy llGetMass scaling, ramps the target by at most 4 m/s per second and upward mass-normalized thrust by 20 units per second, bounds integral growth to the available force and requests 50 ms run ticks. At x2 the final nominal target remains 10.26 m/s; acceleration should build gradually with no repeated launch/brake cycle. Verify on clear level ground first, then quick turns, a lower slider value, key release, jump/fall, a wall and Movelock. The options show script speed/target/state separately from viewer-measured speed: compare both to distinguish physical oscillation from display corrections; no live-grid comparison has been performed automatically. Offline evaluation uses distinct legacy/MKS masses (100 times apart), exercises cleanup and force/ramp bounds, and checks a range of deterministic braking models. This does not emulate Havok, prove smoothness on the grid or justify changing global avatar prediction. Intercepting horizontal controls is an unimplemented design candidate, not an established way to remove the simulator avatar controller.
 
 Run authority follow-up (2026-10-15): the human measured about 7 m/s at x2 with little further gain at x5 on v1.11. Protocol 1.12 restores the Firestorm llGetMassMKS force scale while retaining the explicit 4 m/s/s target ramp, 20-unit/s upward force ramp and immediate cleanup. Verify x2 (10.26 m/s nominal target) first, then x5 (25.65 m/s) on clear level ground, both after settling and while changing the slider. The options additionally show requested thrust as a percentage of the 400-unit MKS-normalized cap, the gradual target and controller resets; a separate state indicates saturation. This is requested effort, not actual acceleration. A normal key release or sharp turn also counts as a reset; repeated resets during straight continuous running are diagnostic. Three extra bounded acknowledgement fields preserve 5/10-field compatibility; malformed powers/targets/counters are rejected. Offline evaluation now divides model force by MKS mass: with the same assumed braking constants it reproduces about 7.13 m/s at both x2/x5 for v1.11, then checks target tracking or explicit saturation across gains/braking constants, slider changes and all release paths for the actual new LSL functions. The earlier legacy-mass plant model hid this loss of authority. Neither model establishes the real Havok response. Confirm smoothness, release, jump/fall, collisions and remote animations on the grid; Movelock hold/reanchor code remains unchanged.
+
+#### Objects inside objects
+
+`AURORA_DEMO_DEEP_PERMS=1` puts a chest (`99760`) in front of the avatar.
+Its contents hold a notecard, "Outer box" (a running script, a notecard and
+"Inner box", which holds a notecard and "Tiny box" with a running script),
+a no-copy "Heirloom" and a no-modify "Sealed box". The demo simulator keeps
+what each object item holds: a rez from the chest's contents brings those
+contents along, a save back stores what the copy holds then. Select the
+chest (`AURORA_DEMO_BUILD=contents-ready,object:99760`), open Contents ›
+Permissions (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick "Include
+objects inside objects": the preview counts one object to open and two
+skipped, with their reasons. Apply rezzes each box 2 m above the object
+holding it, deepest last opened first saved, and deletes every copy; nothing
+stays in world.
+
+`run` ticks the option and presses Apply by itself once the chest is
+selected; the log has one `deep permissions:` line per stage and ends with
+the report (3 objects inside objects, 2 skipped). `run-replace` makes the
+simulator update a saved item in place (no original to remove);
+`run-refuse` makes it refuse every rez with an alert: the job stops at the
+first rez and nothing changes. What a real simulator does on a save back
+(adds a new item or replaces the original), its refusal alerts and the land
+impact of the copies can only be checked on the grid.
 
 #### Replace a prim
 
