@@ -168,6 +168,40 @@ pub fn parse_tilt(text: &str) -> Option<f64> {
         .then(|| ((v * 10.0).round() / 10.0).clamp(-f64::from(ROLL_MAX), f64::from(ROLL_MAX)))
 }
 
+/// The view the viewfinder had when it last closed, taken back at the next
+/// opening of the session, like its tilt (the human's request, 2026-11-18:
+/// leaving the photo mode to change a setting lost the framing). In global
+/// metres (`camera::presets::to_global`), so that it holds across a region
+/// crossing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeptView {
+    pub eye: [f64; 3],
+    pub at: [f64; 3],
+    /// The photo's field of view (radians).
+    pub fov: f32,
+    /// The free camera flew it: the next opening flies it again.
+    pub free: bool,
+}
+
+impl KeptView {
+    /// The camera and the point it looks at, in the render space of the
+    /// main region at `origin`; None when that is more than `reach` metres
+    /// from the avatar at `avatar` (the scene there is not loaded, as for a
+    /// place preset) or the view is broken.
+    pub fn back(&self, origin: (u32, u32), avatar: glam::Vec3, reach: f32) -> Option<(glam::Vec3, glam::Vec3)> {
+        let eye = crate::camera::presets::from_global(origin, self.eye);
+        let at = crate::camera::presets::from_global(origin, self.at);
+        let sound = eye.is_finite() && at.is_finite() && eye.distance_squared(at) > 1e-6;
+        (sound && eye.distance(avatar) <= reach).then_some((eye, at))
+    }
+
+    /// The camera is already at this view (to the centimetre): taking it back
+    /// would only unlock the avatar's camera from its avatar.
+    pub fn shown(eye: glam::Vec3, at: glam::Vec3, eye_now: glam::Vec3, at_now: glam::Vec3) -> bool {
+        eye.distance(eye_now) < 0.01 && at.distance(at_now) < 0.01
+    }
+}
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1030,6 +1064,42 @@ mod tests {
         assert_eq!(parse_tilt("-400"), Some(-f64::from(ROLL_MAX)));
         assert_eq!(parse_tilt("level"), None);
         assert_eq!(parse_tilt(""), None);
+    }
+
+    #[test]
+    fn a_kept_view_comes_back_within_reach_across_a_region_crossing() {
+        use glam::Vec3;
+        let kept = KeptView {
+            eye: [256_010.0, 512_020.0, 25.0],
+            at: [256_012.0, 512_020.0, 24.5],
+            fov: 0.6,
+            free: false,
+        };
+        // the region where it was kept
+        let (eye, at) = kept.back((256_000, 512_000), Vec3::new(30.0, 20.0, 22.0), 64.0).unwrap();
+        assert_eq!((eye, at), (Vec3::new(10.0, 20.0, 25.0), Vec3::new(12.0, 20.0, 24.5)));
+        // the next region east: the same place, 256 m west of its corner
+        let (eye, _) = kept.back((256_256, 512_000), Vec3::new(-200.0, 20.0, 22.0), 64.0).unwrap();
+        assert_eq!(eye, Vec3::new(-246.0, 20.0, 25.0));
+        // farther than the view reaches from the avatar: the scene there is
+        // not loaded, the photo mode opens on the view it has
+        assert!(kept.back((256_000, 512_000), Vec3::new(200.0, 20.0, 22.0), 64.0).is_none());
+        let broken = KeptView { at: kept.eye, ..kept };
+        assert!(broken.back((256_000, 512_000), Vec3::new(10.0, 20.0, 22.0), 64.0).is_none());
+        let nan = KeptView {
+            eye: [f64::NAN, 0.0, 0.0],
+            ..kept
+        };
+        assert!(nan.back((256_000, 512_000), Vec3::ZERO, 64.0).is_none());
+    }
+
+    #[test]
+    fn a_kept_view_already_shown_is_not_taken_again() {
+        use glam::Vec3;
+        let (eye, at) = (Vec3::new(10.0, 20.0, 25.0), Vec3::new(12.0, 20.0, 24.5));
+        assert!(KeptView::shown(eye, at, eye + Vec3::splat(0.001), at));
+        assert!(!KeptView::shown(eye, at, eye + Vec3::X * 0.5, at), "the camera moved");
+        assert!(!KeptView::shown(eye, at, eye, at + Vec3::Z), "it looks elsewhere");
     }
 
     #[test]
