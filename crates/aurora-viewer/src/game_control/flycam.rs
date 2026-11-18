@@ -303,9 +303,14 @@ mod tests {
         };
         s.step(&mut c, i, 0.0);
         i.unroll = false;
-        s.step(&mut c, i, 0.5);
+        // (in frames of 0.1 s: a frame counts for 0.2 s at most)
+        for _ in 0..5 {
+            s.step(&mut c, i, 0.1);
+        }
         assert!(c.up().y.abs() > 0.01, "half way");
-        s.step(&mut c, i, 0.5);
+        for _ in 0..5 {
+            s.step(&mut c, i, 0.1);
+        }
         assert!(c.up().y.abs() < 1e-4, "level: {:?}", c.up());
         let mut i = Input {
             speed_factor: 1.0,

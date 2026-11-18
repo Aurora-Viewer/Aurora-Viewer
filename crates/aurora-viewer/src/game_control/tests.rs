@@ -177,8 +177,9 @@ fn the_stick_and_the_keyboard_add_up_on_a_canonical_axis() {
     e.compute(&s, &frame(Instant::now(), Mode::Avatar, control::AT_POS));
     // stick forward is negative, the W key positive
     assert_eq!(e.state.axes[1], -20000 + 16383);
-    // the semantic advance: the inverted stick (+20000), plus the key
-    assert_eq!(e.state.semantic_axes[1], 20000 + 16383);
+    // the semantic advance: the inverted stick (+20000) plus the key, held
+    // to the i16 range
+    assert_eq!(e.state.semantic_axes[1], i16::MAX);
 }
 
 #[test]
@@ -210,8 +211,8 @@ fn a_remapped_action_keeps_its_default_bit() {
     assert_eq!(e.state.buttons, 1 << BUTTON_NORTH, "the canonical button is the pressed one");
     assert_eq!(e.state.semantic_buttons, 1 << BUTTON_SOUTH, "the semantic bit is Jump's");
     // an action with no default button sets no bit
-    s.set_binding(Mode::Avatar, false, "Fly up", "BUTTON_WEST");
-    with_pad(&mut e, &s, [0; 6], 1 << BUTTON_WEST);
+    s.set_binding(Mode::Avatar, false, "Fly up", "BUTTON_LEFT_SHOULDER");
+    with_pad(&mut e, &s, [0; 6], 1 << BUTTON_LEFT_SHOULDER);
     e.compute(&s, &frame(Instant::now(), Mode::Avatar, 0));
     assert_eq!(e.state.semantic_buttons, 0);
     assert_eq!(e.state.semantic_axes[4], 32767);
@@ -257,14 +258,17 @@ fn the_cursor_mode_carries_the_pointer() {
 }
 
 #[test]
-fn a_mode_change_is_sent_at_once() {
+fn a_mode_change_goes_out_one_region_frame_later() {
     let s = Settings::default();
     let mut e = Engine::default();
     let t = Instant::now();
     e.compute(&s, &frame(t, Mode::Avatar, 0));
     e.packet(t);
+    // scheduleImmediateResend: now plus the 22.2 ms floor, before the
+    // 100 ms resend
     let t1 = t + Duration::from_millis(30);
-    assert!(e.compute(&s, &frame(t1, Mode::Mouselook, 0)));
+    assert!(!e.compute(&s, &frame(t1, Mode::Mouselook, 0)));
+    assert!(e.compute(&s, &frame(t1 + Duration::from_millis(23), Mode::Mouselook, 0)));
 }
 
 #[test]
@@ -408,7 +412,9 @@ fn restore_defaults_resets_the_mode_but_not_whether_it_is_on() {
 
 #[test]
 fn every_default_binding_has_its_row_in_the_preferences() {
-    for mode in Mode::ALL {
+    // (seated, LL's list keeps the avatar's movement bindings out of sight:
+    // they still drive a vehicle)
+    for mode in Mode::ALL.into_iter().filter(|m| *m != Mode::Captive) {
         let axes: Vec<&str> = mappings::axis_choices(mode).iter().map(|a| a.label()).collect();
         for (label, input) in mappings::default_axes(mode) {
             assert!(input == AXIS_NONE || axes.contains(&label.as_str()), "{mode:?} axis {label}");
