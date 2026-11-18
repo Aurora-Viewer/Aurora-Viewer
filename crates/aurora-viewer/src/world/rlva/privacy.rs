@@ -449,6 +449,10 @@ impl World {
                     filter.add_identity(&name, &replacement);
                 }
                 if let Some(name) = self.social.avatar_names.raw(&id) {
+                    // the whole legacy name first, "Resident" included, as
+                    // RlvUtil::filterNames replaces LLAvatarName::getLegacyName:
+                    // "Jane Resident" is one stand-in, not "<stand-in> Resident"
+                    filter.add_identity(&name.legacy_name(), &replacement);
                     filter.add_identity(&name.display_name, &replacement);
                     filter.add_identity(&name.user_name(), &replacement);
                     filter.add_identity(&name.username, &replacement);
@@ -1220,6 +1224,24 @@ mod tests {
         let said = world.chat.back().expect("the object's line");
         assert!(matches!(said.kind, ChatKind::Object(_)), "{:?}", said.kind);
         assert!(!said.text.contains("Tester") && !said.text.contains(&region), "{}", said.text);
+    }
+
+    /// A resident whose last name is "Resident", named in full by an object
+    /// (llKey2Name gives "Jane Resident"): the whole legacy name is one
+    /// stand-in, as RlvUtil::filterNames replaces
+    /// LLAvatarName::getLegacyName before the display name. The filter knew
+    /// "Jane" alone and left "<stand-in> Resident" (seen on the grid,
+    /// 2026-11-18, for residents known by their name only).
+    #[test]
+    fn a_resident_named_in_full_is_one_stand_in() {
+        let (mut world, near) = shownames_world();
+        world.social.avatar_names.on_legacy(near, "Solo", "Resident");
+        world.refresh_rlva_privacy();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        assert_eq!(
+            world.rlva_filter_text("Here:\nSolo Resident\nSolo waves"),
+            format!("Here:\n{stand_in}\n{stand_in} waves")
+        );
     }
 
     /// A script's prompt (its dialog or text box, its permission question,
