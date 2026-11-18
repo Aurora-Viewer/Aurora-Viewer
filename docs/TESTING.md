@@ -6322,7 +6322,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
-| `AURORA_DEMO_PHOTOTOOLS=env\|general` | Opens the Phototools window (toolbar `phototools`) on a tab |
+| `AURORA_DEMO_PHOTOTOOLS=env\|light\|dof\|general[:photo]` | Opens the Phototools window (toolbar `phototools`) on a tab, with `:photo` the photo window too |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6784,9 +6784,20 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
-- **`AURORA_DEMO_PHOTOTOOLS=env|general`**: opens Phototools at the first
-  frame, as the toolbar's button does, on the Environment tab (`env`, also the
-  default) or the General one. Environment, as sections that fold: Environment
+- **`AURORA_DEMO_PHOTOTOOLS=env|light|dof|general[:photo]`**: opens Phototools
+  at the first frame, as the toolbar's button does, on the Environment tab
+  (`env`, also the default), Light, Depth of field & glow (`dof`) or General.
+  With `:photo` (`light:photo`, `dof:photo`) the photo window opens too: a
+  banner under the tabs says "Photo window open: these apply to the photo
+  until it closes", with the photo window's "Keep this light", and the rows
+  the photo window overrides carry a camera mark and edit the photo's values
+  (try the aperture, the shadow quality, the exposure: Preferences' rows stay
+  as they were once the photo window closes). Light: Lights and shadows
+  settings (shadow quality, projector shadows, worn lights, nearby lights),
+  Ambient occlusion settings. Depth of field & glow: Depth of field settings
+  (the switch, the focus, Show focus point, the view angle, the lens),
+  HDR tone mapping, Glow. With the depth of field on and "Show focus point"
+  on, a small cross marks the focus point (yellow, red when locked). Environment, as sections that fold: Environment
   settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
   clouds, the same switch as the photo window's), Quick environments (four
   times of day, the shared environment), Environment presets (three "New"
