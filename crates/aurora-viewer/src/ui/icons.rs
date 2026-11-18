@@ -350,6 +350,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "layout-align-middle",
     "layout-align-right",
     "layout-align-top",
+    "layout-board-split",
     "layout-bottombar",
     "layout-dashboard",
     "layout-sidebar-left-collapse",
