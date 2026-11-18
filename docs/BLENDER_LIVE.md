@@ -788,6 +788,65 @@ modifiers removed, keeping geometry modifiers and shape keys. The source mesh,
 selection, object mode and modifier settings remain intact. Custom joint
 position overrides are not applied to Aurora's skeleton.
 
+## Maya (plug-in 0.1.0)
+
+Aurora LiveMesh also works from Autodesk Maya 2022 and later. It uses the same
+connection, port (17655) and key as the Blender plug-in, so the viewer side is
+the same: start the preview in Aurora's **LiveMesh** window first.
+
+**Install.** In Aurora's LiveMesh window, open **Plugins › Maya 2022 and
+later** and click **Save Maya plug-in…**. Extract the ZIP anywhere, then drag
+`install.mel` into a Maya viewport. It copies the `aurora_live_maya` folder to
+your Maya scripts folder, adds a **LiveMesh** button to an **Aurora** shelf
+and opens the window. Dragging a newer `install.mel` replaces the old copy.
+
+**Use.** Select mesh objects and click **Add selected**, then **Connect**. The
+list is saved with the scene. Edits are sent after a short pause, at most once
+per interval (2 seconds by default) with **Automatic updates** on; **Update
+now** sends at once and reloads the texture files.
+
+- **Rigged meshes** are meshes with a skinCluster. The plug-in reads the skin's
+  input mesh: blend shapes and the other deformers before the skin are
+  included, the current pose is not. Joints are matched by name without
+  namespace (`rig:mPelvis` is `mPelvis`), or by a string attribute
+  `auroraJoint` on the joint. Every weighted joint must be a Second Life joint
+  (`mPelvis`, `mChest`, the Bento joints, the collision volumes such as
+  `BELLY`); the strongest four weights of each vertex are kept and normalized.
+  Vertices without weight take those of the nearest weighted vertex.
+- **Bind pose.** By default the skin's bind matrices (`bindPreMatrix`,
+  `geomMatrix`) are used whole, as a Collada export from Maya writes them for
+  an upload. **Use Second Life joint axes** keeps only each joint's bind
+  position and takes Aurora's own joint axes: use it for a rig whose joint
+  orientations do not follow Second Life's (the mesh then twists after an
+  upload too).
+- **Axes and units.** Maya's Y-up scene in centimetres becomes Second Life's
+  Z-up frame in metres, turned like a Y-up Collada file at upload. A rig is
+  also turned so that its left side (found from `mShoulderLeft` and
+  `mShoulderRight`, or the collar, hip, eye or wrist pairs) is the avatar's
+  left, whichever way it faces in Maya.
+- **Static meshes** (no skin) keep their rotation and scale; their position in
+  the scene is not used: Aurora places them in front of your avatar, as with
+  Blender. A static mesh parented under another synchronized static mesh is a
+  prim of that mesh's linkset.
+- **Materials.** Standard Surface, aiStandardSurface and USD Preview Surface
+  give base colour, metalness, roughness, emission, opacity and a normal map;
+  Lambert, Blinn and Phong give their colour, transparency and incandescence.
+  Textures must be `file` (or `aiImage`) nodes on one image (no UDIM), with a
+  plain `place2dTexture` (repeat and offset only). Normal maps go through a
+  `bump2d` set to **Tangent Space Normals** with depth 1, or an `aiNormalMap`
+  at strength 1. For transparency, connect the base colour file's alpha to
+  the opacity (Lambert: `outTransparency` to Transparency). Colour spaces sRGB
+  and Raw are read. Images are scaled to at most 1024 pixels. A material that
+  does not follow these rules is shown in its plain colour, and the list says
+  why.
+- **Not in this version:** shape transfer, rig creation, posing helpers, the
+  Import / LOD bundle and explicit grouping. Use the Blender plug-in or a
+  normal upload for those.
+
+The plug-in's pure rules (frames, binds, weights, packing, colour tables) have
+tests that run without Maya: `python maya/tests/test_convert.py`.
+`python maya/package.py <file.zip>` builds the same ZIP as the viewer's button.
+
 ## Current limits
 
 - 32 enabled source objects and 600,000 exported corners. Transfer frames stay

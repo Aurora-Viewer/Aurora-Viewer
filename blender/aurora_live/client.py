@@ -219,8 +219,12 @@ def prepare_frame(snapshot, hello):
 
 
 class Client:
-    def __init__(self, port):
+    def __init__(self, port, capabilities=None):
+        """`capabilities` limits the optional controls this client negotiates
+        (shape-transfer, shape-apply, import-lods); None offers every one the
+        viewer has. The Maya plug-in shares this module and offers none."""
         self.port = port
+        self._capabilities = capabilities
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -361,8 +365,9 @@ class Client:
                             self._rest_axes = hello.get("rest_axes", {})
                             self._features = frozenset(hello.get("features", []))
                         self._set_status("Connected to Aurora", hello["joints"])
-                        if "shape-transfer" in hello.get("features", []):
-                            features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])]
+                        features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])
+                                    and (self._capabilities is None or name in self._capabilities)]
+                        if "shape-transfer" in hello.get("features", []) and features:
                             payload = json.dumps({"type": "features", "features": features}).encode("utf-8")
                             connection.sendall(struct.pack("<I", len(payload)) + payload)
                             self._reply(reader)

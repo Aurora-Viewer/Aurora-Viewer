@@ -1308,4 +1308,33 @@ fn plugins(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
             }
         },
     );
+    ui.add_space(12.0);
+    maya(live, ui, p);
+}
+
+/// The Maya plug-in: no detection or installer run from here, Maya installs
+/// it itself from the dropped install.mel.
+fn maya(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+    widgets::collapsing(ui, p, "blender_live_maya", aurora_i18n::tr!("blender-live-maya"), false, |ui| {
+        ui.label(aurora_i18n::tr!(
+            "blender-live-maya-version",
+            version = super::addon::maya_version()
+        ));
+        ui.label(aurora_i18n::tr!("blender-live-maya-instructions"));
+        if ui
+            .add_enabled_ui(!live.maya_addon.busy, |ui| {
+                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-maya"))
+            })
+            .inner
+            .clicked()
+        {
+            live.save_maya_addon = true;
+        }
+        if live.maya_addon.saved {
+            ui.colored_label(p.violet_light, aurora_i18n::tr!("blender-live-maya-saved"));
+        }
+        if let Some(error) = &live.maya_addon.error {
+            ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
+        }
+    });
 }

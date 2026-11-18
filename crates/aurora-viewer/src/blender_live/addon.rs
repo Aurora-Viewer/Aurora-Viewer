@@ -1,5 +1,6 @@
-//! Ship both matching Blender package layouts inside the viewer, so the bridge
-//! needs no source checkout or Python installation outside Blender.
+//! Ship both matching Blender package layouts and the Maya plug-in inside the
+//! viewer, so the bridge needs no source checkout or Python installation
+//! outside Blender or Maya.
 use parking_lot::Mutex;
 use std::{
     io::{Cursor, Write},
@@ -38,6 +39,60 @@ const FILES: &[(&str, &[u8])] = &[
     ("LICENSE", include_bytes!("../../../../LICENSE")),
 ];
 
+/// The Maya plug-in: a drag-and-drop installer at the root, the package in
+/// `aurora_live_maya/`. Its transport is the Blender plug-in's `client.py`,
+/// which imports nothing from Blender.
+const MAYA_FILES: &[(&str, &[u8])] = &[
+    ("install.mel", include_bytes!("../../../../maya/install.mel")),
+    (
+        "aurora_live_maya_install.py",
+        include_bytes!("../../../../maya/aurora_live_maya_install.py"),
+    ),
+    (
+        "aurora_live_maya/__init__.py",
+        include_bytes!("../../../../maya/aurora_live_maya/__init__.py"),
+    ),
+    (
+        "aurora_live_maya/convert.py",
+        include_bytes!("../../../../maya/aurora_live_maya/convert.py"),
+    ),
+    (
+        "aurora_live_maya/capture.py",
+        include_bytes!("../../../../maya/aurora_live_maya/capture.py"),
+    ),
+    (
+        "aurora_live_maya/materials.py",
+        include_bytes!("../../../../maya/aurora_live_maya/materials.py"),
+    ),
+    (
+        "aurora_live_maya/session.py",
+        include_bytes!("../../../../maya/aurora_live_maya/session.py"),
+    ),
+    ("aurora_live_maya/ui.py", include_bytes!("../../../../maya/aurora_live_maya/ui.py")),
+    (
+        "aurora_live_maya/client.py",
+        include_bytes!("../../../../blender/aurora_live/client.py"),
+    ),
+    ("LICENSE", include_bytes!("../../../../LICENSE")),
+];
+
+pub(super) fn maya_archive() -> Result<Vec<u8>, String> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, bytes) in MAYA_FILES {
+        writer.start_file(*name, options).map_err(|error| error.to_string())?;
+        writer.write_all(bytes).map_err(|error| error.to_string())?;
+    }
+    writer.finish().map(|cursor| cursor.into_inner()).map_err(|error| error.to_string())
+}
+
+pub(super) fn maya_version() -> &'static str {
+    include_str!("../../../../maya/aurora_live_maya/__init__.py")
+        .lines()
+        .find_map(|line| line.strip_prefix("VERSION = \"").and_then(|v| v.strip_suffix('"')))
+        .unwrap_or("unknown")
+}
+
 pub(super) fn archive(legacy: bool) -> Result<Vec<u8>, String> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -67,6 +122,8 @@ pub(super) fn version() -> &'static str {
 #[derive(Default)]
 pub struct Addon {
     pub legacy: bool,
+    /// The Maya plug-in instead of a Blender package.
+    pub maya: bool,
     pub busy: bool,
     pub saved: bool,
     pub error: Option<String>,
@@ -74,6 +131,14 @@ pub struct Addon {
 }
 
 impl Addon {
+    /// The Maya plug-in's save button.
+    pub fn maya() -> Self {
+        Self {
+            maya: true,
+            ..Default::default()
+        }
+    }
+
     pub fn poll(&mut self) {
         if let Some(result) = self.result.lock().take() {
             self.busy = false;
@@ -94,11 +159,18 @@ impl Addon {
         let result = self.result.clone();
         let ctx = ctx.clone();
         let legacy = self.legacy;
+        let maya = self.maya;
         jobs.execute(move || {
             let saved = (|| {
                 let Some(path) = rfd::FileDialog::new()
-                    .set_title(aurora_i18n::tr!("blender-live-save-addon"))
-                    .set_file_name(if legacy {
+                    .set_title(if maya {
+                        aurora_i18n::tr!("blender-live-save-maya")
+                    } else {
+                        aurora_i18n::tr!("blender-live-save-addon")
+                    })
+                    .set_file_name(if maya {
+                        "aurora-live-mesh-maya.zip"
+                    } else if legacy {
                         "aurora-live-mesh-legacy.zip"
                     } else {
                         "aurora-live-mesh.zip"
@@ -108,7 +180,7 @@ impl Addon {
                 else {
                     return Ok(false);
                 };
-                let bytes = archive(legacy)?;
+                let bytes = if maya { maya_archive()? } else { archive(legacy)? };
                 crate::atomic_file::write(&path, &bytes).map_err(|error| error.to_string())?;
                 Ok(true)
             })();
@@ -146,5 +218,25 @@ mod tests {
                 assert_eq!(contents.as_slice(), *original, "matching {path}");
             }
         }
+    }
+
+    #[test]
+    fn blender_live_maya_package_carries_its_installer_package_and_the_shared_client() {
+        let bytes = maya_archive().expect("archive");
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid ZIP");
+        assert_eq!(zip.len(), MAYA_FILES.len());
+        for (name, original) in MAYA_FILES {
+            let mut file = zip.by_name(name).expect("entry");
+            assert!(file.enclosed_name().is_some());
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents).expect("source");
+            assert_eq!(contents.as_slice(), *original, "matching {name}");
+        }
+        let client = MAYA_FILES
+            .iter()
+            .find(|(name, _)| *name == "aurora_live_maya/client.py")
+            .expect("client");
+        assert_eq!(client.1, include_bytes!("../../../../blender/aurora_live/client.py"));
+        assert!(maya_version().split('.').count() == 3, "{}", maya_version());
     }
 }

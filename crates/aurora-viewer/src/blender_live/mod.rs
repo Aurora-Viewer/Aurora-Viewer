@@ -106,6 +106,7 @@ pub struct Live {
     pub snapshot: Option<protocol::Prepared>,
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
+    pub maya_addon: addon::Addon,
     pub shape: shape::State,
     pub import: import::State,
     pub(super) installer: installer::Installer,
@@ -113,6 +114,7 @@ pub struct Live {
     pub(super) installer_choose: bool,
     pub(super) installer_target: Option<std::path::PathBuf>,
     pub save_addon: bool,
+    pub save_maya_addon: bool,
     pub start_requested: bool,
     pub states: HashMap<Uuid, SourceState>,
     pub selected: Option<Uuid>,
@@ -165,6 +167,7 @@ impl Default for Live {
             snapshot: None,
             owner: None,
             addon: Default::default(),
+            maya_addon: addon::Addon::maya(),
             shape: Default::default(),
             import: Default::default(),
             installer: Default::default(),
@@ -172,6 +175,7 @@ impl Default for Live {
             installer_choose: false,
             installer_target: None,
             save_addon: false,
+            save_maya_addon: false,
             start_requested: false,
             states: HashMap::new(),
             selected: None,
@@ -420,6 +424,7 @@ impl Live {
 
     pub fn show(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, can_upload: bool) -> bool {
         self.addon.poll();
+        self.maya_addon.poll();
         self.installer.poll();
         ui::show(self, ctx, p, can_upload)
     }
