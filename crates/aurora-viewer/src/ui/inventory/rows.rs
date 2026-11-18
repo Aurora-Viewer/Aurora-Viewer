@@ -87,13 +87,27 @@ pub struct Row {
 
 pub const NONE: usize = usize::MAX;
 
+/// What the explorer's folder shows as tiles (`aurora::gallery`): nothing
+/// (its list), every entry (the gallery view), or the entries that have a
+/// picture, listed before the others (the combination view).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tiles {
+    #[default]
+    None,
+    All,
+    Pictured,
+}
+
 #[derive(Default)]
 pub struct PlainTree {
     open: HashSet<Uuid>,
     restored: bool,
     revision: u64,
     saved: u64,
-    key: Option<(u64, Uuid, bool, bool, u64)>,
+    key: Option<(u64, Uuid, bool, bool, u64, Tiles, bool)>,
+    tiles_mode: Tiles,
+    /// The first rows, drawn as tiles; the list draws the rows after them.
+    pub tiles: usize,
     pub rows: Vec<Row>,
     /// The listed folders and items, in order (Shift selection).
     pub order: Vec<Uuid>,
@@ -129,10 +143,32 @@ impl PlainTree {
         }
     }
 
+    /// Which entries of the listed folder are tiles; only the explorer's
+    /// folder, listed without its root, has any.
+    pub fn set_tiles(&mut self, tiles: Tiles) {
+        self.tiles_mode = tiles;
+    }
+
+    /// The first row the list draws: the tiles come before it.
+    pub fn list_start(&self) -> usize {
+        if self.tiles_mode == Tiles::Pictured { self.tiles } else { 0 }
+    }
+
     /// List the rows again if the inventory, the sort or an open folder
     /// changed since the last call. Returns whether it did.
     pub fn prepare(&mut self, view: &ViewCache, inv: &Inventory, root: Uuid, show_root: bool, show_library: bool) -> bool {
-        let key = (view.built(), root, show_root, show_library, self.revision);
+        let tiles = if show_root { Tiles::None } else { self.tiles_mode };
+        // RLVa's @viewtexture takes the pictures away, and with them the tiles
+        // of the combination view
+        let key = (
+            view.built(),
+            root,
+            show_root,
+            show_library,
+            self.revision,
+            tiles,
+            tiles != Tiles::None && inv.can_preview(0),
+        );
         if self.key == Some(key) {
             return false;
         }
@@ -140,14 +176,64 @@ impl PlainTree {
         self.order.clear();
         self.listed_open.clear();
         self.width = 0.0;
+        self.tiles = 0;
         if show_root {
             self.folder(view, inv, show_library, root, 0, 0, NONE);
         } else {
             self.listed_open.push(root);
-            self.children(view, inv, show_library, root, 1, 0, NONE);
+            if tiles == Tiles::None {
+                self.children(view, inv, show_library, root, 1, 0, NONE);
+            } else {
+                self.tiled(view, inv, show_library, root, tiles);
+            }
         }
         self.key = Some(key);
         true
+    }
+
+    /// The explorer's folder with tiles, in the gallery's order
+    /// (LLInventoryGallery::compareGalleryItem): the folders before the
+    /// items, and in each group the entries with a picture first, in the
+    /// list's order otherwise. The combination view's gallery takes the
+    /// entries with a picture and leaves the others to its list, in the
+    /// list's order (LLPanelMainInventory::setViewMode with
+    /// FILTER_ONLY_THUMBNAILS and FILTER_EXCLUDE_THUMBNAILS,
+    /// indra/newview/llpanelmaininventory.cpp).
+    fn tiled(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, tiles: Tiles) {
+        let mut entries: Vec<(Uuid, bool, bool)> = view
+            .children_iter(folder, show_library, inv.lib_root)
+            .filter_map(|id| {
+                let is_folder = inv.folders.contains_key(&id);
+                (is_folder || inv.items.contains_key(&id)).then(|| (id, is_folder, thumbnail::tile_picture(inv, id).is_some()))
+            })
+            .collect();
+        match tiles {
+            Tiles::All => entries.sort_by_key(|&(_, is_folder, pictured)| (!is_folder, !pictured)),
+            _ => entries.sort_by_key(|&(_, _, pictured)| !pictured),
+        }
+        self.tiles = match tiles {
+            Tiles::All => entries.len(),
+            _ => entries.iter().filter(|(_, _, pictured)| *pictured).count(),
+        };
+        for (id, is_folder, _) in entries {
+            self.rows.push(Row {
+                id,
+                level: 1,
+                kind: if is_folder { Kind::Folder { open: false } } else { Kind::Item },
+                parent: NONE,
+                end: self.rows.len(),
+            });
+            self.order.push(id);
+        }
+        if self.rows.is_empty() {
+            self.rows.push(Row {
+                id: folder,
+                level: 1,
+                kind: Kind::Empty,
+                parent: NONE,
+                end: 0,
+            });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -302,13 +388,16 @@ pub(super) fn scroll(
     }
     let height_of_row = row_height(ui, p, st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
+    // the combination view's tiles come first, drawn above the list
+    let start = st.plain.list_start();
+    let listed = |st: &InventoryUi, id: Option<Uuid>| id.and_then(|id| st.plain.position(id)).and_then(|index| index.checked_sub(start));
     if navigated {
         st.scroll_hold = None;
     }
-    if navigated && let Some(index) = st.selected.and_then(|id| st.plain.position(id)) {
+    if navigated && let Some(index) = listed(st, st.selected) {
         offset = Some(keyboard::scroll_offset(st, index, height_of_row, pitch, height));
     }
-    if let Some(index) = st.reveal.and_then(|id| st.plain.position(id)) {
+    if let Some(index) = listed(st, st.reveal) {
         // Bring it in sight; the row centres itself once drawn.
         offset = Some((index as f32 * pitch - height / 2.0).max(0.0));
     }
@@ -316,7 +405,7 @@ pub(super) fn scroll(
     if let Some(offset) = offset {
         area = area.vertical_scroll_offset(offset);
     }
-    let total = st.plain.rows.len();
+    let total = st.plain.rows.len().saturating_sub(start);
     let out = area.show_viewport(ui, |ui, viewport| {
         ui.set_height((pitch * total as f32 - ui.spacing().item_spacing.y).max(0.0));
         ui.set_min_width(st.plain.width);
@@ -332,22 +421,23 @@ pub(super) fn scroll(
         let range = first..last;
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect(&range)), |ui| {
             ui.skip_ahead_auto_ids(first);
-            rows(ui, p, icons, inv, st, prefs, facts, actions, range.clone());
+            rows(ui, p, icons, inv, st, prefs, facts, actions, start + first..start + last);
         });
         // F2 on a selected row scrolled out of sight starts its renaming too.
         let renamed = st.rename.as_ref().map(|edit| edit.id).or_else(|| {
             st.selected
                 .filter(|_| st.rename.is_none() && ui.input(|i| i.key_pressed(egui::Key::F2)))
         });
-        if let Some(index) = renamed.and_then(|id| st.plain.position(id))
+        if let Some(index) = listed(st, renamed)
             && !range.contains(&index)
         {
             let one = index..index + 1;
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect(&one)), |ui| {
-                rows(ui, p, icons, inv, st, prefs, facts, actions, one);
+                rows(ui, p, icons, inv, st, prefs, facts, actions, start + index..start + index + 1);
             });
         }
-        guides(ui, &st.plain, range, origin, pitch, height_of_row);
+        let origin = origin - egui::vec2(0.0, start as f32 * pitch);
+        guides(ui, &st.plain, start + first..start + last, origin, pitch, height_of_row);
         ui.set_min_width(st.plain.width);
     });
     st.plain_scroll = out.state.unclamped_offset().y;
