@@ -169,6 +169,8 @@ pub enum BarAction {
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// The top bar's "Clouds paused" chip: let the clouds move again.
+    ResumeClouds,
     /// World › Environment › New sky / water / day cycle (World.EnvPreset
     /// new_sky, new_water, new_day_cycle).
     NewEnvironment(crate::world::env_select::SettingsKind),
@@ -279,6 +281,9 @@ pub struct StatusInfo<'a> {
     pub fps: f32,
     pub flying: bool,
     pub seated: bool,
+    /// The clouds are paused (Pause clouds) while the photo window is
+    /// closed: a chip that resumes them.
+    pub clouds_paused: bool,
     pub ping_ms: u32,
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
@@ -2549,6 +2554,21 @@ pub fn top_bars(
                         if on {
                             state_chip(ui, p, text);
                         }
+                    }
+                    // Pause clouds lasts the session: say so, and a click ends it
+                    if st.clouds_paused
+                        && super::widgets::action_button(
+                            ui,
+                            p,
+                            "cloud-filled",
+                            aurora_i18n::tr!("ui-bars-clouds-paused"),
+                            super::widgets::ActionKind::Flat,
+                            Vec2::new(0.0, CHIP_HEIGHT + 4.0),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-bars-clouds-paused-tip"))
+                        .clicked()
+                    {
+                        action = BarAction::ResumeClouds;
                     }
                     ui.add_space(4.0);
                     egui::Frame::new()

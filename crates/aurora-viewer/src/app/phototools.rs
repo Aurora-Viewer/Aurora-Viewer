@@ -37,10 +37,11 @@ impl App {
             self.folders.settings_changed = true;
         }
         // "New Sky / Water / Day Preset", as the World menu's entries
-        match out.new_preset {
-            Some(crate::world::env_select::SettingsKind::Day) => self.open_new_day_editor(),
-            Some(kind) => self.open_env_editor_snapshot(kind),
-            None => {}
+        if let Some(kind) = out.new_preset {
+            self.open_new_environment(kind);
+        }
+        if out.toggle_flycam {
+            self.toggle_flycam_from_input(false);
         }
         out.env
     }

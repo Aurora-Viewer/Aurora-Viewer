@@ -2788,7 +2788,9 @@ LUT_3D_SIZE {n}
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The photo's light holds the clouds still.
+    /// The clouds are held still: a switch of the session (never saved)
+    /// shared by the photo window and Phototools, kept when the photo
+    /// window closes (`PhotoLight::closed`).
     pub(super) fn photo_clouds_paused(&self) -> bool {
         self.snapshots.ui.light.clouds_paused
     }

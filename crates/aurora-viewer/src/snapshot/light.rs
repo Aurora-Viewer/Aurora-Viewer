@@ -31,7 +31,9 @@ pub struct PhotoLight {
     /// The ambient occlusion for the photo (0 off, as Preferences'
     /// levels); None: Preferences' one.
     pub ambient_occlusion: Option<u8>,
-    /// The clouds stop moving (LLEnvironment::pauseCloudScroll).
+    /// The clouds stop moving (LLEnvironment::pauseCloudScroll). A switch
+    /// of the session, shared with Phototools and kept when the window
+    /// closes (`closed`).
     pub clouds_paused: bool,
     /// The lights worn by avatars light the scene
     /// (LLPipeline::sRenderAttachedLights).

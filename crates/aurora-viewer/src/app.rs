@@ -16571,11 +16571,9 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::ResumeClouds => self.snapshots.ui.light.clouds_paused = false,
             BarAction::AuroraWeather => self.env_ui.weather_open = true,
-            BarAction::NewEnvironment(kind) => match kind {
-                crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
-                kind => self.open_env_editor_snapshot(kind),
-            },
+            BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
@@ -18665,6 +18663,7 @@ impl App {
                     fps: self.perf.fps,
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
+                    clouds_paused: self.photo_clouds_paused() && !self.panels.snapshot,
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance_ink: ui::balance_gains::ink(&self.palette, balance.flash),
                     balance: balance.balance,

@@ -85,6 +85,8 @@ pub struct Out {
     pub new_preset: Option<SettingsKind>,
     /// A setting changed: apply them like a change of Preferences.
     pub changed: bool,
+    /// What the borrowed rows ask of the app besides (Preferences' result).
+    pub toggle_flycam: bool,
 }
 
 #[derive(Default)]
@@ -109,26 +111,41 @@ impl PhototoolsUi {
         mut env: Env<'_>,
     ) -> Out {
         let mut out = Out::default();
+        // the pending save first: a drag that ended with the window closed
+        // is still saved
+        self.save_when_released(ctx, settings);
+        if !*open {
+            return out;
+        }
         self.rows.share_from(preferences);
         let screen = ctx.content_rect();
         let pos = egui::pos2(screen.right() - WIDTH - 300.0, screen.top() + 90.0);
-        let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("toolbar-command-phototools"), pos, Vec2::new(WIDTH, 680.0));
+        let mut floater = Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("toolbar-command-phototools"),
+            pos,
+            Vec2::new(WIDTH, (screen.height() - 120.0).clamp(260.0, 680.0)),
+        );
         floater.min_size = Vec2::new(400.0, 260.0);
         floater.show(ctx, p, open, |ui| {
             self.body(ui, p, settings, &mut env, &mut out);
         });
-        // saved once the button is released, not at every frame of a drag
         self.unsaved |= out.changed;
+        self.save_when_released(ctx, settings);
+        out
+    }
+
+    /// Saved once the button is released, not at every frame of a drag.
+    fn save_when_released(&mut self, ctx: &egui::Context, settings: &Settings) {
         if self.unsaved && !ctx.input(|i| i.pointer.any_down()) {
             self.unsaved = false;
             settings.save();
         }
-        out
     }
 
     fn body(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &mut Settings, env: &mut Env<'_>, out: &mut Out) {
         self.tab = self.tab.min(TABS.len() - 1);
-        let labels: Vec<(&str, bool)> = TABS.iter().map(|t| (t.label(), true)).collect();
+        let labels = TABS.map(|t| (t.label(), true));
         widgets::tabs(ui, p, &mut self.tab, &labels);
         ui.add_space(6.0);
         let tab = TABS[self.tab];
@@ -148,8 +165,11 @@ impl PhototoolsUi {
 
     /// One Legacy group box.
     fn rows(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &mut Settings, out: &mut Out, title: &str, section: PhotoSection) {
-        widgets::collapsing(ui, p, ("phototools", title), title, true, |ui| {
-            out.changed |= options::phototools_section(ui, p, settings, &mut self.rows, section);
+        // the id is the section's, not its translated title
+        widgets::collapsing(ui, p, ("phototools", section as u8), title, true, |ui| {
+            let r = options::phototools_section(ui, p, settings, &mut self.rows, section);
+            out.changed |= r.changed;
+            out.toggle_flycam |= r.toggle_flycam;
         });
     }
 
@@ -238,7 +258,11 @@ impl PhototoolsUi {
 /// photo window's (`snapshots.ui.light.clouds_paused`).
 fn pause_clouds(ui: &mut egui::Ui, p: &Palette, env: &mut Env<'_>) {
     use aurora_i18n::tr;
-    widgets::switch_labeled(ui, p, env.clouds, tr!("photo-light-pause-clouds")).on_hover_text(tr!("photo-light-pause-clouds-hint"));
+    // greyed like the presets under @setenv / @setsphere
+    // (FloaterQuickPrefs::onClickPauseClouds, quickprefs.cpp)
+    ui.add_enabled_ui(!env.ui.rlva_locked, |ui| {
+        widgets::switch_labeled(ui, p, env.clouds, tr!("photo-light-pause-clouds")).on_hover_text(tr!("photo-light-pause-clouds-hint"));
+    });
 }
 
 #[cfg(test)]
