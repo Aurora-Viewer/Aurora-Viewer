@@ -64,6 +64,9 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const ARRIVAL: Duration = Duration::from_secs(15);
 /// A coalesced item's parts are all taken once no new one came for this long.
 const GROUP_SETTLE: Duration = Duration::from_secs(2);
+/// A save in place whose serial moved once counts after this long with no
+/// other move.
+const SERIAL_QUIET: Duration = Duration::from_secs(4);
 /// The simulator may refuse a mask the object's base does not allow: the
 /// masks are sent, then the job goes on.
 const PERMS_WAIT: Duration = Duration::from_secs(10);
@@ -238,21 +241,17 @@ pub fn same_name(candidate: &str, name: &str) -> bool {
 /// save counts: a single new object item of the same owner named as the
 /// original (or as the copy), or the original updated in place. Second
 /// Life updates it in place, keeping its id, and hides object asset ids in
-/// contents listings: there the evidence is the listing's serial moved
-/// since the save was sent while every other item stayed exactly as it was
-/// (the original's own record may change: its group follows the copy's).
-/// Any other change of the listing (another item edited, added or removed,
-/// a name that only starts with the original's, two candidates) leaves it
+/// contents listings: there the evidence is the listing's serial, which a
+/// save in place moves twice (the second bringing the item's new record,
+/// its group and masks), every other item staying exactly as it was. Both
+/// moves are waited for (`serial_moves`), so that the next save starts from
+/// a settled listing and no late update of this one can stand for it; a
+/// single move counts only once the listing has been `quiet` since. Any
+/// other change of the listing (another item edited, added or removed, a
+/// name that only starts with the original's, two candidates) leaves it
 /// pending, and only a match by the original's name lets the original be
 /// removed.
-pub fn save_outcome(
-    before: &[TaskItem],
-    after: &[TaskItem],
-    original: &TaskItem,
-    saved_as: &str,
-    serial_moved: bool,
-    settling: &HashSet<Uuid>,
-) -> Saved {
+pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem, saved_as: &str, serial_moves: u16, quiet: bool) -> Saved {
     let known: HashSet<Uuid> = before.iter().map(|i| i.item_id).collect();
     let new: Vec<&TaskItem> = after
         .iter()
@@ -273,37 +272,30 @@ pub fn save_outcome(
         (None, Some(new), _) | (None, None, Some(new)) => Saved::Replaced(new),
         (Some(_), None, Some(new)) => Saved::Unnamed(new),
         (Some(now), None, None) if !original.asset_id.is_nil() && now.asset_id != original.asset_id => Saved::InPlace,
-        (Some(_), None, None) if serial_moved && others_unchanged(before, after, original.item_id, settling) => Saved::InPlace,
+        (Some(_), None, None)
+            if (serial_moves >= 2 || (serial_moves == 1 && quiet)) && others_unchanged(before, after, original.item_id) =>
+        {
+            Saved::InPlace
+        }
         _ => Saved::Pending,
     }
 }
 
 /// Every item but `original` listed after exactly as before, none added
-/// or removed. The items this job saved back here just before (`settling`)
-/// only have to stay listed: Second Life's save in place moves the serial
-/// twice, the second bringing the saved object's record (its group, its
-/// masks), which may land during the next save.
-pub fn others_unchanged(before: &[TaskItem], after: &[TaskItem], original: Uuid, settling: &HashSet<Uuid>) -> bool {
+/// or removed.
+pub fn others_unchanged(before: &[TaskItem], after: &[TaskItem], original: Uuid) -> bool {
     let others = |list: &[TaskItem]| {
-        let mut v: Vec<TaskItem> = list
-            .iter()
-            .filter(|i| i.item_id != original)
-            .cloned()
-            .map(|i| {
-                if settling.contains(&i.item_id) {
-                    TaskItem {
-                        item_id: i.item_id,
-                        ..Default::default()
-                    }
-                } else {
-                    i
-                }
-            })
-            .collect();
+        let mut v: Vec<TaskItem> = list.iter().filter(|i| i.item_id != original).cloned().collect();
         v.sort_by_key(|i| i.item_id);
         v
     };
     others(before) == others(after)
+}
+
+/// How far a contents listing's serial moved, from `from` to `to` (it
+/// wraps).
+pub fn serial_moves(from: i16, to: i16) -> u16 {
+    (to as u16).wrapping_sub(from as u16)
 }
 
 /// Why processing an object stopped.
@@ -457,6 +449,11 @@ struct Frame {
     prims: Vec<Prim>,
     /// The prim being read, or whose objects are being opened.
     current: usize,
+    /// Prims whose contents are changed (Apply done), from the first.
+    applied: usize,
+    /// A copy's roots checked by their FromTaskID (`Props`): nothing of a
+    /// copy is ever deleted before.
+    verified: bool,
 }
 
 impl Frame {
@@ -476,6 +473,8 @@ impl Frame {
             prims: roots.iter().map(|(id, key)| Prim::new(*id, *key)).collect(),
             roots,
             current: 0,
+            applied: 0,
+            verified: false,
         }
     }
 
@@ -541,8 +540,8 @@ pub struct Job {
     /// copy's name then.
     snapshot: Option<(Vec<TaskItem>, i16, String)>,
     saved: Option<TaskItem>,
-    /// Items this job saved back: their records may still settle.
-    saved_ids: HashSet<Uuid>,
+    /// The source listing's last serial seen during a save, and since when.
+    serial_seen: Option<(i16, Instant)>,
     stopping: bool,
     /// Stop pressed, and taken into account.
     stop_requested: bool,
@@ -569,7 +568,7 @@ impl Job {
             gathering: None,
             snapshot: None,
             saved: None,
-            saved_ids: HashSet::new(),
+            serial_seen: None,
             stopping: false,
             stop_requested: false,
             user_stopped: false,
@@ -867,10 +866,12 @@ impl Job {
             self.report.failures.push(reason);
         }
         let top_is_copy = self.top().is_some_and(|f| f.copy.is_some());
-        let next = if own_copy && rec.delete_copy {
+        let verified = self.top().is_some_and(|f| f.verified);
+        let next = if own_copy && rec.delete_copy && verified {
             Stage::Recover
         } else if own_copy {
-            // kept in world: not ours, or the only instance left
+            // kept in world: not ours, the only instance left, or not
+            // checked yet (another object may stand among what came)
             self.stack.pop();
             self.after_copy(tool, world)
         } else if self.stopping {
@@ -1024,7 +1025,8 @@ impl Job {
                         frame.current += 1;
                         return Ok(Some(Stage::Read));
                     }
-                    frame.current = 0;
+                    // the first prim whose contents are not changed yet
+                    frame.current = frame.applied;
                     return Ok(Some(Stage::Scripts));
                 }
                 if frame.prim().pending.is_empty() {
@@ -1034,15 +1036,18 @@ impl Job {
                 Ok(Some(Stage::Next))
             }
             Stage::Scripts => {
+                // (only the scripts not asked yet: those of late child
+                // prims come after the others stopped and started again)
+                let unknown: Vec<(Uuid, ObjKey, Uuid)> = scripts.iter().filter(|s| s.3.is_none()).map(|s| (s.0, s.1, s.2)).collect();
                 if first {
-                    for (prim, prim_key, item, _) in &scripts {
+                    for (prim, prim_key, item) in &unknown {
                         tool.contents.running.remove(&(*prim, *item));
                         Self::running_query(tool, *prim_key, *prim, *item);
                     }
                 }
                 let poll = self.poll(now);
                 let mut known = true;
-                for (prim, prim_key, item, _) in &scripts {
+                for (prim, prim_key, item) in &unknown {
                     if !tool.contents.running.contains_key(&(*prim, *item)) {
                         known = false;
                         if poll {
@@ -1057,9 +1062,10 @@ impl Job {
                 if let Some(frame) = self.stack.last_mut() {
                     for p in &mut frame.prims {
                         for s in &mut p.scripts {
-                            let running = tool.contents.running.get(&(p.id, s.0)).is_some_and(|r| r.0);
-                            s.1 = Some(running);
-                            any |= running;
+                            if s.1.is_none() {
+                                s.1 = Some(tool.contents.running.get(&(p.id, s.0)).is_some_and(|r| r.0));
+                            }
+                            any |= s.1 == Some(true);
                         }
                     }
                 }
@@ -1258,6 +1264,9 @@ impl Job {
                     }
                 }
                 self.arrived = None;
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.verified = true;
+                }
                 if self.user_stopped {
                     // stopped while it was on its way: straight to the trash
                     return Ok(Some(Stage::Recover));
@@ -1314,11 +1323,12 @@ impl Job {
                     return Ok(Some(self.next_prim(tool, world)));
                 }
                 // the copy's next prim, then the whole linkset's masks
-                if let Some(frame) = self.stack.last_mut()
-                    && frame.current + 1 < frame.prims.len()
-                {
-                    frame.current += 1;
-                    return Ok(Some(Stage::Next));
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.applied = frame.applied.max(frame.current + 1);
+                    if frame.current + 1 < frame.prims.len() {
+                        frame.current += 1;
+                        return Ok(Some(Stage::Next));
+                    }
                 }
                 Ok(Some(if self.options.includes_type(i32::from(AT_OBJECT)) {
                     Stage::ObjectPerms
@@ -1404,6 +1414,20 @@ impl Job {
                 if world.objects.index_of_uuid(&source).is_none() {
                     return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
                 }
+                // child prims whose updates came after the others were read:
+                // their contents and scripts too, before the one save
+                if first && let Some(frame) = self.stack.last_mut() {
+                    let known = frame.prims.len();
+                    frame.add_children(world);
+                    if frame.prims.len() > known {
+                        log::info!(
+                            "deep permissions: {} more prims of {root} came, read before the save",
+                            frame.prims.len() - known
+                        );
+                        frame.current = frame.applied;
+                        return Ok(Some(Stage::Read));
+                    }
+                }
                 if first {
                     let (before, serial) = tool
                         .contents
@@ -1425,6 +1449,7 @@ impl Job {
                         return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
                     }
                     self.snapshot = Some((before, serial, saved_as));
+                    self.serial_seen = None;
                     log::info!(
                         "deep permissions: saving {} back into {source} ({} objects)",
                         self.name(),
@@ -1451,23 +1476,23 @@ impl Job {
                     return Ok(Some(Stage::Delete));
                 };
                 let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
-                let mut outcome = save_outcome(before, &items, &original, saved_as, inv.serial != *serial, &self.saved_ids);
+                if self.serial_seen.is_none_or(|(seen, _)| seen != inv.serial) {
+                    self.serial_seen = Some((inv.serial, now));
+                }
+                let quiet = self
+                    .serial_seen
+                    .is_some_and(|(_, since)| now.saturating_duration_since(since) >= SERIAL_QUIET);
+                let outcome = save_outcome(before, &items, &original, saved_as, serial_moves(*serial, inv.serial), quiet);
                 if group {
-                    // the saved item must still hold several objects; in
-                    // place, its record is read once it has changed (Second
-                    // Life sends it with the serial's second move)
+                    // the saved item must still hold several objects (in
+                    // place, its record came with the serial's second move)
                     let saved = match &outcome {
-                        Saved::InPlace => items
-                            .iter()
-                            .find(|i| i.item_id == original.item_id)
-                            .filter(|now| before.iter().find(|b| b.item_id == original.item_id) != Some(*now)),
+                        Saved::InPlace => items.iter().find(|i| i.item_id == original.item_id),
                         Saved::Added(new) | Saved::Replaced(new) | Saved::Unnamed(new) => Some(new),
                         Saved::Pending => None,
                     };
-                    match saved {
-                        None if outcome != Saved::Pending => outcome = Saved::Pending,
-                        Some(item) if !is_group(item) => return Err(Failure::GroupSplit),
-                        _ => {}
+                    if saved.is_some_and(|item| !is_group(item)) {
+                        return Err(Failure::GroupSplit);
                     }
                 }
                 if outcome != Saved::Pending {
@@ -1481,13 +1506,11 @@ impl Job {
                         Ok(None)
                     }
                     Saved::Added(new) => {
-                        self.saved_ids.insert(new.item_id);
                         self.report.objects += 1;
                         self.saved = Some(new);
                         Ok(Some(Stage::RemoveOriginal))
                     }
                     Saved::Replaced(new) => {
-                        self.saved_ids.insert(new.item_id);
                         self.report.objects += 1;
                         if new.name != original.name {
                             self.rename_in_parent(new.item_id, original.name.clone());
@@ -1495,12 +1518,10 @@ impl Job {
                         Ok(Some(Stage::Delete))
                     }
                     Saved::InPlace => {
-                        self.saved_ids.insert(original.item_id);
                         self.report.objects += 1;
                         Ok(Some(Stage::Delete))
                     }
                     Saved::Unnamed(new) => {
-                        self.saved_ids.insert(new.item_id);
                         log::warn!(
                             "deep permissions: {} saved as {:?}, the original is kept next to it",
                             original.name,
@@ -1542,6 +1563,12 @@ impl Job {
                     self.rename_in_parent(new.item_id, original.name.clone());
                 }
                 Ok(Some(Stage::Delete))
+            }
+            Stage::Delete | Stage::Recover if !self.top().is_some_and(|f| f.verified) => {
+                // never an object whose origin was not checked
+                log::warn!("deep permissions: {root} not checked as rezzed from these contents: left in world");
+                self.stack.pop();
+                Ok(Some(self.after_copy(tool, world)))
             }
             Stage::Delete | Stage::Recover => {
                 let left: Vec<(Uuid, ObjKey)> = roots
