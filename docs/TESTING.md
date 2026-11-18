@@ -535,7 +535,7 @@ forward on the left stick, runs past 90 % and turns on the right stick;
 forward and pans; `cursor` presses Select into the mouse cursor mode at frame
 630 and moves the pointer right and up. `actions`, `device-mappings`,
 `device-options` and `server-data` open that tab of Preferences › Game
-Controls while the left stick, the right trigger and South are held from
+Controls while the left stick, a touch of the right trigger and North are held from
 frame 650: the Device Options tab shows the live values, the Server Data tab
 the last packet. Every hundred frames the log has a `game control demo:` line
 with the mode, whether a packet went out, the flycam, the cursor mode and the

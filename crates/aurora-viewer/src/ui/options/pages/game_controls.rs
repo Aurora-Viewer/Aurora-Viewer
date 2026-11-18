@@ -189,6 +189,9 @@ fn button_input_name(index: usize) -> String {
 
 /// The axis inputs an action may take, as saved: the four stick axes, both
 /// triggers as one, none (axis_input_selector).
+/// The width of a live value in the Device Options rows.
+const VALUE_W: f32 = 80.0;
+
 const AXIS_INPUTS: [(&str, usize); 6] = [
     ("AXIS_LEFTX", 0),
     ("AXIS_LEFTY", 1),
@@ -675,7 +678,7 @@ fn device_options_tab(cx: &mut Cx) {
         for axis in 0..NUM_AXES {
             let (id, devices) = (id.clone(), devices.clone());
             let (raw, fixed) = (live.raw[axis], live.fixed[axis]);
-            cx.row(
+            cx.wide().row(
                 axis_input_name(axis),
                 tr!("game-control-axis-options-hint"),
                 &Nothing,
@@ -683,7 +686,11 @@ fn device_options_tab(cx: &mut Cx) {
                     let (mut o, name) = device_options(s, &devices, &id);
                     let before = o.axes;
                     ui.horizontal(|ui| {
-                        ui.label(tr!("game-control-raw-value", value = raw.to_string()));
+                        // (fixed widths: the live values do not shift the row)
+                        ui.add_sized(
+                            egui::vec2(VALUE_W, 20.0),
+                            egui::Label::new(tr!("game-control-raw-value", value = raw.to_string())),
+                        );
                         let a = &mut o.axes[axis];
                         let mut offset = i32::from(a.offset);
                         ui.label(tr!("game-control-offset"));
@@ -700,7 +707,10 @@ fn device_options_tab(cx: &mut Cx) {
                         let a = &mut o.axes[axis];
                         ui.label(tr!("game-control-dead-zone"));
                         ui.add(egui::DragValue::new(&mut a.dead_zone).range(0..=MAX_AXIS_DEAD_ZONE));
-                        ui.label(tr!("game-control-adjusted-value", value = fixed.to_string()));
+                        ui.add_sized(
+                            egui::vec2(VALUE_W, 20.0),
+                            egui::Label::new(tr!("game-control-adjusted-value", value = fixed.to_string())),
+                        );
                     });
                     if o.axes == before {
                         return false;
@@ -711,7 +721,7 @@ fn device_options_tab(cx: &mut Cx) {
             );
         }
     });
-    cx.row(
+    cx.below().row(
         tr!("game-control-buttons"),
         tr!("game-control-buttons-live-hint"),
         &Nothing,
@@ -729,6 +739,7 @@ fn device_options_tab(cx: &mut Cx) {
 }
 
 fn server_tab(cx: &mut Cx) {
+    let p = cx.p;
     cx.toggle(
         tr!("game-control-send-to-server"),
         tr!("game-control-send-to-server-hint"),
@@ -749,34 +760,37 @@ fn server_tab(cx: &mut Cx) {
             4 => Mode::Cursor,
             _ => Mode::None,
         };
-        egui::Grid::new("game-control-data").striped(true).num_columns(3).show(ui, |ui| {
-            ui.strong("#");
-            ui.strong(tr!("common-name"));
-            ui.strong(tr!("game-control-value"));
-            ui.end_row();
+        let line = |ui: &mut egui::Ui, index: usize, name: &str, value: String| {
+            ui.horizontal(|ui| {
+                let cell = |ui: &mut egui::Ui, width: f32, text: egui::RichText| {
+                    ui.allocate_ui_with_layout(egui::vec2(width, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_min_width(width);
+                        ui.label(text);
+                    });
+                };
+                cell(ui, 28.0, egui::RichText::new(index.to_string()).color(p.muted));
+                cell(ui, 220.0, egui::RichText::new(name));
+                ui.label(value);
+            });
+        };
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             for (i, name) in AXIS_NAMES.iter().enumerate() {
-                ui.label(i.to_string());
-                ui.label(*name);
-                ui.label(state.axes[i].to_string());
-                ui.end_row();
+                line(ui, i, name, state.axes[i].to_string());
             }
             for i in 0..NUM_BUTTONS {
-                ui.label(i.to_string());
-                ui.label(gc::button_name(i));
-                ui.label(u8::from(state.buttons & (1 << i) != 0).to_string());
-                ui.end_row();
+                line(ui, i, &gc::button_name(i), u8::from(state.buttons & (1 << i) != 0).to_string());
             }
             for (i, value) in state.semantic_axes.iter().enumerate().take(mode.semantic_axes()) {
-                ui.label(i.to_string());
-                ui.label(mappings::semantic_axis_name(mode, i));
-                ui.label(value.to_string());
-                ui.end_row();
+                line(ui, i, mappings::semantic_axis_name(mode, i), value.to_string());
             }
             for i in 0..mappings::semantic_buttons(mode) {
-                ui.label(i.to_string());
-                ui.label(mappings::semantic_button_name(mode, i));
-                ui.label(u8::from(state.semantic_buttons & (1 << i) != 0).to_string());
-                ui.end_row();
+                line(
+                    ui,
+                    i,
+                    &mappings::semantic_button_name(mode, i),
+                    u8::from(state.semantic_buttons & (1 << i) != 0).to_string(),
+                );
             }
         });
         false

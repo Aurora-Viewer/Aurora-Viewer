@@ -194,8 +194,8 @@ impl App {
                 self.options_ui.open(crate::ui::options::Page::GameControls, tab);
             }
         }
-        // crate::joystick::GamepadButton::STANDARD: Select is 8, the right
-        // stick 12; the sticks are axes 0/1 and 3/4, the triggers 6 and 7.
+        // crate::joystick::GamepadButton::STANDARD: North is 2, Select 8, the
+        // right stick 12; the sticks are axes 0/1 and 3/4, the triggers 6 and 7.
         let mut d = crate::joystick::Device::gamepad(
             "demo-gamepad".into(),
             "Demo gamepad".into(),
@@ -236,8 +236,10 @@ impl App {
             _ => {
                 if f >= 650 {
                     d.axes[1] = -0.6;
-                    d.axes[7] = 0.5;
-                    d.buttons |= 1;
+                    // under an eighth: a live value, no flight
+                    d.axes[7] = 0.1;
+                    // North: no avatar action by default (South would jump)
+                    d.buttons |= 1 << 2;
                 }
             }
         }
