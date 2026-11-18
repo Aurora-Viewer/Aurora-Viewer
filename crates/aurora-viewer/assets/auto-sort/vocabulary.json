@@ -252,7 +252,8 @@
         "wedges",
         "mules",
         "sandal",
-        "sneaker"
+        "sneaker",
+        "plats"
       ]
     },
     {
@@ -289,7 +290,8 @@
         "briefs",
         "boxers",
         "negligee",
-        "teddy"
+        "teddy",
+        "pasties"
       ]
     },
     {
@@ -372,7 +374,9 @@
         "bomber",
         "trench",
         "teddy coat",
-        "teddy jacket"
+        "teddy jacket",
+        "shrug",
+        "shrugs"
       ]
     },
     {
@@ -398,7 +402,9 @@
         "tees",
         "hoodies",
         "sweaters",
-        "blouses"
+        "blouses",
+        "longsleeve",
+        "long sleeve"
       ]
     },
     {
@@ -603,7 +609,23 @@
         "living room set",
         "kitchen set",
         "bedroom furniture",
-        "dining table"
+        "dining table",
+        "rugs",
+        "sideboard",
+        "nightstand",
+        "bookshelf",
+        "bookcase",
+        "fireplace",
+        "piano",
+        "fridge",
+        "refrigerator",
+        "lounger",
+        "chaise",
+        "room divider",
+        "stepladder",
+        "bar counter",
+        "bathtubs",
+        "tub"
       ]
     },
     {
@@ -639,7 +661,65 @@
         "mirror",
         "lamps",
         "teddy bear",
-        "dress form"
+        "dress form",
+        "print",
+        "prints",
+        "art print",
+        "poster",
+        "posters",
+        "canvas",
+        "plaque",
+        "letterboard",
+        "street sign",
+        "yard sign",
+        "wall sign",
+        "neon sign",
+        "artwork",
+        "wall art",
+        "embroidery hoop",
+        "cross stitch",
+        "collage",
+        "headstone",
+        "gravestone",
+        "tombstone",
+        "garland",
+        "wreath",
+        "wreaths",
+        "flowers",
+        "florals",
+        "books",
+        "plate",
+        "plates",
+        "chalkboard",
+        "fairy lights",
+        "string lights",
+        "fence",
+        "fencing",
+        "planter",
+        "planters",
+        "succulent",
+        "balloon",
+        "balloons",
+        "incense",
+        "clock",
+        "clocks",
+        "statue",
+        "sculpture",
+        "candle holder",
+        "candelabra",
+        "pumpkin",
+        "pumpkins",
+        "ornament",
+        "ornaments",
+        "blanket",
+        "blankets",
+        "hanging lights",
+        "wall panels",
+        "wall panel",
+        "terrarium",
+        "fireworks",
+        "dinnerware",
+        "tray"
       ]
     },
     {
