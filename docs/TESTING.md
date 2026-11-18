@@ -3547,6 +3547,8 @@ objects inside objects": the preview counts one object to open and two
 skipped, with their reasons. Apply rezzes each box 2 m above the object
 holding it, deepest last opened first saved, and deletes every copy; nothing
 stays in world.
+While it runs, Stop (in place of OK and Apply) trashes the copies still in
+world and ends; the report says it was stopped.
 
 `run` ticks the option and presses Apply by itself once the chest is
 selected; the log has one `deep permissions:` line per stage and ends with
