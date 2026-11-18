@@ -15,6 +15,15 @@ impl App {
             self.demo_phototools();
         }
         let mut open = self.panels.phototools;
+        // the photo window's values while it is open (the rows follow the
+        // view)
+        let photo = self.panels.snapshot.then(|| ui::options::PhotoState {
+            sun: super::snapshot::env_view(&self.env_ui, &self.world.eep).sun,
+            loading: self.world.eep.photo_loading(),
+            viewfinder: self.viewfinder_on(),
+            boost: self.settings.photo_held.is_some(),
+        });
+        let director_dof = self.director_dof().is_some();
         let out = self.phototools_ui.show(
             ctx,
             p,
@@ -27,7 +36,9 @@ impl App {
                 loading: self.world.eep.local_loading(),
                 time_of_day: self.panels.time_of_day,
                 lighting,
-                clouds: &mut self.snapshots.ui.light.clouds_paused,
+                light: &mut self.snapshots.ui.light,
+                photo,
+                director_dof,
             },
         );
         self.panels.phototools = open;
@@ -43,11 +54,21 @@ impl App {
         if out.toggle_flycam {
             self.toggle_flycam_from_input(false);
         }
+        // "Keep this light" of the banner, as the photo window's button
+        if out.keep_light {
+            self.keep_photo_light();
+        }
+        // a photo's value changed, or a saved setting that the photo shows:
+        // the preview follows
+        if (out.photo_changed || out.changed) && self.panels.snapshot {
+            self.snapshots.preview_wanted = true;
+        }
         out.env
     }
 
-    /// AURORA_DEMO_PHOTOTOOLS=<tab>: the window opened at the start, on
-    /// that tab (`env` or `general`; `1` the first).
+    /// AURORA_DEMO_PHOTOTOOLS=<tab>[:photo]: the window opened at the start,
+    /// on that tab (`env`, `light`, `dof` or `general`), and with `:photo`
+    /// the photo window too.
     fn demo_phototools(&mut self) {
         if self.phototools_demo_done {
             return;
@@ -56,7 +77,11 @@ impl App {
             return;
         };
         self.phototools_demo_done = true;
-        self.phototools_ui.tab = ui::phototools::Tab::parse(&value.to_string_lossy()).unwrap_or(0);
+        let (tab, photo) = ui::phototools::Tab::parse(&value.to_string_lossy()).unwrap_or((0, false));
+        self.phototools_ui.tab = tab;
+        if photo {
+            self.panels.snapshot = true;
+        }
         ui::widgets::open_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools);
     }
 }

@@ -32,6 +32,9 @@ pub struct Settings {
     pub enabled: bool,
     /// RenderDepthOfFieldInEditMode (off).
     pub in_edit: bool,
+    /// FSFocusPointRender (off): a small crosshair on the focus point,
+    /// yellow when free and red when locked.
+    pub show_focus_point: bool,
     pub focus: FocusMode,
     /// CameraFNumber (9, 1..64).
     pub f_number: f32,
@@ -54,6 +57,7 @@ impl Default for Settings {
         Settings {
             enabled: false,
             in_edit: false,
+            show_focus_point: false,
             focus: FocusMode::Camera,
             f_number: 9.0,
             focal_length: 50.0,

@@ -4,6 +4,7 @@
 
 use super::App;
 use crate::dof::{self, FocusMode};
+use crate::ui;
 use aurora_render::{DepthOfField, Renderer};
 
 /// AURORA_DEMO_DOF=<f-number>:<focus distance m>[:debug]: the effect on,
@@ -156,6 +157,52 @@ impl App {
             });
         }
         Some(lens)
+    }
+}
+
+impl App {
+    /// "Show focus point" (FSFocusPointRender, LLPipeline::renderFocusPoint,
+    /// pipeline.cpp, originally LGPL 2.1): a crosshair on the point the lens
+    /// focuses on, yellow when it is free and red when it is locked, while
+    /// the depth of field is on. A difference: the Legacy Viewer draws 4 cm
+    /// axes in the world, which vanish a few metres away; this is a cross of
+    /// a fixed size on the screen. None in manual focus (a distance has no
+    /// point), in the viewfinder (its AF point is its own mark) and under
+    /// the Director's lens.
+    pub(super) fn draw_focus_point(&self, ctx: &egui::Context, p: &crate::theme::Palette, proj: &ui::hud::Projector) {
+        if !self.settings.dof.show_focus_point
+            || !self.in_world()
+            || self.pano_open()
+            || self.viewfinder_on()
+            || self.director_dof().is_some()
+        {
+            return;
+        }
+        let (s, manual) = if self.panels.snapshot {
+            self.settings.snapshot.dof.applied(&self.settings.dof)
+        } else {
+            (self.settings.dof.clone(), None)
+        };
+        if !s.enabled || manual.is_some() {
+            return;
+        }
+        let Some((c, _)) = self.dof_focus.point.and_then(|point| proj.project(point)) else {
+            return;
+        };
+        let color = if s.focus == FocusMode::Locked { p.danger } else { p.amber };
+        let painter = ui::hud::world_painter(ctx);
+        let arm = 7.0;
+        // a dark line under the coloured one keeps it visible on any sky
+        for (width, color) in [(3.0, p.navy.gamma_multiply(0.6)), (1.5, color)] {
+            painter.line_segment(
+                [c - egui::vec2(arm, 0.0), c + egui::vec2(arm, 0.0)],
+                egui::Stroke::new(width, color),
+            );
+            painter.line_segment(
+                [c - egui::vec2(0.0, arm), c + egui::vec2(0.0, arm)],
+                egui::Stroke::new(width, color),
+            );
+        }
     }
 }
 
