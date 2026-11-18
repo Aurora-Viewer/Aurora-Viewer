@@ -149,7 +149,12 @@ impl MediaManager {
             let Some((pos, rot, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let model = Mat4::from_scale_rotation_translation(o.scale, rot, pos);
+            // The drawn size, as the HUD picking builds its model
+            // (Scene::face_hit_in with world.visual_scale_at): a HUD resized
+            // locally (Ctrl + wheel) is drawn bigger or smaller on screen
+            // only, and the page under the cursor must follow that drawn
+            // size, not the simulator's (#4111).
+            let model = Mat4::from_scale_rotation_translation(world.visual_scale_at(idx, now), rot, pos);
             let Some(faces) = self.cpu_faces(world, scene, idx) else {
                 continue;
             };
@@ -246,6 +251,11 @@ impl MediaManager {
     /// Whether the prim `idx` shows prim media.
     pub fn has_media(&self, world: &World, idx: usize) -> bool {
         world.objects.get(idx).is_some_and(|o| self.objects.contains_key(&o.full_id))
+    }
+
+    /// The page pixel the last media mouse event went to (demo logs).
+    pub fn last_pixel(&self) -> Option<(i32, i32)> {
+        self.last_pixel
     }
 
     /// Left press in the world. Returns true when a media face took it.
@@ -721,5 +731,91 @@ mod tests {
             },
         );
         assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
+    }
+
+    #[test]
+    fn a_locally_resized_hud_keeps_its_media_under_the_cursor() {
+        let (mut world, mut scene, front, _) = crate::scene::picking::tests::scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        let idx = front;
+        let o = world.objects.get_mut(idx).unwrap();
+        o.parent_id = parent;
+        o.state = 31u8.rotate_left(4);
+        o.position = Vec3::ZERO;
+        o.rotation = glam::Quat::IDENTITY;
+        o.scale = Vec3::ONE;
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        let id = o.full_id;
+        let cache_key = o.visual_volume().cache_key() ^ (3u64 << 60);
+        let face = &mut Arc::make_mut(o.te.as_mut().expect("fixture texture entry")).faces[0];
+        face.color[3] = 1.0;
+        // identity texture transform: st is the face's uv
+        face.scale_s = 1.0;
+        face.scale_t = 1.0;
+        face.offset_s = 0.0;
+        face.offset_t = 0.0;
+        face.rotation = 0.0;
+        let mut media = MediaManager::default();
+        media.objects.insert(
+            id,
+            ObjMedia {
+                idx,
+                data: Some(ObjectMediaData {
+                    faces: vec![Some(MediaEntry {
+                        current_url: "https://example.invalid/media".into(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+                hud: true,
+                ..Default::default()
+            },
+        );
+        media.pick_cache.insert(
+            id,
+            (
+                cache_key,
+                Arc::new(vec![Some(CpuFace {
+                    positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
+                    uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                    indices: vec![0, 2, 1, 0, 3, 2],
+                })]),
+            ),
+        );
+        {
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.lod = 3;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        crate::scene::picking::tests::index_test_objects(&mut scene);
+        // Ctrl + wheel over the HUD: a local 200% resize, drawn only
+        world.hud_scales.set(id, 2.0);
+        world.dirty_hud(idx);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
+        let now = std::time::Instant::now();
+        let (pos, rot, _) = Scene::object_transform(&world, idx, now, 0).unwrap();
+        let drawn_scale = world.visual_scale_at(idx, now);
+        assert_eq!(drawn_scale, Vec3::splat(2.0));
+        // the screen cursor of the drawn point at texture uv (0.75, 0.25),
+        // and the ray the HUD pick casts through it
+        let local = Vec3::new(-0.5, -0.5 + 0.75, -0.5 + 0.25);
+        let drawn = pos + rot * (local * drawn_scale);
+        let view = scene.lists.hud_view.expect("the demo builds a HUD view");
+        let [cx, cy] = view.pixel(drawn);
+        let ray = view.ray(cx, cy);
+        let hit = media
+            .hit_test(&world, &scene, ray.0, ray.1, None, true, Some(idx))
+            .expect("the media face takes the HUD click");
+        assert!(
+            (hit.st - Vec2::new(0.75, 0.25)).length() < 1e-3,
+            "the resized HUD clicked st {:?} at the drawn uv (0.75, 0.25)",
+            hit.st
+        );
+        assert!((ray.0 + ray.1 * hit.t - drawn).length() < 1e-3);
     }
 }

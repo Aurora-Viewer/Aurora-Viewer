@@ -232,6 +232,7 @@ impl App {
     pub(super) fn demo_hud_drag_steps(&mut self) {
         self.demo_hud_view_zoom_steps();
         self.demo_hud_scale_steps();
+        self.demo_hud_media_scale_steps();
         if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode.starts_with("drag")) {
             return;
         }
@@ -407,6 +408,45 @@ impl App {
             self.build.deselect_all(&self.world);
             self.build.sync_hud_zoom(&mut self.world);
             log::info!("demo HUD view with empty selection: reset={}", self.world.hud_zoom == 1.0);
+        }
+    }
+
+    /// AURORA_DEMO_HUDS=media-scale: the `media` HUD, locally resized with
+    /// the HUD key + wheel at frame 720, then clicked at frames 880/900. The
+    /// page must get the click at the pixel under the cursor, as after any
+    /// local HUD resize (#4111).
+    fn demo_hud_media_scale_steps(&mut self) {
+        if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "media-scale") {
+            return;
+        }
+        let media_hud = self
+            .world
+            .objects
+            .iter()
+            .map(|(idx, _)| idx)
+            .find(|&idx| self.world.hud_root(idx).is_some() && self.media.has_media(&self.world, idx));
+        if self.frame_count == 720
+            && let (Some(idx), Some(view)) = (media_hud, self.scene.lists.hud_view)
+            && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+        {
+            self.cursor_pos = view.pixel(pos).into();
+            self.demo_hud_drag_key(true);
+            let handled = self.on_hud_scroll(5.0);
+            log::info!(
+                "demo HUD media-scale zoom: handled={handled}, scale={:.3}",
+                self.world.hud_scale(idx)
+            );
+        } else if self.frame_count == 840 {
+            self.demo_hud_drag_key(false);
+        } else if self.frame_count == 880 && media_hud.is_some() {
+            self.on_left_press();
+        } else if self.frame_count == 900 && media_hud.is_some() {
+            self.on_left_release();
+            log::info!(
+                "demo HUD media-scale click: focus={:?} pixel={:?}",
+                self.media.focus,
+                self.media.last_pixel()
+            );
         }
     }
 

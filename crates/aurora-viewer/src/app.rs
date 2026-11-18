@@ -24281,7 +24281,7 @@ impl ApplicationHandler for App {
                         o.click_action = crate::interaction::code::IGNORE;
                     }
                 }
-                if mode == "media" {
+                if matches!(mode.as_str(), "media" | "media-scale") {
                     let item = self.demo_hud_media(crate::demo::demo_media_page());
                     self.demo_worn_item(item, self.world.agent_id);
                 }
