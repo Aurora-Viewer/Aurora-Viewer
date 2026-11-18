@@ -41,7 +41,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample {
         title: "★彡 ♛ Queen ♛ 彡★",
         display_name: "꧁༺ Ⓝⓞⓥⓐ ༻꧂",
-        chat: "Symbols: ░▒▓█ ╔═╗ → ⇒ ➳ ✞ ☠ ⚡ ⎝⎠ ◆ ⠁⠃ ①② ⅓ ™ ∞ ✿ ❀ ♪",
+        chat: "Symbols: ░▒▓█ ╔═╗ → ⇒ ➳ ♱ ♰ ✞ ☠ ⚡ ⎝⎠ ◆ ⠁⠃ ①② ⅓ ™ ∞ ✿ ❀ ♪",
     },
     // already drawn by the embedded fonts: must not change
     Sample {
@@ -61,8 +61,8 @@ pub const SAMPLES: &[Sample] = &[
     },
     Sample {
         title: "ᗩᑌᖇOᖇᗩ ᏔᎾᏞᎰ",
-        display_name: "ᴀᴜʀᴏʀᴀ ωσℓƒ ツ",
-        chat: "Other scripts: नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
+        display_name: "ᴀᴜʀᴏʀᴀ ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ ᴥ",
+        chat: "Other scripts: ಠ ୨୧ অ અ ਅ അ అ අ · 𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ · नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
     },
     Sample {
         title: "🐺 Wolf Pack 🌙",
