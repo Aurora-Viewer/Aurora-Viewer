@@ -701,3 +701,94 @@ fn profile_photo_controls_change_ratio_and_use_full_dimensions_for_native_pixels
         "photos are not inventory cargo"
     );
 }
+
+#[test]
+fn invite_to_group_works_in_both_profile_styles_and_is_hidden_on_own_profile() {
+    let find_shape = |output: &egui::FullOutput, find: &dyn Fn(&egui::Shape) -> Option<Rect>| -> Option<Rect> {
+        fn visit(shape: &egui::Shape, find: &dyn Fn(&egui::Shape) -> Option<Rect>) -> Option<Rect> {
+            find(shape).or_else(|| match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| visit(s, find)),
+                _ => None,
+            })
+        }
+        output.shapes.iter().find_map(|s| visit(&s.shape, find))
+    };
+    let text_rect = |output: &egui::FullOutput, target: &str| {
+        find_shape(output, &|shape| match shape {
+            egui::Shape::Text(text) if text.galley.text() == target => Some(text.galley.rect.translate(text.pos.to_vec2())),
+            _ => None,
+        })
+    };
+    let click = |f: &mut PhotoFixture, point: Pos2| {
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(
+                f.frame_actions(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ])
+                .1,
+            );
+        }
+        actions
+    };
+    for (classic, compact) in [(false, false), (false, true), (true, false)] {
+        let mut f = PhotoFixture::new(classic, compact);
+        f.profiles.windows[0].tab = TAB_SL;
+        let out = f.settle();
+        let target = if classic {
+            if let Some(t) = crate::ui::icons::global("users-plus") {
+                let tex = t.id();
+                find_shape(&out, &|shape| match shape {
+                    egui::Shape::Mesh(m) if m.texture_id == tex => Some(m.calc_bounds()),
+                    _ => None,
+                })
+                .expect("classic invite button")
+            } else {
+                text_rect(&out, "users-plus").expect("classic invite fallback icon")
+            }
+        } else {
+            let label = text_rect(&out, aurora_i18n::tr!("ui-profile-aurora-invite")).expect("aurora invite link");
+            // its leading user-plus icon is clickable too
+            let icon_point = Pos2::new(label.left() - 9.0, label.center().y);
+            let icon_actions = click(&mut f, icon_point);
+            assert!(
+                matches!(&icon_actions[..], [ProfileAction::InviteToGroup(id)] if *id == f.id),
+                "classic {classic}, compact {compact}: icon click ({})",
+                icon_actions.len()
+            );
+            f.time += 1.0;
+            label
+        };
+        let actions = click(&mut f, target.center());
+        assert!(
+            matches!(&actions[..], [ProfileAction::InviteToGroup(id)] if *id == f.id),
+            "classic {classic}, compact {compact}"
+        );
+
+        // own profile: no Invite link or button
+        f.world.agent_id = f.id;
+        f.world.social.friends.clear();
+        let out = f.settle();
+        if classic {
+            assert!(text_rect(&out, "users-plus").is_none());
+            if let Some(t) = crate::ui::icons::global("users-plus") {
+                let tex = t.id();
+                assert!(
+                    find_shape(&out, &|shape| match shape {
+                        egui::Shape::Mesh(m) if m.texture_id == tex => Some(m.calc_bounds()),
+                        _ => None,
+                    })
+                    .is_none()
+                );
+            }
+        } else {
+            assert!(text_rect(&out, aurora_i18n::tr!("ui-profile-aurora-invite")).is_none());
+        }
+    }
+}

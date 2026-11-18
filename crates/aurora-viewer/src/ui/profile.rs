@@ -79,6 +79,9 @@ pub enum ProfileAction {
     },
     /// Chat of one of our groups (double-click in the group list).
     GroupChat(Uuid),
+    /// "Invite to group" (LLAvatarActions::inviteToGroup,
+    /// indra/newview/llavataractions.cpp): group picker then invitation.
+    InviteToGroup(Uuid),
     /// Picks and classifieds: "Show on map" / "Teleport"
     /// (LLFloaterWorldMap::trackLocation, gAgent.teleportViaLocation).
     ShowOnMap(DVec3),
@@ -1516,13 +1519,9 @@ fn second_life_tab(
                 if !own {
                     ui.horizontal(|ui| {
                         ui.add_space(LABEL_W - 22.0);
-                        widgets::icon_button(
-                            ui,
-                            p,
-                            "users-plus",
-                            aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"),
-                            false,
-                        );
+                        if widgets::icon_button(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"), true) {
+                            actions.push(ProfileAction::InviteToGroup(id));
+                        }
                     });
                 }
             });

@@ -53,11 +53,14 @@ pub struct InviteUi {
 }
 
 /// LLFloaterGroupPicker as LLAvatarActions::inviteToGroup opens it: the
-/// residents to invite, and the group selected in the list.
+/// residents to invite, an optional name filter, and the group selected in the
+/// list.
 struct GroupChoice {
     invitees: Vec<Uuid>,
+    filter: String,
     selected: Option<Uuid>,
     raise: bool,
+    focus: bool,
 }
 
 /// init_group_list with GP_MEMBER_INVITE and without "none"
@@ -93,8 +96,10 @@ impl InviteUi {
     pub fn choose_group(&mut self, invitees: Vec<Uuid>) {
         self.choice = Some(GroupChoice {
             invitees,
+            filter: String::new(),
             selected: None,
             raise: true,
+            focus: true,
         });
     }
 
@@ -147,18 +152,19 @@ impl InviteUi {
         if choice.selected.is_some_and(|s| !groups.iter().any(|g| g.id == s)) {
             choice.selected = None;
         }
-        let size = Vec2::new(300.0, 320.0);
+        let size = Vec2::new(300.0, 350.0);
         let screen = ctx.content_rect();
         let mut open = true;
         let mut ok = false;
         let mut cancel = false;
+        let mut visible_selected = None;
         let mut floater = Floater::new(
             CHOICE,
             aurora_i18n::tr!("ui-context-invite-to-group"),
             screen.center() - size * 0.5,
             size,
         );
-        floater.min_size = Vec2::new(240.0, 220.0);
+        floater.min_size = Vec2::new(240.0, 240.0);
         floater.show(ctx, p, &mut open, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(
@@ -166,6 +172,15 @@ impl InviteUi {
                     .size(12.5)
                     .color(p.muted),
             );
+            // in a row: the field's own layout would otherwise take the window's height
+            let width = ui.available_width();
+            let search = ui
+                .horizontal(|ui| widgets::clearable_search_box(ui, p, &mut choice.filter, aurora_i18n::tr!("people-groups-filter"), width))
+                .inner;
+            if std::mem::take(&mut choice.focus) && !groups.is_empty() {
+                search.request_focus();
+            }
+            let plan = crate::world::groups::plan_group_list(&groups, &choice.filter, |g| &g.name);
             let list_h = (ui.available_height() - 44.0).max(80.0);
             egui::Frame::new()
                 .fill(p.field)
@@ -181,16 +196,32 @@ impl InviteUi {
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             if groups.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(aurora_i18n::tr!("ui-group-invite-pick-none"))
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(aurora_i18n::tr!("ui-group-invite-pick-none"))
+                                            .size(12.5)
+                                            .color(p.muted_dim),
+                                    )
+                                    .wrap(),
+                                );
+                            } else if let Some(query) = &plan.no_match {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(aurora_i18n::tr!(
+                                            "ui-contacts-no-group-containing-was-found",
+                                            value0 = query.clone()
+                                        ))
                                         .size(12.5)
                                         .color(p.muted_dim),
+                                    )
+                                    .wrap(),
                                 );
                             }
                             let radius = ui.visuals().widgets.inactive.corner_radius;
-                            for g in &groups {
+                            for g in &plan.items {
                                 let (row, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
                                 let selected = choice.selected == Some(g.id);
+                                widgets::reveal_search_selection(ui, &r, selected);
                                 if selected {
                                     ui.painter().rect_filled(row, radius, p.violet.gamma_multiply(0.35));
                                 } else if r.hovered() {
@@ -219,10 +250,11 @@ impl InviteUi {
                             }
                         });
                 });
+            visible_selected = choice.selected.filter(|s| plan.items.iter().any(|g| g.id == *s));
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let size = Vec2::new(0.0, 28.0);
-                let chosen = choice.selected.is_some();
+                let chosen = visible_selected.is_some();
                 if widgets::action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, chosen).clicked() {
                     ok = true;
                 }
@@ -231,10 +263,9 @@ impl InviteUi {
                 }
             });
         });
-        // onBtnOK: the selected group (none selected: nothing, as
+        // onBtnOK: the selected visible group (none selected: nothing, as
         // showForGroup refuses a null group)
-        let selected = choice.selected;
-        if ok && let Some(group) = selected {
+        if ok && let Some(group) = visible_selected {
             if let Some(choice) = self.choice.take() {
                 self.invite_into(group, choice.invitees);
             }
@@ -515,7 +546,7 @@ impl InviteUi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aurora_net::GroupMembership;
+    use aurora_net::{GroupMembership, NetEvent};
 
     fn group(n: u128, name: &str, powers: u64) -> GroupMembership {
         GroupMembership {
@@ -527,6 +558,99 @@ mod tests {
             list_in_profile: true,
             contribution: 0,
         }
+    }
+
+    fn world_with_groups(list: Vec<GroupMembership>) -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.apply(NetEvent::Groups(list));
+        world
+    }
+
+    fn collect_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.galley.rect.translate(t.pos.to_vec2()))),
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    collect_texts(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn run_picker(
+        ui: &mut InviteUi,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &World,
+        time: &mut f64,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, Rect)>, Option<Rect>) {
+        *time += 1.0 / 60.0;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(*time),
+                events,
+                ..Default::default()
+            },
+            |u| ui.group_picker(u.ctx(), p, world),
+        );
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            collect_texts(&clipped.shape, &mut texts);
+        }
+        let clear_label = aurora_i18n::tr!("common-clear");
+        let clear_rect = output.platform_output.accesskit_update.and_then(|u| {
+            u.nodes.into_iter().find_map(|(_, node)| {
+                if node.label().is_some_and(|l| l == clear_label) {
+                    node.bounds()
+                        .map(|b| Rect::from_min_max(Pos2::new(b.x0 as f32, b.y0 as f32), Pos2::new(b.x1 as f32, b.y1 as f32)))
+                } else {
+                    None
+                }
+            })
+        });
+        (texts, clear_rect)
+    }
+
+    fn settle_picker(
+        ui: &mut InviteUi,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &World,
+        time: &mut f64,
+    ) -> (Vec<(String, Rect)>, Option<Rect>) {
+        for _ in 0..5 {
+            run_picker(ui, ctx, p, world, time, Vec::new());
+        }
+        run_picker(ui, ctx, p, world, time, Vec::new())
+    }
+
+    fn click_at(
+        ui: &mut InviteUi,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &World,
+        time: &mut f64,
+        pos: Pos2,
+    ) -> (Vec<(String, Rect)>, Option<Rect>) {
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let res = run_picker(ui, ctx, p, world, time, events);
+            if !pressed {
+                return res;
+            }
+        }
+        unreachable!()
     }
 
     #[test]
@@ -560,5 +684,92 @@ mod tests {
         ui.choose_group(vec![b]);
         ui.demo_choose(h);
         assert_eq!((ui.target(), ui.invitees.as_slice()), (Some(h), [b].as_slice()));
+    }
+
+    #[test]
+    fn group_picker_search_filters_and_guards_hidden_selection() {
+        let invite = groups::powers::MEMBER_INVITE;
+        let builders = Uuid::from_u128(1);
+        let club = Uuid::from_u128(2);
+        let resident = Uuid::from_u128(42);
+        let world = world_with_groups(vec![
+            group(1, "Aurora Builders", invite),
+            group(2, "Fireflies Club", invite),
+            group(3, "No Invite Rights", groups::powers::NOTICES_RECEIVE),
+        ]);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut time = 0.0;
+        let find = |texts: &[(String, Rect)], needle: &str| -> Rect {
+            texts
+                .iter()
+                .find(|(t, _)| t == needle)
+                .unwrap_or_else(|| panic!("missing text {needle:?} in {texts:?}"))
+                .1
+        };
+
+        // Typing immediately upon open filters without clicking the search box first.
+        let mut ui = InviteUi::default();
+        ui.choose_group(vec![resident]);
+        settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        run_picker(&mut ui, &ctx, &p, &world, &mut time, vec![egui::Event::Text("club".into())]);
+        let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        assert!(texts.iter().any(|(t, _)| t == "Fireflies Club"));
+        assert!(!texts.iter().any(|(t, _)| t == "Aurora Builders"));
+        let club_rect = find(&texts, "Fireflies Club");
+        click_at(&mut ui, &ctx, &p, &world, &mut time, club_rect.center());
+        assert_eq!(ui.choice.as_ref().expect("choice").selected, Some(club));
+        let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
+        click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
+        assert_eq!(ui.target(), Some(club));
+        assert_eq!(ui.invitees, [resident]);
+
+        // Filtering out a selected group disables OK until the filter is cleared.
+        let mut ui = InviteUi::default();
+        ui.choose_group(vec![resident]);
+        let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        assert!(!texts.iter().any(|(t, _)| t == "No Invite Rights"));
+        let search_rect = find(&texts, aurora_i18n::tr!("people-groups-filter"));
+        let builders_rect = find(&texts, "Aurora Builders");
+        click_at(&mut ui, &ctx, &p, &world, &mut time, builders_rect.center());
+        assert_eq!(ui.choice.as_ref().expect("choice").selected, Some(builders));
+        click_at(&mut ui, &ctx, &p, &world, &mut time, search_rect.center());
+        run_picker(&mut ui, &ctx, &p, &world, &mut time, vec![egui::Event::Text("zzz".into())]);
+        let (texts, clear_rect) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        assert!(!texts.iter().any(|(t, _)| t == "Aurora Builders"));
+        assert!(
+            texts
+                .iter()
+                .any(|(t, _)| *t == aurora_i18n::tr!("ui-contacts-no-group-containing-was-found", value0 = "zzz"))
+        );
+        let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
+        click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
+        assert_eq!(ui.target(), None);
+
+        // Clearing the search restores the selected group and re-enables OK.
+        let clear = clear_rect.expect("clear button");
+        click_at(&mut ui, &ctx, &p, &world, &mut time, clear.center());
+        let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        assert!(texts.iter().any(|(t, _)| t == "Aurora Builders"));
+        let ok_rect = find(&texts, aurora_i18n::tr!("common-ok"));
+        click_at(&mut ui, &ctx, &p, &world, &mut time, ok_rect.center());
+        assert_eq!(ui.target(), Some(builders));
+    }
+
+    #[test]
+    fn group_picker_with_no_invitable_groups_keeps_no_groups_message() {
+        let world = world_with_groups(vec![group(1, "No Invite Rights", groups::powers::NOTICES_RECEIVE)]);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut time = 0.0;
+        let mut ui = InviteUi::default();
+        ui.choose_group(vec![Uuid::from_u128(42)]);
+        let (texts, _) = settle_picker(&mut ui, &ctx, &p, &world, &mut time);
+        assert!(texts.iter().any(|(t, _)| t == aurora_i18n::tr!("ui-group-invite-pick-none")));
     }
 }

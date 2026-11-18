@@ -1458,12 +1458,11 @@ fn tab_dropdown(ui: &mut egui::Ui, env: &Env, w: &mut Window, own: bool) {
     }
 }
 
-/// The link at the right of a card's head; `waiting` greys it out with
-/// that tooltip (a feature not ported yet).
+/// The link at the right of a card's head; `tip` explains it on hover.
 struct Link<'a> {
     text: &'a str,
     icon: Option<&'a str>,
-    waiting: Option<&'a str>,
+    tip: Option<&'a str>,
 }
 
 impl<'a> Link<'a> {
@@ -1471,7 +1470,7 @@ impl<'a> Link<'a> {
         Link {
             text,
             icon: None,
-            waiting: None,
+            tip: None,
         }
     }
 }
@@ -1510,30 +1509,36 @@ fn card(
                     if let Some(link) = link {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
-                            let color = if link.waiting.is_some() { p.muted_dim } else { p.violet_light };
-                            let sense = if link.waiting.is_some() { Sense::hover() } else { Sense::click() };
+                            let color = p.violet_light;
                             // right to left: a chevron after the text, a
                             // leading icon before it
                             let trailing = link.icon == Some("chevron-right");
                             let icon = |ui: &mut egui::Ui| {
-                                if let Some(icon) = link.icon {
-                                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+                                link.icon.is_some_and(|icon| {
+                                    let (rect, mut r) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::click());
                                     paint_icon(ui, icon, rect.center(), 12.0, color);
-                                }
+                                    r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if let Some(tip) = link.tip {
+                                        r = r.on_hover_text(tip);
+                                    }
+                                    r.clicked()
+                                })
                             };
+                            let mut hit = false;
                             if trailing {
-                                icon(ui);
+                                hit |= icon(ui);
                             }
-                            let mut r =
-                                ui.add(egui::Label::new(RichText::new(link.text).font(semibold(ui, 11.5)).color(color)).sense(sense));
+                            let mut r = ui
+                                .add(egui::Label::new(RichText::new(link.text).font(semibold(ui, 11.5)).color(color)).sense(Sense::click()))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if let Some(tip) = link.tip {
+                                r = r.on_hover_text(tip);
+                            }
+                            hit |= r.clicked();
                             if !trailing {
-                                icon(ui);
+                                hit |= icon(ui);
                             }
-                            r = match link.waiting {
-                                Some(tip) => r.on_hover_text(tip),
-                                None => r.on_hover_cursor(egui::CursorIcon::PointingHand),
-                            };
-                            clicked = r.clicked() && link.waiting.is_none();
+                            clicked = hit;
                         });
                     }
                 });
@@ -1942,13 +1947,12 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
         return;
     }
     let title = aurora_i18n::tr!("ui-profile-aurora-groups", count = pr.groups.len() as i64);
-    // inviting to a group is not ported yet: the link waits greyed
     let invite = (!own).then(|| Link {
         text: aurora_i18n::tr!("ui-profile-aurora-invite"),
         icon: Some("user-plus"),
-        waiting: Some(aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon")),
+        tip: Some(aurora_i18n::tr!("ui-context-invite-to-group")),
     });
-    card(ui, p, Some(("users-group", &title)), invite, false, |ui| {
+    if card(ui, p, Some(("users-group", &title)), invite, false, |ui| {
         if pr.groups.is_empty() {
             ui.label(RichText::new(aurora_i18n::tr!("common-none")).size(12.5).color(p.muted));
             return;
@@ -2000,7 +2004,11 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
                 group_profile::request_open(ui.ctx(), g.id);
             }
         }
-    });
+    }) {
+        // LLPanelProfile::onCommitMenu ("invite_to_group") /
+        // LLAvatarActions::inviteToGroup (indra/newview/llpanelprofile.cpp)
+        env.actions.push(ProfileAction::InviteToGroup(w.id));
+    }
 }
 
 /// Our private notes on someone, a click away from the Notes tab.
