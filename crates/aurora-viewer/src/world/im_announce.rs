@@ -32,11 +32,17 @@ impl World {
         if !im.from_name.is_empty() {
             self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
         }
-        let name = self.social.avatar_names.complete(&from).unwrap_or_else(|| im.from_name.clone());
+        let name = self
+            .social
+            .avatar_names
+            .complete_in(super::names::NameScope::Roster, &from)
+            .unwrap_or_else(|| im.from_name.clone());
         self.im_messages.push(ImMessage {
             kind: ImKind::Private,
             session: from,
             new_session: true,
+            // the announcement carries no text of theirs yet
+            mention: false,
         });
         self.social.session_mut(from);
         let line = ChatLine {
@@ -46,6 +52,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         log::info!("incoming IM announced (the sender started typing)");
         self.conversation_card(from, line);

@@ -380,9 +380,16 @@ mod tests {
                                 );
                             } else {
                                 let shown = ui.scope(|ui| match &target {
-                                    super::super::Link::Agent(id) => {
-                                        super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0, false.into())
-                                    }
+                                    super::super::Link::Agent(id) => super::super::agent_link(
+                                        ui,
+                                        &p,
+                                        &world,
+                                        crate::world::names::NameScope::World,
+                                        *id,
+                                        "Resident",
+                                        14.0,
+                                        false.into(),
+                                    ),
                                     super::super::Link::App(url, action) => link(ui, &p, &world, url, action, "Resident", 14.0),
                                     _ => unreachable!(),
                                 });

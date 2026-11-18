@@ -29,6 +29,8 @@ const VERSION: u32 = 1;
 const THIS_PC: &[&str] = &[
     "username",
     "remember_username",
+    // the proxies of this PC's network (Preferences › Network › Proxy)
+    "proxy",
     "last_login",
     "remember_password",
     "grid",
@@ -56,6 +58,8 @@ const THIS_PC_NESTED: &[(&str, &[&str])] = &[("audio", THIS_PC_AUDIO), ("gifs", 
 pub(super) fn is_this_pc(key: &str) -> bool {
     match key.split_once('.') {
         None => THIS_PC.contains(&key),
+        // a section of THIS_PC is this PC's with all its settings
+        Some((section, _)) if THIS_PC.contains(&section) => true,
         Some((section, inner)) => THIS_PC_NESTED.iter().any(|(name, keys)| *name == section && keys.contains(&inner)),
     }
 }

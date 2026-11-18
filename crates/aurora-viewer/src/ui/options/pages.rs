@@ -20,6 +20,7 @@ pub mod media;
 pub mod network;
 pub mod privacy;
 pub mod protections;
+pub mod proxy;
 pub mod rlva;
 pub mod shortcuts;
 pub mod sound;

@@ -2,7 +2,7 @@
 //! FSAreaSearch::findObjects / processRequestQueue / requestObjectProperties
 //! (indra/newview/fsareasearch.cpp). Avatars are excluded; attachments are opt-in.
 use super::*;
-use crate::ui::area_search::{Action, Row};
+use crate::ui::area_search::{Action, MenuLocks, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
 use aurora_net::build::{BuildCmd, ObjectProps};
 use rayon::prelude::*;
@@ -15,6 +15,51 @@ const IN_FLIGHT: usize = PACKET * 3;
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Between two touches of the menu's selection (FSAreaSearchTouchTimer).
 const TOUCH_SPACING: Duration = Duration::from_millis(200);
+
+/// What RLVa hides of the right-click menu opened on the rows `ids`:
+/// FSPanelAreaSearchList::onContextMenuItemVisibleRLV (indra/newview/
+/// fsareasearch.cpp). Nothing with RLVa off, everything under @interact or
+/// for a row whose object is gone; otherwise each word is refused as soon
+/// as one row's object refuses it, with the checks the actions themselves
+/// meet when sent: a touch and a sit without a picked point, a teleport to
+/// where the object is.
+fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
+    if !world.rlva.enabled() {
+        return MenuLocks::default();
+    }
+    if world.rlva.has("interact") {
+        return MenuLocks::ALL;
+    }
+    // RlvActions::canBuyObject: @buy, whatever the object
+    let mut locks = MenuLocks {
+        buy: world.rlva.has("buy"),
+        ..MenuLocks::default()
+    };
+    for id in ids {
+        let Some((idx, o)) = world.objects.index_of_uuid(id).and_then(|i| Some((i, world.objects.get(i)?))) else {
+            return MenuLocks::ALL;
+        };
+        locks.touch |= !world.rlva_can_touch(o.key.region, o.key.local_id);
+        locks.edit |= !world.rlva_can_edit(idx);
+        locks.delete |= !world.rlva_can_delete_or_return(idx);
+        locks.sit |= !world.rlva_allows_command(
+            &NetCommand::RequestSit {
+                handle: o.key.region,
+                target: *id,
+                offset: Vec3::ZERO,
+            },
+            Uuid::nil(),
+        );
+        locks.teleport |= !Scene::object_transform(world, idx, now, 0).is_some_and(|xf| {
+            let (x, y) = crate::ui::minimap::to_global(world, xf.0);
+            world.rlva_can_teleport_global(glam::DVec3::new(x, y, f64::from(xf.0.z)))
+        });
+        if locks == MenuLocks::ALL {
+            break;
+        }
+    }
+    locks
+}
 
 #[derive(Default)]
 pub(super) struct Feed {
@@ -320,9 +365,11 @@ impl App {
         }
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
         let draw_distance = self.settings.draw_distance;
+        let world = &self.world;
+        let locks = |ids: &[Uuid]| menu_locks(world, ids, now);
         if let Some(action) = self
             .area_search_ui
-            .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance)
+            .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance, &locks)
         {
             self.area_search_action(action, now);
         }
@@ -864,5 +911,76 @@ mod tests {
         assert!(placement(&store, &Object::from_update(1, update(16, 14, Vec3::ZERO))).is_none());
         let local = Object::from_update(crate::world::objects::PREVIEW_REGION, update(17, 0, Vec3::ZERO));
         assert!(placement(&store, &local).is_none());
+    }
+
+    /// The demo world with RLVa on and a prim 1 m from the agent.
+    fn rlva_world() -> (World, Uuid) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let id = crate::demo::action_id(35_000);
+        let mut prim = crate::demo::action_avatar(false);
+        prim.local_id = 35_000;
+        prim.full_id = id;
+        prim.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        prim.parent_id = 0;
+        prim.position = Vec3::new(100.0, 120.0, 30.0);
+        prim.name_values.clear();
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![prim],
+        });
+        world.agent.position = Vec3::new(100.0, 121.0, 30.0);
+        world.rlva.configure(true);
+        (world, id)
+    }
+
+    fn restrict(world: &mut World, text: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: text.to_owned(),
+        }));
+    }
+
+    #[test]
+    fn area_search_menu_locks_follow_the_rlva_rule_of_each_word() {
+        let now = Instant::now();
+        let one = |f: fn(&mut MenuLocks)| {
+            let mut locks = MenuLocks::default();
+            f(&mut locks);
+            locks
+        };
+        for (restriction, expected) in [
+            ("@touchall=n", one(|l| l.touch = true)),
+            ("@touchworld=n", one(|l| l.touch = true)),
+            ("@sit=n", one(|l| l.sit = true)),
+            ("@buy=n", one(|l| l.buy = true)),
+            ("@interact=n", MenuLocks::ALL),
+        ] {
+            let (mut world, id) = rlva_world();
+            assert_eq!(menu_locks(&world, &[id], now), MenuLocks::default(), "nothing refused yet");
+            restrict(&mut world, restriction);
+            assert_eq!(menu_locks(&world, &[id], now), expected, "{restriction}");
+            // the preference off: no entry is hidden
+            world.rlva.configure(false);
+            assert_eq!(menu_locks(&world, &[id], now), MenuLocks::default(), "{restriction}, RLVa off");
+        }
+        // @fartouch: the object's own place is measured (no picked point),
+        // for the touch as for the sit
+        let (mut world, id) = rlva_world();
+        restrict(&mut world, "@fartouch:0.5=n");
+        let far = menu_locks(&world, &[id], now);
+        assert!(far.touch && far.sit && !far.buy, "{far:?}");
+        // a row whose object is gone hides every checked entry
+        let (world, id) = rlva_world();
+        assert_eq!(menu_locks(&world, &[id, Uuid::from_u128(77)], now), MenuLocks::ALL);
     }
 }

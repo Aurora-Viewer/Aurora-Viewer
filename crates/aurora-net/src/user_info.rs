@@ -258,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_capability_is_read_and_written_and_its_errors_kept_apart() {
-        let http = reqwest::Client::new();
+        let http = crate::test_http_client();
         let info = llsd_map! { "success" => true, "directory_visibility" => "default", "email" => "a@example.com" };
         let (url, server) = serve_once("200 OK", info).await;
         let got = fetch(&http, &url).await.expect("info");

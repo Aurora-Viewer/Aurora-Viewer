@@ -22,6 +22,7 @@ use super::web_view::WebView;
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::profiles::{self, Online};
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::profile::location_text;
@@ -126,6 +127,7 @@ impl Edit {
 struct PickEdit {
     /// Nil for a pick being created.
     id: Uuid,
+    parcel: Uuid,
     name: String,
     desc: String,
     snapshot: Uuid,
@@ -165,6 +167,12 @@ struct Publish {
 
 struct Window {
     id: Uuid,
+    /// Where the profile was asked from, for RLVa's `@shownames`: opened
+    /// from a list of people known besides the world (`NameScope::Roster`)
+    /// it names its resident as that list does, the Legacy Viewer's profile
+    /// having no test of its own (LLPanelProfileSecondLife); opened from the
+    /// world it stays closed to a hidden name.
+    scope: NameScope,
     open: bool,
     tab: usize,
     about: Edit,
@@ -211,10 +219,26 @@ struct Window {
     demo_photo: Option<(PictureSlot, bool)>,
 }
 
+enum CloseChoice {
+    Save,
+    Ignore,
+    Cancel,
+}
+
 impl Window {
+    fn answer_close(&mut self, choice: CloseChoice, actions: &mut Vec<ProfileAction>) {
+        match choice {
+            CloseChoice::Save if !save_all(self, actions) => return,
+            CloseChoice::Save | CloseChoice::Ignore => self.open = false,
+            CloseChoice::Cancel => {}
+        }
+        self.confirm_close = false;
+    }
+
     fn new(id: Uuid) -> Window {
         Window {
             id,
+            scope: NameScope::World,
             open: true,
             tab: TAB_SL,
             about: Edit::default(),
@@ -241,6 +265,102 @@ impl Window {
             notes_saved: false,
             demo_classified: None,
             demo_photo: None,
+        }
+    }
+
+    /// A new pick or an explicit relocation asks the simulator for the parcel
+    /// it chose for those coordinates. A content-only save keeps that parcel.
+    fn save_pick(&mut self, actions: &mut Vec<ProfileAction>) -> bool {
+        if self.pick_save_waits() {
+            return false;
+        }
+        let Some((edit, base)) = &mut self.pick_edit else {
+            return true;
+        };
+        if edit == base {
+            return true;
+        }
+        let refresh = edit.id.is_nil() || edit.location.is_some();
+        let pick = pick_of(edit);
+        let id = pick.id;
+        edit.id = id;
+        edit.location = None;
+        *base = edit.clone();
+        self.pick_sel = Some(id);
+        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
+        if refresh {
+            self.asked.remove(&id);
+            self.ask(
+                id,
+                NetCommand::PickInfoRequest {
+                    creator: self.id,
+                    pick: id,
+                },
+                actions,
+            );
+        }
+        true
+    }
+
+    fn pick_save_waits(&self) -> bool {
+        self.pick_edit
+            .as_ref()
+            .is_some_and(|(e, base)| e != base && !e.id.is_nil() && e.location.is_none() && e.parcel.is_nil())
+    }
+
+    fn pick_wait_notice(&self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
+        if self.id != world.agent_id || (self.tab != TAB_PICKS && !self.pick_save_waits()) {
+            return;
+        }
+        let Some(id) = self.pick_edit.as_ref().map(|(e, _)| e.id).or(self.pick_sel) else {
+            return;
+        };
+        let Some(wait) = world.profiles.pick_retry_in(self.id, id, std::time::Instant::now()) else {
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(aurora_i18n::tr!("voice-waiting-for-parcel"));
+            if wait.is_zero() {
+                if flat_button(ui, p, aurora_i18n::tr!("script-retry")).clicked() {
+                    actions.push(ProfileAction::Net(NetCommand::PickInfoRequest {
+                        creator: self.id,
+                        pick: id,
+                    }));
+                }
+            } else {
+                ui.ctx().request_repaint_after(wait);
+            }
+        });
+    }
+
+    /// Both styles edit a copy of the server's pick. A reply can resolve the
+    /// parcel while a name, description or picture is already being edited.
+    fn follow_pick(&mut self, info: &PickInfo) {
+        if let Some((edit, base)) = &mut self.pick_edit
+            && edit.id == info.id
+            && edit != base
+        {
+            // The simulator can also adjust the saved coordinates. A local
+            // Set Location remains the draft until Save or Cancel.
+            base.pos = info.pos_global;
+            base.parcel = info.parcel;
+            if edit.location.is_none() {
+                edit.pos = info.pos_global;
+                edit.parcel = info.parcel;
+            }
+            return;
+        }
+        let server = PickEdit {
+            id: info.id,
+            parcel: info.parcel,
+            name: info.name.clone(),
+            desc: info.desc.clone(),
+            snapshot: info.snapshot,
+            pos: info.pos_global,
+            location: None,
+        };
+        if self.pick_edit.as_ref().is_none_or(|(_, base)| *base != server) {
+            self.pick_edit = Some((server.clone(), server));
         }
     }
 
@@ -356,20 +476,40 @@ impl ProfileUi {
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {
-        if id.is_nil() || !world.rlva_can_name(id) {
+        self.open_in(world, NameScope::World, id);
+    }
+
+    /// `open` from a place that shows names in `scope`: nothing opens from
+    /// a name that place hides (the Legacy Viewer disables the entry or
+    /// links an `rlvanonym` name, RlvActions::canShowName).
+    pub fn open_in(&mut self, world: &mut World, scope: NameScope, id: Uuid) {
+        if id.is_nil() || !world.rlva_shows_name(scope, id) {
             return;
         }
         world.profiles.refresh(id);
         world.social.want_name(id);
         match self.windows.iter_mut().find(|w| w.id == id) {
             Some(w) => {
+                if scope == NameScope::Roster {
+                    w.scope = scope;
+                }
                 w.open = true;
                 w.raise = true;
                 w.asked.clear();
                 w.classifieds_asked = false;
             }
-            None => self.windows.push(Window::new(id)),
+            None => {
+                let mut window = Window::new(id);
+                window.scope = scope;
+                self.windows.push(window);
+            }
         }
+    }
+
+    /// The windows open and the place each one names its resident from.
+    #[cfg(test)]
+    pub(crate) fn opened(&self) -> Vec<(Uuid, NameScope)> {
+        self.windows.iter().filter(|w| w.open).map(|w| (w.id, w.scope)).collect()
     }
 
     /// The toolbar's Profile (Avatar.ToggleMyProfile, llviewermenu.cpp): our
@@ -520,8 +660,21 @@ impl ProfileUi {
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
-            if !world.rlva_can_name(w.id) {
+            if !world.rlva_shows_name(w.scope, w.id) {
                 continue;
+            }
+            // Done and the close confirmation also work from other tabs. Merge
+            // the parcel into an existing draft before either style draws its buttons.
+            if w.id == world.agent_id
+                && w.pick_save_waits()
+                && let Some((edit, _)) = &w.pick_edit
+                && let Some(info) = world
+                    .profiles
+                    .picks
+                    .get(&edit.id)
+                    .filter(|p| p.creator == w.id && !p.parcel.is_nil())
+            {
+                w.follow_pick(info);
             }
             if !classic {
                 let profile = world.profiles.get(&w.id);
@@ -575,7 +728,7 @@ impl ProfileUi {
             if std::mem::take(&mut w.raise) {
                 widgets::expand_floater(ctx, &win_id);
             }
-            let name = world.social.name_of(&w.id);
+            let name = world.social.name_in(w.scope, &w.id);
             world.social.avatar_names.want(&w.id);
             // floater_profile.xml: 485 x 510 (480 x 510 at least), centered
             let size = Vec2::new(540.0, 650.0);
@@ -585,6 +738,7 @@ impl ProfileUi {
             floater.min_size = Vec2::new(500.0, 580.0);
             let own = w.id == world.agent_id;
             let shown = floater.show(ctx, p, &mut open, |ui| {
+                w.pick_wait_notice(ui, p, world, &mut actions);
                 if w.confirm_close {
                     unsaved_bar(ui, p, w, &mut actions);
                     ui.add_space(4.0);
@@ -759,7 +913,7 @@ fn photo_window(
     window: &mut Window,
 ) {
     let Some(photo) = &mut window.photo else { return };
-    let name = aurora::display_name(world, &window.id);
+    let name = aurora::display_name(world, window.scope, &window.id);
     let caption = match photo.slot {
         PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
         PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
@@ -811,14 +965,17 @@ fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                        w.confirm_close = false;
+                        w.answer_close(CloseChoice::Cancel, actions);
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("common-ignore")).clicked() {
-                        w.open = false;
+                        w.answer_close(CloseChoice::Ignore, actions);
                     }
-                    if flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked() {
-                        save_all(w, actions);
-                        w.open = false;
+                    if ui
+                        .add_enabled_ui(!w.pick_save_waits(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
+                        .inner
+                        .clicked()
+                    {
+                        w.answer_close(CloseChoice::Save, actions);
                     }
                 });
             });
@@ -847,7 +1004,10 @@ fn close_or_confirm(w: &mut Window, open: bool) {
     }
 }
 
-fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
+fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) -> bool {
+    if !w.save_pick(actions) {
+        return false;
+    }
     for (edit, key) in [
         (&mut w.about, "sl_about_text"),
         (&mut w.fl_about, "fl_about_text"),
@@ -859,17 +1019,6 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             data.insert(key, edit.text.clone());
             actions.push(ProfileAction::Save { target: w.id, data });
         }
-    }
-    if let Some((e, base)) = &mut w.pick_edit
-        && e != base
-    {
-        // a new pick gets its id once: saved again, it is the same pick
-        let pick = pick_of(e);
-        e.id = pick.id;
-        e.location = None;
-        *base = e.clone();
-        w.pick_sel = Some(pick.id);
-        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
     }
     if let Some((e, base)) = &mut w.classified_edit
         && e != base
@@ -884,6 +1033,7 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             actions.push(ProfileAction::Net(NetCommand::ClassifiedUpdate(Box::new(classified_of(e)))));
         }
     }
+    true
 }
 
 /// The classified sent for an edit (LLPanelProfileClassified::sendUpdate): a
@@ -908,6 +1058,7 @@ fn classified_of(e: &ClassifiedEdit) -> aurora_net::ClassifiedInfo {
 fn pick_of(e: &PickEdit) -> PickInfo {
     PickInfo {
         id: if e.id.is_nil() { Uuid::new_v4() } else { e.id },
+        parcel: e.parcel,
         name: e.name.clone(),
         desc: e.desc.clone(),
         snapshot: e.snapshot,
@@ -1128,7 +1279,7 @@ fn second_life_tab(
                     .truncate(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    copy_menu(ui, p, world, id);
+                    copy_menu(ui, p, world, w.scope, id);
                     crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &id), 9.5);
                 });
             });
@@ -1169,7 +1320,7 @@ fn second_life_tab(
             }
         }
     });
-    let appearance = world.contact_sets.appearance(&id);
+    let appearance = world.rlva_contact_appearance(&id);
     if !appearance.icons.is_empty() {
         ui.horizontal_wrapped(|ui| {
             for badge in &appearance.icons {
@@ -1290,7 +1441,7 @@ fn second_life_tab(
                     world.social.avatar_names.want(&partner);
                     let r = ui.add(
                         egui::Label::new(
-                            RichText::new(world.social.name_of(&partner))
+                            RichText::new(world.social.name_in(NameScope::Roster, &partner))
                                 .size(12.0)
                                 .color(super::colors::text(super::colors::get().chat_slurl)),
                         )
@@ -1300,7 +1451,7 @@ fn second_life_tab(
                         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                         .clicked()
                     {
-                        request_open(ui.ctx(), partner);
+                        super::context::request(ui.ctx(), super::context::CtxAction::RosterProfile(partner));
                     }
                 }
                 Some(_) => {
@@ -1477,22 +1628,33 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.vertical(|ui| {
+            // LLPanelProfileSecondLife::updateButtons: no map under
+            // @showworldmap, no teleport offer that @showloc forbids
             if ui
                 .add_enabled(
-                    world.can_locate_avatar(id),
+                    world.can_locate_avatar(id) && super::context::can_show_on_map(world),
                     egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
                 )
                 .clicked()
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
+            if ui
+                .add_enabled(
+                    super::context::can_pay_resident(world),
+                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
+                )
+                .clicked()
+            {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
         ui.vertical(|ui| {
             if ui
-                .add(egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size))
+                .add_enabled(
+                    world.rlva_can_offer_teleport(id),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size),
+                )
                 .clicked()
             {
                 actions.push(ProfileAction::OfferTeleport(id));
@@ -1528,19 +1690,30 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
                 {
                     actions.push(ProfileAction::ToggleBlock(id));
                 }
-                overflow_menu(ui, p, world, id, blocked, actions);
+                overflow_menu(ui, p, world, w.scope, id, blocked, actions);
             });
         });
     });
 }
 
 /// menu_fs_profile_overflow.xml.
-fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
+fn overflow_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    scope: NameScope,
+    id: Uuid,
+    blocked: bool,
+    actions: &mut Vec<ProfileAction>,
+) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
+        // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
+        let mappable = world.can_locate_avatar(id) && super::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        let payable = super::context::can_pay_resident(world);
+        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), payable) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
@@ -1572,7 +1745,7 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
-            ui.ctx().copy_text(world.social.name_of(&id));
+            ui.ctx().copy_text(world.social.name_in(scope, &id));
         }
         if menu::item(ui, p, "link-filled", aurora_i18n::tr!("ui-profile-copy-uri")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
@@ -1593,9 +1766,9 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
 }
 
 /// menu_fs_profile_name_field.xml (copy menu inside the name field).
-fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
+fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, scope: NameScope, id: Uuid) {
     let names = &world.social.avatar_names;
-    let display = names.get(&id).map(|n| n.display(&names.options));
+    let display = names.get_in(scope, &id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
     widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
         let display_name = aurora_i18n::tr!("ui-profile-copy-display-name");
@@ -1670,7 +1843,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
         );
         return;
     };
-    let Some(username) = web_username(c.world, &w.id) else {
+    let Some(username) = web_username(c.world, w.scope, &w.id) else {
         loading(ui, c.p);
         return;
     };
@@ -1688,9 +1861,9 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, id: &Uuid) -> Option<String> {
+fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
-    if let Some(u) = names.get(id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
+    if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
     }
     world.legacy_name(id).map(|n| {
@@ -1791,7 +1964,7 @@ fn picks_tab(
         });
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
-            let can_add = pr.picks.len() < picks_limit(world) && !creating && !world.rlva.has("showloc");
+            let can_add = pr.picks.len() < picks_limit(world) && !creating && !w.pick_save_waits() && !world.rlva.has("showloc");
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
@@ -1845,7 +2018,9 @@ fn picks_tab(
     ui.horizontal_top(|ui| {
         let before = w.pick_sel;
         side_list(ui, p, &items, &mut w.pick_sel, height, "picks");
-        if before != w.pick_sel {
+        if before != w.pick_sel && w.pick_save_waits() {
+            w.pick_sel = before;
+        } else if before != w.pick_sel {
             // another pick: an unsaved new one is dropped
             w.pick_edit = None;
             w.confirm_delete = false;
@@ -1881,6 +2056,7 @@ fn new_pick(world: &World) -> PickEdit {
     };
     PickEdit {
         id: Uuid::nil(),
+        parcel: Uuid::nil(),
         name,
         desc,
         snapshot,
@@ -1906,26 +2082,12 @@ fn pick_detail(
 ) {
     let (p, world, own) = (c.p, c.world, c.own);
     let info = world.profiles.picks.get(&sel);
-    if !sel.is_nil() && info.is_none() {
+    if !sel.is_nil() && info.is_none_or(|i| i.parcel.is_nil()) {
         w.ask(sel, NetCommand::PickInfoRequest { creator: w.id, pick: sel }, actions);
     }
     // our own picks are edited in a copy of the server's
     if own && let Some(i) = info {
-        let server = PickEdit {
-            id: i.id,
-            name: i.name.clone(),
-            desc: i.desc.clone(),
-            snapshot: i.snapshot,
-            pos: i.pos_global,
-            location: None,
-        };
-        let follow = match &w.pick_edit {
-            Some((e, base)) => e.id != i.id || (e == base && *base != server),
-            None => true,
-        };
-        if follow {
-            w.pick_edit = Some((server.clone(), server));
-        }
+        w.follow_pick(i);
     }
     let width = (ui.available_width() - 8.0).min(300.0);
     ui.set_max_width(width);
@@ -2034,26 +2196,27 @@ fn pick_detail(
             let here = new_pick(world);
             if let Some((e, _)) = w.pick_edit.as_mut() {
                 e.pos = here.pos;
+                e.parcel = here.parcel;
                 e.location = here.location;
             }
         }
     });
-    let mut created = None;
+    let mut save = false;
+    let waiting = w.pick_save_waits();
     if own && let Some((e, base)) = w.pick_edit.as_mut() {
         widgets::divider(ui, p);
         ui.horizontal(|ui| {
             if e.id.is_nil() {
                 if ui.button(aurora_i18n::tr!("ui-profile-create-place")).clicked() {
-                    created = Some(pick_of(e));
+                    save = true;
                 }
             } else {
                 let dirty = e != base;
                 if ui
-                    .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
+                    .add_enabled(dirty && !waiting, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
                     .clicked()
                 {
-                    *base = e.clone();
-                    actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick_of(e)))));
+                    save = true;
                 }
                 if ui
                     .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("common-cancel")))
@@ -2064,10 +2227,8 @@ fn pick_detail(
             }
         });
     }
-    if let Some(pick) = created {
-        w.pick_sel = Some(pick.id);
-        w.pick_edit = None;
-        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
+    if save {
+        w.save_pick(actions);
     }
 }
 
@@ -2381,7 +2542,7 @@ mod tests {
         use crate::ui::inventory::InvDrag;
         let p = crate::theme::Theme::default().palette();
         let mut emoji = super::super::emoji::Emoji::load();
-        let browser = crate::media::browser_settings(std::path::Path::new("."), "fr");
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "fr", &Default::default());
         let web = WebContext {
             paths: None,
             browser: &browser,
@@ -2542,6 +2703,97 @@ mod tests {
         e.text = "a".into();
         e.sync("c");
         assert_eq!(e.text, "c");
+    }
+
+    #[test]
+    fn editing_pick_contents_preserves_the_saved_parcel_and_position() {
+        let mut edit = PickEdit {
+            id: Uuid::from_u128(41),
+            parcel: Uuid::from_u128(42),
+            pos: DVec3::new(300_001.0, 300_002.0, 30.0),
+            ..Default::default()
+        };
+        edit.name = "Changed name".into();
+        edit.desc = "Changed description".into();
+        edit.snapshot = Uuid::from_u128(43);
+        let saved = pick_of(&edit);
+        assert_eq!(saved.parcel, Uuid::from_u128(42));
+        assert_eq!(saved.pos_global, edit.pos);
+        assert_eq!(saved.id, edit.id);
+        assert_eq!(saved.snapshot, edit.snapshot);
+    }
+
+    #[test]
+    fn relocating_a_pick_refreshes_its_parcel_and_keeps_newer_content_edits() {
+        let owner = Uuid::from_u128(40);
+        let mut w = Window::new(owner);
+        let mut info = PickInfo {
+            id: Uuid::from_u128(41),
+            parcel: Uuid::from_u128(42),
+            pos_global: DVec3::new(256_001.0, 256_002.0, 30.0),
+            ..Default::default()
+        };
+        w.follow_pick(&info);
+        w.asked.insert(info.id);
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.pos.x += 256.0;
+        edit.parcel = Uuid::nil();
+        edit.location = Some("Moved".into());
+        let mut actions = Vec::new();
+        w.save_pick(&mut actions);
+        assert!(matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick)),
+            ProfileAction::Net(NetCommand::PickInfoRequest { creator, pick: id })]
+            if pick.parcel.is_nil() && pick.pos_global.x == 256_257.0 && *creator == owner && *id == info.id));
+        w.ask(
+            info.id,
+            NetCommand::PickInfoRequest {
+                creator: owner,
+                pick: info.id,
+            },
+            &mut actions,
+        );
+        assert_eq!(actions.len(), 2);
+
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.desc = "New description".into();
+        let expected = edit.pos;
+        actions.clear();
+        assert!(!save_all(&mut w, &mut actions)); // Done or Save while waiting
+        close_or_confirm(&mut w, false);
+        w.answer_close(CloseChoice::Save, &mut actions);
+        assert!(w.open && w.confirm_close && has_unsaved(&w) && actions.is_empty());
+        w.answer_close(CloseChoice::Cancel, &mut actions);
+        assert!(w.open && !w.confirm_close && w.pick_save_waits());
+        info.pos_global = expected + DVec3::new(0.0, 0.0, 0.001);
+        info.parcel = Uuid::from_u128(43);
+        w.follow_pick(&info);
+        assert!(actions.is_empty() && has_unsaved(&w)); // receiving is never saving
+        close_or_confirm(&mut w, false);
+        w.answer_close(CloseChoice::Save, &mut actions);
+        assert!(!w.open && !w.confirm_close);
+        assert!(matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick))]
+            if pick.parcel == info.parcel && pick.pos_global == info.pos_global && pick.desc == "New description"));
+
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.pos.y += 256.0;
+        edit.parcel = Uuid::nil();
+        edit.location = Some("Moved again".into());
+        w.follow_pick(&info);
+        let (edit, base) = w.pick_edit.as_ref().unwrap();
+        assert!(edit.parcel.is_nil() && edit.location.is_some());
+        assert_eq!(base.parcel, info.parcel);
+        let mut blocked = Window::new(owner);
+        let mut draft = PickEdit {
+            id: info.id,
+            ..Default::default()
+        };
+        blocked.pick_edit = Some((draft.clone(), draft.clone()));
+        draft.desc = "Discard this".into();
+        blocked.pick_edit.as_mut().unwrap().0 = draft;
+        close_or_confirm(&mut blocked, false);
+        actions.clear();
+        blocked.answer_close(CloseChoice::Ignore, &mut actions);
+        assert!(!blocked.open && !blocked.confirm_close && actions.is_empty());
     }
 
     #[test]

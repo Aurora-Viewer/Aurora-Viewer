@@ -13,8 +13,8 @@
 //! A row changes the very field its Preferences row edits, with the same
 //! range and the same clamp (`Settings::sanitized`), and the app applies and
 //! saves the change like a change of Preferences, so the two never differ.
-//! Aurora's ranges win over the Legacy Viewer's (draw distance 32..512 m
-//! against 32..1024, volume LOD 0.5..4 against 0..4, fully rendered avatars
+//! Some Aurora ranges differ from the Legacy Viewer's (volume LOD 0.5..4
+//! against 0..4, fully rendered avatars
 //! 1..100 against 1..66, bandwidth 50..4000 against 50..3000). Left out for
 //! lack of an Aurora setting: FSNameTagZOffsetCorrection ("Tags Offset") and
 //! DebugShowColor ("Color Under Cursor"). Not here yet: the editor of the
@@ -85,7 +85,7 @@ impl Slot {
     /// The slider's range: the one of Preferences.
     pub fn range(self) -> RangeInclusive<f64> {
         match self {
-            Slot::DrawDistance => 32.0..=512.0,
+            Slot::DrawDistance => f64::from(crate::settings::DRAW_DISTANCE_MIN)..=f64::from(crate::settings::DRAW_DISTANCE_MAX),
             Slot::Particles => 0.0..=8192.0,
             Slot::PhysicsDetail => 0.0..=1.0,
             Slot::Lod => 0.5..=4.0,
@@ -159,10 +159,11 @@ pub fn set_complexity_position(s: &mut Settings, position: u32) {
 /// and the other residents' "show name tags" switches and the "briefly" one
 /// of Preferences › Avatars. The own tag's switch is RenderNameShowSelf, a
 /// setting of its own that the Legacy Viewer's quick preferences leave
-/// alone, so this row never touches it. One difference: the Legacy Viewer's
-/// Off also hides the own tag (LLVOAvatar::idleUpdateNameTag draws it
-/// on RenderNameShowSelf && AvatarNameTagMode); Aurora has no mode apart
-/// from these switches to remember, so Off keeps the own tag's choice.
+/// alone, so this row never touches it. Off still hides the own tag, as in
+/// the Legacy Viewer (LLVOAvatar::idleUpdateNameTag draws it on
+/// RenderNameShowSelf && AvatarNameTagMode): `hud::name_tag_enabled` reads
+/// the mode from these switches, and On or Brief bring the own tag back
+/// with the choice of its switch (#3855).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NameTags {
     Off,
@@ -181,9 +182,9 @@ impl NameTags {
         }
     }
 
-    /// Off hides the residents' tags (the timer's switch stays as it is); On
-    /// and Brief show them, the second only for a while. The own tag keeps
-    /// its Preferences switch.
+    /// Off hides the residents' tags (the timer's switch stays as it is), and
+    /// with them our own; On and Brief show them, the second only for a
+    /// while. The own tag's Preferences switch is never changed.
     pub fn apply(self, s: &mut Settings) {
         let shown = self != NameTags::Off;
         s.show_friend_name_tags = shown;

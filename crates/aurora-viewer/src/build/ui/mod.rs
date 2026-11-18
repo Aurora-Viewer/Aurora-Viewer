@@ -14,6 +14,7 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+pub(crate) mod export;
 mod features;
 mod floaters;
 pub(crate) mod general;
@@ -192,11 +193,16 @@ pub struct FloaterState {
     pub contents_filter: String,
     /// Independent from every personal/folder inventory window.
     pub contents_rights: crate::ui::inventory::permissions::Rights,
+    /// The language picked for "New script"; None follows the region (Lua
+    /// where SLua runs, as LLPanelContents::getState resets it).
+    pub new_script_lua: Option<bool>,
     pub contents_selection: contents_selection::Selection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
+    /// (object, item) of the contents to open in its window: a notecard,
+    /// or the preview of a texture, a sound or an animation.
     pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,
@@ -406,6 +412,7 @@ pub fn show(
     }
     workspace::prepare(ctx, env.demo, s);
     tool.ui.legacy_window = s.legacy_window;
+    common::set_wheel_on_hover(ctx, s.wheel_on_hover);
     let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
     if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
         ctx.data_mut(|d| d.insert_temp(preview, true));
@@ -504,6 +511,9 @@ pub fn show(
     if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
+    // Keep the user's Build size. Large Appearance › Text size reflows inside
+    // the floater (shape fields and Legacy Texture slots); it must not shove
+    // the window wider or taller on its own.
     floater.min_size = if s.legacy_window {
         legacy::MIN_SIZE
     } else {

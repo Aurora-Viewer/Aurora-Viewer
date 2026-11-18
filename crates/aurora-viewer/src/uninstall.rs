@@ -71,6 +71,8 @@ pub enum Secret {
     Password(Login),
     SecondFactor(Login),
     CrashReports,
+    /// The SOCKS 5 proxy's user name and password.
+    Proxy,
 }
 
 impl Secret {
@@ -79,6 +81,10 @@ impl Secret {
         match self {
             Secret::CacheKey => (crate::cache_key::STORE_ENTRY.0, crate::cache_key::STORE_ENTRY.1.to_owned()),
             Secret::CrashReports => (crate::crash::github::STORE_ENTRY.0, crate::crash::github::STORE_ENTRY.1.to_owned()),
+            Secret::Proxy => {
+                let (service, account) = crate::credentials::proxy_store_entry();
+                (service, account.to_owned())
+            }
             Secret::Password(login) => {
                 let [password, _] = crate::credentials::store_entries(&login.grid, &login.user);
                 password
@@ -159,6 +165,7 @@ pub fn plan(system: &dyn System, logins: &[Login]) -> Plan {
         parts.push(Part::Secret(Secret::SecondFactor(login.clone())));
     }
     parts.push(Part::Secret(Secret::CrashReports));
+    parts.push(Part::Secret(Secret::Proxy));
     parts.push(Part::BlenderAddon);
     Plan { parts }
 }
@@ -361,6 +368,7 @@ pub fn part_label(part: &Part) -> String {
         Part::NotificationId(_) => tr!("uninstall-notification-id").to_owned(),
         Part::Secret(Secret::CacheKey) => tr!("uninstall-cache-key").to_owned(),
         Part::Secret(Secret::CrashReports) => tr!("uninstall-crash-reports").to_owned(),
+        Part::Secret(Secret::Proxy) => tr!("uninstall-proxy").to_owned(),
         Part::Secret(Secret::Password(login)) => {
             tr!("uninstall-password", user = login.user.clone(), grid = grid_label(&login.grid)).to_owned()
         }

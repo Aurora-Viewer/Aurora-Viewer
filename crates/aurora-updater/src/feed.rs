@@ -118,23 +118,26 @@ impl Source {
 
     pub fn client(&self) -> Result<Client> {
         let source = self.clone();
-        let builder = Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .https_only(!self.loopback)
-            .connect_timeout(Duration::from_secs(8))
-            .read_timeout(Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                if attempt.previous().len() >= 5 {
-                    attempt.error("too many redirects")
-                } else if source.validate_url(attempt.url().as_str()).is_ok() {
-                    attempt.follow()
-                } else {
-                    attempt.error("untrusted redirect")
-                }
-            }));
-        // An explicit local feed must not leave loopback through a system proxy.
-        let builder = if self.loopback { builder.no_proxy() } else { builder };
-        Ok(builder.build()?)
+        let loopback = self.loopback;
+        // An explicit local feed never leaves loopback: the rule never
+        // proxies it.
+        let client = aurora_proxy::http_client(|builder| {
+            builder
+                .user_agent(aurora_version::user_agent())
+                .https_only(!loopback)
+                .connect_timeout(Duration::from_secs(8))
+                .read_timeout(Duration::from_secs(20))
+                .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                    if attempt.previous().len() >= 5 {
+                        attempt.error("too many redirects")
+                    } else if source.validate_url(attempt.url().as_str()).is_ok() {
+                        attempt.follow()
+                    } else {
+                        attempt.error("untrusted redirect")
+                    }
+                }))
+        })?;
+        Ok(client)
     }
 
     pub async fn bytes(&self, client: &Client, url: &str, limit: usize) -> Result<Vec<u8>> {

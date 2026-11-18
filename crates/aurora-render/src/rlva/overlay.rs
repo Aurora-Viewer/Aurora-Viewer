@@ -107,6 +107,6 @@ impl Overlays {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.group, &[]);
         pass.set_bind_group(1, textures, &[]);
-        pass.draw(0..3, 0..effects.len() as u32);
+        pass.draw(0..6, 0..effects.len() as u32);
     }
 }

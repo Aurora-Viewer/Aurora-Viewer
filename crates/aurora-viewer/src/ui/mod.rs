@@ -7,8 +7,11 @@ pub mod appearance;
 pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
+pub mod avatar_align;
+pub mod avatar_marks;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
+pub mod avatar_welcome;
 pub mod backdrop;
 pub mod balance_gains;
 pub mod bars;
@@ -34,11 +37,20 @@ pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
+pub mod conversation_log;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
+pub mod director;
+pub mod director_capture;
+pub mod director_drag;
+pub mod director_key_rows;
+pub mod director_library;
+pub mod director_look;
+pub mod director_output;
+pub mod director_ruler;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -84,6 +96,7 @@ pub mod menu;
 pub mod minimap;
 pub mod money_tracker;
 pub mod monitor;
+pub mod mouselook_combat;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
@@ -93,8 +106,10 @@ pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
+pub mod panorama;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -105,6 +120,7 @@ pub mod place_card;
 pub mod place_details;
 pub mod places;
 pub mod portals;
+pub mod pose_stand;
 pub mod presence;
 pub mod profile;
 pub mod quick_prefs;
@@ -116,6 +132,7 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
@@ -128,7 +145,9 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
+pub mod stand_fly;
 pub mod stream_title;
 pub mod surface_opacity;
 pub(crate) mod text_menu;
@@ -163,8 +182,13 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Favorite Wearables window (`ui/appearance/wearable_favorites.rs`).
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -180,6 +204,9 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    /// Inventory's dual-panel layout (`InventoryPreferences::dual_panel`,
+    /// saved by the app when it changes).
+    pub inventory_dual: bool,
     pub texture_library: bool,
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
@@ -212,14 +239,29 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The Compass (toolbar `avatar_align`, Me › Avatar alignment), in its
+    /// compact layout while `avatar_align_mini` (kept in the settings).
+    pub avatar_align: bool,
+    pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Avatar Welcome Pack (toolbar `avatar`, Me › Avatar Welcome Pack…).
+    pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
+    /// The Director (toolbar `director`): its window and its timeline.
+    pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The pose stand (toolbar `pose_stand`).
+    pub pose_stand: bool,
+    /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
+    pub omnifilter: bool,
+    /// The conversation log (toolbar `conversation_log`, Communicate ›
+    /// Conversation log…).
+    pub conversation_log: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -250,7 +292,9 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
+            snapshot_pano: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
@@ -262,6 +306,7 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            inventory_dual: settings.inventory.dual_panel,
             texture_library: false,
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
@@ -283,10 +328,17 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            avatar_align: false,
+            avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
+            avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
+            director: false,
             voice_controls: false,
+            pose_stand: false,
+            omnifilter: false,
+            conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,

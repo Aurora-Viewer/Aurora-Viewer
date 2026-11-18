@@ -151,7 +151,7 @@ mod tests {
             requests
         });
         assert_eq!(
-            upload(&reqwest::Client::new(), &base, id, true, vec![255, 79, 0, 1])
+            upload(&crate::test_http_client(), &base, id, true, vec![255, 79, 0, 1])
                 .await
                 .expect("upload"),
             asset
@@ -171,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn an_upload_without_confirmation_never_supplies_an_asset() {
         let (url, task) = crate::outfits::tests::server(vec![(200, Llsd::new_map())]).await;
-        let error = upload(&reqwest::Client::new(), &url, Uuid::from_u128(1), false, vec![1])
+        let error = upload(&crate::test_http_client(), &url, Uuid::from_u128(1), false, vec![1])
             .await
             .expect_err("no uploader");
         assert!(!error.contains(&url));

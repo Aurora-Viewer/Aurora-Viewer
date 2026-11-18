@@ -15,6 +15,14 @@
 //!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   faces-mapping: one face on each of three textured surfaces (repeats,
+//!   offset and rotation; planar mapping; a PBR base color transform), for
+//!   the face-select pattern.
+//!   `,no-highlight` after any faces-* name turns "Show highlight" off when
+//!   the Edit tool opens, at 600 (faces-mapping,object:99620,no-highlight).
+//!   faces-texgen: frames A closely, selects a side face at 625, then
+//!   switches its mapping Default <-> Planar at 655 with the Texture tab's
+//!   edit (capture at 650 and 690).
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -71,6 +79,11 @@ pub enum Step {
     TexturePicker(super::ui::PickTarget, bool),
     BomPicker(Option<usize>),
     CloseView,
+    /// "Show highlight" (RenderHighlightSelections) on or off.
+    Highlight(bool),
+    /// The selected faces' mapping switched Default <-> Planar, as the
+    /// Texture tab's Mapping control does.
+    TexGenToggle,
     CloseEditor,
     CreateAt(Vec3),
     CreationPreview(usize),
@@ -78,6 +91,8 @@ pub enum Step {
     Contents,
     ContentsProperties,
     ContentsSelection(bool),
+    /// "New notecard" then "New script" in the Contents tab.
+    ContentsNew,
     TakeTask(bool),
     /// Every item, selected and dropped together on the inventory root.
     TakeAll,
@@ -481,7 +496,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
-            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            260 if parts[0] == "contents-new" => vec![Step::ContentsNew],
+            260 if !matches!(parts[0], "contents-ready" | "contents-new") => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
     }
@@ -553,13 +569,31 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 .collect()
         };
         return match frame {
-            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
+            215 => {
+                let mut steps = vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)];
+                // `,no-highlight`: "Show highlight" off, the halo hidden
+                if parts.contains(&"no-highlight") {
+                    steps.push(Step::Highlight(false));
+                }
+                steps
+            }
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-complex" | "faces-texgen") || parts[0].starts_with("faces-picker") => {
+                vec![Step::CloseView]
+            }
+            240 if parts[0] == "faces-texgen" => pick(99620, u8::MAX, false),
+            270 if parts[0] == "faces-texgen" => vec![Step::TexGenToggle],
+            _ if parts[0] == "faces-texgen" => Vec::new(),
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
+            240 if parts[0] == "faces-mapping" => pick(99620, u8::MAX, false),
+            260 if parts[0] == "faces-mapping" => pick(99621, u8::MAX, true),
+            280 if parts[0] == "faces-mapping" => pick(99622, u8::MAX, true),
+            _ if parts[0] == "faces-mapping" => Vec::new(),
             240 => pick(99620, u8::MAX, false),
+            // a second face with another texture: the picker opens tentative
+            245 if parts[0].starts_with("faces-picker-multiple") => pick(99621, u8::MAX, true),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
                 if parts[0].starts_with("faces-picker-material") {
                     super::ui::PickTarget::PbrMaterial
@@ -683,6 +717,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             }
             None => Vec::new(),
         },
+        // what the drag left, for a restriction arriving during it
+        251 | 275 | 300 if handle.is_some() => {
+            log::info!(
+                "demo build: frame {frame} drag={} selection={} position={:?}",
+                tool.manip.drag.is_some(),
+                tool.selection.len(),
+                object.and_then(|idx| world.objects.get(idx)).map(|o| o.position),
+            );
+            if frame == 300 || tool.manip.drag.is_none() {
+                return Vec::new();
+            }
+            let k = (frame - 250) as f32 / 40.0;
+            vec![Step::Cursor(x_start(tool) + dx * k, y_start(tool) + dy * k)]
+        }
         251..=290 if handle.is_some() && tool.manip.drag.is_some() => {
             let k = (frame - 250) as f32 / 40.0;
             let (ex, ey) = edge.unwrap_or((x_start(tool) + dx, y_start(tool) + dy));

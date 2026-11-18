@@ -22,6 +22,7 @@
 
 mod link_stats;
 pub mod protocol;
+mod receive_gain;
 mod session;
 mod state;
 mod transmit;
@@ -223,6 +224,16 @@ impl VoiceSession {
         let volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 0.5 };
         self.shared.prefs.lock().volumes.insert(id, volume);
         let _ = self.cmd_tx.send(Cmd::Data(protocol::user_gain_message(id, volume)));
+    }
+
+    /// The viewer's own volume on everything received (0..=1, 0.5 = as
+    /// sent, 1 = 200 %), for a private call's channel, where the server
+    /// ignores [`VoiceSession::set_user_volume`] and the received track
+    /// carries the other resident's voice alone (see `receive_gain`). Keep it
+    /// at 0.5 on a channel that mixes several voices. Kept across
+    /// reconnections; changes ramp over 20 ms.
+    pub fn set_receive_volume(&self, volume: f32) {
+        self.shared.rx_gain.set_volume(volume);
     }
 
     /// Mutes / unmutes a participant for this viewer (mute list).

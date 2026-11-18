@@ -69,9 +69,27 @@ impl App {
             }
             return Some(dof::lens(&s, d, view, debug));
         }
+        // the Director's lens while its window is open with its depth of
+        // field on: at its own aperture, focused on the lock's target or at
+        // the distance set there
+        if let Some((f_number, distance)) = self.director_dof() {
+            let s = dof::Settings {
+                enabled: true,
+                f_number,
+                ..self.settings.dof.clone()
+            };
+            let focus = self.dof_focus.update(distance, dt, s.transition);
+            return Some(dof::lens(&s, focus, view, false));
+        }
         // the photo window's lens while it is open, off included (its All
         // sharp is sharp, not the Preferences' blur), else the Preferences'
         // (never changed by the window)
+        // a 360° picture has no depth of field (the blur would differ from
+        // face to face and show at their edges): the live view shows what
+        // the picture will, with none
+        if self.pano_open() || self.capture_360.drawing_face() {
+            return None;
+        }
         let photo = &self.settings.snapshot.dof;
         let (s, manual) = if self.panels.snapshot {
             photo.applied(&self.settings.dof)

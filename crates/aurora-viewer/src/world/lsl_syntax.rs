@@ -43,10 +43,13 @@ impl World {
     /// The keywords of `id` came (handleFileFetched): used if the agent's
     /// region still names it. A failure keeps the bundled ones
     /// (loadDefaultKeywordsIntoLLSD).
-    pub(super) fn on_lsl_syntax(&mut self, id: Uuid, keywords: Result<Vec<Keyword>, String>) {
+    pub(super) fn on_lsl_syntax(&mut self, id: Uuid, keywords: Result<Vec<Keyword>, String>, lua: Option<Vec<Keyword>>) {
         let wanted = self.main().and_then(|r| r.lsl_syntax_id) == Some(id);
         match keywords {
-            Ok(keywords) if wanted => lsl_keywords::install(Catalog::from_keywords(id, keywords)),
+            Ok(keywords) if wanted => lsl_keywords::install(
+                Catalog::from_keywords(id, keywords),
+                lua.map(|lua| Catalog::lua_from_keywords(id, lua)),
+            ),
             // another region by now: ask again if it comes back
             Ok(_) => {
                 self.lsl_syntax_asked.remove(&id);
@@ -84,6 +87,7 @@ mod tests {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         w
     }
@@ -105,6 +109,7 @@ mod tests {
         w.apply(NetEvent::LslSyntax {
             id,
             keywords: Err("status 404".into()),
+            lua: None,
         });
         assert!(w.follow_lsl_syntax().is_none());
         // the answer for a region left meanwhile is asked again later
@@ -113,6 +118,7 @@ mod tests {
         w.apply(NetEvent::LslSyntax {
             id: other,
             keywords: Ok(Vec::new()),
+            lua: None,
         });
         assert!(!w.lsl_syntax_asked.contains(&other));
     }
