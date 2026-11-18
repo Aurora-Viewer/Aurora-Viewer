@@ -1297,7 +1297,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
 /// A level of the photo's (shadows, occlusion) on Preferences' stepped
 /// slider: Preferences' `current` until one is chosen; under the photo
 /// quality's boost, never past it.
-fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
+pub(crate) fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
     use crate::snapshot::light::photo_level;
     ui.horizontal(|ui| {
         let mut level = photo_level(true, *value, current, boost);

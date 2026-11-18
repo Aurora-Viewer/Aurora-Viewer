@@ -16,14 +16,15 @@ impl App {
         }
         let mut open = self.panels.phototools;
         // the photo window's values while it is open (the rows follow the
-        // view)
-        let photo = self.panels.snapshot.then(|| ui::options::PhotoState {
+        // view); nothing worked out while Phototools is closed
+        let photo = (open && self.panels.snapshot).then(|| ui::options::PhotoState {
             sun: super::snapshot::env_view(&self.env_ui, &self.world.eep).sun,
             loading: self.world.eep.photo_loading(),
             viewfinder: self.viewfinder_on(),
+            busy: self.photo_busy(),
             boost: self.settings.photo_held.is_some(),
         });
-        let director_dof = self.director_dof().is_some();
+        let director_dof = open && self.director_dof().is_some();
         let out = self.phototools_ui.show(
             ctx,
             p,
@@ -40,6 +41,7 @@ impl App {
                 photo,
                 director_dof,
             },
+            self.snapshots.fov_before,
         );
         self.panels.phototools = open;
         // applied like a change of Preferences (draw distance, render
@@ -64,6 +66,28 @@ impl App {
             self.snapshots.preview_wanted = true;
         }
         out.env
+    }
+
+    /// Phototools over the full-frame photo view (the viewfinder, or the
+    /// photo window's full frame), whose branch of the frame draws no other
+    /// window: what the normal frame gives it (the environment lists, the
+    /// room to move in, "Personal lighting", the environment actions).
+    pub(super) fn phototools_over_photo(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if self.panels.phototools {
+            if !self.env_scan {
+                self.env_scan = true;
+                self.env_ui.scan_left = usize::MAX;
+            }
+            self.env_ui.refresh(ctx, &self.world.inventory);
+            let screen = ctx.content_rect();
+            ui::layout::set_work_area(ctx, screen);
+            ui::layout::set_move_area(ctx, screen);
+        }
+        self.env_ui.rlva_locked = self.world.rlva.has("setenv") || self.world.rlva.has("setsphere");
+        let mut lighting = self.panels.personal_lighting;
+        let actions = self.phototools_window(ctx, p, &mut lighting);
+        self.panels.personal_lighting = lighting;
+        self.env_actions(actions);
     }
 
     /// AURORA_DEMO_PHOTOTOOLS=<tab>[:photo]: the window opened at the start,

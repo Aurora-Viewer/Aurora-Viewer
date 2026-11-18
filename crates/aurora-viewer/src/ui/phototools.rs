@@ -70,6 +70,12 @@ impl Tab {
         }
     }
 
+    /// The tab has rows the photo window overrides, which the banner tells
+    /// of.
+    fn has_photo_rows(self) -> bool {
+        matches!(self, Tab::Environment | Tab::Light | Tab::DofGlow | Tab::General)
+    }
+
     /// `AURORA_DEMO_PHOTOTOOLS=<tab>[:photo]`: the tab, and whether the
     /// photo window is opened too.
     pub fn parse(text: &str) -> Option<(usize, bool)> {
@@ -146,11 +152,12 @@ impl PhototoolsUi {
         settings: &mut Settings,
         preferences: &OptionsUi,
         mut env: Env<'_>,
+        keep_fov: Option<f32>,
     ) -> Out {
         let mut out = Out::default();
         // the pending save first: a drag that ended with the window closed
         // is still saved
-        self.save_when_released(ctx, settings);
+        self.save_when_released(ctx, settings, keep_fov);
         if !*open {
             return out;
         }
@@ -168,15 +175,17 @@ impl PhototoolsUi {
             self.body(ui, p, settings, &mut env, &mut out);
         });
         self.unsaved |= out.changed;
-        self.save_when_released(ctx, settings);
+        self.save_when_released(ctx, settings, keep_fov);
         out
     }
 
     /// Saved once the button is released, not at every frame of a drag.
-    fn save_when_released(&mut self, ctx: &egui::Context, settings: &Settings) {
+    /// `keep_fov`: the user's view angle while the viewfinder is on (it
+    /// writes its own focal length into the setting): what is written.
+    fn save_when_released(&mut self, ctx: &egui::Context, settings: &Settings, keep_fov: Option<f32>) {
         if self.unsaved && !ctx.input(|i| i.pointer.any_down()) {
             self.unsaved = false;
-            settings.save();
+            settings.save_with_fov(keep_fov);
         }
     }
 
@@ -185,7 +194,9 @@ impl PhototoolsUi {
         let labels = TABS.map(|t| (t.label(), true));
         widgets::tabs(ui, p, &mut self.tab, &labels);
         ui.add_space(6.0);
-        if let Some(state) = env.photo {
+        // (every tab built so far has a row the photo window overrides:
+        // the General tab's exposure)
+        if let Some(state) = env.photo.filter(|_| TABS[self.tab].has_photo_rows()) {
             banner(ui, p, env, state, out);
         }
         let tab = TABS[self.tab];
@@ -214,13 +225,11 @@ impl PhototoolsUi {
         env: &mut Env<'_>,
         out: &mut Out,
         title: &str,
-        sections: &[PhotoSection],
+        section: PhotoSection,
     ) {
-        // the id is the first section's, not its translated title
-        widgets::collapsing(ui, p, ("phototools", sections[0] as u8), title, true, |ui| {
-            for &section in sections {
-                self.rows_of(ui, p, settings, env, out, section);
-            }
+        // the id is the section's, not its translated title
+        widgets::collapsing(ui, p, ("phototools", section as u8), title, true, |ui| {
+            self.rows_of(ui, p, settings, env, out, section);
         });
     }
 
@@ -241,7 +250,13 @@ impl PhototoolsUi {
             touched: false,
         });
         let r = options::phototools_section(ui, p, settings, &mut self.rows, section, layer.as_mut());
-        out.photo_changed |= layer.is_some_and(|l| l.touched);
+        // a value of the photo changed: the preview follows, and the photo's
+        // depth of field (a saved setting) is written once the button is
+        // released, without the app's pass for a changed setting
+        if layer.is_some_and(|l| l.touched) {
+            out.photo_changed = true;
+            self.unsaved = true;
+        }
         out.changed |= r.changed;
         out.toggle_flycam |= r.toggle_flycam;
     }
@@ -283,12 +298,14 @@ impl PhototoolsUi {
                         .selector_body(ui, p, env.view, env.loading, None, LABEL_W, env.lighting, None, &mut out.env),
                 }
                 ui.add_space(4.0);
-                pause_clouds(ui, p, env);
+                pause_clouds(ui, p, env, out);
             },
         );
         let free = !env.ui.rlva_locked;
         widgets::collapsing(ui, p, ("phototools", "quick"), tr!("phototools-quick-environments"), true, |ui| {
             ui.add_enabled_ui(free, |ui| {
+                // the photo window's own time row (above) stands for the times of
+                // day while it is open
                 ui.horizontal_wrapped(|ui| {
                     let times = [
                         tr!("ui-environment-sunrise"),
@@ -296,25 +313,15 @@ impl PhototoolsUi {
                         tr!("ui-environment-lie-down"),
                         tr!("common-midnight"),
                     ];
-                    for (i, name) in times.iter().enumerate() {
+                    for (i, name) in times.iter().enumerate().filter(|_| env.photo.is_none()) {
                         let preset = i as u8 + 1;
-                        // the photo's time of day while its window is open
-                        let on = match env.photo {
-                            Some(_) => env.light.env.time == Some(preset),
-                            None => env.time_of_day == preset,
-                        };
-                        if widgets::underlined_button(ui, p, name, on)
+                        if widgets::underlined_button(ui, p, name, env.time_of_day == preset)
                             .on_hover_text(super::bars::time_of_day()[usize::from(preset)])
                             .clicked()
                         {
-                            if env.photo.is_some() {
-                                env.light.env.set_time(Some(preset));
-                                out.photo_changed = true;
-                            } else {
-                                // FSRepeatedEnvTogglesShared is off by default:
-                                // the same preset again stays
-                                out.env.push(EnvAction::Preset(preset));
-                            }
+                            // FSRepeatedEnvTogglesShared is off by default:
+                            // the same preset again stays
+                            out.env.push(EnvAction::Preset(preset));
                         }
                     }
                 });
@@ -354,29 +361,13 @@ impl PhototoolsUi {
                 });
             },
         );
-        self.rows(
-            ui,
-            p,
-            settings,
-            env,
-            out,
-            tr!("ui-options-reflections"),
-            &[PhotoSection::Reflections],
-        );
+        self.rows(ui, p, settings, env, out, tr!("ui-options-reflections"), PhotoSection::Reflections);
     }
 
     /// P_Lighting: Lights and Shadows Settings, Ambient Occlusion Settings.
     fn light(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &mut Settings, env: &mut Env<'_>, out: &mut Out) {
         use aurora_i18n::tr;
-        self.rows(
-            ui,
-            p,
-            settings,
-            env,
-            out,
-            tr!("phototools-lights-shadows"),
-            &[PhotoSection::Shadows],
-        );
+        self.rows(ui, p, settings, env, out, tr!("phototools-lights-shadows"), PhotoSection::Shadows);
         self.rows(
             ui,
             p,
@@ -384,7 +375,7 @@ impl PhototoolsUi {
             env,
             out,
             tr!("phototools-ambient-occlusion"),
-            &[PhotoSection::AmbientOcclusion],
+            PhotoSection::AmbientOcclusion,
         );
     }
 
@@ -409,16 +400,8 @@ impl PhototoolsUi {
                 self.rows_of(ui, p, settings, env, out, PhotoSection::Lens);
             },
         );
-        self.rows(
-            ui,
-            p,
-            settings,
-            env,
-            out,
-            tr!("phototools-tone-mapping"),
-            &[PhotoSection::ToneMapping],
-        );
-        self.rows(ui, p, settings, env, out, tr!("phototools-glow"), &[PhotoSection::Glow]);
+        self.rows(ui, p, settings, env, out, tr!("phototools-tone-mapping"), PhotoSection::ToneMapping);
+        self.rows(ui, p, settings, env, out, tr!("phototools-glow"), PhotoSection::Glow);
     }
 
     /// P_General: General Render Settings, then the two boxes under it.
@@ -431,7 +414,7 @@ impl PhototoolsUi {
             env,
             out,
             tr!("phototools-general-render"),
-            &[PhotoSection::GeneralRender],
+            PhotoSection::GeneralRender,
         );
         self.rows(
             ui,
@@ -440,21 +423,24 @@ impl PhototoolsUi {
             env,
             out,
             tr!("phototools-render-options"),
-            &[PhotoSection::RenderOptions],
+            PhotoSection::RenderOptions,
         );
-        self.rows(ui, p, settings, env, out, tr!("ui-options-quality"), &[PhotoSection::ImageQuality]);
+        self.rows(ui, p, settings, env, out, tr!("ui-options-quality"), PhotoSection::ImageQuality);
     }
 }
 
 /// "Pause Clouds": a switch of the session, never saved, shared with the
 /// photo window's (`snapshots.ui.light.clouds_paused`).
-fn pause_clouds(ui: &mut egui::Ui, p: &Palette, env: &mut Env<'_>) {
+fn pause_clouds(ui: &mut egui::Ui, p: &Palette, env: &mut Env<'_>, out: &mut Out) {
     use aurora_i18n::tr;
     // greyed like the presets under @setenv / @setsphere
     // (FloaterQuickPrefs::onClickPauseClouds, quickprefs.cpp)
     ui.add_enabled_ui(!env.ui.rlva_locked, |ui| {
+        let before = env.light.clouds_paused;
         widgets::switch_labeled(ui, p, &mut env.light.clouds_paused, tr!("photo-light-pause-clouds"))
             .on_hover_text(tr!("photo-light-pause-clouds-hint"));
+        // the photo's preview shows the clouds held still
+        out.photo_changed |= env.light.clouds_paused != before;
     });
 }
 

@@ -3842,6 +3842,21 @@ impl Settings {
         });
     }
 
+    /// `save`, with the view angle `fov` (radians) written as the user's
+    /// own: the viewfinder puts its focal length in `camera.fov` while it
+    /// is on and gives the user's back when it closes, so a save made in
+    /// the meantime must not keep the focal length.
+    pub fn save_with_fov(&self, fov: Option<f32>) {
+        match fov {
+            Some(fov) if (fov - self.camera.fov).abs() > 1e-6 => {
+                let mut copy = self.clone();
+                copy.camera.fov = fov;
+                copy.save();
+            }
+            _ => self.save(),
+        }
+    }
+
     /// What is written to the file: the user's own graphics values while
     /// the photo quality raises them, no user name unless remembered.
     pub(crate) fn to_saved(&self) -> Settings {
