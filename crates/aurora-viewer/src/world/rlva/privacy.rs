@@ -365,34 +365,6 @@ impl World {
         }
     }
 
-    /// RlvUIEnabler permits land/estate administration under showloc only
-    /// through actual ownership or group powers, without a god-mode shortcut.
-    pub fn rlva_can_view_parcel(&self) -> bool {
-        if !self.rlva.has("showloc") {
-            return true;
-        }
-        let parcel = match &self.land.sel {
-            Some(s) => s.parcel.as_ref(),
-            None => self.parcel.as_ref(),
-        };
-        parcel.is_some_and(|p| {
-            p.owner_id == self.agent_id
-                || self
-                    .groups
-                    .groups
-                    .iter()
-                    .any(|g| g.id == p.owner_id && g.powers & ((1 << 33) | (1 << 34) | (1 << 48)) != 0)
-        })
-    }
-
-    pub fn rlva_can_view_region(&self) -> bool {
-        !self.rlva.has("showloc")
-            || self
-                .main()
-                .and_then(|r| r.info.as_ref())
-                .is_some_and(|r| r.owner == self.agent_id || r.is_estate_manager)
-    }
-
     pub fn rlva_region_label(&self) -> String {
         if self.rlva.has("showloc") {
             aurora_i18n::tr!("rlva-hidden-region").to_owned()

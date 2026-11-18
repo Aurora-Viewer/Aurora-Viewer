@@ -29,6 +29,7 @@ mod groups;
 mod im_queries;
 mod interaction;
 mod inventory;
+pub mod land_gate;
 pub mod last_points;
 pub mod login;
 pub mod modifiers;

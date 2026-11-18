@@ -1564,6 +1564,10 @@ intact. `privacy/matcher.rs` compiles Unicode word-boundary replacements into
 a shared trie, reused while the patterns stay unchanged. Name exceptions,
 limited avatar menus, location writes, application links and teleport offers
 are checked at both their native UI paths and the common action boundary.
+`land_gate.rs` holds the `@showloc` rule of About Land and Region / Estate
+(own parcel, group parcel with a return power, region owner or estate
+manager) and `LandGate`, the open-time check the frame loop steps for each
+of the two windows.
 The current teleport-history label follows location privacy without losing
 its navigation coordinates; persisted arrivals omit a hidden current place.
 `effects.rs` owns per-object sphere/overlay modifiers, tween targets and
