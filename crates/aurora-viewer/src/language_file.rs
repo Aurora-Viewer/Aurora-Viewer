@@ -161,29 +161,35 @@ mod tests {
         assert_eq!(chosen(false, r"C:\t\de.ftl"), None);
     }
 
+    /// A file of a folder, written as this system writes paths: the name
+    /// shown must come out of it on every system, not only on Windows.
+    fn file(name: &str) -> String {
+        Path::new("t").join(name).to_string_lossy().into_owned()
+    }
+
     #[test]
     fn the_preferences_tell_the_file_in_use_from_the_next_one() {
-        let path = PathBuf::from(r"C:\t\de.ftl");
+        let de = file("de.ftl");
         let ok = Loaded {
-            path: path.clone(),
+            path: PathBuf::from(&de),
             result: Ok(info()),
         };
         assert_eq!(shown("", Some(&ok)), Shown::NoFile);
         assert_eq!(
-            shown(r"C:\t\de.ftl", Some(&ok)),
+            shown(&de, Some(&ok)),
             Shown::InUse {
                 name: "de.ftl".into(),
                 info: info()
             }
         );
-        assert_eq!(shown(r"C:\t\es.ftl", Some(&ok)), Shown::NextLaunch { name: "es.ftl".into() });
-        assert_eq!(shown(r"C:\t\de.ftl", None), Shown::NextLaunch { name: "de.ftl".into() });
+        assert_eq!(shown(&file("es.ftl"), Some(&ok)), Shown::NextLaunch { name: "es.ftl".into() });
+        assert_eq!(shown(&de, None), Shown::NextLaunch { name: "de.ftl".into() });
         let failed = Loaded {
-            path,
+            path: PathBuf::from(&de),
             result: Err(Failure::NotText),
         };
         assert_eq!(
-            shown(r"C:\t\de.ftl", Some(&failed)),
+            shown(&de, Some(&failed)),
             Shown::Failed {
                 name: "de.ftl".into(),
                 failure: Failure::NotText
