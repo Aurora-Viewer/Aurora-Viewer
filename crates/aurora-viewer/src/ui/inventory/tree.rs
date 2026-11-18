@@ -183,7 +183,7 @@ mod tests {
     fn frame(ctx: &egui::Context, text: &mut String, events: Vec<egui::Event>) -> egui::Response {
         let p = crate::theme::Theme::default().palette();
         let mut field = None;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0))),
                 events,
@@ -194,6 +194,8 @@ mod tests {
                 let _ = ui.button("Next");
             },
         );
+        // No renderer consumes the font atlas in this headless test.
+        output.textures_delta.clear();
         field.expect("the field is drawn every frame")
     }
 
