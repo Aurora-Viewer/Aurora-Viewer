@@ -431,7 +431,16 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         response.ctx.data_mut(|data| {
             data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point);
             data.insert_temp(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, item)), shown);
+            if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+                data.insert_temp(egui::Id::unique(("inventory_demo_click_row", st.ui_id, item)), response.rect);
+            }
         });
+    }
+}
+
+pub(super) fn demo_viewport(ctx: &egui::Context, st: &InventoryUi, rect: egui::Rect) {
+    if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)), rect));
     }
 }
 
@@ -457,6 +466,28 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if mode.starts_with("keyboard-click-") {
+        // Prepare a half-visible row at either edge, then leave the actual
+        // click to the human. The long demo folder gives both edges room.
+        if frame == 620 {
+            let geometry = ctx.data(|data| {
+                let row = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_row", st.ui_id, Uuid::from_u128(11000))))?;
+                let clip = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)))?;
+                Some((row, clip))
+            });
+            if let Some(((row, clip), (offset, _))) = geometry.zip(st.list_viewport) {
+                let edge = if mode.ends_with("top") { clip.top() } else { clip.bottom() };
+                st.scroll_restore = Some((offset + row.top() - edge + row.height() / 2.0).max(0.0));
+                st.selected = None;
+                st.selection.clear();
+                log::info!(
+                    "demo inventory click edge: mode={mode}, target=11000, offset={:?}",
+                    st.scroll_restore
+                );
+            }
+        }
+        return Vec::new();
+    }
     if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
         if matches!(frame, 650 | 651)
             && let Some(pos) =

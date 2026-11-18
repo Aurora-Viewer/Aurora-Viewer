@@ -561,6 +561,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "aurora-keyboard-fold"
         | "aurora-keyboard-down"
         | "aurora-keyboard-wide" => 8100,
+        "keyboard-click-top" | "keyboard-click-bottom" | "aurora-keyboard-click-top" | "aurora-keyboard-click-bottom" => 11000,
         "animation"
         | "animation-open"
         | "animation-play-local"
