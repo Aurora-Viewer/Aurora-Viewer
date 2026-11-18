@@ -1427,7 +1427,7 @@ fn shortcut_claims_focus(
     }
     // a focused inventory list keeps its file manager's chords (Ctrl+Shift+A
     // inverts there, not People; Ctrl+Shift+N makes a folder, not the sunset)
-    if ui::inventory::list_keeps_chord(ctx, logical, mods.ctrl, shift, alt) {
+    if ui::inventory::list_keeps_chord(ctx, &Input::key(code), mods.ctrl, shift, alt) {
         return false;
     }
     true
@@ -7895,6 +7895,17 @@ impl App {
                 );
                 return;
             }
+            // the inventory lists' keys: one the list could never see, or
+            // keeps fixed, is refused the same way (`inventory_accepts`)
+            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(&b) {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("common-inventory").to_owned(),
+                    aurora_i18n::tr!("keybinds-inventory-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -13212,6 +13223,7 @@ impl App {
             ui::close_key::begin(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
+            ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that
@@ -25015,7 +25027,7 @@ impl ApplicationHandler for App {
                     // the focused inventory list's chord is the list's only
                     // (shortcut_claims_focus gave it to egui)
                     let inventory_chord =
-                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &ke.logical_key, mods.ctrl, self.shift, self.alt);
+                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &Input::key(code), mods.ctrl, self.shift, self.alt);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat

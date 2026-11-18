@@ -135,7 +135,9 @@ pub(super) fn adopt_focus(st: &mut InventoryUi) {
 /// Handles this frame's selection keys and typed letters for the focused
 /// list; true when the selected row changed (the list then scrolls to it).
 pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explorer: bool) -> bool {
-    let commands = shortcuts::take(ui, false, |c| matches!(c, Command::SelectAll | Command::InvertSelection));
+    let commands = shortcuts::take(ui, |c| {
+        matches!(c, Command::SelectAll | Command::InvertSelection) || (explorer && c == Command::ToggleSelection)
+    });
     let cut = st.cut || st.cut_cancelled;
     let anything = !st.selection.is_empty() || st.focus.is_some();
     let mut moves = Vec::new();
@@ -158,7 +160,6 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
                     egui::Key::PageDown if plain => Some(Move::PageDown),
                     egui::Key::ArrowUp if explorer && ctrl => Some(Move::Focus(false)),
                     egui::Key::ArrowDown if explorer && ctrl => Some(Move::Focus(true)),
-                    egui::Key::Space if explorer && ctrl => Some(Move::Toggle),
                     // a cut pending: Esc cancels the cut (clipboard.rs) and
                     // keeps the selection
                     egui::Key::Escape if modifiers.is_none() && !cut && anything => Some(Move::Clear),
@@ -185,6 +186,10 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
         match command {
             Command::SelectAll => select_all(st),
             Command::InvertSelection => invert(st),
+            Command::ToggleSelection => {
+                moves.push((Move::Toggle, false));
+                continue;
+            }
             _ => {}
         }
         st.focus = None;

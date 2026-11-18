@@ -479,10 +479,15 @@ fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
 }
 
-/// A Ctrl or Alt chord the focused inventory list handles itself
-/// (`shortcuts::list_chord`), before the viewer's own shortcuts take it.
-pub fn list_keeps_chord(ctx: &egui::Context, logical: &winit::keyboard::Key, ctrl: bool, shift: bool, alt: bool) -> bool {
-    clipboard::list_focused_recently(ctx) && shortcuts::list_chord(logical, ctrl, shift, alt)
+/// A key the focused inventory list handles itself (its bindings,
+/// `shortcuts::list_keeps`), before the viewer's own shortcuts take it.
+pub fn list_keeps_chord(ctx: &egui::Context, input: &crate::keybinds::Input, ctrl: bool, shift: bool, alt: bool) -> bool {
+    clipboard::list_focused_recently(ctx) && shortcuts::list_keeps(ctx, input, ctrl, shift, alt)
+}
+
+/// The user's inventory keys, for this frame's lists (`shortcuts::publish`).
+pub fn publish_shortcuts(ctx: &egui::Context, kb: &crate::keybinds::KeyBindings) {
+    shortcuts::publish(ctx, kb);
 }
 
 /// Inventory cargo shared by world placement and the build contents floater.

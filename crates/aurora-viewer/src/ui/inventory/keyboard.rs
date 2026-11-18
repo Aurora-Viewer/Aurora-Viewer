@@ -94,7 +94,7 @@ pub(super) fn commands(
                 | shortcuts::Command::Refresh
         )
     };
-    for command in shortcuts::take(ui, false, wanted) {
+    for command in shortcuts::take(ui, wanted) {
         match command {
             shortcuts::Command::NewFolder => {
                 let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) && st.tab == 0;

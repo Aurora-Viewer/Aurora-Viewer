@@ -9,7 +9,7 @@
 //! somewhere (a double-click, the column, the breadcrumb, Enter, a
 //! revealed item, a shortcut such as Recent) is a step; it holds at most
 //! `LIMIT` places; the keys of Windows Explorer and Dolphin (Alt+←/→/↑,
-//! the mouse's back and forward buttons, Backspace by preference) and a
+//! the mouse's back and forward buttons, Backspace; all rebindable) and a
 //! right-click on Back or Forward listing the places, as in Explorer; Up
 //! and Back select the folder they come out of, as Explorer and Dolphin do.
 
@@ -212,17 +212,15 @@ pub(crate) fn input(
     }
     // the mouse's side buttons over the window, as in a file manager
     if ui.rect_contains_pointer(area) {
-        let (back, forward) = ui.input(|i| {
-            (
-                i.pointer.button_pressed(egui::PointerButton::Extra1),
-                i.pointer.button_pressed(egui::PointerButton::Extra2),
-            )
-        });
-        if back {
-            go_back(inv, st, prefs, 1);
-        }
-        if forward {
-            go_forward(inv, st, prefs, 1);
+        // the mouse's bound buttons (back and forward by default)
+        for command in shortcuts::mouse(ui, |c| matches!(c, Command::Back | Command::Forward | Command::Up | Command::Root)) {
+            match command {
+                Command::Back => go_back(inv, st, prefs, 1),
+                Command::Forward => go_forward(inv, st, prefs, 1),
+                Command::Up => go_up(inv, st, prefs),
+                Command::Root => go_root(inv, st, prefs),
+                _ => {}
+            }
         }
     }
     // the keys only while the list has the keyboard: elsewhere Alt+arrows
@@ -236,7 +234,7 @@ pub(crate) fn input(
             Command::Back | Command::Forward | Command::Up | Command::Root | Command::Refresh | Command::EditPath | Command::Search
         )
     };
-    for command in shortcuts::take(ui, prefs.explorer.backspace_up, navigation) {
+    for command in shortcuts::take(ui, navigation) {
         match command {
             Command::Back => go_back(inv, st, prefs, 1),
             Command::Forward => go_forward(inv, st, prefs, 1),
