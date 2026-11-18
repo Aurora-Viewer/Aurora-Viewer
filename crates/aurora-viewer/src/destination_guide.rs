@@ -715,17 +715,18 @@ fn client() -> Option<reqwest::Client> {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(aurora_version::user_agent())
-        .https_only(true)
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .dns_resolver(crate::link_preview::PublicOnly)
-        .build()
-        .map_err(|e| log::warn!("destination guide: no HTTP client: {e}"))
-        .ok()
+    aurora_proxy::http_client(|b| {
+        let b = b
+            .user_agent(aurora_version::user_agent())
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy);
+        crate::link_preview::public_only(b)
+    })
+    .map_err(|e| log::warn!("destination guide: no HTTP client: {e}"))
+    .ok()
 }
 
 /// The body of `url`, at most `max` bytes.

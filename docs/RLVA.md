@@ -110,10 +110,19 @@ script authors; the command lists below describe this branch specifically.
   responses are still sent on acceptance or an RLVa refusal. Blocked offers
   and requests use busy replies, without manufacturing a user decline.
   Invitation text is masked under recvim or showloc as appropriate.
-  standtp records the pre-sit location and returns only after a successful
-  forced sit followed by a stand.
+  standtp records the pre-sit location of a sit asked while it is held, by
+  hand or forced, and returns only after a successful sit followed by a
+  stand; a ground sit records none.
+  A landmark dropped in the world opens no portal where the teleport by that
+  landmark is refused (tplm, or unsit while seated); crossing a portal is a
+  teleport to a location, refused under tploc. The Teleport Home menu entries
+  are greyed under either tplm or tploc; the Home buttons and the teleport
+  itself give way only under both.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
-  touchhud/this, interact and fartouch.
+  touchhud/this, interact and fartouch. Interact drops every pick, a HUD's
+  included: no click action, media, menu or selection by a click, on a HUD
+  as in the world; our own avatar keeps its menu and a worn HUD its Touch
+  entry. Fartouch leaves the HUDs alone.
   Vendor payments obey buy; resident payments obey pay. Fartouch includes
   the exact distance boundary; sitting/teleport distances remain exclusive.
   A worn removal-locked HUD cannot be hidden through the HUD switch and
@@ -198,7 +207,9 @@ script authors; the command lists below describe this branch specifically.
   HUD attachments and also applies to photos without the interface; opaque
   overlay texels suppress object hits while terrain navigation remains usable.
   setcam_textures/camtextures temporarily replace world diffuse/PBR base
-  textures and particle textures, leaving avatars and attachments intact;
+  textures and particle textures, leaving avatars and attachments intact.
+  An empty value is the Legacy Viewer's flat grey (`IMG_DEFAULT`), painted
+  locally and not fetched; an explicit id uses that texture.
   getcam_textures reads the active override. showself/showselfhead preserve
   HUD visibility. setcam_avdist/camavdist silhouettes use the reference's
   dark colour and take precedence over render exceptions.
@@ -208,7 +219,41 @@ script authors; the command lists below describe this branch specifically.
   shownearby. Display names, rich chat, notifications, hover text, maps and
   radar use privacy projections while canonical identities and transcript
   filenames stay intact. Hidden-name avatar menus expose the reference's
-  limited actions. Application links and place details filter labels and
+  limited actions. The right-click menu of an avatar in the world (and of what
+  they wear) greys View profile, Become friends, Add to contact set, Send IM,
+  Give my calling card, Voice call, Invite to group, Ignore and Offer teleport
+  while `@shownames` hides that resident (`RLV.CanShowName`,
+  `Avatar.EnableAddFriend`, `Avatar.EnableCall` and `Object.EnableMute`,
+  menu_avatar_other.xml); Block voice follows Ignore and a name-plate click
+  that would run one of them does nothing (both stricter than the Legacy
+  Viewer, which has neither). A conversation (an IM, a group chat, its
+  members and header), the notices about them (an IM, a friendship offer),
+  the friends, group and search lists, the group profile, About Land and the
+  estate and region windows name their people whoever is around, and a click
+  on such a name opens the profile. The menu of a name greys View profile and
+  Zoom in while `@shownames` is set (FSCommon::checkIsActionEnabled) and keeps
+  the friendship offer, the history and the copies; the people lists offer no
+  friendship to a hidden resident (PeopleContextMenu). A name the
+  restriction hides in a chat (a speaker of the nearby chat, a rewritten
+  mention) opens no menu, as the Legacy Viewer writes it as plain text
+  (FSChatHistory). The owner and the creator of an item, in the inventory or
+  in an object's contents, follow LLSidepanelItemInfo field by field: the
+  owner is hidden unless excepted, the creator when they also own the item
+  or stand nearby, and a hidden one is a plain stand-in that opens no
+  profile. A bare link to a resident in chat keeps the
+  name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
+  label of a labelled link is filtered like the text around it
+  (RlvUtil::filterNames and filterLocation) and a `/mention` link is
+  rewritten. `@shownames` and `@showloc` rewrite the names and the places in
+  what no resident typed: an object's chat and IMs, the system's messages,
+  the viewer's notices. What a resident typed, in the nearby chat or in an
+  IM session, ours included, is shown as typed
+  (LLFloaterIMNearbyChatHandler::processChat filters only when the source is
+  not an avatar). A script's prompt (its dialog or text box, its permission
+  question, its link prompt) is shown as the simulator sent it, the name of
+  the object's owner included (process_script_dialog and
+  process_script_question have no RLVa test); a click on that name opens no
+  profile while the restriction hides the resident. Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure
@@ -240,7 +285,8 @@ script authors; the command lists below describe this branch specifically.
   Positive query-angle domains, exact axis cases and solar-glow component
   resets follow the native conversion helpers. Temporary overrides restore
   the user's local environment when released or disabled. Native environment
-  changes respect the lock.
+  changes respect the lock. A sky forced while no setenv lock is held gives
+  way to the user's next choice of environment, the shared one included.
 - Editing: edit, editobj, editattach and editworld at selection, local
   transforms and network writes, including material and media capabilities;
   viewtransparent and viewwireframe. viewnote/viewscript/viewtexture also

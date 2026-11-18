@@ -179,6 +179,8 @@ pub(crate) struct Ctx {
     pub free_point: u8,
     pub bridge: Uuid,
     pub flew: bool,
+    /// Where the avatar stood before the run's sit.
+    pub stood: Option<(RegionHandle, Vec3)>,
     /// Why the in-world cases are skipped.
     pub world_skip: Option<String>,
     /// A made-up resident, for the name rules: nobody real is involved.
@@ -212,6 +214,7 @@ impl Ctx {
             free_point: 0,
             bridge,
             flew: false,
+            stood: None,
             world_skip: None,
             other: Uuid::from_u128(0x5e1f_7e57_0000_0000_0000_0000_0000_0001),
         }

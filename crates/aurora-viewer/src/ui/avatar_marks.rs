@@ -7,7 +7,7 @@
 //! maps and the name tags, not in the radar list: the custom colour and the
 //! ring are Aurora additions, asked for by the human.
 
-use super::context::{self, CtxAction};
+use super::context::{self, AvatarList, CtxAction};
 use super::menu;
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
@@ -37,19 +37,26 @@ fn label(name: MarkColor) -> &'static str {
     }
 }
 
+/// Unlike LLNetMap::handleRightMouseDown, the mini-map also protects the
+/// mark controls: the clear action and custom colour would identify a dot.
+fn can_edit(world: &World, ids: &[Uuid], source: AvatarList) -> bool {
+    source != AvatarList::MiniMap || ids.iter().all(|id| super::minimap::can_mark(world, id))
+}
+
 /// "Markers ▸": the five colours, "Custom color…", "Clear marker" for
 /// `ids`, "Clear all markers" (the MarkAvatar menu). Each choice goes to
 /// the app as a `CtxAction`.
-pub fn submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid]) {
+pub fn submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid], source: AvatarList) {
     let marks = &world.avatar_marks;
-    menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), !ids.is_empty(), |ui| {
+    let enabled = !ids.is_empty() && can_edit(world, ids, source);
+    menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), enabled, |ui| {
         for (name, rgb) in LEGACY_COLORS {
             if menu::swatch(ui, p, color(rgb), label(name)) {
                 context::request(ui.ctx(), CtxAction::MarkAvatars(ids.to_vec(), rgb));
             }
         }
         if menu::item(ui, p, "palette-filled", aurora_i18n::tr!("ui-minimap-custom-marker")) {
-            context::request(ui.ctx(), CtxAction::MarkCustom(ids.to_vec()));
+            context::request(ui.ctx(), CtxAction::MarkCustom { ids: ids.to_vec(), source });
         }
         menu::separator(ui, p);
         let marked = ids.iter().any(|id| marks.contains(id));
@@ -96,6 +103,7 @@ pub fn ring(ui: &egui::Ui, world: &World, id: &Uuid, picture: Rect, round: bool)
 /// changes.
 pub struct CustomMark {
     ids: Vec<Uuid>,
+    source: AvatarList,
     color: widgets::color::Rgba,
     state: widgets::color::ColorPickState,
     /// Opened from a menu: comes to the front once shown.
@@ -105,11 +113,12 @@ pub struct CustomMark {
 impl CustomMark {
     /// Starts from the colour the residents share, else the last custom
     /// colour of the session, else the menu's first.
-    pub fn new(world: &World, ids: Vec<Uuid>, last: Option<Rgb>) -> Self {
+    pub fn new(world: &World, ids: Vec<Uuid>, last: Option<Rgb>, source: AvatarList) -> Self {
         let [r, g, b] = world.avatar_marks.shared(&ids).or(last).unwrap_or(LEGACY_COLORS[0].1);
         let color = [r, g, b, 255];
         CustomMark {
             ids,
+            source,
             color,
             state: widgets::color::ColorPickState::new(egui::Id::unique(WINDOW), color),
             raise: true,
@@ -135,6 +144,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, picker: &mut Op
     let Some(mark) = picker else {
         return;
     };
+    if !can_edit(world, &mark.ids, mark.source) {
+        *picker = None;
+        return;
+    }
     let size = Vec2::new(280.0, 220.0);
     let mut open = true;
     let who = target(world, &mark.ids);
@@ -202,10 +215,76 @@ mod tests {
         let mut w = world();
         let (a, b) = (Uuid::from_u128(11), Uuid::from_u128(12));
         // nothing marked, nothing chosen before: the menu's first colour
-        assert_eq!(CustomMark::new(&w, vec![a], None).rgb(), LEGACY_COLORS[0].1);
-        assert_eq!(CustomMark::new(&w, vec![a], Some([1, 2, 3])).rgb(), [1, 2, 3]);
+        assert_eq!(CustomMark::new(&w, vec![a], None, AvatarList::Nearby).rgb(), LEGACY_COLORS[0].1);
+        assert_eq!(CustomMark::new(&w, vec![a], Some([1, 2, 3]), AvatarList::Nearby).rgb(), [1, 2, 3]);
         w.avatar_marks.set(&[a, b], [9, 8, 7]);
-        assert_eq!(CustomMark::new(&w, vec![a, b], Some([1, 2, 3])).rgb(), [9, 8, 7]);
+        assert_eq!(
+            CustomMark::new(&w, vec![a, b], Some([1, 2, 3]), AvatarList::Nearby).rgb(),
+            [9, 8, 7]
+        );
+    }
+
+    #[test]
+    fn mini_map_marks_close_on_hidden_names_or_a_hidden_parcel_and_restore_the_same_colour() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        use std::time::Instant;
+
+        let mut w = world();
+        for event in crate::demo::events() {
+            w.apply(event);
+        }
+        let center = glam::Vec3::new(130.0, 130.0, 25.0);
+        for event in crate::demo::minimap_name_events(center) {
+            w.apply(event);
+        }
+        let (luna, distant) = (crate::demo::u(0x327701), crate::demo::u(0x327702));
+        let blue = LEGACY_COLORS[2].1;
+        w.avatar_marks.set(&[luna], blue);
+        let source = AvatarList::MiniMap;
+        assert!(can_edit(&w, &[luna], source));
+        assert!(!can_edit(&w, &[distant], source));
+        assert!(!can_edit(&w, &[luna, distant], source));
+
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let draw_menu = |ui: &mut egui::Ui, w: &World| submenu(ui, &p, w, &[luna], source);
+        let mut picker = Some(CustomMark::new(&w, vec![luna], None, source));
+        assert_eq!(picker.as_ref().unwrap().rgb(), blue);
+        frames.run(Vec::new(), |ui| draw_menu(ui, &w));
+        let texts = frames.run(Vec::new(), |ui| draw_menu(ui, &w));
+        let row = painted(&texts, aurora_i18n::tr!("ui-minimap-markers")).rect.center();
+        let custom = aurora_i18n::tr!("ui-minimap-custom-marker");
+        let clear = aurora_i18n::tr!("ui-minimap-clear-marker");
+        let texts = frames.hover(row, |ui| draw_menu(ui, &w));
+        assert!(texts.iter().any(|t| t.source == custom));
+        assert!(texts.iter().any(|t| t.source == clear));
+
+        w.rlva_configure(true);
+        w.rlva_console_input("@shownames=n");
+        let texts = frames.run(Vec::new(), |ui| {
+            draw_menu(ui, &w);
+            show(ui.ctx(), &p, &mut w, &mut picker);
+        });
+        assert!(!texts.iter().any(|t| t.source == custom || t.source == clear));
+        assert!(picker.is_none());
+        assert!(context::take_requests(&frames.ctx).is_empty());
+        w.rlva_console_input("@shownames=y");
+        assert!(can_edit(&w, &[luna], source));
+        let mut picker = Some(CustomMark::new(&w, vec![luna], None, source));
+        assert_eq!(picker.as_ref().unwrap().rgb(), blue);
+
+        // The west resident is still loaded and named when only our eastern
+        // parcel becomes visible. The open picker must not keep its colour.
+        let mut settings = crate::settings::Settings::default();
+        crate::demo::parcel_visibility::install(&mut w, &mut settings, "always");
+        w.agent.get_off(center);
+        w.parcel = Some(crate::demo::parcel_visibility::parcel_at(center.x, center.y));
+        let _ = w.update_parcel_visibility(&settings.parcel_visibility, Instant::now());
+        assert!(w.objects.index_of_uuid(&luna).is_some());
+        assert!(!can_edit(&w, &[luna], source));
+        frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
+        assert!(picker.is_none());
+        assert_eq!(w.avatar_marks.get(&luna), Some(blue));
     }
 
     #[test]

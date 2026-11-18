@@ -22,7 +22,7 @@ mod animations;
 mod authoring;
 mod bindings;
 mod clip;
-mod gizmo;
+pub(crate) mod gizmo;
 mod graph;
 mod links;
 mod object_data;
@@ -146,6 +146,12 @@ impl Frame {
             .zip(&rig.default_world_inv)
             .map(|(p, inverse)| model * *p * inverse.inverse())
             .collect();
+        // couple mode: Person B's body is drawn where the editor moved it
+        // (`World::couple_shift`); the move rides on the model, as below,
+        // so their recorded keys stay free of it
+        if let Some(shift) = world.couple_shift(subject, model) {
+            model = shift * model;
+        }
         // Avatar Studio's Hover Height lifts the stored pose for display
         // only. Carry the lift on the model instead: the joints stay where
         // the avatar shows, and everything read back in model space (bone
@@ -166,6 +172,13 @@ pub fn offsets(joint: Mat4, contact: Vec3, target_p: Vec3, target_q: Quat) -> Op
     let p = target_q.inverse() * (joint.transform_point3(contact) - target_p);
     let q = (target_q.inverse() * q).normalize();
     (p.is_finite() && q.is_finite()).then_some((p, q))
+}
+
+/// Whether a click with these modifiers adds its joint to the selection
+/// (or takes it out): Shift, or Ctrl (Cmd on macOS), the same on a handle,
+/// a bone, a picker dot and a row, in the pose and animation editors.
+pub(crate) fn adds_to_selection(modifiers: egui::Modifiers) -> bool {
+    modifiers.shift || modifiers.ctrl || modifiers.command
 }
 
 fn ray(proj: &Projector, at: Pos2) -> Option<(Vec3, Vec3)> {
@@ -230,16 +243,22 @@ impl Editor {
     }
 
     fn active_tool(&self, modifiers: egui::Modifiers) -> Tool {
-        if modifiers.ctrl {
+        // a handle being dragged keeps its tool: Shift pressed during the
+        // drag only makes it finer (`gizmo::FINE`)
+        if let Some(tool) = self.gizmo.dragging_tool() {
+            tool
+        } else if modifiers.ctrl {
             Tool::Rotate
-        } else if modifiers.shift {
+        } else if modifiers.shift && !self.clip.active {
             Tool::Move
         } else {
+            // the animation editor keeps the Move or Rotate chosen (R) with
+            // Shift held, so that Shift grabs a ring or an arrow finely
             self.tool
         }
     }
     fn gizmo_visible(&self, modifiers: egui::Modifiers) -> bool {
-        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift
+        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift || self.clip.active
     }
 
     /// The drag scale of the shared move and rotate handles. The Poser's
@@ -255,15 +274,22 @@ impl Editor {
     }
 
     /// Whether a free rotation drag is ten times finer. Shift does that in
-    /// the Poser, which says so on its trackball. Elsewhere Shift only
+    /// the Poser, which says so on its trackball, and in the animation
+    /// editor, whose Shift keeps the chosen tool. Elsewhere Shift only
     /// enables dragging a point (`point_drag_enabled`), so that Ctrl+Shift
     /// keeps the rotation rate it always had.
     fn fine_drag(&self, modifiers: egui::Modifiers) -> bool {
-        self.poser.active && modifiers.shift
+        (self.poser.active || self.clip.active) && modifiers.shift
     }
 
     fn bone_overlays_visible(&self) -> bool {
         !(self.clip.active && self.clip.is_playing())
+    }
+
+    /// Whether a click or a grab on `joint`'s handle starts its limb's pole:
+    /// the joint must be the selected one, in IK, with no pole yet.
+    fn takes_limb_pole(&self, joint: usize) -> bool {
+        self.selected == Some(joint) && self.mode == Mode::Ik && self.pole.is_none()
     }
 
     fn point_drag_enabled(&self, modifiers: egui::Modifiers) -> bool {
@@ -759,6 +785,18 @@ impl Editor {
     }
 
     fn select(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.clip.active && !self.poser.active {
+            // every way of picking a joint in the animation editor (handle,
+            // bone, picker, Tracks row, timeline, joint list, pole, binding,
+            // link…) keeps the joints picked together right: a joint of the
+            // selection leads the others, any other joint is selected alone
+            self.clip_retarget_followers(bone);
+        }
+        self.select_joint(bone, rig, frame);
+    }
+    /// Select `bone` and leave the animation editor's joints picked together
+    /// as they are: for the paths that already set them.
+    fn select_joint(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
         if self.poser.active {
             self.select_pose_bone(bone, rig, frame);
             return;
@@ -782,7 +820,10 @@ impl Editor {
             self.graph.target = binding.target.clone();
         }
         self.control = Control::Bone;
-        self.tool = Tool::Move;
+        // the animation editor keeps the Move or Rotate chosen from joint to joint
+        if !self.clip.active {
+            self.tool = Tool::Move;
+        }
         self.pole_orbit = None;
         self.pole = None;
         self.drag = None;
@@ -949,6 +990,7 @@ impl Editor {
         // the poser's Ctrl picks another part or avatar: the handles let the
         // pointer through (a drag already begun keeps them)
         let picking_parts = self.poser_ctrl_picks(modifiers) && !self.gizmo.dragging();
+        self.gizmo.shift_fine = self.poser.active || self.clip.active;
         let (owns, change) = self
             .gizmo
             .show(ctx, palette, geometry, pose, !point_hit && !picking_parts, self.gizmo_sensitivity());
@@ -1077,6 +1119,8 @@ impl Editor {
             if !selected_pole {
                 self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
             }
+            // couple mode: the other person's joints, a click edits them
+            self.couple_waiting_handles(ctx, palette, world, proj, gizmo_owns || self.clip.waiting_source());
             let limb_list = if self.limb_controls {
                 limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
             } else {
@@ -1101,6 +1145,7 @@ impl Editor {
                         continue;
                     }
                     let selected = self.selected == Some(joint);
+                    let follower = self.clip_follows(joint);
                     let limb = limb_list.iter().find(|l| l.end == joint);
                     let point = if self.links.bone_pick {
                         frame.joints[joint].w_axis.truncate()
@@ -1141,14 +1186,21 @@ impl Editor {
                                     palette.teal,
                                 );
                             }
+                            if follower {
+                                // a joint that follows the selected one: a thinner ring
+                                ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.5, palette.teal));
+                            }
                             ui.painter().circle_filled(
                                 rect.center(),
-                                if selected { 4.5 } else { 2.5 },
-                                if selected { palette.teal } else { palette.ink },
+                                if selected || follower { 4.5 } else { 2.5 },
+                                if selected || follower { palette.teal } else { palette.ink },
                             );
                             response
                         })
                         .inner;
+                    // a press on a joint's handle is the editor's: Avatar Studio
+                    // would otherwise also turn its camera with the drag
+                    self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
                     if self.links.bone_pick && response.clicked() {
                         self.picked_bone(
                             world,
@@ -1162,9 +1214,17 @@ impl Editor {
                         continue;
                     }
                     if response.clicked() || response.drag_started() {
-                        self.select(joint, rig, &frame);
-                        if self.mode == Mode::Ik
-                            && self.pole.is_none()
+                        if !self.clip.active {
+                            self.select(joint, rig, &frame);
+                        } else if response.clicked() {
+                            self.clip_click_bone(joint, rig, &frame, ctx.input(|i| adds_to_selection(i.modifiers)));
+                        } else {
+                            self.clip_grab_bone(joint, rig, &frame);
+                        }
+                        // only for the joint that leads: one added to the
+                        // selection (Shift or Ctrl + click) must not give the
+                        // selected joint its own limb's pole
+                        if self.takes_limb_pole(joint)
                             && let Some(limb) = limb
                         {
                             self.pole = Some(limb.pole(&frame));
@@ -1196,6 +1256,8 @@ impl Editor {
                 self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
             }
             self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
+            // a point dragged keeps the pointer to its release, wherever it goes
+            self.manipulator_hovered |= self.drag.is_some();
         }
         if self.clip.active {
             // the animation editor has its own, narrower window and pages

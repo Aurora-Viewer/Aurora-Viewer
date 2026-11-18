@@ -60,7 +60,7 @@ impl State {
             })
             .collect()
     }
-    fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
+    pub(super) fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
         self.owners.insert(owner);
         for bone in 0..before.rotations.len() {
             let rotation = (before.rotations[bone].dot(after.rotations[bone]).abs() < 0.9999999).then_some(after.rotations[bone]);
@@ -182,7 +182,9 @@ impl Editor {
             self.authoring.remove(bone);
         }
         self.commit();
+        let start = pose.clone();
         let bones = [Some(bone), mirror];
+        let mut applied = Vec::new();
         for bone in bones.into_iter().flatten() {
             if Some(bone) == pinned_mirror {
                 continue;
@@ -199,6 +201,34 @@ impl Editor {
             let before = pose.clone();
             if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, &goal) {
                 self.authoring.record(bone, &before, &pose);
+                applied.push(goal);
+            }
+        }
+        if self.clip.active {
+            let followers = self.clip_followers();
+            self.follow_clip_lead(rig, bone, mirror, &start, &mut pose, &scale, rotate);
+            // A turned follower above the selected joint (an elbow picked
+            // with its wrist) carries it: the joint is solved again under its
+            // turned parent so that it holds the handle's rotation. Left
+            // carried, the next drag frame read the joint off the handle and
+            // turned it back, and the follower with it, so the hand shook.
+            let above = |joint: usize| {
+                let mut at = rig.parent[joint];
+                while let Some(parent) = at {
+                    if followers.contains(&parent) {
+                        return true;
+                    }
+                    at = rig.parent[parent];
+                }
+                false
+            };
+            if rotate {
+                for goal in applied.iter().filter(|goal| above(goal.bone)) {
+                    let before = pose.clone();
+                    if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, goal) {
+                        self.authoring.record(goal.bone, &before, &pose);
+                    }
+                }
             }
         }
         self.refresh_clip_marks();
@@ -209,6 +239,23 @@ impl Editor {
         };
         if self.graph.selected.is_some() || self.drag.is_some() || self.gizmo.dragging() || self.weight != 1.0 {
             return;
+        }
+        // In the animation editor the fields are read again only when the
+        // joint, the playhead, the clip or its preview changes, or an edit
+        // ends: read every frame, the shown pose's last digits made them
+        // flicker while nothing was being done.
+        if self.clip.active {
+            // a few reads after a change: the shown pose may follow an edit
+            // a frame late
+            let key = self.clip.authored_sync_key(bone);
+            let reads = match self.clip.authored_sync {
+                Some((last, reads)) if last == key => reads,
+                _ => 0,
+            };
+            if reads >= 3 {
+                return;
+            }
+            self.clip.authored_sync = Some((key, reads + 1));
         }
         let local = frame.model.inverse() * frame.joints[bone];
         self.position = local.transform_point3(self.contact);

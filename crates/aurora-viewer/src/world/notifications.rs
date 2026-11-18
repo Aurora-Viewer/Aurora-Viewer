@@ -374,6 +374,47 @@ pub struct Notification {
 }
 
 impl Kind {
+    /// The names a notice of this kind shows under RLVa's `@shownames`.
+    /// `NameScope::Roster`, which hides none: an instant message, a call, a
+    /// teleport offer or request, a friendship or calling card offer, a
+    /// group's notice or invitation, a friend going on or off line. The
+    /// Legacy Viewer tests `@shownames` for none of them
+    /// (process_improved_im, indra/newview/llimprocessing.cpp;
+    /// LLFloaterIMNearbyChatHandler leaves the ONLINE_STATUS notices alone).
+    /// An inventory offer is not one: its giver is hidden while around
+    /// (inventory_offer_handler).
+    pub fn names(self) -> super::names::NameScope {
+        match self {
+            Kind::Teleport | Kind::Friendship | Kind::Group | Kind::Presence | Kind::Message | Kind::Call => {
+                super::names::NameScope::Roster
+            }
+            _ => super::names::NameScope::World,
+        }
+    }
+
+    /// A script's prompt: its dialog or text box, its permission question,
+    /// its link prompt. The Legacy Viewer has no RLVa test on what they
+    /// show (process_script_dialog, process_script_question and
+    /// process_load_url, indra/newview/llviewermessage.cpp): the message,
+    /// the object's name and its owner's name stay as the simulator sent
+    /// them under `@shownames` and `@showloc`. A click on the owner's name
+    /// still follows `names`: the Legacy Viewer writes it as plain text.
+    pub fn as_received(self) -> bool {
+        matches!(self, Kind::Script | Kind::Permissions | Kind::Url)
+    }
+
+    /// The body of a notice of this kind under `@shownames` and `@showloc`
+    /// (`names::TextScope`): shown as written when a resident typed it (the
+    /// card of a message) or a script sent it (`as_received`), rewritten for
+    /// the other kinds.
+    pub fn text(self) -> super::names::TextScope {
+        if self.as_received() || self == Kind::Message {
+            super::names::TextScope::verbatim(self.names())
+        } else {
+            self.names().into()
+        }
+    }
+
     pub fn look(self) -> Look {
         match self {
             Kind::Info | Kind::Presence => Look::Info,
@@ -493,6 +534,7 @@ impl Notification {
             | Data::RegionRestart
             | Data::RegionMessage { .. }
             | Data::CallingCard { .. }
+            | Data::Permissions { .. }
             | Data::Delivery { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
             // closing the notice's toast declines its attachment
@@ -1091,7 +1133,7 @@ pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
         Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
         Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
         Response::Dismiss => match &n.data {
-            Data::Dialog { .. } | Data::TextBox { .. } => Outcome::Ignored,
+            Data::Dialog { .. } | Data::TextBox { .. } | Data::Permissions { .. } => Outcome::Ignored,
             Data::Inventory { object, .. } if !object.is_nil() => Outcome::Kept,
             Data::GroupNotice { attachment: Some(a), .. } if a.saved => Outcome::Kept,
             _ if n.close_declines() => Outcome::Declined,
@@ -1497,6 +1539,10 @@ mod tests {
                 caution: None,
             },
         );
+        let question = n.list.iter().find(|question| question.id == id).expect("permission question");
+        assert!(!question.close_declines());
+        assert_eq!(outcome_of(question, &Response::Dismiss), Outcome::Ignored);
+        assert_eq!(outcome_of(question, &Response::Decline), Outcome::Declined);
         let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), Uuid::nil());
         assert!(matches!(
             &cmds[..],

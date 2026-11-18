@@ -124,6 +124,9 @@ pub fn helper() -> anyhow::Result<bool> {
         return Ok(false);
     };
     let id = args.get(index + 1).ok_or_else(|| anyhow::anyhow!("missing crash session"))?;
+    // a report it sends follows the viewer's proxy rule (Preferences ›
+    // Network › Proxy): this process reads it for itself
+    crate::proxy::install(&crate::settings::Settings::load().proxy);
     let dir = session_dir(&root(), id)?;
     let record = load(&dir)?;
     if args[index] == "--crash-watch" {

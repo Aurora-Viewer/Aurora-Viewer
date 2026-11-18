@@ -139,7 +139,7 @@ impl RegionMessagePromptUi {
                             }
                             // the name not known yet: the notification's title
                             None => {
-                                super::notifications::text::show(ui, p, &n.title, &n.name_links, 15.0, p.ink, false, true);
+                                super::notifications::text::show(ui, p, &n.title, &n.name_links, 15.0, p.ink, false, true, n.kind.names());
                             }
                         }
                         ui.add_space(10.0);
@@ -150,7 +150,17 @@ impl RegionMessagePromptUi {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 egui::ScrollArea::vertical().max_height(MESSAGE_HEIGHT).show(ui, |ui| {
-                                    super::notifications::text::show(ui, p, n.body.trim(), &n.name_links, 14.0, p.ink, false, true);
+                                    super::notifications::text::show(
+                                        ui,
+                                        p,
+                                        n.body.trim(),
+                                        &n.name_links,
+                                        14.0,
+                                        p.ink,
+                                        false,
+                                        true,
+                                        n.kind.names(),
+                                    );
                                 });
                             });
                         ui.add_space(14.0);

@@ -52,7 +52,6 @@
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Driver budget and usage for the heaps the texture streamer can use:
@@ -291,25 +290,84 @@ pub struct VideoMemoryProbe {
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How long the end of the sampler waits for a query under way before
+/// leaving it to the driver (a stuck driver never holds up the shutdown).
+const QUERY_GRACE: Duration = Duration::from_millis(50);
+/// How long it waits, at most, for the thread to let its adapter go.
+const RELEASE_WAIT: Duration = Duration::from_secs(2);
+
+/// Where the sampling thread is, for its end ([`BudgetSampler`]'s `Drop`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// Between two queries, waiting on the condition variable.
+    Idle,
+    /// In the driver's query.
+    Querying,
+    /// Stopped while in the query: the thread forgets its adapter instead of
+    /// dropping it when the query returns.
+    Abandoned,
+    /// Out of its loop, dropping what it holds (the adapter).
+    Releasing,
+    /// Gone: nothing of the GPU is held by it any more.
+    Done,
+}
+
+#[derive(Debug)]
+struct Control {
+    stop: bool,
+    phase: Phase,
+}
+
 /// The query runs without the cache lock. A stuck driver leaves the last
 /// budget available and cannot hold up a frame or the viewer's shutdown.
+///
+/// Its end waits for the thread to drop its copy of the adapter (#3963): left
+/// to itself, the thread woke up during the process's exit holding the last
+/// reference to the wgpu instance, and `vkDestroyInstance` unloaded the
+/// driver's library while `exit` was running that library's finalizers (a
+/// crash in `__cxa_finalize`, NVIDIA on Linux). A thread stuck in the driver
+/// is not waited for; it never drops its adapter afterwards either.
 struct BudgetSampler {
     latest: Arc<parking_lot::Mutex<Option<Sample>>>,
-    stopped: Arc<AtomicBool>,
+    control: Arc<(parking_lot::Mutex<Control>, parking_lot::Condvar)>,
 }
 
 impl BudgetSampler {
     fn new(mut query: impl FnMut() -> Option<(u64, u64, u64, u64)> + Send + 'static, interval: Duration) -> Self {
         let latest = Arc::new(parking_lot::Mutex::new(None));
-        let stopped = Arc::new(AtomicBool::new(false));
-        let (output, stop) = (latest.clone(), stopped.clone());
+        let control = Arc::new((
+            parking_lot::Mutex::new(Control {
+                stop: false,
+                phase: Phase::Idle,
+            }),
+            parking_lot::Condvar::new(),
+        ));
+        let (output, shared) = (latest.clone(), control.clone());
         let spawned = std::thread::Builder::new().name("aurora-vram".into()).spawn(move || {
+            let (lock, wake) = &*shared;
             let mut floor = BudgetFloor::default();
             let mut shared_floor = BudgetFloor::default();
             let mut tightest = SlidingMin::<i64>::default();
             let mut logged = None::<u64>;
-            while !stop.load(Ordering::Acquire) {
-                if let Some((dedicated_budget, dedicated_usage, shared_budget, shared_usage)) = query() {
+            loop {
+                {
+                    let mut c = lock.lock();
+                    if c.stop {
+                        break;
+                    }
+                    c.phase = Phase::Querying;
+                }
+                let reading = query();
+                {
+                    let mut c = lock.lock();
+                    if c.phase == Phase::Abandoned {
+                        break;
+                    }
+                    c.phase = Phase::Idle;
+                    // (an end waiting on the query goes on at once)
+                    wake.notify_all();
+                }
+                if let Some((dedicated_budget, dedicated_usage, shared_budget, shared_usage)) = reading {
                     let now = std::time::Instant::now();
                     let raw = dedicated_budget.saturating_add(shared_budget);
                     let usage = dedicated_usage.saturating_add(shared_usage);
@@ -345,13 +403,31 @@ impl BudgetSampler {
                         );
                     }
                 }
-                std::thread::sleep(interval);
+                let mut c = lock.lock();
+                if !c.stop {
+                    wake.wait_for(&mut c, interval);
+                }
             }
+            let mut c = lock.lock();
+            if c.phase == Phase::Abandoned {
+                // the end of the sampler has not waited: the process may be
+                // exiting, and the adapter may hold the last reference to
+                // the instance; never destroy it from here
+                drop(c);
+                std::mem::forget(query);
+                return;
+            }
+            c.phase = Phase::Releasing;
+            drop(c);
+            drop(query);
+            lock.lock().phase = Phase::Done;
+            wake.notify_all();
         });
         if let Err(e) = spawned {
             log::warn!("GPU memory budget: sampling thread not started ({e}); texture memory follows its setting only");
+            control.0.lock().phase = Phase::Done;
         }
-        Self { latest, stopped }
+        Self { latest, control }
     }
 
     fn read(&self) -> Option<(u64, u64, u64)> {
@@ -364,8 +440,29 @@ impl BudgetSampler {
 }
 
 impl Drop for BudgetSampler {
+    /// Stops the thread and waits for it to let the adapter go: a query
+    /// under way gets [`QUERY_GRACE`], then is left to the driver
+    /// (`Abandoned`); the release itself gets [`RELEASE_WAIT`] at most.
     fn drop(&mut self) {
-        self.stopped.store(true, Ordering::Release);
+        let (lock, wake) = &*self.control;
+        let mut c = lock.lock();
+        c.stop = true;
+        wake.notify_all();
+        let start = std::time::Instant::now();
+        while c.phase != Phase::Done {
+            let waited = start.elapsed();
+            if c.phase == Phase::Querying && waited >= QUERY_GRACE {
+                c.phase = Phase::Abandoned;
+                log::warn!("GPU memory budget: the driver's query did not return; the sampling thread is left to it");
+                return;
+            }
+            if waited >= RELEASE_WAIT {
+                log::warn!("GPU memory budget: the sampling thread did not end within {RELEASE_WAIT:?}");
+                return;
+            }
+            let limit = if c.phase == Phase::Querying { QUERY_GRACE } else { RELEASE_WAIT };
+            wake.wait_for(&mut c, limit.saturating_sub(waited));
+        }
     }
 }
 
@@ -620,6 +717,60 @@ mod tests {
             // The query is still blocked until after both operations.
             release_tx.send(()).expect("release the sampling thread");
         }
+    }
+
+    /// #3963: once the sampler is dropped, its thread holds nothing of the
+    /// GPU any more (the `Arc` stands for its copy of the adapter), so it
+    /// never destroys the instance during the process's exit.
+    #[test]
+    fn the_end_of_the_sampler_waits_for_its_thread_to_let_go() {
+        let adapter = Arc::new(());
+        let held = adapter.clone();
+        let sampler = BudgetSampler::new(
+            move || {
+                let _ = &held;
+                Some((8_000 * MB, 1_000 * MB, 0, 0))
+            },
+            Duration::from_secs(60),
+        );
+        let start = Instant::now();
+        while sampler.read().is_none() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // the thread sleeps for a minute: the end wakes it instead
+        let start = Instant::now();
+        drop(sampler);
+        assert!(start.elapsed() < Duration::from_secs(1), "the end waited for the interval");
+        assert_eq!(Arc::strong_count(&adapter), 1, "the thread still holds its adapter");
+    }
+
+    /// A query stuck in the driver is not waited for, and when it returns
+    /// later the thread forgets its adapter instead of dropping it.
+    #[test]
+    fn a_query_left_to_the_driver_never_drops_its_adapter() {
+        let adapter = Arc::new(());
+        let held = adapter.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (returned_tx, returned_rx) = std::sync::mpsc::channel();
+        let sampler = BudgetSampler::new(
+            move || {
+                let _ = &held;
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                let _ = returned_tx.send(());
+                None
+            },
+            Duration::from_millis(1),
+        );
+        entered_rx.recv_timeout(Duration::from_secs(5)).expect("the query entered");
+        let start = Instant::now();
+        drop(sampler);
+        assert!(start.elapsed() < Duration::from_millis(250), "the end waited for a stuck query");
+        release_tx.send(()).expect("release the query");
+        returned_rx.recv_timeout(Duration::from_secs(5)).expect("the query returned");
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(Arc::strong_count(&adapter), 2, "the abandoned thread dropped its adapter");
     }
 
     /// wgpu drops the extension from its own list on RADV: only the

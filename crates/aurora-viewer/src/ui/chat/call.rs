@@ -85,7 +85,7 @@ pub(super) fn strip(
                     let shown = others.len().min(SHOWN).min(room);
                     for m in others.iter().take(shown) {
                         st.wanted_pics.insert(m.id);
-                        let name = world.social.name_of(&m.id);
+                        let name = world.social.name_in(crate::world::names::NameScope::Roster, &m.id);
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(MEMBER, MEMBER), egui::Sense::click());
                         avatar_disc(ui, p, rect, pics.get(&m.id), &name, false);
                         if m.speaking {
@@ -187,7 +187,7 @@ pub(super) fn ringing(
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
     let inv = &invite.invite;
     let name = if inv.from_name.is_empty() {
-        world.social.name_of(&inv.from)
+        world.social.name_in(crate::world::names::NameScope::Roster, &inv.from)
     } else {
         inv.from_name.clone()
     };

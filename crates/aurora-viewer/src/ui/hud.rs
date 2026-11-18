@@ -181,9 +181,15 @@ impl NameTagVisibility {
     }
 }
 
+/// LLVOAvatar::idleUpdateNameTag (indra/newview/llvoavatar.cpp) draws our own
+/// tag on `RenderNameShowSelf && AvatarNameTagMode`: Avatar Name Tags on Off
+/// hides every tag, ours included (#3855). Aurora's mode is Off when neither
+/// the friends' nor the other residents' tags show
+/// (`quick_prefs::NameTags::of`); the own tag's switch keeps its value and
+/// applies again once one of them is back on.
 fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: bool) -> bool {
     if own {
-        settings.show_own_name_tag
+        settings.show_own_name_tag && (settings.show_friend_name_tags || settings.show_other_name_tags)
     } else if friend {
         settings.show_friend_name_tags
     } else {
@@ -488,7 +494,8 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        // the animation editor's mirror of us has no name tag
+        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) || world.is_mirror(&o.full_id) {
             continue;
         }
         if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
@@ -509,6 +516,13 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
             // from us, not from the camera: the RLVa limits and the tags'
             // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
@@ -1008,7 +1022,7 @@ mod tests {
     }
 
     #[test]
-    fn name_tag_categories_are_independent_and_self_takes_priority() {
+    fn name_tag_categories_follow_their_switches_and_off_hides_our_own() {
         for own in [false, true] {
             for friends in [false, true] {
                 for others in [false, true] {
@@ -1018,8 +1032,9 @@ mod tests {
                         show_other_name_tags: others,
                         ..Default::default()
                     };
-                    assert_eq!(name_tag_enabled(&settings, true, false), own);
-                    assert_eq!(name_tag_enabled(&settings, true, true), own);
+                    // ours: its switch, while the residents' tags are not all off
+                    assert_eq!(name_tag_enabled(&settings, true, false), own && (friends || others));
+                    assert_eq!(name_tag_enabled(&settings, true, true), own && (friends || others));
                     assert_eq!(name_tag_enabled(&settings, false, true), friends);
                     assert_eq!(name_tag_enabled(&settings, false, false), others);
                 }

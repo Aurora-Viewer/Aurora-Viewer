@@ -714,7 +714,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
         action = Some(BarAction::TeleportHistory);
     }
-    if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
+    if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
         action = Some(BarAction::TeleportHome);
     }
     if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places")) {

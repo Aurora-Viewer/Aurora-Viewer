@@ -37,18 +37,8 @@ function Find-Bash {
 # A JSON string as JavaScript writes it (Claude Code): only the quote, the
 # backslash and the control characters are escaped.
 function ConvertTo-JsonText([string]$Text) {
-    $b = New-Object Text.StringBuilder
-    foreach ($ch in $Text.ToCharArray()) {
-        switch ([int]$ch) {
-            34 { [void]$b.Append('\"') }
-            92 { [void]$b.Append('\\') }
-            10 { [void]$b.Append('\n') }
-            13 { [void]$b.Append('\r') }
-            9 { [void]$b.Append('\t') }
-            default { [void]$b.Append($ch) }
-        }
-    }
-    '"' + $b.ToString() + '"'
+    # the backslash first: the other escapes add their own
+    '"' + $Text.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n').Replace("`r", '\r').Replace("`t", '\t') + '"'
 }
 
 function New-HookInput([string]$Tool, [string]$Command) {
@@ -56,6 +46,25 @@ function New-HookInput([string]$Tool, [string]$Command) {
     '"cwd":"C:\\Aurora-Viewer\\work\\some-task","permission_mode":"default","hook_event_name":"PreToolUse",' +
     '"tool_name":"' + $Tool + '","tool_input":{"command":' + (ConvertTo-JsonText $Command) +
     ',"description":"What the command does"},"tool_use_id":"toolu_test"}'
+}
+
+# The hook decodes its input by pieces of $pieceSize characters (its
+# piece_size). A script that holds $Text once per character of its JSON
+# text, each time placed so that a piece ends before that character; a
+# filler no rule looks at, between two ";", moves it there.
+function New-PieceScript([string]$Tool, [string]$Text) {
+    $json = ConvertTo-JsonText $Text
+    $length = $json.Length - 2
+    $empty = New-HookInput $Tool ''
+    $at = $empty.IndexOf('"command":"') + '"command":"'.Length
+    $b = New-Object Text.StringBuilder
+    foreach ($cut in 1..($length - 1)) {
+        $end = [int][Math]::Ceiling(($at + 2 + $cut) / $pieceSize) * $pieceSize
+        $fill = $end - $cut - $at
+        [void]$b.Append(';').Append('x', $fill - 2).Append(';').Append($Text)
+        $at += $fill + $length
+    }
+    $b.Append(';').ToString()
 }
 
 # Runs the hook's command line on $Json, as Claude Code does: in bash, with
@@ -80,8 +89,14 @@ function Invoke-Hook([string]$Json, [string]$PathDir, [string]$Project) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $p = [Diagnostics.Process]::Start($psi)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Json)
-    $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-    $p.StandardInput.Close()
+    # A hook that cannot start (the "missing" and "broken" cases) never reads
+    # its input: if its shell has already ended, the write fails with
+    # "Broken pipe". Its exit code is what the case checks.
+    try {
+        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $p.StandardInput.Close()
+    } catch [System.IO.IOException] {
+    }
     $out = $p.StandardOutput.ReadToEnd()
     $err = $p.StandardError.ReadToEnd()
     $p.WaitForExit()
@@ -100,10 +115,19 @@ $settings = Get-Content -Raw -LiteralPath (Join-Path $root '.claude/settings.jso
 $entry = @($settings.hooks.PreToolUse)[0]
 $handler = @($entry.hooks)[0]
 $hookCommand = [string]$handler.command
-if ($entry.matcher -ne 'Bash|PowerShell' -or $handler.type -ne 'command' -or $handler.shell -ne 'bash' -or -not $hookCommand) {
-    Write-Host '.claude/settings.json: expected one PreToolUse command hook, in bash, on "Bash|PowerShell".' -ForegroundColor Red
+if ($entry.matcher -ne 'Bash|PowerShell' -or $handler.type -ne 'command' -or $handler.shell -ne 'bash' -or -not $hookCommand -or -not ($handler.timeout -gt 0)) {
+    Write-Host '.claude/settings.json: expected one PreToolUse command hook, in bash, on "Bash|PowerShell", with its timeout.' -ForegroundColor Red
     exit 1
 }
+# The seconds Claude Code gives the hook: past them it lets the call through
+# unchecked, after making the agent wait that long.
+$timeout = [int]$handler.timeout
+$hookText = Get-Content -Raw -LiteralPath (Join-Path $root '.claude/hooks/shell-rules.sh')
+if ($hookText -notmatch '(?m)^piece_size=(\d+)\r?$') {
+    Write-Host '.claude/hooks/shell-rules.sh: expected its "piece_size=<number>" line.' -ForegroundColor Red
+    exit 1
+}
+$pieceSize = [int]$Matches[1]
 
 # What a refusal must say, per rule.
 $search = 'ripgrep'
@@ -184,8 +208,20 @@ $cases = @(
     @{ Json = '{"tool_name":"Read","tool_input":{"file_path":"notes-on-cargo.md"}}'; Expect = $pass }
     # the same text with spaces, as another JSON writer would print it
     @{ Json = '{ "tool_name": "Bash", "tool_input": { "command": "grep -r foo ." } }'; Expect = $search }
-    # a long script (a file written through a here-document): fast, and read to its end
-    @{ Tool = 'Bash'; Command = ("echo line`n" * 20000) + 'cargo test -p aurora-net'; Expect = $tests; Long = $true }
+    # --- long input (a file written through a here-document): read to its end,
+    # and in the time Claude Code gives the hook, on a slow PC too
+    @{ Tool = 'Bash'; Command = ("echo line`n" * 20000) + 'cargo test -p aurora-net'; Expect = $tests; Long = 'a script of 20,000 lines' }
+    # The hook decodes its input by pieces: in these two, a piece ends on
+    # every character of the text in turn, inside each escape. A quote or a
+    # backslash decoded wrong ends the script before its last line, which
+    # then goes through...
+    @{ Tool = 'PowerShell'; Command = (New-PieceScript 'PowerShell' 'echo "C:\some\dir\" \\ "x"') + 'cargo test -p aurora-net'; Expect = $tests; Long = 'quotes and backslashes cut by the pieces' }
+    # ... a line break that is lost gives this grep the "-r" of the next
+    # line, and one that is made up (the \n of ".\nrgrep" is a backslash
+    # and an n) starts a line with "rgrep": both would be refused.
+    @{ Tool = 'Bash'; Command = New-PieceScript 'Bash' "grep x .\nrgrep `n -r y"; Expect = $pass; Long = 'line breaks cut by the pieces' }
+    # a long text before the command
+    @{ Json = '{"tool_name":"Bash","tool_input":{"description":"' + ('What the command does. ' * 10000) + '","command":"cargo test -p aurora-net"}}'; Expect = $tests; Long = 'a long field before the command' }
     # --- a hook that cannot run lets everything through, it never refuses
     # everything: its file is missing, or an older bash stops on its syntax
     @{ Tool = 'Bash'; Command = 'cargo test -p aurora-net'; Project = 'missing'; Expect = $pass }
@@ -200,6 +236,8 @@ New-Item -ItemType Directory -Path $withRg, $withoutRg, $projects.missing, (Join
 $failed = 0
 $total = 0.0
 $slowest = 0.0
+$slowestLong = 0.0
+$slowestLongName = ''
 try {
     # a stand-in the hook only looks for, never runs
     if ($onWindows) {
@@ -207,14 +245,26 @@ try {
     } else {
         Set-Content -LiteralPath (Join-Path $withRg 'rg') -Value '#!/bin/sh'
         & chmod +x (Join-Path $withRg 'rg')
+        # The hook's command line starts `bash` from PATH, and PATH is only
+        # the stand-in folder: without bash in it the hook cannot start
+        # off Windows (Git's bash.exe finds it there). The hook needs
+        # nothing else: builtins only.
+        foreach ($d in $withRg, $withoutRg) {
+            New-Item -ItemType SymbolicLink -Path (Join-Path $d 'bash') -Target $bash | Out-Null
+        }
     }
     [IO.File]::WriteAllText((Join-Path $projects.broken '.claude/hooks/shell-rules.sh'), "if then (`n")
     foreach ($c in $cases) {
         $json = if ($c.ContainsKey('Json')) { $c.Json } else { New-HookInput $c.Tool $c.Command }
-        $shown = if ($c.ContainsKey('Json')) { "input: $($c.Json)" } elseif ($c.Long) { "$($c.Tool): (long script)" } else { "$($c.Tool): $($c.Command)" }
+        $shown = if ($c.Long) { "long input: $($c.Long)" } elseif ($c.ContainsKey('Json')) { "input: $($c.Json)" } else { "$($c.Tool): $($c.Command)" }
         $project = if ($c.Project) { $projects[$c.Project] } else { $root }
         $r = Invoke-Hook $json $(if ($c.NoRg) { $withoutRg } else { $withRg }) $project
-        if (-not $c.Long) { $total += $r.Ms; if ($r.Ms -gt $slowest) { $slowest = $r.Ms } }
+        if ($c.Long) {
+            if ($r.Ms -gt $slowestLong) { $slowestLong = $r.Ms; $slowestLongName = $c.Long }
+        } else {
+            $total += $r.Ms
+            if ($r.Ms -gt $slowest) { $slowest = $r.Ms }
+        }
         $problem = $null
         if ($c.Expect) {
             if ($r.Code -ne 2) { $problem = "expected a refusal (exit code 2), got exit code $($r.Code): $($r.Message)" }
@@ -226,7 +276,7 @@ try {
             # bash's own complaint is expected from a hook that cannot run
             $problem = "expected to pass in silence, got: $($r.Message)"
         }
-        if (-not $problem -and $c.Long -and $r.Ms -gt 5000) { $problem = "took $([int]$r.Ms) ms on a long script (the hook is given 5 s)" }
+        if (-not $problem -and $c.Long -and $r.Ms -gt 1000 * $timeout) { $problem = "took $([int]$r.Ms) ms (the hook is given $timeout s)" }
         if ($problem) {
             Write-Host "  $shown`n    $problem" -ForegroundColor Red
             $failed++
@@ -237,4 +287,4 @@ try {
 }
 if ($failed) { Write-Host "Shell hook of the agents: $failed of $($cases.Count) commands went the wrong way." -ForegroundColor Red; exit 1 }
 $count = @($cases | Where-Object { -not $_.Long }).Count
-Write-Host ("Shell hook of the agents: {0} commands refused or let through as expected ({1:N0} ms per call, slowest {2:N0} ms)." -f $cases.Count, ($total / $count), $slowest)
+Write-Host ("Shell hook of the agents: {0} commands refused or let through as expected ({1:N0} ms per call, slowest {2:N0} ms; long input: {3:N0} ms at most, on {4}, of the {5} s the hook is given)." -f $cases.Count, ($total / $count), $slowest, $slowestLong, $slowestLongName, $timeout)

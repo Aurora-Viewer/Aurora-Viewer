@@ -44,6 +44,13 @@ pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
 pub mod director;
+pub mod director_capture;
+pub mod director_drag;
+pub mod director_key_rows;
+pub mod director_library;
+pub mod director_look;
+pub mod director_output;
+pub mod director_ruler;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -71,6 +78,7 @@ pub mod icons;
 pub mod inspect;
 pub mod interface;
 pub mod inventory;
+pub mod keyboard_focus;
 pub mod land;
 pub mod landmark_create;
 pub mod layout;
@@ -102,6 +110,7 @@ pub mod object_actions;
 pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
+pub mod panorama;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -112,6 +121,7 @@ pub mod place_card;
 pub mod place_details;
 pub mod places;
 pub mod portals;
+pub mod pose_stand;
 pub mod presence;
 pub mod profile;
 pub mod quick_prefs;
@@ -177,6 +187,9 @@ pub struct Panels {
     pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -192,6 +205,9 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    /// Inventory's dual-panel layout (`InventoryPreferences::dual_panel`,
+    /// saved by the app when it changes).
+    pub inventory_dual: bool,
     pub texture_library: bool,
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
@@ -240,6 +256,8 @@ pub struct Panels {
     pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The pose stand (toolbar `pose_stand`).
+    pub pose_stand: bool,
     /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
     pub omnifilter: bool,
     /// The conversation log (toolbar `conversation_log`, Communicate ›
@@ -277,6 +295,7 @@ impl Panels {
             group_titles: false,
             wearable_favorites: false,
             snapshot: false,
+            snapshot_pano: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
@@ -288,6 +307,7 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            inventory_dual: settings.inventory.dual_panel,
             texture_library: false,
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
@@ -295,7 +315,12 @@ impl Panels {
             avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
-            contacts: false,
+            // FSFloaterContacts::onOpen: torn off, Contacts is its own window
+            // (ContactsTornOff). Closing that window puts the flag back to
+            // false (contacts.rs), so the flag alone says the window was
+            // open: keeping it while always starting closed left a torn-off
+            // Contacts with no way back to its tab.
+            contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
             places: false,
@@ -317,6 +342,7 @@ impl Panels {
             quick_prefs: false,
             director: false,
             voice_controls: false,
+            pose_stand: false,
             omnifilter: false,
             conversation_log: false,
             about: false,
@@ -404,6 +430,18 @@ mod tests {
                 "the mini-map window is open: the radar does not repeat it"
             );
         }
+    }
+
+    /// A Contacts torn off at the last exit comes back as its own window: it
+    /// is where its tab went, and the settings record it.
+    #[test]
+    fn a_torn_off_contacts_comes_back_as_its_own_window() {
+        let mut settings = Settings::default();
+        settings.contacts.torn_off = true;
+        let panels = Panels::from_settings(&settings);
+        assert!(panels.contacts, "the torn-off Contacts window is open");
+        settings.contacts.torn_off = false;
+        assert!(!Panels::from_settings(&settings).contacts);
     }
 
     /// The radar in the top left corner, the mini-map in the top right one
