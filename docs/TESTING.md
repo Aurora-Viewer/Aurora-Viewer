@@ -10302,6 +10302,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   its profile, map and teleport use the lagoon's asset. Combine with
   `:classic,links` to verify the Legacy-style list, and paste additional
   landmark links into the Favorites folder from Inventory.
+  Run this with `AURORA_DEMO_INVENTORY` unset: its synthetic inventory marks
+  the Places folders fetched without loading their landmarks. Open Inventory
+  normally when testing paste-as-link alongside Places.
   `:classic` shows the Legacy Viewer's three tabs for the run, whatever
   Preferences › Aurora › Places says (not saved): the Teleport / Map /
   Profile bar stays whole at the bottom, down to the window's minimum size
