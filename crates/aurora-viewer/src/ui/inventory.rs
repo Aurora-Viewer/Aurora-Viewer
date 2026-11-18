@@ -58,6 +58,7 @@ pub(crate) mod properties;
 mod received;
 mod replace_links;
 mod rows;
+mod select_keys;
 mod shortcuts;
 pub(crate) mod smart;
 mod smart_builder;
@@ -614,6 +615,11 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// The keyboard's place apart from the selection (Ctrl+↑/↓ in the
+    /// explorer, `select_keys`), drawn as an outline.
+    focus: Option<Uuid>,
+    /// The letters typed to find a row (`select_keys`).
+    type_ahead: select_keys::TypeAhead,
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,
@@ -1076,6 +1082,7 @@ impl InventoryUi {
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         clipboard::request_focus(ui, self);
         self.keyboard_selection = false;
+        self.focus = None;
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -2008,12 +2015,43 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         ui.memory_mut(|m| m.surrender_focus(r.id));
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        // Windows Explorer: Tab goes on to rename the next row, Shift+Tab
+        // the one before (Aurora difference: the Legacy Viewer's Tab ends
+        // the rename only)
+        let tab = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift));
         st.rename = Some(edit);
         finish_rename(inv, st, actions);
+        if let Some(back) = tab
+            && st.rename.is_none()
+        {
+            rename_next(inv, st, id, back);
+        }
         return true;
     }
     st.rename = Some(edit);
     true
+}
+
+/// Renames the row after `id` in the list (before it with `back`) that
+/// can be renamed, as Tab does in Windows Explorer's rename.
+fn rename_next(inv: &Inventory, st: &mut InventoryUi, id: Uuid, back: bool) {
+    let order = keyboard::shown_order(st);
+    let Some(at) = order.iter().position(|row| *row == id) else {
+        return;
+    };
+    let next = if back {
+        order[..at].iter().rev().find(|row| rules::renameable(inv, **row)).copied()
+    } else {
+        order[at + 1..].iter().find(|row| rules::renameable(inv, **row)).copied()
+    };
+    if let Some(next) = next {
+        st.selection.clear();
+        st.selection.insert(next);
+        st.selected = Some(next);
+        st.anchor = Some(next);
+        st.begin_rename(inv, next);
+        st.reveal = Some(next);
+    }
 }
 
 fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {

@@ -400,6 +400,7 @@ pub(super) fn shortcuts(
         return;
     }
     super::keyboard::open_shortcut(ui, inv, st, prefs, facts, actions);
+    super::keyboard::commands(ui, inv, root, st, prefs, facts, actions);
     // egui-winit consumes the physical C/X/V presses and emits these native
     // clipboard events instead. Testing key_pressed(C) would miss real input.
     let mut events = Vec::new();

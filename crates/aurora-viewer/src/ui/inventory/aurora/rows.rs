@@ -37,6 +37,18 @@ fn row_rects(ui: &egui::Ui) -> (Rect, Rect) {
     (rect, Rect::from_x_y_ranges(left..=rect.right(), rect.y_range()))
 }
 
+/// The keyboard's place when it is not the selection (Ctrl+↑/↓).
+fn focus_ring(ui: &egui::Ui, p: &Palette, full: Rect, st: &InventoryUi, id: Uuid) {
+    if st.focus == Some(id) {
+        ui.painter().rect_stroke(
+            full.shrink(0.5),
+            ui.visuals().window_corner_radius,
+            egui::Stroke::new(1.0, p.violet),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
 fn background(ui: &egui::Ui, p: &Palette, full: Rect, selected: bool) {
     let fill = if selected {
         p.violet.gamma_multiply(0.28)
@@ -379,6 +391,7 @@ pub(in super::super) fn item(
     #[cfg(test)]
     tests::record(ui, id, rect);
     background(ui, p, full, selected);
+    focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon_name, icon_center, tint);
     let permissions = Permissions::inventory(inv, id);
     let hovered = ui.rect_contains_pointer(full) && ui.ctx().dragged_id().is_none();
@@ -517,6 +530,7 @@ pub(in super::super) fn folder(
     #[cfg(test)]
     tests::record(ui, id, rect);
     background(ui, p, full, selected);
+    focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon, icon_center, tint);
     let caret = (!frame.explorer).then(|| {
         let caret_rect = Rect::from_center_size(caret_center, Vec2::splat(CARET + 4.0));
