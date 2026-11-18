@@ -158,22 +158,51 @@ impl NameScope {
 /// and so is what a script wrote in its dialog, its text box or its link
 /// prompt (process_script_dialog and process_load_url have no RLVa test).
 /// A scope alone (`NameScope::into`) is a rewritten text.
+///
+/// A `/mention` link is rewritten where RlvUtil::filterMentions
+/// (rlvcommon.cpp) runs: on every line of the nearby chat, a resident's
+/// included (LLFloaterIMNearbyChatHandler::processChat), and at the end of
+/// RlvUtil::filterNames, so in every rewritten text. Nothing runs it on a
+/// script's prompt, where LLUrlEntryAgentMention (indra/llui/llurlentry.cpp,
+/// no RLVa test) writes "@" and the resident's name: `mentions` is
+/// `NameScope::Roster` there, and `names` everywhere else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextScope {
     pub names: NameScope,
+    /// The names its `/mention` links give.
+    pub mentions: NameScope,
     pub rewritten: bool,
 }
 
 impl TextScope {
-    /// A text shown as written, its links named as `names` names them.
+    /// A text shown as written, its links named as `names` names them: what
+    /// a resident typed.
     pub fn verbatim(names: NameScope) -> Self {
-        Self { names, rewritten: false }
+        Self {
+            names,
+            mentions: names,
+            rewritten: false,
+        }
+    }
+
+    /// A script's prompt (`notifications::Kind::as_received`): shown as
+    /// written, a mention in it naming its resident.
+    pub fn as_received(names: NameScope) -> Self {
+        Self {
+            names,
+            mentions: NameScope::Roster,
+            rewritten: false,
+        }
     }
 }
 
 impl From<NameScope> for TextScope {
     fn from(names: NameScope) -> Self {
-        Self { names, rewritten: true }
+        Self {
+            names,
+            mentions: names,
+            rewritten: true,
+        }
     }
 }
 

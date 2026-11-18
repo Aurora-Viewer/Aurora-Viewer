@@ -243,8 +243,11 @@ script authors; the command lists below describe this branch specifically.
   profile. A bare link to a resident in chat keeps the
   name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
   label of a labelled link is filtered like the text around it
-  (RlvUtil::filterNames and filterLocation) and a `/mention` link is
-  rewritten. `@shownames` and `@showloc` rewrite the names and the places in
+  (RlvUtil::filterNames and filterLocation). A `/mention` link is rewritten
+  where RlvUtil::filterMentions runs: on every line of the nearby chat and in
+  what an object or the system says, not in a script's prompt, where it reads
+  "@" and the name of its resident (LLUrlEntryAgentMention has no RLVa
+  test). `@shownames` and `@showloc` rewrite the names and the places in
   what no resident typed: an object's chat and IMs, the system's messages,
   the viewer's notices. What a resident typed, in the nearby chat or in an
   IM session, ours included, is shown as typed
