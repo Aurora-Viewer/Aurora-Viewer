@@ -489,10 +489,30 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
     }
 }
 
-pub(super) fn demo_viewport(ctx: &egui::Context, st: &InventoryUi, rect: egui::Rect) {
+pub(super) fn demo_viewport<R>(ctx: &egui::Context, st: &InventoryUi, out: &egui::scroll_area::ScrollAreaOutput<R>) {
     if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
-        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)), rect));
+        let viewport = (out.id, out.inner_rect, out.state.unclamped_offset());
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)), viewport));
     }
+}
+
+/// The demo must target the actual scroll area: list() clears scroll_restore
+/// before drawing, since that field belongs to tab/update restoration.
+pub(super) fn position_click_demo(
+    ctx: &egui::Context,
+    st: &mut InventoryUi,
+    row: egui::Rect,
+    viewport: (egui::Id, egui::Rect, egui::Vec2),
+    top: bool,
+) -> f32 {
+    let (area, clip, mut offset) = viewport;
+    let edge = if top { clip.top() } else { clip.bottom() };
+    offset.y = (offset.y + row.top() - edge + row.height() / 2.0).max(0.0);
+    st.scroll_hold = None;
+    super::super::widgets::scroll_offset::set(ctx, area, offset);
+    st.selected = None;
+    st.selection.clear();
+    offset.y
 }
 
 pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uuid) {
@@ -545,18 +565,13 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         if frame == 620 {
             let geometry = ctx.data(|data| {
                 let row = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_row", st.ui_id, Uuid::from_u128(11000))))?;
-                let clip = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)))?;
-                Some((row, clip))
+                let viewport =
+                    data.get_temp::<(egui::Id, egui::Rect, egui::Vec2)>(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)))?;
+                Some((row, viewport))
             });
-            if let Some(((row, clip), (offset, _))) = geometry.zip(st.list_viewport) {
-                let edge = if mode.ends_with("top") { clip.top() } else { clip.bottom() };
-                st.scroll_restore = Some((offset + row.top() - edge + row.height() / 2.0).max(0.0));
-                st.selected = None;
-                st.selection.clear();
-                log::info!(
-                    "demo inventory click edge: mode={mode}, target=11000, offset={:?}",
-                    st.scroll_restore
-                );
+            if let Some((row, viewport)) = geometry {
+                let offset = position_click_demo(ctx, st, row, viewport, mode.ends_with("top"));
+                log::info!("demo inventory click edge: mode={mode}, target=11000, offset={offset}");
             }
         }
         return Vec::new();

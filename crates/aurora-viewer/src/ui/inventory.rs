@@ -2175,7 +2175,7 @@ struct ScrollHold {
 const SCROLL_HOLD_SECONDS: f64 = 5.0;
 
 fn record_list_shown<R>(ui: &egui::Ui, st: &mut InventoryUi, out: &egui::scroll_area::ScrollAreaOutput<R>) {
-    clipboard::demo_viewport(ui.ctx(), st, out.inner_rect);
+    clipboard::demo_viewport(ui.ctx(), st, out);
     let bar = ui.spacing().scroll.allocated_width();
     st.list_shown = Some(ListShown {
         offset: out.state.unclamped_offset().y,
@@ -5795,7 +5795,7 @@ mod tests {
                 |ui| {
                     ui.set_width(420.0);
                     let p = crate::theme::Theme::default().palette();
-                    let out = if self.filtered {
+                    if self.filtered {
                         self.st.view.search(
                             &self.inv,
                             root,
@@ -5808,33 +5808,21 @@ mod tests {
                             facts.agent,
                             view::now(),
                         );
-                        prepare_result_tree(&mut self.st, &self.inv, root);
-                        search_scroll(
-                            ui,
-                            &p,
-                            &Icons::default(),
-                            &mut self.inv,
-                            &mut self.st,
-                            &mut self.prefs,
-                            &facts,
-                            &mut self.actions,
-                            130.0,
-                        )
-                    } else {
-                        rows::scroll(
-                            ui,
-                            &p,
-                            &Icons::default(),
-                            &mut self.inv,
-                            &mut self.st,
-                            &mut self.prefs,
-                            &facts,
-                            &mut self.actions,
-                            130.0,
-                            root,
-                            false,
-                        )
-                    };
+                    }
+                    let out = list(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        &mut self.inv,
+                        &mut self.st,
+                        &mut self.prefs,
+                        &facts,
+                        &mut self.actions,
+                        130.0,
+                        root,
+                        self.filtered,
+                        false,
+                    );
                     self.area = Some((out.id, out.inner_rect, out.state.unclamped_offset()));
                 },
             );
@@ -5888,6 +5876,33 @@ mod tests {
                     modifiers,
                 },
             ]);
+        }
+    }
+
+    #[test]
+    fn inventory_click_demo_places_its_target_half_outside_each_edge() {
+        for filtered in [false, true] {
+            for aurora in [false, true] {
+                for top in [false, true] {
+                    let mut f = ClickScroll::new(filtered, aurora, 1.46);
+                    let id = Uuid::from_u128(220);
+                    f.place(id, None);
+                    let viewport = f.area.expect("list");
+                    let row = f.row(id);
+                    f.st.selection = HashSet::from([id]);
+                    clipboard::position_click_demo(&f.ctx, &mut f.st, row, viewport, top);
+                    f.settle();
+                    let (_, clip, after) = f.area.expect("list");
+                    let row = f.row(id);
+                    let edge = if top { clip.top() } else { clip.bottom() };
+                    assert!(
+                        (row.center().y - edge).abs() < 1.0,
+                        "target must straddle the requested edge: {row:?}, {clip:?}"
+                    );
+                    assert_eq!(after.x, viewport.2.x, "demo preserves horizontal position");
+                    assert!(f.st.selection.is_empty() && f.st.selected.is_none());
+                }
+            }
         }
     }
 
