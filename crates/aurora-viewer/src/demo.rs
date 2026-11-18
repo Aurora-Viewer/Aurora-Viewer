@@ -6355,6 +6355,9 @@ pub fn events() -> Vec<NetEvent> {
     if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
         ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
     }
+    if crate::build::deep_perms::demo::mode().is_some() {
+        ev.extend(crate::build::deep_perms::demo::events(HANDLE, height(134.5, 127.5)));
+    }
     // our avatar + a second one
     let mut avatars = Vec::new();
     for (k, (pos, first, last)) in [

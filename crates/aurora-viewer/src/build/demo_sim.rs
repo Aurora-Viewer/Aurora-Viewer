@@ -35,6 +35,14 @@ pub struct DemoSim {
     rezzed_from_task: HashMap<Uuid, Uuid>,
     /// Groups supplied by creation requests, including an explicitly empty group.
     rezzed_groups: HashMap<Uuid, Uuid>,
+    /// What an object item holds (`AURORA_DEMO_DEEP_PERMS`), by item id: a
+    /// rez from contents gets it, a save back keeps the copy's contents.
+    stored: HashMap<Uuid, Vec<TaskItem>>,
+    /// The item each object rezzed from a stored item came from.
+    stored_copies: HashMap<Uuid, Uuid>,
+    /// `AURORA_DEMO_DEEP_PERMS=run-replace` / `run-refuse`, or set by a test.
+    pub(crate) deep_in_place: bool,
+    pub(crate) deep_refuse: bool,
 }
 
 /// An object's position, rotation and scale.
@@ -199,6 +207,11 @@ impl DemoSim {
     }
 
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
+        if id == super::deep_perms::demo::id(super::deep_perms::demo::CHEST) && !self.contents.contains_key(&id) {
+            let (items, stored) = super::deep_perms::demo::contents(id);
+            self.stored.extend(stored);
+            self.contents.insert(id, (1, items));
+        }
         if id == super::replace::demo::id(super::replace::demo::SOURCE) {
             return self.contents.entry(id).or_insert((1, Vec::new()));
         }
@@ -351,6 +364,9 @@ impl DemoSim {
                 let Some(id) = Self::uuids(world, *handle, local_ids).first().copied() else {
                     return Vec::new();
                 };
+                if let Some(events) = self.save_stored(world, id, *destination_id) {
+                    return events;
+                }
                 let name = self.props_of(world, id).name.clone();
                 let entry = self.contents_of(*destination_id);
                 entry.0 = entry.0.wrapping_add(1);
@@ -575,6 +591,7 @@ impl DemoSim {
                 }
                 events
             }
+            BuildCmd::RezInventory(rez) if !rez.from_task.is_nil() && self.stored.contains_key(&rez.item.id) => self.rez_stored(world, rez),
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
                 if rez.from_task.is_nil() {
@@ -871,6 +888,99 @@ impl DemoSim {
             }],
             _ => Vec::new(),
         }
+    }
+
+    /// RezObject of a stored object item (`AURORA_DEMO_DEEP_PERMS`): a copy
+    /// holding what the item holds, under new item ids, with the item's
+    /// name and masks; `run-refuse` answers with an alert instead.
+    fn rez_stored(&mut self, world: &World, rez: &aurora_net::inventory::rez::RezInventory) -> Vec<NetEvent> {
+        if self.deep_refuse || super::deep_perms::demo::refuse() {
+            return vec![NetEvent::Alert {
+                message: format!(
+                    "Can't rez object '{}' at {{ {:.1}, {:.1}, {:.1} }} because the owner of this land does not allow it.",
+                    rez.item.name, rez.ray_end.x, rez.ray_end.y, rez.ray_end.z
+                ),
+            }];
+        }
+        let object = crate::demo::inventory_rez(rez);
+        let id = object.full_id;
+        self.rezzed_from_task.insert(id, rez.from_task);
+        self.rezzed_groups.insert(id, rez.group);
+        self.stored_copies.insert(id, rez.item.id);
+        let held = self.stored.get(&rez.item.id).cloned().unwrap_or_default();
+        let mut items = Vec::new();
+        for mut it in held {
+            let old = it.item_id;
+            it.item_id = Uuid::new_v4();
+            it.parent_id = id;
+            if let Some(inner) = self.stored.get(&old).cloned() {
+                self.stored.insert(it.item_id, inner);
+            }
+            items.push(it);
+        }
+        self.contents.insert(id, (1, items));
+        let item = &rez.item;
+        let p = self.props_of(world, id);
+        p.name.clone_from(&item.name);
+        p.base_mask = item.base_mask;
+        p.owner_mask = item.owner_mask;
+        p.group_mask = item.group_mask;
+        p.everyone_mask = item.everyone_mask;
+        p.next_owner_mask = item.next_owner_mask;
+        vec![NetEvent::ObjectUpdates {
+            handle: rez.handle,
+            objects: vec![object],
+        }]
+    }
+
+    /// Save back of a copy rezzed from a stored item: a new object item
+    /// holding the copy's contents and masks, next to the original (as the
+    /// demo always did), or in its place with `run-replace`.
+    fn save_stored(&mut self, world: &World, copy: Uuid, destination: Uuid) -> Option<Vec<NetEvent>> {
+        let original = *self.stored_copies.get(&copy)?;
+        let held = self.contents.get(&copy).map(|c| c.1.clone()).unwrap_or_default();
+        let p = self.props_of(world, copy).clone();
+        let in_place = self.deep_in_place || super::deep_perms::demo::replace_in_place();
+        let entry = self.contents_of(destination);
+        entry.0 = entry.0.wrapping_add(1);
+        let existing = entry.1.iter().position(|i| i.item_id == original);
+        let mut item = existing.and_then(|i| entry.1.get(i).cloned()).unwrap_or_else(|| TaskItem {
+            parent_id: destination,
+            creator_id: DEMO_CREATOR,
+            owner_id: crate::demo::DEMO_AGENT,
+            last_owner_id: DEMO_CREATOR,
+            asset_type: 6,
+            inv_type: 6,
+            creation_date: 1_700_000_000,
+            ..Default::default()
+        });
+        item.name.clone_from(&p.name);
+        item.asset_id = Uuid::new_v4();
+        item.base_mask = p.base_mask;
+        item.owner_mask = p.owner_mask;
+        item.group_mask = p.group_mask;
+        item.everyone_mask = p.everyone_mask;
+        item.next_owner_mask = p.next_owner_mask;
+        match existing {
+            Some(i) if in_place => entry.1[i] = item.clone(),
+            _ => {
+                item.item_id = Uuid::new_v4();
+                entry.1.push(item.clone());
+            }
+        }
+        let (serial, items) = entry.clone();
+        self.stored.insert(item.item_id, held);
+        Some(vec![NetEvent::TaskInventory {
+            object: destination,
+            serial: Some(serial),
+            result: Ok(items),
+        }])
+    }
+
+    /// What a stored object item holds (tests).
+    #[cfg(test)]
+    pub(crate) fn stored(&self, item: Uuid) -> Option<&Vec<TaskItem>> {
+        self.stored.get(&item)
     }
 
     /// Capability answers: costs from the prim counts, default physics.

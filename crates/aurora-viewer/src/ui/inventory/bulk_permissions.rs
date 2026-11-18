@@ -232,7 +232,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
-        response = controls(ui, p, &mut state.options, status, busy, aurora_i18n::tr!("inventory-bulk-adjust"));
+        response = controls(
+            ui,
+            p,
+            &mut state.options,
+            status,
+            busy,
+            aurora_i18n::tr!("inventory-bulk-adjust"),
+            None,
+        );
     });
     let (apply, accept, cancel) = response;
     if apply || accept {

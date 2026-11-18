@@ -28,6 +28,9 @@ pub struct BulkPerms {
     pub next_modify: bool,
     pub next_copy: bool,
     pub next_transfer: bool,
+    /// "Include objects inside objects" (`build/deep_perms.rs`): object
+    /// contents only, the inventory window never shows it.
+    pub nested: bool,
 }
 
 impl Default for BulkPerms {
@@ -39,12 +42,13 @@ impl Default for BulkPerms {
             next_modify: false,
             next_copy: true,
             next_transfer: false,
+            nested: false,
         }
     }
 }
 
 impl BulkPerms {
-    fn apply(&self, item: &mut TaskItem) {
+    pub(crate) fn apply(&self, item: &mut TaskItem) {
         item.group_mask = if self.share { perm::COPY | perm::MODIFY | perm::MOVE } else { 0 };
         item.everyone_mask = if self.everyone_copy { perm::COPY } else { 0 };
         item.next_owner_mask = perm::MOVE;
@@ -67,7 +71,7 @@ impl BulkPerms {
             .is_some_and(|i| self.types[i])
     }
 
-    fn includes(&self, item: &TaskItem) -> bool {
+    pub(crate) fn includes(&self, item: &TaskItem) -> bool {
         !item.is_folder && self.includes_type(i32::from(item.asset_type))
     }
 }
@@ -86,7 +90,10 @@ pub struct BulkState {
     pub options: BulkPerms,
     original: Option<BulkPerms>,
     job: Option<Job>,
-    status: String,
+    pub(crate) deep: Option<crate::build::deep_perms::Job>,
+    pub(crate) status: String,
+    /// `AURORA_DEMO_DEEP_PERMS=run`: started once.
+    demo_started: bool,
 }
 
 fn type_name(t: i8) -> &'static str {
@@ -109,13 +116,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     if !tool.ui.bulk_perms_open {
         return;
     }
+    let running = tool.ui.bulk.job.is_some() || tool.ui.bulk.deep.is_some();
+    let preview = if tool.ui.bulk.options.nested && !running {
+        tool.nested_preview(world)
+    } else {
+        String::new()
+    };
     let state = &mut tool.ui.bulk;
     state.original.get_or_insert_with(|| state.options.clone());
     let mut open = true;
     let mut apply = false;
     let mut accept = false;
     let mut cancel = false;
-    let running = state.job.is_some();
     let b = &mut state.options;
     Floater::new(
         "bulk_perms",
@@ -125,8 +137,19 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
-        (apply, accept, cancel) = controls(ui, p, b, &state.status, running, aurora_i18n::tr!("content-perms-adjust"));
+        (apply, accept, cancel) = controls(
+            ui,
+            p,
+            b,
+            &state.status,
+            running,
+            aurora_i18n::tr!("content-perms-adjust"),
+            Some(&preview),
+        );
     });
+    if tool.demo_deep_start(world) {
+        apply = true;
+    }
     if apply || accept {
         tool.start_bulk_permissions(world);
     }
@@ -144,6 +167,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
 }
 
 /// Shared bulk-permission controls for object contents and agent inventory.
+/// `nested` (object contents only) shows "Include objects inside objects"
+/// with the preview of what it would open.
 pub(crate) fn controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -151,6 +176,7 @@ pub(crate) fn controls(
     status: &str,
     running: bool,
     heading: &str,
+    nested: Option<&str>,
 ) -> (bool, bool, bool) {
     let (mut apply, mut accept, mut cancel) = (false, false, false);
     ui.horizontal_top(|ui| {
@@ -230,28 +256,54 @@ pub(crate) fn controls(
         });
     });
     ui.add_space(8.0);
+    if let Some(preview) = nested {
+        ui.add_enabled_ui(!running, |ui| {
+            widgets::checkbox(ui, p, &mut b.nested, aurora_i18n::tr!("content-perms-nested"))
+                .on_hover_text(aurora_i18n::tr!("content-perms-nested-help"));
+        });
+        if b.nested && !running && !preview.is_empty() {
+            small(ui, p, preview);
+        }
+        ui.add_space(4.0);
+    }
     if !status.is_empty() {
         small(ui, p, status);
     }
-    // the buttons at the bottom, from the height they measure (a
-    // guessed 28 points grew the window at every frame with a larger
-    // text)
-    widgets::above_footer(ui).1.show(ui, |ui| {
-        ui.horizontal(|ui| {
-            let enabled = !running && b.types.iter().any(|on| *on);
-            accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
-            apply = ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
-                .clicked();
-            cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-        });
+    // the buttons under the rest, laid out in the flow: the fixed window
+    // takes the height of its content, so a longer status or the nested
+    // option's preview make it taller instead of running under the
+    // buttons (a footer pinned to the window's last height did)
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let enabled = !running && b.types.iter().any(|on| *on);
+        accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
+        apply = ui
+            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
+            .clicked();
+        cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
     });
     (apply, accept, cancel)
 }
 
 impl BuildTool {
-    fn start_bulk_permissions(&mut self, world: &World) {
-        if self.ui.bulk.job.is_some() {
+    pub(crate) fn start_bulk_permissions(&mut self, world: &World) {
+        if self.ui.bulk.job.is_some() || self.ui.bulk.deep.is_some() {
+            return;
+        }
+        if self.ui.bulk.options.nested {
+            let prims = self
+                .sel_prims(world)
+                .into_iter()
+                .filter(|i| self.contents_editable(world, *i))
+                .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
+                .collect();
+            log::info!("deep permissions: started");
+            self.ui.bulk.deep = Some(crate::build::deep_perms::Job::new(
+                self.ui.bulk.options.clone(),
+                prims,
+                Instant::now(),
+            ));
+            self.ui.bulk.status = aurora_i18n::tr!("content-perms-starting").into();
             return;
         }
         let targets = self
@@ -270,6 +322,65 @@ impl BuildTool {
         });
         self.ui.bulk.status = aurora_i18n::tr!("content-perms-starting").into();
         self.advance_bulk_permissions(world, Instant::now());
+    }
+
+    /// What "Include objects inside objects" would open, from the selected
+    /// prims' listings (asked for when missing): their own object items.
+    fn nested_preview(&mut self, world: &World) -> String {
+        let mut objects = 0;
+        let mut skipped: Vec<(String, crate::build::deep_perms::Skip)> = Vec::new();
+        let mut reading = false;
+        for idx in self.sel_prims(world) {
+            if !self.contents_editable(world, idx) {
+                continue;
+            }
+            let Some(id) = world.objects.get(idx).map(|o| o.full_id) else {
+                continue;
+            };
+            match self.contents.objects.get(&id).filter(|inv| inv.requested.is_some()) {
+                Some(inv) => {
+                    let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
+                    let found = crate::build::deep_perms::scan(&items, world.agent_id, world.groups.active, 0);
+                    objects += found.eligible.len();
+                    skipped.extend(found.skipped);
+                    reading |= inv.loading;
+                }
+                None => {
+                    self.request_contents(world, idx, false);
+                    reading = true;
+                }
+            }
+        }
+        if reading && objects == 0 && skipped.is_empty() {
+            return aurora_i18n::tr!("content-perms-reading").into();
+        }
+        let mut text = aurora_i18n::tr!("content-perms-nested-preview", objects = objects, skipped = skipped.len());
+        if !skipped.is_empty() {
+            let list: Vec<String> = skipped
+                .iter()
+                .take(4)
+                .map(|(name, why)| aurora_i18n::tr!("content-perms-nested-entry", name = name.as_str(), reason = why.label()))
+                .collect();
+            text.push(' ');
+            text.push_str(&list.join(aurora_i18n::tr!("content-perms-nested-separator")));
+        }
+        text
+    }
+
+    /// `AURORA_DEMO_DEEP_PERMS=run…`: ticks the option and presses Apply
+    /// once the selected prim's properties are known.
+    fn demo_deep_start(&mut self, world: &World) -> bool {
+        if self.ui.bulk.demo_started || !crate::build::deep_perms::demo::run() {
+            return false;
+        }
+        let prims = self.sel_prims(world);
+        if prims.is_empty() || !prims.iter().all(|i| self.contents_editable(world, *i)) {
+            return false;
+        }
+        self.ui.bulk.demo_started = true;
+        self.ui.bulk.options.nested = true;
+        log::info!("deep permissions: demo run starts");
+        true
     }
 
     pub(crate) fn bulk_inventory_error(&mut self, object: Uuid) {
