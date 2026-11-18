@@ -10305,6 +10305,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Run this with `AURORA_DEMO_INVENTORY` unset: its synthetic inventory marks
   the Places folders fetched without loading their landmarks. Open Inventory
   normally when testing paste-as-link alongside Places.
+  With `:narrow,open` and `AURORA_TEXT_SIZE=1.5` or `2`, check Favorites,
+  Landmarks and History: the inline Teleport, Map and More actions wrap to
+  additional rows and remain fully visible and clickable.
   `:classic` shows the Legacy Viewer's three tabs for the run, whatever
   Preferences › Aurora › Places says (not saved): the Teleport / Map /
   Profile bar stays whole at the bottom, down to the window's minimum size
