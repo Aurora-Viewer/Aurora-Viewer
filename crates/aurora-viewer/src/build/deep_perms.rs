@@ -10,11 +10,14 @@
 //! object that holds it (RezObject with FromTaskID, like
 //! LLToolDragAndDrop::dropObject from task inventory), its running scripts
 //! stopped, its own contents changed (its objects first, deepest first),
-//! its masks set when Objects is ticked, its scripts started again, saved
-//! back (DeRezObject DRD_SAVE_INTO_TASK_INVENTORY, "Save back to object
-//! contents") and the rezzed copy deleted. The original item is removed only
-//! once the saved one is listed; a simulator that replaces it in place
-//! leaves nothing to remove.
+//! in every prim of its linkset, its masks set when Objects is ticked, its
+//! scripts started again, saved back once (DeRezObject
+//! DRD_SAVE_INTO_TASK_INVENTORY, "Save back to object contents") and the
+//! rezzed copy deleted. The original item is
+//! removed only once a saved one of its name is listed; a simulator that
+//! replaces it in place leaves nothing to remove. A new object is changed or
+//! deleted only once its FromTaskID says it was rezzed from these contents,
+//! Stop included.
 //!
 //! Only objects the Legacy Viewer lets us rez from contents are opened
 //! (dad3dRezFromObjectOnLand, lltooldraganddrop.cpp: copy for the agent and
@@ -184,37 +187,57 @@ pub fn rez_refusal(alert: &str, name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Saved {
     Pending,
-    /// A new item next to the original, which is then removed.
+    /// A new item of the original's name next to it: the original is then
+    /// removed.
     Added(TaskItem),
-    /// The original's place taken by a new item: nothing to remove.
+    /// The original's place taken by a new item of its name, or of the
+    /// copy's: nothing to remove.
     Replaced(TaskItem),
-    /// The original updated in place (its asset or the listing's serial
-    /// changed): nothing to remove.
+    /// The original's own asset changed: nothing to remove.
     InPlace,
-    /// Only one new object, of another name, while the original is still
-    /// listed: probably the save, but the original is kept next to it.
+    /// A new item of the copy's name only (a script renamed it), while the
+    /// original is still listed: the original is kept next to it.
     Unnamed(TaskItem),
 }
 
-/// The save back of the copy of `original`, from the listings before and
-/// after it. The new item has the original's name, or starts with it (a
-/// simulator may number a duplicate name), or is the only new object; the
-/// original is removed only after a match by name.
-pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem, serial_moved: bool) -> Saved {
+/// `candidate` is `name`, or `name` numbered as a simulator numbers a
+/// duplicate name in an object's contents ("Box 1", "Box 2").
+pub fn same_name(candidate: &str, name: &str) -> bool {
+    candidate == name
+        || candidate
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The save back of the copy of `original`, named `saved_as` when it was
+/// sent, from the listings before and after it. Only evidence tied to that
+/// save counts: a single new object item of the same owner named as the
+/// original (or as the copy), or the original's own asset changed. Any
+/// other change of the listing (another item edited, added or numbered
+/// otherwise, two candidates) leaves it pending, and only a match by the
+/// original's name lets the original be removed.
+pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem, saved_as: &str) -> Saved {
     let known: HashSet<Uuid> = before.iter().map(|i| i.item_id).collect();
-    let new: Vec<&TaskItem> = after.iter().filter(|i| is_object(i) && !known.contains(&i.item_id)).collect();
-    let named = new
+    let new: Vec<&TaskItem> = after
         .iter()
-        .find(|i| i.name == original.name)
-        .or_else(|| new.iter().find(|i| i.name.starts_with(&original.name)))
-        .map(|i| (*i).clone());
-    let only = (new.len() == 1).then(|| new[0].clone());
+        .filter(|i| is_object(i) && !known.contains(&i.item_id) && i.owner_id == original.owner_id)
+        .collect();
+    let single = |name: &str| {
+        let mut found = new.iter().filter(|i| same_name(&i.name, name));
+        match (found.next(), found.next()) {
+            (Some(one), None) => Some((*one).clone()),
+            _ => None,
+        }
+    };
+    let named = single(&original.name);
+    let by_copy = (saved_as != original.name).then(|| single(saved_as)).flatten();
     let still = after.iter().find(|i| i.item_id == original.item_id);
-    match (still, named, only) {
+    match (still, named, by_copy) {
         (Some(_), Some(new), _) => Saved::Added(new),
         (None, Some(new), _) | (None, None, Some(new)) => Saved::Replaced(new),
         (Some(_), None, Some(new)) => Saved::Unnamed(new),
-        (Some(now), None, None) if (!original.asset_id.is_nil() && now.asset_id != original.asset_id) || serial_moved => Saved::InPlace,
+        (Some(now), None, None) if !original.asset_id.is_nil() && now.asset_id != original.asset_id => Saved::InPlace,
         _ => Saved::Pending,
     }
 }
@@ -230,6 +253,9 @@ pub enum Failure {
     RezTimeout,
     /// The new object does not come from the source: it is not deleted.
     NotOurs,
+    /// The new object's origin could not be checked (its properties never
+    /// came): it is not deleted.
+    Unverified,
     /// A stage of a rezzed copy failed or timed out.
     Step(String),
     /// The save back was not seen and the original is gone: the copy is
@@ -252,7 +278,7 @@ pub fn recovery(failure: &Failure) -> Recovery {
             delete_copy: false,
             stop: true,
         },
-        Failure::NotOurs => Recovery {
+        Failure::NotOurs | Failure::Unverified => Recovery {
             delete_copy: false,
             stop: true,
         },
@@ -319,34 +345,86 @@ pub enum Stage {
     Done,
 }
 
-/// An object whose contents are being processed: a selected prim (depth 0)
-/// or a rezzed copy.
-#[derive(Debug)]
-struct Frame {
-    object: Uuid,
+/// A prim whose contents are processed: a selected prim, or one prim of a
+/// rezzed copy's linkset.
+#[derive(Debug, Clone)]
+struct Prim {
+    id: Uuid,
     key: ObjKey,
-    depth: usize,
     /// Object items still to open.
     pending: VecDeque<TaskItem>,
-    /// The item of the parent this copy was rezzed from.
-    copy: Option<TaskItem>,
-    /// Scripts of the copy and whether they ran when it arrived.
+    /// Scripts of a copy's prim and whether they ran when it arrived.
     scripts: Vec<(Uuid, Option<bool>)>,
     /// Items saved back here under another name: their original name.
     renames: Vec<(Uuid, String)>,
 }
 
+impl Prim {
+    fn new(id: Uuid, key: ObjKey) -> Self {
+        Self {
+            id,
+            key,
+            pending: VecDeque::new(),
+            scripts: Vec::new(),
+            renames: Vec::new(),
+        }
+    }
+}
+
+/// An object whose contents are being processed: a selected prim (depth 0)
+/// or a rezzed copy, with every prim of its linkset.
+#[derive(Debug)]
+struct Frame {
+    /// The selected prim, or the copy's root.
+    object: Uuid,
+    key: ObjKey,
+    depth: usize,
+    /// The item of the parent this copy was rezzed from.
+    copy: Option<TaskItem>,
+    /// The parent's prim whose contents held that item: the rez came from
+    /// it, and the save goes back into it.
+    source: Option<(Uuid, ObjKey)>,
+    /// The root first, then a copy's child prims as they are seen.
+    prims: Vec<Prim>,
+    /// The prim being read, or whose objects are being opened.
+    current: usize,
+}
+
 impl Frame {
-    fn new(object: Uuid, key: ObjKey, depth: usize, copy: Option<TaskItem>) -> Self {
+    fn new(object: Uuid, key: ObjKey, depth: usize, copy: Option<TaskItem>, source: Option<(Uuid, ObjKey)>) -> Self {
         Self {
             object,
             key,
             depth,
-            pending: VecDeque::new(),
             copy,
-            scripts: Vec::new(),
-            renames: Vec::new(),
+            source,
+            prims: vec![Prim::new(object, key)],
+            current: 0,
         }
+    }
+
+    /// The copy's child prims not listed yet (a linkset's updates may come
+    /// after its root's).
+    fn add_children(&mut self, world: &World) {
+        if self.copy.is_none() {
+            return;
+        }
+        for &idx in world.objects.children_of(&self.key) {
+            if let Some(o) = world.objects.get(idx)
+                && !self.prims.iter().any(|p| p.id == o.full_id)
+            {
+                self.prims.push(Prim::new(o.full_id, o.key));
+            }
+        }
+    }
+
+    fn prim(&self) -> &Prim {
+        &self.prims[self.current.min(self.prims.len() - 1)]
+    }
+
+    fn prim_mut(&mut self) -> &mut Prim {
+        let i = self.current.min(self.prims.len() - 1);
+        &mut self.prims[i]
     }
 }
 
@@ -374,8 +452,13 @@ pub struct Job {
     /// The item being rezzed, the objects before, the rez point and the
     /// last alert then.
     rezzing: Option<(TaskItem, HashSet<Uuid>, Vec3, u64)>,
-    /// The source's listing and serial before the save back.
-    snapshot: Option<(Vec<TaskItem>, i16)>,
+    /// The rez of an arrived object whose origin is being checked: waited
+    /// for again if the object turns out to be another one.
+    arrived: Option<(TaskItem, HashSet<Uuid>, Vec3, u64)>,
+    /// The RezObject of `rezzing` already sent: not sent again.
+    rez_resumed: bool,
+    /// The source's listing before the save back, and the copy's name then.
+    snapshot: Option<(Vec<TaskItem>, String)>,
     saved: Option<TaskItem>,
     stopping: bool,
     /// Stop pressed, and taken into account.
@@ -398,6 +481,8 @@ impl Job {
             sent: false,
             poll_at: now,
             rezzing: None,
+            arrived: None,
+            rez_resumed: false,
             snapshot: None,
             saved: None,
             stopping: false,
@@ -415,7 +500,7 @@ impl Job {
 
     /// Objects whose listings the job reads (kept by the contents cache).
     pub fn objects(&self) -> Vec<Uuid> {
-        self.stack.iter().map(|f| f.object).collect()
+        self.stack.iter().flat_map(|f| f.prims.iter().map(|p| p.id)).collect()
     }
 
     fn top(&self) -> Option<&Frame> {
@@ -529,7 +614,7 @@ impl Job {
                 self.report.prims_skipped += 1;
                 continue;
             };
-            self.stack.push(Frame::new(id, o.key, 0, None));
+            self.stack.push(Frame::new(id, o.key, 0, None, None));
             return Stage::Read;
         }
         log::info!(
@@ -552,11 +637,12 @@ impl Job {
             if self.report.stopped.is_none() {
                 self.report.stopped = Some(aurora_i18n::tr!("content-perms-nested-stopped").into());
             }
-            // a rez in flight is waited for, a save back sent is seen through
+            // a rez in flight is waited for, an arrival's origin checked
+            // before anything is deleted, a save back sent is seen through
             if !self.rez_in_flight()
                 && !matches!(
                     self.stage,
-                    Stage::Save | Stage::RemoveOriginal | Stage::Delete | Stage::Recover | Stage::Done
+                    Stage::Props | Stage::Save | Stage::RemoveOriginal | Stage::Delete | Stage::Recover | Stage::Done
                 )
             {
                 let next = if self.top().is_some_and(|f| f.copy.is_some()) {
@@ -603,10 +689,16 @@ impl Job {
                 self.fail(tool, world, Failure::RezTimeout, now);
                 return;
             }
+            // an arrival never checked is never deleted
+            Stage::Props if elapsed > TIMEOUT => {
+                self.fail(tool, world, Failure::Unverified, now);
+                return;
+            }
             Stage::Save if elapsed > TIMEOUT => {
                 let gone = self
-                    .parent()
-                    .and_then(|p| tool.contents.objects.get(&p.object))
+                    .top()
+                    .and_then(|f| f.source)
+                    .and_then(|(source, _)| tool.contents.objects.get(&source))
                     .zip(self.top().and_then(|f| f.copy.as_ref()))
                     .is_some_and(|(inv, original)| !inv.items.iter().any(|i| i.item_id == original.item_id));
                 let failure = if gone {
@@ -636,10 +728,6 @@ impl Job {
         }
     }
 
-    fn parent(&self) -> Option<&Frame> {
-        self.stack.len().checked_sub(2).and_then(|i| self.stack.get(i))
-    }
-
     /// The stage after a copy frame was popped.
     fn after_copy(&mut self, tool: &BuildTool, world: &World) -> Stage {
         if self.stopping {
@@ -665,6 +753,7 @@ impl Job {
             }
             Failure::RezTimeout => aurora_i18n::tr!("content-perms-nested-rez-timeout", name = name.as_str()),
             Failure::NotOurs => aurora_i18n::tr!("content-perms-nested-not-ours", name = name.as_str()),
+            Failure::Unverified => aurora_i18n::tr!("content-perms-nested-unverified", name = name.as_str()),
             Failure::Step(text) => aurora_i18n::tr!("content-perms-nested-failed", name = name.as_str(), reason = text.as_str()),
             Failure::OriginalGone => aurora_i18n::tr!("content-perms-nested-original-gone", name = name.as_str()),
         };
@@ -676,6 +765,8 @@ impl Job {
         // while rezzing, the top frame is the container, not the failing copy
         let own_copy = self.rezzing.is_none() && self.top().is_some_and(|f| f.copy.is_some());
         self.rezzing = None;
+        self.arrived = None;
+        self.rez_resumed = false;
         self.snapshot = None;
         self.saved = None;
         if rec.stop {
@@ -776,10 +867,10 @@ impl Job {
     fn step(&mut self, tool: &mut BuildTool, world: &World, now: Instant) -> Result<Option<Stage>, Failure> {
         let first = !self.sent;
         self.sent = true;
-        // a listing error of the object being read
-        if let Some(object) = self.inventory_error.take()
+        // a listing error of the prim being read
+        if let Some(errored) = self.inventory_error.take()
             && matches!(self.stage, Stage::Read | Stage::Apply)
-            && self.top().is_some_and(|f| f.object == object)
+            && self.top().is_some_and(|f| f.prim().id == errored)
         {
             return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
         }
@@ -789,10 +880,19 @@ impl Job {
         let Some(frame) = self.stack.last() else {
             return Ok(Some(Stage::Done));
         };
-        let (object, key, depth) = (frame.object, frame.key, frame.depth);
-        let (copy, scripts, renames) = (frame.copy.clone(), frame.scripts.clone(), frame.renames.clone());
+        let (root, root_key, depth) = (frame.object, frame.key, frame.depth);
+        let (copy, source) = (frame.copy.clone(), frame.source);
+        // the prim whose contents are read, opened or changed
+        let (object, key) = (frame.prim().id, frame.prim().key);
+        let renames = frame.prim().renames.clone();
+        let linkset: Vec<(Uuid, ObjKey)> = frame.prims.iter().map(|p| (p.id, p.key)).collect();
+        let scripts: Vec<(Uuid, ObjKey, Uuid, Option<bool>)> = frame
+            .prims
+            .iter()
+            .flat_map(|p| p.scripts.iter().map(move |s| (p.id, p.key, s.0, s.1)))
+            .collect();
         // the copy must stay in world until it is deleted
-        if copy.is_some() && !matches!(self.stage, Stage::Delete | Stage::Recover) && world.objects.index_of_uuid(&object).is_none() {
+        if copy.is_some() && !matches!(self.stage, Stage::Delete | Stage::Recover) && world.objects.index_of_uuid(&root).is_none() {
             return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
         }
         match self.stage {
@@ -805,7 +905,9 @@ impl Job {
                     .unwrap_or_default();
                 let found = scan(&items, world.agent_id, world.groups.active, depth);
                 log::info!(
-                    "deep permissions: level {depth} listing, {} objects to open, {} skipped",
+                    "deep permissions: level {depth} listing of prim {} of {}, {} objects to open, {} skipped",
+                    self.top().map_or(0, |f| f.current) + 1,
+                    linkset.len(),
                     found.eligible.len(),
                     found.skipped.len()
                 );
@@ -815,41 +917,44 @@ impl Job {
                     .filter(|i| i.asset_type == super::contents::AT_LSL_TEXT)
                     .map(|i| (i.item_id, None))
                     .collect();
-                if found_scripts.len() > MAX_SCRIPTS {
+                if scripts.len() + found_scripts.len() > MAX_SCRIPTS {
                     return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-too-many").into()));
                 }
-                if let Some(frame) = self.stack.last_mut() {
-                    frame.pending = found.eligible.into();
-                    if copy.is_some() {
-                        frame.scripts = found_scripts;
-                    }
-                }
+                let Some(frame) = self.stack.last_mut() else {
+                    return Ok(Some(Stage::Done));
+                };
+                frame.prim_mut().pending = found.eligible.into();
                 if copy.is_some() {
+                    frame.prim_mut().scripts = found_scripts;
+                    // every prim of the linkset read before its scripts stop
+                    frame.add_children(world);
+                    if frame.current + 1 < frame.prims.len() {
+                        frame.current += 1;
+                        return Ok(Some(Stage::Read));
+                    }
+                    frame.current = 0;
                     return Ok(Some(Stage::Scripts));
                 }
-                if self.stack.last().is_some_and(|f| f.pending.is_empty()) {
+                if frame.prim().pending.is_empty() {
                     return Ok(Some(Stage::Apply));
                 }
-                if let Some(frame) = self.stack.last() {
-                    Self::preflight(world, frame)?;
-                }
+                Self::preflight(world, frame)?;
                 Ok(Some(Stage::Next))
             }
             Stage::Scripts => {
-                let scripts: Vec<Uuid> = scripts.iter().map(|s| s.0).collect();
                 if first {
-                    for item in &scripts {
-                        tool.contents.running.remove(&(object, *item));
-                        Self::running_query(tool, key, object, *item);
+                    for (prim, prim_key, item, _) in &scripts {
+                        tool.contents.running.remove(&(*prim, *item));
+                        Self::running_query(tool, *prim_key, *prim, *item);
                     }
                 }
                 let poll = self.poll(now);
                 let mut known = true;
-                for item in &scripts {
-                    if !tool.contents.running.contains_key(&(object, *item)) {
+                for (prim, prim_key, item, _) in &scripts {
+                    if !tool.contents.running.contains_key(&(*prim, *item)) {
                         known = false;
                         if poll {
-                            Self::running_query(tool, key, object, *item);
+                            Self::running_query(tool, *prim_key, *prim, *item);
                         }
                     }
                 }
@@ -858,36 +963,38 @@ impl Job {
                 }
                 let mut any = false;
                 if let Some(frame) = self.stack.last_mut() {
-                    for s in &mut frame.scripts {
-                        let running = tool.contents.running.get(&(object, s.0)).is_some_and(|r| r.0);
-                        s.1 = Some(running);
-                        any |= running;
+                    for p in &mut frame.prims {
+                        for s in &mut p.scripts {
+                            let running = tool.contents.running.get(&(p.id, s.0)).is_some_and(|r| r.0);
+                            s.1 = Some(running);
+                            any |= running;
+                        }
                     }
                 }
                 Ok(Some(if any { Stage::StopScripts } else { Stage::Next }))
             }
             Stage::StopScripts | Stage::RestoreScripts => {
                 let restore = self.stage == Stage::RestoreScripts;
-                let ran: Vec<Uuid> = scripts.iter().filter(|s| s.1 == Some(true)).map(|s| s.0).collect();
+                let ran: Vec<(Uuid, ObjKey, Uuid)> = scripts.iter().filter(|s| s.3 == Some(true)).map(|s| (s.0, s.1, s.2)).collect();
                 if first {
-                    for item in &ran {
-                        tool.contents.running.remove(&(object, *item));
+                    for (prim, prim_key, item) in &ran {
+                        tool.contents.running.remove(&(*prim, *item));
                         tool.send(BuildCmd::SetScriptRunning {
-                            handle: key.region,
-                            object_id: object,
+                            handle: prim_key.region,
+                            object_id: *prim,
                             item_id: *item,
                             running: restore,
                         });
-                        Self::running_query(tool, key, object, *item);
+                        Self::running_query(tool, *prim_key, *prim, *item);
                     }
                 }
                 let poll = self.poll(now);
                 let mut confirmed = true;
-                for item in &ran {
-                    if tool.contents.running.get(&(object, *item)).is_none_or(|r| r.0 != restore) {
+                for (prim, prim_key, item) in &ran {
+                    if tool.contents.running.get(&(*prim, *item)).is_none_or(|r| r.0 != restore) {
                         confirmed = false;
                         if poll {
-                            Self::running_query(tool, key, object, *item);
+                            Self::running_query(tool, *prim_key, *prim, *item);
                         }
                     }
                 }
@@ -897,16 +1004,21 @@ impl Job {
                 Ok(Some(if restore { Stage::Rename } else { Stage::Next }))
             }
             Stage::Next => {
-                let item = self.stack.last_mut().and_then(|f| f.pending.pop_front());
+                let item = self.stack.last_mut().and_then(|f| f.prim_mut().pending.pop_front());
                 match item {
                     Some(item) => {
                         self.rezzing = Some((item, HashSet::new(), Vec3::ZERO, 0));
+                        self.rez_resumed = false;
                         Ok(Some(Stage::Rez))
                     }
                     None => Ok(Some(Stage::Apply)),
                 }
             }
             Stage::Rez => {
+                if first && std::mem::take(&mut self.rez_resumed) {
+                    // waiting again for a rez already sent
+                    return Ok(None);
+                }
                 if first {
                     let at = Self::rez_point_of(world, object)
                         .ok_or_else(|| Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()))?;
@@ -954,12 +1066,12 @@ impl Job {
                     let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
                         return Ok(None);
                     };
-                    log::info!("deep permissions: {} arrived as {id}", item.name);
-                    let frame = Frame::new(id, o.key, depth + 1, Some(item));
+                    log::info!("deep permissions: {} arrived as {id}, checking where it comes from", item.name);
+                    let frame = Frame::new(id, o.key, depth + 1, Some(item), Some((object, key)));
                     self.stack.push(frame);
-                    self.rezzing = None;
-                    // stopped while it was on its way: straight to the trash
-                    return Ok(Some(if self.user_stopped { Stage::Recover } else { Stage::Props }));
+                    self.arrived = self.rezzing.take();
+                    // even when stopped: nothing is deleted before its origin is known
+                    return Ok(Some(Stage::Props));
                 }
                 if let Some((_, message)) = world
                     .recent_alerts
@@ -973,22 +1085,41 @@ impl Job {
             Stage::Props => {
                 if first || self.poll(now) {
                     if first {
-                        tool.props.remove(&object);
+                        tool.props.remove(&root);
                     }
                     tool.send(BuildCmd::Select {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids: vec![root_key.local_id],
                     });
                 }
-                let Some(props) = tool.props.get(&object).filter(|p| p.full) else {
+                let Some(props) = tool.props.get(&root).filter(|p| p.full) else {
                     return Ok(None);
                 };
-                let source = self.parent().map(|p| p.object).unwrap_or_default();
-                if props.from_task_id != source {
-                    return Err(Failure::NotOurs);
+                let from = source.map(|s| s.0).unwrap_or_default();
+                if props.from_task_id != from {
+                    // another object of ours that looked like the arrival:
+                    // left alone, and the one asked for still waited for
+                    let Some(mut waiting) = self.arrived.take() else {
+                        return Err(Failure::NotOurs);
+                    };
+                    log::info!("deep permissions: {root} comes from {}, not {from}: left alone", props.from_task_id);
+                    waiting.1.insert(root);
+                    self.stack.pop();
+                    self.rezzing = Some(waiting);
+                    self.rez_resumed = true;
+                    return Ok(Some(Stage::Rez));
+                }
+                self.arrived = None;
+                if self.user_stopped {
+                    // stopped while it was on its way: straight to the trash
+                    return Ok(Some(Stage::Recover));
                 }
                 if props.owner_id != world.agent_id || props.owner_mask & perm::MODIFY == 0 {
                     return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-skip-no-modify").into()));
+                }
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.add_children(world);
+                    log::info!("deep permissions: {root} is ours, {} prims", frame.prims.len());
                 }
                 Ok(Some(Stage::Read))
             }
@@ -1023,6 +1154,13 @@ impl Job {
                     self.stack.pop();
                     return Ok(Some(self.next_prim(tool, world)));
                 }
+                // the copy's next prim, then the whole linkset's masks
+                if let Some(frame) = self.stack.last_mut()
+                    && frame.current + 1 < frame.prims.len()
+                {
+                    frame.current += 1;
+                    return Ok(Some(Stage::Next));
+                }
                 Ok(Some(if self.options.includes_type(i32::from(AT_OBJECT)) {
                     Stage::ObjectPerms
                 } else {
@@ -1031,11 +1169,12 @@ impl Job {
             }
             Stage::ObjectPerms => {
                 let (group, everyone, next) = object_masks(&self.options);
+                let local_ids: Vec<u32> = linkset.iter().map(|(_, k)| k.local_id).collect();
                 if first {
                     for (field, set, mask) in permission_changes(&self.options) {
                         tool.send(BuildCmd::SetPermissions {
-                            handle: key.region,
-                            local_ids: vec![key.local_id],
+                            handle: root_key.region,
+                            local_ids: local_ids.clone(),
                             field,
                             set,
                             mask,
@@ -1044,17 +1183,19 @@ impl Job {
                 }
                 if first || self.poll(now) {
                     tool.send(BuildCmd::Select {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids,
                     });
                 }
-                let done = tool.props.get(&object).is_some_and(|p| {
-                    let base = p.base_mask;
-                    let g = perm::COPY | perm::MODIFY | perm::MOVE;
-                    let n = perm::MODIFY | perm::COPY | perm::TRANSFER;
-                    p.group_mask & g & base == group & g & base
-                        && p.everyone_mask & perm::COPY & base == everyone & perm::COPY & base
-                        && p.next_owner_mask & n & base == next & n & base
+                let done = linkset.iter().all(|(id, _)| {
+                    tool.props.get(id).is_some_and(|p| {
+                        let base = p.base_mask;
+                        let g = perm::COPY | perm::MODIFY | perm::MOVE;
+                        let n = perm::MODIFY | perm::COPY | perm::TRANSFER;
+                        p.group_mask & g & base == group & g & base
+                            && p.everyone_mask & perm::COPY & base == everyone & perm::COPY & base
+                            && p.next_owner_mask & n & base == next & n & base
+                    })
                 });
                 Ok(done.then_some(Stage::RestoreScripts))
             }
@@ -1064,15 +1205,15 @@ impl Job {
                 };
                 if first {
                     // fresh properties: a script may rename the object at any time
-                    tool.props.remove(&object);
+                    tool.props.remove(&root);
                 }
                 if first || self.poll(now) {
                     tool.send(BuildCmd::Select {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids: vec![root_key.local_id],
                     });
                 }
-                let Some(props) = tool.props.get(&object).filter(|p| p.full) else {
+                let Some(props) = tool.props.get(&root).filter(|p| p.full) else {
                     return Ok(None);
                 };
                 if props.name == original.name {
@@ -1082,37 +1223,38 @@ impl Job {
                     self.name_sent = true;
                     log::info!("deep permissions: renaming the copy {:?} back to {:?}", props.name, original.name);
                     tool.send(BuildCmd::SetName {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids: vec![root_key.local_id],
                         name: original.name.clone(),
                     });
                     tool.send(BuildCmd::Select {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids: vec![root_key.local_id],
                     });
                 }
                 Ok(None)
             }
             Stage::Save => {
-                let Some(parent) = self.parent() else {
+                let (Some((source, _)), Some(original)) = (source, copy) else {
                     return Ok(Some(Stage::Delete));
                 };
-                let source = parent.object;
                 if world.objects.index_of_uuid(&source).is_none() {
                     return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
                 }
                 if first {
-                    let before = tool
-                        .contents
-                        .objects
-                        .get(&source)
-                        .map(|inv| (inv.items.clone(), inv.serial))
-                        .unwrap_or_default();
-                    self.snapshot = Some(before);
+                    let before = tool.contents.objects.get(&source).map(|inv| inv.items.clone()).unwrap_or_default();
+                    // the name the saved item takes: the item's, unless a
+                    // script renamed the copy again
+                    let saved_as = tool
+                        .props
+                        .get(&root)
+                        .filter(|p| p.full)
+                        .map_or_else(|| original.name.clone(), |p| p.name.clone());
+                    self.snapshot = Some((before, saved_as));
                     log::info!("deep permissions: saving {} back into {source}", self.name());
                     tool.send(BuildCmd::DeRez {
-                        handle: key.region,
-                        local_ids: vec![key.local_id],
+                        handle: root_key.region,
+                        local_ids: vec![root_key.local_id],
                         destination: derez::SAVE_INTO_TASK_INVENTORY,
                         destination_id: source,
                         group_id: world.groups.active,
@@ -1124,11 +1266,11 @@ impl Job {
                     Self::read(tool, world, source, false)?;
                     return Ok(None);
                 };
-                let (Some((before, serial)), Some(original)) = (self.snapshot.as_ref(), copy) else {
+                let Some((before, saved_as)) = self.snapshot.as_ref() else {
                     return Ok(Some(Stage::Delete));
                 };
                 let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
-                let outcome = save_outcome(before, &items, &original, inv.serial != *serial);
+                let outcome = save_outcome(before, &items, &original, saved_as);
                 log::info!("deep permissions: save of {} -> {outcome:?}", original.name);
                 match outcome {
                     Saved::Pending => {
@@ -1166,10 +1308,10 @@ impl Job {
                 }
             }
             Stage::RemoveOriginal => {
-                let (Some(parent), Some(original)) = (self.parent(), copy) else {
+                // only ever after a save matched by the original's name
+                let (Some((source, source_key)), Some(original), Some(_)) = (source, copy, self.saved.as_ref()) else {
                     return Ok(Some(Stage::Delete));
                 };
-                let (source, source_key) = (parent.object, parent.key);
                 if first {
                     tool.send(BuildCmd::RemoveTaskInventory {
                         handle: source_key.region,
@@ -1198,11 +1340,11 @@ impl Job {
             }
             Stage::Delete | Stage::Recover => {
                 if first {
-                    if world.objects.index_of_uuid(&object).is_some() {
-                        log::info!("deep permissions: deleting the copy {object}");
+                    if world.objects.index_of_uuid(&root).is_some() {
+                        log::info!("deep permissions: deleting the copy {root}");
                         tool.send(BuildCmd::DeRez {
-                            handle: key.region,
-                            local_ids: vec![key.local_id],
+                            handle: root_key.region,
+                            local_ids: vec![root_key.local_id],
                             destination: derez::TRASH,
                             destination_id: BuildTool::folder_of_type(world, TRASH_FOLDER),
                             group_id: world.groups.active,
@@ -1210,7 +1352,7 @@ impl Job {
                     }
                     return Ok(None);
                 }
-                if world.objects.index_of_uuid(&object).is_some() {
+                if world.objects.index_of_uuid(&root).is_some() {
                     return Ok(None);
                 }
                 self.stack.pop();
@@ -1220,11 +1362,17 @@ impl Job {
         }
     }
 
+    /// A save back found under another name: the parent's prim that holds
+    /// it gives it its item's name back with its own contents change.
     fn rename_in_parent(&mut self, item: Uuid, name: String) {
+        let Some(source) = self.top().and_then(|f| f.source).map(|s| s.0) else {
+            return;
+        };
         if let Some(i) = self.stack.len().checked_sub(2)
             && let Some(parent) = self.stack.get_mut(i)
+            && let Some(prim) = parent.prims.iter_mut().find(|p| p.id == source)
         {
-            parent.renames.push((item, name));
+            prim.renames.push((item, name));
         }
     }
 }

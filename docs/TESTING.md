@@ -3538,13 +3538,15 @@ Run authority follow-up (2026-10-15): the human measured about 7 m/s at x2 with 
 `AURORA_DEMO_DEEP_PERMS=1` puts a chest (`99760`) in front of the avatar.
 Its contents hold a notecard, "Outer box" (a running script, a notecard and
 "Inner box", which holds a notecard and "Tiny box" with a running script),
-a no-copy "Heirloom" and a no-modify "Sealed box". The demo simulator keeps
-what each object item holds: a rez from the chest's contents brings those
-contents along, a save back stores what the copy holds then. Select the
-chest (`AURORA_DEMO_BUILD=contents-ready,object:99760`), open Contents ›
-Rights (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick "Include
-objects inside objects": the preview counts one object to open and two
-skipped, with their reasons. Apply rezzes each box 2 m above the object
+"Linked box" (two linked prims: a notecard in its root, a running script
+and "Pebble box", holding a notecard, in its child prim), a no-copy
+"Heirloom" and a no-modify "Sealed box". The demo simulator keeps what each
+object item holds, prim by prim: a rez from the chest's contents brings
+those contents along, a save back stores what the copy's prims hold then.
+Select the chest (`AURORA_DEMO_BUILD=contents-ready,object:99760`), open
+Contents › Rights (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick
+"Include objects inside objects": the preview counts two objects to open
+and two skipped, with their reasons. Apply rezzes each box 2 m above the object
 holding it, deepest last opened first saved, and deletes every copy; nothing
 stays in world.
 While it runs, Stop (in place of OK and Apply) trashes the copies still in
@@ -3552,7 +3554,7 @@ world and ends; the report says it was stopped.
 
 `run` ticks the option and presses Apply by itself once the chest is
 selected; the log has one `deep permissions:` line per stage and ends with
-the report (3 objects inside objects, 2 skipped). `run-replace` makes the
+the report (5 objects inside objects, 2 skipped). `run-replace` makes the
 simulator update a saved item in place (no original to remove);
 `run-refuse` makes it refuse every rez with an alert: the job stops at the
 first rez and nothing changes. What a real simulator does on a save back

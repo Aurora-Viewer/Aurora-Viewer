@@ -66,12 +66,15 @@ fn item(parent: Uuid, n: u128, name: &str, asset_type: i8, owner_mask: u32) -> T
     }
 }
 
-/// The chest's listing, and what each of its object items holds (by item
-/// id, at every level): a notecard; "Outer box" with a script, a notecard
-/// and "Inner box", which holds a notecard and "Tiny box" with a script; a
+/// The chest's listing, what each of its object items holds in its root
+/// (by item id, at every level) and in its child prims: a notecard; "Outer
+/// box" with a script, a notecard and "Inner box", which holds a notecard
+/// and "Tiny box" with a script; "Linked box", two linked prims, a notecard
+/// in its root and a script and "Pebble box" (a notecard) in its child; a
 /// no-copy and a no-modify object, which stay closed.
-pub fn contents(chest: Uuid) -> (Vec<TaskItem>, HashMap<Uuid, Vec<TaskItem>>) {
+pub fn contents(chest: Uuid) -> (Vec<TaskItem>, HashMap<Uuid, Vec<TaskItem>>, HashMap<Uuid, Vec<Vec<TaskItem>>>) {
     let mut stored = HashMap::new();
+    let mut links = HashMap::new();
     let outer = item(chest, 2, aurora_i18n::tr!("content-perms-demo-outer"), 6, PERM_ALL);
     let inner = item(outer.item_id, 5, aurora_i18n::tr!("content-perms-demo-inner"), 6, PERM_ALL);
     let tiny = item(inner.item_id, 7, aurora_i18n::tr!("content-perms-demo-tiny"), 6, PERM_ALL);
@@ -104,13 +107,39 @@ pub fn contents(chest: Uuid) -> (Vec<TaskItem>, HashMap<Uuid, Vec<TaskItem>>) {
     );
     stored.insert(heirloom.item_id, Vec::new());
     stored.insert(sealed.item_id, Vec::new());
+    // the child prim's item ids are made when it is rezzed: `parent` is a
+    // placeholder
+    let linked = item(chest, 11, aurora_i18n::tr!("content-perms-demo-linked"), 6, PERM_ALL);
+    let pebble = item(Uuid::nil(), 14, aurora_i18n::tr!("content-perms-demo-pebble"), 6, PERM_ALL);
+    stored.insert(
+        pebble.item_id,
+        vec![item(
+            pebble.item_id,
+            15,
+            aurora_i18n::tr!("content-perms-demo-inner-note"),
+            7,
+            PERM_ALL,
+        )],
+    );
+    stored.insert(
+        linked.item_id,
+        vec![item(linked.item_id, 12, aurora_i18n::tr!("content-perms-demo-readme"), 7, PERM_ALL)],
+    );
+    links.insert(
+        linked.item_id,
+        vec![vec![
+            item(Uuid::nil(), 13, aurora_i18n::tr!("content-perms-demo-spin"), 10, PERM_ALL),
+            pebble,
+        ]],
+    );
     let items = vec![
         item(chest, 1, aurora_i18n::tr!("content-perms-demo-notes"), 7, PERM_ALL),
         outer,
         heirloom,
         sealed,
+        linked,
     ];
-    (items, stored)
+    (items, stored, links)
 }
 
 /// The chest, a wooden box in front of the avatar.

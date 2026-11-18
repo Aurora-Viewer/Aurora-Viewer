@@ -38,8 +38,12 @@ pub struct DemoSim {
     /// What an object item holds (`AURORA_DEMO_DEEP_PERMS`), by item id: a
     /// rez from contents gets it, a save back keeps the copy's contents.
     stored: HashMap<Uuid, Vec<TaskItem>>,
+    /// What the child prims of a stored object item hold, in link order.
+    stored_links: HashMap<Uuid, Vec<Vec<TaskItem>>>,
     /// The item each object rezzed from a stored item came from.
     stored_copies: HashMap<Uuid, Uuid>,
+    /// The child prims of such a copy.
+    copy_children: HashMap<Uuid, Vec<Uuid>>,
     /// `AURORA_DEMO_DEEP_PERMS=run-replace` / `run-refuse`, or set by a test.
     pub(crate) deep_in_place: bool,
     pub(crate) deep_refuse: bool,
@@ -208,8 +212,9 @@ impl DemoSim {
 
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
         if id == super::deep_perms::demo::id(super::deep_perms::demo::CHEST) && !self.contents.contains_key(&id) {
-            let (items, stored) = super::deep_perms::demo::contents(id);
+            let (items, stored, links) = super::deep_perms::demo::contents(id);
             self.stored.extend(stored);
+            self.stored_links.extend(links);
             self.contents.insert(id, (1, items));
         }
         if id == super::replace::demo::id(super::replace::demo::SOURCE) {
@@ -892,7 +897,8 @@ impl DemoSim {
 
     /// RezObject of a stored object item (`AURORA_DEMO_DEEP_PERMS`): a copy
     /// holding what the item holds, under new item ids, with the item's
-    /// name and masks; `run-refuse` answers with an alert instead.
+    /// name and masks, and its child prims with theirs; `run-refuse`
+    /// answers with an alert instead.
     fn rez_stored(&mut self, world: &World, rez: &aurora_net::inventory::rez::RezInventory) -> Vec<NetEvent> {
         if self.deep_refuse || super::deep_perms::demo::refuse() {
             return vec![NetEvent::Alert {
@@ -908,17 +914,32 @@ impl DemoSim {
         self.rezzed_groups.insert(id, rez.group);
         self.stored_copies.insert(id, rez.item.id);
         let held = self.stored.get(&rez.item.id).cloned().unwrap_or_default();
-        let mut items = Vec::new();
-        for mut it in held {
-            let old = it.item_id;
-            it.item_id = Uuid::new_v4();
-            it.parent_id = id;
-            if let Some(inner) = self.stored.get(&old).cloned() {
-                self.stored.insert(it.item_id, inner);
-            }
-            items.push(it);
-        }
+        let items = self.adopt(held, id);
         self.contents.insert(id, (1, items));
+        let mut objects = vec![object.clone()];
+        let mut children = Vec::new();
+        for (n, held) in self
+            .stored_links
+            .get(&rez.item.id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+        {
+            let child_id = Uuid::new_v4();
+            let mut child = object.clone();
+            child.full_id = child_id;
+            child.local_id = child_id.as_u128() as u32;
+            child.parent_id = object.local_id;
+            // (a child's position is its parent's frame)
+            child.position = glam::Vec3::new(0.6 * (n as f32 + 1.0), 0.0, 0.0);
+            child.scale = glam::Vec3::splat(0.5);
+            let items = self.adopt(held, child_id);
+            self.contents.insert(child_id, (1, items));
+            children.push(child_id);
+            objects.push(child);
+        }
+        self.copy_children.insert(id, children);
         let item = &rez.item;
         let p = self.props_of(world, id);
         p.name.clone_from(&item.name);
@@ -929,16 +950,46 @@ impl DemoSim {
         p.next_owner_mask = item.next_owner_mask;
         vec![NetEvent::ObjectUpdates {
             handle: rez.handle,
-            objects: vec![object],
+            objects,
         }]
     }
 
+    /// Items of a stored listing in a rezzed prim: new ids, what their
+    /// object items hold following them.
+    fn adopt(&mut self, held: Vec<TaskItem>, prim: Uuid) -> Vec<TaskItem> {
+        let mut items = Vec::new();
+        for mut it in held {
+            let old = it.item_id;
+            it.item_id = Uuid::new_v4();
+            it.parent_id = prim;
+            if let Some(inner) = self.stored.get(&old).cloned() {
+                self.stored.insert(it.item_id, inner);
+            }
+            if let Some(links) = self.stored_links.get(&old).cloned() {
+                self.stored_links.insert(it.item_id, links);
+            }
+            items.push(it);
+        }
+        items
+    }
+
     /// Save back of a copy rezzed from a stored item: a new object item
-    /// holding the copy's contents and masks, next to the original (as the
-    /// demo always did), or in its place with `run-replace`.
+    /// holding the copy's contents, its child prims' and its masks, next
+    /// to the original (as the demo always did), or in its place with
+    /// `run-replace`.
     fn save_stored(&mut self, world: &World, copy: Uuid, destination: Uuid) -> Option<Vec<NetEvent>> {
         let original = *self.stored_copies.get(&copy)?;
         let held = self.contents.get(&copy).map(|c| c.1.clone()).unwrap_or_default();
+        let links: Vec<Vec<TaskItem>> = self
+            .copy_children
+            .get(&copy)
+            .map(|children| {
+                children
+                    .iter()
+                    .map(|c| self.contents.get(c).map(|c| c.1.clone()).unwrap_or_default())
+                    .collect()
+            })
+            .unwrap_or_default();
         let p = self.props_of(world, copy).clone();
         let in_place = self.deep_in_place || super::deep_perms::demo::replace_in_place();
         let entry = self.contents_of(destination);
@@ -970,6 +1021,9 @@ impl DemoSim {
         }
         let (serial, items) = entry.clone();
         self.stored.insert(item.item_id, held);
+        if !links.is_empty() {
+            self.stored_links.insert(item.item_id, links);
+        }
         Some(vec![NetEvent::TaskInventory {
             object: destination,
             serial: Some(serial),
@@ -981,6 +1035,12 @@ impl DemoSim {
     #[cfg(test)]
     pub(crate) fn stored(&self, item: Uuid) -> Option<&Vec<TaskItem>> {
         self.stored.get(&item)
+    }
+
+    /// What the child prims of a stored object item hold (tests).
+    #[cfg(test)]
+    pub(crate) fn stored_links(&self, item: Uuid) -> Option<&Vec<Vec<TaskItem>>> {
+        self.stored_links.get(&item)
     }
 
     /// Capability answers: costs from the prim counts, default physics.
