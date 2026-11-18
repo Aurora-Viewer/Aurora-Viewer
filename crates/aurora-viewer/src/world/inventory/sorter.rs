@@ -1833,6 +1833,9 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         return false;
     }
     let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
+    if has_folders && shelf_of_products(inv, f, name, reserved) {
+        return false;
+    }
     // a store before a dash (`Clothes - Winter`) is too weak a sign for a
     // folder of the user's: only a tag (`[Store]`, `*Store*`) makes it one
     let store_named = store_tagged(name).is_some();
@@ -1876,6 +1879,78 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // Shoes`, `Old Hair`, `Reborn Stuff`)
         tagged || store_named || named && names_a_product(name) && one_product_named(inv, f, name)
     }
+}
+
+/// A shelf of the user's holding other products, whose own name says
+/// nothing Auto-sort knows (`floorplan` holding `floorplan. cemetery sign
+/// [box]` and `floorplan. rude bouquet [box]`; `Eternus` holding only
+/// `[Eternus] Glossy Dress (unpacked)`). Kept whole, it could only stay as
+/// not recognized with everything in it: it is opened instead, and each
+/// product in it still moves whole.
+///
+/// Never a delivery: no loose item beside its folders (a delivery's main
+/// item and its `Extras`), no folder that is a delivery's part (`HUD`,
+/// `Textures`, `Rez Box`, a body's version, `Gold`), no store tag in its
+/// name (a tagged store shelf keeps its own rule, `Stores/<store>`), and
+/// its products differ by more than a colour or a finish (`Aphrodite`
+/// holding `Aphrodite Black` and `Aphrodite Red` is one product's colours
+/// and stays whole). A lone product counts when the shelf is named for its
+/// store (`Eternus`, `Aurun`), and a lone shelf of the user's is opened
+/// (`!! miscellaneous` holding `blog brands`).
+fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &HashSet<String>) -> bool {
+    if !f.items.is_empty() || store_tagged(name).is_some() || target(name, -1, 0, None, &[], false).is_some() {
+        return false;
+    }
+    let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
+    if subs.is_empty() || f.children.len() != subs.len() {
+        return false;
+    }
+    let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+    let part = |sub: &str| {
+        let sub_words = words(sub);
+        reserved.contains(&sub.to_lowercase())
+            || classify(sub, -1, 0).body.is_some() && product_words(sub).is_empty()
+            || sub_words.iter().all(|w| {
+                VERSION_WORDS.contains(&w.as_str())
+                    || DELIVERY_PARTS.contains(&w.as_str())
+                    || FINISHES.contains(&w.as_str())
+                    || tone(w)
+                    || w.chars().all(|c| c.is_ascii_digit())
+            })
+    };
+    if subs.iter().any(|s| part(s.info.name.trim())) {
+        return false;
+    }
+    let own: HashSet<String> = product_words(name).into_iter().collect();
+    let products: Vec<&&super::Folder> = subs.iter().filter(|s| product_folder_in(inv, s.info.id, reserved)).collect();
+    let rest = |sub: &str| -> Vec<String> {
+        let mut rest: Vec<String> = product_words(sub)
+            .into_iter()
+            .filter(|w| !own.contains(w) && !FINISHES.contains(&w.as_str()) && !tone(w))
+            .collect();
+        rest.sort_unstable();
+        rest.dedup();
+        rest
+    };
+    if let [only] = subs.as_slice() {
+        let sub = only.info.name.trim();
+        let sub_words = words(sub);
+        if products.is_empty() {
+            // (a delivery's inner folder carries its name again)
+            return !sub_words.iter().any(|w| own.contains(w));
+        }
+        return !own.is_empty() && own.iter().all(|w| sub_words.contains(w)) && !rest(sub).is_empty();
+    }
+    if products.is_empty() {
+        return false;
+    }
+    let named: Vec<Vec<String>> = products
+        .iter()
+        .map(|s| rest(s.info.name.trim()))
+        .filter(|r| !r.is_empty())
+        .collect();
+    let distinct: HashSet<&Vec<String>> = named.iter().collect();
+    (distinct.len() >= 2 || products.len() < subs.len()) && named.len() * 2 >= products.len()
 }
 
 /// A folder of loose items names one product with a word of its own: not

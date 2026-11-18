@@ -4280,3 +4280,61 @@ fn the_demo_finder_lists_demos_and_never_what_is_worn_or_a_link() {
         "to Pre-Trash, never deleted"
     );
 }
+
+/// A store's shelf of the user's whose name says nothing (`Nookery` holding
+/// `Nookery. cemetery plaque [box]`) is opened: its products are sorted
+/// one by one, each moving whole, instead of the whole shelf staying as not
+/// recognized. A lone product counts when the shelf is named for its store.
+#[test]
+fn a_whole_sort_opens_an_unnamed_store_shelf() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Unsorted");
+    add_folder(&mut inv, 81, 80, "Nookery");
+    add_folder(&mut inv, 82, 81, "Nookery. cemetery plaque [box]");
+    add_item(&mut inv, 200, 82, "Nookery. cemetery plaque", 0);
+    add_folder(&mut inv, 83, 81, "Nookery. hanging candle / silver [box]");
+    add_item(&mut inv, 201, 83, "Nookery. hanging candle / silver", 0);
+    add_folder(&mut inv, 84, 80, "Velmira");
+    add_folder(&mut inv, 85, 84, "[Velmira] Glossy Dress Black (unpacked)");
+    add_item(&mut inv, 202, 85, "[Velmira] Glossy Dress Black", 0);
+    let prefs = Preferences::default();
+    let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
+    let moved = |at: u128| plan.moves.iter().find(|m| m.id == id(at)).map(|m| m.label.clone());
+    let base = prefs.base_name();
+    assert_eq!(moved(82), Some(format!("{base} / {}", cat(Category::Decor))));
+    assert_eq!(moved(83), Some(format!("{base} / {}", cat(Category::Decor))));
+    assert_eq!(moved(85), Some(format!("{base} / {}", cat(Category::Dresses))));
+    // the shelves stay, the products' items stay in their products
+    for at in [81, 84, 200, 201, 202] {
+        assert_eq!(moved(at), None, "{at}");
+    }
+    assert!(plan.unknown.is_empty(), "{:?}", plan.unknown);
+}
+
+/// One product's colours (`Aphrodite` holding `Aphrodite Black` and
+/// `Aphrodite Red`) and a delivery with its parts (`HUD`, `Textures`) are
+/// never opened as a shelf.
+#[test]
+fn a_products_colours_and_parts_are_no_shelf() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Unsorted");
+    add_folder(&mut inv, 81, 80, "Aphrodite");
+    add_folder(&mut inv, 82, 81, "Aphrodite Black");
+    add_item(&mut inv, 200, 82, "Aphrodite Black", 0);
+    add_folder(&mut inv, 83, 81, "Aphrodite Red");
+    add_item(&mut inv, 201, 83, "Aphrodite Red", 0);
+    add_folder(&mut inv, 84, 80, "Velmora Selene");
+    add_folder(&mut inv, 85, 84, "HUD");
+    add_item(&mut inv, 202, 85, "Velmora Selene HUD", 0);
+    add_folder(&mut inv, 86, 84, "Textures");
+    add_item(&mut inv, 203, 86, "Velmora Selene Texture 1", 0);
+    let reserved = sorter_folder_names(&Preferences::default());
+    for shelf in [81, 84] {
+        let f = &inv.folders[&id(shelf)];
+        assert!(!shelf_of_products(&inv, f, f.info.name.trim(), &reserved), "{}", f.info.name);
+    }
+    let plan = plan_whole(&inv, &Preferences::default(), &HashSet::new(), &HashSet::new());
+    for at in [82, 83, 85, 86, 200, 201, 202, 203] {
+        assert!(plan.moves.iter().all(|m| m.id != id(at)), "{at}");
+    }
+}
