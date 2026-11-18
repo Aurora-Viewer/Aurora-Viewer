@@ -214,6 +214,8 @@ impl App {
             target,
             pie_path: Vec::new(),
             pie_input_frame: None,
+            // the pie drops it on its first frame if the press is over
+            held: self.settings.use_pie_menu && self.settings.pie_menu_on_press,
         });
     }
 

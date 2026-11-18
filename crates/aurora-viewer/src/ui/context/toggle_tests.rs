@@ -31,6 +31,7 @@ impl Harness {
                 point: Vec3::ZERO,
                 pie_path: Vec::new(),
                 pie_input_frame: None,
+                held: false,
             }),
             facts: Facts::default(),
             prefs: Preferences::default(),

@@ -1701,6 +1701,7 @@ mod tests {
                                 target: crate::ui::context::Target::Ground,
                                 pie_path: Vec::new(),
                                 pie_input_frame: None,
+                                held: false,
                             });
                         }
                         match *kind {
