@@ -3688,6 +3688,12 @@ content-perms-nested-restoring = Relance des scripts de « { $name } »…
 content-perms-nested-saving = Réenregistrement de « { $name } »…
 content-perms-nested-deleting = Suppression de la copie rezzée de « { $name } »…
 content-perms-nested-finished = { $count } éléments modifiés dans { $objects } objets contenus dans des objets, { $skipped } ignorés.
+content-perms-nested-kept-next = { $kept ->
+    [one] { $kept } gardé à côté de son original : les noms différaient.
+   *[other] { $kept } gardés à côté de leurs originaux : les noms différaient.
+    }
+content-perms-nested-stopped = Arrêté : les copies rezzées ont été supprimées, les éléments d’origine laissés tels quels.
+content-perms-nested-stop-help = Supprime les copies rezzées encore dans le monde et s’arrête : les éléments d’origine restent tels quels, les objets déjà réenregistrés gardent leurs modifications.
 content-perms-nested-original-kept = « { $name } » a été réenregistré, mais son élément d’origine n’a pas pu être retiré : les deux sont dans le contenu.
 content-perms-nested-copy-left = La copie rezzée de « { $name } » n’a pas pu être supprimée : supprimez-la vous-même.
 content-perms-nested-save-unconfirmed = le réenregistrement n’a pas été confirmé

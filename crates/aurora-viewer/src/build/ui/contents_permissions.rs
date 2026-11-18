@@ -117,6 +117,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         return;
     }
     let running = tool.ui.bulk.job.is_some() || tool.ui.bulk.deep.is_some();
+    // Stop while a nested job runs and has not been asked to stop yet
+    let stoppable = tool.ui.bulk.deep.as_ref().is_some_and(|j| !j.stop_requested());
+    let mut stop = false;
     let preview = if tool.ui.bulk.options.nested && !running {
         tool.nested_preview(world)
     } else {
@@ -145,8 +148,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
             running,
             aurora_i18n::tr!("content-perms-adjust"),
             Some(&preview),
+            stoppable.then_some(&mut stop),
         );
     });
+    if stop && let Some(job) = tool.ui.bulk.deep.as_mut() {
+        log::info!("deep permissions: Stop pressed");
+        job.request_stop();
+    }
     if tool.demo_deep_start(world) {
         apply = true;
     }
@@ -168,7 +176,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
 
 /// Shared bulk-permission controls for object contents and agent inventory.
 /// `nested` (object contents only) shows "Include objects inside objects"
-/// with the preview of what it would open.
+/// with the preview of what it would open; `stop`, while such a job runs,
+/// a Stop button in place of OK and Apply.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -177,6 +187,7 @@ pub(crate) fn controls(
     running: bool,
     heading: &str,
     nested: Option<&str>,
+    stop: Option<&mut bool>,
 ) -> (bool, bool, bool) {
     let (mut apply, mut accept, mut cancel) = (false, false, false);
     ui.horizontal_top(|ui| {
@@ -224,16 +235,26 @@ pub(crate) fn controls(
         });
     });
     section(ui, p, heading);
+    // the columns' widths, wider than the layout's when a larger text size
+    // would wrap their words ("Shar/e")
+    let group_width = column_width(ui, p, 82.0, aurora_i18n::tr!("common-group-2"), aurora_i18n::tr!("common-share"));
+    let anyone_width = column_width(
+        ui,
+        p,
+        90.0,
+        aurora_i18n::tr!("content-perms-anyone"),
+        aurora_i18n::tr!("common-copy-2"),
+    );
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(Vec2::new(82.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(82.0);
+        ui.allocate_ui_with_layout(Vec2::new(group_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(group_width);
             label(ui, p, aurora_i18n::tr!("common-group-2"));
             if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("common-share"), true) {
                 b.share = v;
             }
         });
-        ui.allocate_ui_with_layout(Vec2::new(90.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(90.0);
+        ui.allocate_ui_with_layout(Vec2::new(anyone_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(anyone_width);
             label(ui, p, aurora_i18n::tr!("content-perms-anyone"));
             if let Some(v) = check(ui, p, b.everyone_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
                 b.everyone_copy = v;
@@ -275,14 +296,33 @@ pub(crate) fn controls(
     // buttons (a footer pinned to the window's last height did)
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let enabled = !running && b.types.iter().any(|on| *on);
-        accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
-        apply = ui
-            .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
-            .clicked();
+        if let Some(stop) = stop {
+            *stop = ui
+                .button(aurora_i18n::tr!("common-stop"))
+                .on_hover_text(aurora_i18n::tr!("content-perms-nested-stop-help"))
+                .clicked();
+        } else {
+            let enabled = !running && b.types.iter().any(|on| *on);
+            accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
+            apply = ui
+                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
+                .clicked();
+        }
         cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
     });
     (apply, accept, cancel)
+}
+
+/// A permission column: at least `min`, or its heading and its check box's
+/// label (with the box) on one line each, as drawn (12-point text).
+fn column_width(ui: &egui::Ui, p: &Palette, min: f32, heading: &str, check: &str) -> f32 {
+    let width = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), egui::FontId::proportional(12.0), p.ink)
+            .size()
+            .x
+    };
+    min.max(width(heading) + 6.0).max(width(check) + 30.0)
 }
 
 impl BuildTool {

@@ -3685,6 +3685,12 @@ content-perms-nested-restoring = Starting the scripts of “{ $name }” again�
 content-perms-nested-saving = Saving “{ $name }” back…
 content-perms-nested-deleting = Deleting the rezzed copy of “{ $name }”…
 content-perms-nested-finished = Updated { $count } items in { $objects } objects inside objects, skipped { $skipped }.
+content-perms-nested-kept-next = { $kept ->
+    [one] { $kept } kept next to its original: the names differed.
+   *[other] { $kept } kept next to their originals: the names differed.
+    }
+content-perms-nested-stopped = Stopped: the rezzed copies were deleted, the original items were left as they were.
+content-perms-nested-stop-help = Deletes the rezzed copies still in world and ends: the original items stay as they are, the objects already saved back keep their changes.
 content-perms-nested-original-kept = “{ $name }” was saved back, but its original item could not be removed: both are in the contents.
 content-perms-nested-copy-left = The rezzed copy of “{ $name }” could not be deleted: delete it by hand.
 content-perms-nested-save-unconfirmed = the save back was not confirmed

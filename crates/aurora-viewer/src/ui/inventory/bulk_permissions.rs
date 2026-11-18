@@ -240,6 +240,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
             busy,
             aurora_i18n::tr!("inventory-bulk-adjust"),
             None,
+            None,
         );
     });
     let (apply, accept, cancel) = response;

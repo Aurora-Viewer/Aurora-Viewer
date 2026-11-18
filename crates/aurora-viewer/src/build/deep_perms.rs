@@ -155,10 +155,29 @@ pub fn arrival(seen: impl IntoIterator<Item = Seen>, before: &HashSet<Uuid>, at:
         .map(|o| o.id)
 }
 
-/// A simulator alert that answers a rez: there is no typed refusal, so
-/// only an alert naming rezzing counts.
-pub fn rez_refusal(alert: &str) -> bool {
-    alert.to_lowercase().contains("rez")
+/// Words of a refusal, matched as whole words.
+const REFUSAL_WORDS: [&str; 6] = ["can't", "can\u{2019}t", "cannot", "unable", "denied", "full"];
+/// Phrases of a refusal, matched as they are.
+const REFUSAL_PHRASES: [&str; 4] = ["can not", "not allowed", "not permitted", "no permission"];
+
+/// A simulator alert that answers the rez of `name`: there is no typed
+/// refusal, so an alert counts only when it speaks of rezzing and names
+/// the object or says no (Second Life's "Can't rez object 'Box' at …
+/// because the owner of this land does not allow it.", OpenSim's
+/// "Can't rez object because the parcel is full.").
+pub fn rez_refusal(alert: &str, name: &str) -> bool {
+    let alert = alert.to_lowercase();
+    let words: Vec<&str> = alert
+        .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '\u{2019}'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    if !words.iter().any(|w| w.starts_with("rez")) {
+        return false;
+    }
+    let name = name.trim().to_lowercase();
+    (!name.is_empty() && alert.contains(&name))
+        || words.iter().any(|w| REFUSAL_WORDS.contains(w))
+        || REFUSAL_PHRASES.iter().any(|p| alert.contains(p))
 }
 
 /// What a listing of the source says about a save back.
@@ -172,25 +191,30 @@ pub enum Saved {
     /// The original updated in place (its asset or the listing's serial
     /// changed): nothing to remove.
     InPlace,
+    /// Only one new object, of another name, while the original is still
+    /// listed: probably the save, but the original is kept next to it.
+    Unnamed(TaskItem),
 }
 
 /// The save back of the copy of `original`, from the listings before and
 /// after it. The new item has the original's name, or starts with it (a
-/// simulator may number a duplicate name), or is the only new object.
+/// simulator may number a duplicate name), or is the only new object; the
+/// original is removed only after a match by name.
 pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem, serial_moved: bool) -> Saved {
     let known: HashSet<Uuid> = before.iter().map(|i| i.item_id).collect();
     let new: Vec<&TaskItem> = after.iter().filter(|i| is_object(i) && !known.contains(&i.item_id)).collect();
-    let saved = new
+    let named = new
         .iter()
         .find(|i| i.name == original.name)
         .or_else(|| new.iter().find(|i| i.name.starts_with(&original.name)))
-        .or_else(|| (new.len() == 1).then(|| &new[0]))
         .map(|i| (*i).clone());
+    let only = (new.len() == 1).then(|| new[0].clone());
     let still = after.iter().find(|i| i.item_id == original.item_id);
-    match (still, saved) {
-        (Some(_), Some(new)) => Saved::Added(new),
-        (None, Some(new)) => Saved::Replaced(new),
-        (Some(now), None) if (!original.asset_id.is_nil() && now.asset_id != original.asset_id) || serial_moved => Saved::InPlace,
+    match (still, named, only) {
+        (Some(_), Some(new), _) => Saved::Added(new),
+        (None, Some(new), _) | (None, None, Some(new)) => Saved::Replaced(new),
+        (Some(_), None, Some(new)) => Saved::Unnamed(new),
+        (Some(now), None, None) if (!original.asset_id.is_nil() && now.asset_id != original.asset_id) || serial_moved => Saved::InPlace,
         _ => Saved::Pending,
     }
 }
@@ -285,6 +309,9 @@ pub enum Stage {
     Apply,
     ObjectPerms,
     RestoreScripts,
+    /// The copy takes its item's name back before the save (a script may
+    /// have renamed it), so that the saved item is found by its name.
+    Rename,
     Save,
     RemoveOriginal,
     Delete,
@@ -330,6 +357,8 @@ pub struct Report {
     pub skipped: Vec<(String, Skip)>,
     pub failures: Vec<String>,
     pub prims_skipped: usize,
+    /// Saved items found only as the one new object: the original kept.
+    pub kept_next: usize,
     pub stopped: Option<String>,
 }
 
@@ -349,6 +378,11 @@ pub struct Job {
     snapshot: Option<(Vec<TaskItem>, i16)>,
     saved: Option<TaskItem>,
     stopping: bool,
+    /// Stop pressed, and taken into account.
+    stop_requested: bool,
+    user_stopped: bool,
+    /// SetName sent in the Rename stage.
+    name_sent: bool,
     pub inventory_error: Option<Uuid>,
     pub report: Report,
 }
@@ -367,6 +401,9 @@ impl Job {
             snapshot: None,
             saved: None,
             stopping: false,
+            stop_requested: false,
+            user_stopped: false,
+            name_sent: false,
             inventory_error: None,
             report: Report::default(),
         }
@@ -393,7 +430,23 @@ impl Job {
             .unwrap_or_default()
     }
 
-    fn level(&self) -> usize {
+    /// Stop: the rezzed copies still in world are deleted, a rez in
+    /// flight is waited for to delete it too, nothing more is changed; a
+    /// save back already sent is seen through.
+    pub fn request_stop(&mut self) {
+        self.stop_requested = true;
+    }
+
+    /// A RezObject sent whose object has not arrived yet.
+    pub fn rez_in_flight(&self) -> bool {
+        self.stage == Stage::Rez && self.sent
+    }
+
+    pub fn stop_requested(&self) -> bool {
+        self.stop_requested
+    }
+
+    pub(crate) fn level(&self) -> usize {
         self.top().map_or(0, |f| f.depth)
     }
 
@@ -405,7 +458,7 @@ impl Job {
             Stage::Scripts | Stage::StopScripts => aurora_i18n::tr!("content-perms-nested-stopping", name = name),
             Stage::Apply | Stage::ObjectPerms => aurora_i18n::tr!("content-perms-nested-applying", name = name),
             Stage::RestoreScripts => aurora_i18n::tr!("content-perms-nested-restoring", name = name),
-            Stage::Save | Stage::RemoveOriginal => aurora_i18n::tr!("content-perms-nested-saving", name = name),
+            Stage::Rename | Stage::Save | Stage::RemoveOriginal => aurora_i18n::tr!("content-perms-nested-saving", name = name),
             Stage::Delete | Stage::Recover => aurora_i18n::tr!("content-perms-nested-deleting", name = name),
             Stage::Done => self.report_text(false),
         }
@@ -421,6 +474,10 @@ impl Job {
             objects = r.objects,
             skipped = r.skipped.len() + r.prims_skipped
         );
+        if r.kept_next > 0 {
+            text.push(' ');
+            text.push_str(&aurora_i18n::tr!("content-perms-nested-kept-next", kept = r.kept_next));
+        }
         let sep = aurora_i18n::tr!("content-perms-nested-separator");
         if details && !r.skipped.is_empty() {
             let list: Vec<String> = r
@@ -448,6 +505,7 @@ impl Job {
         self.stage = stage;
         self.entered = now;
         self.sent = false;
+        self.name_sent = false;
         self.poll_at = now;
     }
 
@@ -487,12 +545,40 @@ impl Job {
         if self.stage == Stage::Done {
             return;
         }
+        if self.stop_requested && !self.user_stopped {
+            self.user_stopped = true;
+            self.stopping = true;
+            log::info!("deep permissions: stop asked at {:?} (level {})", self.stage, self.level());
+            if self.report.stopped.is_none() {
+                self.report.stopped = Some(aurora_i18n::tr!("content-perms-nested-stopped").into());
+            }
+            // a rez in flight is waited for, a save back sent is seen through
+            if !self.rez_in_flight()
+                && !matches!(
+                    self.stage,
+                    Stage::Save | Stage::RemoveOriginal | Stage::Delete | Stage::Recover | Stage::Done
+                )
+            {
+                let next = if self.top().is_some_and(|f| f.copy.is_some()) {
+                    Stage::Recover
+                } else {
+                    Stage::Done
+                };
+                self.advance(next, now);
+                return;
+            }
+        }
         let elapsed = now.saturating_duration_since(self.entered);
         // soft limits: the change was sent, the job goes on
         match self.stage {
             Stage::ObjectPerms if elapsed > PERMS_WAIT => {
                 log::warn!("deep permissions: masks of {} not confirmed, going on", self.name());
                 self.advance(Stage::RestoreScripts, now);
+                return;
+            }
+            Stage::Rename if elapsed > PERMS_WAIT => {
+                log::warn!("deep permissions: the name of {} not confirmed, saving anyway", self.name());
+                self.advance(Stage::Save, now);
                 return;
             }
             Stage::RemoveOriginal if elapsed > TIMEOUT => {
@@ -594,7 +680,11 @@ impl Job {
         self.saved = None;
         if rec.stop {
             self.stopping = true;
-            self.report.stopped = Some(reason);
+            if self.report.stopped.is_none() {
+                self.report.stopped = Some(reason);
+            } else {
+                self.report.failures.push(reason);
+            }
         } else {
             self.report.failures.push(reason);
         }
@@ -804,7 +894,7 @@ impl Job {
                 if !confirmed {
                     return Ok(None);
                 }
-                Ok(Some(if restore { Stage::Save } else { Stage::Next }))
+                Ok(Some(if restore { Stage::Rename } else { Stage::Next }))
             }
             Stage::Next => {
                 let item = self.stack.last_mut().and_then(|f| f.pending.pop_front());
@@ -868,9 +958,14 @@ impl Job {
                     let frame = Frame::new(id, o.key, depth + 1, Some(item));
                     self.stack.push(frame);
                     self.rezzing = None;
-                    return Ok(Some(Stage::Props));
+                    // stopped while it was on its way: straight to the trash
+                    return Ok(Some(if self.user_stopped { Stage::Recover } else { Stage::Props }));
                 }
-                if let Some((_, message)) = world.recent_alerts.iter().find(|(n, text)| *n > alert && rez_refusal(text)) {
+                if let Some((_, message)) = world
+                    .recent_alerts
+                    .iter()
+                    .find(|(n, text)| *n > alert && rez_refusal(text, &item.name))
+                {
                     return Err(Failure::RezRefused(message.clone()));
                 }
                 Ok(None)
@@ -963,6 +1058,41 @@ impl Job {
                 });
                 Ok(done.then_some(Stage::RestoreScripts))
             }
+            Stage::Rename => {
+                let Some(original) = copy else {
+                    return Ok(Some(Stage::Save));
+                };
+                if first {
+                    // fresh properties: a script may rename the object at any time
+                    tool.props.remove(&object);
+                }
+                if first || self.poll(now) {
+                    tool.send(BuildCmd::Select {
+                        handle: key.region,
+                        local_ids: vec![key.local_id],
+                    });
+                }
+                let Some(props) = tool.props.get(&object).filter(|p| p.full) else {
+                    return Ok(None);
+                };
+                if props.name == original.name {
+                    return Ok(Some(Stage::Save));
+                }
+                if !self.name_sent {
+                    self.name_sent = true;
+                    log::info!("deep permissions: renaming the copy {:?} back to {:?}", props.name, original.name);
+                    tool.send(BuildCmd::SetName {
+                        handle: key.region,
+                        local_ids: vec![key.local_id],
+                        name: original.name.clone(),
+                    });
+                    tool.send(BuildCmd::Select {
+                        handle: key.region,
+                        local_ids: vec![key.local_id],
+                    });
+                }
+                Ok(None)
+            }
             Stage::Save => {
                 let Some(parent) = self.parent() else {
                     return Ok(Some(Stage::Delete));
@@ -1021,6 +1151,16 @@ impl Job {
                     }
                     Saved::InPlace => {
                         self.report.objects += 1;
+                        Ok(Some(Stage::Delete))
+                    }
+                    Saved::Unnamed(new) => {
+                        log::warn!(
+                            "deep permissions: {} saved as {:?}, the original is kept next to it",
+                            original.name,
+                            new.name
+                        );
+                        self.report.objects += 1;
+                        self.report.kept_next += 1;
                         Ok(Some(Stage::Delete))
                     }
                 }

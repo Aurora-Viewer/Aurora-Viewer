@@ -203,8 +203,54 @@ fn recovery_deletes_only_copies_whose_original_is_safe_and_stops_on_rez_failures
             stop: false
         }
     );
-    assert!(rez_refusal("Can't rez object 'Box' at { 1, 2, 3 } because the parcel is full."));
-    assert!(!rez_refusal("Region restart in 5 minutes"));
+    assert!(rez_refusal(
+        "Can't rez object 'Box' at { 1, 2, 3 } because the parcel is full.",
+        "Box"
+    ));
+    assert!(!rez_refusal("Region restart in 5 minutes", "Box"));
+}
+
+#[test]
+fn a_refusal_speaks_of_rezzing_and_names_the_object_or_says_no() {
+    // Second Life and OpenSim texts
+    assert!(rez_refusal(
+        "Can't rez object 'Box' at { 1, 2, 3 } on parcel 'X' because the owner of this land does not allow it.",
+        "Box"
+    ));
+    assert!(rez_refusal("Can't rez object because the parcel is full.", "Box"));
+    assert!(rez_refusal("Unable to rez the object: not enough land resources", "Lamp"));
+    assert!(rez_refusal("You can\u{2019}t rez here", ""));
+    assert!(rez_refusal("Rezzing is not permitted on this parcel", "Box"));
+    // naming the object is enough, whatever the wording
+    assert!(rez_refusal("Rez of outer BOX stopped by the region", "Outer box"));
+    // rezzing without a refusal or the name, or a refusal without rezzing
+    assert!(!rez_refusal("Your friend rezzed a gift", "Box"));
+    assert!(!rez_refusal("Region rezzed objects successfully", "Box"));
+    assert!(!rez_refusal("Teleport denied: the region is full", "Box"));
+    assert!(!rez_refusal("The prezzie for Box is full of candy", "Box"));
+}
+
+#[test]
+fn a_new_object_found_only_as_the_one_new_item_never_removes_the_original() {
+    let original = listed(10, "Box", 100);
+    let before = vec![original.clone()];
+    let renamed = listed(20, "Glowing thing", 200);
+    // the original still listed: kept next to it
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), renamed.clone()], &original, true),
+        Saved::Unnamed(renamed.clone())
+    );
+    // the original gone: the simulator replaced it
+    assert_eq!(
+        save_outcome(&before, std::slice::from_ref(&renamed), &original, true),
+        Saved::Replaced(renamed.clone())
+    );
+    // a name match still removes it
+    let named = listed(21, "Box", 200);
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), named.clone()], &original, true),
+        Saved::Added(named)
+    );
 }
 
 #[test]
@@ -243,6 +289,8 @@ struct Harness {
     /// Commands the "network" loses.
     drop: Box<dyn FnMut(&BuildCmd, &World) -> bool>,
     sent: Vec<BuildCmd>,
+    /// A script renames every object on rez.
+    rename_on_rez: Option<String>,
 }
 
 impl Harness {
@@ -264,6 +312,7 @@ impl Harness {
             chest,
             drop: Box::new(|_, _| false),
             sent: Vec::new(),
+            rename_on_rez: None,
         };
         let idx = h.world.objects.index_of_uuid(&chest).expect("chest");
         h.tool.open_build(Tool::Edit);
@@ -309,19 +358,52 @@ impl Harness {
                     continue;
                 }
                 self.sent.push(command.clone());
-                for event in self.sim.reply(&self.world, &command) {
+                let events = self.sim.reply(&self.world, &command);
+                let rezzed: Vec<(u64, u32)> = events
+                    .iter()
+                    .filter(|_| matches!(command, BuildCmd::RezInventory(_)))
+                    .filter_map(|e| match e {
+                        NetEvent::ObjectUpdates { handle, objects } => objects.first().map(|o| (*handle, o.local_id)),
+                        _ => None,
+                    })
+                    .collect();
+                for event in events {
                     self.deliver(event);
+                }
+                if let Some(name) = self.rename_on_rez.clone() {
+                    for (handle, local_id) in rezzed {
+                        let rename = BuildCmd::SetName {
+                            handle,
+                            local_ids: vec![local_id],
+                            name: name.clone(),
+                        };
+                        for event in self.sim.reply(&self.world, &rename) {
+                            self.deliver(event);
+                        }
+                    }
                 }
             }
         }
     }
 
     fn run(&mut self, options: BulkPerms) -> String {
+        self.run_until(options, |_| false)
+    }
+
+    /// Runs the job, pressing Stop once `stop` says so (checked before
+    /// each tick).
+    fn run_until(&mut self, options: BulkPerms, mut stop: impl FnMut(&Job) -> bool) -> String {
         self.tool.ui.bulk.options = options;
         self.tool.ui.bulk.options.nested = true;
         self.tool.start_bulk_permissions(&self.world);
         assert!(self.tool.ui.bulk.deep.is_some());
         for _ in 0..2000 {
+            if let Some(job) = self.tool.ui.bulk.deep.as_mut()
+                && !job.stop_requested()
+                && stop(job)
+            {
+                job.request_stop();
+            }
             self.clock += Duration::from_millis(250);
             self.tool.advance_deep_permissions(&self.world, self.clock);
             self.pump();
@@ -534,3 +616,72 @@ fn without_objects_ticked_the_copies_keep_their_masks() {
 
 /// The Objects filter of the window (TYPES order, floater_bulk_perms.xml).
 const TYPES_OBJECT_INDEX: usize = 5;
+
+#[test]
+fn a_renamed_copy_takes_its_item_name_back_before_the_save() {
+    let mut h = Harness::new();
+    h.rename_on_rez = Some("Renamed by a script".into());
+    let before = h.chest_items();
+    let outer_before = named(&before, aurora_i18n::tr!("content-perms-demo-outer"))[0].clone();
+    let report = h.run(shared());
+    assert!(!report.contains("kept"), "{report}");
+    assert_eq!(
+        h.count(|c| matches!(c, BuildCmd::SetName { name, .. } if *name == outer_before.name)),
+        1
+    );
+    let items = h.chest_items();
+    let outer = named(&items, aurora_i18n::tr!("content-perms-demo-outer"));
+    assert_eq!(outer.len(), 1);
+    assert_ne!(outer[0].item_id, outer_before.item_id);
+    assert!(named(&items, "Renamed by a script").is_empty());
+    assert_eq!(h.rezzed_left(), 0);
+}
+
+#[test]
+fn a_name_that_stays_different_keeps_the_original_next_to_the_save() {
+    let mut h = Harness::new();
+    h.rename_on_rez = Some("Renamed by a script".into());
+    // the name cannot be set back
+    h.drop = Box::new(|c, _| matches!(c, BuildCmd::SetName { .. }));
+    let before = h.chest_items();
+    let outer_before = named(&before, aurora_i18n::tr!("content-perms-demo-outer"))[0].clone();
+    let report = h.run(shared());
+    assert!(report.contains("kept next"), "{report}");
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RemoveTaskInventory { .. })), 0);
+    let items = h.chest_items();
+    // the original and the save side by side
+    assert!(items.iter().any(|i| i.item_id == outer_before.item_id));
+    assert_eq!(named(&items, "Renamed by a script").len(), 1);
+    assert_eq!(h.rezzed_left(), 0);
+}
+
+#[test]
+fn stop_at_the_second_level_trashes_every_copy_and_keeps_the_originals() {
+    let mut h = Harness::new();
+    let before = h.chest_items();
+    let report = h.run_until(shared(), |job| job.level() == 2 && job.stage == Stage::Scripts);
+    assert!(report.contains("Stopped"), "{report}");
+    assert_eq!(h.rezzed_left(), 0);
+    // two copies rezzed (Outer box, Inner box), both trashed, nothing saved
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RezInventory(_))), 2);
+    assert_eq!(
+        h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. } if *destination == derez::TRASH)),
+        2
+    );
+    assert_eq!(
+        h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. } if *destination == derez::SAVE_INTO_TASK_INVENTORY)),
+        0
+    );
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RemoveTaskInventory { .. })), 0);
+    assert_eq!(h.chest_items(), before);
+}
+
+#[test]
+fn stop_while_a_rez_is_on_its_way_trashes_it_when_it_arrives() {
+    let mut h = Harness::new();
+    let report = h.run_until(shared(), |job| job.level() == 1 && job.rez_in_flight());
+    assert!(report.contains("Stopped"), "{report}");
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RezInventory(_))), 2);
+    assert_eq!(h.rezzed_left(), 0);
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RemoveTaskInventory { .. })), 0);
+}
