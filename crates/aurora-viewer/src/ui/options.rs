@@ -219,7 +219,7 @@ impl Page {
             Page::Gamepad => "device-gamepad-filled",
             // (the gamepad's icon is the Gamepad page's; this one sends to
             // scripts and maps actions)
-            Page::GameControls => "device-gamepad-2",
+            Page::GameControls => "device-gamepad-2-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
