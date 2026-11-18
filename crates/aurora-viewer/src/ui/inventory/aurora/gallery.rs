@@ -206,13 +206,13 @@ pub(super) fn combination(
         let room = rect.height() - HANDLE - HEADER;
         let max = (room - MIN).max(MIN);
         let shared = if prefs.explorer.gallery_height == 0 {
-            // the tiles' own height, up to half the room
             let grid = Grid::new(
                 rect.width() - ui.spacing().scroll.allocated_width(),
                 side(&prefs.explorer),
                 name_height(ui),
             );
-            grid.height(tiles).min(room / 2.0)
+            let pitch = rows::row_height(ui, p, st) + ui.spacing().item_spacing.y;
+            split(room, grid.height(tiles), listed as f32 * pitch)
         } else {
             f32::from(prefs.explorer.gallery_height)
         };
@@ -400,6 +400,23 @@ fn pane(
     let shown = (out.state.unclamped_offset().y, out.inner_rect.height());
     ui.ctx().data_mut(|d| d.insert_temp(place, shown));
     out
+}
+
+/// The tiles' share of the combination view's room, before the user drags
+/// the bar (LLPanelMainInventory::updateCombinationVisibility): the list
+/// takes a third and the tiles the rest; tiles that fit in their two
+/// thirds keep their own height when the list needs more than its third,
+/// and a list shorter than its third leaves the rest to the tiles.
+fn split(room: f32, tiles: f32, list: f32) -> f32 {
+    let list_default = room / 3.0;
+    let tiles_default = room - list_default;
+    if list > list_default && tiles < tiles_default {
+        tiles
+    } else if list < list_default && tiles > tiles_default {
+        room - list
+    } else {
+        tiles_default
+    }
 }
 
 /// Ctrl and the wheel over the tiles change their side, a step a notch; a
@@ -818,6 +835,12 @@ mod tests {
         assert_eq!(side(&prefs), DEFAULT_SIDE);
         prefs.tile_size = 9000;
         assert_eq!(side(&prefs), MAX_SIDE);
+        // the Legacy Viewer's split: a third for the list, unless one part
+        // needs less than its share
+        assert_eq!(split(300.0, 120.0, 400.0), 120.0, "short tiles keep their height");
+        assert_eq!(split(300.0, 500.0, 40.0), 260.0, "a short list leaves the rest");
+        assert_eq!(split(300.0, 500.0, 400.0), 200.0, "both long: two thirds");
+        assert_eq!(split(300.0, 120.0, 40.0), 200.0, "both short: two thirds");
         // a wheel notch is a step; a pinch's small steps add up
         assert_eq!(zoom_steps(0.2), (1, 0.0));
         assert_eq!(zoom_steps(-0.2), (-1, 0.0));
