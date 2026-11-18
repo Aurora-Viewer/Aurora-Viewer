@@ -2655,6 +2655,13 @@ starts, midway and after it. With `AURORA_DEMO_RLVA=interact` and
 selection and the drag end together, and the position stops. `@fartouch`
 leaves a drag running: the far-selection check waits for the drag to end.
 
+`AURORA_DEMO_BUILD=rect,<x>,<y>,-,<dx>,<dy>` presses the Edit tool at a pixel
+through the real click path, drags and releases; `rect,object:<id>,-,<dx>,<dy>`
+presses on an object. `rect-shift` holds Shift, `rect-focus` loses the window
+focus and `rect-tool` changes tool with the button down, and `keep:<id>` at the
+end selects an object first. The `demo rect:` lines of the log give the
+selection and its space before, during and after the gesture.
+
 `AURORA_DEMO_BUILD=cycle,object:99610` adds three nested objects, two of
 them linksets, selects A then simulates two notches towards the back and one
 towards the front: A → B → C → B. The scenario
