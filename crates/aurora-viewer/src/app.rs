@@ -22216,6 +22216,9 @@ impl ApplicationHandler for App {
             // a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
                 let (who, option) = v.split_once(':').unwrap_or((v.as_str(), "0"));
+                if option.split(':').any(|part| part == "classic") {
+                    self.settings.classic_profiles = true;
+                }
                 let id = match who {
                     "self" => crate::demo::DEMO_AGENT,
                     "nova" => crate::demo::DEMO_NOVA,

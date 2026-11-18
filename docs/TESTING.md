@@ -6518,7 +6518,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -6864,6 +6864,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and the return to the shared environment. Moving a slider changes the same
   setting in Preferences (open both to compare) and is saved on release.
   Capture after frame 300, with `--language fr` and `--language en`.
+  At `AURORA_TEXT_SIZE=1.5`, long labels wrap before the sliders and the
+  Aurora Weather button stays inside the window (#3613).
 - **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
   teleport from the home grid asks when worn items are not in My Suitcase:
   seven invented items, an invented grid as the destination. "Teleport anyway" goes
@@ -9837,7 +9839,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   profile window (tab 0 Second Life / Profile, 1 Feed / Web, 2 Favorites,
   3 Classifieds, 4 Real life / First life, 5 Notes). The window is the
   Aurora one unless Preferences › Aurora › Profiles is on the classic
-  window. `:edit` opens our own profile in edit mode, `:compact` gives the
+  window. `:edit` opens our own profile in edit mode; `:classic` selects the
+  classic style for this demo only (`friend:classic:2` for Picks,
+  `friend:classic:3` for Classifieds).
+  Click a picture to check its read-only enlarged preview. `:compact` gives the
   window the width of the compact layout (380 px). With this variable the
   three residents of the scenarios have a profile picture, so a banner:
   the scenarios of the profile mock-up are
@@ -11033,6 +11038,9 @@ gallery's double-click continues to open the outfit's contents.
   preview the HD one, the balance drops by L$ 10 and the outfit's folder
   holds "Photo of "…" outfit"; a second HD picture sends the first to the
   Trash. The log says `outfit HD picture: …` at each step.
+- `batch-settings`: the batch window with Portrait settings expanded. At
+  `AURORA_TEXT_SIZE=1.5`, scroll to both final checkboxes and the outfits;
+  Cancel / Start stay visible below the scrolling content (#3907).
 - `batch`, `batch-run`: the showcase, then at frame 600 the batch
   portraits' window (Fider #447, the banner's Take the portraits) over the
   demo's outfits: those without a picture ticked, those with one to tick to
