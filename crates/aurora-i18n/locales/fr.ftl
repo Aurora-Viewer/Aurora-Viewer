@@ -15829,3 +15829,13 @@ ui-options-proxy-direct-media-warning = Le média se connecte en direct, sans le
 ui-options-proxy-direct-media-confirm-title = Lire le média sans le proxy ?
 ui-options-proxy-direct-media-confirm-text = La vidéo, et les pages web que le proxy HTTP ne couvre pas, ne passent pas par le proxy. Elles se connectent directement depuis cet ordinateur : la personne qui a choisi le média d'une parcelle ou d'un objet peut voir votre vraie adresse IP. Tout le reste continue de passer par le proxy. Le changement s'applique au prochain démarrage du viewer.
 ui-options-proxy-direct-media-confirm = Lire le média en direct
+
+sky-rays-enabled = Rayons volumétriques du soleil et de la lune
+sky-rays-help = Diffuse la lumière de l’astre qui projette les ombres. Nécessite les ombres.
+sky-rays-source = Source des rayons
+sky-rays-auto = Automatique
+sky-rays-sun = Soleil
+sky-rays-moon = Lune
+sky-rays-strength = Intensité des rayons
+sky-rays-fade = Fondu proche
+sky-rays-samples = Échantillons

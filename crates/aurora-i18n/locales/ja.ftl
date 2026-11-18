@@ -15706,3 +15706,13 @@ ui-options-proxy-direct-media-warning = メディアはプロキシを迂回し�
 ui-options-proxy-direct-media-confirm-title = プロキシを使わずにメディアを再生しますか？
 ui-options-proxy-direct-media-confirm-text = 動画と、HTTP プロキシの対象外の Web ページはプロキシを経由しません。このコンピュータから直接接続するため、区画やオブジェクトのメディアを設定した人に実際の IP アドレスが見えます。その他の通信はすべてプロキシを経由したままです。変更はビューアの再起動後に有効になります。
 ui-options-proxy-direct-media-confirm = メディアを直接再生する
+
+sky-rays-enabled = 太陽と月のボリューム光
+sky-rays-help = 影を落とす太陽または月の光を散乱させます。影を有効にしてください。
+sky-rays-source = 光源
+sky-rays-auto = 自動
+sky-rays-sun = 太陽
+sky-rays-moon = 月
+sky-rays-strength = 光の強さ
+sky-rays-fade = 近距離フェード
+sky-rays-samples = サンプル数

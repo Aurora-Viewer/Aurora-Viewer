@@ -1678,6 +1678,8 @@ pub struct FrameParams {
     pub tex_anim_at: Option<std::time::Instant>,
     pub sun_dir: Vec3,
     pub sun_visible: f32,
+    /// Strength, near fade, step count and padding of directional scattering.
+    pub sky_rays: [f32; 4],
     pub sun_color: Vec3,
     pub sky_zenith: Vec3,
     pub sky_horizon: Vec3,

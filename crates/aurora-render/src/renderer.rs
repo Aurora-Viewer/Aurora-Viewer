@@ -215,6 +215,7 @@ struct FrameU {
     /// The main view of a photo tile: its part of the photo
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
+    sky_rays: [f32; 4],
     photo: [f32; 4],
     /// x: the material textures' mip bias (main view under FSR drawing the
     /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
@@ -942,6 +943,7 @@ struct Targets {
     /// Multisampled depth (MSAA only; otherwise `depth_ss` is the scene depth).
     depth_msaa: Option<wgpu::TextureView>,
     depth_msaa_tex: Option<wgpu::Texture>,
+    volume_depth: Option<crate::volume_depth::Resolve>,
     /// A copy of the scene depth (same size and samples) the rigged blended
     /// faces draw into, writing their depth as they go
     /// (`RiggedBlendDepth::Layered` and `Layers`, made on its first use).
@@ -1011,6 +1013,7 @@ struct Pipelines {
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     /// The volumetric clouds' weather map (env.wgsl `fs_cloud_weather`).
+    sky_rays: wgpu::RenderPipeline,
     clouds_weather: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     /// PBR terrain (vs_terrain_pbr / fs_terrain_pbr), masked or not.
@@ -4914,6 +4917,26 @@ impl Backend {
             gbuf: ssr,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
+        let sky_rays = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            depth_write: false,
+            depth_format: None,
+            samples: 1,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            ..base("Sun and Moon rays", "vs_sky", "fs_sky_rays")
+        });
         let clouds_weather = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -5928,6 +5951,7 @@ impl Backend {
             hud_debug_red,
             hud_debug_blue,
             sky,
+            sky_rays,
             clouds_weather,
             terrain,
             terrain_pbr,
@@ -6230,6 +6254,9 @@ impl Backend {
             color_msaa,
             color_tex,
             color,
+            volume_depth: depth_msaa
+                .as_ref()
+                .map(|depth| crate::volume_depth::Resolve::new(device, depth, DEPTH_FORMAT)),
             depth_msaa,
             depth_msaa_tex,
             blend_layers: None,
@@ -7461,6 +7488,7 @@ impl Backend {
         u.ground_color = f.ground_color.extend(1.0).to_array();
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
+        u.sky_rays = f.sky_rays;
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
         let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
         // the whole list for every fragment; the main view narrows it (render)
@@ -11676,6 +11704,30 @@ impl Backend {
                 }
             }
             self.drawn_pick.encode_copy(&mut encoder);
+        }
+        if f.shadows && !f.cutout && f.sky_rays[0] > 0.0 {
+            if let Some(resolve) = &self.targets.volume_depth {
+                resolve.encode(&mut encoder, &self.targets.depth_ss);
+            }
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Sun and Moon rays"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.targets.color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.b);
+            pass.set_pipeline(&self.pipelines.sky_rays);
+            pass.draw(0..3, 0..1);
         }
         // depth under the cursor, read back in a later frame
         self.depth_pick.encode_hover(

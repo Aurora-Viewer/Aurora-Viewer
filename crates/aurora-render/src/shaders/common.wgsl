@@ -129,6 +129,7 @@ struct Frame {
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
     lightning: vec4<f32>,       // the lightning's glow: xy the way to it, z its height (sine), w how bright
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
+    sky_rays: vec4<f32>,
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
