@@ -20372,19 +20372,18 @@ impl App {
                 }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
-                // RlvUIEnabler::filterFloaterShowLoc: asked once, when the window opens
+                // RlvUIEnabler::filterFloaterShowLoc, asked again for what the window shows
                 let land_view = self.land_gate.step(
+                    "About Land",
                     self.panels.about_land,
                     self.world.rlva.has("showloc"),
-                    || self.world.land.sel.is_some(),
-                    |selected| self.world.rlva_parcel_verdict(selected),
+                    || self.world.rlva_parcel_verdict(),
                     std::time::Instant::now(),
                 );
                 if land_view == GateView::Refused {
                     self.panels.about_land = false;
                     // the parcel picked for a refused window (the ground menu's) must
-                    // not stay selected: the next request, from the button or on land
-                    // the agent owns, would be judged on it
+                    // not stay selected: the next request would be judged on it
                     self.world.land.deselect();
                 }
                 // a hidden window keeps its request while the parcel arrives
@@ -20423,10 +20422,10 @@ impl App {
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
                 let region_view = self.region_gate.step(
+                    "Region / Estate",
                     self.panels.region_estate,
                     self.world.rlva.has("showloc"),
-                    || false,
-                    |_| self.world.rlva_region_verdict(),
+                    || self.world.rlva_region_verdict(),
                     std::time::Instant::now(),
                 );
                 if region_view == GateView::Refused {
