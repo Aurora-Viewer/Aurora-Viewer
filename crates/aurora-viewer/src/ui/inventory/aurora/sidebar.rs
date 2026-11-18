@@ -131,7 +131,8 @@ fn entry_tinted(
     }
     let icon_center = Pos2::new(rect.left() + left + ICON / 2.0, rect.center().y);
     let tint = color.unwrap_or(if selected { p.violet_pale } else { p.muted });
-    widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
+    let size = super::super::category::row_icon_size(icon, ICON);
+    widgets::paint_glyph(ui.painter(), icon, icon_center, size, tint);
     let mut end = rect.right() - 8.0;
     if waiting > 0 {
         let badge = widgets::unread_count(

@@ -5287,7 +5287,9 @@ through a mask, committed in `assets/icons/aurora/`), so a skin replaces them
 by name. `Icons::sized` draws an icon larger than 1.5x its 64 px raster from a
 192 px copy rasterized on first use (`Icons::large`, gallery tiles and the
 details picture): the egui renderer has no mipmaps, so one raster cannot
-serve both sizes.
+serve both sizes. In rows, `category::row_icon_size` draws folders half as
+large again as the 16-point icon slot (their Tabler margins keep them in
+the row), so the symbol is legible without changing the row height.
 
 Avatar impostor pictures (`scene/impostors.rs`, `aurora-render`): only visible
 avatars allocate or refresh tiles. Offscreen cached pictures expire after five

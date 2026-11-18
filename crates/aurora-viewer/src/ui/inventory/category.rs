@@ -208,6 +208,24 @@ pub fn filter_glyph(filter_type: i32, p: &crate::theme::Palette) -> Option<(&'st
     Some((row.symbol, super::item_icon_color(asset_type, filter_type, p)))
 }
 
+/// The size to draw an inventory icon at in a row whose icon slot is
+/// `slot` wide, without changing the row: folders are drawn half as large
+/// again (Tabler's folder fills 20 of its 24 units, so a 16-point slot
+/// shows a 20-point folder, its symbol legible), Trash and My Suitcase a
+/// quarter (their glyphs are taller), items at the slot's size. The rows
+/// are tall enough (24 points, 20 in the classic tree) for the folder's
+/// own margins to keep it inside.
+pub fn row_icon_size(name: &str, slot: f32) -> f32 {
+    let base = name.strip_suffix("_Link").unwrap_or(name);
+    if is_folder_icon(base) || base.starts_with("Inv_Sys") {
+        slot * 1.5
+    } else if base.starts_with("Inv_Trash") || base.starts_with("Inv_Suitcase") {
+        slot * 1.25
+    } else {
+        slot
+    }
+}
+
 /// Whether `name` is the icon of a folder (drawn in the folders' tint).
 pub fn is_folder_icon(name: &str) -> bool {
     name.starts_with("Inv_Folder") || ROWS.iter().any(|row| row.closed == name || row.open == name)
@@ -289,6 +307,28 @@ mod tests {
         // their icons of tree::folder_icon
         for folder_type in [-1, 8, 14, 51, 52, 58, 59, 60, 100] {
             assert_eq!(Category::of_folder(folder_type), None, "folder type {folder_type}");
+        }
+    }
+
+    #[test]
+    fn folders_are_drawn_larger_in_rows_and_items_at_their_slot() {
+        assert_eq!(row_icon_size("Inv_TexturesClosed", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_LookFolderOpen", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_FolderClosed", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_SysClosed", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_TexturesClosed_Link", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_FolderClosed_Link", 16.0), 24.0);
+        assert_eq!(row_icon_size("Inv_TrashClosed", 16.0), 20.0);
+        assert_eq!(row_icon_size("Inv_SuitcaseOpen", 16.0), 20.0);
+        for item in [
+            "Inv_Texture",
+            "Inv_Object",
+            "Inv_Pants",
+            "Inv_Texture_Link",
+            "Inv_LinkFolder",
+            "box",
+        ] {
+            assert_eq!(row_icon_size(item, 16.0), 16.0, "{item}");
         }
     }
 
