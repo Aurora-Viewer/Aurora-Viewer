@@ -7761,6 +7761,14 @@ pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uu
     ])
 }
 
+/// AURORA_DEMO_TP_AWAY=snow (#3664): the same trip over lying snow. The
+/// ground fills with snow at frame 300 in calm weather (the Weather window's
+/// snow-fill button), and the arrivals go through the app as from the
+/// network, which cleans the snow left behind.
+pub fn away_snow() -> bool {
+    std::env::var("AURORA_DEMO_TP_AWAY").is_ok_and(|v| v == "snow")
+}
+
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,
 /// as in a busy region where objects come and go. The cubes of
 /// `stress_churned` are removed at frame 300 (their textures are evicted a

@@ -4557,6 +4557,13 @@ impl App {
                         self.settings.camera.reset_on_teleport,
                         self.camera.focus_point().is_none()
                     );
+                    // Aurora Weather (#3664): what the weather left on the
+                    // ground belongs to the place left
+                    if self.world.arrived_in_another_region {
+                        let clean = crate::weather::clean_on_arrival(&self.weather_now);
+                        log::info!("weather: arrival in another region, ground cleaned up {clean}");
+                        self.env_ui.weather_clean |= clean;
+                    }
                     // a teleport to another place (TELEPORT_MOVING), not the
                     // login nor a teleport inside the region (TELEPORT_LOCAL)
                     if arrived_before && !local {
@@ -14814,12 +14821,21 @@ impl App {
                 self.world.apply(ev);
             }
         }
-        // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
+        // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back;
+        // `snow`: over lying snow, the arrivals through the app too
+        let away_snow = self.demo && crate::demo::away_snow();
+        if away_snow && self.frame_count == 300 {
+            self.env_ui.weather_fill = true;
+        }
         if self.demo
             && let Some(events) = crate::demo::away_teleport(self.frame_count, &self.world, &mut self.away_coarse)
         {
             for ev in events {
-                self.world.apply(ev);
+                if let Some(e) = self.world.apply(ev)
+                    && away_snow
+                {
+                    self.on_app_event(e);
+                }
             }
             log::info!(
                 "demo teleport away: frame {}, {} objects in the store",

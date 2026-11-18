@@ -868,6 +868,9 @@ pub struct World {
     /// not TeleportFinish): the camera may stay where it is
     /// (`Camera::on_teleport_arrival`).
     pub arrived_by_local_teleport: bool,
+    /// The last arrival was in another region than the one before (a
+    /// teleport away or a border crossing), not the login.
+    pub arrived_in_another_region: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -1211,6 +1214,7 @@ impl World {
             arrived_by_crossing: false,
             local_teleport: false,
             arrived_by_local_teleport: false,
+            arrived_in_another_region: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -3405,7 +3409,8 @@ impl World {
                 // to another region (MainRegionChanged comes first) only the
                 // arrival's list stays; the simulators still connected send
                 // theirs again.
-                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                self.arrived_in_another_region = self.region_left.take().is_some_and(|left| left != handle);
+                if self.arrived_in_another_region && !self.arrived_by_crossing {
                     self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
@@ -10083,7 +10088,7 @@ mod motion_tests {
             position: Vec3::new(255.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(world.arrived_by_crossing);
+        assert!(world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
         assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
     }
@@ -10101,7 +10106,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 20.0, 40.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 20.0, 40.0));
         assert_eq!(world.agent.velocity, Vec3::ZERO);
     }
@@ -10115,7 +10120,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && !world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
     }
 
