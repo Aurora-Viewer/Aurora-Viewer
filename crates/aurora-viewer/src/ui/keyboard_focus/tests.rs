@@ -80,11 +80,21 @@ impl Bench {
             chosen,
         } = self;
         let mut output = ctx.run_ui(input(events.clone()), |ui| {
-            assert_eq!(
-                ui.input(|i| i.events.clone()),
-                events,
-                "the plugin must not consume or rewrite input"
-            );
+            // InputState marks a held key as repeating before plugins run.
+            // Compare what matters here without treating that as our edit.
+            let observed = ui.input(|i| {
+                i.events
+                    .iter()
+                    .cloned()
+                    .map(|mut event| {
+                        if let Event::Key { repeat, .. } = &mut event {
+                            *repeat = false;
+                        }
+                        event
+                    })
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(observed, events, "the plugin must not consume or rewrite input");
             ui.set_width(200.0);
             ui.add(TextEdit::singleline(text).id(*field));
             let row = crate::ui::widgets::navigation(ui, palette, "search", "Preferences", false);
