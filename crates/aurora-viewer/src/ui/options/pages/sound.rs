@@ -493,6 +493,14 @@ fn voice(cx: &mut Cx) {
             &field!(audio.mic_hold),
             &[(false, tr!("ui-options-toggle"), false), (true, tr!("common-hold-to-talk"), false)],
         );
+        // StopMicCaptureWhenMuted, the "bluetooth_behavior" radio group of
+        // the LL viewer 26.5's panel_preferences_sound.xml
+        cx.choice(
+            tr!("voice-bluetooth-only"),
+            tr!("voice-bluetooth-hint"),
+            &field!(audio.stop_mic_when_muted),
+            &[(false, tr!("voice-better-voice"), false), (true, tr!("voice-better-audio"), false)],
+        );
         let push = crate::keybinds::Action::PushToTalk;
         let t = Custom {
             path: "keybinds",

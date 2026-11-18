@@ -2198,6 +2198,11 @@ pub struct AudioSettings {
     /// Microphone button of the bottom bar: false = toggle (click on / click
     /// off), true = hold to talk (Firestorm PushToTalkToggle inverted).
     pub mic_hold: bool,
+    /// Close the microphone while muted, so that a Bluetooth headset leaves
+    /// its hands-free mode (StopMicCaptureWhenMuted, the LL viewer 26.5's
+    /// "Bluetooth only: Better in-world audio", on; off is "Better voice":
+    /// open the whole time voice is on).
+    pub stop_mic_when_muted: bool,
     /// Microphone gain (0..2).
     pub mic_gain: f32,
     /// Collision sounds (EnableCollisionSounds, on).
@@ -2268,6 +2273,7 @@ impl Default for AudioSettings {
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
+            stop_mic_when_muted: true,
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
