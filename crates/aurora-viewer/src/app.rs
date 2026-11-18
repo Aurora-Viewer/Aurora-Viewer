@@ -24320,6 +24320,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
+        #[cfg(target_os = "linux")]
+        crate::crash::renderer_dropped();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {

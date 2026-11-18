@@ -312,6 +312,14 @@ pub fn out_of_memory(size: usize) {
     native::out_of_memory(size);
 }
 
+/// The renderer was dropped and its driver is being unloaded: a fatal
+/// signal the driver gave a handler of its own comes back to the crash
+/// handler before that handler's code is gone (crash/linux.rs).
+#[cfg(target_os = "linux")]
+pub fn renderer_dropped() {
+    native::reclaim();
+}
+
 /// The long-lived thread whose panic means the session cannot go on
 /// (`threads.rs`): the app ends the session when it sees one.
 pub fn thread_died() -> Option<&'static str> {

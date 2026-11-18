@@ -296,6 +296,10 @@ fn run(dir: &Path, main: Option<&super::native::Thread>) {
     let mut written: Option<Instant> = None;
     loop {
         std::thread::sleep(TICK);
+        // A graphics driver gives a fatal signal its own handler when it
+        // first compiles a shader, at any time in the session.
+        #[cfg(target_os = "linux")]
+        super::native::reclaim_lasting();
         let window = WINDOW.load(Ordering::Relaxed);
         if window != 0 {
             if window_hung(window) {

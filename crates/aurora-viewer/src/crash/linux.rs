@@ -15,6 +15,12 @@
 //! have happened while the loader was busy. Another thread crashing
 //! meanwhile waits for the first one's file.
 //!
+//! A library can give a fatal signal its own handler well into the session,
+//! and leave it there when it is unloaded: [`reclaim`] puts ours back. A
+//! fault at an address where nothing is mapped (such a handler, a call
+//! through a stale pointer) is written without the unwinder, which would
+//! fault there in turn.
+//!
 //! Legacy Viewer reference: setupBreakpad (indra/newview/llappviewerlinux.cpp),
 //! which writes a minidump on the same signals through Breakpad's
 //! ExceptionHandler; Aurora writes the module + offset text its Windows
@@ -24,7 +30,7 @@ use std::ffi::{CStr, c_int, c_void};
 use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 const FRAMES: usize = 64;
 /// The signals that end the process with a crash.
@@ -47,6 +53,16 @@ static OOM_WRITING: AtomicBool = AtomicBool::new(false);
 static PREVIOUS: [OnceLock<libc::sigaction>; SIGNALS.len()] = [const { OnceLock::new() }; SIGNALS.len()];
 /// The executable's file name: the loader lists it without one.
 static EXE: OnceLock<Name> = OnceLock::new();
+/// [`install`] gave the signals to [`on_fatal`]: [`reclaim`] keeps them there.
+static INSTALLED: AtomicBool = AtomicBool::new(false);
+/// No handler in [`SEEN`]: no handler has this address.
+const NO_HANDLER: usize = usize::MAX;
+/// The handler other than ours that [`reclaim_lasting`] last found on each
+/// of [`SIGNALS`].
+static SEEN: [AtomicUsize; SIGNALS.len()] = [const { AtomicUsize::new(NO_HANDLER) }; SIGNALS.len()];
+/// The bytes the unwinder may read at an address it has no unwind table
+/// for, to tell a signal frame (9 on x86-64, 8 on AArch64).
+const PROBE: usize = 16;
 
 pub fn install(dir: &Path) -> anyhow::Result<()> {
     let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("native.txt"))?;
@@ -70,17 +86,99 @@ pub fn install(dir: &Path) -> anyhow::Result<()> {
                 "cannot read signal {signal}"
             );
             let _ = PREVIOUS[index].set(old);
-            let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = on_fatal as extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) as libc::sighandler_t;
-            action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
-            libc::sigemptyset(&mut action.sa_mask);
             anyhow::ensure!(
-                libc::sigaction(signal, &action, std::ptr::null_mut()) == 0,
+                libc::sigaction(signal, &ours(), std::ptr::null_mut()) == 0,
                 "cannot handle signal {signal}"
             );
         }
     }
+    INSTALLED.store(true, Ordering::Release);
     install_snapshot()
+}
+
+/// [`on_fatal`] as `sigaction` holds it, on the thread's alternate stack.
+fn ours() -> libc::sigaction {
+    // SAFETY: a zeroed sigaction is a valid one, and the set is ours.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_fatal as extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) as libc::sighandler_t;
+        action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+        libc::sigemptyset(&mut action.sa_mask);
+        action
+    }
+}
+
+/// Puts [`on_fatal`] back on the fatal signals that another handler took
+/// since [`install`], and logs what held each one. NVIDIA's shader compiler
+/// (libnvidia-gpucomp) gives SIGABRT a handler of its own, an empty
+/// function, at its first compile: an abort then left no report, and once
+/// the driver was unloaded at exit the signal pointed at unmapped memory,
+/// where an abort became a SIGSEGV. Called once the renderer is dropped at
+/// exit; the watchdog calls [`reclaim_lasting`] every second.
+///
+/// The handler found is not kept to be handed the signal: its library can
+/// be unloaded at any time. Nothing is done while a crash is being written:
+/// the signal is then on another handler on purpose ([`hand_on`]). Not in
+/// the Legacy Viewer, which sets its handlers once, at start
+/// (LLApp::setupErrorHandling, indra/llcommon/llapp.cpp).
+pub fn reclaim() {
+    log_taken(&take_back(false));
+}
+
+/// [`reclaim`] for a handler that stays: one found at two calls in a row.
+/// A library that borrows a signal for an instant (a processor feature
+/// probed under a SIGILL handler) has put the previous handler back by the
+/// next call, and is left alone.
+pub fn reclaim_lasting() {
+    log_taken(&take_back(true));
+}
+
+fn log_taken(taken: &[(c_int, String)]) {
+    for (signal, holder) in taken {
+        log::warn!(
+            "crash reports: {} had been given another handler ({holder}); ours is back",
+            signal_name(*signal).unwrap_or("?")
+        );
+    }
+}
+
+/// The signals given back to [`on_fatal`], each with what held it: a
+/// module's file name, or what the signal was left to.
+fn take_back(lasting: bool) -> Vec<(c_int, String)> {
+    let mut taken = Vec::new();
+    if !INSTALLED.load(Ordering::Acquire) || WRITER.load(Ordering::Acquire) != 0 {
+        return taken;
+    }
+    let ours = ours();
+    for (index, &signal) in SIGNALS.iter().enumerate() {
+        // SAFETY: a plain sigaction call on a zeroed struct we own.
+        let held = unsafe {
+            let mut current: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(signal, std::ptr::null(), &mut current) != 0 {
+                continue;
+            }
+            current.sa_sigaction
+        };
+        if held == ours.sa_sigaction {
+            SEEN[index].store(NO_HANDLER, Ordering::Relaxed);
+            continue;
+        }
+        if SEEN[index].swap(held, Ordering::Relaxed) != held && lasting {
+            continue;
+        }
+        // SAFETY: as in `install`.
+        if unsafe { libc::sigaction(signal, &ours, std::ptr::null_mut()) } != 0 {
+            continue;
+        }
+        SEEN[index].store(NO_HANDLER, Ordering::Relaxed);
+        let holder = match held {
+            libc::SIG_DFL => "the default action".to_owned(),
+            libc::SIG_IGN => "ignored".to_owned(),
+            handler => find(handler).map_or_else(|| "code outside every module".to_owned(), |module| module.name.as_str().to_owned()),
+        };
+        taken.push((signal, holder));
+    }
+    taken
 }
 
 extern "C" fn on_fatal(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
@@ -149,7 +247,27 @@ unsafe fn write_signal(mut file: &std::fs::File, signal: c_int, info: *const lib
     // SAFETY: alarm is async-signal-safe.
     unsafe { libc::alarm(WRITE_ALARM) };
     let mut frames = [0usize; FRAMES];
-    let count = capture(&mut frames);
+    // A fault at an address where nothing is mapped (the handler or a
+    // callback of a library since unloaded, a call through a stale pointer)
+    // is not unwound: with no unwind table for that address, the unwinder
+    // reads its instructions to tell a signal frame, faults there in turn,
+    // and that second fault ends the process before any stack is written.
+    // The stack is then that address and its caller.
+    let count = match pc.filter(|&pc| unmapped(pc)) {
+        Some(pc) => {
+            let _ = writeln!(file, "Not unwound: nothing is mapped at the faulting instruction");
+            frames[0] = pc;
+            // SAFETY: the contract of this function.
+            match unsafe { caller(context) } {
+                Some(caller) => {
+                    frames[1] = caller;
+                    2
+                }
+                None => 1,
+            }
+        }
+        None => capture(&mut frames),
+    };
     for (index, address) in frames[..count].iter().enumerate() {
         let _ = writeln!(file, "{index:02}: {address:#x}");
     }
@@ -183,6 +301,57 @@ unsafe fn fault(info: *const libc::siginfo_t, context: *const c_void) -> (c_int,
         None
     };
     (code, address, pc.filter(|&pc| pc != 0))
+}
+
+/// Reads this process's memory through the kernel, which answers an
+/// unmapped address with an error where a plain read would fault. False
+/// when not all of `into` could be read. Async-signal-safe: one system call.
+fn read(address: usize, into: &mut [u8]) -> bool {
+    let local = libc::iovec {
+        iov_base: into.as_mut_ptr().cast(),
+        iov_len: into.len(),
+    };
+    let remote = libc::iovec {
+        iov_base: address as *mut c_void,
+        iov_len: into.len(),
+    };
+    // SAFETY: the kernel writes at most `into.len()` bytes into `into`, and
+    // only reads the other range, with an error if it cannot.
+    let count = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+    usize::try_from(count).is_ok_and(|count| count == into.len())
+}
+
+/// Whether the bytes the unwinder may read at `address` are not all mapped.
+/// A read refused for another reason (a sandbox without this system call)
+/// tells nothing: the address is then taken as mapped, as before.
+fn unmapped(address: usize) -> bool {
+    !read(address, &mut [0; PROBE]) && std::io::Error::last_os_error().raw_os_error() == Some(libc::EFAULT)
+}
+
+/// The return address of the code that jumped where nothing is mapped: no
+/// instruction ran there, so it is still where the call left it, on top of
+/// the stack on x86-64 and in the link register on AArch64.
+///
+/// # Safety
+/// `context` is null or the live record of an SA_SIGINFO handler.
+unsafe fn caller(context: *const c_void) -> Option<usize> {
+    let context = context.cast::<libc::ucontext_t>();
+    #[cfg(target_arch = "x86_64")]
+    let caller = {
+        // SAFETY: checked for null; the interrupted thread's registers.
+        let sp = unsafe { context.as_ref() }?.uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+        let mut word = [0; size_of::<usize>()];
+        read(sp, &mut word).then(|| usize::from_ne_bytes(word))
+    };
+    // SAFETY: as above.
+    #[cfg(target_arch = "aarch64")]
+    let caller = unsafe { context.as_ref() }.map(|c| c.uc_mcontext.regs[30] as usize);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let caller = {
+        let _ = context;
+        None
+    };
+    caller.filter(|&caller| caller != 0)
 }
 
 /// Gives the signal the handling it had before ours: the standard
@@ -918,6 +1087,141 @@ mod tests {
         blocked.join().unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.lines().filter(|line| line.contains("+0x")).count() > 4, "{text}");
+    }
+
+    /// A page that was mapped and no longer is.
+    fn unmapped_page() -> usize {
+        // SAFETY: a private anonymous page of our own, given back at once.
+        unsafe {
+            let page = libc::mmap(
+                std::ptr::null_mut(),
+                4096,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            assert_ne!(page, libc::MAP_FAILED);
+            assert_eq!(libc::munmap(page, 4096), 0);
+            page as usize
+        }
+    }
+
+    #[test]
+    fn an_unmapped_address_is_told_from_a_mapped_one() {
+        let here = [7u8; PROBE];
+        assert!(!unmapped(here.as_ptr() as usize));
+        assert!(!unmapped(an_unmapped_address_is_told_from_a_mapped_one as *const () as usize));
+        // The second page of the address space, which no mapping may take
+        // (vm.mmap_min_addr): a page given back could be another test's by now.
+        assert!(unmapped(4096));
+        let mut word = [0; 8];
+        assert!(read(here.as_ptr() as usize, &mut word));
+        assert_eq!(word, [7; 8]);
+    }
+
+    /// The fatal signals belong to the whole process, and these tests end
+    /// it with one: each runs again, alone, in a test process of its own,
+    /// which gets the session folder in this variable.
+    const ALONE: &str = "AURORA_TEST_CRASH_ALONE";
+
+    /// Runs the test `name` of this module alone, to its end by a signal;
+    /// the signal, what the process printed and its `native.txt`.
+    fn crash_alone(name: &str) -> (Option<c_int>, String, String) {
+        use std::os::unix::process::ExitStatusExt;
+        let dir = std::env::temp_dir().join(format!("aurora-crash-linux-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        // the name libtest gives the test: its path without the crate
+        let path = format!("{}::{name}", module_path!());
+        let test = path.split_once("::").map_or(&*path, |(_, rest)| rest);
+        let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+            .args([test, "--exact", "--test-threads=1", "--nocapture"])
+            .env(ALONE, &dir)
+            .output()
+            .expect("the test binary starts");
+        let printed = format!("{}\n{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+        let native = std::fs::read_to_string(dir.join("native.txt")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        (run.status.signal(), printed, native)
+    }
+
+    /// The crash handler on a folder of its own, in a process that leaves
+    /// no core file: the crash is the test.
+    fn install_alone(dir: &std::ffi::OsStr) {
+        // SAFETY: a plain flag of this process.
+        unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) };
+        install(Path::new(dir)).unwrap();
+    }
+
+    #[test]
+    fn a_jump_where_nothing_is_mapped_is_written_without_the_unwinder() {
+        let Some(dir) = std::env::var_os(ALONE) else {
+            let (signal, printed, native) = crash_alone("a_jump_where_nothing_is_mapped_is_written_without_the_unwinder");
+            assert_eq!(signal, Some(libc::SIGSEGV), "{printed}");
+            let mut lines = native.lines();
+            assert_eq!(lines.next(), Some("Native signal 11 (SIGSEGV)"), "{native}");
+            assert!(native.contains("\nNot unwound: "), "{native}");
+            // The address jumped to, in no module, then the test that jumped.
+            let frames = native.split_once("Native stack (modules):\n").expect("the stack by module").1;
+            let mut frames = frames.lines();
+            assert_eq!(frames.next(), Some("00: ?"), "{native}");
+            assert!(
+                frames
+                    .next()
+                    .is_some_and(|f| f.starts_with("01: aurora_viewer") && f.contains("+0x")),
+                "{native}"
+            );
+            assert_eq!(frames.next(), Some("Modules:"), "{native}");
+            return;
+        };
+        install_alone(&dir);
+        // SAFETY: none: the call faults, which is what this process is for.
+        let jump = unsafe { std::mem::transmute::<*const (), extern "C" fn()>(unmapped_page() as *const ()) };
+        jump();
+    }
+
+    #[test]
+    fn a_signal_given_another_handler_comes_back_and_an_abort_is_written() {
+        extern "C" fn quiet(_signal: c_int) {}
+        let Some(dir) = std::env::var_os(ALONE) else {
+            let (signal, printed, native) = crash_alone("a_signal_given_another_handler_comes_back_and_an_abort_is_written");
+            assert_eq!(signal, Some(libc::SIGABRT), "{printed}");
+            assert_eq!(native.lines().next(), Some("Native signal 6 (SIGABRT)"), "{native}");
+            assert!(native.contains("\nNative stack (modules):\n00: aurora_viewer"), "{native}");
+            return;
+        };
+        install_alone(&dir);
+        assert!(take_back(false).is_empty() && take_back(true).is_empty());
+        let take = || {
+            // SAFETY: a handler that does nothing, as the driver's.
+            unsafe { libc::signal(libc::SIGABRT, quiet as extern "C" fn(c_int) as libc::sighandler_t) };
+        };
+        // A handler that stays is taken back at the second look, with the
+        // module it is in (this test binary).
+        take();
+        assert!(take_back(true).is_empty());
+        let taken = take_back(true);
+        assert!(
+            matches!(&taken[..], [(libc::SIGABRT, holder)] if holder.starts_with("aurora_viewer")),
+            "{taken:?}"
+        );
+        assert!(take_back(true).is_empty());
+        // One that was put back in between is left alone.
+        take();
+        assert!(take_back(true).is_empty());
+        // SAFETY: plain sigaction calls on structs we own.
+        unsafe { libc::sigaction(libc::SIGABRT, &ours(), std::ptr::null_mut()) };
+        assert!(take_back(true).is_empty());
+        take();
+        assert!(take_back(true).is_empty());
+        // At exit, at once; a signal left to its default action too.
+        assert_eq!(take_back(false).len(), 1);
+        // SAFETY: as above.
+        unsafe { libc::signal(libc::SIGFPE, libc::SIG_DFL) };
+        assert_eq!(take_back(false), [(libc::SIGFPE, "the default action".to_owned())]);
+        take();
+        reclaim();
+        std::process::abort();
     }
 
     #[test]
