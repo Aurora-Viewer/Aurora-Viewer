@@ -6556,7 +6556,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` or `history-big` / `history:n=<count>` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time; `history-big` seeds thousands of history rows (#2955) |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local,links]` or `history-big` / `history:n=<count>` | "Places" on a tab, with layout, time-zone or landmark-link fixtures; `history-big` seeds thousands of history rows (#2955) |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -10289,7 +10289,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local,links]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -10297,6 +10297,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   narrow row opens in place); `:wide,open` does both. The demo's favourite
   of the lagoon is a copy of its landmark (same asset): one place with a
   lit star.
+  `:links` replaces that lagoon favorite with an inventory link to the
+  original landmark (#3595). It stays in Favorites and the favorites bar;
+  its profile, map and teleport use the lagoon's asset. Combine with
+  `:classic,links` to verify the Legacy-style list, and paste additional
+  landmark links into the Favorites folder from Inventory.
   `:classic` shows the Legacy Viewer's three tabs for the run, whatever
   Preferences › Aurora › Places says (not saved): the Teleport / Map /
   Profile bar stays whole at the bottom, down to the window's minimum size
@@ -11747,6 +11752,12 @@ separate searches enabled and disabled; that preference controls only the text.
 - `rename`, `new-script`, `new-note`, `new-folder`: renaming in the
   row, without a window (their screenshots simulate the focus of the field
   without activating the Windows window).
+- `rename-focus`, `aurora-rename-focus`, `rename-window`,
+  `aurora-rename-window`: select the demo object at frame 650, F2 at 670,
+  rename at 690, Enter at 710 and Down at 735. Capture at 680 to see the
+  editor and at 780 to see navigation resume. The `window` modes target a
+  second inventory window; the first must keep its selection. The log
+  records the editor and focus at 680, 720 and 750 (#3594, #3584).
 - `multi-add`, `multi-detach`, `delete`: the multiple selection and the
   delete confirmation.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:

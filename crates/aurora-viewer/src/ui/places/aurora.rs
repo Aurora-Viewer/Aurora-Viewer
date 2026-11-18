@@ -152,8 +152,11 @@ pub struct Env<'a> {
 /// The profile the preview asks for a place.
 fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option<Profile> {
     if let Some(item) = place.item {
-        let asset = inv.items.get(&item).map_or(Uuid::nil(), |it| it.asset_id);
-        return Some(Profile::Landmark { item, asset });
+        let original = crate::world::landmarks::inventory_item(inv, item)?;
+        return Some(Profile::Landmark {
+            item: original.id,
+            asset: original.asset_id,
+        });
     }
     let entry = history.get(place.history?)?;
     Some(Profile::History {
@@ -999,7 +1002,7 @@ impl PlacesUi {
                 global: entry.global,
                 title: entry.title.clone(),
             });
-        } else if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
+        } else if let Some(item) = place.item.and_then(|i| crate::world::landmarks::inventory_item(inv, i)) {
             self.confirm = Some(Confirm::Landmark {
                 asset: item.asset_id,
                 name: item.name.clone(),
@@ -2094,6 +2097,23 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn landmark_link_profile_and_teleport_use_the_original_asset() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(201)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        let place = Place {
+            item: Some(id(201)),
+            favorite: Some(id(201)),
+            ..Default::default()
+        };
+        assert!(matches!(profile_of(&place, &inv, &[]), Some(Profile::Landmark { item, asset }) if item == id(101) && asset == id(1001)));
+        let mut state = PlacesUi::default();
+        state.teleport(Key::Landmark(id(1001)), &place, &inv, &[]);
+        assert!(matches!(state.confirm, Some(Confirm::Landmark { asset, .. }) if asset == id(1001)));
     }
 
     #[test]
