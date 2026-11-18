@@ -274,6 +274,37 @@ pub fn first_use_refused() -> bool {
     until.is_some_and(|t| Instant::now() < t)
 }
 
+/// Whether the video memory refuses even a small buffer mapped at its
+/// creation, as egui-wgpu's `Renderer::new` makes its own through wgpu's
+/// `create_buffer_init`, which panics on one refused (#3867). Asked in
+/// scopes of its own, before the renderer's first allocation.
+/// `AURORA_GPU_OOM_UI=1` refuses it (testing).
+pub fn mapped_buffer_refused(device: &wgpu::Device) -> bool {
+    if std::env::var_os("AURORA_GPU_OOM_UI").is_some_and(|v| v == "1") {
+        log::warn!("egui buffers: refused by AURORA_GPU_OOM_UI");
+        return true;
+    }
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let probe = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("egui buffer probe"),
+        size: 256,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: true,
+    });
+    let invalid = pollster::block_on(invalid.pop());
+    let oom = pollster::block_on(oom.pop());
+    for e in oom.iter().chain(&invalid) {
+        say(e);
+    }
+    if oom.is_some() || invalid.is_some() {
+        log::warn!("egui buffers: the video memory refused a small mapped buffer");
+        return true;
+    }
+    probe.unmap();
+    false
+}
+
 /// `AURORA_GPU_OOM_START=<seconds>`: for that long after the renderer is
 /// first made, its placeholder textures come back invalid as if video
 /// memory were full, at start and at each remake of the renderer

@@ -911,6 +911,8 @@ pub enum RenderError {
     Surface(String),
     #[error("the graphics driver lost the device while the viewer was starting (see the log)")]
     DeviceLost,
+    #[error("the graphics card's video memory is full")]
+    VideoMemoryFull,
 }
 
 /// A device lost while the backend is being made: the error, at the points
@@ -3795,6 +3797,23 @@ impl Backend {
         if !external {
             crate::present::configure(&surface, &device, &config);
         }
+        // egui's renderer first, while the most video memory is free: its
+        // buffers come from wgpu's `create_buffer_init`, which panics on one
+        // the memory refused (egui-wgpu's `Renderer::new`, #3867), and the
+        // notice of a full memory is drawn with it. A card too full even for
+        // those: the start stops with that message instead of the panic.
+        let egui = if egui_later {
+            EguiSlot(None)
+        } else {
+            if crate::gpu_alloc::mapped_buffer_refused(&device) {
+                return Err(RenderError::VideoMemoryFull);
+            }
+            EguiSlot(Some(egui_wgpu::Renderer::new(
+                &device,
+                format,
+                egui_wgpu::RendererOptions::default(),
+            )))
+        };
 
         // ---- layouts
         // (the entries kept: the stochastic transparency's sample mask shader
@@ -4355,7 +4374,6 @@ impl Backend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {

@@ -2577,6 +2577,14 @@ splash-update-installing = Installation de la mise à jour…
 splash-update-cache = Vidage du cache…
 splash-update-launching = Lancement de la nouvelle version…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: impossible d'initialiser Metal : " }{ $e }
+app-graphics-start-memory-full =
+    La carte graphique n’a plus de mémoire vidéo pour Aurora Viewer : un autre programme l’occupe.
+
+    À essayer :
+    • fermez les programmes qui utilisent la carte graphique (un autre viewer, un jeu, un éditeur vidéo ou 3D), puis relancez Aurora Viewer ;
+    • sur un portable à deux cartes graphiques, vérifiez sur laquelle Aurora Viewer tourne.
+
+    Le journal de ce démarrage : { $log }
 app-graphics-start-failed-title = Aurora Viewer ne peut pas démarrer
 app-graphics-start-failed =
     Aurora Viewer n'a pu ouvrir aucune carte graphique pour dessiner sa fenêtre.
