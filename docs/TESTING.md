@@ -6805,7 +6805,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   changes, with its "Keep this light" (the environment only), and the rows
   the photo window also has (the depth of field's switch, aperture and focus,
   the shadow quality, the ambient occlusion, the worn lights, the exposure,
-  the sky, water, day and time of day) change the photo: try the aperture and
+  the sky, water, day and time of day, Pause clouds) change the photo: try the aperture and
   the shadow quality, then close the photo window and look at Preferences,
   which kept its own values. The shadow and occlusion rows are greyed while a
   photo is being made. In the viewfinder the View angle row is greyed (the
