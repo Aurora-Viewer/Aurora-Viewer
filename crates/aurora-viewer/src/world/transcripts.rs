@@ -235,7 +235,8 @@ impl World {
         let text = format::encode_mentions(&line.text, |id| self.social.name_in(scope, &id));
         (
             self.rlva_filter_text_in(scope, &from).into_owned(),
-            self.rlva_filter_text_in(scope, &format!("{verb}{text}")).into_owned(),
+            self.rlva_filter_text_in(line.kind.text_in(scope), &format!("{verb}{text}"))
+                .into_owned(),
         )
     }
 

@@ -235,7 +235,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 p,
                 env.emoji,
                 world,
-                env.names,
+                line.kind.text_in(env.names),
                 env.want_names,
                 text,
                 size,

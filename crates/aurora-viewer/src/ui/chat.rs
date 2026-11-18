@@ -63,7 +63,7 @@ use super::context::CtxAction;
 use super::presence;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
-use crate::world::names::NameScope;
+use crate::world::names::{NameScope, TextScope};
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
@@ -1334,12 +1334,14 @@ pub(crate) fn text_with_links(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     text: &str,
     names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
+    // the names of its links, and what is rewritten of its labels
+    let (scope, wording) = (scope.names, scope);
     let segs = segments(text);
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
@@ -1372,7 +1374,7 @@ pub(crate) fn text_with_links(
                         world,
                         NameScope::Roster,
                         id,
-                        &world.rlva_filter_text_in(scope, &label),
+                        &world.rlva_filter_text_in(wording, &label),
                         size,
                         false.into(),
                     ),
@@ -1382,7 +1384,7 @@ pub(crate) fn text_with_links(
                         world,
                         scope,
                         id,
-                        &world.rlva_filter_text_in(scope, &label),
+                        &world.rlva_filter_text_in(wording, &label),
                         size,
                         false.into(),
                     ),
@@ -1502,11 +1504,13 @@ fn line_job(
 ) -> BubbleJob {
     // the on-screen chat has no conversation: the line's kind tells its names
     let scope = line_names(&line.kind);
+    // what a resident typed is shown as typed (`ChatKind::text_in`)
+    let wording = line.kind.text_in(scope);
     let filtered;
     let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
         let mut copy = line.clone();
         // (the whole text, the labels of its links included)
-        copy.text = world.rlva_filter_text_in(scope, &copy.text).into_owned();
+        copy.text = world.rlva_filter_text_in(wording, &copy.text).into_owned();
         copy.from = sender_name(world, scope, &world.own_name(), &copy);
         filtered = copy;
         &filtered
@@ -1646,7 +1650,7 @@ fn line_job(
             // whole text above has already read
             piece
         } else {
-            world.rlva_filter_text_in(scope, &piece).into_owned()
+            world.rlva_filter_text_in(wording, &piece).into_owned()
         };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
@@ -1885,16 +1889,14 @@ pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) 
 /// asked at the end of the frame), places, app commands and labelled links
 /// by their label. The preview cuts the result, never a link's address in
 /// its middle, as the Legacy Viewer's toasts show the labels of their text
-/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it.
-pub(crate) fn resolved_text(world: &World, text: &str) -> String {
-    resolved_text_in(world, NameScope::World, text)
-}
-
-/// `resolved_text` for a text shown in `scope` (`conversation_names`).
-pub(crate) fn resolved_text_in(world: &World, scope: NameScope, text: &str) -> String {
+/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it. `scope`:
+/// where the text is shown (`conversation_names`), or `ChatKind::text_in`
+/// for the text of a line.
+pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text: &str) -> String {
+    let scope = scope.into();
     let name = |id: &uuid::Uuid| {
         app_links::want_agents([*id]);
-        Some(world.social.name_in(scope, id))
+        Some(world.social.name_in(scope.names, id))
     };
     let text = plain_text(text, name, |u, link| app_label(world, u, link));
     world.rlva_filter_text_in(scope, &text).into_owned()
@@ -2363,7 +2365,19 @@ pub(crate) fn chat_text(
     color: Color32,
     italics: bool,
 ) {
-    chat_text_marked(ui, p, emoji, world, NameScope::World, want_names, text, size, color, italics, None);
+    chat_text_marked(
+        ui,
+        p,
+        emoji,
+        world,
+        NameScope::World.into(),
+        want_names,
+        text,
+        size,
+        color,
+        italics,
+        None,
+    );
 }
 
 /// A text searched for in the lines, and the wash its matches are drawn on.
@@ -2398,14 +2412,15 @@ fn marked_run(
 }
 
 /// `chat_text` with the matches of a searched text highlighted, for a text
-/// shown in `scope` (`conversation_names`).
+/// shown in `scope` (`conversation_names`, or `ChatKind::text_in` for the
+/// text of a line).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chat_text_marked(
     ui: &mut egui::Ui,
     p: &Palette,
     emoji: &mut super::emoji::Emoji,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
     text: &str,
     size: f32,
@@ -2414,13 +2429,15 @@ pub(crate) fn chat_text_marked(
     mark: Option<Mark>,
 ) {
     let emphasis = emphasis.into();
-    // `@shownames` and `@showloc` rewrite the text and the labels someone
-    // wrote, those of an avatar link included (RlvUtil::filterNames and
-    // filterLocation run on the raw text). A bare avatar link shows the name
-    // of its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
+    // `@shownames` and `@showloc` rewrite the text and the labels of what no
+    // resident typed, those of an avatar link included (RlvUtil::filterNames
+    // and filterLocation run on the raw text of an object's line; `wording`
+    // is as written for a resident's). A bare avatar link shows the name of
+    // its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
     // test); a `/mention` link is rewritten (RlvUtil::filterMentions).
-    let hide = |t: &str| world.rlva_filter_text_in(scope, t).into_owned();
-    let filtered = world.rlva_filter_text_in(scope, text);
+    let (scope, wording) = (scope.names, scope);
+    let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
+    let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
@@ -2725,7 +2742,7 @@ fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, na
             Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
         .collect();
-    world.rlva_filter_text_in(scope, &text).into_owned()
+    world.rlva_filter_text_in(line.kind.text_in(scope), &text).into_owned()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -3265,7 +3282,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.kind.text_in(env.names),
                     env.want_names,
                     &system_text(&line.text),
                     super::fonts::chat_size(ui.ctx(), 12.5),
@@ -3367,7 +3384,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.kind.text_in(env.names),
                     env.want_names,
                     &visible,
                     super::fonts::chat_size(ui.ctx(), 13.5),
@@ -5789,7 +5806,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
@@ -5849,7 +5866,7 @@ mod tests {
                                 if chat {
                                     chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false);
                                 } else {
-                                    text_with_links(ui, &p, &world, NameScope::World, &text, &[], size, p.ink);
+                                    text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], size, p.ink);
                                 }
                             },
                         );
@@ -5914,7 +5931,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, &text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         let mut shown = String::new();
@@ -6028,10 +6045,10 @@ mod tests {
              http://maps.secondlife.com/secondlife/Pinède/1/2/3 [https://example.org le site] https://example.org/x"
         );
         assert_eq!(
-            resolved_text(&world, &text),
+            resolved_text_in(&world, NameScope::World, &text),
             "Lune Étoilée, @Lune Étoilée et … à Cercle des Brumes Pinède (1,2,3) le site https://example.org/x"
         );
-        assert_eq!(resolved_text(&world, "plain words"), "plain words");
+        assert_eq!(resolved_text_in(&world, NameScope::World, "plain words"), "plain words");
     }
 
     #[test]
