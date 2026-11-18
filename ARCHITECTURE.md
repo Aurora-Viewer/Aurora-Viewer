@@ -4228,6 +4228,9 @@ current egui pass. `app/inventory_drag.rs` reads that feedback after all
 windows, before released cargo is cleared. `cursors.rs` caches native Tabler
 copy / move badges, since Windows substitutes its ordinary arrow for the
 system Copy cursor; release and Escape restore ordinary widget feedback.
+`cursors::Shown` hands a cursor picture to the window once, when it changes:
+egui-winit would send it again at every frame, which stalls a Wayland desktop
+for as long as the picture is up. egui-winit keeps the system cursors.
 
 1. **Network → world.** `aurora-net` decodes the messages on its runtime and
    sends them as `NetEvent`; `World::apply` updates the state (objects,
