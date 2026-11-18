@@ -94,7 +94,7 @@ impl Default for NameOptions {
 ///
 /// A lookup that names no scope is `World`: stricter than the Legacy Viewer
 /// where that one asks nothing, never looser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameScope {
     /// Someone met in the world: name tag, local chat, radar and nearby
     /// lists, mini-map, hover tip, avatar menus, the notices that are not

@@ -265,10 +265,9 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
-    /// The residents of `names` that RLVa's `@shownames` hides as the owner
-    /// or the creator of an item (`resident_scopes`): their name is the
-    /// stand-in and opens no profile.
-    pub unnamed: HashSet<Uuid>,
+    /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
+    /// the field that shows them (`resident_scopes`): it opens no profile.
+    pub hidden_names: HiddenNames,
     /// The profile picture of the residents the dialogs show.
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
@@ -322,7 +321,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
-            unnamed: Default::default(),
+            hidden_names: Default::default(),
             pictures: Default::default(),
             online: world
                 .social
@@ -1093,28 +1092,28 @@ use tree::folder_icon;
 /// LLFloaterProperties do (indra/newview/llsidepaneliteminfo.cpp,
 /// llfloaterproperties.cpp): the owner is hidden unless excepted
 /// (canShowName(SNC_DEFAULT, owner)), the creator only when they also own
-/// the item or stand in a region around (RlvUtil::isNearbyAgent). A nil id
-/// (no creator sent, a group's item) names no one.
-fn resident_scopes(it: &aurora_net::inventory::InvItem) -> impl Iterator<Item = (Uuid, crate::world::names::NameScope)> {
+/// the item or stand in a region around (RlvUtil::isNearbyAgent). The owner
+/// first, then the creator; a nil id (no creator sent, a group's item)
+/// names no one.
+pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, crate::world::names::NameScope); 2] {
     use crate::world::names::NameScope;
     let owner = if it.group_owned { Uuid::nil() } else { it.owner };
     [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
-        .into_iter()
-        .filter(|(id, _)| !id.is_nil())
 }
 
-impl Facts {
-    /// Files `name` for `resident`, shown in `scope`. A resident hidden in
-    /// one of the roles shown at once (the creator of an item, the owner of
-    /// another) stays hidden in both: stricter than the Legacy Viewer, which
-    /// answers for each field.
-    fn name_resident(&mut self, world: &World, resident: Uuid, scope: crate::world::names::NameScope, name: String) {
-        if !world.rlva_shows_name(scope, resident) {
-            self.unnamed.insert(resident);
-        } else if self.unnamed.contains(&resident) {
-            return;
+/// The stand-ins of the owners and creators `@shownames` hides, each by the
+/// field that shows it: the Legacy Viewer answers for each field, so a
+/// resident hidden as the owner of an item is still named as the creator of
+/// another one that they neither own nor stand near.
+pub(crate) type HiddenNames = std::collections::HashMap<(Uuid, crate::world::names::NameScope), String>;
+
+/// Notes in `hidden` the stand-in of the owner and of the creator of `it`
+/// where `@shownames` hides them.
+pub(crate) fn hide_residents(world: &World, it: &aurora_net::inventory::InvItem, hidden: &mut HiddenNames) {
+    for (resident, scope) in resident_scopes(it) {
+        if !resident.is_nil() && !world.rlva_shows_name(scope, resident) {
+            hidden.insert((resident, scope), world.social.name_in(scope, &resident));
         }
-        self.names.insert(resident, name);
     }
 }
 
@@ -2404,14 +2403,18 @@ pub fn show(
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
         {
-            for (resident, scope) in resident_scopes(it) {
-                let name = world
-                    .social
-                    .avatar_names
-                    .complete_in(scope, &resident)
-                    .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into());
-                facts.name_resident(world, resident, scope, name);
+            // the real names, for the fields that show them
+            for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
+                facts.names.insert(
+                    resident,
+                    world
+                        .social
+                        .avatar_names
+                        .complete_in(crate::world::names::NameScope::Roster, &resident)
+                        .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into()),
+                );
             }
+            hide_residents(world, it, &mut facts.hidden_names);
         }
         for window in &st.windows {
             property_names(&window.state, world, facts);
@@ -2448,15 +2451,19 @@ pub fn show(
     // Aurora's details of the selection name its creator and owner.
     if !classic && *open {
         for state in std::iter::once(&*st).chain(dual.as_deref()) {
-            let residents = state
+            let original = state
                 .selected
                 .and_then(|id| rules::original(&world.inventory, id))
                 .and_then(|id| world.inventory.items.get(&id))
-                .map(resident_scopes);
-            for (resident, scope) in residents.into_iter().flatten() {
-                world.social.want_name(resident);
-                let name = world.social.name_in(scope, &resident);
-                facts.name_resident(world, resident, scope, name);
+                .cloned();
+            if let Some(it) = original {
+                for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
+                    world.social.want_name(resident);
+                    facts
+                        .names
+                        .insert(resident, world.social.name_in(crate::world::names::NameScope::Roster, &resident));
+                }
+                hide_residents(world, &it, &mut facts.hidden_names);
             }
         }
     }
@@ -2483,15 +2490,12 @@ pub fn show(
             st.creator_generation = Some(world.inventory.generation);
         }
         // the search reads the creators' names and shows none of them
-        // (LLInventoryFilter has no `@shownames` test); a creator hidden in
-        // the properties or the details above keeps their stand-in
+        // (LLInventoryFilter has no `@shownames` test)
         for id in &st.creators {
             world.social.want_name(*id);
-            if !facts.unnamed.contains(id) {
-                facts
-                    .names
-                    .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
-            }
+            facts
+                .names
+                .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
         }
     }
     let inv = &mut world.inventory;
@@ -2931,6 +2935,77 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RLVa `@shownames` answers for each field, as
+    /// LLSidepanelItemInfo::refreshFromItem does: the owner is hidden unless
+    /// excepted, the creator only when they also own the item or stand in a
+    /// region around, and a resident hidden in one field stays named in
+    /// another.
+    #[test]
+    fn shownames_hides_the_owner_and_the_creator_field_by_field() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != me)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let (far, maker) = (Uuid::from_u128(0xfa5), Uuid::from_u128(0xc4ea));
+        let item = |owner, creator, group_owned| aurora_net::inventory::InvItem {
+            owner,
+            creator,
+            group_owned,
+            ..Default::default()
+        };
+        let hidden = |world: &World, it: &aurora_net::inventory::InvItem| {
+            let mut hidden = HiddenNames::new();
+            hide_residents(world, it, &mut hidden);
+            let mut fields: Vec<_> = hidden.into_keys().collect();
+            fields.sort_by_key(|(_, scope)| *scope != NameScope::Owner);
+            fields
+        };
+        assert!(hidden(&world, &item(far, near, false)).is_empty(), "no restriction");
+        world.rlva.configure(true);
+        let restrict = |world: &mut World, command: String| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Names fixture".into(),
+                source_id: Uuid::from_u128(1),
+                owner_id: me,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: command,
+            }));
+            world.refresh_rlva_privacy();
+        };
+        restrict(&mut world, "@shownames=n".into());
+        // someone else's item, made by a resident who is away: the owner alone
+        assert_eq!(hidden(&world, &item(far, maker, false)), [(far, NameScope::Owner)]);
+        // my own item: its creator is hidden only when they stand around
+        assert!(hidden(&world, &item(me, far, false)).is_empty());
+        assert_eq!(hidden(&world, &item(me, near, false)), [(near, NameScope::Creator { owner: me })]);
+        // a creator who owns the item is hidden in both fields...
+        assert_eq!(
+            hidden(&world, &item(far, far, false)),
+            [(far, NameScope::Owner), (far, NameScope::Creator { owner: far })]
+        );
+        // ...and stays named as the creator of my item shown at the same time
+        let mut both = HiddenNames::new();
+        hide_residents(&world, &item(far, far, false), &mut both);
+        hide_residents(&world, &item(me, far, false), &mut both);
+        assert!(!both.contains_key(&(far, NameScope::Creator { owner: me })));
+        // a group's item names no owner, and its creator owns nothing
+        assert!(hidden(&world, &item(Uuid::nil(), far, true)).is_empty());
+        // an exception names the resident in every field
+        restrict(&mut world, format!("@shownames:{near}=add"));
+        assert!(hidden(&world, &item(near, near, false)).is_empty());
+    }
 
     #[test]
     fn inventory_tab_filters_keep_independent_defaults_and_live_edits() {

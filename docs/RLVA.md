@@ -233,12 +233,14 @@ script authors; the command lists below describe this branch specifically.
   on such a name opens the profile. The menu of a name greys View profile and
   Zoom in while `@shownames` is set (FSCommon::checkIsActionEnabled) and keeps
   the friendship offer, the history and the copies; the people lists offer no
-  friendship to a hidden resident (PeopleContextMenu). A speaker the
-  restriction hides in the nearby chat gets none of them, teleport offer and
-  request included. The owner and the creator of an inventory item follow
-  LLSidepanelItemInfo: the owner is hidden unless excepted, the creator when
-  they also own the item or stand nearby, and a hidden one is a plain
-  stand-in that opens no profile. A bare link to a resident in chat keeps the
+  friendship to a hidden resident (PeopleContextMenu). A name the
+  restriction hides in a chat (a speaker of the nearby chat, a rewritten
+  mention) opens no menu, as the Legacy Viewer writes it as plain text
+  (FSChatHistory). The owner and the creator of an item, in the inventory or
+  in an object's contents, follow LLSidepanelItemInfo field by field: the
+  owner is hidden unless excepted, the creator when they also own the item
+  or stand nearby, and a hidden one is a plain stand-in that opens no
+  profile. A bare link to a resident in chat keeps the
   name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
   label of a labelled link is filtered like the text around it
   (RlvUtil::filterNames and filterLocation) and a `/mention` link is
