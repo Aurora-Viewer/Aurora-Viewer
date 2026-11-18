@@ -468,10 +468,10 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
         // (indra/newview/llsidepaneliteminfo.cpp): the owner is hidden unless
         // excepted, the creator only when they also own the item or stand in
         // a region around; a hidden name opens no profile.
-        let owner = if item.group_owned { Uuid::nil() } else { item.owner };
-        for (label, id, scope) in [
-            (aurora_i18n::tr!("common-creator"), item.creator, NameScope::Creator { owner }),
-            (aurora_i18n::tr!("common-owner"), item.owner, NameScope::Owner),
+        let [owner, creator] = crate::ui::inventory::resident_scopes(item);
+        for (label, (id, scope)) in [
+            (aurora_i18n::tr!("common-creator"), creator),
+            (aurora_i18n::tr!("common-owner"), owner),
         ] {
             ui.horizontal(|ui| {
                 ui.label(label);
