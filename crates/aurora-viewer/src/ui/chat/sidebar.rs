@@ -698,7 +698,7 @@ fn preview(world: &World, scope: NameScope, line: &crate::world::ChatLine, named
     let own = world.own_name();
     let name = super::sender_name(world, scope, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = super::resolved_text_in(world, scope, &text);
+    let text = super::resolved_text_in(world, line.kind.text_in(scope), &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {

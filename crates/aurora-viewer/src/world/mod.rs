@@ -296,6 +296,18 @@ impl ChatKind {
         matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_))
     }
 
+    /// The text of a line of this kind, in a conversation that shows the
+    /// names of `names` (`names::TextScope`): what a resident typed, we
+    /// included, in the nearby chat or in an IM session, is shown as typed
+    /// under RLVa's `@shownames` and `@showloc`; an object's line, the
+    /// viewer's notices and the cards are rewritten.
+    pub fn text_in(self, names: names::NameScope) -> names::TextScope {
+        match self {
+            ChatKind::Local(_) | ChatKind::Own(_) | ChatKind::Im => names::TextScope::verbatim(names),
+            _ => names.into(),
+        }
+    }
+
     /// Not sent by a person: what an object or a script says (its owner-say
     /// and its llRegionSayTo to us included), its IMs, and the viewer's
     /// notices. The cards of residents' offers are people's (#741).
@@ -4957,7 +4969,12 @@ impl World {
             return;
         }
         let mut c = c;
-        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
+        // `@shownames` and `@showloc` rewrite what an object or the system
+        // says, never what a resident typed ("avatar => filter only their
+        // name", process_chat_from_simulator; `names::TextScope`)
+        if c.source_type != aurora_net::ChatSourceType::Agent
+            && let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message)
+        {
             c.message = text;
         }
         let own_attachment = self.rlva.enabled()

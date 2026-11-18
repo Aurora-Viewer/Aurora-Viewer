@@ -392,6 +392,21 @@ impl Kind {
         }
     }
 
+    /// The body of a notice of this kind under `@shownames` and `@showloc`
+    /// (`names::TextScope`): shown as written when a resident typed it (the
+    /// card of a message) or a script wrote it (a dialog, a text box, a link
+    /// prompt: process_script_dialog and process_load_url show the message
+    /// they received, indra/newview/llviewermessage.cpp), rewritten for the
+    /// other kinds. The title follows `names` either way: the owner a
+    /// dialog's title names stays hidden while the Legacy Viewer shows it,
+    /// stricter on purpose.
+    pub fn text(self) -> super::names::TextScope {
+        match self {
+            Kind::Script | Kind::Url | Kind::Message => super::names::TextScope::verbatim(self.names()),
+            _ => self.names().into(),
+        }
+    }
+
     pub fn look(self) -> Look {
         match self {
             Kind::Info | Kind::Presence => Look::Info,

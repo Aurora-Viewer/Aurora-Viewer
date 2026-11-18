@@ -132,7 +132,7 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                         p,
                         env.emoji,
                         world,
-                        env.names,
+                        line.kind.text_in(env.names),
                         env.want_names,
                         &text,
                         chat_size(ui.ctx(), 12.0),
@@ -259,7 +259,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
     let emphasis = super::line_emphasis(env, line, italics);
-    let text = world.rlva_filter_text_in(env.names, &text).into_owned();
+    let text = world.rlva_filter_text_in(line.kind.text_in(env.names), &text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
@@ -302,7 +302,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                         p,
                         env.emoji,
                         world,
-                        env.names,
+                        line.kind.text_in(env.names),
                         env.want_names,
                         &visible,
                         size,

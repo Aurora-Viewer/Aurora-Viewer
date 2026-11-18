@@ -244,7 +244,14 @@ script authors; the command lists below describe this branch specifically.
   name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
   label of a labelled link is filtered like the text around it
   (RlvUtil::filterNames and filterLocation) and a `/mention` link is
-  rewritten. Application links and place details filter labels and
+  rewritten. `@shownames` and `@showloc` rewrite the names and the places in
+  what no resident typed: an object's chat and IMs, the system's messages,
+  the viewer's notices. What a resident typed, in the nearby chat or in an
+  IM session, ours included, is shown as typed
+  (LLFloaterIMNearbyChatHandler::processChat filters only when the source is
+  not an avatar), and so is the message of a script's dialog, text box or
+  link prompt (process_script_dialog has no RLVa test); the owner named in a
+  dialog's title stays hidden (stricter than the Legacy Viewer). Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure
