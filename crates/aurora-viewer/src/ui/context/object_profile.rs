@@ -63,6 +63,7 @@ impl ObjectProfileUi {
             *self = Self::default();
         }
         self.object = Some(id);
+        self.editor.ui.object_profile = true;
         self.editor.selection = vec![key];
         if let Some(props) = props {
             self.on_properties(&[props]);

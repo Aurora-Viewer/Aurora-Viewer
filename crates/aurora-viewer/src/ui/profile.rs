@@ -520,12 +520,26 @@ impl ProfileUi {
         }
     }
 
-    /// The residents whose profile is open, written over `out`
-    /// (LLAvatarActions::profileVisible): RLVa asks it for the giver of an
-    /// inventory offer (`World::rlva_names_giver`).
-    pub(crate) fn open_residents(&self, out: &mut std::collections::HashSet<Uuid>) {
+    /// The residents whose profile is shown, written over `out`: RLVa asks
+    /// it for the giver of an inventory offer (`World::rlva_names_giver`).
+    /// LLAvatarActions::profileVisible is LLFloater::isShown: a minimized
+    /// window does not count, nor one that is not drawn (a resident whose
+    /// name the window may not show).
+    pub(crate) fn open_residents(&self, ctx: &egui::Context, world: &World, classic: bool, out: &mut std::collections::HashSet<Uuid>) {
         out.clear();
-        out.extend(self.windows.iter().filter(|w| w.open).map(|w| w.id));
+        out.extend(
+            self.windows
+                .iter()
+                .filter(|w| {
+                    let win_id = if classic {
+                        format!("profile-{}", w.id)
+                    } else {
+                        aurora::window_id(w.id)
+                    };
+                    w.open && world.rlva_shows_name(w.scope, w.id) && !widgets::floater_minimized(ctx, &win_id)
+                })
+                .map(|w| w.id),
+        );
     }
 
     /// The windows open and the place each one names its resident from.

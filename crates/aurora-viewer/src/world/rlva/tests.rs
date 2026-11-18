@@ -4145,6 +4145,53 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
     assert!(all(&world, contents(&world, seat)) && all(&world, transform(&world, seat)) && all(&world, delink(&world, seat)));
 }
 
+/// LLToolSelect::handleObjectSelection (lltoolselect.cpp): what RLVa keeps
+/// from edits is not selected by the build tools, whose click leaves the
+/// selection as it is, and is selected by a right click for the time of its
+/// menu (`temp_select`), with the build tools closed. The menu's Delete and
+/// Take then follow rlvCanDeleteOrReturn, which asks nothing under
+/// @editworld alone. LLSelectMgr::deselectAllIfTooFar keeps such a
+/// selection while it is the menu's, and @interact drops it.
+#[test]
+fn rlva_a_right_click_selects_what_cannot_be_edited_for_its_menu_only() {
+    use crate::build::{BuildTool, menu_selectable, rlva_keeps_menu_selection, rlva_selectable};
+    let (mut world, _, other) = build_escape_world();
+    let s = crate::build::BuildSettings::default();
+    let mut tool = BuildTool::default();
+    let key = world.objects.get(other).unwrap().key;
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert_eq!(tool.selection, [key], "no restriction yet");
+    tool.deselect_all(&world);
+    command(&mut world.rlva, A, "@editworld=n");
+    assert!(!world.rlva_can_edit(other) && !rlva_selectable(&world, other));
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert!(tool.selection.is_empty(), "the build tools select nothing");
+    // open build tools refuse the menu's selection until they are closed
+    assert!(BuildTool::menu_only(&world, other) && menu_selectable(&world, other, false));
+    tool.open = true;
+    assert!(!tool.select_for_menu_near(&mut world, &s, other, false, false));
+    tool.open = false;
+    assert!(tool.select_for_menu_near(&mut world, &s, other, false, false));
+    assert!(tool.menu_selection && tool.selection == [key]);
+    assert!(rlva_keeps_menu_selection(&world, other), "kept while the menu is open");
+    assert!(world.rlva_can_delete_or_return(other) && world.rlva_can_take_copy(other));
+    assert!(
+        world.rlva_allows_command(
+            &NetCommand::Build(aurora_net::build::BuildCmd::Select {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+            }),
+            Uuid::nil()
+        ),
+        "the temporary selection is sent"
+    );
+    // a build-tool click on it changes nothing of the selection either
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert_eq!(tool.selection, [key]);
+    command(&mut world.rlva, A, "@interact=n");
+    assert!(!menu_selectable(&world, other, true) && !rlva_keeps_menu_selection(&world, other));
+}
+
 /// object_selected_and_point_valid (llviewermenu.cpp): a rezzed object is
 /// not worn under @rez, on its default point with an attachment lock of any
 /// kind, nor on a point that takes no attachment. RlvActions::canBuild: the

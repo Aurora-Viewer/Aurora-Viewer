@@ -195,10 +195,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let name = super::sender_name(world, env.names, env.own_name, line);
+    let name = super::sender_name(world, env.own_name, line);
     // a history line's sender is known when its name was cached
     // (world/transcripts.rs): its picture shows, dimmed
-    let avatar = if object {
+    let avatar = if object || line.anonymous() {
         uuid::Uuid::nil()
     } else if own {
         world.agent_id
@@ -442,6 +442,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let day = 86_400;
         // yesterday's two lines, then today's
@@ -491,6 +492,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let mut list_top = 0.0;
         let mut output = ctx.run_ui(

@@ -1521,12 +1521,13 @@ fn line_job(
     let scope = line_names(world, &line.kind);
     // what a resident typed is shown as typed (`ChatKind::text_in`)
     let wording = line.wording(scope);
+    // (a line is rewritten when it arrives, `World::rlva_freeze_line`; a
+    // card's text while it is shown: the whole of it, the labels of its
+    // links included)
     let filtered;
-    let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
+    let line = if wording.rewritten && world.rlva.enabled() {
         let mut copy = line.clone();
-        // (the whole text, the labels of its links included)
         copy.text = world.rlva_filter_text_in(wording, &copy.text).into_owned();
-        copy.from = sender_name(world, scope, &world.own_name(), &copy);
         filtered = copy;
         &filtered
     } else {
@@ -2248,6 +2249,15 @@ fn link_seg(link: &str) -> Seg<'_> {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
+            // `rlvanonym`, the link RLVa writes for a hidden resident: their
+            // stand-in in plain text, never a link
+            // (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
+            // picked from the id, as RlvUtil::filterMentions does for a
+            // name it does not have)
+            (Some(id), "rlvanonym") => Seg::Labelled(
+                Cow::Owned(crate::world::rlva::privacy::anonymous(id).display_name.clone()),
+                Box::new(Seg::Text("")),
+            ),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
             _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
@@ -2308,7 +2318,9 @@ fn line_name_menu(
     line: &crate::world::ChatLine,
     menu: Option<egui::Id>,
 ) {
-    if !super::context::name_has_menu(world, scope, id) {
+    // the stand-in of a speaker hidden when the line arrived is plain text
+    // (`super::context::name_has_menu`, decided then)
+    if line.anonymous() {
         return;
     }
     if !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
@@ -2727,20 +2739,22 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
-/// The name a line of a conversation shown in `scope` gives its sender
+/// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
 /// the file gives it, under RLVa's `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
-pub(crate) fn sender_name(world: &World, scope: NameScope, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if line.origin != Origin::Live {
+///
+/// Under `@shownames`, who a line said during this session names was
+/// decided when it arrived (`World::rlva_freeze_line`): a speaker hidden
+/// then keeps the stand-in the line holds, one named then keeps their name,
+/// and an object the name it was given then, whatever the restriction
+/// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
+pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if line.origin != Origin::Live || line.anonymous() {
         return line.from.clone();
-    }
-    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_shows_name(scope, line.source)
-    {
-        return world.rlva_anonymous(line.source).display_name.clone();
     }
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
@@ -2748,12 +2762,12 @@ pub(crate) fn sender_name(world: &World, scope: NameScope, own_name: &str, line:
     let cached = if object {
         None
     } else {
-        names.get_in(scope, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     match cached {
         Some(n) => n.display(&names.options),
         None if own => own_name.to_owned(),
-        None => world.rlva_filter_text_in(scope, &line.from).into_owned(),
+        None => line.from.clone(),
     }
 }
 
@@ -2841,7 +2855,7 @@ impl Copied<'_> {
             let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
                 return (String::new(), String::new());
             };
-            let name = sender_name(self.world, self.names, self.own_name, line);
+            let name = sender_name(self.world, self.own_name, line);
             (copy_prefix(line, &name), shown_text(self.world, self.names, line, &name))
         })
     }
@@ -3350,10 +3364,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged {
+    let cached = if object || logged || line.anonymous() {
         None
     } else {
-        names.get_in(env.names, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     let name = match cached {
         Some(n) => n.display(&names.options),
@@ -3382,10 +3396,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                             );
                         }
                     } else {
-                        if !line.source.is_nil() {
-                            env.wanted.insert(line.source);
+                        // (none for a speaker `@shownames` hid:
+                        // FSChatHistoryHeader shows Unknown_Icon)
+                        let pictured = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
+                        if !pictured.is_nil() {
+                            env.wanted.insert(pictured);
                         }
-                        avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
+                        avatar_pic(ui, p, env.pics.get(&pictured), &name, 20.0);
                     }
                     let col = super::colors::contact_sender_color(line, world)
                         .or(tone)
@@ -3397,6 +3414,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     // the inspector in the Legacy Viewer; Aurora opens the
                     // profile (a history line's when its sender is known)
                     let avatar = match (logged, own) {
+                        _ if line.anonymous() => uuid::Uuid::nil(),
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
@@ -4915,7 +4933,8 @@ enum SenderLink {
 fn sender_link(world: &World, line: &crate::world::ChatLine) -> Option<SenderLink> {
     let id = if line.kind.is_own() { world.agent_id } else { line.source };
     match line.kind {
-        _ if id.is_nil() || line.kind.is_notice() => None,
+        // (the stand-in of a hidden speaker is plain text)
+        _ if id.is_nil() || line.kind.is_notice() || line.anonymous() => None,
         ChatKind::Object(_) | ChatKind::ObjectIm => Some(SenderLink::Object(id)),
         _ => Some(SenderLink::Resident(id)),
     }
@@ -4967,6 +4986,7 @@ fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate
                 name: line.from.clone(),
                 owner: uuid::Uuid::nil(),
                 group_owned: false,
+                owner_hidden: false,
                 slurl: String::new(),
             },
         )))
@@ -6297,6 +6317,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6346,6 +6367,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -6382,6 +6404,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
         }
         let ctx = egui::Context::default();
@@ -6928,6 +6951,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
             world.chat_clock.pushed_back();
         }

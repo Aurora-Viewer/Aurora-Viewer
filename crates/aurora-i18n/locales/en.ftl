@@ -8809,6 +8809,7 @@ world-inventory-offers-check-failed = Inventory check unavailable. Offer again t
 world-inventory-offers-checked = Inventory checked. Review the original before offering again.
 world-inventory-offers-item-sent = { "Inventory item " }{ $item }{ " offered" }
 world-inventory-offers-folder-sent = { "Inventory folder " }{ $item }{ " offered" }
+world-inventory-offers-sent-anonymous = { "Inventory item offered to " }{ $name }
 world-inventory-offers-body-part = Body part
 world-mod-offers-you-friendship = { $from }{ " offers you friendship" }
 world-calling-card-title = Calling card

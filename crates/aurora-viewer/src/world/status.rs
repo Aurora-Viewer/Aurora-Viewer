@@ -495,6 +495,7 @@ impl World {
                         origin: Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     };
                     self.conversation_push(from, line, true);
                 }
@@ -538,6 +539,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         self.conversation_push(im.from_agent_id, line, false);
     }

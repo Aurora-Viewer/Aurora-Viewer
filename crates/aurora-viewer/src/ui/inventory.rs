@@ -650,6 +650,12 @@ pub struct InventoryUi {
     hover: hover::State,
     pub share_picker: super::avatar_picker::AvatarPicker,
     pub share_items: Vec<Uuid>,
+    /// The resident on whose conversation the items of the Share dialog
+    /// were dropped, and those whose offer made that way is on its way:
+    /// LLGiveInventory::logInventoryOffer writes such a gift in the
+    /// conversation whatever RLVa hides (`World::inventory_offer_sent`).
+    pub share_in_session: Option<Uuid>,
+    pub offers_in_session: std::collections::HashSet<Uuid>,
     pub property_edit: Option<(Uuid, PropertyEdit)>,
     pub preview: Option<Uuid>,
     pub preview_text: Option<Result<String, String>>,

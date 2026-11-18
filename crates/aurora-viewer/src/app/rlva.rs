@@ -214,15 +214,21 @@ impl App {
         if self.world.agent.flying && self.world.rlva.has("fly") {
             self.world.agent.flying = false;
         }
+        // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
+        // leaves the selection, the temporary one of a menu excepted
+        let menu = self.build.menu_selection;
         let invalid: Vec<_> = self
             .build
             .selection
             .iter()
             .filter(|key| {
-                self.world
-                    .objects
-                    .index_of(key)
-                    .is_none_or(|i| !crate::build::rlva_selectable(&self.world, i))
+                self.world.objects.index_of(key).is_none_or(|i| {
+                    if menu {
+                        !crate::build::rlva_keeps_menu_selection(&self.world, i)
+                    } else {
+                        !crate::build::rlva_selectable(&self.world, i)
+                    }
+                })
             })
             .copied()
             .collect();

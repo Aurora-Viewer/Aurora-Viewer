@@ -7747,11 +7747,19 @@ impl App {
                 );
             } else {
                 // the name is a link to the resident, as in the Legacy Viewer's chat;
-                // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
+                // checked for keywords as nearby chat (FSRadar::radarAlertMsg).
+                // Under RLVa's `@shownames` the line is from
+                // FSRadarEntry::getRadarName, everyone's stand-in, and the
+                // chat writes it as plain text (`mRlvNamesFiltered`).
                 let name = ui::people::radar_name(&self.world, &id, s.name_format);
                 self.world
                     .keyword_alert(id, &name, &text, true, crate::world::attention::Open::NearbyChat);
-                self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
+                let line = if self.world.rlva.has("shownames") {
+                    format!("{name} {text}")
+                } else {
+                    format!("secondlife:///app/agent/{id}/about {text}")
+                };
+                self.world.system_message(line);
             }
         }
     }
@@ -9486,7 +9494,11 @@ impl App {
     fn poll_names(&mut self) {
         let s = &self.settings;
         let options = crate::world::names::NameOptions {
-            use_display_names: s.use_display_names,
+            // RLVa's `@shownames` forces display names on, so that both
+            // forms of a name are known to its filter
+            // (LLAvatarNameCache::setForceDisplayNames in the toggle handler
+            // of RLV_BHVR_SHOWNAMES, indra/newview/rlvhandler.cpp)
+            use_display_names: s.use_display_names || self.world.rlva.has("shownames"),
             show_usernames: s.show_usernames,
             legacy_format: s.legacy_username_format,
             trim_resident: s.trim_resident,
@@ -19684,6 +19696,7 @@ impl App {
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = Some(to);
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -20685,7 +20698,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
-                self.profile_ui.open_residents(&mut self.world.rlva.open_profiles);
+                let mut shown = std::mem::take(&mut self.world.rlva.open_profiles);
+                self.profile_ui
+                    .open_residents(&ctx, &self.world, self.settings.classic_profiles, &mut shown);
+                self.world.rlva.open_profiles = shown;
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
                 self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
@@ -20721,6 +20737,7 @@ impl App {
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = None;
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first

@@ -164,6 +164,11 @@ impl App {
         // Shift or Ctrl alone adds to the selection or takes out of it
         // (LLToolPie::handleRightClickPick, the click's mask)
         let extend = crate::build::BuildTool::menu_extends(self.shift, self.ctrl, self.alt);
+        // (the surface clicked is within 1.5 m: `ObjectMenu::near`)
+        let near_root = self.object_menu.near;
+        let near = |world: &World, idx: usize| {
+            near_root.is_some() && world.objects.get(linkset_root(world, idx)).map(|root| root.key) == near_root
+        };
         let me = self.world.agent_id;
         let target = match picked.and_then(|i| self.world.objects.get(i).map(|o| (i, o))) {
             Some((_, o)) if o.is_avatar() => Target::Avatar {
@@ -175,7 +180,15 @@ impl App {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
                     Some(w) if w == me => {
-                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
+                        let near = near(&self.world, idx);
+                        if self.build.open
+                            && crate::build::menu_selectable(&self.world, idx, near)
+                            && crate::build::BuildTool::menu_only(&self.world, idx)
+                        {
+                            self.build.close(&mut self.world, &mut self.settings.build);
+                        }
+                        self.build
+                            .select_for_menu_near(&mut self.world, &self.settings.build, idx, extend, near);
                         self.flush_build();
                         Target::Attachment { key }
                     }
@@ -192,7 +205,15 @@ impl App {
                             super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
-                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
+                        let near = near(&self.world, idx);
+                        if self.build.open
+                            && crate::build::menu_selectable(&self.world, idx, near)
+                            && crate::build::BuildTool::menu_only(&self.world, idx)
+                        {
+                            self.build.close(&mut self.world, &mut self.settings.build);
+                        }
+                        self.build
+                            .select_for_menu_near(&mut self.world, &self.settings.build, idx, extend, near);
                         self.flush_build();
                         if let Some(bounds) = self.build.bounds(&self.world, Instant::now()) {
                             self.turn_to_selection(idx, bounds.center);
@@ -305,6 +326,7 @@ impl App {
                 f.contact_sets = w.contact_sets.set_names();
                 f.im_blocked = !w.rlva_can_start_im(*id);
                 f.name_hidden = !w.rlva_can_name(*id);
+                f.names_hidden = w.rlva.has("shownames");
                 f.pay_blocked = !crate::ui::context::can_pay_resident(w) || !w.rlva_can_name(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);

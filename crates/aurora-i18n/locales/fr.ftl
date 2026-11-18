@@ -8817,6 +8817,7 @@ world-inventory-offers-check-failed = La vérification de l’inventaire a écho
 world-inventory-offers-checked = Inventaire vérifié. Contrôlez l’original avant de proposer à nouveau le don.
 world-inventory-offers-item-sent = { "Objet de l’inventaire " }{ $item }{ " offert" }
 world-inventory-offers-folder-sent = { "Dossier de l’inventaire " }{ $item }{ " offert" }
+world-inventory-offers-sent-anonymous = { "Objet de l’inventaire offert à " }{ $name }
 world-inventory-offers-body-part = Partie du corps
 world-mod-offers-you-friendship = { $from }{ " vous propose son amitié" }
 world-calling-card-title = Carte de visite

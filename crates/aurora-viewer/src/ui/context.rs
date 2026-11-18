@@ -247,6 +247,10 @@ pub struct Facts {
     /// are greyed (menu_avatar_other.xml, menu_attachment_other.xml:
     /// `RLV.CanShowName`).
     pub name_hidden: bool,
+    /// RLVa `@shownames` is set, whoever the resident is: the handlers of
+    /// LLAvatarGiveCard and FSAddToContactSet (llviewermenu.cpp) do nothing
+    /// then, for an `@shownames:<uuid>` exception too.
+    pub names_hidden: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
@@ -959,7 +963,6 @@ fn avatar_menu_reporting(
         }
         return;
     }
-    voice_row(ui, p, id, voice_volume_of(world, id));
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let blocked = world.is_avatar_blocked(&id);
     let here = avatar_position(world, &id).is_some();
@@ -1009,6 +1012,8 @@ fn avatar_menu_reporting(
         }
         return;
     }
+    // (not for a resident whose name is hidden: LLAvatarListItem::setShowVoiceVolume)
+    voice_row(ui, p, id, voice_volume_of(world, id));
     let profile = |ui: &mut egui::Ui| {
         if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), !name_menu_restricted) {
             act(match scope {
@@ -1086,8 +1091,13 @@ fn avatar_menu_reporting(
             act(CtxAction::AddFriend(id));
         }
     };
+    // PeopleContextMenu's `can_delete` (indra/newview/llpanelpeoplemenus.cpp)
+    // refuses a friend whose name RLVa hides, in the nearby and the recent
+    // lists; the friends list's own menu (FSContactsFriendsMenu) and a
+    // name's ask nothing.
+    let removable = !matches!(kind, AvatarList::Nearby | AvatarList::MiniMap) || world.rlva_can_name(id);
     let remove_friend = |ui: &mut egui::Ui| {
-        if friend.is_some() && menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
+        if friend.is_some() && removable && menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
             act(CtxAction::RemoveFriend(id));
         }
     };

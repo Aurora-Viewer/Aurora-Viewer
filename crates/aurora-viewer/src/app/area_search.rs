@@ -459,8 +459,18 @@ impl App {
             }
             Action::Buy(id) => self.on_ctx_action(CtxAction::Buy(id)),
             // setFindOwnerText(gAgentUsername), then the search
+            // (under RLVa's `@shownames` the owner column shows the stand-in
+            // of our own name too, which is then what finds our objects)
             Action::FilterMine => {
-                let name = self.world.social.name_of(&self.world.agent_id);
+                let name = self
+                    .world
+                    .social
+                    .name_in(crate::world::names::NameScope::Roster, &self.world.agent_id);
+                let name = if self.world.rlva.has("shownames") {
+                    crate::world::rlva::privacy::anonymous_named(&name).display_name.clone()
+                } else {
+                    name
+                };
                 self.area_search_ui.table.filters.owner = name;
                 self.area_search_ui.reveal_search();
             }
@@ -612,9 +622,11 @@ impl App {
                 .into_iter()
                 .filter(|id| !id.is_nil() && *id != r.group_id)
             {
+                // the names as a list of people shows them: the columns
+                // hide them by their own rule, below
                 names.entry(id).or_insert_with(|| {
                     self.world.social.want_name(id);
-                    self.world.social.name_of(&id)
+                    self.world.social.name_in(crate::world::names::NameScope::Roster, &id)
                 });
             }
             if !r.group_id.is_nil() {
@@ -626,17 +638,31 @@ impl App {
                 });
             }
         }
+        // RLVa `@shownames`: RLVa_hideNameIfRestricted
+        // (indra/newview/fsareasearch.cpp) replaces what the owner and the
+        // last owner columns show by RlvStrings::getAnonym of that text,
+        // whoever it names (oneself, an `@shownames:<uuid>` exception, a
+        // group); the creator column is left as it is.
+        let names_hidden = self.world.rlva.has("shownames");
+        let hide = move |name: String| {
+            if names_hidden && !name.is_empty() {
+                crate::world::rlva::privacy::anonymous_named(&name).display_name.clone()
+            } else {
+                name
+            }
+        };
         let rows = rows
             .into_par_iter()
             .map(|(mut r, _)| {
-                r.owner = if r.owner_id == r.group_id && !r.group_id.is_nil() {
+                r.owner = hide(if r.owner_id == r.group_id && !r.group_id.is_nil() {
                     group_names.get(&r.group_id).cloned().unwrap_or_default()
                 } else {
                     names.get(&r.owner_id).cloned().unwrap_or_default()
-                };
+                });
                 r.creator = names.get(&r.creator_id).cloned().unwrap_or_default();
-                r.last_owner = names.get(&r.last_owner_id).cloned().unwrap_or_default();
+                r.last_owner = hide(names.get(&r.last_owner_id).cloned().unwrap_or_default());
                 r.group = group_names.get(&r.group_id).cloned().unwrap_or_default();
+                r.names_hidden = names_hidden;
                 r
             })
             .collect();

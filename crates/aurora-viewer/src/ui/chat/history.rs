@@ -685,16 +685,16 @@ mod tests {
             origin: crate::world::Origin::Log,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         assert_eq!(NAMES, NameScope::Roster);
-        assert_eq!(super::super::sender_name(&world, NAMES, "Aurora Demo", &line), "Near Tester");
-        assert_eq!(
-            super::super::sender_name(&world, NameScope::World, "Aurora Demo", &line),
-            "Near Tester"
-        );
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
+        // said now: the stand-in the line takes when it arrives
         let mut said = line.clone();
         said.origin = crate::world::Origin::Live;
-        let around = super::super::sender_name(&world, NameScope::World, "Aurora Demo", &said);
+        said.source = near;
+        world.rlva_freeze_line(NameScope::World, &mut said);
+        let around = super::super::sender_name(&world, "Aurora Demo", &said);
         assert!(!around.contains("Tester"), "{around}");
         // the text: a notice of the viewer is rewritten when it comes, and
         // read back as the file has it
@@ -711,7 +711,9 @@ mod tests {
             );
         }
         notice.origin = crate::world::Origin::Live;
-        let now = world.rlva_filter_text_in(notice.wording(NameScope::World), &notice.text);
-        assert!(!now.contains("Tester"), "{now}");
+        world.rlva_freeze_line(NameScope::World, &mut notice);
+        assert!(!notice.text.contains("Tester"), "{}", notice.text);
+        // and nothing rewrites it again when it is drawn
+        assert!(!notice.wording(NameScope::World).rewritten);
     }
 }

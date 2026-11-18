@@ -84,6 +84,10 @@ pub struct RemoteObject {
     pub name: String,
     pub owner: Uuid,
     pub group_owned: bool,
+    /// `rlv_shownames`: RLVa's `@shownames` hid the owner when the object
+    /// spoke (process_chat_from_simulator and IM_FROM_TASK write it in the
+    /// objectim link; LLInspectRemoteObject then shows `rlvanonym`).
+    pub owner_hidden: bool,
     /// "Region/x/y/z", escaped as in the link; may be empty.
     pub slurl: String,
 }
@@ -211,6 +215,7 @@ pub fn parse(url: &str) -> Option<AppLink> {
                 owner: query_value(query, "owner").and_then(|v| id(&v)).unwrap_or_default(),
                 // LLSD asBoolean of the string: "1" / "true"
                 group_owned: query_value(query, "groupowned").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+                owner_hidden: query_value(query, "rlv_shownames").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
                 slurl: query_value(query, "slurl").unwrap_or_default(),
             })
         }),

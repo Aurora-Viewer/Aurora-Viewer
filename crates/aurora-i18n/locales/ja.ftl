@@ -8744,6 +8744,7 @@ world-inventory-offers-check-failed = インベントリを確認できません
 world-inventory-offers-checked = インベントリを確認しました。もう一度渡す前に元のアイテムを確認してください。
 world-inventory-offers-item-sent = { "インベントリのアイテム「" }{ $item }{ "」を送りました" }
 world-inventory-offers-folder-sent = { "インベントリのフォルダ「" }{ $item }{ "」を送りました" }
+world-inventory-offers-sent-anonymous = { $name }{ "にインベントリのアイテムを送りました" }
 world-inventory-offers-body-part = 身体部位
 world-mod-offers-you-friendship = { $from }{ "がフレンド登録を申し込んでいます" }
 world-calling-card-title = コーリングカード

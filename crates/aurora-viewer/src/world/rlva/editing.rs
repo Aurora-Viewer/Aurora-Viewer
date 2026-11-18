@@ -309,8 +309,10 @@ impl World {
             BuildCmd::Delink { handle, local_ids } => local_ids
                 .iter()
                 .all(|id| index(*handle, *id).is_some_and(|i| self.rlva_can_edit(i) && self.rlva_can_unlink(i))),
-            BuildCmd::Select { handle, local_ids }
-            | BuildCmd::SetShape { handle, local_ids, .. }
+            // (a right click selects what it may not edit for the time of
+            // its menu: LLToolSelect::handleObjectSelection, temp_select)
+            BuildCmd::Select { .. } => true,
+            BuildCmd::SetShape { handle, local_ids, .. }
             | BuildCmd::SetMaterial { handle, local_ids, .. }
             | BuildCmd::SetPermissions { handle, local_ids, .. }
             | BuildCmd::SetGroup { handle, local_ids, .. }

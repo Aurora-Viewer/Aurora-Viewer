@@ -104,6 +104,7 @@ impl World {
             blocked: true,
             // already greyed as blocked: not dimmed a second time
             beyond_range: false,
+            speaker: Default::default(),
         });
     }
 

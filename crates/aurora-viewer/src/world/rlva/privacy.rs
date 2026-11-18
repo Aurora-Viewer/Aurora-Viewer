@@ -1,7 +1,7 @@
 //! Display-only identity and location filtering. Canonical IDs, name cache
 //! records and region coordinates stay available to protocol handlers.
 use super::super::{
-    World,
+    ChatKind, ChatLine, Origin, Speaker, World,
     contact_sets::Appearance,
     names::{AvatarName, AvatarNames},
 };
@@ -149,12 +149,13 @@ impl TextFilter {
         }
     }
 
-    fn add_identity(&mut self, original: &str, replacement: &str) {
-        self.add(original, replacement);
-        // Visible Unicode URLs may escape only spaces, while canonical
-        // application links escape every non-ASCII UTF-8 byte.
-        self.add(&original.replace(' ', "%20"), replacement);
-        self.add(&aurora_net::land::uri_escape(original), replacement);
+    /// A resident's name, as RlvUtil::filterNames (rlvcommon.cpp) takes
+    /// it: more than two bytes long (`std::string::length`), and as it is
+    /// written, not as an address would escape it.
+    fn add_name(&mut self, original: &str, replacement: &str) {
+        if original.len() > 2 {
+            self.add(original, replacement);
+        }
     }
 
     /// Longest first, so that a name is replaced before a part of it.
@@ -230,10 +231,15 @@ impl World {
         self.rlva_hide_places(&mut places);
         places.sort();
         places.reuse_matcher(&self.rlva_place_privacy);
-        // (a notice that names its resident keeps them: `name_resident`)
+        // The notices that came since the last pass are rewritten now, once
+        // (`Notifications::settle`): one already shown keeps its text when a
+        // restriction comes or goes, as the Legacy Viewer's notifications
+        // do. (A notice that names its resident keeps them: `name_resident`.)
+        let fresh = self.notifications.settle();
+        let mut mentions = Vec::new();
         for (text, notification) in self.notifications.with_text_scopes() {
             // a script's prompt stays as received, its owner's name included
-            if notification.kind.as_received() {
+            if !fresh.contains(&notification.id) || notification.kind.as_received() {
                 continue;
             }
             let filter = if text.names == NameScope::Roster { &places } else { &filter };
@@ -243,6 +249,22 @@ impl World {
                 text.rewritten.then_some(&mut notification.body),
                 &mut notification.name_links,
             );
+            if text.mentions != NameScope::Roster {
+                mentions.push((notification.id, text.rewritten));
+            }
+        }
+        // (RlvUtil::filterNames ends with filterMentions)
+        for (id, body) in mentions {
+            let Some(at) = self.notifications.list.iter().position(|n| n.id == id) else {
+                continue;
+            };
+            let title = self.rlva_freeze_mentions(&self.notifications.list[at].title).into_owned();
+            let text = body.then(|| self.rlva_freeze_mentions(&self.notifications.list[at].body).into_owned());
+            let notification = &mut self.notifications.list[at];
+            notification.title = title;
+            if let Some(text) = text {
+                notification.body = text;
+            }
         }
         self.rlva_privacy = filter;
         self.rlva_place_privacy = places;
@@ -273,6 +295,140 @@ impl World {
         let names = &self.social.avatar_names;
         names.want(&id);
         names.anonymous(&id)
+    }
+
+    /// The name of `id` where the Legacy Viewer tests
+    /// `hasBehaviour(RLV_BHVR_SHOWNAMES)` and no one in particular: while
+    /// `@shownames` is set everyone is their stand-in there, oneself and an
+    /// `@shownames:<uuid>` exception included, around us or not. The
+    /// questions of LLAvatarActions::landEjectMultiple, landFreezeMultiple
+    /// and the estate ones (llavataractions.cpp), mean_name_callback and
+    /// the bump lines (llviewermessage.cpp), the sound explorer
+    /// (NACLfloaterexploresounds.cpp), FSRadar::radarAlertMsg.
+    pub fn rlva_name_unless_hidden(&self, id: Uuid) -> String {
+        if self.rlva.has("shownames") {
+            self.rlva_anonymous(id).display_name.clone()
+        } else {
+            self.social.name_in(NameScope::Roster, &id)
+        }
+    }
+
+    /// How `@shownames` leaves `id` right now (`Speaker`).
+    pub fn rlva_speaker(&self, id: Uuid) -> Speaker {
+        if !self.rlva_can_name(id) {
+            Speaker::Hidden
+        } else if self.rlva.has("shownames") && self.social.avatar_names.rlva_around(&id) {
+            Speaker::Around
+        } else {
+            Speaker::Named
+        }
+    }
+
+    /// Who a line of `kind` that arrives now in a conversation shown in
+    /// `scope` names as its sender, `from` being the name it came with
+    /// (process_chat_from_simulator, indra/newview/llviewermessage.cpp,
+    /// under `!canShowName(SNC_DEFAULT)`): the stand-in of a resident the
+    /// nearby chat hides, the name of an object rewritten. An IM session
+    /// names its people (FSFloaterIM has no RLVa test), and the name of an
+    /// object's IM follows its owner (`World::on_im`).
+    pub(crate) fn rlva_sender(&self, scope: NameScope, kind: ChatKind, source: Uuid, from: String) -> (Speaker, String) {
+        if !self.rlva.has("shownames") {
+            return (Speaker::Named, from);
+        }
+        match kind {
+            ChatKind::Local(_) | ChatKind::Im => {
+                let speaker = self.rlva_speaker(source);
+                if speaker == Speaker::Hidden && scope == NameScope::World && matches!(kind, ChatKind::Local(_)) {
+                    (speaker, self.rlva_anonymous(source).display_name.clone())
+                } else {
+                    (speaker, from)
+                }
+            }
+            ChatKind::Object(_) if scope == NameScope::World => (Speaker::Named, self.rlva_filter_text(&from).into_owned()),
+            _ => (Speaker::Named, from),
+        }
+    }
+
+    /// A line enters a conversation shown in `scope`: what `@shownames` and
+    /// `@showloc` hide of it is decided now and kept with it, as the Legacy
+    /// Viewer does (`ChatLine::wording`, `Speaker`). Its sender; the text of
+    /// what no resident typed (an object's line, a notice of the viewer),
+    /// rewritten; and in the nearby chat the mentions of the residents
+    /// whose name is hidden, a muted line's left as they are
+    /// (LLFloaterIMNearbyChatHandler::processChat hands it over before its
+    /// filters).
+    pub(crate) fn rlva_freeze_line(&self, scope: NameScope, line: &mut ChatLine) {
+        if line.origin != Origin::Live || !self.rlva.enabled() {
+            return;
+        }
+        let (speaker, from) = self.rlva_sender(scope, line.kind, line.source, std::mem::take(&mut line.from));
+        line.speaker = speaker;
+        line.from = from;
+        if line.kind.is_automated()
+            && let Cow::Owned(text) = self.rlva_filter_text_in(line.kind.text_in(scope), &line.text)
+        {
+            line.text = text;
+        }
+        if scope == NameScope::World
+            && !line.blocked
+            && let Cow::Owned(text) = self.rlva_freeze_mentions(&line.text)
+        {
+            line.text = text;
+        }
+    }
+
+    /// RlvUtil::filterMentions (indra/newview/rlvcommon.cpp): under
+    /// `@shownames`, the `/mention` link of a resident whose name is hidden
+    /// becomes "@" and their stand-in, in plain text. As there, only a link
+    /// that ends its line, or that `/` or `?` follows, is one
+    /// (`/mention(?=/|\?|$)`): a mention followed by a space or by more
+    /// text stays a link, which names its resident
+    /// (LLUrlEntryAgentMention has no RLVa test).
+    pub fn rlva_freeze_mentions<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        const PREFIX: &str = "secondlife:///app/agent/";
+        const SUFFIX: &str = "/mention";
+        if !self.rlva.has("shownames") || !text.contains(SUFFIX) {
+            return Cow::Borrowed(text);
+        }
+        let end = PREFIX.len() + 36 + SUFFIX.len();
+        let mut out = String::with_capacity(text.len());
+        let mut changed = false;
+        let mut rest = text;
+        while let Some(i) = rest.find(PREFIX) {
+            let link = &rest[i..];
+            let id = link.get(PREFIX.len()..PREFIX.len() + 36).and_then(|u| Uuid::parse_str(u).ok());
+            let ends = link.get(PREFIX.len() + 36..end) == Some(SUFFIX)
+                && matches!(link[end..].chars().next(), None | Some('/' | '?' | '\n' | '\r'));
+            match id {
+                Some(id) if ends && !self.rlva_can_name(id) => {
+                    out.push_str(&rest[..i]);
+                    out.push('@');
+                    out.push_str(&self.rlva_anonymous(id).display_name);
+                    rest = &link[end..];
+                    changed = true;
+                }
+                _ => {
+                    out.push_str(&rest[..i + PREFIX.len()]);
+                    rest = &link[PREFIX.len()..];
+                }
+            }
+        }
+        if !changed {
+            return Cow::Borrowed(text);
+        }
+        out.push_str(rest);
+        Cow::Owned(out)
+    }
+
+    /// The contact-set appearance of the sender of `line`: none for one
+    /// whose name was hidden when the line arrived
+    /// (`rlva_contact_appearance`, decided then: `Speaker`).
+    pub fn rlva_line_appearance(&self, line: &ChatLine) -> &std::sync::Arc<Appearance> {
+        if line.speaker == Speaker::Hidden {
+            &PLAIN_APPEARANCE
+        } else {
+            self.contact_sets.appearance(&line.source)
+        }
     }
 
     /// The contact-set appearance to show for `id`: none for a resident
@@ -439,25 +595,28 @@ impl World {
                 } else {
                     self.social.avatar_names.anonymous(&id).display_name.clone()
                 };
-                if let Some(name) = self.social.names.get(&id) {
-                    filter.add_identity(name, &replacement);
-                }
-                if let Some(name) = self
-                    .objects
-                    .index_of_uuid(&id)
-                    .and_then(|i| self.objects.get(i))
-                    .and_then(|o| o.display_name())
-                {
-                    filter.add_identity(&name, &replacement);
-                }
+                // RlvUtil::filterNames: the display name and the legacy
+                // name of each avatar around, nothing else (not the
+                // account name "jane.doe", nor a name escaped in an
+                // address). Until the name service answers, the legacy
+                // name the avatar's object came with stands for both.
                 if let Some(name) = self.social.avatar_names.raw(&id) {
-                    // the whole legacy name first, "Resident" included, as
-                    // RlvUtil::filterNames replaces LLAvatarName::getLegacyName:
+                    // the whole legacy name, "Resident" included:
                     // "Jane Resident" is one stand-in, not "<stand-in> Resident"
-                    filter.add_identity(&name.legacy_name(), &replacement);
-                    filter.add_identity(&name.display_name, &replacement);
-                    filter.add_identity(&name.user_name(), &replacement);
-                    filter.add_identity(&name.username, &replacement);
+                    filter.add_name(&name.legacy_name(), &replacement);
+                    filter.add_name(&name.display_name, &replacement);
+                } else {
+                    if let Some(name) = self.social.names.get(&id) {
+                        filter.add_name(name, &replacement);
+                    }
+                    if let Some(name) = self
+                        .objects
+                        .index_of_uuid(&id)
+                        .and_then(|i| self.objects.get(i))
+                        .and_then(|o| o.display_name())
+                    {
+                        filter.add_name(&name, &replacement);
+                    }
                 }
             }
         }
@@ -524,6 +683,13 @@ impl World {
         self.social.avatar_names.shows(scope, &id)
     }
 
+    /// `rlva_shows_name` where the Legacy Viewer names oneself alone, an
+    /// `@shownames:<uuid>` exception hidden as anyone
+    /// (LLSidepanelTaskInfo::refreshAll, llsidepaneltaskinfo.cpp).
+    pub fn rlva_shows_name_but_exceptions(&self, scope: NameScope, id: Uuid) -> bool {
+        self.social.avatar_names.shows_but_exceptions(scope, &id, &self.agent_id)
+    }
+
     /// The notice of what `from` gives us, or of their answer to what we
     /// gave them, names them. inventory_offer_handler and IM_INVENTORY_ACCEPTED
     /// / IM_INVENTORY_DECLINED in process_improved_im
@@ -544,6 +710,14 @@ impl World {
     /// The avatars of every region around, oneself left out
     /// (RlvUtil::isNearbyAgent over LLWorld::getAvatars, rlvcommon.cpp):
     /// the loaded ones and the coarse locations, whatever their distance.
+    /// RlvUtil::isNearbyAgent: `id` is someone else in a region around.
+    pub fn rlva_is_nearby(&self, id: Uuid) -> bool {
+        !id.is_nil()
+            && id != self.agent_id
+            && (self.coarse.values().flatten().any(|(other, _)| *other == id)
+                || self.objects.avatars().any(|(_, o)| o.full_id == id && !self.is_mirror(&id)))
+    }
+
     fn rlva_nearby_avatars(&self) -> std::collections::HashSet<Uuid> {
         let loaded = self.objects.avatars().map(|(_, o)| o.full_id).filter(|id| !self.is_mirror(id));
         let coarse = self.coarse.values().flatten().map(|(id, _)| *id);
@@ -735,13 +909,16 @@ mod tests {
         let mut filter = TextFilter::default();
         filter.add("Secret Region", "hidden");
         filter.add("Secret Region Annex", "annex");
-        filter.add_identity("Élodie Meadows", "anonymous");
+        filter.add_name("Élodie Meadows", "anonymous");
+        // two bytes or less: not a name RlvUtil::filterNames replaces
+        filter.add_name("Jo", "anonymous");
         assert_eq!(
             filter.apply("SECRET REGION ANNEX / Secret Region / ÉLODIE MEADOWS"),
             "annex / hidden / anonymous"
         );
-        assert_eq!(filter.apply("Élodie%20Meadows"), "anonymous");
-        assert_eq!(filter.apply("%C3%89lodie%20Meadows"), "anonymous");
+        // a name is replaced as it is written, not as an address escapes it
+        assert!(matches!(filter.apply("Élodie%20Meadows and Jo"), Cow::Borrowed(_)));
+        assert!(matches!(filter.apply("%C3%89lodie%20Meadows"), Cow::Borrowed(_)));
         assert!(matches!(filter.apply("Secret Regional and Élodie Meadowson"), Cow::Borrowed(_)));
         let mut same = TextFilter::default();
         same.replacements.clone_from(&filter.replacements);
@@ -1106,6 +1283,7 @@ mod tests {
             origin: crate::world::Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -1118,9 +1296,13 @@ mod tests {
         assert_eq!(conversation_names(None), NameScope::World);
         assert_eq!(conversation_names(session.as_ref()), NameScope::Roster);
         // the sender of a line, by the conversation it is read in
-        let said = line(ChatKind::Im, near, "Near Tester", "Near Tester is here");
-        assert_eq!(sender_name(&world, NameScope::Roster, "Me", &said), "Near Tester");
-        assert!(!sender_name(&world, NameScope::World, "Me", &said).contains("Tester"));
+        let mut said = line(ChatKind::Im, near, "Near Tester", "Near Tester is here");
+        world.rlva_freeze_line(NameScope::Roster, &mut said);
+        assert_eq!(sender_name(&world, "Me", &said), "Near Tester");
+        assert_eq!(said.text, "Near Tester is here");
+        let mut heard = line(ChatKind::Local(aurora_net::ChatType::Normal), near, "Near Tester", "hello");
+        world.rlva_freeze_line(NameScope::World, &mut heard);
+        assert!(!sender_name(&world, "Me", &heard).contains("Tester"));
         // its text: the session keeps the names it was written with
         assert_eq!(resolved_text_in(&world, NameScope::Roster, &said.text), said.text);
         assert!(!resolved_text_in(&world, NameScope::World, &said.text).contains("Tester"));
@@ -1172,6 +1354,141 @@ mod tests {
         restrict(&mut world, "shownames=y");
         world.refresh_rlva_privacy();
         assert_eq!(world.rlva_filter_text(&text), notice);
+    }
+
+    /// What `@shownames` hides of a chat line is decided when the line
+    /// arrives and kept with it (process_chat_from_simulator writes the
+    /// stand-in in `chat.mFromName` and sets `mRlvNamesFiltered`): a line
+    /// said under the restriction keeps its stand-in once it is lifted, one
+    /// said without it keeps its name when it comes back.
+    #[test]
+    fn a_chat_line_keeps_what_shownames_made_of_it_when_it_arrived() {
+        use crate::ui::chat::sender_name;
+        use crate::world::Speaker;
+        let (mut world, near) = shownames_world();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        let chat = |world: &mut World, source_type, source_id: Uuid, name: &str, text: &str| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: name.into(),
+                source_id,
+                owner_id: near,
+                source_type,
+                chat_type: aurora_net::ChatType::Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.into(),
+            }));
+        };
+        let object = Uuid::from_u128(0x0B1E_C7ED);
+        let agent = aurora_net::ChatSourceType::Agent;
+        let thing = aurora_net::ChatSourceType::Object;
+        chat(&mut world, agent, near, "Near Tester", "said while hidden");
+        chat(
+            &mut world,
+            thing,
+            object,
+            "Greeter of Near Tester",
+            "Near Tester waves while hidden",
+        );
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        chat(&mut world, agent, near, "Near Tester", "said while named");
+        chat(&mut world, thing, object, "Greeter of Near Tester", "Near Tester waves while named");
+        let check = |world: &World| {
+            let line = |text: &str| world.chat.iter().find(|l| l.text.ends_with(text)).cloned().expect("line");
+            let hidden = line("said while hidden");
+            assert_eq!(hidden.speaker, Speaker::Hidden);
+            assert!(hidden.anonymous());
+            assert_eq!(hidden.from, stand_in);
+            assert_eq!(sender_name(world, "Me", &hidden), stand_in);
+            assert!(world.rlva_line_appearance(&hidden).chat_text.is_none());
+            let named = line("said while named");
+            assert_eq!(named.speaker, Speaker::Named);
+            assert!(!named.anonymous());
+            assert_eq!(sender_name(world, "Me", &named), "Near Tester");
+            // an object's line: its name, its text and the owner its
+            // inspector hides (`rlv_shownames`)
+            let hidden = line("waves while hidden");
+            assert_eq!(hidden.text, format!("{stand_in} waves while hidden"));
+            assert_eq!(hidden.from, format!("Greeter of {stand_in}"));
+            assert_eq!(sender_name(world, "Me", &hidden), hidden.from);
+            assert!(world.chat_object(&hidden).is_some_and(|o| o.owner_hidden));
+            let named = line("waves while named");
+            assert_eq!(named.text, "Near Tester waves while named");
+            assert_eq!(named.from, "Greeter of Near Tester");
+            assert!(world.chat_object(&named).is_some_and(|o| !o.owner_hidden));
+            // nothing rewrites a line when it is drawn
+            for l in [&hidden, &named] {
+                assert!(!l.wording(NameScope::World).rewritten);
+            }
+        };
+        // with the restriction lifted, then back
+        check(&world);
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        check(&world);
+    }
+
+    /// RlvUtil::filterMentions: the pattern ends with `(?=/|\?|$)`, so a
+    /// mention is rewritten at the end of its line, or before `/` or `?`,
+    /// and left as a link (which names its resident) before anything else.
+    #[test]
+    fn a_mention_is_rewritten_where_the_legacy_pattern_matches_it() {
+        let (mut world, near) = shownames_world();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        let link = format!("secondlife:///app/agent/{near}/mention");
+        assert_eq!(world.rlva_freeze_mentions(&format!("ask {link}")), format!("ask @{stand_in}"));
+        assert_eq!(
+            world.rlva_freeze_mentions(&format!("ask {link}\nnow")),
+            format!("ask @{stand_in}\nnow")
+        );
+        assert_eq!(
+            world.rlva_freeze_mentions(&format!("{link}?x {link}/y")),
+            format!("@{stand_in}?x @{stand_in}/y")
+        );
+        for kept in [format!("ask {link} now"), format!("{link}, hello"), format!("{link}s")] {
+            assert_eq!(world.rlva_freeze_mentions(&kept), kept);
+        }
+        // oneself, an exception, and no restriction
+        let me = format!("ask secondlife:///app/agent/{}/mention", world.agent_id);
+        assert_eq!(world.rlva_freeze_mentions(&me), me);
+        restrict(&mut world, &format!("shownames:{near}=add"));
+        world.refresh_rlva_privacy();
+        let text = format!("ask {link}");
+        assert_eq!(world.rlva_freeze_mentions(&text), text);
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        assert_eq!(world.rlva_freeze_mentions(&text), text);
+    }
+
+    /// A notice is settled when it comes: one already shown keeps its text
+    /// when `@shownames` comes, one that came under it keeps its stand-in
+    /// once it is lifted.
+    #[test]
+    fn a_notice_keeps_what_shownames_made_of_it_when_it_came() {
+        use crate::world::notifications::{Data, Kind};
+        let (mut world, near) = shownames_world();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        let under = world
+            .notifications
+            .push(Kind::Info, "Near Tester waves", "Near Tester is here", Data::None);
+        world.refresh_rlva_privacy();
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        let without = world
+            .notifications
+            .push(Kind::Info, "Near Tester waves", "Near Tester is here", Data::None);
+        world.refresh_rlva_privacy();
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        let notice = |id: u64| world.notifications.list.iter().find(|n| n.id == id).expect("notice");
+        assert_eq!(notice(under).title, format!("{stand_in} waves"));
+        assert_eq!(notice(under).body, format!("{stand_in} is here"));
+        assert_eq!(notice(without).title, "Near Tester waves");
+        assert_eq!(notice(without).body, "Near Tester is here");
+        for id in [under, without] {
+            assert!(!world.notifications.text_of(notice(id)).rewritten);
+        }
     }
 
     /// `@shownames` and `@showloc` rewrite what an object or the system

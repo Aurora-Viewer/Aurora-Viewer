@@ -627,6 +627,12 @@ pub struct Notifications {
     /// The notices that name their resident whatever RLVa's `@shownames`
     /// hides afterwards (`name_resident`).
     named: HashSet<u64>,
+    /// The notices whose text RLVa's `@shownames` and `@showloc` have
+    /// settled (`settle`): rewritten, or left as it was, when the notice
+    /// came, and shown as it is since. The Legacy Viewer writes the text of
+    /// a notification once, and nothing rewrites a notification already
+    /// shown when a restriction comes or goes.
+    settled: HashSet<u64>,
 }
 
 const MAX: usize = 100;
@@ -635,6 +641,8 @@ impl Notifications {
     /// Refresh an active notification's presentation, including the entry
     /// snapshot used if it departs before the next history tick.
     pub fn update_body(&mut self, id: u64, body: String) {
+        // a new text, to settle again
+        self.settled.remove(&id);
         if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
             n.body.clone_from(&body);
         }
@@ -682,12 +690,33 @@ impl Notifications {
     /// How the text of the notice `n` is shown under `@shownames` and
     /// `@showloc`: as its kind is (`Kind::text`), or naming everyone once
     /// `name_resident` named its resident.
+    ///
+    /// Once settled (`settle`), the text is shown as it is: what was to be
+    /// hidden when the notice came is rewritten in it already.
     pub fn text_of(&self, n: &Notification) -> super::names::TextScope {
-        if self.names_resident(n.id) {
+        let text = if self.names_resident(n.id) {
             super::names::NameScope::Roster.into()
         } else {
             n.kind.text()
+        };
+        if self.settled.contains(&n.id) {
+            super::names::TextScope::as_received(text.names)
+        } else {
+            text
         }
+    }
+
+    /// The listed notices that came since the last call: their text is
+    /// settled now (`World::refresh_rlva_privacy` rewrites what RLVa hides
+    /// at this moment) and never again.
+    pub fn settle(&mut self) -> Vec<u64> {
+        let list = &self.list;
+        if self.settled.len() > list.len() {
+            self.settled.retain(|id| list.iter().any(|n| n.id == *id));
+        }
+        let fresh: Vec<u64> = list.iter().map(|n| n.id).filter(|id| !self.settled.contains(id)).collect();
+        self.settled.extend(&fresh);
+        fresh
     }
 
     /// Every listed notice with the scope of its text (`text_of`), to

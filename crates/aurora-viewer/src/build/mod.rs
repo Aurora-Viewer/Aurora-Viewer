@@ -1109,12 +1109,34 @@ pub fn selectable(world: &World, idx: usize) -> bool {
     world.rlva_within_fartouch(idx) && selectable_within(world, idx)
 }
 
-/// [`selectable`] without @fartouch's distance: what a right click on a
-/// surface within 1.5 m still selects for its menu.
+/// [`selectable`] without @fartouch's distance: what the build tools open
+/// on from the menu of a right click on a surface within 1.5 m.
 pub fn selectable_within(world: &World, idx: usize) -> bool {
-    if !rlva_selectable(world, idx) {
-        return false;
-    }
+    rlva_selectable(world, idx) && selectable_kind(world, idx)
+}
+
+/// What a right click selects for the time of its menu (`temp_select` in
+/// LLToolSelect::handleObjectSelection, indra/newview/lltoolselect.cpp):
+/// an object RLVa keeps from edits too (RlvActions::canEdit only refuses a
+/// selection that is not temporary), and under @fartouch one whose own
+/// place is too far when the surface clicked is within 1.5 m (`near`).
+/// @interact leaves a HUD alone.
+pub fn menu_selectable(world: &World, idx: usize, near: bool) -> bool {
+    (!world.rlva.has("interact") || world.hud_root(idx).is_some())
+        && (near || world.rlva_within_fartouch(idx))
+        && selectable_kind(world, idx)
+}
+
+/// What RLVa lets the menu's own selection keep
+/// (LLSelectMgr::deselectAllIfTooFar: a transient node is not asked
+/// RlvActions::canEdit; under @interact only a HUD stays).
+pub fn rlva_keeps_menu_selection(world: &World, idx: usize) -> bool {
+    !world.rlva.has("interact") || world.hud_root(idx).is_some()
+}
+
+/// An object of a kind that can be selected: a prim or a tree, in the world
+/// or worn by our avatar.
+fn selectable_kind(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
         let Some(o) = world.objects.get(i) else {
@@ -1418,7 +1440,20 @@ impl BuildTool {
             self.deselect_all(world);
         }
         self.selection_linked = s.edit_linked;
+        // LLToolSelect::handleObjectSelection: a click on an object RLVa
+        // keeps from edits (RlvActions::canEdit) leaves the selection as it
+        // is, where a click on nothing clears it.
+        if let Some(i) = idx
+            && !world.rlva_can_edit(i)
+            && selectable_kind(world, i)
+        {
+            return;
+        }
         let unit = idx.and_then(|i| Self::unit_of(world, i, s.edit_linked));
+        self.click_select_unit(world, s, idx, unit, extend);
+    }
+
+    fn click_select_unit(&mut self, world: &mut World, s: &BuildSettings, idx: Option<usize>, unit: Option<ObjKey>, extend: bool) {
         let Some(unit) = unit else {
             if !extend {
                 self.deselect_all(world);
@@ -1502,10 +1537,34 @@ impl BuildTool {
     /// (`extend_select` in LLToolSelect::handleObjectSelection, which
     /// LLToolPie::handleRightClickPick calls with the click's mask).
     pub fn select_for_menu_with(&mut self, world: &mut World, s: &BuildSettings, idx: usize, extend: bool) -> bool {
-        if Self::unit_of(world, idx, s.edit_linked).is_none() {
+        self.select_for_menu_near(world, s, idx, extend, false)
+    }
+
+    /// Whether the right click's selection of `idx` can only be temporary:
+    /// RLVa keeps the object from edits, or @fartouch finds it too far. The
+    /// build tools close first on such an object
+    /// (LLToolMgr::leaveBuildMode in LLToolSelect::handleObjectSelection).
+    pub fn menu_only(world: &World, idx: usize) -> bool {
+        !world.rlva_can_edit(idx) || !world.rlva_within_fartouch(idx)
+    }
+
+    /// As [`Self::select_for_menu_with`], with `near`: the surface clicked
+    /// is within 1.5 m. The selection is temporary, so it takes what RLVa
+    /// keeps from edits and, with `near`, what @fartouch finds too far
+    /// (`menu_selectable`), once the build tools are closed (`menu_only`).
+    pub fn select_for_menu_near(&mut self, world: &mut World, s: &BuildSettings, idx: usize, extend: bool, near: bool) -> bool {
+        if !menu_selectable(world, idx, near) || self.replacement_active() || (self.open && Self::menu_only(world, idx)) {
             return false;
         }
-        self.click_select(world, s, Some(idx), extend);
+        if self.selection_linked != s.edit_linked && !self.selection.is_empty() {
+            self.deselect_all(world);
+        }
+        self.selection_linked = s.edit_linked;
+        let unit = world
+            .objects
+            .get(if s.edit_linked { idx } else { root_of(world, idx) })
+            .map(|o| o.key);
+        self.click_select_unit(world, s, Some(idx), unit, extend);
         if !self.open {
             self.menu_selection = true;
         }
