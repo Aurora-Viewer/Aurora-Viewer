@@ -353,6 +353,24 @@ impl ChatLog {
         self.worker.as_ref()
     }
 
+    /// Run a job on the transcript thread, in turn with the lines queued
+    /// before it (the Chat Service's storage). False when it was refused:
+    /// it will not run.
+    pub fn run_job(&mut self, job: impl FnOnce() + Send + 'static) -> bool {
+        self.worker().is_some_and(|w| w.run(job))
+    }
+
+    /// The legacy-transcript inputs of a direct conversation's stitched
+    /// read: the folder and the cleaned stem whose family is read
+    /// (LLLogChat::getTranscriptFamily). None while logged out.
+    pub fn family_of(&self, stem: &str) -> Option<(PathBuf, String)> {
+        let clean = names::clean_file_name(stem.trim());
+        if clean.is_empty() {
+            return None;
+        }
+        Some((self.dir()?.to_path_buf(), clean))
+    }
+
     /// Append a line to a conversation's file (LLLogChat::saveHistory). An
     /// empty `from` is a system line. Nothing happens while logged out.
     pub fn append(&mut self, stem: &str, time: SystemTime, from: &str, text: &str) {
