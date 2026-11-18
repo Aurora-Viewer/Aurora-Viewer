@@ -405,10 +405,12 @@ impl Kind {
 
     /// The body of a notice of this kind under `@shownames` and `@showloc`
     /// (`names::TextScope`): shown as written when a resident typed it (the
-    /// card of a message) or a script sent it (`as_received`), rewritten for
-    /// the other kinds.
+    /// card of a message) or a script sent it (`as_received`, where a
+    /// `/mention` names its resident too), rewritten for the other kinds.
     pub fn text(self) -> super::names::TextScope {
-        if self.as_received() || self == Kind::Message {
+        if self.as_received() {
+            super::names::TextScope::as_received(self.names())
+        } else if self == Kind::Message {
             super::names::TextScope::verbatim(self.names())
         } else {
             self.names().into()
