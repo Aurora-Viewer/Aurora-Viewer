@@ -28,7 +28,10 @@ fn rings(output: &FullOutput, palette: Palette) -> Vec<(Rect, Rect)> {
         .shapes
         .iter()
         .filter_map(|shape| match &shape.shape {
-            egui::Shape::Rect(rect) if rect.stroke == Stroke::new(2.0, palette.ink) && rect.fill == egui::Color32::TRANSPARENT => {
+            egui::Shape::Rect(rect)
+                if (rect.stroke == Stroke::new(2.0, palette.ink) || rect.stroke == Stroke::new(1.0, palette.ink))
+                    && rect.fill == egui::Color32::TRANSPARENT =>
+            {
                 Some((rect.rect, shape.clip_rect))
             }
             _ => None,
@@ -220,10 +223,13 @@ fn the_ring_keeps_its_controls_clip_and_layer_and_disappears_with_it() {
     let painted = rings(&output, theme.palette());
     assert_eq!(painted.len(), 1);
     assert_eq!(painted[0].1, Rect::from_min_max(pos2(40.0, 50.0), pos2(240.0, 70.0)));
-    assert!(painted[0].0.top() < painted[0].1.top(), "exercise a partly scrolled-out control");
+    assert_eq!(
+        painted[0].0, painted[0].1,
+        "the constrained indicator outlines only the visible portion"
+    );
     let index = |stroke: bool| {
         output.shapes.iter().position(|s| match &s.shape {
-            egui::Shape::Rect(r) if stroke => r.stroke == Stroke::new(2.0, theme.palette().ink),
+            egui::Shape::Rect(r) if stroke => r.stroke == Stroke::new(1.0, theme.palette().ink),
             egui::Shape::Rect(r) => r.fill == theme.palette().raised,
             _ => false,
         })
@@ -258,6 +264,73 @@ fn a_skin_reload_updates_the_ring_without_resetting_keyboard_navigation() {
     bench.expect_ring(&output, bench.navigation);
 }
 
+#[test]
+fn sized_buttons_and_a_scroll_edge_have_a_real_visible_indicator() {
+    for scrolled in [false, true] {
+        for shared in [false, true] {
+            let ctx = Context::default();
+            let theme = Theme::default();
+            theme.apply(&ctx, 1.0);
+            let palette = theme.palette();
+            let mut painter = crate::crash::software::Painter::default();
+            let mut pixels = vec![0; 600 * 400];
+            let background = (u32::from(palette.panel.r()) << 16) | (u32::from(palette.panel.g()) << 8) | u32::from(palette.panel.b());
+            let mut visible = Rect::NOTHING;
+            for pass in 0..3 {
+                let events = if pass == 2 { vec![key(Key::Tab, false)] } else { Vec::new() };
+                let mut output = ctx.run_ui(input(events), |ui| {
+                    egui::Frame::new().inner_margin(20.0).show(ui, |ui| {
+                        let mut button = |ui: &mut Ui| {
+                            let response = if shared {
+                                crate::ui::widgets::flat_button_sized(ui, &palette, "Wider glyphs gypé", vec2(180.0, 26.0))
+                            } else {
+                                ui.add_sized(vec2(180.0, 26.0), egui::Button::new("Wider glyphs gypé"))
+                            };
+                            response.request_focus();
+                            visible = response.rect.intersect(ui.clip_rect());
+                            if scrolled {
+                                assert_eq!(response.rect.top(), ui.clip_rect().top(), "exercise an exact scroll edge");
+                                ui.add_space(200.0);
+                            }
+                        };
+                        if scrolled {
+                            egui::ScrollArea::vertical().max_height(70.0).show(ui, button);
+                        } else {
+                            button(ui);
+                        }
+                    });
+                });
+                painter.update_textures(&output.textures_delta);
+                if pass == 2 {
+                    let ring = output
+                        .shapes
+                        .iter()
+                        .filter(|shape| {
+                            matches!(&shape.shape, egui::Shape::Rect(r)
+                            if r.stroke == Stroke::new(1.0, palette.ink)
+                                && r.fill == egui::Color32::TRANSPARENT
+                                && r.stroke_kind == StrokeKind::Inside)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    assert_eq!(ring.len(), 1, "shared={shared}, scrolled={scrolled}");
+                    let primitives = ctx.tessellate(ring, output.pixels_per_point);
+                    painter.fill_and_draw(&mut pixels, [600, 400], &primitives, output.pixels_per_point, palette.panel);
+                    let mut painted = 0;
+                    for (at, pixel) in pixels.iter().enumerate() {
+                        if *pixel != background {
+                            painted += 1;
+                            assert!(visible.contains(pos2((at % 600) as f32 + 0.5, (at / 600) as f32 + 0.5)));
+                        }
+                    }
+                    assert!(painted > 100, "the outline must survive rasterization and clipping");
+                }
+                output.textures_delta.clear();
+            }
+        }
+    }
+}
+
 /// A visual check without opening/activating a native window or injecting
 /// input into the human's desktop. Uses Aurora's real fonts, widgets and
 /// software painter (the splash/recovery window), and ordinary Tab events.
@@ -287,14 +360,15 @@ fn capture_controls_offscreen() {
         crate::ui::fonts::apply(&ctx, "");
         let palette = theme.palette();
         let mut painter = crate::crash::software::Painter::default();
-        let mut pixels = vec![0u32; 480 * 300];
+        let mut pixels = vec![0u32; 480 * 420];
         let field = Id::unique("visual_focus_search");
         let mut text = "Parcelles : glyphes gypé".to_owned();
         let mut on = false;
+        let mut height = 0.0;
         let mut frame = |events: Vec<Event>, save: Option<&str>| {
             let mut raw = input(events);
-            raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(480.0, 300.0)));
-            let output = ctx.run_ui(raw, |ui| {
+            raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(480.0, 420.0)));
+            let mut output = ctx.run_ui(raw, |ui| {
                 egui::Frame::new().inner_margin(20.0).show(ui, |ui| {
                     ui.set_width(380.0);
                     ui.heading("Navigation au clavier");
@@ -304,23 +378,28 @@ fn capture_controls_offscreen() {
                     crate::ui::widgets::flat_button(ui, &palette, "Enregistrer");
                     crate::ui::widgets::switch_labeled(ui, &palette, &mut on, "Afficher les lignes");
                     ui.hyperlink_to("Documentation", "https://example.com");
+                    crate::ui::widgets::flat_button_sized(ui, &palette, "Vérifier les mises à jour", vec2(220.0, 26.0));
+                    ui.add_sized(vec2(220.0, 26.0), egui::Button::new("Bouton direct : gypé"));
+                    crate::ui::widgets::height_slider(ui, &palette, &mut height, -1.0..=1.0, false);
+                    ui.scope(|ui| ui.add(egui::Label::new("MW|_gypé").sense(Sense::click())));
                 });
             });
             let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
             painter.paint(
                 &mut pixels,
-                [480, 300],
+                [480, 420],
                 &primitives,
                 &output.textures_delta,
                 output.pixels_per_point,
                 palette.panel,
             );
+            output.textures_delta.clear();
             if let Some(name) = save {
                 let data = pixels
                     .iter()
                     .flat_map(|pixel| [(pixel >> 16) as u8, (pixel >> 8) as u8, *pixel as u8])
                     .collect();
-                let image = image::RgbImage::from_raw(480, 300, data).expect("capture pixels");
+                let image = image::RgbImage::from_raw(480, 420, data).expect("capture pixels");
                 let file = folder.join(format!("{look}-{name}.png"));
                 image.save(&file).expect("write capture");
                 println!("{}", file.display());
@@ -339,5 +418,10 @@ fn capture_controls_offscreen() {
         frame(vec![key(Key::Tab, false)], Some("switch"));
         frame(vec![key(Key::Tab, false)], Some("switch-label"));
         frame(vec![key(Key::Tab, false)], Some("link"));
+        frame(vec![key(Key::Tab, false)], Some("sized-button"));
+        frame(vec![key(Key::Tab, false)], Some("direct-button"));
+        frame(vec![key(Key::Tab, false)], Some("height-slider"));
+        frame(vec![key(Key::Tab, false)], Some("height-value"));
+        frame(vec![key(Key::Tab, false)], Some("tight-label"));
     }
 }

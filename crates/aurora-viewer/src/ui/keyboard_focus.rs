@@ -95,14 +95,31 @@ impl egui::Plugin for KeyboardFocus {
         {
             return;
         }
-        // Outside the control: an inside stroke covers glyphs of tight
-        // labels, links and text fields. Keep the parent's visible bounds
+        // Prefer outside the control: a thick inside stroke covers glyphs
+        // of tight labels, links and text fields. Keep the parent's visible bounds
         // and every side already cut by the control's own clip. The layer
         // still lets covering windows/popups obscure the outline.
-        let painter = Painter::new(ctx.clone(), widget.layer_id, outline_clip(widget, parent));
+        let clip = outline_clip(widget, parent);
+        let visible = widget.rect.intersect(clip);
+        if !visible.is_positive() {
+            return;
+        }
+        let painter = Painter::new(ctx.clone(), widget.layer_id, clip);
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        painter.rect_stroke(widget.rect, radius, Stroke::new(4.0, self.palette.bar), StrokeKind::Outside);
-        painter.rect_stroke(widget.rect, radius, Stroke::new(2.0, self.palette.ink), StrokeKind::Outside);
+        if clip.left() < widget.rect.left()
+            || clip.top() < widget.rect.top()
+            || clip.right() > widget.rect.right()
+            || clip.bottom() > widget.rect.bottom()
+        {
+            painter.rect_stroke(widget.rect, radius, Stroke::new(4.0, self.palette.bar), StrokeKind::Outside);
+            painter.rect_stroke(widget.rect, radius, Stroke::new(2.0, self.palette.ink), StrokeKind::Outside);
+        } else {
+            // add_sized/scope can give a control a parent exactly its size.
+            // An outside stroke would then be entirely clipped. Keep a thin
+            // inset indicator, without the thick backing that covers text,
+            // inside the visible portion. This also respects a scroll edge.
+            painter.rect_stroke(visible, radius, Stroke::new(1.0, self.palette.ink), StrokeKind::Inside);
+        }
     }
 }
 
