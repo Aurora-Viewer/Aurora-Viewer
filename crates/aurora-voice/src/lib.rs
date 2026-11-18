@@ -29,6 +29,7 @@ mod transmit;
 
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use aurora_audio::{MicCapture, VoiceSink};
 use glam::{DVec3, Quat};
@@ -86,6 +87,32 @@ pub struct VoiceSession {
     shared: Arc<Shared>,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     agent_id: Uuid,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+/// A session closed for the viewer's exit, until its thread has ended
+/// ([`VoiceSession::close_for_exit`]).
+#[must_use = "the viewer waits for the session's thread before it exits"]
+pub struct ExitWait {
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ExitWait {
+    /// Waits up to `timeout` for the session's thread to end; false if it is
+    /// still running. Polled every 10 ms, like
+    /// LLWebRTCVoiceClient::drainConnections.
+    pub fn wait(self, timeout: Duration) -> bool {
+        let Some(thread) = self.thread else { return true };
+        let deadline = Instant::now() + timeout;
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _ = thread.join();
+        true
+    }
 }
 
 /// Largest accepted [`VoiceSession::set_mic_gain`] value.
@@ -134,10 +161,19 @@ impl VoiceSession {
             rt.block_on(session::run(http, params, sink, thread_shared, cmd_rx));
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
         });
-        if let Err(e) = spawned {
-            *shared.status.lock() = VoiceStatus::Error(format!("cannot start voice thread: {e}"));
+        let thread = match spawned {
+            Ok(thread) => Some(thread),
+            Err(e) => {
+                *shared.status.lock() = VoiceStatus::Error(format!("cannot start voice thread: {e}"));
+                None
+            }
+        };
+        VoiceSession {
+            shared,
+            cmd_tx,
+            agent_id,
+            thread,
         }
-        VoiceSession { shared, cmd_tx, agent_id }
     }
 
     /// Current connection status.
@@ -252,6 +288,20 @@ impl VoiceSession {
     /// Leaves the channel (logout + close happen in the background).
     pub fn disconnect(self) {
         drop(self);
+    }
+
+    /// Leaves the channel because the viewer is quitting: the connection is
+    /// closed without the logout request, and the viewer waits on the
+    /// returned [`ExitWait`] before it exits, as
+    /// LLWebRTCVoiceClient::terminate (indra/newview/llvoicewebrtc.cpp)
+    /// drains the connections. A thread still running when the process
+    /// exits can abort it on Linux: the exit frees the TLS library's random
+    /// generator, which a new connection then finds gone.
+    pub fn close_for_exit(mut self) -> ExitWait {
+        self.shared.exiting.store(true, std::sync::atomic::Ordering::Relaxed);
+        ExitWait {
+            thread: self.thread.take(),
+        }
     }
 }
 

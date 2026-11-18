@@ -82,6 +82,9 @@ pub(crate) struct Shared {
     pub tx: TxControl,
     /// The viewer's own gain on the received voice (private calls).
     pub rx_gain: ReceiveGain,
+    /// The viewer is quitting: the channel is left without its logout
+    /// ([`crate::VoiceSession::close_for_exit`]).
+    pub exiting: AtomicBool,
 }
 
 impl Shared {
@@ -93,6 +96,7 @@ impl Shared {
             prefs: Mutex::new(LocalPrefs::default()),
             tx: TxControl::new(),
             rx_gain: ReceiveGain::default(),
+            exiting: AtomicBool::new(false),
         }
     }
 
@@ -809,8 +813,13 @@ async fn negotiate_and_run(
     }
     .await;
 
-    // breakVoiceConnectionCoro: tell the server we are leaving.
-    logout(http, &params.provision_cap_url, &viewer_session).await;
+    // breakVoiceConnectionCoro: tell the server we are leaving, unless the
+    // viewer is quitting: LLVoiceWebRTCConnection::connectionStateMachine
+    // (VOICE_STATE_DISCONNECT) skips this courtesy logout while shutting
+    // down and only closes the connection.
+    if !shared.exiting.load(Ordering::Relaxed) {
+        logout(http, &params.provision_cap_url, &viewer_session).await;
+    }
     outcome
 }
 

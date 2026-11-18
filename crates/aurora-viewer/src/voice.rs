@@ -108,6 +108,14 @@ impl Voice {
         self.own_level = 0.0;
         self.status.clear();
     }
+    /// The viewer quits: the session closes without its logout and the
+    /// microphone stops; the app waits on the returned handle before the
+    /// process exits (aurora_voice::VoiceSession::close_for_exit).
+    pub fn close_for_exit(&mut self) -> Option<aurora_voice::ExitWait> {
+        self.mic = None;
+        self.connected = false;
+        self.session.take().map(|(_, session)| session.close_for_exit())
+    }
     /// A channel to join, None to keep the current call, or why to leave.
     fn wanted(v: &VoiceInputs, current: Option<&ChannelKey>) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
         if !v.enabled {

@@ -361,7 +361,45 @@ fn loopback_webrtc_session() {
         channel_id: "test-private-call".into(),
         credentials: "test-call-credentials".into(),
     });
+    check_quit_without_logout();
     LOOPBACK_ONLY.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Quitting closes the connection without the logout, and the session's
+/// thread ends within the viewer's wait.
+fn check_quit_without_logout() {
+    let server_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let state = Arc::new(ServerState::default());
+    let url = start_fake_server(server_rt.handle().clone(), state.clone(), Uuid::from_u128(0x43));
+    let params = VoiceConnectParams {
+        provision_cap_url: url,
+        signaling_cap_url: None,
+        agent_id: Uuid::from_u128(0x42),
+        voice_server_type: "webrtc".into(),
+        channel: ChannelKind::Local { parcel_local_id: Some(5) },
+        grid: "agni".into(),
+        stun_servers: Some(vec![]),
+    };
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let (sink, _tap) = PcmSink::loopback(48_000);
+    let session = VoiceSession::connect(http, params, sink);
+    wait_for("connected", Duration::from_secs(30), || {
+        session.status() == crate::VoiceStatus::Connected
+    });
+
+    assert!(
+        session.close_for_exit().wait(Duration::from_secs(10)),
+        "the session's thread did not end"
+    );
+    assert!(state.logouts.lock().is_empty(), "a logout was sent while quitting");
+    let peers: Vec<_> = state.peers.lock().drain(..).collect();
+    for pc in peers {
+        let _ = server_rt.block_on(pc.close());
+    }
 }
 
 fn check_loopback_channel(channel: ChannelKind) {
