@@ -706,6 +706,8 @@ impl App {
                         .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                 }
             }
+            // asked from a name the inventory shows (`ui::inventory::resident_scopes`:
+            // a hidden owner or creator is no link), or from a calling card
             InvAction::Profile(id) => self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id),
             InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
             InvAction::CopyLandmarkSlurl(asset) => {

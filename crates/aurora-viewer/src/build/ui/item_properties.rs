@@ -58,6 +58,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
             (id, world.social.name_of(&id))
         })
         .collect::<HashMap<_, _>>();
+    // the names above are the world's: a hidden one opens no profile
+    let unnamed = names
+        .keys()
+        .copied()
+        .filter(|id| !world.rlva_shows_name(crate::world::names::NameScope::World, *id))
+        .collect::<std::collections::HashSet<_>>();
     let mut open = true;
     properties::window(ctx, "task_item_props").show(ctx, p, &mut open, |ui| {
         let response = properties::panel(
@@ -74,6 +80,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 // TaskInventory has no thumbnail field or agent-thumbnail capability.
                 can_thumbnail: false,
                 names: &names,
+                unnamed: &unnamed,
                 images,
                 wanted_images: &mut tool.ui.wanted_images,
             },

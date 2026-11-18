@@ -230,7 +230,9 @@ fn resident(facts: &Facts, id: Uuid) -> String {
 /// A resident as a link to their profile.
 fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, id: Uuid, size: f32, actions: &mut Vec<InvAction>) {
     let name = resident(facts, id);
-    if id.is_nil() {
+    // no resident, or one RLVa's `@shownames` hides: the stand-in opens no
+    // profile (LLSidepanelItemInfo::onClickCreator / onClickOwner)
+    if id.is_nil() || facts.unnamed.contains(&id) {
         ui.label(egui::RichText::new(name).size(size).color(p.muted));
         return;
     }

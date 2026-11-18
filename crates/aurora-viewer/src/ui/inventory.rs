@@ -265,6 +265,10 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    /// The residents of `names` that RLVa's `@shownames` hides as the owner
+    /// or the creator of an item (`resident_scopes`): their name is the
+    /// stand-in and opens no profile.
+    pub unnamed: HashSet<Uuid>,
     /// The profile picture of the residents the dialogs show.
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
@@ -318,6 +322,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            unnamed: Default::default(),
             pictures: Default::default(),
             online: world
                 .social
@@ -1082,6 +1087,36 @@ impl InventoryUi {
 }
 
 use tree::folder_icon;
+
+/// The owner and the creator of an item with the place each is named in
+/// under RLVa's `@shownames`, as LLSidepanelItemInfo::refreshFromItem and
+/// LLFloaterProperties do (indra/newview/llsidepaneliteminfo.cpp,
+/// llfloaterproperties.cpp): the owner is hidden unless excepted
+/// (canShowName(SNC_DEFAULT, owner)), the creator only when they also own
+/// the item or stand in a region around (RlvUtil::isNearbyAgent). A nil id
+/// (no creator sent, a group's item) names no one.
+fn resident_scopes(it: &aurora_net::inventory::InvItem) -> impl Iterator<Item = (Uuid, crate::world::names::NameScope)> {
+    use crate::world::names::NameScope;
+    let owner = if it.group_owned { Uuid::nil() } else { it.owner };
+    [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
+        .into_iter()
+        .filter(|(id, _)| !id.is_nil())
+}
+
+impl Facts {
+    /// Files `name` for `resident`, shown in `scope`. A resident hidden in
+    /// one of the roles shown at once (the creator of an item, the owner of
+    /// another) stays hidden in both: stricter than the Legacy Viewer, which
+    /// answers for each field.
+    fn name_resident(&mut self, world: &World, resident: Uuid, scope: crate::world::names::NameScope, name: String) {
+        if !world.rlva_shows_name(scope, resident) {
+            self.unnamed.insert(resident);
+        } else if self.unnamed.contains(&resident) {
+            return;
+        }
+        self.names.insert(resident, name);
+    }
+}
 
 /// II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS / LLInventoryIcon::getIconName
 /// (Firestorm indra/{llinventory,newview}, originally LGPL 2.1).
@@ -2365,28 +2400,26 @@ pub fn show(
     } else {
         Facts::default()
     };
-    fn property_names(st: &InventoryUi, world: &World, names: &mut std::collections::HashMap<Uuid, String>) {
+    fn property_names(st: &InventoryUi, world: &World, facts: &mut Facts) {
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
         {
-            for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
-                names.insert(
-                    resident,
-                    world
-                        .social
-                        .avatar_names
-                        .complete_in(crate::world::names::NameScope::Roster, &resident)
-                        .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into()),
-                );
+            for (resident, scope) in resident_scopes(it) {
+                let name = world
+                    .social
+                    .avatar_names
+                    .complete_in(scope, &resident)
+                    .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into());
+                facts.name_resident(world, resident, scope, name);
             }
         }
         for window in &st.windows {
-            property_names(&window.state, world, names);
+            property_names(&window.state, world, facts);
         }
     }
-    property_names(st, world, &mut facts.names);
+    property_names(st, world, &mut facts);
     if let Some(dual) = dual.as_deref() {
-        property_names(dual, world, &mut facts.names);
+        property_names(dual, world, &mut facts);
     }
     // the give confirmation names its resident and shows their picture,
     // asked of the app (issue #1197)
@@ -2419,12 +2452,11 @@ pub fn show(
                 .selected
                 .and_then(|id| rules::original(&world.inventory, id))
                 .and_then(|id| world.inventory.items.get(&id))
-                .map(|it| [it.owner, it.creator]);
-            for resident in residents.into_iter().flatten().filter(|id| !id.is_nil()) {
+                .map(resident_scopes);
+            for (resident, scope) in residents.into_iter().flatten() {
                 world.social.want_name(resident);
-                facts
-                    .names
-                    .insert(resident, world.social.name_in(crate::world::names::NameScope::Roster, &resident));
+                let name = world.social.name_in(scope, &resident);
+                facts.name_resident(world, resident, scope, name);
             }
         }
     }
@@ -2450,11 +2482,16 @@ pub fn show(
                 .collect();
             st.creator_generation = Some(world.inventory.generation);
         }
+        // the search reads the creators' names and shows none of them
+        // (LLInventoryFilter has no `@shownames` test); a creator hidden in
+        // the properties or the details above keeps their stand-in
         for id in &st.creators {
             world.social.want_name(*id);
-            facts
-                .names
-                .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
+            if !facts.unnamed.contains(id) {
+                facts
+                    .names
+                    .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
+            }
         }
     }
     let inv = &mut world.inventory;
