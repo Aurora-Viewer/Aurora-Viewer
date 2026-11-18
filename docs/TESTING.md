@@ -8021,7 +8021,10 @@ failure. Grid validation and any paid upload are performed by the human.
   made up by the demo. A look is `light` or `dark`, with an optional
   `accent:<hex>`: `light,accent:#2563EB;dark,accent:#E11D48;secs=3` changes
   every 3 seconds (4 by default), and a single look stays. `system` follows
-  the real system instead. What to look for: the windows, bars, name
+  the real system instead; outside GNOME and KDE (Hyprland, Sway…)
+  xdg-desktop-portal-gtk serves GNOME's setting, so `gsettings set
+  org.gnome.desktop.interface color-scheme prefer-dark` turns it dark and
+  `default` light. What to look for: the windows, bars, name
   plates and chat change at once, with no restart; on `light`, counts,
   selected rows and initials still read; on `dark`, the skin's own
   background and text come back. `AURORA_DEMO_COLORS` wins over it,

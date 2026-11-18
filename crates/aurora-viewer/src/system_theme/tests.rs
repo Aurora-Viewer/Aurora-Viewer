@@ -39,19 +39,36 @@ fn a_colour_the_user_chose_wins() {
     assert_eq!(colors(light(Some([10, 20, 30])), &chosen).accent, Some(PICKED));
 }
 
-/// A chosen dark background under the system's dark text would be unreadable.
+/// A chosen background is the window itself: the light mode leaves it alone.
 #[test]
-fn a_chosen_background_or_text_keeps_the_pair_off_the_system() {
+fn a_chosen_background_keeps_the_light_pair_off() {
     let surface = InterfaceColors {
         surface: Some(PICKED),
         ..Default::default()
     };
     assert_eq!(colors(light(None), &surface), surface);
+}
+
+/// Touching the Text swatch on a light system keeps the window light, and the
+/// chosen text is made readable on it.
+#[test]
+fn a_chosen_text_stays_on_the_light_background() {
     let text = InterfaceColors {
         text: Some(PICKED),
         ..Default::default()
     };
-    assert_eq!(colors(light(None), &text), text);
+    let c = colors(light(None), &text);
+    assert_eq!((c.surface, c.text), (Some(LIGHT_SURFACE), Some(PICKED)));
+    let skin = crate::theme::Theme::default().skin_palette();
+    let (p, _) = crate::interface_colors::derive(skin, &c);
+    assert!(crate::interface_colors::contrast(p.ink, p.panel) >= 4.5, "{p:?}");
+    // a light text too: it is darkened to read
+    let pale = InterfaceColors {
+        text: Some([0xF0, 0xF0, 0xF0, 255]),
+        ..Default::default()
+    };
+    let (p, adjusted) = crate::interface_colors::derive(skin, &colors(light(None), &pale));
+    assert!(adjusted.text && crate::interface_colors::contrast(p.ink, p.panel) >= 4.5, "{p:?}");
 }
 
 /// The light pair goes through the same rules as a background of one's own.

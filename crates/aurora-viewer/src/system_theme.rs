@@ -58,12 +58,14 @@ static LOOK: Mutex<Look> = Mutex::new(Look {
 static CHANGED: AtomicBool = AtomicBool::new(false);
 
 /// The interface's colours under `look`: each colour the user chose stays,
-/// the others follow the system. Background and text go as a pair, as one
-/// alone from the system could not be read on the other the user chose.
+/// the others follow the system. A chosen background keeps the light mode
+/// off, as it is the window itself; a chosen text goes on the light
+/// background, which `interface_colors::derive` keeps readable, so touching
+/// the Text swatch does not turn the window dark.
 pub fn colors(look: Look, chosen: &InterfaceColors) -> InterfaceColors {
     let accent = chosen.accent.or(look.accent.map(|[r, g, b]| [r, g, b, 255]));
-    let (surface, text) = if look.scheme == Scheme::Light && chosen.surface.is_none() && chosen.text.is_none() {
-        (Some(LIGHT_SURFACE), Some(LIGHT_TEXT))
+    let (surface, text) = if look.scheme == Scheme::Light && chosen.surface.is_none() {
+        (Some(LIGHT_SURFACE), chosen.text.or(Some(LIGHT_TEXT)))
     } else {
         (chosen.surface, chosen.text)
     };
