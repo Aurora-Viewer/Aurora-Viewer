@@ -14910,6 +14910,7 @@ inventory-sorter-to-pre-trash = Pre-Trash
 inventory-sorter-rule-pre-trash-hint = Checks everything in the folder you sort, sorted or not, at any depth. Matches wait in Pre-Trash until you confirm.
 inventory-sorter-rule-pre-trash-unsorted-hint = Checks everything in the folder you sort, at any depth, except the { $folder } folder. Matches wait in Pre-Trash until you confirm.
 inventory-sorter-look-in = Look in
+inventory-sorter-rule-inside-deliveries = Match only items, including those inside deliveries
 inventory-sorter-look-all = Everywhere
 inventory-sorter-look-unsorted = Everywhere except Sorted
 inventory-sorter-pre-trash-waiting = { $count ->
@@ -15052,6 +15053,12 @@ inventory-cleanup-demos-summary = { $count ->
    *[other] { $count } demos ({ $items } items)
 }
 inventory-cleanup-empty-group = Empty folders
+inventory-cleanup-empty-summary = { $count ->
+    [one] One empty folder selected
+   *[other] { $count } empty folders selected
+    }
+inventory-cleanup-empty-nothing = No empty folders found.
+inventory-cleanup-empty-intro = Find folders with no items at any depth and move the selected folders to Pre-Trash.
 inventory-share-section = Share my settings
 inventory-share-section-hint = Hand your rules, store hints and options to someone else as text, for a notecard or a chat.
 inventory-share-open = Share…
@@ -15091,6 +15098,7 @@ inventory-sorter-kept-own = Stays: My folders and the folders holding one, never
 inventory-sorter-kept-protected = Stays: system and protected folders
 inventory-sorter-kept-loading = Stays for now: folders still loading (they move once loaded)
 inventory-sorter-kept-unreadable = Stays: a folder inside could not be read, so it never moves whole
+inventory-sorter-kept-delivery = Stays inside delivery folders
 inventory-sorter-done-skipped = { $count } sorted; { $skipped ->
         [one] { $skipped } skipped because it changed since the preview.
        *[other] { $skipped } skipped because they changed since the preview.

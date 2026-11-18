@@ -348,6 +348,7 @@ fn files_round_trip_and_snapshots_are_pruned() {
             restore: false,
             from_trash: false,
             snapshot: false,
+            only_if_empty: false,
         }],
         base_id: None,
         undoes: None,

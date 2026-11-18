@@ -266,6 +266,7 @@ fn restore_move(id: Uuid, folder: bool, name: &str, from: Uuid, to: Uuid, label:
         restore: true,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     }
 }
 

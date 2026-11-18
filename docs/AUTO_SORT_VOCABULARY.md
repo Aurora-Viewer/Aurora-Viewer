@@ -12,7 +12,7 @@ built into the viewer. Anyone can add a word there without reading Rust.
 
 | Section | What it holds |
 |---|---|
-| `bodies` | Each body (`body`, the folder name), its `strong` words, its `weak` words (only counted when no strong word names a body: `lara` or `juicy` are also ordinary words) and the bodies it `hides` (`eBODY Reborn` is Reborn, not eBODY). |
+| `bodies` | Each body (`body`, the folder name), its `strong` words, its `weak` words (only counted when no strong word names a body), its optional `fit_aliases` and the bodies it `hides` (`eBODY Reborn` is filed as Reborn). An alias requires a fit phrase such as `fits Venus`, a trailing fit label such as `/ Venus` on clothing or shoes, or a suffix immediately after a garment word such as `Dress Isis`. |
 | `categories` | Each category (its key, such as `dresses` or `body-addons`) and its words, **in the order they are tried**: the first match wins, so a "Lingerie Set" is lingerie, unless another category has a longer phrase built on the word that matched: "hair bow" (accessories) beats "hair", "dress shirt" (tops) beats "dress". Sets come last. |
 | `skin_tones` | Tones creators name body skins with (`porcelain`): a body name with a tone is a skin. |
 | `unpackers` | Words of a box that gives the real items when worn or rezzed. |

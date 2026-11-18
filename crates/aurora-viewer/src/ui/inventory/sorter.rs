@@ -2152,10 +2152,8 @@ pub(super) fn show(
             state.updating = true;
         } else {
             let plan = make(inv);
-            // A Pre-Trash rule reads the whole folder sorted at any depth (and
-            // the sort folder's tree): what is not loaded yet is asked for, and
-            // the preview fills in as it arrives (it follows the inventory's
-            // generation). Nothing waits for it.
+            // Rules reach beyond the initially loaded folders. Ask for
+            // unread folders so the preview can fill in as they arrive.
             state.to_request.extend(plan.unfetched.iter().copied());
             state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
         }
@@ -2194,7 +2192,9 @@ pub(super) fn show(
             let make = {
                 let (options, protected, worn) = (prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
                 move |inv: &Inventory| match options.cleanup.find {
-                    Find::Old => sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn),
+                    Find::Old | Find::EmptyFolders => {
+                        sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn)
+                    }
                     Find::Duplicates => sorter::plan_duplicates(inv, &options, &options.cleanup, cleanup_source, &protected, &worn),
                     Find::Demos => sorter::plan_demos(inv, &options, &options.cleanup, cleanup_source, &protected, &worn),
                 }
@@ -3833,8 +3833,6 @@ fn kinds_grid(ui: &mut egui::Ui, p: &Palette, id: &str, kinds: &mut Vec<Kind>) {
 
 /// Rows drawn per group: the rest is counted, so a large cleanup stays
 /// smooth (the groups open one at a time).
-const CLEANUP_ROWS: usize = 300;
-
 /// The Clean up tab: how old (chips, or a month and a year), which kinds,
 /// where, then the list by kind with a box per row (unchecked rows stay) and
 /// the two ways out: Pre-Trash, or the Trash after a confirmation.
@@ -3853,7 +3851,7 @@ fn cleanup_tab(
     let base = options.base_name();
     let cleanup = &mut options.cleanup;
     ui.add_enabled_ui(!busy, |ui| {
-        const FINDS: [Find; 3] = [Find::Old, Find::Duplicates, Find::Demos];
+        const FINDS: [Find; 4] = [Find::Old, Find::Duplicates, Find::Demos, Find::EmptyFolders];
         let mut find = FINDS.iter().position(|f| *f == cleanup.find).unwrap_or(0);
         let changed = ui.push_id("inventory_cleanup_find", |ui| {
             segmented(
@@ -3864,6 +3862,7 @@ fn cleanup_tab(
                     (aurora_i18n::tr!("inventory-cleanup-find-old"), true),
                     (aurora_i18n::tr!("inventory-cleanup-find-duplicates"), true),
                     (aurora_i18n::tr!("inventory-cleanup-find-demos"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-empty-group"), true),
                 ],
             )
         });
@@ -3873,7 +3872,10 @@ fn cleanup_tab(
     });
     let duplicates = cleanup.find == Find::Duplicates;
     let demos = cleanup.find == Find::Demos;
-    let intro = if duplicates {
+    let empty_only = cleanup.find == Find::EmptyFolders;
+    let intro = if empty_only {
+        aurora_i18n::tr!("inventory-cleanup-empty-intro")
+    } else if duplicates {
         aurora_i18n::tr!("inventory-cleanup-duplicates-intro")
     } else if demos {
         aurora_i18n::tr!("inventory-cleanup-demos-intro")
@@ -3883,7 +3885,7 @@ fn cleanup_tab(
     ui.label(RichText::new(intro).small().color(p.muted));
     ui.add_space(6.0);
     ui.add_enabled_ui(!busy, |ui| {
-        if !duplicates && !demos {
+        if cleanup.find == Find::Old {
             section_header(ui, p, "calendar-filled", aurora_i18n::tr!("inventory-cleanup-when"));
             const AGES: [Age; 5] = [Age::OneYear, Age::TwoYears, Age::ThreeYears, Age::FiveYears, Age::Custom];
             let mut age = AGES.iter().position(|a| *a == cleanup.age).unwrap_or(0);
@@ -3929,9 +3931,11 @@ fn cleanup_tab(
             }
             ui.add_space(8.0);
         }
-        section_header(ui, p, "filter-filled", aurora_i18n::tr!("inventory-cleanup-types"));
-        kinds_grid(ui, p, "inventory_cleanup_kinds", &mut cleanup.kinds);
-        ui.add_space(8.0);
+        if !empty_only {
+            section_header(ui, p, "filter-filled", aurora_i18n::tr!("inventory-cleanup-types"));
+            kinds_grid(ui, p, "inventory_cleanup_kinds", &mut cleanup.kinds);
+            ui.add_space(8.0);
+        }
         section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-cleanup-where"));
         let mut place = usize::from(!cleanup.whole && has_folder);
         let moved = ui.push_id("inventory_cleanup_where", |ui| {
@@ -3989,7 +3993,7 @@ fn cleanup_tab(
                     .small()
                     .color(p.muted),
             );
-        } else if !demos {
+        } else if cleanup.find == Find::Old {
             ui.push_id("inventory_cleanup_empty_folders", |ui| {
                 switch_labeled(
                     ui,
@@ -4005,12 +4009,16 @@ fn cleanup_tab(
     crate::ui::widgets::divider(ui, p);
     let State {
         cleanup: list,
+        cleaning,
         skipped,
         cleanup_action,
         tab,
         ..
     } = state;
-    let Some((.., plan)) = list.as_ref() else { return };
+    let Some((.., plan)) = list.as_ref().filter(|(_, choices, ..)| choices == cleanup) else {
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-updating")).color(p.muted));
+        return;
+    };
     // (the default folders still locked are never looked at: said, with
     // the way to Options, so a short list is never taken for the whole)
     if plan.locked_items > 0 {
@@ -4035,7 +4043,9 @@ fn cleanup_tab(
     }
     let date = date_text(plan.cutoff);
     if plan.rows.is_empty() {
-        let nothing = if duplicates {
+        let nothing = if empty_only {
+            aurora_i18n::tr!("inventory-cleanup-empty-nothing").to_string()
+        } else if duplicates {
             aurora_i18n::tr!("inventory-cleanup-duplicates-nothing").to_string()
         } else if demos {
             aurora_i18n::tr!("inventory-cleanup-demos-nothing").to_string()
@@ -4050,7 +4060,9 @@ fn cleanup_tab(
     let kept: Vec<&sorter::CleanupRow> = plan.rows_of(skipped).collect();
     let going_count = plan.rows.len() - kept.len();
     let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
-    let summary = if duplicates {
+    let summary = if empty_only {
+        aurora_i18n::tr!("inventory-cleanup-empty-summary", count = going_count)
+    } else if duplicates {
         aurora_i18n::tr!("inventory-cleanup-duplicates-summary", count = going_count, items = plan.duplicated)
     } else if demos {
         aurora_i18n::tr!("inventory-cleanup-demos-summary", count = going_count, items = items)
@@ -4061,7 +4073,7 @@ fn cleanup_tab(
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let size = Vec2::new(0.0, 26.0);
-        let enabled = going_count > 0 && !busy && free;
+        let enabled = going_count > 0 && !busy && free && cleaning.is_none();
         let label = aurora_i18n::tr!("inventory-cleanup-to-pre-trash", count = going_count);
         if ui
             .add_enabled_ui(enabled, |ui| {
@@ -4076,8 +4088,7 @@ fn cleanup_tab(
         // to the Trash)
         let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going_count);
         // (demos too: to Pre-Trash, looked at there first)
-        if !duplicates
-            && !demos
+        if cleanup.find == Find::Old
             && ui
                 .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
                 .inner
@@ -4098,29 +4109,36 @@ fn cleanup_tab(
         };
         let title = format!("{label}  ({})", rows.len());
         collapsing(ui, p, ("inventory_cleanup_group", &label), title, false, |ui| {
-            for row in rows.iter().take(CLEANUP_ROWS) {
-                ui.horizontal(|ui| {
-                    let mut on = !skipped.contains(&row.id);
-                    checkbox(ui, p, &mut on, &row.name).on_hover_text(aurora_i18n::tr!("inventory-cleanup-keep-tip"));
-                    if on {
-                        skipped.remove(&row.id);
-                    } else {
-                        skipped.insert(row.id);
+            let row_height = ui.spacing().interact_size.y;
+            egui::ScrollArea::vertical()
+                .id_salt(("inventory_cleanup_rows", &label))
+                .max_height(240.0)
+                .show_rows(ui, row_height, rows.len(), |ui, range| {
+                    for row in &rows[range] {
+                        ui.horizontal(|ui| {
+                            let mut on = !skipped.contains(&row.id);
+                            let tip = aurora_i18n::tr!("inventory-cleanup-keep-tip");
+                            let at = sorter::folder_path(inv, row.from);
+                            if checkbox(ui, p, &mut on, &row.name).on_hover_text(format!("{tip}\n{at}")).changed() {
+                                if on {
+                                    skipped.remove(&row.id);
+                                } else {
+                                    skipped.insert(row.id);
+                                }
+                            }
+                            let detail = if empty_only {
+                                at
+                            } else if row.folder {
+                                let when = short_date(row.created);
+                                format!("{when} · {}", aurora_i18n::tr!("inventory-cleanup-folder-items", count = row.items))
+                            } else {
+                                short_date(row.created)
+                            };
+                            ui.add(egui::Label::new(RichText::new(&detail).small().color(p.muted)).truncate())
+                                .on_hover_text(detail);
+                        });
                     }
-                    let mut when = short_date(row.created);
-                    if row.folder {
-                        when = format!("{when} · {}", aurora_i18n::tr!("inventory-cleanup-folder-items", count = row.items));
-                    }
-                    ui.label(RichText::new(when).small().color(p.muted));
                 });
-            }
-            if rows.len() > CLEANUP_ROWS {
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("inventory-cleanup-more", count = rows.len() - CLEANUP_ROWS))
-                        .small()
-                        .color(p.muted),
-                );
-            }
         });
     }
 }
@@ -5022,24 +5040,28 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
                             _ => {}
                         }
                     }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-look-in")).small().color(p.muted));
+                    let mut look = usize::from(rule.skip_sorted);
+                    if crate::ui::widgets::segmented(
+                        ui,
+                        p,
+                        &mut look,
+                        &[
+                            (aurora_i18n::tr!("inventory-sorter-look-all"), true),
+                            (aurora_i18n::tr!("inventory-sorter-look-unsorted"), true),
+                        ],
+                    ) {
+                        rule.skip_sorted = look == 1;
+                    }
+                    crate::ui::widgets::switch_labeled(
+                        ui,
+                        p,
+                        &mut rule.inside_deliveries,
+                        aurora_i18n::tr!("inventory-sorter-rule-inside-deliveries"),
+                    );
                     match rule.target {
                         _ if rule.pre_trash => {
-                            // where it looks: the whole folder sorted, at any
-                            // depth, with or without the sort folder's tree
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-look-in")).small().color(p.muted));
-                            let mut look = usize::from(rule.skip_sorted);
-                            if crate::ui::widgets::segmented(
-                                ui,
-                                p,
-                                &mut look,
-                                &[
-                                    (aurora_i18n::tr!("inventory-sorter-look-all"), true),
-                                    (aurora_i18n::tr!("inventory-sorter-look-unsorted"), true),
-                                ],
-                            ) {
-                                rule.skip_sorted = look == 1;
-                            }
                             let hint = if rule.skip_sorted {
                                 aurora_i18n::tr!("inventory-sorter-rule-pre-trash-unsorted-hint", folder = base.as_str())
                             } else {
@@ -5176,10 +5198,16 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
     for (why, names) in plan.kept_by_reason() {
         let title = format!("{}  ({})", why.label(), names.len());
         crate::ui::widgets::collapsing(ui, p, ("inventory_sorter_kept", why), title, false, |ui| {
-            for (name, _) in names.iter().take(PREVIEW_ROWS) {
-                ui.label(RichText::new(name).color(p.muted));
-            }
-            more(ui, p, names.len());
+            let row_height = ui.text_style_height(&egui::TextStyle::Body);
+            egui::ScrollArea::vertical()
+                .id_salt(("inventory_sorter_kept_rows", why))
+                .max_height(240.0)
+                .show_rows(ui, row_height, names.len(), |ui, rows| {
+                    for (name, _) in &names[rows] {
+                        ui.add(egui::Label::new(RichText::new(name).color(p.muted)).truncate())
+                            .on_hover_text(name);
+                    }
+                });
         });
     }
 }

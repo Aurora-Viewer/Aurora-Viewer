@@ -27,6 +27,9 @@ pub struct BodyWords {
     pub strong: Vec<String>,
     #[serde(default)]
     pub weak: Vec<String>,
+    /// Model names that need a fitting phrase or a label after the product.
+    #[serde(default)]
+    pub fit_aliases: Vec<String>,
     #[serde(default)]
     pub hides: Vec<String>,
 }
@@ -107,6 +110,10 @@ impl Vocabulary {
         for body in &raw.bodies {
             check(&mut problems, &format!("bodies/{}", body.body), &body.strong);
             check(&mut problems, &format!("bodies/{}", body.body), &body.weak);
+            check(&mut problems, &format!("bodies/{}/fit_aliases", body.body), &body.fit_aliases);
+            if body.fit_aliases.iter().any(|alias| alias.contains(' ')) {
+                problems.push(format!("bodies/{}/fit_aliases: one word each", body.body));
+            }
         }
         let mut categories = Vec::with_capacity(raw.categories.len());
         for entry in raw.categories {

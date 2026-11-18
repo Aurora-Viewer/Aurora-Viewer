@@ -170,8 +170,11 @@ pub fn export(prefs: &Preferences, share: &Share) -> String {
             clean(&rule.folder)
         };
         let mut flags = Vec::new();
-        if rule.pre_trash && rule.skip_sorted {
+        if rule.skip_sorted {
             flags.push("except-sorted");
+        }
+        if rule.inside_deliveries {
+            flags.push("inside-deliveries");
         }
         if !rule.enabled {
             flags.push("off");
@@ -414,11 +417,14 @@ fn same_hint(a: &StoreHint, b: &StoreHint) -> bool {
 /// The same rule, whatever the case and spacing of its words and path.
 fn same_rule(a: &Rule, b: &Rule) -> bool {
     let norm = |s: &str| super::words(s).join(" ");
-    let same_words = a.mode == b.mode && norm(&a.words) == norm(&b.words);
+    let same_words = a.mode == b.mode
+        && norm(&a.words) == norm(&b.words)
+        && a.skip_sorted == b.skip_sorted
+        && a.inside_deliveries == b.inside_deliveries;
     if a.pre_trash || b.pre_trash {
         // a Pre-Trash rule has no folder: its words, where it looks and
         // whether it is on make it
-        return same_words && a.pre_trash == b.pre_trash && a.skip_sorted == b.skip_sorted;
+        return same_words && a.pre_trash == b.pre_trash;
     }
     same_words && a.target == b.target && super::split_path(&a.folder) == super::split_path(&b.folder)
 }
@@ -451,7 +457,8 @@ fn read_rule(value: &str) -> Option<Rule> {
         mode,
         folder: if pre_trash { String::new() } else { to.chars().take(200).collect() },
         pre_trash,
-        skip_sorted: pre_trash && flags.iter().any(|f| f == "except-sorted"),
+        skip_sorted: flags.iter().any(|f| f == "except-sorted"),
+        inside_deliveries: flags.iter().any(|f| f == "inside-deliveries"),
         ..Default::default()
     };
     // a rule with no words or nowhere to go is a broken line

@@ -14915,6 +14915,7 @@ inventory-sorter-to-pre-trash = Pré-corbeille
 inventory-sorter-rule-pre-trash-hint = Vérifie tout le dossier trié, déjà rangé ou non, à toute profondeur. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
 inventory-sorter-rule-pre-trash-unsorted-hint = Vérifie tout le dossier trié, à toute profondeur, sauf le dossier { $folder }. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
 inventory-sorter-look-in = Chercher dans
+inventory-sorter-rule-inside-deliveries = Rechercher uniquement les articles, y compris dans les dossiers de livraison
 inventory-sorter-look-all = Partout
 inventory-sorter-look-unsorted = Partout sauf Trié
 inventory-sorter-pre-trash-waiting = { $count ->
@@ -15057,6 +15058,12 @@ inventory-cleanup-demos-summary = { $count ->
    *[other] { $count } démos ({ $items } objets)
 }
 inventory-cleanup-empty-group = Dossiers vides
+inventory-cleanup-empty-summary = { $count ->
+    [one] Un dossier vide sélectionné
+   *[other] { $count } dossiers vides sélectionnés
+    }
+inventory-cleanup-empty-nothing = Aucun dossier vide trouvé.
+inventory-cleanup-empty-intro = Recherchez les dossiers qui ne contiennent aucun article, même dans leurs sous-dossiers, et placez les dossiers sélectionnés dans la Pré-corbeille.
 inventory-share-section = Partager mes réglages
 inventory-share-section-hint = Donnez vos règles, indices de boutique et options à quelqu'un sous forme de texte, pour une note ou un chat.
 inventory-share-open = Partager…
@@ -15096,6 +15103,7 @@ inventory-sorter-kept-own = Restent : Mes dossiers et ceux qui en contiennent, j
 inventory-sorter-kept-protected = Restent : dossiers système et protégés
 inventory-sorter-kept-loading = Restent pour l'instant : dossiers encore en chargement (ils bougent une fois chargés)
 inventory-sorter-kept-unreadable = Restent : un dossier à l’intérieur n’a pas pu être lu, il n’est donc jamais déplacé en entier
+inventory-sorter-kept-delivery = Reste dans les dossiers de livraison
 inventory-sorter-done-skipped = { $count ->
         [one] { $count } trié
        *[other] { $count } triés

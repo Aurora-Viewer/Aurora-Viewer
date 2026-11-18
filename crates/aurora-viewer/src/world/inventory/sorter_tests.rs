@@ -1931,7 +1931,7 @@ fn four_hundred_thousand_items_timings() {
         ..Default::default()
     });
     let t = std::time::Instant::now();
-    let scan = pre_trash_scan(&inv, &with_rule, id(1), &none, &none);
+    let scan = scan_rules(&inv, &with_rule, id(1), &none, &none);
     eprintln!("pre_trash_scan: {:?} ({} found)", t.elapsed(), scan.found.len());
     let mut inv = inv;
     let mut queue: VecDeque<Move> = whole.moves.into();
@@ -1976,7 +1976,7 @@ fn a_creator_hint_beats_the_store_read_from_the_name() {
             creator_name: "Made Up Maker".into(),
         },
     ];
-    let by = |name: &str, creator: Option<Uuid>| match target_by(name, 6, 0, None, &[], true, &hints, creator) {
+    let by = |name: &str, creator: Option<Uuid>| match target_by(name, 6, 0, None, &[], true, &hints, creator, None) {
         Some(Dest::Path(path)) => path.join("/"),
         other => format!("{other:?}"),
     };
@@ -1999,7 +1999,7 @@ fn a_creator_hint_beats_the_store_read_from_the_name() {
         ..Default::default()
     }];
     assert_eq!(
-        match target_by("Thing 01", 6, 0, None, &[], true, &bare, Some(maker)) {
+        match target_by("Thing 01", 6, 0, None, &[], true, &bare, Some(maker), None) {
             Some(Dest::Path(path)) => path.join("/"),
             other => format!("{other:?}"),
         },
@@ -2133,6 +2133,7 @@ fn move_of(inv: &Inventory, at: u128, to: Dest) -> Move {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     }
 }
 
@@ -2398,8 +2399,8 @@ fn clean_up_never_takes_the_sort_folder_whole_after_a_change_of_language() {
         }],
         ..Default::default()
     };
-    let scan = pre_trash_scan(&inv, &rule, id(1), &HashSet::new(), &HashSet::new());
-    assert!(!scan.found.contains(&id(50)));
+    let scan = scan_rules(&inv, &rule, id(1), &HashSet::new(), &HashSet::new());
+    assert!(!scan.found.contains_key(&id(50)));
 }
 
 /// A resumed run or a layout restore leaves what was excluded since.
@@ -2419,6 +2420,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             restore: false,
             from_trash: false,
             snapshot: false,
+            only_if_empty: false,
         },
         Move {
             id: id(70),
@@ -2431,6 +2433,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             restore: false,
             from_trash: false,
             snapshot: false,
+            only_if_empty: false,
         },
     ];
     let prefs = Preferences {
@@ -2511,6 +2514,7 @@ fn exclusions_stop_a_resume_but_never_an_undo() {
         restore: true,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     };
     let prefs = Preferences {
         excluded: vec![id(50)],
@@ -2565,6 +2569,7 @@ fn move_to(inv: &Inventory, at: u128, to: Dest) -> Move {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     }
 }
 
@@ -2781,6 +2786,7 @@ fn listed_own_folders_stay_on_resume_pre_trash_and_clean_up() {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     };
     let plan = plan_saved(&inv, std::slice::from_ref(&resume), &prefs, &none, &none);
     assert!(plan.moves.is_empty(), "a resumed run leaves a listed folder");
@@ -3065,6 +3071,7 @@ fn a_refused_folder_move_is_skipped_before_its_tree_loads() {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     }]);
     let none = HashSet::new();
     let mut skipped = 0;
@@ -3133,6 +3140,7 @@ fn refused_moves_are_skipped_a_few_batches_a_frame() {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     };
     let mut queue: VecDeque<Move> = std::iter::repeat_n(one, 4 * BATCH + 5).collect();
     let none = HashSet::new();
@@ -3167,6 +3175,7 @@ fn stale_moves_are_skipped_a_few_batches_a_frame() {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     };
     let mut queue: VecDeque<Move> = std::iter::repeat_n(gone, 4 * BATCH + 5).collect();
     let none = HashSet::new();
@@ -3387,6 +3396,7 @@ fn a_folder_that_failed_to_load_is_unknown_never_empty() {
         restore: false,
         from_trash: false,
         snapshot: false,
+        only_if_empty: false,
     }]);
     let mut skipped = 0;
     let step = step_with(
@@ -4416,13 +4426,172 @@ fn a_whole_sort_opens_deep_category_shelves_but_reports_intact_unknown_deliverie
     add_item(&mut inv, 201, parent, "Unknown Widget", 0);
     add_folder(&mut inv, 90, parent, "[Velmira] Vesper [box]");
     add_item(&mut inv, 202, 90, "Vesper", 0);
+    add_item(&mut inv, 203, 90, "Velvet Top / Reborn", 0);
     let none = HashSet::new();
     let planned = plan_whole(&inv, &Preferences::default(), &none, &none);
     assert!(planned.moves.iter().any(|m| m.id == id(200)));
-    assert!(planned.moves.iter().all(|m| ![id(90), id(202)].contains(&m.id)));
+    assert!(planned.moves.iter().all(|m| ![id(90), id(202), id(203)].contains(&m.id)));
+    assert!(
+        planned
+            .kept_list
+            .iter()
+            .any(|(name, reason)| name == "Velvet Top / Reborn" && *reason == Kept::Delivery)
+    );
     for name in ["Unknown Widget", "[Velmira] Vesper [box]", "Vesper"] {
         assert!(planned.unknown.iter().any(|row| row == name), "{name}");
     }
+}
+
+#[test]
+fn my_rules_find_deep_sorted_matches_and_open_deliveries_only_when_enabled() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, 1, "!!!!!SORTED!!!!!!");
+    add_folder(&mut inv, 71, 70, "Decor");
+    add_folder(&mut inv, 72, 71, "My archive");
+    add_folder(&mut inv, 73, 72, "Winter");
+    add_folder(&mut inv, 74, 73, "[Moss Vale] Velvet Sofa FATPACK");
+    add_typed(&mut inv, 200, 73, "read me", NEW, 7);
+    add_typed(&mut inv, 201, 74, "read me", NEW, 7);
+    add_item(&mut inv, 202, 74, "Velvet Sofa Black", NEW);
+    add_typed(&mut inv, 203, 74, "read me", NEW, 7);
+    let none = HashSet::new();
+    let worn = HashSet::from([id(203)]);
+    let mut prefs = Preferences {
+        rules: vec![Rule {
+            words: "read me".into(),
+            folder: "Instructions".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    for mode in [Match::All, Match::Any, Match::Phrase] {
+        prefs.rules[0].mode = mode;
+        prefs.rules[0].inside_deliveries = false;
+        let plan = plan_whole(&inv, &prefs, &none, &worn);
+        assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(200)], "{mode:?}");
+        assert!(plan.kept_list.contains(&("read me".into(), Kept::Delivery)));
+        prefs.rules[0].inside_deliveries = true;
+        let plan = plan_whole(&inv, &prefs, &none, &worn);
+        assert_eq!(
+            plan.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+            HashSet::from([id(200), id(201)])
+        );
+    }
+    let scoped = plan(&inv, id(71), &prefs, &none, &worn);
+    assert_eq!(
+        scoped.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+        HashSet::from([id(200), id(201)])
+    );
+    prefs.rules.push(Rule {
+        words: "read me".into(),
+        mode: Match::Phrase,
+        pre_trash: true,
+        inside_deliveries: true,
+        ..Default::default()
+    });
+    assert!(plan(&inv, id(OBJECTS), &prefs, &none, &worn).moves.is_empty());
+    prefs.rules.pop();
+    add_folder(&mut inv, 75, 73, "[Moss Vale] Tulip Chair [Unpack Me]");
+    add_typed(&mut inv, 204, 75, "read me", NEW, 7);
+    prefs.rules[0].mode = Match::Any;
+    let planned = plan_whole(&inv, &prefs, &none, &worn);
+    assert!(planned.moves.iter().any(|m| m.id == id(204)));
+    assert!(planned.moves.iter().all(|m| m.id != id(75)));
+    prefs.rules[0].skip_sorted = true;
+    assert!(plan_whole(&inv, &prefs, &none, &worn).moves.is_empty());
+}
+
+#[test]
+fn empty_folders_only_rechecks_the_tree_before_moving() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, 1, "Empty archive");
+    add_folder(&mut inv, 71, 70, "Nested");
+    add_folder(&mut inv, 72, 1, "Occupied archive");
+    add_item(&mut inv, 200, 72, "Old chair", OLD);
+    add_folder(&mut inv, 73, 1, "Unread archive");
+    inv.folders.get_mut(&id(73)).expect("folder").state = FetchState::Unknown;
+    let prefs = Preferences::default();
+    let cleanup = Cleanup {
+        find: Find::EmptyFolders,
+        ..before_2020()
+    };
+    let none = HashSet::new();
+    let plan = plan_cleanup(&inv, &prefs, &cleanup, id(1), today(), &none, &none);
+    assert_eq!(cleaned(&plan), [id(70)]);
+    assert!(plan.unfetched.contains(&id(73)));
+    let mut queue = VecDeque::from(plan.moves(&none));
+    add_item(&mut inv, 201, 71, "New chair", NEW);
+    let mut skipped = 0;
+    assert!(matches!(
+        step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped),
+        Step::Done
+    ));
+    assert_eq!(skipped, 1);
+}
+
+#[test]
+fn ambiguous_body_aliases_need_fit_context() {
+    for (name, expected) in [
+        ("[Harbor Gems] Venus Necklace", "Jewelry"),
+        ("Moss Vale / Venus / Diamond Stud", "Jewelry"),
+        ("MoonCove - Venus Flytrap Gang", "Decor"),
+        ("[Moss Brow] Venus Stockings", "Stockings & socks"),
+        ("Foldworks// Venus T-shirt", "Tops"),
+        ("Pearl Boots / Venus", "Belleza/Shoes"),
+        ("Velvet Skirt [Freya]", "Belleza/Skirts"),
+        ("Top fits Isis", "Belleza/Tops"),
+    ] {
+        assert_eq!(path(name).as_deref(), Some(expected), "{name}");
+    }
+    assert!(!path("AsterWorks - Venus (Full Pack)").is_some_and(|p| p.contains("Belleza")));
+}
+
+#[test]
+fn store_prefixes_use_a_confirmed_label_from_the_same_creator() {
+    let mut inv = fixture(&["MoonCove - Accent Light", "MoonCove DJ Stage - Adult", "MoonCove DJ Stage - PG"]);
+    for at in [100, 101] {
+        inv.items.get_mut(&id(at)).expect("item").creator = id(900);
+    }
+    inv.items.get_mut(&id(102)).expect("item").creator = id(901);
+    let prefs = Preferences {
+        stores: true,
+        ..Default::default()
+    };
+    let none = HashSet::new();
+    let plan = plan_whole(&inv, &prefs, &none, &none);
+    let label = |at| &plan.moves.iter().find(|m| m.id == id(at)).expect("item moved").label;
+    assert!(label(101).ends_with(" / MoonCove"), "{}", label(101));
+    assert!(!label(102).ends_with(" / MoonCove"), "{}", label(102));
+}
+
+#[test]
+fn clothing_deliveries_without_a_category_use_the_consensus_across_fits() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "[Moss Vale] Starfall [unpack me]");
+    add_item(&mut inv, 201, 70, "Starfall Kini / Blue / Reborn", NEW);
+    add_item(&mut inv, 202, 70, "Starfall Kini / Blue / Hourglass", NEW);
+    let prefs = Preferences {
+        stores: true,
+        ..Default::default()
+    };
+    let none = HashSet::new();
+    let plan = plan_whole(&inv, &prefs, &none, &none);
+    assert_eq!(plan.moves.len(), 1);
+    let moved = &plan.moves[0];
+    assert_eq!(moved.id, id(70));
+    assert!(moved.label.contains("Several bodies / Swimwear"), "{}", moved.label);
+    assert!(plan.unknown.is_empty());
+}
+
+#[test]
+fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "MoonCove");
+    add_item(&mut inv, 200, 70, "MoonCove - Velvet Top [FATPACK]", NEW);
+    add_folder(&mut inv, 71, 70, "MoonCove - Velvet Top [DEMO]");
+    add_item(&mut inv, 201, 71, "MoonCove - Velvet Top / Reborn [DEMO]", NEW);
+    add_item(&mut inv, 202, 71, "MoonCove - Velvet Top / Hourglass [DEMO]", NEW);
+    assert_eq!(target_from_items(&inv, id(70), &Preferences::default(), None), None);
 }
 
 #[test]
