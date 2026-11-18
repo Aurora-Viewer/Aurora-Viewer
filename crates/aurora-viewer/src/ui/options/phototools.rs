@@ -32,8 +32,10 @@
 //!   - RenderNormalMapScale ("Texture Bumpiness"): the normals built from
 //!     bump heights use a fixed scale of 64, the Legacy default.
 
-use super::cx::Cx;
-use super::{OptionsUi, Page};
+use super::cx::{Cx, Mode};
+use super::{OptionsResult, OptionsUi, Page, pages, run_ui};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// One Legacy group box.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -88,6 +90,13 @@ const IMAGE_QUALITY: &[Row] = &[
 ];
 
 impl Section {
+    const ALL: [Section; 4] = [
+        Section::Reflections,
+        Section::GeneralRender,
+        Section::RenderOptions,
+        Section::ImageQuality,
+    ];
+
     fn rows(self) -> &'static [Row] {
         match self {
             Section::Reflections => REFLECTIONS,
@@ -98,33 +107,71 @@ impl Section {
     }
 }
 
-/// The rows of `section`, one `borrow` each so that the Legacy order wins
-/// over the page's.
+/// Rows of one page tab that the page already declares in the order of the
+/// section: one `borrow` (one pass over the page's declarations) draws them.
+struct Run {
+    page: Page,
+    tab: usize,
+    paths: Vec<&'static str>,
+}
+
+/// The settings of a tab in the order its page declares them.
+fn page_order(page: Page, tab: usize) -> Vec<&'static str> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let (mut s, d) = (crate::settings::Settings::default(), crate::settings::Settings::default());
+    let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+    let mut order = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        cx.enter(page, tab);
+        pages::draw(&mut cx, page, tab);
+        order = cx.collected.iter().filter(|(pg, _)| *pg == page).map(|(_, name)| *name).collect();
+    });
+    order
+}
+
+/// The section's rows cut into the fewest runs that keep the Legacy order:
+/// a `borrow` draws a page's rows in the page's order, so a row the page
+/// declares before the one drawn just above starts a new run.
+fn build_runs(rows: &[Row]) -> Vec<Run> {
+    let mut orders: HashMap<(Page, usize), Vec<&'static str>> = HashMap::new();
+    let mut runs: Vec<Run> = Vec::new();
+    let mut last = 0;
+    for &(page, tab, path) in rows {
+        let order = orders.entry((page, tab)).or_insert_with(|| page_order(page, tab));
+        // a name no page declares gets a run of its own (the test says so)
+        let at = order.iter().position(|name| *name == path).unwrap_or(usize::MAX);
+        match runs.last_mut() {
+            Some(run) if run.page == page && run.tab == tab && at > last && at != usize::MAX => run.paths.push(path),
+            _ => runs.push(Run {
+                page,
+                tab,
+                paths: vec![path],
+            }),
+        }
+        last = at;
+    }
+    runs
+}
+
+/// The runs of every section, worked out once.
+fn runs(section: Section) -> &'static [Run] {
+    static RUNS: OnceLock<Vec<Vec<Run>>> = OnceLock::new();
+    let all = RUNS.get_or_init(|| Section::ALL.iter().map(|s| build_runs(s.rows())).collect());
+    &all[section as usize]
+}
+
+/// The rows of `section`. The caller's `Cx` is never `enter`ed on a page:
+/// the rows would then take the ids of the same rows in Preferences, and two
+/// windows drawing one id at once is a warning in a development build.
 pub(super) fn draw(cx: &mut Cx, section: Section) {
     // the collapsing section names the group
     cx.group("", |cx| {
-        for &(page, tab, path) in section.rows() {
-            cx.borrow(page, tab, &[path]);
+        for run in runs(section) {
+            cx.borrow(run.page, run.tab, &run.paths);
         }
     });
-}
-
-impl OptionsUi {
-    /// What the app tells Preferences about the world, for a second window
-    /// of borrowed rows (Phototools has its own `OptionsUi`, so that the
-    /// two windows never share the sizes the rows measured): the fields the
-    /// rows of the pages it borrows from read.
-    pub fn share_from(&mut self, from: &OptionsUi) {
-        self.rlva_camera_preset_locked = from.rlva_camera_preset_locked;
-        self.rlva_camera_fov_locked = from.rlva_camera_fov_locked;
-        self.sky_tone_mapped = from.sky_tone_mapped;
-        self.vram = from.vram;
-        if self.gpu_in_use != from.gpu_in_use || self.gpus != from.gpus {
-            self.gpu_in_use.clone_from(&from.gpu_in_use);
-            self.gpus.clone_from(&from.gpus);
-        }
-        self.gpu_notice = from.gpu_notice;
-    }
 }
 
 #[cfg(test)]
@@ -132,59 +179,98 @@ mod tests {
     use super::*;
     use crate::settings::Settings;
 
-    const ALL: [Section; 4] = [
-        Section::Reflections,
-        Section::GeneralRender,
-        Section::RenderOptions,
-        Section::ImageQuality,
-    ];
-
     /// Every setting named above has a row in Preferences, on the page and
     /// tab named: a renamed or moved setting fails here, not on screen.
     #[test]
     fn every_row_is_one_of_preferences() {
-        let ctx = egui::Context::default();
-        let p = crate::theme::Theme::default().palette();
-        for section in ALL {
+        for section in Section::ALL {
             for &(page, tab, path) in section.rows() {
-                let mut s = Settings::default();
-                let d = Settings::default();
-                let mut st = OptionsUi::default();
-                let mut r = super::super::OptionsResult::default();
-                let mut found = false;
-                super::super::run_ui(&ctx, egui::RawInput::default(), |ui| {
-                    let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, super::super::cx::Mode::Collect, "");
-                    cx.enter(page, tab);
-                    super::super::pages::draw(&mut cx, page, tab);
-                    found = cx.collected.iter().any(|(pg, name)| *pg == page && *name == path);
-                });
-                assert!(found, "{path} is not a row of {page:?} tab {tab}");
+                assert!(page_order(page, tab).contains(&path), "{path} is not a row of {page:?} tab {tab}");
             }
         }
     }
 
-    /// Each section draws its rows: the borrowed declarations reach the
-    /// screen, in a window as wide as Phototools'.
+    /// The runs keep the Legacy order and are fewer than the rows.
     #[test]
-    fn each_section_draws_rows() {
+    fn the_runs_keep_the_legacy_order() {
+        for section in Section::ALL {
+            let flat: Vec<&str> = runs(section).iter().flat_map(|r| r.paths.iter().copied()).collect();
+            let legacy: Vec<&str> = section.rows().iter().map(|r| r.2).collect();
+            assert_eq!(flat, legacy, "{section:?}");
+        }
+        let passes: usize = Section::ALL.iter().map(|s| runs(*s).len()).sum();
+        let rows: usize = Section::ALL.iter().map(|s| s.rows().len()).sum();
+        assert!(passes < rows, "{passes} passes for {rows} rows");
+    }
+
+    /// Each section draws exactly its rows, in a window as wide as
+    /// Phototools': every borrowed declaration reaches the screen.
+    #[test]
+    fn each_section_draws_its_rows() {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
-        for section in ALL {
-            let mut s = Settings::default();
-            let mut st = OptionsUi::default();
-            let mut height = 0.0;
-            super::super::run_ui(&ctx, egui::RawInput::default(), |ui| {
+        for section in Section::ALL {
+            let (mut s, d) = (Settings::default(), Settings::default());
+            let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+            let mut drawn = 0;
+            run_ui(&ctx, egui::RawInput::default(), |ui| {
                 ui.set_width(460.0);
-                let before = ui.min_rect().height();
-                super::super::phototools_section(ui, &p, &mut s, &mut st, section);
-                height = ui.min_rect().height() - before;
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Show, "");
+                draw(&mut cx, section);
+                drawn = cx.drawn;
             });
-            // a row is 34 points at least
-            assert!(
-                height >= 34.0 * section.rows().len() as f32 * 0.9,
-                "{section:?} drew {height} points for {} rows",
-                section.rows().len()
-            );
+            assert_eq!(drawn, section.rows().len(), "{section:?}");
         }
+    }
+
+    /// A change of a borrowed row sets `changed` and writes the setting
+    /// Preferences' row edits.
+    #[test]
+    fn a_borrowed_rows_change_sets_changed() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let label = super::super::describe_settings()
+            .into_iter()
+            .find(|(path, ..)| path == "occlusion_culling")
+            .expect("the row")
+            .1;
+        let p = crate::theme::Theme::default().palette();
+        let mut flipped = false;
+        // the switch sits at the right end of the row: try the last points
+        for back in (6..60).step_by(6) {
+            let mut frames = Frames::new();
+            let (mut s, mut st) = (Settings::default(), OptionsUi::default());
+            let before = s.occlusion_culling;
+            let mut changed = false;
+            let mut frame = |events, s: &mut Settings, st: &mut OptionsUi| {
+                frames.run(events, |ui| {
+                    ui.set_width(460.0);
+                    changed |= super::super::phototools_section(ui, &p, s, st, Section::RenderOptions).changed;
+                })
+            };
+            frame(Vec::new(), &mut s, &mut st);
+            let texts = frame(Vec::new(), &mut s, &mut st);
+            let row = texts.iter().find(|t| t.source == label).expect("its label").rect;
+            let at = egui::pos2(460.0 - back as f32, row.center().y);
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ] {
+                frame(events, &mut s, &mut st);
+            }
+            if s.occlusion_culling != before {
+                assert!(changed, "the row changed the setting without saying so");
+                flipped = true;
+                break;
+            }
+        }
+        assert!(flipped, "no click on the row's right end flipped the setting");
     }
 }
