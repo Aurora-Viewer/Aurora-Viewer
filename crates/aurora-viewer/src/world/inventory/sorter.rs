@@ -1155,6 +1155,17 @@ pub fn target_by(
     }
     let mut found = classify(name, asset_type, flags);
     found.category = category_past_store(name, asset_type, found.category);
+    target_classified(name, found, stores, hints, creator, observed_store)
+}
+
+fn target_classified(
+    name: &str,
+    mut found: Classified,
+    stores: bool,
+    hints: &[StoreHint],
+    creator: Option<Uuid>,
+    observed_store: Option<&str>,
+) -> Option<Dest> {
     let by_creator = creator.and_then(|c| hints.iter().find(|h| h.creator == Some(c)));
     let mut shop = observed_store
         .map(str::to_owned)
@@ -4492,6 +4503,9 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
     let mut bulk_type = None;
     let mut bulk_count = 0;
     let mut mixed_bulk = false;
+    let mut scripts = 0;
+    let mut notecards = 0;
+    let mut landmarks = 0;
     let mut samples = Vec::new();
     let mut stack = vec![folder];
     let mut seen = HashSet::new();
@@ -4507,9 +4521,11 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
                         bulk_type = Some(it.asset_type);
                         bulk_count += 1;
                     }
-                    // Distribution scripts, instructions and landmarks can
-                    // ship alongside the actual assets.
-                    3 | 7 | 10 | 24 | 25 => {}
+                    // These can accompany a product or be the pack itself.
+                    3 => landmarks += 1,
+                    7 => notecards += 1,
+                    10 => scripts += 1,
+                    24 | 25 => {}
                     _ => mixed_bulk = true,
                 }
                 continue;
@@ -4525,10 +4541,20 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         }
         stack.extend(f.children.iter().copied());
     }
-    if counted == 0 && bulk_count >= 2 && !mixed_bulk {
-        let mut path = vec![category_folder(Category::of_asset(bulk_type?, 0)?)];
-        path.extend(shop.map(str::to_owned));
-        return Some(Dest::Path(path));
+    if counted == 0 && !mixed_bulk {
+        let kind = match (bulk_count, scripts, notecards, landmarks) {
+            (2.., _, _, _) => bulk_type,
+            // A script kit can also ship installation notes or landmarks.
+            (0, 2.., _, _) => Some(10),
+            (0, 0, 2.., 0) => Some(7),
+            (0, 0, 0, 2..) => Some(3),
+            _ => None,
+        };
+        if let Some(category) = kind.and_then(|kind| Category::of_asset(kind, 0)) {
+            let mut path = vec![category_folder(category)];
+            path.extend(shop.map(str::to_owned));
+            return Some(Dest::Path(path));
+        }
     }
     if let Some((path, best)) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         && best * 5 >= counted * 3
@@ -4559,6 +4585,68 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         path.push(shop.to_owned());
     }
     Some(Dest::Path(path))
+}
+
+/// A manual category is evidence only on an open shelf. A parent inside a
+/// delivery cannot inherit a label from the shelves outside it.
+fn manual_shelf_category(
+    inv: &Inventory,
+    from: Uuid,
+    categories: &HashMap<Vec<String>, Category>,
+    reserved: &HashSet<String>,
+    own: &OwnFolders,
+) -> Option<(Uuid, Category)> {
+    for id in actions::ancestors(inv, from) {
+        let folder = inv.folders.get(&id)?;
+        if folder.info.type_default != -1 || folder.state != FetchState::Fetched {
+            break;
+        }
+        if let Some(category) = categories.get(&words(&folder.info.name)) {
+            return Some((id, *category));
+        }
+        if !own.opens(&id) && product_folder_in(inv, id, reserved) {
+            break;
+        }
+    }
+    None
+}
+
+/// A manual shelf cannot override explicit evidence inside an intact pack.
+/// Documentation, links and distribution scripts can accompany any product.
+fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category) -> bool {
+    let mut has_product = false;
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for item in folder.items.iter().filter_map(|id| inv.items.get(id)) {
+            if matches!(item.asset_type, 0 | 3 | 7 | 10 | 24 | 25) {
+                continue;
+            }
+            let classified = classify(&item.name, item.asset_type, item.flags);
+            match category_past_store(&item.name, item.asset_type, classified.category) {
+                Some(other) if other != category => return false,
+                Some(_) => has_product = true,
+                None if item.asset_type == 6 => has_product = true,
+                None => return false,
+            }
+        }
+        stack.extend(folder.children.iter().copied());
+    }
+    has_product
+}
+
+struct ReadEntry {
+    id: Uuid,
+    folder: bool,
+    from: Uuid,
+    name: String,
+    to: Option<Dest>,
+    unpacker: bool,
+    contextual: bool,
+    category: Option<Category>,
 }
 
 fn plan_with(
@@ -4675,43 +4763,117 @@ fn plan_with(
     // Reading thousands of names against every phrase is the heavy part:
     // it runs on all cores, the inventory itself is only read above.
     use rayon::prelude::*;
-    let read: Vec<_> = candidates
+    let stores_root = stores_folder();
+    let mut read: Vec<_> = candidates
         .into_par_iter()
         .map(|(id, folder, from, name, asset_type, flags, created, sorted, creator)| {
             let rules = if sorted { &sorted_rules } else { &prefs.rules };
-            let to = if let Some(to) = rule_moves.get(&id) {
-                Some(to.clone())
+            let rule_target = rule_moves.get(&id).cloned().or_else(|| {
+                rule_for(rules, &name, created)
+                    .filter(|r| !folder || !r.inside_deliveries)
+                    .map(Rule::destination)
+            });
+            let contextual = !sorted && rule_target.is_none() && matches!(asset_type, -1 | 6);
+            let mut found = classify(&name, asset_type, flags);
+            let to = if let Some(to) = rule_target {
+                Some(to)
             } else {
+                found.category = category_past_store(&name, asset_type, found.category);
                 let observed_store = creator
                     .zip(bare_store_prefix(&name))
                     .and_then(|(creator, prefix)| observed_stores.get(&(creator, prefix.to_lowercase())))
                     .map(String::as_str);
-                let to = target_by(
-                    &name,
-                    asset_type,
-                    flags,
-                    created,
-                    rules,
-                    prefs.stores,
-                    &prefs.store_hints,
-                    creator,
-                    observed_store,
-                );
+                let to = target_classified(&name, found, prefs.stores, &prefs.store_hints, creator, observed_store);
                 let shop = match &to {
-                    Some(Dest::Path(path)) if path.first() == Some(&stores_folder()) => path.get(1).map(String::as_str),
+                    Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).map(String::as_str),
                     _ => None,
                 };
-                let untyped = to.is_none() || shop.is_some() && rule_for(rules, &name, created).is_none();
-                if untyped && folder && product_folder_in(inv, id, &reserved) {
+                if (to.is_none() || shop.is_some()) && folder && product_folder_in(inv, id, &reserved) {
                     target_from_items(inv, id, prefs, shop).or(to)
                 } else {
                     to
                 }
             };
-            let unpacker = classify(&name, asset_type, flags).unpacker;
-            (id, folder, from, name, to, unpacker)
+            let category = if contextual { found.category } else { None };
+            ReadEntry {
+                id,
+                folder,
+                from,
+                name,
+                to,
+                unpacker: found.unpacker,
+                contextual,
+                category,
+            }
         })
         .collect();
+    // A shelf's explicit label and the recognizable neighbors must agree.
+    // This keeps unknown names in mixed personal archives for review.
+    let mut votes = HashMap::new();
+    let mut totals = HashMap::new();
+    for entry in &read {
+        if let Some(category) = entry.category {
+            *votes.entry((entry.from, category)).or_insert(0usize) += 1;
+            *totals.entry(entry.from).or_insert(0usize) += 1;
+        }
+    }
+    let categories: HashMap<_, _> = Category::ALL
+        .into_iter()
+        .filter(|&category| {
+            clothing_fit_category(Some(category))
+                || matches!(
+                    category,
+                    Category::Accessories
+                        | Category::Jewelry
+                        | Category::Decor
+                        | Category::Furniture
+                        | Category::Pets
+                        | Category::Vehicles
+                        | Category::AnimatedObjects
+                        | Category::Hair
+                )
+        })
+        .flat_map(|category| [(words(category.key()), category), (words(&category_folder(category)), category)])
+        .collect();
+    let mut shelves = HashMap::new();
+    for entry in &mut read {
+        let shop = match &entry.to {
+            None => None,
+            Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).cloned(),
+            _ => continue,
+        };
+        if !entry.contextual || entry.category.is_some() || totals.get(&entry.from).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let shelf = shelves
+            .entry(entry.from)
+            .or_insert_with(|| manual_shelf_category(inv, entry.from, &categories, &reserved, &own));
+        let Some((anchor, category)) = *shelf else { continue };
+        // The nearest label directly describes its loose entries. Deeper
+        // down, only named deliveries under their own store shelf inherit it.
+        if entry.from != anchor {
+            let prefix = words(&inv.folders[&entry.from].info.name);
+            let title = words(without_number(entry.name.trim()));
+            if !entry.folder
+                || !prefix.iter().any(|word| word.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+                || !title.starts_with(&prefix)
+                || title.len() == prefix.len()
+            {
+                continue;
+            }
+        }
+
+        let count = votes.get(&(entry.from, category)).copied().unwrap_or(0);
+        if count < 2 || count * 3 < totals[&entry.from] * 2 {
+            continue;
+        }
+        if entry.folder && (!product_folder_in(inv, entry.id, &reserved) || !delivery_fits_category(inv, entry.id, category)) {
+            continue;
+        }
+        let mut path = vec![category_folder(category)];
+        path.extend(shop);
+        entry.to = Some(Dest::Path(path));
+    }
     let base_name = base_name_in(inv, prefs);
     let pre_trash_at = pre_trash(inv);
     let pre_trash_label = format!("{} / {}", folder_path(inv, inv.root), pre_trash_name());
@@ -4740,7 +4902,16 @@ fn plan_with(
             pending.extend(f.children.iter().copied());
         }
     };
-    for (id, folder, from, name, to, unpacker) in read {
+    for ReadEntry {
+        id,
+        folder,
+        from,
+        name,
+        to,
+        unpacker,
+        ..
+    } in read
+    {
         let Some(to) = to else {
             unknown(&mut plan, id, folder, name);
             continue;

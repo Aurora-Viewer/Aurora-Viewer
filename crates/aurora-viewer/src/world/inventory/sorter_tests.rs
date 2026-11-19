@@ -4526,6 +4526,63 @@ fn a_whole_sort_opens_deep_category_shelves_but_reports_intact_unknown_deliverie
 }
 
 #[test]
+fn labeled_manual_shelves_resolve_opaque_products_only_with_agreeing_neighbors() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, 1, "!! Decor");
+    add_folder(&mut inv, 71, 70, "Birch Vale");
+    add_item(&mut inv, 200, 71, "Garden Statue", 0);
+    add_item(&mut inv, 201, 71, "Wall Sculpture", 0);
+    add_item(&mut inv, 202, 70, "Vesper", 0);
+    add_item(&mut inv, 214, 70, "Garden Statue", 0);
+    add_item(&mut inv, 215, 70, "Wall Sculpture", 0);
+    add_item(&mut inv, 216, 71, "Opaque loose part", 0);
+    add_item(&mut inv, 203, 71, "Velvet Dress", 0);
+    add_typed(&mut inv, 204, 71, "Albedo", NEW, 57);
+    add_folder(&mut inv, 72, 71, "[Birch Vale] Sylvan [boxed]");
+    add_item(&mut inv, 205, 72, "Sylvan", 0);
+    add_typed(&mut inv, 206, 72, "Read me", NEW, 7);
+    add_folder(&mut inv, 73, 71, "[Birch Vale] Rowan [boxed]");
+    add_item(&mut inv, 207, 73, "Rowan One", 0);
+    add_item(&mut inv, 208, 73, "Rowan Two", 0);
+    add_item(&mut inv, 209, 73, "Velvet Jacket", 0);
+    add_folder(&mut inv, 74, 70, "Mixed gifts");
+    add_item(&mut inv, 210, 74, "Golden Necklace", 0);
+    add_item(&mut inv, 211, 74, "Short Skirt", 0);
+    add_item(&mut inv, 212, 74, "Lumen", 0);
+    add_folder(&mut inv, 75, 71, "Locked");
+    add_item(&mut inv, 213, 75, "Locked Vesper", 0);
+    let prefs = Preferences::default();
+    let protected = HashSet::from([id(75)]);
+    let none = HashSet::new();
+    for planned in [
+        plan_whole(&inv, &prefs, &protected, &none),
+        plan(&inv, id(70), &prefs, &protected, &none),
+    ] {
+        for (entry, category) in [
+            (202, Category::Decor),
+            (203, Category::Dresses),
+            (204, Category::Materials),
+            (72, Category::Decor),
+        ] {
+            assert!(
+                planned
+                    .moves
+                    .iter()
+                    .any(|m| m.id == id(entry) && m.to == Dest::Path(vec![category_folder(category)])),
+                "{entry}: {:?}",
+                planned.unknown
+            );
+        }
+        assert!(planned.moves.iter().all(|m| {
+            ![73, 205, 206, 207, 208, 209, 212, 213, 216]
+                .into_iter()
+                .any(|entry| m.id == id(entry))
+        }));
+        assert!(planned.unknown.iter().any(|name| name == "Lumen"));
+    }
+}
+
+#[test]
 fn my_rules_find_deep_sorted_matches_and_open_deliveries_only_when_enabled() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, 1, "!!!!!SORTED!!!!!!");
@@ -4698,6 +4755,24 @@ fn opaque_asset_packs_use_consistent_native_types_and_keep_their_contents() {
     add_typed(&mut inv, 205, 70, "Meadow sky", NEW, 56);
     assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
     inv.items.get_mut(&id(205)).expect("item").asset_type = 6;
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+}
+
+#[test]
+fn opaque_script_deliveries_use_native_payload_and_keep_the_guide() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Kestrel [boxed]");
+    add_typed(&mut inv, 201, 70, "Core", NEW, 10);
+    add_typed(&mut inv, 202, 70, "Controller", NEW, 10);
+    add_typed(&mut inv, 203, 70, "Read me", NEW, 7);
+    add_typed(&mut inv, 204, 70, "Support", NEW, 3);
+    let prefs = Preferences::default();
+    let none = HashSet::new();
+    let planned = plan_whole(&inv, &prefs, &none, &none);
+    assert_eq!(planned.moves.len(), 1);
+    assert_eq!(planned.moves[0].id, id(70));
+    assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Scripts)]));
+    add_item(&mut inv, 205, 70, "Something unrelated", 0);
     assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
 }
 
