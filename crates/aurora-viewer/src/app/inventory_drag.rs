@@ -1414,6 +1414,7 @@ mod tests {
                 currency_symbol: String::new(),
                 export_supported: false,
                 group_chat_post_links: false,
+                game_control: false,
                 max_link_children: None,
                 open_settings: None,
                 animated_object_max_tris: 0,

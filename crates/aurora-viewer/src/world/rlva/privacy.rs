@@ -1260,7 +1260,7 @@ mod tests {
         let body = format!("Pick someone in {region}:\n1. Near Tester");
         for kind in [Kind::Script, Kind::Permissions, Kind::Url] {
             assert!(kind.as_received(), "{kind:?}");
-            assert_eq!(kind.text(), TextScope::verbatim(NameScope::World), "{kind:?}");
+            assert_eq!(kind.text(), TextScope::as_received(NameScope::World), "{kind:?}");
             let id = world.notifications.push(kind, "Box (Near Tester)", body.clone(), Data::None);
             world
                 .notifications
@@ -1294,6 +1294,85 @@ mod tests {
             assert!(!kind.as_received(), "{kind:?}");
             assert_eq!(kind.text(), NameScope::Roster.into(), "{kind:?}");
         }
+    }
+
+    /// A `/mention` link is rewritten where RlvUtil::filterMentions
+    /// (rlvcommon.cpp) runs: on every line of the nearby chat
+    /// (LLFloaterIMNearbyChatHandler::processChat) and at the end of
+    /// RlvUtil::filterNames, so in what an object or the system says.
+    /// Nothing runs it on a script's prompt nor on an IM session:
+    /// LLUrlEntryAgentMention (indra/llui/llurlentry.cpp) has no RLVa test
+    /// and writes "@" and the name of the resident there. A bare avatar
+    /// link names its resident everywhere (LLUrlEntryAgent).
+    #[test]
+    fn a_mention_is_rewritten_in_the_nearby_chat_and_names_its_resident_in_a_script_s_prompt() {
+        use crate::ui::chat::{resolved_text_in, text_with_links};
+        use crate::world::ChatKind;
+        use crate::world::notifications::Kind;
+        use aurora_net::ChatType::Normal;
+        let (world, near) = shownames_world();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        let text = format!("ask secondlife:///app/agent/{near}/mention or secondlife:///app/agent/{near}/about");
+        let named = "ask @Near Tester or Near Tester";
+        // a script's prompt, and a session where every name is shown
+        for kind in [Kind::Script, Kind::Permissions, Kind::Url] {
+            assert_eq!(kind.text().mentions, NameScope::Roster, "{kind:?}");
+            assert_eq!(resolved_text_in(&world, kind.text(), &text), named, "{kind:?}");
+        }
+        assert_eq!(resolved_text_in(&world, ChatKind::Im.text_in(NameScope::Roster), &text), named);
+        assert_eq!(resolved_text_in(&world, Kind::Message.text(), &text), named);
+        // the nearby chat, whoever speaks: the mention alone is rewritten in
+        // what a resident typed
+        for kind in [ChatKind::Local(Normal), ChatKind::Own(Normal)] {
+            let scope = kind.text_in(NameScope::World);
+            assert_eq!(scope.mentions, NameScope::World, "{kind:?}");
+            assert_eq!(
+                resolved_text_in(&world, scope, &text),
+                format!("ask @{stand_in} or Near Tester"),
+                "{kind:?}"
+            );
+        }
+        // what an object or the system says, and the viewer's own notices
+        for scope in [
+            ChatKind::Object(Normal).text_in(NameScope::World),
+            ChatKind::System.text_in(NameScope::World),
+            Kind::Info.text(),
+            Kind::Alert.text(),
+        ] {
+            assert_eq!(scope.mentions, NameScope::World, "{scope:?}");
+            let shown = resolved_text_in(&world, scope, &text);
+            assert!(shown.starts_with(&format!("ask @{stand_in} or ")), "{scope:?}: {shown}");
+        }
+        // as a notice draws it
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let drawn = |scope: TextScope| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                    ..Default::default()
+                },
+                |ui| text_with_links(ui, &p, &world, scope, &text, &[], 12.0, p.ink),
+            );
+            output.textures_delta.clear();
+            let mut shown = String::new();
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(t) = &clipped.shape {
+                    shown.push_str(t.galley.text());
+                    shown.push('|');
+                }
+            }
+            shown
+        };
+        let prompt = drawn(Kind::Script.text());
+        assert!(prompt.contains("@Near Tester|") && !prompt.contains(&stand_in), "{prompt}");
+        let notice = drawn(Kind::Info.text());
+        assert!(
+            notice.contains(&format!("@{stand_in}|")) && !notice.contains("@Near Tester"),
+            "{notice}"
+        );
+        assert!(notice.contains("Near Tester|"), "a bare avatar link names its resident: {notice}");
     }
 
     #[test]

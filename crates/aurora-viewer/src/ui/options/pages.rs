@@ -12,6 +12,7 @@ pub mod commands;
 pub mod confirmations;
 pub mod controls;
 pub mod fun;
+pub mod game_controls;
 pub mod graphics;
 pub mod inventory;
 pub mod joystick;
@@ -88,6 +89,7 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("ui-options-colors"),
             aurora_i18n::tr!("extra-skin"),
         ],
+        Page::GameControls => game_controls::tabs(),
         Page::Shortcuts => shortcuts::tabs(),
         _ => vec![page.name()],
     }
@@ -121,6 +123,7 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
             }
         }
         Page::Gamepad => joystick::gamepad_page(cx, tab),
+        Page::GameControls => game_controls::page(cx, tab),
         Page::Shortcuts => shortcuts::page(cx, tab),
         Page::Commands => commands::page(cx),
         Page::System => system::page(cx),

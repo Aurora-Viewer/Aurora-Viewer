@@ -2030,9 +2030,9 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         && st.selected == Some(id)
         && st.selection.len() == 1
         && st.pending.is_none()
-        && !ui.ctx().text_edit_focused()
-        && ui.input(|i| i.key_pressed(egui::Key::F2))
+        && clipboard::list_has_focus(ui, st)
         && rules::renameable(inv, id)
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
     {
         st.begin_rename(inv, id);
     }
@@ -2060,6 +2060,8 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         st.reveal = None;
         st.reveal_path.clear();
     }
+    // egui releases the editor on Enter/Escape before returning its response.
+    let keyboard_owner = r.has_focus() || (r.lost_focus() && ui.memory(|m| m.focused().is_none()));
     if edit.focus {
         r.request_focus();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
@@ -2070,13 +2072,17 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
             state.store(ui.ctx(), r.id);
         }
         edit.focus = false;
-    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        ui.memory_mut(|m| m.surrender_focus(r.id));
+    } else if keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        clipboard::request_focus(ui, st);
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        // Windows Explorer: Tab goes on to rename the next row, Shift+Tab
-        // the one before (Aurora difference: the Legacy Viewer's Tab ends
-        // the rename only)
+        // LLFolderView::handleKeyHere / onRenamerLost (indra/llui/llfolderview.cpp):
+        // completing a rename keeps navigation in this list. A click that
+        // moved focus elsewhere keeps its new destination instead. Windows
+        // Explorer: Tab goes on to rename the next row, Shift+Tab the one
+        // before (Aurora difference: the Legacy Viewer's Tab ends the
+        // rename only).
+        let submitted = keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         let tab = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift));
         st.rename = Some(edit);
         finish_rename(inv, st, actions);
@@ -2084,6 +2090,8 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
             && st.rename.is_none()
         {
             rename_next(inv, st, id, back);
+        } else if submitted && st.rename.is_none() {
+            clipboard::request_focus(ui, st);
         }
         return true;
     }
@@ -5927,6 +5935,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
+                clipboard::list_focus(ui, state, 24.0);
                 item_row(
                     ui,
                     &crate::theme::Theme::default().palette(),

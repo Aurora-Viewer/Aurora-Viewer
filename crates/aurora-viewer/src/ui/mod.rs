@@ -139,6 +139,7 @@ pub mod scripts;
 pub mod search;
 pub mod shape;
 pub mod sheet;
+pub mod signup;
 pub mod sim_console;
 pub mod skin;
 pub mod sky_beacons;

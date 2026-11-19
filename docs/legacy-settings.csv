@@ -2098,7 +2098,7 @@ StatsReportMaxDuration,F32,unreviewed,,,"Maximum seconds for viewer stats file d
 StatsReportSkipZeroDataSaves,Boolean,unreviewed,,,"In viewer stats data file, skip saving entry if there is no data"
 StatsSessionTrackFrameStats,Boolean,unreviewed,,,Track rendering and network statistics
 StatsSummaryFile,String,unreviewed,,,Filename for stats logging summary
-StopMicCaptureWhenMuted,S32,unreviewed,,,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
+StopMicCaptureWhenMuted,S32,in-aurora,,field `stop_mic_when_muted`,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
 StreamMetadataAnnounceChannel,S32,unreviewed,,field `stream_title_announce`,Chat channel where stream metadata is announced to.
 StreamMetadataAnnounceToChat,Boolean,unreviewed,,field `stream_title_announce`,Announces stream metadata to a defined chat channel.
 SwitchToSharedEnvAfterTeleport,Boolean,unreviewed,,,Switch to Shared Environment after teleport
