@@ -192,6 +192,11 @@ impl App {
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
         self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
+        // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
+        // streamer could load them again from
+        if let Some(demo) = &mut self.stream_demo {
+            demo.gpu_reset();
+        }
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
