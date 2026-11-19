@@ -117,6 +117,7 @@ mod land_moderation;
 mod land_rights;
 mod link_health;
 mod login_favorites;
+mod login_start;
 mod marketplace_listings;
 mod media_pack;
 mod money_tracker;
@@ -3402,39 +3403,37 @@ impl App {
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
         // then a SLURL given from outside (LLStartUp::getStartSLURL)
-        let slurl = if let Some(l) = self.login_form.start_slurl.as_ref() {
-            let name = match crate::grids::resolve(&self.settings, None, &l.target()) {
-                Ok(name) => name,
+        let slurl = self.login_form.start_slurl.clone();
+        // then a favourite chosen in the account's start menu
+        // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
+        let favorite = if reconnect.is_some() || slurl.is_some() {
+            None
+        } else {
+            self.chosen_start_favorite().map(|f| f.start_location())
+        };
+        // then the region field, read like the Legacy Viewer's location
+        // combo: a SLURL, "Region/x/y/z" or a bare name
+        // (FSPanelLogin::onLocationSLURL → LLStartUp::setStartSLURL → LLSLURL)
+        let typed = (reconnect.is_none() && slurl.is_none() && favorite.is_none())
+            .then(|| login_start::region(&self.settings.start_location, &self.settings.start_region))
+            .flatten();
+        let start = if let Some(place) = reconnect {
+            place
+        } else if let Some(location) = slurl.as_ref().or(typed.as_ref()) {
+            match login_start::start(&self.settings, location) {
+                Ok(start) => start,
                 Err(error) => {
                     self.login_form.error = Some(error.text().to_owned());
                     return;
                 }
-            };
-            Some(StartLocation::Region {
-                name,
-                x: l.pos.x.round() as u32,
-                y: l.pos.y.round() as u32,
-                z: l.pos.z.round() as u32,
-            })
+            }
+        } else if let Some(favorite) = favorite {
+            favorite
+        } else if self.settings.start_location == "home" {
+            StartLocation::Home
         } else {
-            None
+            StartLocation::Last
         };
-        // then a favourite chosen in the account's start menu
-        // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
-        let favorite = self.chosen_start_favorite().map(|f| f.start_location());
-        let start = reconnect
-            .or(slurl)
-            .or(favorite)
-            .unwrap_or_else(|| match self.settings.start_location.as_str() {
-                "home" => StartLocation::Home,
-                "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
-                    name: self.settings.start_region.trim().to_owned(),
-                    x: 128,
-                    y: 128,
-                    z: 30,
-                },
-                _ => StartLocation::Last,
-            });
         let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         let login_agent = self
             .login_form
