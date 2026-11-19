@@ -8,6 +8,10 @@ use super::*;
 
 #[path = "mcp_bridge/contents.rs"]
 mod contents;
+#[path = "mcp_bridge/inventory.rs"]
+mod inv_tools;
+#[path = "mcp_bridge/offers.rs"]
+mod offers;
 use aurora_mcp::{
     AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, FRAME_BUDGET_MICROS, LinksetDataStore, LsdOperation,
     McpError, McpRequestEnvelope, McpServerHandle, PrimTransformSpec, RawCapturedFrame, RollbackAction, ViewerRequest, ViewerResponse,
@@ -150,6 +154,16 @@ struct PendingScriptCompile {
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
 }
 
+/// radar_scan_objects waiting for the names of objects in range.
+struct PendingRadar {
+    max_radius_m: f32,
+    root_only: bool,
+    name_filter: Option<String>,
+    limit: usize,
+    started: Instant,
+    reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+}
+
 /// A take / take_copy waiting for its new inventory item.
 struct PendingTake {
     local_id: u32,
@@ -231,6 +245,9 @@ pub struct McpBridge {
     pending_script_creations: VecDeque<PendingScriptCreation>,
     pending_contents: VecDeque<contents::PendingContents>,
     pending_takes: VecDeque<PendingTake>,
+    pending_trash: VecDeque<inv_tools::PendingTrash>,
+    pending_radar: VecDeque<PendingRadar>,
+    pending_offers: VecDeque<offers::PendingOffer>,
     /// The last source sent per object (bytes, sha256): reported back
     /// instead of the source, which may hold keys.
     script_fingerprints: HashMap<Uuid, (usize, String)>,
@@ -494,11 +511,11 @@ impl App {
                                 }
                             }
                             let handle = self.world.objects.get(idx).map(|o| o.key.region).unwrap_or_default();
+                            // forget what was known: only the simulator's ScriptRunning
+                            // reply (asked for below) may say whether it runs and what
+                            // it was compiled to
+                            self.build.contents.running.remove(&(pending.object_uuid, pending.item_id));
                             if saved.compiled {
-                                self.build
-                                    .contents
-                                    .running
-                                    .insert((pending.object_uuid, pending.item_id), (pending.running, Some(pending.compile)));
                                 self.send(NetCommand::Build(BuildCmd::SetScriptRunning {
                                     handle,
                                     object_id: pending.object_uuid,
@@ -724,11 +741,15 @@ impl App {
                 }
             }
 
-            // Expire timed-out rez transactions (5s)
+            // Expire unconfirmed rez transactions (10 s). Not a failure: the
+            // simulator may still carry the rez out (a stuck avatar's rezzes were
+            // queued and all landed after a teleport, so retries made copies).
             while let Some(front) = self.mcp_bridge.build_tx_mgr.pending_rez.front() {
-                if now.duration_since(front.started_at) > Duration::from_secs(5) {
+                if now.duration_since(front.started_at) > Duration::from_secs(10) {
                     if let Some(expired) = self.mcp_bridge.build_tx_mgr.pending_rez.pop_front() {
-                        let _ = expired.reply_tx.send(Err(McpError::Timeout(5000)));
+                        let _ = expired.reply_tx.send(Err(McpError::Internal(
+                            "not confirmed within 10 s, which is NOT a failure: the simulator may still rez it. Do not retry: scan with radar_scan_objects in about 10 s. If nothing appears and the avatar does not walk either, the region has stopped acting on this avatar: a short teleport (nav_move_and_teleport) clears it, then try once more.".into(),
+                        )));
                     }
                 } else {
                     break;
@@ -756,6 +777,17 @@ impl App {
 
         // 2a. Object contents requests (mcp_bridge/contents.rs)
         self.poll_mcp_contents();
+        self.poll_mcp_inventory_delete();
+        self.poll_mcp_offers();
+        let scans = std::mem::take(&mut self.mcp_bridge.pending_radar);
+        for scan in scans {
+            let (json, unknown) = self.mcp_radar_objects_quiet(scan.max_radius_m, scan.root_only, scan.name_filter.clone(), scan.limit);
+            if unknown == 0 || now.duration_since(scan.started) > Duration::from_millis(2500) {
+                let _ = scan.reply_tx.send(Ok(ViewerResponse::Json(json)));
+            } else {
+                self.mcp_bridge.pending_radar.push_back(scan);
+            }
+        }
 
         // 2a'. Takes waiting for their inventory item
         let takes = std::mem::take(&mut self.mcp_bridge.pending_takes);
@@ -1096,80 +1128,21 @@ impl App {
                 name_filter,
                 limit,
             } => {
-                let me = self.world.agent.position;
-                let needle = name_filter.as_deref().unwrap_or_default().to_ascii_lowercase();
-                let mut missing_props = Vec::new();
-                let mut rows: Vec<(f32, Value)> = self
-                    .world
-                    .objects
-                    .iter()
-                    .filter(|(_, o)| !o.is_avatar())
-                    .filter(|(_, o)| !root_only || o.parent_id == 0)
-                    .filter_map(|(idx, o)| {
-                        let world_pos = crate::build::replace::region_transform(&self.world, idx)
-                            .map(|(p, _)| p)
-                            .unwrap_or(o.position);
-                        let dist = world_pos.distance(me);
-                        if dist > max_radius_m {
-                            return None;
-                        }
-                        let props = self.build.props.get(&o.full_id);
-                        if props.is_none() {
-                            missing_props.push((dist, o.key.region, o.full_id));
-                        }
-                        let obj_name = props
-                            .map(|p| p.name.clone())
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| {
-                                let t = o.text.lines().next().unwrap_or("").trim();
-                                (!t.is_empty()).then(|| t.to_owned())
-                            })
-                            .unwrap_or_else(|| format!("Prim {}", o.key.local_id));
-                        if !needle.is_empty() && !obj_name.to_ascii_lowercase().contains(&needle) {
-                            return None;
-                        }
-                        let desc = props.map(|p| p.description.clone()).unwrap_or_default();
-                        let owner_id = self.linkset_owner(idx);
-                        let attach_pt = o.attachment_point();
-                        let attach_name = (attach_pt != 0).then(|| {
-                            self.world
-                                .avatar_lib
-                                .attach_names
-                                .get(&attach_pt)
-                                .cloned()
-                                .unwrap_or_else(|| format!("Point {attach_pt}"))
-                        });
-                        Some((
-                            dist,
-                            json!({
-                                "local_id": o.key.local_id,
-                                "uuid": o.full_id.to_string(),
-                                "parent_id": o.parent_id,
-                                "name": obj_name,
-                                "description": desc,
-                                "position": [world_pos.x, world_pos.y, world_pos.z],
-                                "local_position": [o.position.x, o.position.y, o.position.z],
-                                "rotation_quat": [o.rotation.x, o.rotation.y, o.rotation.z, o.rotation.w],
-                                "scale": [o.scale.x, o.scale.y, o.scale.z],
-                                "distance_m": (dist * 100.0).round() / 100.0,
-                                "attachment_point": attach_pt,
-                                "attachment_point_name": attach_name,
-                                "is_mesh": o.volume.is_mesh(),
-                                "owner_id": owner_id.to_string(),
-                            }),
-                        ))
-                    })
-                    .collect();
-                missing_props.sort_by(|a, b| a.0.total_cmp(&b.0));
-                for (_, handle, object) in missing_props.into_iter().take(64) {
-                    self.send(NetCommand::RequestObjectProperties { handle, object });
+                // linkset children are named by their own properties: ask, and
+                // answer once they came (or ~2.5 s), not with "Prim <id>" at once
+                let (json, unknown) = self.mcp_radar_objects(max_radius_m, root_only, name_filter.clone(), limit);
+                if unknown == 0 {
+                    let _ = reply_tx.send(Ok(ViewerResponse::Json(json)));
+                } else {
+                    self.mcp_bridge.pending_radar.push_back(PendingRadar {
+                        max_radius_m,
+                        root_only,
+                        name_filter,
+                        limit,
+                        started: Instant::now(),
+                        reply_tx,
+                    });
                 }
-                rows.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let objects: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
-                let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
-                    "count": objects.len(),
-                    "objects": objects,
-                }))));
             }
             ViewerRequest::CommsReadHistory { channel_filter, limit } => {
                 let filter = channel_filter.unwrap_or_else(|| "all".to_string()).to_ascii_lowercase();
@@ -1615,6 +1588,9 @@ impl App {
             ViewerRequest::ObjectContents { object_local_id } => {
                 self.start_mcp_contents(object_local_id, contents::ContentsOp::List, reply_tx);
             }
+            ViewerRequest::ObjectCopyContents { object_local_id } => {
+                self.start_mcp_contents(object_local_id, contents::ContentsOp::CopyToInventory, reply_tx);
+            }
             ViewerRequest::TaskItemPermissions {
                 object_local_id,
                 item_id,
@@ -1720,9 +1696,31 @@ impl App {
                 depth: _,
                 limit,
             } => {
-                let folder_uuid = Uuid::parse_str(folder_id_or_path.trim()).ok();
-                let resp = self.handle_mcp_inventory_browse(folder_uuid, None, None, false, limit);
+                // a UUID, "/" for the root, or a path resolved name by name: an
+                // unknown path is an error, never the root in its place
+                let wanted = folder_id_or_path.trim();
+                let folder_uuid = if let Ok(id) = Uuid::parse_str(wanted) {
+                    Ok(Some(id))
+                } else if wanted.is_empty() || wanted == "/" {
+                    Ok(None)
+                } else {
+                    self.resolve_inventory_path(wanted).map(Some)
+                };
+                let resp = folder_uuid.and_then(|f| self.handle_mcp_inventory_browse(f, None, None, false, limit));
                 let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::InventoryOffers => {
+                let _ = reply_tx.send(Ok(self.mcp_inventory_offers()));
+            }
+            ViewerRequest::InventoryOfferRespond { offer_id, accept } => {
+                self.start_mcp_offer_respond(offer_id, accept, reply_tx);
+            }
+            ViewerRequest::GiveInventory { item_id, to_avatar } => {
+                let resp = self.mcp_give_inventory(item_id, to_avatar);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::InventoryDelete { item_ids } => {
+                self.start_mcp_inventory_delete(item_ids, reply_tx);
             }
             ViewerRequest::InventorySearch {
                 folder_id,
@@ -2594,6 +2592,115 @@ impl App {
         }
     }
 
+    /// radar_scan_objects' rows, and how many objects in range still have no
+    /// properties (their names are asked for).
+    fn mcp_radar_objects(&mut self, max_radius_m: f32, root_only: bool, name_filter: Option<String>, limit: usize) -> (Value, usize) {
+        self.mcp_radar_objects_ask(max_radius_m, root_only, name_filter, limit, true)
+    }
+
+    /// The same, without asking for names again (while waiting for them).
+    fn mcp_radar_objects_quiet(&mut self, max_radius_m: f32, root_only: bool, name_filter: Option<String>, limit: usize) -> (Value, usize) {
+        self.mcp_radar_objects_ask(max_radius_m, root_only, name_filter, limit, false)
+    }
+
+    fn mcp_radar_objects_ask(
+        &mut self,
+        max_radius_m: f32,
+        root_only: bool,
+        name_filter: Option<String>,
+        limit: usize,
+        ask: bool,
+    ) -> (Value, usize) {
+        let me = self.world.agent.position;
+        let needle = name_filter.unwrap_or_default().to_ascii_lowercase();
+        let mut missing_props = Vec::new();
+        let mut rows: Vec<(f32, Value)> = self
+            .world
+            .objects
+            .iter()
+            .filter(|(_, o)| !o.is_avatar())
+            .filter(|(_, o)| !root_only || o.parent_id == 0)
+            .filter_map(|(idx, o)| {
+                let world_pos = crate::build::replace::region_transform(&self.world, idx)
+                    .map(|(p, _)| p)
+                    .unwrap_or(o.position);
+                let dist = world_pos.distance(me);
+                if dist > max_radius_m {
+                    return None;
+                }
+                let props = self.build.props.get(&o.full_id);
+                if props.is_none() {
+                    missing_props.push((dist, o.key.region, o.full_id));
+                }
+                let obj_name = props
+                    .map(|p| p.name.clone())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        let t = o.text.lines().next().unwrap_or("").trim();
+                        (!t.is_empty()).then(|| t.to_owned())
+                    })
+                    .unwrap_or_else(|| format!("Prim {}", o.key.local_id));
+                let name_known = props.is_some_and(|p| !p.name.is_empty());
+                // an object not named yet is kept (name_known: false) so the scan waits for
+                // its name instead of filtering it out under "Prim <id>"
+                if name_known && !needle.is_empty() && !obj_name.to_ascii_lowercase().contains(&needle) {
+                    return None;
+                }
+                let desc = props.map(|p| p.description.clone()).unwrap_or_default();
+                let owner_id = if !o.owner_id.is_nil() {
+                    o.owner_id
+                } else {
+                    props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
+                };
+                let attach_pt = o.attachment_point();
+                let attach_name = (attach_pt != 0).then(|| {
+                    self.world
+                        .avatar_lib
+                        .attach_names
+                        .get(&attach_pt)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Point {attach_pt}"))
+                });
+                Some((
+                    dist,
+                    json!({
+                        "local_id": o.key.local_id,
+                        "uuid": o.full_id.to_string(),
+                        "parent_id": o.parent_id,
+                        "name": obj_name,
+                    // false: "Prim <local_id>" stands in until the simulator names it
+                    "name_known": name_known,
+                        "description": desc,
+                        "position": [world_pos.x, world_pos.y, world_pos.z],
+                        "local_position": [o.position.x, o.position.y, o.position.z],
+                        "rotation_quat": [o.rotation.x, o.rotation.y, o.rotation.z, o.rotation.w],
+                        "scale": [o.scale.x, o.scale.y, o.scale.z],
+                        "distance_m": (dist * 100.0).round() / 100.0,
+                        "attachment_point": attach_pt,
+                        "attachment_point_name": attach_name,
+                        "is_mesh": o.volume.is_mesh(),
+                        "owner_id": owner_id.to_string(),
+                    }),
+                ))
+            })
+            .collect();
+        missing_props.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, handle, object) in missing_props.into_iter().take(if ask { 64 } else { 0 }) {
+            self.send(NetCommand::RequestObjectProperties { handle, object });
+        }
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let objects: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
+        let unknown = objects.iter().filter(|v| v["name_known"] == json!(false)).count();
+        (
+            json!({
+                "count": objects.len(),
+                "objects": objects,
+                "names_pending": unknown,
+            }),
+            unknown,
+        )
+    }
+
     fn handle_mcp_inventory_browse(
         &self,
         folder_uuid: Option<Uuid>,
@@ -2638,6 +2745,7 @@ impl App {
                     folders_out.push(json!({
                         "uuid": folder.info.id.to_string(),
                         "parent_id": folder.info.parent.to_string(),
+                        "path": self.inventory_folder_path(folder.info.id),
                         "name": folder.info.name,
                         "type_default": folder.info.type_default,
                         "library": folder.library,
@@ -2669,6 +2777,7 @@ impl App {
                         folders_out.push(json!({
                             "uuid": child.info.id.to_string(),
                             "parent_id": child.info.parent.to_string(),
+                            "path": self.inventory_folder_path(child.info.id),
                             "name": child.info.name,
                             "type_default": child.info.type_default,
                             "library": child.library,
@@ -2714,6 +2823,7 @@ impl App {
         json!({
             "item_id": item.id.to_string(),
             "parent_id": item.parent.to_string(),
+            "parent_path": self.inventory_folder_path(item.parent),
             "name": item.name,
             "description": item.desc,
             "type": type_name,

@@ -923,6 +923,53 @@ impl McpRouter {
             }
 
             // ---- Phase 4: Inventory & Appearance (COF State Machine) ----
+            "inventory_offers" => {
+                let resp = self.send_to_viewer(None, ViewerRequest::InventoryOffers, 5000).await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "inventory_offer_respond" => {
+                let offer_id = args
+                    .get("offer_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("offer_id (from inventory_offers) is required".into()))?;
+                let accept = args
+                    .get("accept")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| McpError::InvalidParams("accept: true or false is required".into()))?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryOfferRespond { offer_id, accept }, 25_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "give_inventory" => {
+                let item_id = parse_opt_uuid(args, "item_id")?.ok_or_else(|| McpError::InvalidParams("item_id is required".into()))?;
+                let to_avatar =
+                    parse_opt_uuid(args, "to_avatar_key")?.ok_or_else(|| McpError::InvalidParams("to_avatar_key is required".into()))?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::GiveInventory { item_id, to_avatar }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "inventory_delete" => {
+                let ids: Vec<Uuid> = match args.get("item_ids").or_else(|| args.get("item_id")) {
+                    Some(Value::Array(a)) => a
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .and_then(|s| Uuid::parse_str(s).ok())
+                                .ok_or_else(|| McpError::InvalidParams("item_ids must be UUIDs".into()))
+                        })
+                        .collect::<Result<_, _>>()?,
+                    Some(Value::String(s)) => {
+                        vec![Uuid::parse_str(s).map_err(|_| McpError::InvalidParams("item_id must be a UUID".into()))?]
+                    }
+                    _ => return Err(McpError::InvalidParams("give item_ids (an array of UUIDs)".into())),
+                };
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryDelete { item_ids: ids }, 20_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
             "inventory_browse" => {
                 let folder_id_or_path = args
                     .get("folder_id_or_path")
@@ -1035,7 +1082,7 @@ impl McpRouter {
                             pcode,
                             name,
                         },
-                        6000,
+                        15_000,
                     )
                     .await?;
                 Ok(text_block(into_json(resp)))
@@ -1123,6 +1170,7 @@ impl McpRouter {
             }
 
             "object_contents"
+            | "object_copy_contents_to_inventory"
             | "object_set_permissions"
             | "task_item_permissions"
             | "task_item_remove"
@@ -1144,6 +1192,7 @@ impl McpRouter {
                 let bool_arg = |key: &str| args.get(key).and_then(Value::as_bool);
                 let request = match name {
                     "object_contents" => ViewerRequest::ObjectContents { object_local_id },
+                    "object_copy_contents_to_inventory" => ViewerRequest::ObjectCopyContents { object_local_id },
                     "object_set_permissions" => ViewerRequest::ObjectSetPermissions {
                         object_local_id,
                         copy: bool_arg("next_owner_copy"),
@@ -1178,7 +1227,7 @@ impl McpRouter {
                     },
                 };
                 let lease = if name == "object_contents" { None } else { lease_id };
-                let resp = self.send_to_viewer(lease, request, 20_000).await?;
+                let resp = self.send_to_viewer(lease, request, 70_000).await?;
                 Ok(text_block(into_json(resp)))
             }
             "lsl_inspect_object_scripts" => {
@@ -1264,6 +1313,16 @@ impl McpRouter {
             }
 
             "lsd_inspect" => {
+                // Second Life has no way for a viewer to read or write a linkset's
+                // data: only scripts in the object can (llLinksetDataRead / Write).
+                // These two tools are a viewer-side model of LSD, never the
+                // simulator's store; answering "0 keys" for a linkset whose scripts
+                // hold many misled an agent into thinking it was empty.
+                if !args.get("local_model").and_then(Value::as_bool).unwrap_or(false) {
+                    return Err(McpError::InvalidParams(
+                        "Second Life does not let a viewer read or write a linkset's data: only scripts in that object can (llLinksetDataRead / llLinksetDataWrite). This tool is a viewer-side model of linkset data, not the object's real store. To read the real data, have a script in the object say it (e.g. on a private channel, read with comms_read_history). Pass local_model: true only to use the model itself.".into(),
+                    ));
+                }
                 let object_local_id =
                     args.get("object_local_id")
                         .and_then(Value::as_u64)
@@ -1293,6 +1352,16 @@ impl McpRouter {
             }
 
             "lsd_mutate" => {
+                // Second Life has no way for a viewer to read or write a linkset's
+                // data: only scripts in the object can (llLinksetDataRead / Write).
+                // These two tools are a viewer-side model of LSD, never the
+                // simulator's store; answering "0 keys" for a linkset whose scripts
+                // hold many misled an agent into thinking it was empty.
+                if !args.get("local_model").and_then(Value::as_bool).unwrap_or(false) {
+                    return Err(McpError::InvalidParams(
+                        "Second Life does not let a viewer read or write a linkset's data: only scripts in that object can (llLinksetDataRead / llLinksetDataWrite). This tool is a viewer-side model of linkset data, not the object's real store. To read the real data, have a script in the object say it (e.g. on a private channel, read with comms_read_history). Pass local_model: true only to use the model itself.".into(),
+                    ));
+                }
                 let object_local_id =
                     args.get("object_local_id")
                         .and_then(Value::as_u64)
@@ -1405,7 +1474,7 @@ impl McpRouter {
                 let position = parse_vec3(args, "position")?;
                 let select = args.get("select").and_then(Value::as_bool).unwrap_or(false);
                 let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::InventoryRezObject { item_id, position, select }, 8000)
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryRezObject { item_id, position, select }, 15_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2872,6 +2941,16 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             in_compact_profile: true,
         },
         ToolDefinition {
+            name: "object_copy_contents_to_inventory".into(),
+            description: "What a buyer does with a product box: Open, then Copy to Inventory. The prim's whole contents go into a new top-level folder named after it (no-copy items MOVE out of the object, as in the viewer's window), and it answers with the folder's id and path and every item's id once they have all arrived.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "object_local_id": { "type": "integer" } },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "object_set_permissions".into(),
             description: "Set an object's OWN next-owner copy / modify / transfer (as on the build tool's General tab), and answer once its properties show them. A copy taken afterwards (take_copy) carries them. Omitted flags stay as they are.".into(),
             input_schema: json!({
@@ -3045,8 +3124,52 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
 
         // Phase 4: Inventory & Appearance (COF Queue)
         ToolDefinition {
+            name: "inventory_offers".into(),
+            description: "Inventory offers waiting for an answer (an avatar's or an object's give): offer_id, from_id, item_name, asset_type, and the item_id an avatar's offer already has. Read-only.".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "inventory_offer_respond".into(),
+            description: "Accept or decline one inventory offer as its card's buttons do. An accepted avatar offer answers once the item is in your inventory (item_id and its folder path); an object's offer is delivered after accepting.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "offer_id": { "type": "integer", "description": "from inventory_offers" },
+                    "accept": { "type": "boolean" }
+                },
+                "required": ["offer_id", "accept"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "give_inventory".into(),
+            description: "Offer one item from your inventory to an avatar, as the inventory window's Share does. A no-copy item leaves your inventory with the offer. The recipient still has to accept; their answer comes as an IM (comms_read_history).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string" },
+                    "to_avatar_key": { "type": "string", "description": "the avatar's UUID" }
+                },
+                "required": ["item_id", "to_avatar_key"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "inventory_delete".into(),
+            description: "Move items from your inventory to the Trash, as the inventory window's Delete does, and answer once they are there. Never purges: they can be restored from the Trash. Worn, Library and protected system items are refused.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_ids": { "type": "array", "items": { "type": "string" }, "description": "inventory item UUIDs (inventory_search finds them)" }
+                },
+                "required": ["item_ids"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "inventory_browse".into(),
-            description: "Browse inventory folders by UUID or path (e.g. '/My Inventory/Objects') with bounded depth and item limit.".into(),
+            description: "Browse inventory folders by UUID or path (e.g. '/My Inventory/Objects'; the root's name may be left out) with bounded depth and item limit. A path that does not resolve, or is ambiguous, is an error naming the segment. Results carry each folder's path and each item's parent_path.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3238,10 +3361,11 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsd_inspect".into(),
-            description: "Inspect Linkset Data (LSD) keys, values, protected status, and 128 KiB byte quota usage on a linkset.".into(),
+            description: "VIEWER-SIDE MODEL ONLY: Second Life gives viewers no access to a linkset's real data (only its scripts can read it), so this refuses unless local_model: true. Inspect Linkset Data (LSD) keys, values, protected status, and 128 KiB byte quota usage on a linkset.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "local_model": { "type": "boolean", "description": "true to use the viewer-side model knowingly" },
                     "object_local_id": { "type": "integer" },
                     "filter_regex": { "type": "string" },
                     "include_protected": { "type": "boolean", "default": true },
@@ -3254,10 +3378,11 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsd_mutate".into(),
-            description: "Batch write, delete, reset, or import JSON into a linkset's 128 KiB Linkset Data store.".into(),
+            description: "VIEWER-SIDE MODEL ONLY: Second Life gives viewers no access to a linkset's real data (only its scripts can read it), so this refuses unless local_model: true. Batch write, delete, reset, or import JSON into a linkset's 128 KiB Linkset Data store.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "local_model": { "type": "boolean", "description": "true to use the viewer-side model knowingly" },
                     "object_local_id": { "type": "integer" },
                     "operations": { "type": "array", "items": { "type": "object" } }
                 },
@@ -4144,7 +4269,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 120, "expected 120 total tools (43 Legacy + 77 Aurora-native)");
+        assert_eq!(defs.len(), 125, "expected 125 total tools (43 Legacy + 82 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [

@@ -302,6 +302,26 @@ pub enum ViewerRequest {
         modify: Option<bool>,
         transfer: Option<bool>,
     },
+    /// "Copy to Inventory" of a prim's whole contents into a new folder.
+    ObjectCopyContents {
+        object_local_id: u32,
+    },
+    /// The inventory offers waiting for an answer.
+    InventoryOffers,
+    /// Accept or decline one offer.
+    InventoryOfferRespond {
+        offer_id: u64,
+        accept: bool,
+    },
+    /// Offer an inventory item to an avatar (the window's Share).
+    GiveInventory {
+        item_id: Uuid,
+        to_avatar: Uuid,
+    },
+    /// Move agent-inventory items to the Trash (never purged), read back.
+    InventoryDelete {
+        item_ids: Vec<Uuid>,
+    },
     /// Remove an item from a prim's contents, read back.
     TaskItemRemove {
         object_local_id: u32,
@@ -732,6 +752,7 @@ impl ViewerRequest {
             | ViewerRequest::FloaterList
             | ViewerRequest::ScriptPromptList
             | ViewerRequest::ObjectContents { .. }
+            | ViewerRequest::InventoryOffers
             | ViewerRequest::ViewportCapture { .. }
             | ViewerRequest::InventoryBrowse { .. }
             | ViewerRequest::InventorySearch { .. }
@@ -822,6 +843,10 @@ impl ViewerRequest {
             | ViewerRequest::ScriptPromptRespond { .. }
             | ViewerRequest::TaskItemPermissions { .. }
             | ViewerRequest::ObjectSetPermissions { .. }
+            | ViewerRequest::InventoryDelete { .. }
+            | ViewerRequest::InventoryOfferRespond { .. }
+            | ViewerRequest::GiveInventory { .. }
+            | ViewerRequest::ObjectCopyContents { .. }
             | ViewerRequest::TaskItemRemove { .. }
             | ViewerRequest::TaskItemAdd { .. }
             | ViewerRequest::TaskNotecardWrite { .. }
