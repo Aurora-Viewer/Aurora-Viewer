@@ -1,10 +1,13 @@
 //! Finds the prim water volumes around our avatar (#2008) without looking
 //! at every prim each frame. Every two seconds, the phantom prims within
-//! 64 m are listed from the scene's pick index; the names of those not
-//! known yet are asked once with RequestObjectPropertiesFamily, as a hover
-//! does, at most a few a sweep. Each frame only tests the few volumes that
-//! matched. Names that reach the viewer another way (hover, build, Area
-//! Search) are kept too.
+//! 64 m are listed from the scene's pick index and matched by the names
+//! already known. Names are asked with RequestObjectPropertiesFamily, as a
+//! hover does, only for the prims the avatar is in or within a few metres
+//! of, a few a sweep: a busy region's far decor is never asked about. A
+//! near prim's name is asked again after a while, so a prim renamed to or
+//! away from a water word follows once the avatar comes near it. Each frame
+//! only tests the few volumes that matched. Names that reach the viewer
+//! another way (hover, build, Area Search) are kept too.
 use crate::movement::water_volume::{self, Volume, Water};
 use crate::scene::Scene;
 use crate::world::World;
@@ -17,19 +20,30 @@ use uuid::Uuid;
 
 const RANGE: f32 = 64.0;
 const SWEEP: Duration = Duration::from_secs(2);
-/// Names asked per sweep, nearest first: about ten a second at most.
-const ASKS: usize = 20;
+/// Names are asked only for prims whose box, grown by this, holds the avatar.
+const NEAR: f32 = 4.0;
+/// Names asked per sweep, nearest first: two a second at most.
+const ASKS: usize = 4;
 /// A name that never came back is asked again after this.
 const ASK_AGAIN: Duration = Duration::from_secs(60);
+/// A near prim's known name is asked again after this (a rename).
+const REFRESH: Duration = Duration::from_secs(30);
 /// Floors are probed again when the avatar moved this far or after FLOOR_AGE.
 const FLOOR_MOVE: f32 = 0.5;
 const FLOOR_AGE: Duration = Duration::from_millis(500);
 const FLOOR_DEPTH: f32 = 128.0;
 
+struct Known {
+    name: String,
+    description: String,
+    at: Instant,
+}
+
 #[derive(Default)]
 pub(super) struct Detector {
-    /// Name and description of the candidates whose properties arrived.
-    names: HashMap<Uuid, (String, String)>,
+    /// Name and description of the candidates whose properties arrived,
+    /// and when.
+    names: HashMap<Uuid, Known>,
     asked: HashMap<Uuid, Instant>,
     matched: Vec<Uuid>,
     /// The list as typed, and its words.
@@ -80,16 +94,14 @@ impl Detector {
         for idx in candidates {
             let Some(o) = world.objects.get(idx) else { continue };
             let Some(volume) = scene.water_volume(world, idx) else { continue };
-            match self.names.get(&o.full_id) {
-                Some((name, description)) => {
-                    if water_volume::matches(&self.words.1, name, description) {
-                        self.matched.push(o.full_id);
-                    }
-                }
-                None if self.asked.get(&o.full_id).is_none_or(|at| now.duration_since(*at) >= ASK_AGAIN) => {
-                    unknown.push((volume.center.distance_squared(position), o.full_id, o.key.region));
-                }
-                None => {}
+            let known = self.names.get(&o.full_id);
+            if known.is_some_and(|k| water_volume::matches(&self.words.1, &k.name, &k.description)) {
+                self.matched.push(o.full_id);
+            }
+            let due = known.is_none_or(|k| now.duration_since(k.at) >= REFRESH)
+                && self.asked.get(&o.full_id).is_none_or(|at| now.duration_since(*at) >= ASK_AGAIN);
+            if due && volume.near(position, NEAR) {
+                unknown.push((volume.center.distance_squared(position), o.full_id, o.key.region));
             }
         }
         unknown.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -122,10 +134,21 @@ impl Detector {
                 continue;
             }
             self.asked.remove(&p.object_id);
-            if phantom && water_volume::matches(&self.words.1, &p.name, &p.description) && !self.matched.contains(&p.object_id) {
+            // a match counts at once, a name that lost its word stops at once
+            let water = phantom && water_volume::matches(&self.words.1, &p.name, &p.description);
+            if water && !self.matched.contains(&p.object_id) {
                 self.matched.push(p.object_id);
+            } else if !water {
+                self.matched.retain(|id| *id != p.object_id);
             }
-            self.names.insert(p.object_id, (p.name.clone(), p.description.clone()));
+            self.names.insert(
+                p.object_id,
+                Known {
+                    name: p.name.clone(),
+                    description: p.description.clone(),
+                    at: Instant::now(),
+                },
+            );
         }
     }
 

@@ -3870,7 +3870,6 @@ ui-options-always-show-teleport-cancel-help = Shows Cancel on the teleport scree
 ui-options-show-back-slurl = Say where a teleport came from
 ui-options-show-back-slurl-help = After a teleport to another region, nearby chat shows a link to the place you left, to go back to it
 ui-options-friends-only-show-help = Only you and your friends are shown: the other avatars disappear, and come back at once when it is switched off. The same switch as the toolbar button and the World menu. A teleport switches it off unless the next row keeps it. Kept for each account.
-ui-options-prim-water-help = Phantom prims whose name or description contains one of the water words become water for your own avatar. Swimming itself is turned on in the AO's Movement tab.
 ui-options-friends-only-keep = Keep "Show friends only" after a teleport
 ui-options-friends-only-keep-help = "Show friends only" stays on when a teleport arrives. Off, the teleport switches it off. Switched off, the other avatars come back at once. Kept for each account.
 ui-options-friends-only-keep-login = Kept for each account: log in to change it.

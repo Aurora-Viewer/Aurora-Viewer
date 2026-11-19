@@ -3852,7 +3852,6 @@ ui-options-always-show-teleport-cancel-help = リージョンがキャンセル�
 ui-options-show-back-slurl = テレポート元を表示
 ui-options-show-back-slurl-help = 別のリージョンへテレポートしたあと、元の場所へのリンクを近くのチャットに表示します。リンクから戻ることができます。
 ui-options-friends-only-show-help = 自分とフレンドだけが表示されます。他のアバターは消え、オフにするとすぐに表示されます。ツールバーのボタンや「ワールド」メニューと同じ設定です。次の項目で維持しない限り、テレポートでオフになります。アカウントごとに保存されます。
-ui-options-prim-water-help = 名前または説明に水の単語のいずれかを含むファントムプリムが、自分のアバターにとって水になります。泳ぎ自体はＡＯの「移動」タブで有効にします。
 ui-options-friends-only-keep = テレポート後も「フレンドのみ表示」を維持
 ui-options-friends-only-keep-help = テレポートが完了しても「フレンドのみ表示」はオンのままです。オフの場合、テレポートでオフになります。オフにすると、他のアバターはすぐに表示されます。アカウントごとに保存されます。
 ui-options-friends-only-keep-login = アカウントごとに保存されます。変更するにはログインしてください。

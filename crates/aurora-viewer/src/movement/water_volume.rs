@@ -13,7 +13,9 @@ pub const THIN: f32 = 0.5;
 /// How deep a plane's water is taken for the water effects (m), which do
 /// not probe its floor.
 const PLANE_DEPTH: f32 = 3.0;
-/// About 8°: a tilted box is a ramp or a wave, not a pool.
+/// About 8°: a tilted box is a ramp or a wave, not a pool. Its top is
+/// still its highest corner, so a slightly tilted pool never lets the
+/// avatar out below its rim.
 const UPRIGHT: f32 = 0.99;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,11 +85,24 @@ impl Volume {
             vertical,
         })
     }
+    /// The highest corner.
     pub fn top(&self) -> f32 {
-        self.center.z + self.half[self.vertical]
+        self.center.z + self.reach()
     }
+    /// The lowest corner.
     pub fn bottom(&self) -> f32 {
-        self.center.z - self.half[self.vertical]
+        self.center.z - self.reach()
+    }
+    /// How far the corners reach above (and below) the centre.
+    fn reach(&self) -> f32 {
+        (0..3)
+            .map(|axis| (self.rotation * Vec3::AXES[axis]).z.abs() * self.half[axis])
+            .sum()
+    }
+    /// `point` is inside the box grown by `margin` on every side.
+    pub fn near(&self, point: Vec3, margin: f32) -> bool {
+        let local = self.rotation.inverse() * (point - self.center);
+        (0..3).all(|axis| local[axis].abs() <= self.half[axis] + margin)
     }
     pub fn thin(&self) -> bool {
         self.half[self.vertical] * 2.0 < THIN
@@ -201,6 +216,28 @@ mod tests {
             "a rail"
         );
         assert!(Volume::new(Vec3::NAN, Quat::IDENTITY, Vec3::splat(4.0)).is_none());
+    }
+
+    #[test]
+    fn a_tilted_pool_tops_out_at_its_highest_corner() {
+        // 20 m across, tilted 5°: its rim is about 0.87 m above the centre's top
+        let tilt = 5.0f32.to_radians();
+        let v = Volume::new(Vec3::ZERO, Quat::from_rotation_x(tilt), Vec3::new(20.0, 20.0, 2.0)).expect("slight tilt");
+        let expected = 10.0 * tilt.sin() + tilt.cos();
+        assert!((v.top() - expected).abs() < 1e-4, "{} vs {expected}", v.top());
+        assert!((v.bottom() + expected).abs() < 1e-4);
+        // upright: top is the centre plus half the height
+        assert_eq!(pool(Vec3::ZERO, Vec3::new(4.0, 4.0, 2.0)).top(), 1.0);
+    }
+
+    #[test]
+    fn names_are_asked_only_near_a_volume() {
+        let v = pool(Vec3::new(0.0, 0.0, 61.0), Vec3::new(8.0, 8.0, 2.0));
+        assert!(v.near(Vec3::new(1.0, 1.0, 61.5), 4.0), "inside");
+        assert!(v.near(Vec3::new(7.9, 0.0, 61.0), 4.0), "beside, within the margin");
+        assert!(v.near(Vec3::new(0.0, 0.0, 65.9), 4.0), "above");
+        assert!(!v.near(Vec3::new(8.1, 0.0, 61.0), 4.0), "too far beside");
+        assert!(!v.near(Vec3::new(0.0, 0.0, 30.0), 4.0), "far below, on the ground");
     }
 
     #[test]
