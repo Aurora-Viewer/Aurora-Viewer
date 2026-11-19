@@ -69,6 +69,19 @@ fn normal_at(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     return n;
 }
 
+// The mesh's smooth normal, the shading's without its normal map, from
+// the xy of the depth prepass's normals target (object.wgsl `depth_normal`,
+// as gtao.wgsl `oct_decode` reads it).
+fn mesh_normal(packed: vec2<f32>) -> vec3<f32> {
+    let e = vec2<f32>(packed.x - select(0.0, 2.0, packed.x > 1.5), packed.y) * 2.0 - vec2<f32>(1.0);
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
+}
+
 // Where a ray from the pixel at `world` starts: off the surface along its
 // normal bent towards the eye (the depth's normal is a face's, so on curved
 // meshes, avatars most of all, the eye's side is the one surely outside),

@@ -69,14 +69,7 @@ fn smooth_normal(pixel: vec2<i32>, flat: vec3<f32>) -> vec3<f32> {
     if (params.camera.w < 0.5) {
         return flat;
     }
-    let packed = textureLoad(motion_tex, pixel, 0).xy;
-    let e = vec2<f32>(packed.x - select(0.0, 2.0, packed.x > 1.5), packed.y) * 2.0 - vec2<f32>(1.0);
-    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
-    if (n.z < 0.0) {
-        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
-        n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
-    }
-    n = normalize(n);
+    let n = mesh_normal(textureLoad(motion_tex, pixel, 0).xy);
     if (dot(n, flat) > 0.7) {
         return n;
     }

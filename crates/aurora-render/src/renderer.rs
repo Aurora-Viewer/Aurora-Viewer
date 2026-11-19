@@ -11614,6 +11614,8 @@ impl Backend {
                         &light,
                         &self.targets.depth_ss,
                         gbuf,
+                        motion_view(self.motion_now, &self.targets, self.taa.as_ref()),
+                        &self.dummies.black,
                         &self.targets.scene_copy,
                         &scene,
                     );
