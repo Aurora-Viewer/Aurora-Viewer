@@ -2072,6 +2072,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending\|passage-refused` | Movement options, local swimming poses, synthetic passage feedback and a refused passage |
 | `AURORA_DEMO_FLEXIBLE=1\|missing-params` | Flexible prims: gravity, tension, wind, force, moving parent and default-parameter fallback |
+| `AURORA_DEMO_PRIM_WATER=name\|description\|custom\|plane\|nomatch\|off` | Swimming in a phantom prim named as water (#2008); with `AURORA_DEMO_MOVELOCK=off` |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
@@ -3298,6 +3299,13 @@ simulator: each object keeps its placements before each edit, the updates of
 one drag (closer than 0.4 s) making one step.
 
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
+
+With `AURORA_DEMO_BUILD=move,object:mirror` and the Features tab, the
+plaza's existing mirror probe is selected. Check its four Probe update
+modes in Aurora and Legacy layouts (`AURORA_DEMO_BUILD_STYLE`): both
+mirror modes require Box and disable Ambient/Coverage; Static and Dynamic
+restore those controls. The mode remains readable with graphics mirrors
+disabled (#3376).
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
 scenarios; `shape` opens the renamed Object section. `+weights`, `+media` and `+permissions` open the related dialogs;
@@ -3549,6 +3557,8 @@ cannot be acknowledged by this viewer; this fixture tests known loaded clips.
 **`AURORA_DEMO_MOVELOCK=on|off|moving|seated|error|timeout|endpoint|halted`** — Aurora's bridge and position lock. The demo seeds the library object, runs the nested inventory creation/copy/attach/script-upload/save callbacks, opens the options and shows the requested activation immediately in the bottom toolbar (the bottom-left indicator is off by default; tick it in the options); provisioning remains a separate diagnostic. `moving` and `seated` change physical maintenance internally while the button, enabled label and indicator remain active; `error` simulates failed compilation; `timeout` withholds the first hello and reports the script-startup timeout after 60 seconds; `endpoint` supplies an untrusted address and must show a refused connection response without exposing its URL. `halted` stops the script once it is ready, as a Stack-Heap Collision does: every request then times out; about ten seconds later the viewer finds the script not running, says it is reinstalling the bridge, recompiles it and saves it again (detach/reattach), and Movelock returns without any action. After three automatic reinstalls in ten minutes it stops and leaves Repair to the user. The demo installs both scripts of the bridge (controller and read-only query service) and answers the discovery probe with both hellos. A real bridge also reports the controller's lowest free memory with each status: the log line `script memory low mark` shows the margin left in Mono's 64 KB. The normal fixture uses the current secondlife.io simulator domain. Click the lock icon or press Ctrl+Alt+P to toggle; its right-click menu opens the options. Settings are saved per avatar. The human must validate real LSL permissions, physical bump resistance, movement/sitting, relog and region changes. Confirm a single existing object is reused/moved into inventory root → `#Aurora` → `Aurora Bridge`, with `#Aurora` sorted above system folders. The stable object/script name remains `#Aurora Bridge v1.0`; the installed protocol is 1.8. The factory waits for the new script to respond before detaching, then five seconds after detachment before reattaching, without requiring an inventory asset UUID update. A lost hello is repeated until confirmed; a stopped script can be started once. Startup, movement permission, simulator connection, inventory save and rejected responses have distinct progress/timeout messages. HTTPS must use the same simulator TLS trust as the other capability requests; redirects remain disabled. on_rez must preserve the queued attach event. Readiness must follow the real TAKE_CONTROLS grant without a script-debug error. The visible enabled state follows the user selection even while physically moving, seated, being pushed, waiting for acknowledgements or encountering a connection error; diagnostics remain in the options. Physical convergence (within 0.35 m of the anchor and below 0.5 m/s) remains internal. Region changes keep activation enabled; the obsolete region-off option is ignored. Movelock has no timeout/keepalive: it must still resist pushes after a long gap without viewer HTTP, until explicitly disabled. LSL control events alone release/reanchor the hold. Movement always releases the hold through simulator control events and relocks at the new position on release; all movement/nudge keys remain available. Old hard-lock settings are ignored. Toggling from the toolbar, shortcut or options emits no dedicated Movelock sound. Detach it explicitly: Movelock turns off, enhanced movement pauses and the bridge stays detached for the current session until enabled, worn or repaired again. The internal installation save must still reattach after its delay. Check explicit unlock and cleanup at logout; no elapsed timer may disable Movelock. Demo validates lifecycle and UI; it does not execute simulator physics. The human validated Movelock on 2026-10-15; the new movement motors retain its hold/reanchor functions.
 
 **`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending|passage-refused`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, while swimming assignments belong to Aurora’s own set.
+
+**`AURORA_DEMO_PRIM_WATER=name|description|custom|plane|nomatch|off`** — Swimming in prim water (#2008). At frame 360 a pool is raised 40 m above the region water (a solid floor, its water a phantom 8 × 8 × 2.4 m prim), the movement-design AO is seeded and the AO's Movement tab opens; swimming is switched on once the set is ready, and "Swim in prim water" is on except in `off`. Run it with `AURORA_DEMO_MOVELOCK=off`: swimming waits for the bridge. The water prim is named `AuroraWater` (`name`), has the word in its description (`description`), is a "Garden pond" found through the added word `pond` (`custom`), is a 5 cm plane over the floor (`plane`) or a "Liverpool sign" that the word `pool` must not match (`nomatch`). The offline demo has no prim collision nor bridge motor, so the avatar is moved in a 12 s loop: at the surface, swimming 6 m across 1.4 m under it (bubbles from the head), 3 m above the top, then falling back in (splashes); the water effects' bubbles and splashes are switched on for the run. With `RUST_LOG=info,aurora_viewer::water_contacts=trace` the `water part` lines show their surface at the pool's top (62.4) and only particle kinds (1 bubbles, 0/5/7 splashes and sprays), never the region water's ripples or wakes. Swimming waits for the window's focus as everywhere: a capture in a window without it shows Flight. The `aurora_viewer::prim_water` log lines give, per phase, the names known/asked/matched, the movement state and the water height: Surface, Submerged, Flight then Surface with water 62.4 in the first four modes; region water (20) and no swimming in `nomatch` and `off`, and in `off` no name is asked. Real swimming, buoyancy and the pool's floor need the grid.
 
 Water gestures (2026-10-17, bridge 1.23): use the configured ascent/descent actions (PageUp/PageDown by default). Tap descent at the surface: complete a physical dive after release and retain depth. Tap ascent underwater: return to the adjusted flotation height; holding/releasing that same press must never start flight or jump on arrival. Repeated ascent presses continue the return; descent cancels it. Current surface gesture: a single ascent press jumps, whether stationary or moving; at a solid shore with a safe landing it uses the rise-then-advance jump. A second distinct press within 400 ms requests higher flight when allowed; holding a key must not request flight. A no-fly parcel still allows a surface jump. Check the correct surface/underwater forward AO list across ascent and idle, short/tall avatars and float offsets from -0.5 to +0.5 m. Bridge 1.23 increases the surface return command to 3-5 m/s with stronger acceleration and braking near the goal; these are command limits, not measured Havok speeds. Inspect actual ascent duration and overshoot on the grid. Ceilings/occupied landings must stop the physical target; sitting, suspension, disable, bridge loss and timeout release pending phases. Check remapped keys, native/enhanced flight handover, shallow/deep water and automatic shore exits. Offline unit tests, LSL lint and prescribed native trajectories verify controls/animation continuity; they do not simulate Havok.
 
@@ -5398,7 +5408,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -5413,6 +5423,10 @@ both open states and the selection count. Capture at frame 620.
   line cut to the list's width.
   `search-back`: "zzz" typed (2510) then erased (2520): the whole list is
   back at its full height, without a scroll bar.
+  `photo-list`, with `AURORA_DEMO_SNAPSHOT=viewfinder-light`: adds forty
+  sky inventory copies and opens the photo's sky list at frame 900. Keep
+  it open, scroll, search and clear the search: its width must stay stable,
+  also with `AURORA_TEXT_SIZE=1.5` or `2` (#3421).
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -6564,7 +6578,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic]` | Group profile window, as a member, officer, owner or guest, in either look |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
@@ -9012,6 +9026,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   disabled with the blocking reason even if the fields are filled. In
   any isolated installation, a label indicates that login to a grid
   is disabled; only enter synthetic values for this test.
+  On Linux, `scripts/test-update-linux.py`
+  (`python3 scripts/test-update-linux.py`) prepares the same two packages as
+  `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
+  tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
+  `--reset-settings` and `--required` in place of the switches, and no
+  server PID to stop: the feed runs inside the script, which keeps serving
+  while the viewer it launched, or the one the update restarted, runs and
+  stops three seconds after the last of them is closed — a Check for updates
+  made after the restart therefore answers "up to date", as on a real
+  installation. Keep the viewer's folder path plain and writable: that is
+  what lets it replace itself. To see the refusal of a protected folder, copy
+  the package into a folder root owns (`sudo cp -r`) and run it from there:
+  the update window says the folder belongs to a sandbox or another account,
+  links the release page, and nothing is downloaded or replaced.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
 - **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
@@ -10077,7 +10105,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -10140,7 +10168,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   as soon as the window opens): "Sandbox doors", General, owned by the
   group, land-scope; "Profile ›" opens the experience profile, whose
   Allow / Forget / Block log `demo group: experience permission …`.
-  `:classic` last (for example `owner:admin:classic`) shows the classic
+  `:wide` opens the profile at 900 × 640 for layout comparisons. Compare
+  `officer:notices:classic` with `officer:notices:classic:wide`, also at
+  `AURORA_TEXT_SIZE=1.5`: narrow notices put the list above the message;
+  the attachment name and Save action must stay separate and readable.
+  `:classic` (for example `owner:admin:classic`) shows the classic
   window (Preferences › Aurora › Profiles, not saved), scrolled to the
   section of the tab asked for and opened: with `owner:members:classic`,
   "Members and roles" manages the members in the Legacy panel's narrow

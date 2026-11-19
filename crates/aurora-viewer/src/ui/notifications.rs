@@ -501,7 +501,14 @@ pub(super) fn card(
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, world.notifications.text_of(n), &shown, &n.name_links, 12.0, p.muted);
+                        let text = world.notifications.text_of(n);
+                        if matches!(n.data, Data::GroupNotice { .. }) {
+                            super::chat::select::document(ui, p, n.id, &shown, |ui, line| {
+                                super::chat::text_with_links(ui, p, world, text, line, &n.name_links, 12.0, p.muted);
+                            });
+                        } else {
+                            super::chat::text_with_links(ui, p, world, text, &shown, &n.name_links, 12.0, p.muted);
+                        }
                     });
                 }
             }
