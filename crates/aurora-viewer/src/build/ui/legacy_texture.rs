@@ -50,7 +50,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
         }
         footer(ui, p, tool, world, s, &sel, env);
         if tool.ui.tex_tab != 2 {
-            surface_effects(ui, p, tool, world, &sel);
+            surface_effects(ui, tool, world, &sel);
         }
     });
 }

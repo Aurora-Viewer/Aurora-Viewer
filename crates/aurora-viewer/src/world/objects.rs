@@ -45,7 +45,7 @@ pub struct RenderState {
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
     /// Viewer-local material override from the object description.
-    pub water_surface_face: Option<u8>,
+    pub(crate) water_surface: Option<water_surface::Surface>,
     /// Temporary material-inspector display mode; no simulator state changes.
     pub blinn_phong_preview: bool,
     /// Geometry cache key currently bound (and its LOD).
@@ -805,11 +805,11 @@ impl ObjectStore {
             let Some(idx) = self.index_of_uuid(&props.object_id) else {
                 continue;
             };
-            let face = water_surface::face(&props.description);
-            if self.get(idx).is_some_and(|object| object.render.water_surface_face != face)
+            let surface = water_surface::parse(&props.description);
+            if self.get(idx).is_some_and(|object| object.render.water_surface != surface)
                 && let Some(object) = self.get_mut(idx)
             {
-                object.render.water_surface_face = face;
+                object.render.water_surface = surface;
                 object.material_dirty = true;
             }
         }

@@ -7,13 +7,14 @@
 //! - `plane`: a 5 cm water plane over the pool's floor;
 //! - `nomatch`: named "Liverpool sign" with the word "pool": not water;
 //! - `off`: prim water left off, the region water only.
-//! - `surface-edit`: an editable cube for testing the Texture tab controls.
+//! - `surface-edit`: an editable cube and sphere for testing the Texture tab controls.
 
 use super::*;
 
 pub const FLOOR: u32 = 122_000;
 pub const WATER: u32 = FLOOR + 1;
 pub const SURFACE_CUBE: u32 = FLOOR + 2;
+pub const SURFACE_SPHERE: u32 = FLOOR + 3;
 /// The pool's centre on the plaza, and the top of its floor.
 pub const CENTER: Vec3 = Vec3::new(132.0, 118.0, 0.0);
 pub const FLOOR_TOP: f32 = 60.0;
@@ -81,10 +82,11 @@ pub fn events(mode: &str) -> Vec<NetEvent> {
     water.update_flags |= crate::build::edits::FLAGS_PHANTOM;
     vec![NetEvent::ObjectUpdates {
         handle: HANDLE,
-        objects: if matches!(mode, "description" | "surface-edit") {
-            vec![floor, water, surface_cube(false)]
-        } else {
-            vec![floor, water]
+        objects: match mode {
+            "description" | "surface-effects" => vec![floor, water, surface_cube(false)],
+            "surface-edit" => vec![floor, water, surface_cube(true), surface_sphere()],
+            "surface-volume" => vec![floor, water, surface_sphere()],
+            _ => vec![floor, water],
         },
     }]
 }
@@ -116,6 +118,27 @@ pub fn surface_cube(moved: bool) -> aurora_net::objects::ObjectUpdate {
     );
     cube.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
     cube
+}
+
+pub fn surface_sphere() -> aurora_net::objects::ObjectUpdate {
+    let mut sphere = prim(
+        SURFACE_SPHERE,
+        CENTER.with_z(FLOOR_TOP) + Vec3::new(2.0, -1.0, 5.0),
+        Quat::IDENTITY,
+        Vec3::splat(5.0),
+        shape(
+            aurora_prim::params::LL_PCODE_PATH_CIRCLE,
+            aurora_prim::params::LL_PCODE_PROFILE_CIRCLE_HALF,
+            100,
+            0,
+            0,
+        ),
+        te([0.64, 0.72, 0.77, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    sphere.update_flags |= crate::ui::context::flags::OBJECT_MODIFY | crate::build::edits::FLAGS_PHANTOM;
+    sphere
 }
 
 /// The properties a hover would get for the scenario's prims.

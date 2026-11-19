@@ -211,6 +211,7 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub link_error: Option<String>,
     pub picker: TexturePicker,
+    water_editor: texture::WaterEditor,
     pub pick_target: Option<PickTarget>,
     /// A texture or material dropped on a Texture tab slot, applied next
     /// frame: the slot, the asset and the inventory item it came from.
@@ -371,6 +372,7 @@ pub fn show(
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
         tool.ui.status_notice = None;
+        tool.ui.water_editor = Default::default();
         tool.status.clear();
         tool.dismiss_texture_picker();
         tool.cancel_color_picker(world);
@@ -577,6 +579,11 @@ pub fn show(
         s.expanded = !s.expanded;
     }
     floaters::secondary(ctx, p, tool, world, s, env);
+    if open {
+        texture::show_surface_editor(ctx, p, tool, world);
+    } else {
+        tool.ui.water_editor = Default::default();
+    }
     if env.demo
         && crate::ui::color_picker::demo::mode().is_some()
         && !ctx.data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false))

@@ -23,6 +23,7 @@ use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::tabs;
 use crate::world::World;
+use crate::world::objects::water_surface::{Effect, Surface, parse, supports_volume};
 use aurora_assets::material::{AlphaMode, OVERRIDE_NULL_UUID, PbrOverride, TextureTransform};
 use aurora_prim::te::{DEFAULT_TEXTURE, TextureFace};
 use egui::RichText;
@@ -469,33 +470,142 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         if tool.ui.tex_tab != 2 {
             face_options(ui, p, tool, world, s, env, &sel);
-            surface_effects(ui, p, tool, world, &sel);
+            surface_effects(ui, tool, world, &sel);
         }
     });
 }
 
-fn surface_effects(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, selection: &[Sel]) {
+#[derive(Default)]
+pub(super) struct WaterEditor {
+    open: bool,
+    draft: Option<WaterDraft>,
+}
+
+struct WaterDraft {
+    object: Uuid,
+    saved: Option<Surface>,
+    settings: Surface,
+}
+
+fn surface_effects(ui: &mut egui::Ui, tool: &mut BuildTool, world: &World, selection: &[Sel]) {
     let [selected] = selection else { return };
-    if tool.sel_te(world).len() != 1 {
+    if tool.sel_te(world).len() == 1
+        && world
+            .objects
+            .get(selected.idx)
+            .is_some_and(|object| tool.props.contains_key(&object.full_id))
+        && ui.button(aurora_i18n::tr!("build-surface-effects")).clicked()
+    {
+        tool.ui.water_editor.open = true;
+    }
+}
+
+pub(super) fn show_surface_editor(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World) {
+    if !tool.ui.water_editor.open {
         return;
     }
-    let Some(object) = world.objects.get(selected.idx) else { return };
+    let mut editor = std::mem::take(&mut tool.ui.water_editor);
+    let faces = tool.sel_te(world);
+    let [(idx, face)] = faces.as_slice() else { return };
+    if !tool.can_modify(world, *idx) {
+        return;
+    }
+    let Some(object) = world.objects.get(*idx) else { return };
     let Some(props) = tool.props.get(&object.full_id) else { return };
-    let current = crate::world::objects::water_surface::face(&props.description);
-    crate::ui::widgets::collapsing(ui, p, "surface_effects", aurora_i18n::tr!("build-surface-effects"), false, |ui| {
-        ui.label(aurora_i18n::tr!("build-surface-water-selected-face", face = selected.face));
-        if let Some(face) = current {
-            ui.label(aurora_i18n::tr!("build-surface-water-active-face", face = face));
+    let current = parse(&props.description);
+    let volume_available = supports_volume(&object.visual_volume());
+    let mut draft = editor
+        .draft
+        .take()
+        .filter(|draft| draft.object == object.full_id && draft.settings.face == *face && draft.saved == current)
+        .map_or_else(
+            || {
+                let mut settings = current.unwrap_or_else(|| Surface::calm(*face));
+                settings.face = *face;
+                settings
+            },
+            |draft| draft.settings,
+        );
+    let position = ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique(super::INSPECTOR_ID)))
+        .map_or(egui::pos2(360.0, 120.0), |rect| rect.right_top() + egui::vec2(10.0, 0.0));
+    crate::ui::widgets::Floater::new(
+        "build_water_surface",
+        aurora_i18n::tr!("build-surface-effects"),
+        position,
+        egui::vec2(330.0, 190.0),
+    )
+    .auto_height()
+    .show(ctx, p, &mut editor.open, |ui| {
+        ui.label(aurora_i18n::tr!("build-surface-water-selected-face", face = *face));
+        let mut effect = draft.effect;
+        ui.horizontal_wrapped(|ui| {
+            for (value, label) in [
+                (Effect::Water, aurora_i18n::tr!("build-surface-effect-water")),
+                (Effect::Lava, aurora_i18n::tr!("build-surface-effect-lava")),
+                (Effect::Energy, aurora_i18n::tr!("build-surface-effect-energy")),
+            ] {
+                crate::ui::widgets::radio_value(ui, p, &mut effect, value, label);
+            }
+        });
+        if effect != draft.effect {
+            draft = Surface::preset(*face, effect);
+        }
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("build-surface-water-tint"));
+            let [r, g, b] = draft.tint;
+            let mut tint = [r, g, b, 255];
+            if crate::ui::widgets::color_button(ui, p, "water_tint", &mut tint, false).changed() {
+                draft.tint = [tint[0], tint[1], tint[2]];
+            }
+        });
+        ui.add(
+            egui::Slider::new(&mut draft.speed, 0..=200)
+                .suffix("%")
+                .text(if effect == Effect::Water {
+                    aurora_i18n::tr!("build-surface-water-wave-speed")
+                } else {
+                    aurora_i18n::tr!("build-surface-animation-speed")
+                }),
+        );
+        if effect == Effect::Water {
+            draft.volume &= volume_available;
+            ui.add_enabled_ui(volume_available, |ui| {
+                crate::ui::widgets::switch_labeled(ui, p, &mut draft.volume, aurora_i18n::tr!("build-surface-water-volume"))
+            })
+            .inner
+            .on_disabled_hover_text(aurora_i18n::tr!("build-surface-water-volume-sphere"));
         }
         ui.horizontal_wrapped(|ui| {
-            if current != Some(selected.face) && ui.button(aurora_i18n::tr!("build-surface-water-apply")).clicked() {
-                tool.set_water_surface(world, selected.idx, Some(selected.face));
+            let reset = if effect == Effect::Water {
+                aurora_i18n::tr!("build-surface-water-calm")
+            } else {
+                aurora_i18n::tr!("build-surface-reset")
+            };
+            if ui.button(reset).clicked() {
+                let volume = draft.volume;
+                draft = Surface::preset(*face, effect);
+                draft.volume = volume;
             }
-            if current.is_some() && ui.button(aurora_i18n::tr!("build-surface-water-remove")).clicked() {
-                tool.set_water_surface(world, selected.idx, None);
+            if ui
+                .add_enabled(current != Some(draft), egui::Button::new(aurora_i18n::tr!("build-surface-apply")))
+                .clicked()
+            {
+                tool.set_water_surface(world, *idx, Some(draft));
+            }
+            if current.is_some() && ui.button(aurora_i18n::tr!("build-surface-remove")).clicked() {
+                tool.set_water_surface(world, *idx, None);
             }
         });
     });
+    if editor.open {
+        editor.draft = Some(WaterDraft {
+            object: object.full_id,
+            saved: current,
+            settings: draft,
+        });
+        tool.ui.water_editor = editor;
+    }
 }
 
 fn glow(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {

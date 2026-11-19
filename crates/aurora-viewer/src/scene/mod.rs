@@ -4274,11 +4274,8 @@ impl Scene {
             // a glTF material ignores the texture entry's color: its own base
             // color alpha decides, in `classify`
             let invisible = tf.color[3] < 0.004 && mat_id.is_none();
-            let object_water = o.render.water_surface_face.map(usize::from) == Some(fi)
-                && !g.hud
-                && wearer.is_none()
-                && rigged_owner.is_none()
-                && plant.is_none();
+            let water_surface = o.render.water_surface.filter(|surface| usize::from(surface.face) == fi);
+            let object_water = water_surface.is_some() && !g.hud && wearer.is_none() && rigged_owner.is_none() && plant.is_none();
             if invisible
                 && !object_water
                 && self.debug_alpha.is_none()
@@ -4294,6 +4291,12 @@ impl Scene {
             let mut rec = te_record_base(model, &tf);
             // the OIT tie-break: the object's id and this face
             rec.identity[0] = aurora_render::oit_tie(*o.full_id.as_bytes(), fi as u32);
+            if let Some(surface) = water_surface.filter(|_| object_water) {
+                let volume = surface.volume && crate::world::objects::water_surface::supports_volume(&o.visual_volume());
+                rec.identity[1] = surface.packed_tint();
+                rec.identity[2] = u32::from(surface.speed);
+                rec.identity[3] = (surface.effect as u32) << 1 | u32::from(volume);
+            }
             // Linden plants cut at 0.5, not the 0.33 of other faces without a
             // material (LLDrawPoolTree, setMinimumAlpha(0.5))
             if plant.is_some() {

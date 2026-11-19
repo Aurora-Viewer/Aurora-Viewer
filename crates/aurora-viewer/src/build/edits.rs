@@ -600,7 +600,12 @@ impl BuildTool {
     }
 
     /// The description belongs to the prim whose face is being edited, including linked children.
-    pub(in crate::build) fn set_water_surface(&mut self, world: &World, idx: usize, face: Option<u8>) {
+    pub(in crate::build) fn set_water_surface(
+        &mut self,
+        world: &World,
+        idx: usize,
+        face: Option<crate::world::objects::water_surface::Surface>,
+    ) {
         if !self.can_modify(world, idx) {
             return;
         }

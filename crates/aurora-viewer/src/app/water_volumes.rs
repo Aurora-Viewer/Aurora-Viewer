@@ -235,7 +235,7 @@ impl super::App {
                 .on_server_update_at(position, Vec3::ZERO, Vec3::ZERO, false, true, Instant::now());
             self.world.agent.position = position;
             self.world.agent.flying = true;
-            let target = if matches!(mode.as_str(), "description" | "surface-edit") {
+            let target = if matches!(mode.as_str(), "description" | "surface-edit" | "surface-effects") {
                 crate::demo::prim_water::surface_cube(false).position
             } else {
                 center.with_z(crate::demo::prim_water::surface())
@@ -246,10 +246,65 @@ impl super::App {
                 &mut self.world.agent,
                 &self.settings.camera,
             );
-            self.panels.ao = !matches!(mode.as_str(), "description" | "surface-edit");
+            self.panels.ao = !matches!(mode.as_str(), "description" | "surface-edit" | "surface-volume" | "surface-effects");
             self.ao_ui.tab = 1;
             self.panels.perf = false;
             self.panels.inventory = false;
+        }
+        if mode == "surface-volume" {
+            if !matches!(self.frame_count, 361 | 850 | 1250) {
+                return;
+            }
+            let sphere = crate::demo::prim_water::surface_sphere();
+            match self.frame_count {
+                361 => {
+                    self.on_app_event(aurora_net::NetEvent::ObjectProperties(vec![ObjectProps {
+                        object_id: sphere.full_id,
+                        description: "[AURORA_WATER:face=0,tint=226D88,speed=60,volume=1]".into(),
+                        ..Default::default()
+                    }]));
+                    self.camera.set_view(
+                        sphere.position + Vec3::new(-9.0, -6.0, 2.0),
+                        sphere.position,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                }
+                850 => {
+                    self.camera.set_view(
+                        sphere.position,
+                        sphere.position + Vec3::X,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                }
+                1250 => {
+                    self.camera.set_view(
+                        sphere.position + Vec3::new(-9.0, -6.0, 2.0),
+                        sphere.position,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                }
+                _ => {}
+            }
+            return;
+        }
+        if mode == "surface-effects" {
+            let description = match self.frame_count {
+                361 => "Demo cube [AURORA_WATER:face=0]",
+                750 => "Demo cube [AURORA_WATER:face=0,effect=lava]",
+                1000 => "Demo cube [AURORA_WATER:face=0,effect=energy]",
+                1250 => "Demo cube",
+                _ => return,
+            };
+            self.on_app_event(aurora_net::NetEvent::ObjectProperties(vec![ObjectProps {
+                object_id: crate::demo::prim_water::id(crate::demo::prim_water::SURFACE_CUBE),
+                name: "Surface effects cube".into(),
+                description: description.into(),
+                ..Default::default()
+            }]));
+            return;
         }
         if mode == "surface-edit" {
             return;
@@ -291,7 +346,7 @@ impl super::App {
                         .objects
                         .index_of_uuid(&object_id)
                         .and_then(|idx| self.world.objects.get(idx))
-                        .and_then(|object| object.render.water_surface_face);
+                        .and_then(|object| object.render.water_surface.map(|surface| surface.face));
                     log::info!(target: "aurora_viewer::prim_water", "Object water directive {description:?}: face {face:?}");
                 }
             }

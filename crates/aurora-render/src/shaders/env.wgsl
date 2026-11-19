@@ -1413,7 +1413,8 @@ struct ObjectWaterOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
+    @location(2) @interpolate(flat) appearance: vec3<u32>,
+    @location(3) @interpolate(flat) camera_inside: u32,
 };
 
 @vertex
@@ -1421,11 +1422,25 @@ fn vs_object_water(in: VsIn) -> ObjectWaterOut {
     let rec = records[in.instance];
     let model = eye_model(rec, in);
     let pos = model * vec4<f32>(vertex_position(rec, in), 1.0);
-    return ObjectWaterOut(eye_clip(rec, pos), pos.xyz + frame.eye.xyz, cofactor(model) * vertex_normal(rec, in), in.uv);
+    let basis_cofactor = cofactor(model);
+    var camera_inside = 0u;
+    if ((rec.identity.w & 1u) != 0u) {
+        // The standard sphere has radius 0.5 in object space. Undo the
+        // displayed transform so scaled and rotated ellipsoids work too.
+        let det = dot(model[0].xyz, basis_cofactor[0]);
+        if (abs(det) > 1e-12) {
+            let relative_camera = frame.camera_pos.xyz - frame.eye.xyz - model[3].xyz;
+            let local_camera = (transpose(basis_cofactor) * relative_camera) / det;
+            camera_inside = u32(dot(local_camera, local_camera) < 0.25);
+        }
+    }
+    return ObjectWaterOut(eye_clip(rec, pos), pos.xyz + frame.eye.xyz,
+        basis_cofactor * vertex_normal(rec, in), rec.identity.yzw, camera_inside);
 }
 
 @fragment
-fn fs_object_water_depth() -> @location(0) vec4<f32> {
+fn fs_object_water_depth(in: ObjectWaterOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if ((in.appearance.z & 1u) != 0u && front == (in.camera_inside != 0u)) { discard; }
     return vec4<f32>(0.0);
 }
 
@@ -1435,11 +1450,55 @@ fn fs_object_water(in: ObjectWaterOut, @builtin(front_facing) front: bool) -> @l
     let offset = in.world_pos - frame.camera_pos.xyz;
     let dist = max(length(offset), 0.001);
     let incident = offset / dist;
-    let geometric_normal = water_unit(in.normal) * select(-1.0, 1.0, front);
-    let broad = analytic_wave(in.uv * 38.0, frame.camera_pos.w);
-    let detail = analytic_wave(in.uv * 95.0, frame.camera_pos.w * 1.45);
-    let wave = water_unit(vec3<f32>(broad.xy * 1.8 + detail.xy * 0.85, 1.0));
-    let normal = perturb_normal(geometric_normal, in.world_pos, in.uv, vec3<f32>(0.0), 1.0, true, wave * 0.5 + vec3<f32>(0.5));
+    let tint_rgb = vec3<u32>((in.appearance.x >> 16u) & 255u, (in.appearance.x >> 8u) & 255u, in.appearance.x & 255u);
+    let tint = srgb_to_linear(vec3<f32>(tint_rgb) / 255.0);
+    let t = frame.camera_pos.w * (f32(in.appearance.y) * 0.01);
+    let world_dx = dpdx(in.world_pos);
+    let world_dy = dpdy(in.world_pos);
+    let effect = in.appearance.z >> 1u;
+    if (effect != 0u) {
+        let normal = water_unit(in.normal) * select(-1.0, 1.0, front);
+        let p = in.world_pos * 0.9;
+        let drift = vec3<f32>(0.047, -0.026, 0.016) * t;
+        let warp = gradient_noise(p * 0.63 + drift);
+        let grain = gradient_noise(p * 5.0 - drift);
+        let edge = 1.0 - clamp(abs(dot(-incident, normal)), 0.0, 1.0);
+        if (effect == 1u) {
+            // Slow-moving molten channels between dark crust plates.
+            let crust = gradient_noise(p + vec3<f32>(warp * 0.7) - drift);
+            let heat = smoothstep(0.54, 0.72, crust + (grain - 0.5) * 0.1);
+            let coal = tint * (0.025 + 0.08 * grain);
+            let molten = tint * (0.75 + 3.0 * heat) + vec3<f32>(0.25, 0.06, 0.0) * heat * heat;
+            return vec4<f32>(mix(coal, molten, heat), 1.0);
+        }
+        // A softly luminous material with moving interference bands.
+        let phase = dot(p, vec3<f32>(2.7, -1.1, 4.8)) + warp * 4.0 - t * 1.7;
+        let band = pow(0.5 + 0.5 * sin(phase), 6.0);
+        let pulse = pow(0.5 + 0.5 * sin(phase * 0.58 + grain * 2.0 + t * 0.9), 8.0);
+        let energy = tint * (0.18 + band * 1.9 + pulse * 0.7 + edge * edge * 1.3);
+        return vec4<f32>(energy, 1.0);
+    }
+    // Use a metre-scaled basis on the geometry. UV islands and texture
+    // repeats should not change the ripple size or reverse the flow.
+    let surface_normal = water_unit(in.normal);
+    let reference = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), abs(surface_normal.z) > 0.98);
+    let tangent = normalize(cross(reference, surface_normal));
+    let bitangent = cross(surface_normal, tangent);
+    let p = vec2<f32>(dot(in.world_pos, tangent), dot(in.world_pos, bitangent));
+    let slot = frame.tex_slots.w;
+    var ripple = analytic_wave(p * 2.5, t).xy;
+    if (slot != 0u) {
+        let dx = vec2<f32>(dot(world_dx, tangent), dot(world_dx, bitangent));
+        let dy = vec2<f32>(dot(world_dy, tangent), dot(world_dy, bitangent));
+        let loc = tex_loc.values[slot];
+        let layer = loc & 0xffffu;
+        let broad = textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, p * 0.35 + t * vec2<f32>(0.018, -0.012), layer, dx * 0.35, dy * 0.35).xy * 2.0 - vec2<f32>(1.0);
+        let detail = textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, p.yx * 0.78 + t * vec2<f32>(-0.014, 0.022), layer, dx.yx * 0.78, dy.yx * 0.78).xy * 2.0 - vec2<f32>(1.0);
+        ripple = broad * 0.24 + detail.yx * 0.12;
+    }
+    let facing = select(-1.0, 1.0, front);
+    let geometric_normal = surface_normal * facing;
+    let normal = water_unit(surface_normal + tangent * ripple.x + bitangent * ripple.y) * facing;
     let slope = normal - geometric_normal;
     let camera_normal = vec2<f32>(dot(slope, frame.cam_right.xyz), dot(slope, frame.cam_up.xyz));
     let sample_uv = clamp(uv + camera_normal * vec2<f32>(1.0, -1.0) * 0.065 / max(sqrt(dist), 1.0),
@@ -1451,11 +1510,11 @@ fn fs_object_water(in: ObjectWaterOut, @builtin(front_facing) front: bool) -> @l
     }
     let sample = water_refraction_sample(sample_uv, dist, WaterRefractionSample(uv, depth, position), incident);
     let scene_color = textureSampleLevel(scene_tex, lin_clamp, sample.uv, 0.0).rgb;
-    // A thin water layer: keep the refracted scene, with a cool scattering
-    // contribution that follows the wave normals even against flat scenery.
-    let scatter = clamp(0.60 + 2.0 * dot(wave.xy, vec2<f32>(0.55, 0.83)), 0.25, 0.95);
-    let transmission = scene_color * vec3<f32>(0.56, 0.78, 0.88)
-        + vec3<f32>(0.025, 0.15, 0.23) * scatter;
+    let interior = in.camera_inside != 0u;
+    let path = clamp(select(distance(sample.position, frame.camera_pos.xyz) - dist, dist, interior), 0.0, 8.0);
+    let attenuation = select(0.18, 0.48, interior);
+    let transmittance = exp(-attenuation * path * (vec3<f32>(1.0) - tint * 0.7));
+    let transmission = scene_color * transmittance + tint * (vec3<f32>(1.0) - transmittance);
     let direction = reflect(incident, normal);
     var radiance = sky_color(vec3<f32>(direction.xy, abs(direction.z)));
     if (probes_on()) {
@@ -1468,6 +1527,7 @@ fn fs_object_water(in: ObjectWaterOut, @builtin(front_facing) front: bool) -> @l
         radiance = mix(radiance, hit.rgb, hit.a);
     }
     let fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(-incident, normal), 0.0, 1.0), 5.0);
+    if ((in.appearance.z & 1u) != 0u && front == interior) { discard; }
     return vec4<f32>(mix(transmission, radiance, fresnel), 1.0);
 }
 
