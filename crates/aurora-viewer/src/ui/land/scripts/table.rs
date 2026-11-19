@@ -114,7 +114,7 @@ impl Table {
                 land.group_name(id, groups).unwrap_or_default()
             } else {
                 social.want_name(*id);
-                social.name_of(id)
+                social.name_in(crate::world::names::NameScope::Roster, id)
             };
             if *name != resolved {
                 *name = resolved;

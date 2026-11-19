@@ -9,6 +9,7 @@
 //! application bundle is signed and replaced as a whole.
 
 pub mod feed;
+pub mod ffmpeg_pack;
 pub mod install;
 pub mod media_pack;
 pub mod package;

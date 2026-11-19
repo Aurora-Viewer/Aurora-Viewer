@@ -69,7 +69,7 @@ pub(super) fn show(
         let in_call = call.and_then(|c| c.members.iter().find(|m| m.id == *id));
         Member {
             id: *id,
-            name: world.social.display_name_of(id),
+            name: world.social.display_name_in(crate::world::names::NameScope::Roster, id),
             status: if *id == world.agent_id {
                 presence::Status::Online
             } else {

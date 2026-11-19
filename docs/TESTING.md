@@ -36,6 +36,25 @@ build about three times faster; its tests take about 1.6 times longer to
 run (21 s instead of 13 on an idle PC), and a failing test keeps files and
 lines in its backtrace (`RUST_BACKTRACE=1`).
 
+**Keyboard focus**: in demo mode, `AURORA_DEMO_OPTIONS=1` opens Preferences.
+Click its search field, then use Tab and Shift+Tab: the focused field,
+navigation entry, button or switch has a contrasting outline. Enter and
+Space keep their usual actions; typing still edits the focused field.
+Moving the pointer keeps the outline, pressing a mouse button hides it,
+and the next Tab shows it again. Repeat in another floater and on the
+login screen, with a larger interface scale and high contrast. A scrolled
+control's outline stays inside its visible pane, a covering window remains
+above it, and a hidden/disabled control or inactive native window has no
+outline. Targeted regressions: `cargo test --workspace keyboard_focus`.
+For an offline visual check without opening a native window or sending
+desktop input, run `cargo test --workspace capture_controls_offscreen --
+--ignored --nocapture`. It draws the real widgets and fonts into
+`.scratch/keyboard-focus-captures/`, in dark and light palettes. Check the
+field, navigation row, button, switch, clickable label and link, including
+sized buttons and the height slider: the outline leaves every glyph
+readable. Where a layout wrapper leaves no room for an outside outline,
+a thin inset indicator remains visible inside the control's clipped bounds.
+
 **Search/filter clear buttons**: type a query in People, Conversations and
 Contacts, Places, the resource library, inventory destination/thumbnail
 pickers, construction Contents, Appearance, Poser/IK, scripts, group lists,
@@ -478,6 +497,7 @@ the background still applies outside screenshots.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic controller input and preferences, avatar camera cycling, lens reset gestures or six-axis camera flight |
+| `AURORA_DEMO_GAME_CONTROL=<scenario>` | Game Controls: a synthetic gamepad walks, flies the flycam or moves the cursor, or a Preferences › Game Controls tab opens |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -505,6 +525,21 @@ the desktop swapchain. The saved image must show the scene without egui,
 nameplates, worn HUDs, selection or debug overlays. Other frames follow the
 normal desktop path. This checks the output boundary for VR; it does not connect
 to OpenXR or provide stereo views.
+
+`AURORA_DEMO_GAME_CONTROL`: from frame 600, a synthetic gamepad reaches
+Game Controls through the joystick worker's snapshot, with the Aurora gamepad
+profile off, the Game Controls settings at their defaults and the demo region
+taking GameControlData (nothing leaves the PC in demo mode). `walk` walks
+forward on the left stick, runs past 90 % and turns on the right stick;
+`flycam` clicks the right stick into the flycam at frame 630, then flies
+forward and pans; `cursor` presses Select into the mouse cursor mode at frame
+630 and moves the pointer right and up. `actions`, `device-mappings`,
+`device-options` and `server-data` open that tab of Preferences › Game
+Controls while the left stick, a touch of the right trigger and North are held from
+frame 650: the Device Options tab shows the live values, the Server Data tab
+the last packet. Every hundred frames the log has a `game control demo:` line
+with the mode, whether a packet went out, the flycam, the cursor mode and the
+avatar's position.
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
@@ -1070,8 +1105,9 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
-| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, or a second of the track recorded (see Details) |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
+| `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1124,10 +1160,14 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
-- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha`**: at frame 620, the Director (toolbar
+- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha|orbit|capture|anim|montage|titles|render`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
-  in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  in the log). The window opens on the tab that shows what the scenario
+  sets: Camera for `lock`, `orbit` and `capture`, Look for `green` and
+  `titles`, Output for `record`, `record-alpha` and `render`, Library for
+  `montage`, Track otherwise (the Filters tab, the photo mode's looks, has
+  no scenario of its own: `AURORA_DEMO_SNAPSHOT` sets the looks it shows). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
   thousand frames a second and frame 700 is still under the loading fade.
   With `1` and a capture at frame 900: the window on the right (Camera,
   Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,
@@ -1154,7 +1194,15 @@ when unfocused") is ignored during a screenshot.
   avatar") on an empty background filled with the key green
   (`director demo: our avatar alone on a green screen`): the avatar alone,
   no sky, ground, water nor other avatar, on one flat green (0, 177, 64)
-  right up to its outline, the Director's interface over it. `record`
+  right up to its outline, the Director's interface over it. `montage`
+  plays a montage of two shots, kept in memory (no file written): the
+  track, then the same track backwards, cut from the last view of the first
+  to the first view of the second without a start delay between them
+  (`director demo: a montage of 2 shots, 18.0 s`, then `director: montage
+  cut to shot 2 of 2` at 9 s and `director: montage ended` once the last
+  view was held a second); the track of four keyframes is back in the
+  window afterwards, and the Montage section lists `Demo A` and `Demo B`.
+  `record`
   shortens the track to a second and records its playback at 24 frames a
   second (`director: recording <w>x<h> at 24 frames a second`), through the
   ffmpeg found (the film starts once it has answered, `director: ffmpeg at
@@ -1169,6 +1217,54 @@ when unfocused") is ignored during a screenshot.
   and quality through the computer's own ffmpeg, each film read back by it
   (its frames, their size, their colors, the transparency):
   `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
+  `AURORA_DIRECTOR_FFMPEG=pack` (with or without the demo) leaves out the
+  ffmpeg chosen by hand and those of the PATH and the usual folders
+  (`director: AURORA_DIRECTOR_FFMPEG=pack, only the ffmpeg pack is looked
+  for`): until the pack is installed, Output shows the help with "Download
+  ffmpeg", which asks first with the size, downloads the pack of this
+  system from the release `ffmpeg-<n>`, checks its size and SHA-256 and
+  installs it next to the media plugins (`director: ffmpeg pack installed,
+  <file>`); the next look finds it there.
+  `orbit` locks the view on our avatar's neck and replaces the track by
+  the Shots section's orbit (`director demo: an orbit of 25 keyframes round
+  our avatar, 10.0 s`): one turn 6 m away and 1 m above the neck, a
+  keyframe every 15°, each looking at the neck and travelling with the
+  avatar; in the world a turquoise circle of twenty-five small cameras round
+  the avatar, the first selected, its first and last segments eased (the
+  Keyframe section says `Ease in` on the second, `Ease out` on the last,
+  and "Travel with its target" is ticked). Played, the avatar stays in the
+  middle of the picture all the way round; walking while it plays, the
+  circle goes with it.
+  `capture` replaces the track with a path flown by hand around our avatar
+  (a circle that speeds up, the view on the avatar, a small shake), taken
+  twenty times a second and made keyframes as "Stop and make keyframes"
+  does (`director demo: a path taken by hand, <n> keyframes over 8.0 s`):
+  diamonds unevenly spaced on the timeline, the turquoise path following the
+  circle without the shake, the last keyframe selected. `anim` keeps the four keyframes: the first
+  starts the first animation of the inventory and the third stops it
+  (`director demo: the first keyframe starts <name>, the third stops it`;
+  with an empty inventory, `director demo: no animation in the inventory`),
+  and the second, selected, has a lens and a time of its own (f/2, focused
+  at 3 m, 18:30, in its "Lens and time of day" rows; the other keyframes'
+  rows say "Track's value" and "Live"). Play it: our avatar plays the animation from
+  the first keyframe to the third and stops, the sun sinks toward the
+  evening around the second keyframe and comes back, the depth of field
+  narrows there, and the user's own sky and the track's lens are back once
+  the playback ends.
+  `titles` adds fades of a second in and out and two titles (`director
+  demo: fades of 1 s and two titles`), "Aurora Viewer / Director" in the
+  centre at the start and "A lower third" (amber, lower left) from 1 s to
+  4 s, then plays the track: captures at frames 640, 700 and 1150 show the
+  picture rising from black under the white title, the lower third fading
+  in, and the picture going to black at the end. `render` adds the same
+  fades and titles, shortens the track to a second and renders it offline
+  as PNG images at 1080p, 24 a second (`director: rendering 25 frames of
+  1920x1080 at 24 a second to <folder>`, then `director: render of 25
+  frames written to <folder>`): 25 files `Aurora_00000.png` to
+  `Aurora_00024.png` in a new `Aurora_<date>` folder of `<Videos>/Aurora
+  Viewer`, the first black, the title in the middle, the last black,
+  whatever the window's size; the Output section shows the progress
+  meanwhile.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -1797,6 +1893,27 @@ when unfocused") is ignored during a screenshot.
   window from frame 300 (on an avatar of the crowd, on the ground next to
   it). Read `hover` and the `hover summary` lines in the profile; combine
   with `AURORA_HOVER_CHECK=1`, `AURORA_DEMO_ACTIONS=1` or a load scene.
+- **`AURORA_HOVER_TRACE=1`** (any mode, the grid included): a `hover trace`
+  line in the log each time the object under the hover cursor changes, or
+  where the answer comes from (`app/hover_pick.rs`): `Cpu` (nothing posed
+  near the ray), `Answer` (the drawn faces of this pixel), `Followed` (the
+  last answer's worn mesh, met by the pointer's ray on the CPU while it
+  moves), `Between` (the last answer's posed object, searched from the
+  depth under the pointer while it moves), `Fallback` (the CPU search, for
+  want of an answer that speaks for the pixel), `Foreground` (the CPU found
+  a surface in front). The line gives the object's local id, whether a left
+  click acts on it (`touch`), what it is (`kind`: the skeleton it is rigged
+  to if any, whether the GPU poses it, whether it is worn, whether it has a
+  face at alpha 0), its distance and the depth's along the ray, and the
+  posed object the last answer saw (`under`). A cursor that flickers shows
+  as lines alternating between two sources or two objects. Every 5 s of
+  hovering, a `hover trace cost` line gives the time the hover took on the
+  CPU over those frames, as calls, mean, longest and sum: the CPU search
+  (each frame), what the answers of the GPU are turned into (ten a second
+  at most; `of which the scan`: the search for the objects of the answer's
+  draw records), and the search for the last answer's object while the pointer
+  moves (`between two answers`, with how many ended `followed`, `between`
+  or with neither). Compare the sums with the frames' time (5 s).
 - **`AURORA_DEMO_LAND_BESIDE=1`**: a 4 m square frame (a box prim hollowed
   at 85 %) lying on the bare ground 5 m along the start view. Its box spans
   the ground in its middle, its surface does not, as the box of a mesh
@@ -1805,7 +1922,7 @@ when unfocused") is ignored during a screenshot.
   land) and `AURORA_DEMO_CLICKS=4000,900,440,menu`, capture frame 700: a right
   click on the ground inside the frame must open the land menu (About Land,
   Edit land), never the frame's menu with the frame outlined.
-- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]"`**:
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]"`**:
   one click on the world every `ms` milliseconds (250 if the value is not a
   number) once the world is displayed, button held 60 ms, through the same
   path as a mouse button (`app/click_pick.rs`), without ever taking the real
@@ -1834,7 +1951,16 @@ when unfocused") is ignored during a screenshot.
     it), the object picked, its face, and `inside its posed bounds`
     (`OUTSIDE` would be a defect: the point read on the GPU is not within
     the bounds the CPU knows for the object). Then come `demo menu: …`
-    (menu opened) or `demo click action: Touch, object=…`. With
+    (menu opened) or `demo click action: Touch, object=…`. A left click
+    acts on a scripted animesh and passes through a rigged attachment by
+    default (Preferences › Mouse and keyboard, "Left click on rigged
+    objects": "Animesh" on, "Rigged attachments you wear" and "Rigged
+    attachments of other avatars" off): `150,rigged,left` writes
+    `aimed at … : OK` and the touch for the animesh, and
+    `aimed at … : PASSED THROUGH` with the object behind as the one picked
+    for a rigged attachment, ours included.
+    `150,rigged,clickable,left` clicks as with the three preferences on,
+    without saving them: `aimed at … : OK` and the touch for each. With
     `3000,rigged,menu` and `AURORA_CAPTURE_FRAMES=1100,1460`, the
     screenshots show the menu of an object worn by another avatar then that
     of an object worn by us, the object surrounded by its outline.
@@ -2544,6 +2670,13 @@ starts, midway and after it. With `AURORA_DEMO_RLVA=interact` and
 `AURORA_DEMO_BUILD_FRAME=650`, `@interact` arrives during the drag: the
 selection and the drag end together, and the position stops. `@fartouch`
 leaves a drag running: the far-selection check waits for the drag to end.
+
+`AURORA_DEMO_BUILD=rect,<x>,<y>,-,<dx>,<dy>` presses the Edit tool at a pixel
+through the real click path, drags and releases; `rect,object:<id>,-,<dx>,<dy>`
+presses on an object. `rect-shift` holds Shift, `rect-focus` loses the window
+focus and `rect-tool` changes tool with the button down, and `keep:<id>` at the
+end selects an object first. The `demo rect:` lines of the log give the
+selection and its space before, during and after the gesture.
 
 `AURORA_DEMO_BUILD=cycle,object:99610` adds three nested objects, two of
 them linksets, selects A then simulates two notches towards the back and one
@@ -3869,6 +4002,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
+| `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
@@ -4064,6 +4198,24 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
+- **`AURORA_DEMO_COUPLE=1|leave|clip|hover|mirror`**: Nova stands beside you from frame 400
+  and accepts an Ask 1.5 s later, as a resident would. Open the animation
+  editor (Avatar Studio › Animate), Clip page: Ask Nova, then Use as B. The
+  timeline shows Person A (violet) and Person B (amber) lanes; a click on the
+  other person's name or lanes edits them, and each keeps their own keys and
+  undo. Save or Export BVH writes `<name> A`, `<name> B` and `<name>
+  placement.txt` in the folder chosen. `leave`: 10 s after Nova becomes
+  Person B her avatar is killed, as on a teleport; she must stay drawn and
+  posable until couple mode ends, then go.
+  `clip` and `hover`, with `AURORA_DEMO_AVATAR_STUDIO=animation-editor`, need
+  no clicks, for screenshots: Nova is asked from frame 860 and becomes Person
+  B face to face, with the Clip page and the timeline open (both people's
+  lanes, B's amber joint dots, the Move Person B fields); `hover` also gives
+  B a hover of their own and opens the Hover menu on Person B at frame 1300.
+  `mirror` presses Mirror yourself instead: a copy of your avatar, with what
+  you wear but not your HUDs, stands 1 m in front of you facing you as Person
+  B, with no name tag, and goes when couple mode ends. The scripted modes turn
+  the view to the side once B is there. Capture from frame 1400.
 - **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
@@ -6282,6 +6434,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_DEMO_REMEMBER_REFUSED=1` | The credential store refuses the password at login |
+| `AURORA_DEMO_SIGNUP=1\|<page>` | The sign-up window of "Create an account" open over the login screen (see Details) |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, a frozen viewer ended from outside, out of memory, stack overflow or a critical thread's death |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
@@ -6318,6 +6471,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
+| `AURORA_DEMO_GAMING_MODE=<frame>` | From that frame, gaming mode is on as from its toolbar button: the Render pauses, the loop slows, with its notice and window title, until the window comes back in front |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -6351,10 +6505,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab |
-| `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
+| `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations (`lost`: the dead end a restart used to leave) |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
-| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
+| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -6381,7 +6535,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -6419,7 +6573,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` or `history-big` / `history:n=<count>` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time; `history-big` seeds thousands of history rows (#2955) |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local,links]` or `history-big` / `history:n=<count>` | "Places" on a tab, with layout, time-zone or landmark-link fixtures; `history-big` seeds thousands of history rows (#2955) |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -6727,6 +6881,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and the return to the shared environment. Moving a slider changes the same
   setting in Preferences (open both to compare) and is saved on release.
   Capture after frame 300, with `--language fr` and `--language en`.
+  At `AURORA_TEXT_SIZE=1.5`, long labels wrap before the sliders and the
+  Aurora Weather button stays inside the window (#3613).
 - **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
   teleport from the home grid asks when worn items are not in My Suitcase:
   seven invented items, an invented grid as the destination. "Teleport anyway" goes
@@ -7738,6 +7894,21 @@ failure. Grid validation and any paid upload are performed by the human.
   Render when the card is overloaded" off, nothing pauses. A capture run
   pauses too (a real one never does): `AURORA_FPS_LIMIT=60`,
   `AURORA_DEMO_BUSY_PAUSE=900` and `AURORA_CAPTURE_FRAMES=1000`.
+- **`AURORA_DEMO_GAMING_MODE=<frame>`**: at that frame gaming mode turns
+  on, as from the toolbar's Gaming mode button: the world is no longer
+  drawn and what is left of it is blurred and darkened, the amber notice
+  "Gaming mode: Aurora is resting…" shows in the middle, the window title
+  ends with "— Gaming mode", the loop runs at 5 fps (2 fps minimised or
+  covered) and in-world media stop drawing. The log says `gaming mode on`.
+  Focus another window, then click back into Aurora: with Preferences ›
+  Graphics › "Leave gaming mode when Aurora comes back in front" on (the
+  default), it ends at once (`gaming mode off`); off, only the button ends
+  it, and the notice says so. A capture run pauses too but keeps its frame
+  rate: `AURORA_DEMO_GAMING_MODE=900` and `AURORA_CAPTURE_FRAMES=1000`.
+  Memory: within a second the log says `texture memory: the window was
+  in gaming mode for 1 s, freeing up video memory`, and 3 s in `gaming mode: memory
+  given back, working set … MB, private … MB`, before and after; the
+  textures load again once it ends (`textures load as before`).
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
@@ -8616,6 +8787,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_REMEMBER_REFUSED=1`**, with `remember_password` on in the demo profile: the login behaves as if the credential store had refused the password (Linux with no Secret Service, for example). The nearby chat shows the notice and the login form's "Remember password" is off after a logout (`AURORA_DEMO_EXIT=logout`). The store itself is not touched; the switch stays off in the demo profile until it is turned on again.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
+- **`AURORA_DEMO_SIGNUP=1|<page>`** (#3796, `ui/signup.rs`): opens the sign-up window of the login screen's "Create an account" once, at the first frame of the login screen. `1` loads Second Life's sign-up page (join.secondlife.com, so the network and the media plugins are needed); any other value is the address of a page shown in its place (an `https://` or `file:///` page), for a capture without the network. That page's `secondlife:///app/floaterjoin/close`, `tos`, `tc` and `privacy` work as on the real page (close the window, open the Terms of Service, the Terms and Conditions or the Privacy Policy over it); `join/<name>/<password>` is refused from any page that is not https on secondlife.com, as outside the demo, so it never fills the form from a test page. The log says `sign-up: opening …`, `sign-up: the page asks …` (the command, never the name or password) and `sign-up: window closed`. Never type real details into the sign-up form in a test: the account would be created on the grid.
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
 - **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 - **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
@@ -9513,7 +9685,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
@@ -9521,7 +9693,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
   the run; `hidden` disables it with Contacts initially selected, showing
-  the fallback to nearby chat. `conference` selects the online friends (IM starts a
+  the fallback to nearby chat. `lost` starts in the state a restart used to
+  leave: Contacts torn off, its tab hidden and its window closed, so
+  nothing reaches the friends list; at frame 900 the Communicate › Contacts
+  command (or Ctrl+Alt+Shift+F) shows the torn-off window again (capture at
+  700 for the dead end, at 1100 after the command, both past the loading
+  fade). `conference` selects the online friends (IM starts a
   conference), `map` one friend who shares their location (Map enabled), `invite`
   the first group where we may invite, on the Groups tab (Invite enabled; add
   `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
@@ -9569,7 +9746,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -9597,6 +9774,25 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
+  - `service`: the Chat Service's history of the direct conversations (LL
+    viewer 26.5). The demo answers `PersistentChatConversationsRequest` and
+    `PersistentChatHistoryRequest` (`demo://chat-service/…`) itself, in
+    pages of 100 rows; the service's own folder,
+    `config\demo\accounts\<demo account uuid>\chat_service\demo\`, starts
+    empty at each launch. Nova's transcript is written as for `im`, and the
+    three offline messages of `offline` open her conversation. What to see:
+    "Loading history…" with a spinner under Nova's conversation while the pages
+    come in, then her history in grey, with no separator line before the live ones:
+    the weeks before the transcript (118 numbered rows, more than one
+    page), the transcript's lines and the offline messages each once, the
+    live offline messages last. No unread count, toast or sound comes
+    from the history. History (the conversation's menu) shows the same
+    stitched history, searchable. The Conversation log (toolbar) lists
+    Orion, who has no open conversation, and Tess. Preferences › Chat ›
+    History, "Chat Service history" off at the next login shows no service rows
+    (the transcript alone) while the requests still run. Erase (Delete
+    Transcripts) removes the transcripts and the service's archives; a
+    failure shows the LL notice and keeps the history hidden.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving
@@ -9675,7 +9871,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   profile window (tab 0 Second Life / Profile, 1 Feed / Web, 2 Favorites,
   3 Classifieds, 4 Real life / First life, 5 Notes). The window is the
   Aurora one unless Preferences › Aurora › Profiles is on the classic
-  window. `:edit` opens our own profile in edit mode, `:compact` gives the
+  window. `:edit` opens our own profile in edit mode; `:classic` selects the
+  classic style for this demo only (`friend:classic:2` for Picks,
+  `friend:classic:3` for Classifieds).
+  Click a picture to check its read-only enlarged preview. `:compact` gives the
   window the width of the compact layout (380 px). With this variable the
   three residents of the scenarios have a profile picture, so a banner:
   the scenarios of the profile mock-up are
@@ -10122,7 +10321,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local,links]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -10130,6 +10329,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   narrow row opens in place); `:wide,open` does both. The demo's favourite
   of the lagoon is a copy of its landmark (same asset): one place with a
   lit star.
+  `:links` replaces that lagoon favorite with an inventory link to the
+  original landmark (#3595). It stays in Favorites and the favorites bar;
+  its profile, map and teleport use the lagoon's asset. Combine with
+  `:classic,links` to verify the Legacy-style list, and paste additional
+  landmark links into the Favorites folder from Inventory.
+  Run this with `AURORA_DEMO_INVENTORY` unset: its synthetic inventory marks
+  the Places folders fetched without loading their landmarks. Open Inventory
+  normally when testing paste-as-link alongside Places.
+  With `:narrow,open` and `AURORA_TEXT_SIZE=1.5` or `2`, check Favorites,
+  Landmarks and History: the inline Teleport, Map and More actions wrap to
+  additional rows and remain fully visible and clickable.
   `:classic` shows the Legacy Viewer's three tabs for the run, whatever
   Preferences › Aurora › Places says (not saved): the Teleport / Map /
   Profile bar stays whole at the bottom, down to the window's minimum size
@@ -10871,6 +11081,9 @@ gallery's double-click continues to open the outfit's contents.
   preview the HD one, the balance drops by L$ 10 and the outfit's folder
   holds "Photo of "…" outfit"; a second HD picture sends the first to the
   Trash. The log says `outfit HD picture: …` at each step.
+- `batch-settings`: the batch window with Portrait settings expanded. At
+  `AURORA_TEXT_SIZE=1.5`, scroll to both final checkboxes and the outfits;
+  Cancel / Start stay visible below the scrolling content (#3907).
 - `batch`, `batch-run`: the showcase, then at frame 600 the batch
   portraits' window (Fider #447, the banner's Take the portraits) over the
   demo's outfits: those without a picture ticked, those with one to tick to
@@ -11132,6 +11345,8 @@ only the gesture's requested motions.
 
 **Expanded inventory layout (#1020):** `aurora-columns` opens the wide explorer with a resized folder sidebar and custom column widths; `aurora-columns-hidden` keeps only Name and Permissions. Compare `aurora-medium`, `aurora-wide`, `aurora-rights` and the compact `aurora` layout. Drag the sidebar gap or column-header boundaries, hold the pointer stationary, then resize/reopen the window: widths remain saved and rows stay aligned with their headers. Double-click a boundary to restore its default widths. The Columns toolbar menu toggles Type, Permissions and Modified independently; Name stays visible. Reset inventory layout restores all columns and responsive widths. Check folder windows, filtered results, ordinary row selection and drag/drop at 100% and 150% UI scale. Medium views now give permissions their own column instead of appending them to the name; compact trees keep their existing inline rights. These controls are local and need no grid connection.
 
+**Gallery and combination views (#2520):** `aurora-gallery` opens the wide explorer on the right-click tests' folder in the gallery view, with the demo's textures as the pictures of an object, a gesture, a sky, a material, the shirt, the link to the object and the subfolder; `aurora-gallery-medium` is the same at the medium width; `aurora-combination` shows the pictured entries as tiles above the list of the others; `aurora-gallery-large` adds the 1,500 pictured objects of the large folder, for scrolling and profiling (`AURORA_PROFILE=1`) against `aurora-wide` in the list view. The View button of the toolbar switches List view, Gallery view and Combination view, and sets the tiles' size (Small, Medium, the Legacy Viewer's 128 px, Large); Ctrl and the wheel over the tiles step it from 64 to 256 px. Look for: the folders first, then the items, the pictured ones first; the type's icon in a picture's corner, large where there is no picture; the Worn, Link and Locked tags, the star and the rights letters on the picture; two lines of name. A click selects, Ctrl and Shift as in the list, a double-click goes into a folder or opens an item; the arrows step a tile or a row, and down from the last tiles goes on into the combination view's list; drag a tile onto a folder tile, or into the space between the tiles. Drag the bar between the tiles and the list, double-click it to reset. A search shows its results as rows in every view.
+
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
 sky, material, link and varied permissions; library in the tree,
@@ -11319,6 +11534,17 @@ separate searches enabled and disabled; that preference controls only the text.
   closes), then Right at 700 (it opens again). Capture at 690 (the folder
   closed and selected) and 720 (open). The log reports the selection and
   the folder's state at both points.
+- `keyboard-down`, `aurora-keyboard-down`: click the demo object at frame
+  650, then press Down eight times, every four frames from 660 to 688: the
+  selection passes the bottom of the list, which scrolls to it. Capture at
+  720; the log reports the selected row and whether it was drawn whole
+  inside the list. Run it with Preferences › Font scale above 1 too.
+- `keyboard-click-top`, `keyboard-click-bottom` (also with the `aurora-`
+  prefix): at frame 620, leave demo item 1000 half clipped at the chosen
+  edge of a long folder, with nothing selected. Click its visible part:
+  it becomes selected and wholly visible, without scrolling sideways.
+  A fully visible row must not move. Repeat at font scales 1, 1.5 and 2;
+  drag the scroll bar afterwards: it must stay where released.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and
@@ -11564,6 +11790,12 @@ separate searches enabled and disabled; that preference controls only the text.
 - `rename`, `new-script`, `new-note`, `new-folder`: renaming in the
   row, without a window (their screenshots simulate the focus of the field
   without activating the Windows window).
+- `rename-focus`, `aurora-rename-focus`, `rename-window`,
+  `aurora-rename-window`: select the demo object at frame 650, F2 at 670,
+  rename at 690, Enter at 710 and Down at 735. Capture at 680 to see the
+  editor and at 780 to see navigation resume. The `window` modes target a
+  second inventory window; the first must keep its selection. The log
+  records the editor and focus at 680, 720 and 750 (#3594, #3584).
 - `multi-add`, `multi-detach`, `delete`: the multiple selection and the
   delete confirmation.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
@@ -12267,6 +12499,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GPU_START_FAIL=1` or `lost` | Start as if no graphics card could draw the window, or as if the driver lost the device during the start: the message the user gets then |
 | `AURORA_PIPELINE_CACHE=0` | No pipeline cache of Aurora's own: every pipeline compiled by the driver, or taken from its own cache, as before |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
+| `AURORA_HOVER_TRACE=1` | Log line at each change of the hover cursor's target or of its source |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
 | `AURORA_STILL_CHECK=1` | What changes when the image should be still |

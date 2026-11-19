@@ -14,6 +14,7 @@ use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::{self, Ctx};
 use crate::ui::widgets::{self, ActionKind};
 use crate::ui::{colors, menu};
+use crate::world::names::NameScope;
 use crate::world::place_details::{Place, Source, Stage};
 use crate::world::profiles::{self, Online};
 use crate::world::search::{self, Key, List, Row, RowIcon, Tab};
@@ -163,19 +164,20 @@ pub(super) fn text_field(ui: &mut egui::Ui, p: &Palette, label: &str, value: &st
     });
 }
 
-/// A resident's name as a link to the profile (LLSLURL "agent" "inspect").
+/// A resident's name as a link to the profile (LLSLURL "agent" "inspect"),
+/// named whatever `@shownames` (FSFloaterSearch has no test of it).
 pub(super) fn agent_link(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid) {
     if id.is_nil() {
         ui.label(RichText::new(aurora_i18n::tr!("common-none")).size(12.0).color(c.p.ink));
         return;
     }
     c.want_names.insert(id);
-    let name = c.world.social.name_of(&id);
+    let name = c.world.social.name_in(NameScope::Roster, &id);
     let link = ui.add(egui::Link::new(
         RichText::new(name).size(12.0).color(colors::text(colors::get().chat_slurl)),
     ));
     if link.clicked() {
-        crate::ui::profile::request_open(ui.ctx(), id);
+        context::request(ui.ctx(), CtxAction::RosterProfile(id));
     }
 }
 
@@ -269,9 +271,9 @@ fn person(
         wanted_pics.insert(id);
     }
     c.want_names.insert(id);
-    let known = world.social.avatar_names.complete(&id);
+    let known = world.social.avatar_names.complete_in(NameScope::Roster, &id);
     let name = known.unwrap_or_else(|| row_name.to_owned());
-    let gear = |ui: &mut egui::Ui| context::avatar_list_menu(ui, p, world, id, context::AvatarList::Name);
+    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Name);
     let block = if blocked {
         aurora_i18n::tr!("common-unblock")
     } else {
@@ -366,7 +368,7 @@ fn person(
         Some(3) => act(CtxAction::PayResident(id)),
         Some(4) => act(CtxAction::Im(id)),
         Some(5) => act(CtxAction::ToggleBlock(id)),
-        Some(7) => act(CtxAction::Profile(id)),
+        Some(7) => act(CtxAction::RosterProfile(id)),
         _ => {}
     }
 }

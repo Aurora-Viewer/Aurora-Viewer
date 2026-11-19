@@ -20,6 +20,7 @@
 
 use super::chat_log::conversations::{self, Conversation, Kind};
 use super::chat_log::{Entry, Loaded, format, import, names};
+use super::names::NameScope;
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -127,7 +128,7 @@ fn minute(t: SystemTime) -> u64 {
 
 impl World {
     /// The transcript file of a conversation, from what is known now.
-    fn transcript_stem(&self, session: &Uuid) -> Option<String> {
+    pub(super) fn transcript_stem(&self, session: &Uuid) -> Option<String> {
         let group = self.groups.group(session);
         let info = self.groups.sessions.get(session);
         if group.is_some() || info.is_some_and(|i| i.group) {
@@ -194,12 +195,22 @@ impl World {
         if self.social.ims[i].log.stem.is_none() {
             self.social.ims[i].log.stem = self.transcript_stem(&session);
         }
-        let log = &mut self.social.ims[i].log;
+        // a direct conversation under the Chat Service reads its stitched
+        // history (direct_history.rs), not the transcript's tail
+        let direct = self.is_direct(&session);
+        if direct {
+            self.direct_open(session);
+        }
+        let Some(log) = self.social.ims.iter_mut().find(|s| s.other == session).map(|s| &mut s.log) else {
+            return;
+        };
         let Some(stem) = log.stem.clone() else {
             return;
         };
         if log.history == HistoryState::NotAsked {
-            log.history = if self.chat_log.request_history(session, &stem) {
+            log.history = if direct {
+                HistoryState::Done
+            } else if self.chat_log.request_history(session, &stem) {
                 HistoryState::Asked
             } else {
                 HistoryState::Done
@@ -211,13 +222,18 @@ impl World {
     }
 
     /// Sender and text of a line as its transcript has them
-    /// (LLIMModel::logToFile: the complete name of an avatar).
-    fn transcript_text(&self, line: &ChatLine) -> (String, String) {
+    /// (LLIMModel::logToFile: the complete name of an avatar). `scope`: the
+    /// nearby chat's transcript hides what the chat hides under RLVa's
+    /// `@shownames` (`NameScope::World`), a conversation's names its
+    /// residents (`NameScope::Roster`).
+    pub(super) fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
         let names = &self.social.avatar_names;
         let from = match line.kind {
             ChatKind::System => String::new(),
             ChatKind::Own(_) => names.complete(&self.agent_id).unwrap_or_else(|| line.from.clone()),
-            ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => names.complete(&line.source).unwrap_or_else(|| line.from.clone()),
+            ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => {
+                names.complete_in(scope, &line.source).unwrap_or_else(|| line.from.clone())
+            }
             _ => line.from.clone(),
         };
         // the verbs Firestorm puts before what is shouted or whispered
@@ -226,10 +242,11 @@ impl World {
             Some(ChatType::Whisper) => "whispers: ",
             _ => "",
         };
-        let text = format::encode_mentions(&line.text, |id| self.social.name_of(&id));
+        let text = format::encode_mentions(&line.text, |id| self.social.name_in(scope, &id));
         (
-            self.rlva_filter_text(&from).into_owned(),
-            self.rlva_filter_text(&format!("{verb}{text}")).into_owned(),
+            self.rlva_filter_text_in(scope, &from).into_owned(),
+            self.rlva_filter_text_in(line.kind.text_in(scope), &format!("{verb}{text}"))
+                .into_owned(),
         )
     }
 
@@ -243,7 +260,7 @@ impl World {
             self.log_conversation(session, false);
         }
         if line.origin == Origin::Live && self.chat_log.cfg.log_im && self.chat_log.identity().is_some() {
-            let (from, text) = self.transcript_text(&line);
+            let (from, text) = self.transcript_text(NameScope::Roster, &line);
             let s = self.session_lines(session);
             match s.log.stem.clone() {
                 Some(stem) => self.chat_log.append(&stem, line.time, &from, &text),
@@ -271,7 +288,7 @@ impl World {
         let Some(stem) = self.transcript_stem(&other) else {
             return;
         };
-        let (from, text) = self.transcript_text(line);
+        let (from, text) = self.transcript_text(NameScope::Roster, line);
         self.chat_log.append(&stem, line.time, &from, &text);
     }
 
@@ -317,14 +334,14 @@ impl World {
         {
             return;
         }
-        let (from, text) = self.transcript_text(line);
+        let (from, text) = self.transcript_text(NameScope::World, line);
         self.chat_log.append(names::NEARBY, line.time, &from, &text);
     }
 
     /// The conversation log's entry of a conversation as it is now
     /// (LLConversation from an LLIMSession): a group chat, a conference or
     /// an instant message with a resident; never with ourselves.
-    fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
+    pub(super) fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
         if key.is_nil() || key == self.agent_id {
             return None;
         }
@@ -353,7 +370,7 @@ impl World {
             let name = self
                 .social
                 .avatar_names
-                .complete(&key)
+                .complete_in(NameScope::Roster, &key)
                 .or_else(|| self.social.names.get(&key).cloned())
                 .unwrap_or_default();
             let session = conversations::private_session(self.agent_id, key);
@@ -381,7 +398,7 @@ impl World {
             return;
         };
         c.offline = offline;
-        if c.kind == Kind::Private && self.social.avatar_names.complete(&key).is_none() {
+        if c.kind == Kind::Private && self.social.avatar_names.complete_in(NameScope::Roster, &key).is_none() {
             self.chat_log.conversations.unnamed.insert(key);
         }
         self.chat_log.conversations.log(c);
@@ -409,7 +426,7 @@ impl World {
                 .conversations
                 .unnamed
                 .iter()
-                .filter_map(|id| Some((*id, self.social.avatar_names.complete(id)?)))
+                .filter_map(|id| Some((*id, self.social.avatar_names.complete_in(NameScope::Roster, id)?)))
                 .collect();
             for (id, name) in named {
                 self.chat_log.conversations.unnamed.remove(&id);
@@ -432,13 +449,10 @@ impl World {
         }
     }
 
-    /// The name an entry of the conversation log shows: with RLVa @shownames
-    /// a resident's name stays hidden also when it was logged before the
-    /// restriction or imported. Display only: the log keeps the real name.
+    /// The name an entry of the conversation log shows: the logged one,
+    /// under RLVa's `@shownames` too (LLConversationLogList and the
+    /// transcripts have no test of it: a conversation names its resident).
     pub fn conversation_display_name(&self, c: &Conversation) -> String {
-        if c.kind == Kind::Private && !c.participant.is_nil() && !self.rlva_can_name(c.participant) {
-            return super::rlva::privacy::anonymous(c.participant).display_name.clone();
-        }
         c.name.clone()
     }
 
@@ -463,6 +477,7 @@ impl World {
 
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
+        self.poll_chat_service();
         self.poll_conversation_log();
         if self.chat_log.identity().is_none() {
             return;
@@ -514,7 +529,7 @@ impl World {
     }
 
     /// Our names as a transcript may have them.
-    fn own_log_names(&self) -> Vec<String> {
+    pub(super) fn own_log_names(&self) -> Vec<String> {
         let mut out = vec!["You".to_owned(), self.own_name()];
         if let Some(n) = self.social.avatar_names.complete(&self.agent_id) {
             out.push(n);
@@ -675,7 +690,7 @@ impl World {
         // the file (target_from and target_message empty in Firestorm)
         let to_log = self.groups.sessions.get(&session).is_some_and(|i| i.started_by_us) && self.chat_log.cfg.log_im;
         let written: Vec<(String, String)> = if to_log {
-            older.iter().map(|l| self.transcript_text(l)).collect()
+            older.iter().map(|l| self.transcript_text(NameScope::Roster, l)).collect()
         } else {
             Vec::new()
         };
@@ -1400,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn the_conversation_log_hides_a_private_name_under_shownames_only() {
+    fn the_conversation_log_names_a_private_conversation_under_shownames() {
         use aurora_net::{ChatMessage, ChatSourceType, ChatType};
         let root = temp();
         let me = Uuid::from_u128(0x5E1F);
@@ -1433,9 +1448,8 @@ mod tests {
             region: None,
         };
         assert!(w.rlva.receive(&restrict));
-        let hidden = w.conversation_display_name(&private);
-        assert_ne!(hidden, "Jane Doe", "a private conversation is anonymous");
-        assert!(!hidden.is_empty());
+        // LLConversationLogList has no `@shownames` test
+        assert_eq!(w.conversation_display_name(&private), "Jane Doe");
         assert_eq!(w.conversation_display_name(&chat), "Some Group");
         assert_eq!(w.conversation_display_name(&own), "Me Resident");
         clean(&w, &root);

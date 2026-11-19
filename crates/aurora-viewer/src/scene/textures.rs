@@ -1151,6 +1151,9 @@ pub struct TextureStreamer {
     background: texture_budget::Background,
     in_front: bool,
     minimized: bool,
+    /// Gaming mode (app/gaming_mode.rs): the textures go back as from a
+    /// minimised window (`set_stepped_back`).
+    stepped_back: bool,
     /// The other viewers on this PC (instances.rs): the budget is shared
     /// with them. And what the driver counts for this one, for them.
     peers: crate::instances::Peers,
@@ -1572,6 +1575,7 @@ impl TextureStreamer {
             background: texture_budget::Background::default(),
             in_front: true,
             minimized: false,
+            stepped_back: false,
             peers: Default::default(),
             video_usage: 0,
             gpu: crate::gpu_load::GpuLoad::new(),
@@ -3755,6 +3759,14 @@ impl TextureStreamer {
         self.minimized = minimized;
     }
 
+    /// Gaming mode is on (app/gaming_mode.rs): the world is not drawn, and
+    /// the textures give their video memory back as a minimised window's
+    /// do (`texture_budget::MINIMIZED_AFTER`), in front or not, until it
+    /// ends. Not in the Legacy Viewer, whose rule is the minimised one.
+    pub fn set_stepped_back(&mut self, on: bool) {
+        self.stepped_back = on;
+    }
+
     /// The other viewers running now (instances.rs).
     pub fn set_peers(&mut self, peers: &crate::instances::Peers) {
         if self.peers != *peers {
@@ -3837,16 +3849,24 @@ impl TextureStreamer {
         // again once in front (LLViewerTexture::updateClass,
         // texture_budget::Background)
         let crowded = video.is_some_and(|v| v.usage > v.budget);
-        let away = self.background.update(now, self.in_front, self.minimized, crowded);
+        // (gaming mode counts as minimised, `set_stepped_back`)
+        let minimized = self.minimized || self.stepped_back;
+        let away = self.background.update(now, self.in_front, minimized, crowded);
         if away && !self.pressure.held() {
             self.pressure.hold_max(now);
-            let place = if self.minimized { "minimised" } else { "in the background" };
+            let place = if self.stepped_back {
+                "in gaming mode"
+            } else if self.minimized {
+                "minimised"
+            } else {
+                "in the background"
+            };
             if crowded {
                 log::info!(
                     "texture memory: the window is {place} with the video memory short, freeing up video memory; the 3D drawing pauses until it is in front"
                 );
             } else {
-                let after = if self.minimized {
+                let after = if minimized {
                     texture_budget::MINIMIZED_AFTER
                 } else {
                     texture_budget::BACKGROUNDED_AFTER

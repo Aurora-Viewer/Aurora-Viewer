@@ -50,9 +50,11 @@ pub fn helper() -> anyhow::Result<bool> {
     if !std::env::args_os().any(|a| a == ARG) {
         return Ok(false);
     }
-    // the language of the viewer: its saved choice, unless --language
-    let language = crate::settings::Settings::language_at_start();
-    aurora_i18n::select(&language, crate::cli::get().language.as_deref());
+    // the language of the viewer: its saved choice or language file, unless
+    // --language
+    let (language, file) = crate::settings::Settings::language_at_start();
+    crate::language_file::start(file.as_deref());
+    crate::language_file::select(&language, file.is_some());
     window::run()?;
     Ok(true)
 }

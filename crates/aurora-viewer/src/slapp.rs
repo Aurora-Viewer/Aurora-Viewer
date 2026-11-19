@@ -308,6 +308,69 @@ pub fn folder_command(url: &str) -> Option<FolderCommand> {
     Some(FolderCommand { action, name, id })
 }
 
+/// What the Second Life sign-up page asks of the window that shows it:
+/// `secondlife:///app/floaterjoin/<action>/…`, read as LLFloaterJoinHandler
+/// does (indra/newview/llfloaterjoin.cpp, originally LGPL 2.1). Only the
+/// sign-up window acts on them (`ui/signup.rs`).
+#[derive(Clone, PartialEq, Eq)]
+pub enum JoinCommand {
+    /// `close`: the page is done (its "Cancel signup").
+    Close,
+    /// `tos`: the Terms of Service, in a window of their own.
+    TermsOfService,
+    /// `tc`: the Terms and Conditions, in a window of their own.
+    TermsAndConditions,
+    /// `privacy`: the Privacy Policy, in a window of their own.
+    Privacy,
+    /// `join/<username>/<password>`: the account was created; its name and
+    /// password go to the login form.
+    Join { username: String, password: String },
+}
+
+/// Never prints the name nor the password (LLFloaterJoinHandler::isSensitive
+/// keeps the command out of the log).
+impl std::fmt::Debug for JoinCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Close => f.write_str("Close"),
+            Self::TermsOfService => f.write_str("TermsOfService"),
+            Self::TermsAndConditions => f.write_str("TermsAndConditions"),
+            Self::Privacy => f.write_str("Privacy"),
+            Self::Join { .. } => f.write_str("Join { .. }"),
+        }
+    }
+}
+
+/// The sign-up command of `url`, None for any other link. Both app forms are
+/// read, as for the folder commands. The name and password of `join` are
+/// unescaped after the path is split (the page escapes them with
+/// encodeURIComponent, so a `/` in the password is `%2F`).
+pub fn join_command(url: &str) -> Option<JoinCommand> {
+    let rest = [PREFIX, "secondlife://app/"]
+        .into_iter()
+        .find(|prefix| url.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix)))
+        .map(|prefix| &url[prefix.len()..])?;
+    let path = rest.split_once('?').map_or(rest, |(path, _)| path);
+    let mut tokens = path.split('/').filter(|t| !t.is_empty());
+    if !tokens.next()?.eq_ignore_ascii_case("floaterjoin") {
+        return None;
+    }
+    Some(match tokens.next()? {
+        "close" => JoinCommand::Close,
+        "tos" => JoinCommand::TermsOfService,
+        "tc" => JoinCommand::TermsAndConditions,
+        "privacy" => JoinCommand::Privacy,
+        "join" => {
+            let (username, password) = (tokens.next()?, tokens.next()?);
+            JoinCommand::Join {
+                username: unescape(username),
+                password: unescape(password),
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// `agent/<id>/<verb>[/<name>]` for the verbs that act (LLAgentHandler).
 fn agent(tokens: &[&str]) -> Option<AppLink> {
     let id = id(tokens.first()?)?;
@@ -485,5 +548,48 @@ mod tests {
         assert_eq!(folder_command("secondlife:///app/teleport/Region/1/2/3"), None);
         assert_eq!(folder_command("https://example.org/wear_folder/?folder_name=x"), None);
         assert_eq!(folder_command("secondlife://Region/1/2/3"), None);
+    }
+
+    #[test]
+    fn join_commands_are_read_like_the_sign_up_handler() {
+        assert_eq!(join_command("secondlife:///app/floaterjoin/close"), Some(JoinCommand::Close));
+        assert_eq!(join_command("secondlife://app/floaterjoin/tos"), Some(JoinCommand::TermsOfService));
+        assert_eq!(
+            join_command("SecondLife:///app/FloaterJoin/tc/"),
+            Some(JoinCommand::TermsAndConditions)
+        );
+        assert_eq!(
+            join_command("secondlife:///app/floaterjoin/privacy?x=1"),
+            Some(JoinCommand::Privacy)
+        );
+        // escaped after the split: a `/` and spaces in the password stay its own
+        assert_eq!(
+            join_command("secondlife:///app/floaterjoin/join/synthetic.resident/a%2Fb%20c%C3%A9"),
+            Some(JoinCommand::Join {
+                username: "synthetic.resident".into(),
+                password: "a/b cé".into(),
+            })
+        );
+        // the action is case-sensitive, and join needs both values
+        for url in [
+            "secondlife:///app/floaterjoin",
+            "secondlife:///app/floaterjoin/Close",
+            "secondlife:///app/floaterjoin/join/synthetic.resident",
+            "secondlife:///app/floaterjoin/delete",
+            "secondlife:///app/wear_folder/?folder_name=x",
+            "https://join.secondlife.com/floaterjoin/close",
+        ] {
+            assert_eq!(join_command(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_join_command_never_prints_its_values() {
+        let join = JoinCommand::Join {
+            username: "synthetic.resident".into(),
+            password: "synthetic-secret".into(),
+        };
+        let printed = format!("{join:?}");
+        assert!(!printed.contains("synthetic"), "{printed}");
     }
 }
