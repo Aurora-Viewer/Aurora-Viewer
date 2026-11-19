@@ -473,7 +473,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 // (indra/newview/llmeshrepository.cpp) also supplies a base
                 // hull for split models whose instance collision is None.
                 let hulls = process::Physics {
-                    base: Some(process::base_hull(high)?),
+                    base: Some(process::base_hull(hull_source(None, &lods, high))?),
                     hulls: Vec::new(),
                 };
                 return Ok((lods, None, hulls));
@@ -527,7 +527,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?
             } else {
                 process::Physics {
-                    base: Some(process::base_hull(high)?),
+                    base: Some(process::base_hull(hull_source(physics.as_ref(), &lods, high))?),
                     hulls: Vec::new(),
                 }
             };
@@ -559,6 +559,19 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
         prepared.hulls.push(hulls);
     }
     Ok(prepared)
+}
+
+/// The model the base hull is made from: the collision model, else the low
+/// LOD, else the medium, else the high, as LLMeshUploadThread::generateHulls
+/// (indra/newview/llmeshrepository.cpp) picks it. The high LOD alone gives a
+/// flat hull for a part whose collision file has volume (#4213). A model
+/// reduced to no triangle is passed over: no hull is made from it.
+fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
+    [physics, lods[1].as_ref(), lods[2].as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|model| model.triangles() > 0)
+        .unwrap_or(high)
 }
 
 fn floats(values: impl IntoIterator<Item = f32>) -> Llsd {
