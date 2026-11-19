@@ -41,6 +41,18 @@ on a single `language-name = …` line so the menu can display it before the
 catalogue is loaded. The same `.ftl` files can be copied out of the source
 tree and imported through the language file picker.
 
+For a release, save the previous and current English catalogues and run
+the delta report for each language:
+
+```text
+cargo run -q -p aurora-i18n --example catalog_delta -- previous-en.ftl crates/aurora-i18n/locales/en.ftl crates/aurora-i18n/locales/zh-Hans.ftl
+```
+
+Translate missing messages, review changed English against the existing
+translation, and remove obsolete keys. The output contains English source
+for review. Apply the reviewed translations to the original locale file
+and run the catalogue tests before testing it in the viewer.
+
 ```rust
 ui.label(aurora_i18n::tr!("inventory-empty"));
 let message = aurora_i18n::tr!("resident-online", name = name.as_str());
