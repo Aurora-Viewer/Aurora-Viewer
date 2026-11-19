@@ -406,6 +406,11 @@ fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     card(ui, p, "cloud-rain", aurora_i18n::tr!("ui-weather-precipitation"), None, |ui, _| {
         // AURORA_SNOW shows as snow until the window is used
         let snowing = w.snowing();
+        let (rain_line, snow_line) = (aurora_i18n::tr!("ui-weather-rain-sub"), aurora_i18n::tr!("ui-weather-snow-sub"));
+        // both as tall as the taller: a line that wraps in one language
+        // keeps the pair even
+        let column = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
+        let height = tile_height(ui, rain_line, column).max(tile_height(ui, snow_line, column));
         ui.columns(2, |tiles| {
             let [rain, snow] = tiles else { return };
             if tile(
@@ -413,7 +418,7 @@ fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 p,
                 "cloud-rain",
                 aurora_i18n::tr!("ui-weather-rain"),
-                aurora_i18n::tr!("ui-weather-rain-sub"),
+                (rain_line, height),
                 !snowing,
             ) {
                 w.precipitation = Precipitation::Rain;
@@ -423,7 +428,7 @@ fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 p,
                 "snowflake",
                 aurora_i18n::tr!("ui-weather-snow"),
-                aurora_i18n::tr!("ui-weather-snow-sub"),
+                (snow_line, height),
                 snowing,
             ) {
                 w.precipitation = Precipitation::Snow;
@@ -477,13 +482,26 @@ fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
+/// The line under a tile's name, wrapped to a tile `width` wide.
+fn tile_line(ui: &egui::Ui, line: &str, width: f32, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout(
+        line.to_owned(),
+        egui::FontId::proportional(ENDS_SIZE),
+        color,
+        (width - 20.0).max(1.0),
+    )
+}
+
+/// How tall a tile `width` wide is with `line` under its name.
+fn tile_height(ui: &egui::Ui, line: &str, width: f32) -> f32 {
+    10.0 + 24.0 + 4.0 + 16.0 + tile_line(ui, line, width, egui::Color32::PLACEHOLDER).size().y + 10.0
+}
+
 /// A tile of a two-way choice: an icon, a name and a line under it, lit
-/// with the accent while `on`. True when clicked.
-fn tile(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, line: &str, on: bool) -> bool {
+/// with the accent while `on`; `height` is the pair's. True when clicked.
+fn tile(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, (line, height): (&str, f32), on: bool) -> bool {
     let width = ui.available_width();
-    let line_font = egui::FontId::proportional(ENDS_SIZE);
-    let line_galley = ui.painter().layout(line.to_owned(), line_font, p.muted, width - 20.0);
-    let height = 10.0 + 24.0 + 4.0 + 16.0 + line_galley.size().y + 10.0;
+    let line_galley = tile_line(ui, line, width, p.muted);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     let enabled = ui.is_enabled();
     let radius = ui.visuals().window_corner_radius;
