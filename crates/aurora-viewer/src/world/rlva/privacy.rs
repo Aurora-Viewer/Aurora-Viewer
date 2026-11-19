@@ -225,6 +225,9 @@ impl World {
         self.social.avatar_names.set_rlva_privacy(private, allowed);
         let nearby = if private { self.rlva_nearby_avatars() } else { Default::default() };
         self.social.avatar_names.set_rlva_nearby(nearby);
+        let mut names = self.rlva_name_filter(false);
+        names.sort();
+        names.reuse_matcher(&self.rlva_name_privacy);
         let mut filter = self.rlva_text_filter(false);
         filter.reuse_matcher(&self.rlva_privacy);
         let mut places = TextFilter::default();
@@ -267,6 +270,7 @@ impl World {
             }
         }
         self.rlva_privacy = filter;
+        self.rlva_name_privacy = names;
         self.rlva_place_privacy = places;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
             let mut filter = self.rlva_text_filter(true);
@@ -295,6 +299,24 @@ impl World {
         let names = &self.social.avatar_names;
         names.want(&id);
         names.anonymous(&id)
+    }
+
+    /// What an `rlvanonym` link shows, one the viewer did not write itself
+    /// (a text that holds `secondlife:///app/agent/<id>/rlvanonym`).
+    /// LLUrlEntryAgentRLVAnonymizedName (indra/llui/llurlentry.cpp) is an
+    /// LLUrlEntryAgentName: it waits for the name of the id, like any
+    /// avatar link, then shows RlvStrings::getAnonym of it, the stand-in of
+    /// the legacy name; and getAnonym gives LLTrans "Unknown" while RLVa is
+    /// off. Never the stand-in of the id: the link shows the same words as
+    /// the resident's tag and chat lines do.
+    pub fn rlva_anonym_label(&self, id: Uuid) -> String {
+        let names = &self.social.avatar_names;
+        names.want(&id);
+        match names.raw(&id) {
+            _ if !self.rlva.enabled() => aurora_i18n::tr!("status-unknown").to_owned(),
+            Some(name) => anonymous_named(&name.legacy_name()).display_name.clone(),
+            None => "…".to_owned(),
+        }
     }
 
     /// The name of `id` where the Legacy Viewer tests
@@ -344,8 +366,25 @@ impl World {
                     (speaker, from)
                 }
             }
-            ChatKind::Object(_) if scope == NameScope::World => (Speaker::Named, self.rlva_filter_text(&from).into_owned()),
+            ChatKind::Object(_) if scope == NameScope::World => (Speaker::Named, self.rlva_object_name(&from).into_owned()),
             _ => (Speaker::Named, from),
+        }
+    }
+
+    /// The name of an object that speaks, as it is kept with its line and
+    /// in its `objectim` link: under `@shownames` the names of the residents
+    /// around are their stand-ins in it, and nothing else changes, the
+    /// places `@showloc` hides included. `RlvUtil::filterNames(chat.mFromName)`
+    /// in process_chat_from_simulator (indra/newview/llviewermessage.cpp)
+    /// and `RlvUtil::filterNames(name)` for IM_FROM_TASK
+    /// (indra/newview/llimprocessing.cpp): RlvUtil::filterLocation runs on
+    /// the text of the line alone
+    /// (LLFloaterIMNearbyChatHandler::processChat).
+    pub fn rlva_object_name<'a>(&self, name: &'a str) -> Cow<'a, str> {
+        if self.rlva.has("shownames") {
+            self.rlva_name_privacy.apply(name)
+        } else {
+            Cow::Borrowed(name)
         }
     }
 
@@ -568,6 +607,15 @@ impl World {
     }
 
     pub fn rlva_text_filter(&self, clear_nearby: bool) -> TextFilter {
+        let mut filter = self.rlva_name_filter(clear_nearby);
+        self.rlva_hide_places(&mut filter);
+        filter.sort();
+        filter
+    }
+
+    /// `rlva_text_filter` without the places: what RlvUtil::filterNames
+    /// (indra/newview/rlvcommon.cpp) alone replaces. Not sorted.
+    fn rlva_name_filter(&self, clear_nearby: bool) -> TextFilter {
         let mut filter = TextFilter::default();
         if !self.rlva.enabled() {
             return filter;
@@ -620,8 +668,6 @@ impl World {
                 }
             }
         }
-        self.rlva_hide_places(&mut filter);
-        filter.sort();
         filter
     }
 
@@ -1561,6 +1607,103 @@ mod tests {
         let said = world.chat.back().expect("the object's line");
         assert!(matches!(said.kind, ChatKind::Object(_)), "{:?}", said.kind);
         assert!(!said.text.contains("Tester") && !said.text.contains(&region), "{}", said.text);
+    }
+
+    /// process_chat_from_simulator (indra/newview/llviewermessage.cpp) and
+    /// IM_FROM_TASK (indra/newview/llimprocessing.cpp) run
+    /// RlvUtil::filterNames alone over the name of an object that speaks,
+    /// and only under `@shownames`: the places `@showloc` hides stay in it,
+    /// in the line and in the `objectim` link its inspector shows.
+    #[test]
+    fn the_name_of_an_object_that_speaks_loses_the_names_and_keeps_the_places() {
+        use crate::world::ChatKind;
+        let (mut world, near) = shownames_world();
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let region = world.region_name();
+        assert!(!region.is_empty());
+        let both = world.rlva_filter_text(&format!("Near Tester in {region}")).into_owned();
+        assert!(!both.contains("Tester") && !both.contains(&region), "a text loses both: {both}");
+        let name = format!("Near Tester and the box of {region}");
+        let kept = format!(" and the box of {region}");
+        let says = |source: u128| {
+            aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: name.clone(),
+                source_id: Uuid::from_u128(source),
+                owner_id: near,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: "hello".into(),
+            })
+        };
+        world.apply(says(0xB0C5));
+        let said = world.chat.back().expect("the object line").clone();
+        assert!(matches!(said.kind, ChatKind::Object(_)), "{:?}", said.kind);
+        let who = said
+            .from
+            .strip_suffix(&kept)
+            .unwrap_or_else(|| panic!("the place stays: {}", said.from));
+        assert!(is_anonym(who, anonym_index("Near Tester")), "{who}");
+        assert_eq!(world.chat_object(&said).expect("its origin").name, said.from);
+        // its IM, the owner standing around
+        world.apply(aurora_net::NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: near,
+            from_name: name.clone(),
+            to_agent_id: world.agent_id,
+            dialog: 19,
+            session_id: Uuid::from_u128(0xB0C6),
+            message: "hello".into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        }));
+        let said = world.chat.back().expect("the object IM").clone();
+        assert_eq!(said.kind, ChatKind::ObjectIm);
+        let who = said
+            .from
+            .strip_suffix(&kept)
+            .unwrap_or_else(|| panic!("the place stays: {}", said.from));
+        assert!(is_anonym(who, anonym_index("Near Tester")), "{who}");
+        assert_eq!(world.chat_object(&said).expect("its origin").name, said.from);
+        // under `@showloc` alone the name is as the object has it
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        world.apply(says(0xB0C7));
+        assert_eq!(world.chat.back().expect("the object line").from, name);
+    }
+
+    /// LLUrlEntryAgentRLVAnonymizedName (indra/llui/llurlentry.cpp): an
+    /// `rlvanonym` link found in a text shows the stand-in of the legacy
+    /// name of its resident, the one their tag and chat lines show, once
+    /// the name is known; never the stand-in of the id. RLVa off, it is
+    /// LLTrans "Unknown" (RlvStrings::getAnonym).
+    #[test]
+    fn an_rlvanonym_link_shows_the_stand_in_of_the_name_once_it_is_known() {
+        use crate::ui::chat::resolved_text_in;
+        let (mut world, _) = shownames_world();
+        let (id, name) = [(FRIEND, "Friend Tester"), (MEMBER, "Member Tester"), (MAKER, "Maker Tester")]
+            .into_iter()
+            .find(|(id, name)| anonym_index(name) != anonym_index(&id.to_string()))
+            .expect("a resident whose id and name give two stand-ins");
+        let label = world.rlva_anonym_label(id);
+        assert!(is_anonym(&label, anonym_index(name)), "{label}");
+        let text = format!("see secondlife:///app/agent/{id}/rlvanonym now");
+        let shown = resolved_text_in(&world, NameScope::World, &text);
+        let label = shown.strip_prefix("see ").and_then(|s| s.strip_suffix(" now")).expect("plain text");
+        assert!(is_anonym(label, anonym_index(name)), "{shown}");
+        // a name still to come: the link waits for it, like any avatar link
+        assert_eq!(world.rlva_anonym_label(Uuid::from_u128(0xABCD)), "\u{2026}");
+        world.rlva.configure(false);
+        let off = world.rlva_anonym_label(id);
+        assert!(
+            ["en", "fr", "ja"]
+                .iter()
+                .any(|language| aurora_i18n::text_in(language, "status-unknown") == off),
+            "{off}"
+        );
     }
 
     /// A resident whose last name is "Resident", named in full by an object

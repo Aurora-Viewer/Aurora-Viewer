@@ -1108,6 +1108,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
+| `AURORA_DEMO_SECOND_CAMERA=face\|body\|back` | The second camera's window open on that framing (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1160,6 +1161,15 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_SECOND_CAMERA=face|body|back`**: at frame 300, the second
+  camera's window (View › Second camera) opens on that framing, the main
+  camera staying behind our avatar (`second camera demo: Face` in the log,
+  then `second camera: renderer made (… ms)` with the first picture). Look
+  for the face, the whole body or the back in the window, with the colours
+  of the 3D view, its own shadows, and the hair's blended faces in front of
+  the face; hovered, the window shows its three framings over the bottom of
+  the picture. Closed, the log says `second camera: renderer let go` about
+  two seconds later.
 - **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha|orbit|capture|anim|montage|titles|render`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
@@ -6494,6 +6504,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
+| `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]` | The updated viewer of this test starts slowly, moving on or stuck |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
@@ -6714,8 +6725,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `silhouette`, `self` and `head` exercise forced world textures, distant
   avatar silhouettes and own-avatar visibility. `textures` substitutes the
   demo gradient. `textures-grey` (`@setcam_textures=n`, the same as
-  `@camtextures=n`) paints world surfaces and particles the flat grey of
-  `IMG_DEFAULT` and leaves the avatar and its attachments textured (#3365).
+  `@camtextures=n`) paints world surfaces, particles and the region's ground
+  the flat grey of `IMG_DEFAULT` and leaves the avatar and its attachments
+  textured (#3365).
   Releasing (`textures-grey-released`) restores the surfaces. An explicit
   texture id, and the restore on a grid, still need a grid: there is no
   fake region for that. `resolution` sets the real 3D resolution divisor
@@ -9047,6 +9059,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   disabled with the blocking reason even if the fields are filled. In
   any isolated installation, a label indicates that login to a grid
   is disabled; only enter synthetic values for this test.
+  The helper ends the new viewer after 90 s without a step of its start
+  (`start-progress` in the transaction folder: a pipeline made, the next
+  step), 15 min at most. To see it, set
+  `AURORA_UPDATE_TEST_SLOW_START=<seconds>` before the script: the viewer
+  the update starts (and only it, and only in these binaries) waits that
+  long before its renderer, one step a second, and must come up after the
+  wait (`150`: past the old fixed 90 s). With `,stuck` it takes no step:
+  at 90 s the helper ends it and 0.2.100 comes back with "The new version
+  did not start correctly". The log of the new viewer says
+  `update test: a slow start of <s> s`.
   On Linux, `scripts/test-update-linux.py`
   (`python3 scripts/test-update-linux.py`) prepares the same two packages as
   `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
@@ -12537,6 +12559,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
+| `AURORA_OBJECT_MOTION_TRACE=<request-file>` | A changed request-file timestamp records 20 seconds of volume reports, damping decisions and rendered transform gaps under `object motion trace`; excludes names, UUIDs, absolute positions and packet contents. Watches at most 64 recent slots. The human performs any grid login and actions. |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |

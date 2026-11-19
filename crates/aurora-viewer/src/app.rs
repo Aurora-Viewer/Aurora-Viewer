@@ -152,6 +152,7 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod second_camera;
 mod selection_turn;
 mod settings_backup;
 mod shape_editor;
@@ -911,6 +912,13 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The second camera (app/second_camera.rs): its framing and where it
+    /// is, its window, the picture that window showed last frame, and the
+    /// view asked of the renderer this frame.
+    second_camera: crate::camera::second::SecondCamera,
+    second_camera_ui: ui::second_camera::SecondCameraUi,
+    second_camera_picture: Option<ui::second_camera::Picture>,
+    second_camera_job: Option<aurora_render::second_view::SecondViewJob>,
     /// Mark ▸ Custom color… of the radar and mini-map menus, and the last
     /// colour it gave this session.
     avatar_mark_ui: Option<ui::avatar_marks::CustomMark>,
@@ -2101,6 +2109,10 @@ impl App {
             experience_profile_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            second_camera: Default::default(),
+            second_camera_ui: Default::default(),
+            second_camera_picture: None,
+            second_camera_job: None,
             avatar_mark_ui: None,
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
@@ -11162,8 +11174,13 @@ impl App {
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
-            self.world
-                .advance_motion(world_now(), &self.net.stats.simulators.lock(), |key| build.is_selected(key));
+            let scene = &self.scene;
+            self.world.advance_motion(
+                world_now(),
+                &self.net.stats.simulators.lock(),
+                |key| build.is_selected(key),
+                |idx| scene.drawable_damping_view(idx),
+            );
             if self.demo && self.demo_link_cfg.is_some() {
                 // offline through a simulated link, as on a grid
                 self.drive_demo_link(ml, dt);
@@ -11584,6 +11601,10 @@ impl App {
             texture_aspect,
             camera_fast,
         );
+        // what the second camera sees is listed too (its terrain, water and
+        // blended faces: our avatar's hair seen from the front)
+        self.second_camera_frame(now, dt);
+        cull.second = self.second_camera_planes();
         // The experimental XR worker can look in any direction after these
         // CPU lists are prepared; per-eye GPU culling still uses the real frusta.
         if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
@@ -12014,6 +12035,7 @@ impl App {
                     texture_aspect,
                     camera_fast,
                 );
+                cull.second = self.second_camera_planes();
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
@@ -13780,6 +13802,8 @@ impl App {
         if !self.exit_prompt.quitting() {
             gfx.renderer.set_rain_surfaces(raining);
         }
+        // the second camera's view, drawn after this frame
+        gfx.renderer.second_view = self.second_camera_job;
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
@@ -20579,6 +20603,7 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
+                self.second_camera_window(&ctx, &p);
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);

@@ -1223,6 +1223,7 @@ fn pieces(text: &str, mut label_of: impl FnMut(&Seg) -> String) -> Vec<(String, 
             Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
             Seg::Agent(id) => (label_of(&s), Some(Link::Agent(id))),
+            Seg::Anonym(_) => (label_of(&s), None),
             Seg::Mention(id) => (format!("@{}", label_of(&s)), Some(Link::Agent(id))),
             Seg::App(..) => {
                 let label = label_of(&s);
@@ -1358,6 +1359,7 @@ pub(crate) fn text_with_links(
         for s in segs {
             match s {
                 Seg::Text(t) => plain(ui, t),
+                Seg::Anonym(id) => plain(ui, &world.rlva_anonym_label(id)),
                 Seg::Url(u) => web_link(ui, p, u, u, size, false.into()),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -1643,6 +1645,7 @@ fn line_job(
             want_names.insert(*id);
             world.social.name_in(scope, id)
         }
+        Seg::Anonym(id) => world.rlva_anonym_label(*id),
         Seg::App(u, link) => app_links::label(world, wording, want_names, u, link),
         _ => String::new(),
     };
@@ -1853,6 +1856,11 @@ enum Seg<'a> {
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
     /// as the avatar's name, opens the profile (LLUrlEntryAgent).
     Agent(uuid::Uuid),
+    /// secondlife:///app/agent/<id>/rlvanonym, the link RLVa writes for a
+    /// hidden resident: their stand-in in plain text, never a link
+    /// (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
+    /// `World::rlva_anonym_label`).
+    Anonym(uuid::Uuid),
     /// A link written with its own text, `[https://example.org Text]` or
     /// `[secondlife:///app/... Text]` (LLUrlEntryHTTPLabel, LLUrlEntrySLLabel):
     /// shown as the text, it acts as the link inside (a web link, an agent
@@ -1872,10 +1880,12 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 /// app commands by `app` (their label, `app_links::label`), labelled links
 /// by their text, web links as written. `name` is told whether the link is
 /// a mention: RLVa rewrites a mention where it leaves a bare avatar link
-/// alone (`TextScope::mentions`).
+/// alone (`TextScope::mentions`). `anonym`: the label of an `rlvanonym`
+/// link (`World::rlva_anonym_label`).
 pub(crate) fn plain_text(
     text: &str,
     name: impl Fn(&uuid::Uuid, bool) -> Option<String>,
+    anonym: impl Fn(uuid::Uuid) -> String,
     app: impl Fn(&str, &crate::slapp::AppLink) -> String,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1889,6 +1899,7 @@ pub(crate) fn plain_text(
                 out.push_str(&name(&id, true).unwrap_or_else(|| id.to_string()));
             }
             Seg::Agent(id) => out.push_str(&name(&id, false).unwrap_or_else(|| id.to_string())),
+            Seg::Anonym(id) => out.push_str(&anonym(id)),
             Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
@@ -1926,6 +1937,7 @@ pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text:
             Seg::App(u, link) => out.push_str(&app_label(world, scope, u, &link)),
             Seg::Place(_, place) => out.push_str(&hide(&place.label)),
             Seg::Labelled(label, _) => out.push_str(&hide(&label)),
+            Seg::Anonym(id) => out.push_str(&world.rlva_anonym_label(id)),
             Seg::Mention(id) => {
                 app_links::want_agents([id]);
                 out.push('@');
@@ -2249,15 +2261,7 @@ fn link_seg(link: &str) -> Seg<'_> {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
-            // `rlvanonym`, the link RLVa writes for a hidden resident: their
-            // stand-in in plain text, never a link
-            // (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
-            // picked from the id, as RlvUtil::filterMentions does for a
-            // name it does not have)
-            (Some(id), "rlvanonym") => Seg::Labelled(
-                Cow::Owned(crate::world::rlva::privacy::anonymous(id).display_name.clone()),
-                Box::new(Seg::Text("")),
-            ),
+            (Some(id), "rlvanonym") => Seg::Anonym(id),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
             _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
@@ -2500,6 +2504,7 @@ pub(crate) fn chat_text_marked(
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
+                Seg::Anonym(id) => marked_run(ui, emoji, &world.rlva_anonym_label(id), size, color, emphasis, mark),
                 Seg::Url(u) => web_link(ui, p, u, u, size, emphasis),
                 Seg::Slurl(u) => {
                     select::label(ui, emphasis.rich_text(ui.ctx(), u, size, super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -2806,6 +2811,7 @@ fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, na
             Seg::Mention(id) => format!(" @{} ", world.social.name_in(wording.mentions, &id)),
             // a bare avatar link names its resident, as it is drawn
             Seg::Agent(id) => world.social.name_in(NameScope::Roster, &id),
+            Seg::Anonym(id) => world.rlva_anonym_label(id),
             Seg::App(u, link) => app_links::label(world, wording, &mut HashSet::new(), u, &link),
         })
         .collect()
@@ -6087,15 +6093,16 @@ mod tests {
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
         let name = |id: &uuid::Uuid, _: bool| (*id == me).then(|| "Aurora Demo".to_owned());
         let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
+        let anonym = |_: uuid::Uuid| "A resident".to_owned();
         assert_eq!(
-            plain_text(&t, name, app),
+            plain_text(&t, name, anonym, app),
             format!("@Aurora Demo see {jane} at https://example.org"),
             "an unknown name keeps its id, a web link its address"
         );
-        assert_eq!(plain_text("[https://example.org the site] now", name, app), "the site now");
+        assert_eq!(plain_text("[https://example.org the site] now", name, anonym, app), "the site now");
         let g = uuid::Uuid::from_u128(7);
         assert_eq!(
-            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, app),
+            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, anonym, app),
             "join Demo Group!",
             "an app command shows its label (#947)"
         );

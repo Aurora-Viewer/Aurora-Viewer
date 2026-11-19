@@ -1225,6 +1225,16 @@ mod tests {
         assert!(f.world.objects.get(child).expect("scaling prim").has_motion());
         assert_eq!(f.frame(&state), vec![child]);
         assert_eq!(f.quiet_frame(&all, &state), vec![child]);
+        f.world.objects.damp_drawables(
+            1.0,
+            |_| false,
+            |_| {
+                Some(crate::world::motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
         f.world
             .objects
             .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
@@ -1416,6 +1426,7 @@ mod tests {
         assert_eq!(f.frame(&state), vec![avatar, att_child]);
         assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child]);
         // faded: placed once more, back on its anchor, then left to the GPU
+        f.world.objects.settle_drawables();
         f.world
             .objects
             .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
