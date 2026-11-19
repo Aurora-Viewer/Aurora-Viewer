@@ -63,6 +63,7 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
