@@ -3805,8 +3805,8 @@ impl Backend {
         let egui = if egui_later {
             EguiSlot(None)
         } else {
-            if crate::gpu_alloc::mapped_buffer_refused(&device) {
-                return Err(RenderError::VideoMemoryFull);
+            if let Some(refused) = crate::gpu_alloc::mapped_buffer_refused(&device) {
+                return Err(refused);
             }
             EguiSlot(Some(egui_wgpu::Renderer::new(
                 &device,

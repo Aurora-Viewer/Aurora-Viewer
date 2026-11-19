@@ -61,9 +61,15 @@ mod tests {
     #[test]
     fn a_full_video_memory_says_what_to_close_not_which_driver_to_update() {
         let log = std::path::Path::new("C:/logs/aurora.log");
-        let (_, body) = super::text("the graphics card's video memory is full", true, log);
-        assert!(body.contains("video memory"));
+        let error = "the graphics card's video memory is full";
+        let (_, body) = super::text(error, true, log);
+        // in every language: checks on the text's own words would only
+        // hold for one
+        assert_ne!(body, super::text(error, false, log).1);
+        assert!(!body.contains(error), "its own text, not the error's: {body}");
         assert!(body.contains("aurora.log"));
         assert!(!body.contains("NVIDIA"), "no driver advice: {body}");
+        // one paragraph per advice, not a single line
+        assert!(body.lines().count() >= 5);
     }
 }
