@@ -1272,6 +1272,13 @@ struct GpuTimer {
     last_pixels: u64,
     /// The world pixels of each readback slot's frame.
     slot_pixels: [std::cell::Cell<u64>; 3],
+    /// What a photo of `last_pixels` is planned by: `last_ms` and the
+    /// rounds its traced passes run that the view's frame does not
+    /// (rt_shadows.rs `STILL_ROUNDS`).
+    last_photo_ms: Option<f32>,
+    /// Those rounds, for each readback slot's frame (0: a frame that
+    /// traces nothing over frames, or a photo's own).
+    slot_rounds: [std::cell::Cell<u32>; 3],
     /// Marks between and inside passes are written
     /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
@@ -1560,6 +1567,8 @@ impl GpuTimer {
             last_ms: None,
             last_pixels: 0,
             slot_pixels: Default::default(),
+            last_photo_ms: None,
+            slot_rounds: Default::default(),
             marks: device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
@@ -1589,8 +1598,15 @@ impl GpuTimer {
                     let ts = crate::readback::u64_array::<{ GPU_TIMESTAMPS as usize }>(&view[..GPU_TIMESTAMPS as usize * 8]);
                     let ms = |a: u32, b: u32| crate::readback::elapsed_gpu_ms(&ts, a, b, self.period_ns);
                     if ts[1] > ts[0] {
-                        self.last_ms = Some(ms(0, 1));
+                        let all = ms(0, 1);
+                        self.last_ms = Some(all);
                         self.last_pixels = self.slot_pixels[slot].get();
+                        // the traced passes are in the contact shadows'
+                        // range, with the levels' builds, which a photo
+                        // does once: counted with them, the estimate errs
+                        // slow; the whole frame without the marks
+                        let round = if self.marks { ms(MARK_SSAO_END, MARK_CONTACT_END) } else { all };
+                        self.last_photo_ms = Some(crate::rt_shadows::still_gpu_ms(all, round, self.slot_rounds[slot].get()));
                         if self.marks {
                             let mut e = [0.0; GpuElement::ALL.len()];
                             for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
@@ -7957,6 +7973,11 @@ impl Backend {
         if let Some(st) = &mut self.st {
             st.release();
         }
+        // the view's last lit frame outlives its targets: the photo's
+        // traced indirect light reads it
+        if let (Some(rt), Some(t)) = (&mut self.rt, &self.targets.rt) {
+            rt.hold_screen(t, &self.targets.scene_copy, &self.targets.depth_ss);
+        }
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
@@ -9300,7 +9321,8 @@ impl Backend {
         // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
         // is traced once in full (clouds.rs `StillSpec`), with no history.
         // Until the noise is made the sky shader keeps the Legacy layer.
-        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+        let rt_still = snapshot.is_some() || f.photo_tile != Mat4::IDENTITY;
+        let still = rt_still.then(|| {
             let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
             crate::clouds::StillSpec {
                 origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
@@ -9641,7 +9663,7 @@ impl Backend {
         // what the traced reflections read after the scene copy
         let rt_clip_from_world = fu.proj * fu.view;
         let fu_camera = fu.camera_pos;
-        if let (true, Some(rt), Some(t)) = (self.rt_now, &self.rt, &self.targets.rt) {
+        if let (true, Some(rt), Some(t)) = (self.rt_now, &mut self.rt, &self.targets.rt) {
             rt.write(
                 &self.queue,
                 t,
@@ -10106,6 +10128,11 @@ impl Backend {
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
+            let rounds = match (self.rt_now && !rt_still, &self.rt, &self.targets.rt) {
+                (true, Some(rt), Some(targets)) => rt.still_rounds(targets) - 1,
+                _ => 0,
+            };
+            t.slot_rounds[slot].set(rounds);
         }
         let mut first_pass = true;
         let mut take_first = || {
@@ -10733,6 +10760,18 @@ impl Backend {
                 &scene,
                 faces,
             );
+            // A photo (a tile of one, a 360° face, an offline film's frame)
+            // has no frame before it: its passes run their rounds over its
+            // view (rt_shadows.rs `STILL_ROUNDS`). The small frame that
+            // records a tiled photo's context is read for its depth alone.
+            let rounds = match rt_still {
+                false => 1,
+                true if f.photo_context == crate::types::PhotoContext::Record => 1,
+                true => rt.still_rounds(t),
+            };
+            if !rt_still && !rt_gi_now {
+                rt.release_screen();
+            }
             // moved surfaces keep their history through the prepass's motion
             let rt_motion_drawn = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
             let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
@@ -10748,32 +10787,53 @@ impl Backend {
                 sky_horizon: fu_sky[1],
                 ground_color: fu_sky[2],
             };
-            rt.encode_lights(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                t,
-                &light,
-                &f.lights,
-                &self.targets.depth_ss,
-                rt_motion_drawn,
-                &self.dummies.black,
-                &scene,
-            );
-            if rt_gi_now {
-                rt.encode_gi(
+            for n in 0..rounds {
+                let round = if rt_still {
+                    crate::rt_shadows::Round::Still(n)
+                } else {
+                    crate::rt_shadows::Round::Live
+                };
+                if n > 0 {
+                    rt.retrace(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &self.targets.depth_ss,
+                        contact,
+                        &scene,
+                        round,
+                    );
+                }
+                rt.encode_lights(
                     &self.device,
                     &self.queue,
                     &mut encoder,
                     t,
                     &light,
-                    &f.lights[..f.lights.len().min(MAX_LIGHTS)],
-                    crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
+                    &f.lights,
                     &self.targets.depth_ss,
-                    rt_motion,
-                    &self.targets.scene_copy,
+                    rt_motion_drawn,
+                    &self.dummies.black,
                     &scene,
+                    round,
                 );
+                if rt_gi_now {
+                    rt.encode_gi(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &f.lights[..f.lights.len().min(MAX_LIGHTS)],
+                        crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
+                        &self.targets.depth_ss,
+                        rt_motion,
+                        &self.targets.scene_copy,
+                        &scene,
+                        round,
+                    );
+                }
             }
         }
         mark(&mut encoder, MARK_CONTACT_END);
@@ -13122,6 +13182,7 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
+        stats.gpu_photo_ms = self.timer.as_ref().and_then(|t| t.last_photo_ms);
         stats.target_bytes_per_pixel = self
             .target_bytes
             .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)

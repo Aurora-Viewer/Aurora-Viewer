@@ -41,7 +41,8 @@ fn back_of(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> Back {
     let expected = distance(world, params.prev_camera.xyz);
     var b = Back(still, expected, 0.02 + 0.03 * expected, false);
     let m = textureLoad(motion_tex, pixel, 0).zw;
-    if (any(m != vec2<f32>(0.0))) {
+    // (camera.w 2: a photo's round, nothing moved since the one before)
+    if (params.camera.w < 1.5 && any(m != vec2<f32>(0.0))) {
         let uv = (vec2<f32>(pixel) + vec2<f32>(0.5)) * params.screen.zw - m;
         let at = uv * params.screen.xy;
         // the motion has no jitter and this pixel does: half a pixel each

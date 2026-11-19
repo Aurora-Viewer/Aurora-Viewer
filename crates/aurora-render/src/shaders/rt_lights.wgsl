@@ -485,7 +485,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         word = chosen | MID_DRAWN | (u32(min(confidence, 255.0) * 256.0) << 16u);
         let origin = ray_origin(world, flat, dist);
         let at = disc_point(id.xy, u32(params.mode.z));
-        // with no history (a photo, a new size), `RESET_RAYS` at once, to
+        // with no history (a new size, a photo's first round), `RESET_RAYS` at once, to
         // lights drawn in proportion to their light at even steps
         // (systematic sampling): what arrives of them is the share itself
         let reset = params.mode.w < 0.5;

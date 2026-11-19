@@ -1775,6 +1775,7 @@ impl Renderer {
                 video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
+                gpu_photo_ms: self.last_stats.gpu_photo_ms,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
