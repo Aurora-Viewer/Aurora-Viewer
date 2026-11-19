@@ -2556,6 +2556,14 @@ splash-update-installing = 正在安裝更新…
 splash-update-cache = 正在清理快取…
 splash-update-launching = 正在啟動新版本…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora 檢視器：無法初始化 Metal：" }{ $e }
+app-graphics-start-memory-full =
+    顯示卡沒有可供 Aurora Viewer 使用的顯示記憶體。另一個程式正在使用這些記憶體。
+
+    可以嘗試：
+    • 關閉使用顯示卡的程式（例如其他檢視器、遊戲、影片編輯器或 3D 編輯器），再啟動 Aurora Viewer。
+    • 如果筆記型電腦裝有兩張顯示卡，請確認 Aurora Viewer 使用哪一張。
+
+    這次啟動的記錄：{ $log }
 app-graphics-start-failed-title = Aurora檢視器無法啟動
 app-graphics-start-failed =
     Aurora Viewer 無法初始化用於繪製視窗的顯示卡。

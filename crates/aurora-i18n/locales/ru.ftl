@@ -2650,6 +2650,14 @@ splash-update-installing = Установка обновления…
 splash-update-cache = Очистка кеша…
 splash-update-launching = Запуск новой версии…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: не удалось запустить Metal. " }{ $e }
+app-graphics-start-memory-full =
+    Для Aurora Viewer не осталось свободной видеопамяти. Она занята другой программой.
+
+    Что можно сделать:
+    • закройте программы, использующие видеокарту, например другой клиент, игру или редактор видео или 3D, а затем снова запустите Aurora Viewer;
+    • на ноутбуке с двумя видеокартами проверьте, какую из них использует Aurora Viewer.
+
+    Журнал этого запуска: { $log }
 app-graphics-start-failed-title = Не удалось запустить Aurora Viewer
 app-graphics-start-failed =
     Aurora Viewer не удалось получить доступ к видеокарте для отрисовки окна.

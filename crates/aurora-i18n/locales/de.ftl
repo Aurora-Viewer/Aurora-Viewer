@@ -2590,6 +2590,14 @@ splash-update-installing = Das Update wird installiert…
 splash-update-cache = Cache leeren…
 splash-update-launching = Starten der neuen Version…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: Metal kann nicht initialisiert werden: " }{ $e }
+app-graphics-start-memory-full =
+    Für Aurora Viewer ist kein Grafikspeicher mehr frei. Ein anderes Programm belegt ihn.
+
+    Mögliche Abhilfen:
+    • Schließen Sie Programme, die die Grafikkarte nutzen, etwa einen anderen Viewer, ein Spiel oder einen Video- oder 3D-Editor. Starten Sie Aurora Viewer danach erneut.
+    • Prüfen Sie bei einem Laptop mit zwei Grafikkarten, welche Karte Aurora Viewer verwendet.
+
+    Protokoll dieses Starts: { $log }
 app-graphics-start-failed-title = Aurora Viewer kann nicht gestartet werden
 app-graphics-start-failed =
     Aurora Viewer konnte keine Grafikkarte zum Zeichnen des Fensters öffnen.
@@ -3114,7 +3122,7 @@ ui-environment-choose-a-sky-water-or-day-cycle-from-your = Wählen Sie einen Him
 world-inventory-actions-choose-a-fully-loaded-personal-folder = Wählen Sie einen vollständig geladenen persönlichen Ordner.
 ui-land-dialogs-choose-a-group = Wählen Sie eine Gruppe:
 world-appearance-choose-a-name-of-1-to-63-characters = Wählen Sie einen Namen mit 1 bis 63 Zeichen.
-ui-appearance-choose-an-outfit-manage-worn-items-or-save-your = Wählen Sie ein Outfit, verwalten Sie getragene Artikel oder speichern Sie Ihr aktuelles Outfit.
+ui-appearance-choose-an-outfit-manage-worn-items-or-save-your = Wählen Sie ein Outfit, verwalten Sie die getragenen Gegenstände oder speichern Sie Ihr aktuelles Outfit.
 ui-perf-visibility-choices-and-draw-lists = Sichtbarkeitsoptionen und Zeichnungslisten
 ui-options-per-sound-choices = Auswahlmöglichkeiten pro Sound
 ui-environment-sky = Himmel
@@ -4200,8 +4208,8 @@ ui-display-name-saves-your-new-name = Speichert Ihren neuen Namen
 inventory-operations-save-interrupted = Speichern unterbrochen.
 inventory-operations-save-rejected-http = { "Speichern abgelehnt (HTTP " }{ $value0 }).
 common-save = Speichern
-ui-appearance-save-what-i-am-wearing-as-a-new-outfit = Speichern Sie, was ich als neues Outfit trage:
-ui-appearance-gallery-save-to-this-outfit = Speichern Sie in diesem Outfit
+ui-appearance-save-what-i-am-wearing-as-a-new-outfit = Getragene Gegenstände als neues Outfit speichern:
+ui-appearance-gallery-save-to-this-outfit = In diesem Outfit speichern
 ui-profile-save-location = Standort speichern
 ui-inventory-dialogs-save-changes = Änderungen speichern?
 common-save-as = Speichern unter
@@ -15282,7 +15290,7 @@ ui-appearance-folders-holds-current = Dieser Ordner enthält das Outfit, das Sie
 ui-appearance-folders-move = In Ordner verschieben
 ui-appearance-folders-other = Andere Outfits
 ui-appearance-folders-empty = Leerer Ordner
-ui-appearance-folders-save-in = Speichern Sie in
+ui-appearance-folders-save-in = Speichern in
 world-outfit-folders-cannot-move-here = Es kann nicht in diesen Ordner verschoben werden.
 world-outfit-folders-already-there = Es befindet sich bereits in diesem Ordner.
 world-outfit-folders-too-deep = Outfit-Ordner reichen nicht tiefer als vier Ebenen.

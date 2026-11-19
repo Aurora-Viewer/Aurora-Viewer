@@ -2560,6 +2560,14 @@ splash-update-installing = 正在安装更新…
 splash-update-cache = 正在清理缓存…
 splash-update-launching = 正在启动新版本…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora 查看器：无法初始化 Metal：" }{ $e }
+app-graphics-start-memory-full =
+    显卡没有可供 Aurora Viewer 使用的显存了。另一个程序正在占用显存。
+
+    可以尝试：
+    • 关闭正在使用显卡的程序（例如其他查看器、游戏、视频编辑器或 3D 编辑器），再启动 Aurora Viewer。
+    • 如果笔记本电脑有两块显卡，请检查 Aurora Viewer 正在使用哪一块。
+
+    本次启动的日志：{ $log }
 app-graphics-start-failed-title = Aurora查看器无法启动
 app-graphics-start-failed =
     Aurora Viewer 无法初始化用于绘制窗口的显卡。
