@@ -76,7 +76,10 @@ fn line_color(p: &Palette, new: Color32, tone: f32) -> Color32 {
 /// The text a bubble shows for a line: links by their label, an emote
 /// after the speaker's name, a whisper or a shout saying so.
 fn line_text(world: &World, line: &crate::world::bubble_chat::Utterance) -> String {
-    let text = super::chat::resolved_text(world, &line.text);
+    // a bubble is what a resident typed: shown as typed under `@shownames`
+    // and `@showloc`, its mentions rewritten (`names::TextScope`)
+    let said = crate::world::names::TextScope::verbatim(crate::world::names::NameScope::World);
+    let text = super::chat::resolved_text_in(world, said, &line.text);
     if line.emote() {
         let from = world.rlva_filter_text(&line.from);
         return format!("{from}{}", text.get(3..).unwrap_or_default());

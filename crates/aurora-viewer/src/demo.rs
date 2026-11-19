@@ -247,6 +247,9 @@ pub mod plants;
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]
 pub mod presence;
+/// A raised pool whose water is a phantom prim (AURORA_DEMO_PRIM_WATER).
+#[path = "demo_prim_water.rs"]
+pub mod prim_water;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;
@@ -3683,8 +3686,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::Call { method, session, .. } => calls::reply(method.clone(), *session),
         // the request made once after login: what the grid kept while we
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
+        // AURORA_DEMO_CHATLOG=service: the Chat Service's list and pages
+        aurora_net::NetCommand::ChatServiceRequest { id, url, body } => {
+            vec![chatlog::service_reply(DEMO_AGENT, *id, url, body.as_ref())]
+        }
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
-            Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            Some(chatlog::Mode::Offline | chatlog::Mode::Service) => chatlog::offline_messages(DEMO_AGENT),
             // AURORA_DEMO_CONV_OPTIONS: Orion's and a group's
             _ if conv_options::scene().is_some() => conv_options::offline_messages(DEMO_AGENT),
             _ => Vec::new(),
@@ -3927,6 +3934,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
+        }
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if prim_water::props(*object).is_some() => {
+            prim_water::props(*object)
+                .map(|props| NetEvent::ObjectProperties(vec![props]))
+                .into_iter()
+                .collect()
         }
         // the other objects' names for the hover tips (AURORA_DEMO_HOVER_TIPS)
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if hover_tips::scenario().is_some() => {
@@ -4741,6 +4754,7 @@ fn caps() -> std::collections::HashMap<String, String> {
         .chain(sim_extras::caps())
         .chain(crate::build::demo_sim::caps())
         .chain(region::open_settings_caps())
+        .chain(chatlog::service_caps())
         .collect();
     if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
         for (name, url) in [
@@ -4792,7 +4806,12 @@ pub fn events() -> Vec<NetEvent> {
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
             name: aurora_i18n::tr!("common-aurora-demo").into(),
-            region_id: Uuid::nil(),
+            // the Chat Service's context needs the region's id
+            region_id: if chatlog::mode() == Some(chatlog::Mode::Service) {
+                chatlog::SERVICE_REGION
+            } else {
+                Uuid::nil()
+            },
             water_height: 20.0,
             sim_access: 13,
             region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),

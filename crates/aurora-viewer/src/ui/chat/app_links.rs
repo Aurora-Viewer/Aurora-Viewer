@@ -79,7 +79,9 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
     let label = match link {
         AppLink::Agent { id, .. } => {
             want_names.insert(*id);
-            world.social.name_of(id)
+            // the name of the avatar the link points at, whatever `@shownames`
+            // hides around us (LLUrlEntryAgent has no RLVa test)
+            world.social.name_in(crate::world::names::NameScope::Roster, id)
         }
         AppLink::Group(id) => group_name(world, *id),
         // the address until ParcelInfoReply, then the parcel's name or
@@ -182,7 +184,7 @@ fn object_place(slurl: &str) -> Option<crate::slurl::PlaceLink> {
 /// The right-click menu of a command, in the order of its menu_url_*.xml.
 pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, link: &AppLink, label: &str) {
     if let AppLink::Agent { id, .. } = link {
-        super::name_menu(r, p, world, *id);
+        super::name_menu(r, p, world, *id, crate::world::names::NameScope::Roster);
         return;
     }
     menu::context_menu(r, p, |ui| {
@@ -380,9 +382,16 @@ mod tests {
                                 );
                             } else {
                                 let shown = ui.scope(|ui| match &target {
-                                    super::super::Link::Agent(id) => {
-                                        super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0, false.into())
-                                    }
+                                    super::super::Link::Agent(id) => super::super::agent_link(
+                                        ui,
+                                        &p,
+                                        &world,
+                                        crate::world::names::NameScope::World,
+                                        *id,
+                                        "Resident",
+                                        14.0,
+                                        false.into(),
+                                    ),
                                     super::super::Link::App(url, action) => link(ui, &p, &world, url, action, "Resident", 14.0),
                                     _ => unreachable!(),
                                 });

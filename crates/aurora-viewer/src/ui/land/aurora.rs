@@ -195,7 +195,10 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, parc
             (world.land.group_name(&group, &groups).unwrap_or_else(|| "…".to_owned()), None)
         } else {
             world.social.want_name(parcel.owner_id);
-            (world.social.name_of(&parcel.owner_id), Some(parcel.owner_id))
+            (
+                world.social.name_in(crate::world::names::NameScope::Roster, &parcel.owner_id),
+                Some(parcel.owner_id),
+            )
         };
         match person {
             Some(id) => {
@@ -225,7 +228,7 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, parc
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if r.clicked() {
                 if let Some(id) = person {
-                    crate::ui::profile::request_open(ui.ctx(), id);
+                    crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
                 } else if parcel.is_group_owned {
                     let group = if parcel.group_id.is_nil() {
                         parcel.owner_id

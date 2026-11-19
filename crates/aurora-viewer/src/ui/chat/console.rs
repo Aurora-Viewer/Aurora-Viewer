@@ -793,6 +793,53 @@ mod tests {
         assert_eq!(job(&emote), "Orion waves");
     }
 
+    /// Under RLVa's `@shownames` and `@showloc` the on-screen chat hides who
+    /// speaks and shows what they typed as typed; what an object says is
+    /// rewritten (`ChatKind::text_in`; LLFloaterIMNearbyChatHandler::
+    /// processChat filters only when the source is not an avatar).
+    #[test]
+    fn rlva_keeps_what_a_resident_typed_and_rewrites_what_an_object_says() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != me).unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: me,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n,showloc=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let text = "Near Tester waits in Secret Region";
+        let job = |kind: ChatKind, source: uuid::Uuid, from: &str| {
+            let mut l = line(kind, from, 0);
+            l.source = source;
+            l.text = text.into();
+            line_job(&ctx, &l, &p, &world, &mut HashSet::new(), 800.0, TEXT, false, JobLook::Line)
+                .job
+                .text
+        };
+        let said = job(ChatKind::Local(ChatType::Normal), near, "Near Tester");
+        assert!(said.ends_with(text), "the text as typed: {said}");
+        assert!(!said[..said.len() - text.len()].contains("Tester"), "the speaker hidden: {said}");
+        let object = job(ChatKind::Object(ChatType::Normal), uuid::Uuid::from_u128(0xB0C5), "Box");
+        assert!(!object.contains("Tester") && !object.contains("Secret Region"), "{object}");
+    }
+
     /// The picture and the name of a card open the profile, and offer the
     /// sender's menu of the Conversations thread on a right click; its
     /// text, and the room beside a short card, let the click through to

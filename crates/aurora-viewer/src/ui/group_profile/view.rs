@@ -342,7 +342,8 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
             let founder = c.world.social.display_name_in(NameScope::Roster, &g.founder).to_string();
             let link = ui.add(egui::Label::new(egui::RichText::new(founder).size(12.5).color(p.violet_light)).sense(Sense::click()));
             if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                crate::ui::profile::request_open(ui.ctx(), g.founder);
+                // the name is the group's, not the world's: it opens whoever `@shownames` hides around us
+                crate::ui::profile::request_open_in(ui.ctx(), NameScope::Roster, g.founder);
             }
         }
         if let Some(n) = v.member_count() {
