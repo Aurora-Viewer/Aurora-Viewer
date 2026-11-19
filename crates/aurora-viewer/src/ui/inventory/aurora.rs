@@ -343,6 +343,29 @@ fn row_menu(
     }
 }
 
+/// The letters typed to find a row, at the list's top right while they
+/// count (Aurora's: the Legacy Viewer's and Explorer's type-ahead show
+/// nothing, which leaves it unknown).
+fn type_ahead_label(ui: &egui::Ui, p: &Palette, st: &InventoryUi, list: Rect) {
+    let now = ui.input(|i| i.time);
+    let Some(text) = st.type_ahead.shown(now) else { return };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.5), p.ink);
+    let size = galley.size() + egui::vec2(16.0, 8.0);
+    let rect = Rect::from_min_size(egui::pos2(list.right() - size.x - 14.0, list.top() + 6.0), size);
+    let painter = ui.painter().with_clip_rect(list);
+    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+    painter.rect_stroke(
+        rect,
+        ui.visuals().window_corner_radius,
+        egui::Stroke::new(1.0, p.violet),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, p.ink);
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+}
+
 /// Lay `body` out in exactly `height` of the room left: the list keeps the
 /// size it is given, whatever it shows (a list measuring a pixel more than
 /// its room made a resizable window grow at every frame).
@@ -578,6 +601,7 @@ fn explorer_list(
         })
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
+    type_ahead_label(ui, p, st, list_rect);
     // between the tiles too, what is dropped goes into the folder shown
     let zone_rect = if shown == view::ExplorerView::List {
         out.inner_rect

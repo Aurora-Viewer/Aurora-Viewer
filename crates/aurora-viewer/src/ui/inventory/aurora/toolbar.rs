@@ -501,11 +501,18 @@ pub(super) fn explorer_row(
             ui.spacing_mut().item_spacing.x = 2.0;
             super::history::buttons(ui, p, inv, st, prefs);
         });
+        // the tools' width as last drawn: the address bar takes the rest
+        let tools_id = ui.scope_id().with("aurora_explorer_tools_width");
+        let mut tools_from = None;
         if layout == Layout::Wide {
-            let crumbs = (ui.available_width() * 0.32).clamp(140.0, 380.0);
+            // the address bar, all the room the tools leave, as Explorer's
+            // and Dolphin's
+            let tools_w = ui.ctx().data(|d| d.get_temp::<f32>(tools_id)).unwrap_or(560.0);
+            let crumbs = (ui.available_width() - tools_w - 8.0).max(180.0);
             ui.allocate_ui_with_layout(Vec2::new(crumbs, BAR), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 super::breadcrumb::show(ui, p, inv, st, prefs, facts, actions)
             });
+            tools_from = Some(ui.cursor().left());
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let count = chip_list(st).len();
@@ -570,6 +577,10 @@ pub(super) fn explorer_row(
             });
         }
         tree_buttons(ui, p, st);
+        if let Some(from) = tools_from {
+            let width = ui.cursor().left() - from;
+            ui.ctx().data_mut(|d| d.insert_temp(tools_id, width));
+        }
     });
     search_line(ui, p, inv, st, prefs, layout);
 }

@@ -203,6 +203,10 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     ui.spacing_mut().item_spacing.x = 4.0;
+    // the bar keeps all the room it is given, whatever its path holds: the
+    // tools after it never lie over it
+    let given = ui.available_rect_before_wrap();
+    ui.set_min_size(given.size());
     if st.tab != 0 {
         ui.add(egui::Label::new(sheet::semibold(ui, super::toolbar::tab_name(st.tab), 13.0, p.ink)).truncate());
         return;
@@ -211,9 +215,18 @@ pub(super) fn show(
         typing(ui, p, inv, st);
         return;
     }
-    // the empty part of the bar, under the folders: a click types a path
+    // the bar itself, a field as the search's: its empty part, under the
+    // folders, takes a click to type a path
     let room = ui.available_rect_before_wrap();
     let blank = ui.interact(room, ui.scope_id().with("inventory_breadcrumb_blank"), Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(room, radius, p.field);
+    if blank.hovered() {
+        ui.painter()
+            .rect_stroke(room, radius, egui::Stroke::new(1.0, p.muted_dim), egui::StrokeKind::Inside);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    ui.add_space(6.0);
     let base = super::base(inv, st);
     let path = chain(inv, base, st.browse);
     let start = path.len().saturating_sub(LEVELS);
@@ -285,7 +298,8 @@ pub(super) fn show(
 
 /// The small button after a folder that lists its subfolders.
 fn chevron(ui: &mut egui::Ui, p: &Palette, folder: Uuid) -> egui::Response {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 20.0), Sense::hover());
+    // a button of its own, as Explorer's chevrons between the folders
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(18.0, 22.0), Sense::hover());
     let response = ui.interact(rect, ui.scope_id().with(("inventory_crumb_chevron", folder)), Sense::click());
     #[cfg(test)]
     ui.ctx()
@@ -303,9 +317,12 @@ fn chevron(ui: &mut egui::Ui, p: &Palette, folder: Uuid) -> egui::Response {
         ui.painter(),
         if open { "chevron-down" } else { "chevron-right" },
         rect.center(),
-        12.0,
-        if hot { p.ink } else { p.muted_dim },
+        13.0,
+        if hot { p.ink } else { p.muted },
     );
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     response.on_hover_text(aurora_i18n::tr!("inventory-path-subfolders"))
 }
 

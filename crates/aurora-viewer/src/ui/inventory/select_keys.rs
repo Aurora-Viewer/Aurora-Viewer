@@ -33,6 +33,13 @@ pub(super) struct TypeAhead {
     at: f64,
 }
 
+impl TypeAhead {
+    /// The letters still counting at `now`, for the list to show them.
+    pub(super) fn shown(&self, now: f64) -> Option<&str> {
+        (!self.text.is_empty() && now - self.at <= TYPE_AHEAD_TIMEOUT).then_some(self.text.as_str())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Move {
     First,
