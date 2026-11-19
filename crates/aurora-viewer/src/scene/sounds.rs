@@ -684,7 +684,9 @@ impl SoundManager {
                             Some(Arc::new(c))
                         }
                         Err(e) => {
-                            log::debug!("sound {id}: {e}");
+                            // A warning, as the Legacy Viewer's "Bad asset" in
+                            // LLVorbisDecodeState::initDecode: the sound stays silent.
+                            log::warn!("sound {id} not decoded: {e}");
                             None
                         }
                     })
