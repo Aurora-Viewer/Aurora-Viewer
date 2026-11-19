@@ -1124,7 +1124,7 @@ mod tests {
                         let mut avatar = crate::demo::action_avatar(false);
                         avatar.full_id = id;
                         avatar.position = position;
-                        w.objects.upsert_at(main, avatar, Some(Instant::now()));
+                        w.objects.upsert_at(main, avatar, Some(Instant::now()), Instant::now());
                     } else {
                         w.coarse.insert(main, vec![(id, position)]);
                     }
@@ -1177,11 +1177,11 @@ mod tests {
         seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
         seat.position = glam::Vec3::new(650.0, 400.0, 30.0);
         seat.rotation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        w.objects.upsert_at(main, seat.clone(), Some(Instant::now()));
+        w.objects.upsert_at(main, seat.clone(), Some(Instant::now()), Instant::now());
         let mut avatar = crate::demo::action_avatar(true);
         avatar.full_id = id;
         avatar.position = glam::Vec3::new(-0.4, 0.2, 1.2);
-        w.objects.upsert_at(main, avatar.clone(), Some(Instant::now()));
+        w.objects.upsert_at(main, avatar.clone(), Some(Instant::now()), Instant::now());
         let expected = seat.position + seat.rotation * avatar.position;
         let found = w.avatar_map_position(id).expect("seated friend");
         assert!(found.distance(expected) < 1e-3, "{found:?} != {expected:?}");
