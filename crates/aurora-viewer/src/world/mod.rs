@@ -334,6 +334,26 @@ pub enum Origin {
     ServerLog,
 }
 
+/// What RLVa's `@shownames` made of the resident who wrote a line, decided
+/// once, when the line arrives: the Legacy Viewer writes the stand-in in
+/// `chat.mFromName`, sets `mRlvNamesFiltered` and colours the line then
+/// (process_chat_from_simulator, indra/newview/llviewermessage.cpp;
+/// LGGContactSets::colorize, indra/newview/lggcontactsets.cpp), and nothing
+/// rewrites a line already shown when the restriction comes or goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Speaker {
+    /// No restriction, or someone it does not reach.
+    #[default]
+    Named,
+    /// Named (oneself aside, an `@shownames:<uuid>` exception), but around
+    /// us under the restriction: not coloured as Linden staff
+    /// (`World::rlva_speaker`).
+    Around,
+    /// `!RlvActions::canShowName(SNC_DEFAULT, id)`: no contact colour, and
+    /// in the nearby chat the stand-in for a name, in plain text.
+    Hidden,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatLine {
     pub time: SystemTime,
@@ -350,6 +370,44 @@ pub struct ChatLine {
     /// (LLViewerChat::getChatColor, indra/newview/llviewerchat.cpp): drawn
     /// dimmed by Preferences › Chat's factor (`ui::colors::beyond_range_alpha`).
     pub beyond_range: bool,
+    /// How RLVa's `@shownames` left the resident who wrote the line when it
+    /// arrived (`World::rlva_freeze_line`).
+    pub speaker: Speaker,
+}
+
+impl ChatLine {
+    /// The line shows the stand-in of its speaker, which `from` holds
+    /// (`mRlvNamesFiltered` of a resident's line): plain text, no picture,
+    /// no menu. The nearby chat's alone: an IM session names its people.
+    pub fn anonymous(&self) -> bool {
+        self.speaker == Speaker::Hidden && matches!(self.kind, ChatKind::Local(_))
+    }
+
+    /// How the text of the line is shown in a conversation that shows the
+    /// names of `names`: as it is, a mention in it naming its resident.
+    /// What RLVa's `@shownames` and `@showloc` hide of a line said during
+    /// this session is rewritten once, when it arrives
+    /// (`World::rlva_freeze_line`:
+    /// LLFloaterIMNearbyChatHandler::processChat,
+    /// indra/newview/llfloaterimnearbychathandler.cpp, sets `mRlvNamesFiltered`
+    /// and `mRlvLocFiltered` so that nothing runs twice), and a line already
+    /// shown is left alone when a restriction comes or goes. The card of an
+    /// offer or a payment is a notice with a state of its own: its text
+    /// follows its kind (`ChatKind::text_in`) while it is shown. Nothing
+    /// rewrites a line read back either:
+    /// LLLogChat::loadChatHistory (indra/newview/lllogchat.cpp),
+    /// FSFloaterNearbyChat::loadHistory
+    /// (indra/newview/fsfloaternearbychat.cpp) and
+    /// LLIMModel::LLIMSession::chatFromLogFile (indra/newview/llimview.cpp)
+    /// have no RLVa test, and RlvUtil::filterMentions runs on the lines the
+    /// simulator sends. What a restriction hid when the line was said is
+    /// hidden in the file already (`World::transcript_text`).
+    pub fn wording(&self, names: names::NameScope) -> names::TextScope {
+        match (self.origin, self.kind) {
+            (Origin::Live, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)) => self.kind.text_in(names),
+            _ => names::TextScope::as_received(names),
+        }
+    }
 }
 
 /// The name an object speaks under in the nearby chat. A name of nothing but
@@ -2528,6 +2586,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2545,6 +2604,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -5052,7 +5112,11 @@ impl World {
                     self.nearby_typing.remove(&c.source_id);
                     // LLNearbyChatHandler::processChat: the speaker joins
                     // the recent people
-                    self.met(c.source_id);
+                    // (not one whose name is hidden: RlvActions::canShowName
+                    // there, llfloaterimnearbychathandler.cpp)
+                    if self.rlva_can_name(c.source_id) {
+                        self.met(c.source_id);
+                    }
                     // LLAgent::heardChat (half the time, ll_rand(2))
                     let coin = Uuid::new_v4().as_bytes()[0] & 1 == 0;
                     self.look_at.heard_chat(c.source_id, coin);
@@ -5081,6 +5145,10 @@ impl World {
             ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
+        // RLVa `@shownames`: who the line names is decided now, once
+        // (`Speaker`): the stand-in of a hidden speaker, the name of an
+        // object rewritten
+        let (speaker, from) = self.rlva_sender(names::NameScope::World, kind, c.source_id, from);
         // a resident's line that mentions the agent
         // (LLUrlRegistry::containsAgentMention)
         if matches!(kind, ChatKind::Local(_)) && crate::ui::chat::mentions(&c.message, &self.agent_id) {
@@ -5154,6 +5222,10 @@ impl World {
                 name: from.clone(),
                 owner: c.owner_id,
                 group_owned: false,
+                // the `rlv_shownames` of the line's objectim link
+                // (process_chat_from_simulator): an owner hidden now, who
+                // is not us
+                owner_hidden: self.rlva.has("shownames") && !self.rlva_can_name(c.owner_id),
                 slurl,
             });
         }
@@ -5173,6 +5245,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range,
+            speaker,
         });
     }
 
@@ -5268,6 +5341,7 @@ impl World {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5311,6 +5385,17 @@ impl World {
         // muted the owner, hiding all their chat and objects. An older
         // region gives no session id: no object to link then.
         let source = if im.dialog == 19 { im.session_id } else { im.from_agent_id };
+        // RLVa `@shownames`, IM_FROM_TASK of LLIMProcessing::processNewMessage
+        // (indra/newview/llimprocessing.cpp): the owner of the object is
+        // hidden, and the object's name rewritten, when they stand around
+        // us now, an `@shownames:<uuid>` exception included; a group's
+        // object keeps both. Kept with the line (`rlv_shownames`).
+        let owner_hidden = im.dialog == 19 && self.rlva.has("shownames") && !im.from_group && self.rlva_is_nearby(im.from_agent_id);
+        let from = if owner_hidden {
+            self.rlva_filter_text(&from).into_owned()
+        } else {
+            from
+        };
         let mut time = SystemTime::now();
         if im.dialog == 19 && !im.session_id.is_nil() {
             // RLVa @showloc masks the location of an object's IM from a
@@ -5334,6 +5419,7 @@ impl World {
                 name: from.clone(),
                 owner: im.from_agent_id,
                 group_owned: im.from_group,
+                owner_hidden,
                 slurl,
             });
         }
@@ -5373,6 +5459,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         });
     }
 
@@ -5508,12 +5595,25 @@ impl World {
                 } else {
                     aurora_i18n::tr!("world-mod-declined")
                 };
-                n.push(
+                // Named or not as an offer of theirs would be, decided
+                // now: IM_INVENTORY_ACCEPTED and IM_INVENTORY_DECLINED of
+                // process_improved_im (indra/newview/llimprocessing.cpp)
+                // write RlvStrings::getAnonym in place of the name.
+                let named = self.rlva_names_giver(im.from_agent_id, false);
+                let who = if named {
+                    from.to_string()
+                } else {
+                    self.rlva_anonymous(im.from_agent_id).display_name.clone()
+                };
+                let id = self.notifications.push(
                     Kind::Inventory,
-                    aurora_i18n::tr!("world-mod-has-your-object", from = from.to_string(), verb = verb.to_string()),
+                    aurora_i18n::tr!("world-mod-has-your-object", from = who, verb = verb.to_string()),
                     String::new(),
                     Data::None,
                 );
+                if named {
+                    self.notifications.name_resident(id);
+                }
             }
             d::MESSAGEBOX | d::FROM_TASK_AS_ALERT => {
                 n.push(Kind::Alert, from, im.message.clone(), Data::None);
@@ -5546,7 +5646,14 @@ impl World {
                 | d::MESSAGEBOX
         );
         let last = self.notifications.last_id();
+        // The notice that hides who gave, or who answered what we gave,
+        // links no one: their stand-in is plain text, as the `rlvanonym`
+        // link of the Legacy Viewer is (`name_giver_notice`).
+        let hidden = self.rlva.enabled()
+            && matches!(im.dialog, d::INVENTORY_OFFERED | d::INVENTORY_ACCEPTED | d::INVENTORY_DECLINED)
+            && !self.notifications.names_resident(last);
         if last != before
+            && !hidden
             && !matches!(
                 im.dialog,
                 d::TASK_INVENTORY_OFFERED | d::GROUP_NOTICE | d::FROM_TASK_AS_ALERT | d::GOTO_URL | d::MESSAGEBOX
@@ -6407,6 +6514,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);

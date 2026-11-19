@@ -69,7 +69,7 @@ fn pasted_unknown_uri_shows_a_readable_label_and_keeps_its_target() {
     let url = "secondlife:///app/frobnicate/1";
     let sentence = format!("Salut tu vas {url} bien ?");
     let parts = pieces(&sentence, |s| match s {
-        Seg::App(u, link) => app_links::label(&world, &mut HashSet::new(), u, link),
+        Seg::App(u, link) => app_links::label(&world, crate::world::names::NameScope::World.into(), &mut HashSet::new(), u, link),
         _ => unreachable!(),
     });
     assert_eq!(
@@ -105,6 +105,7 @@ fn pasted_native_links_preserve_console_line_height() {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
         text: String::new(),
     };
     let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -246,6 +247,7 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
         text: format!(
             "[secondlife:///app/agent/{id}/about Resident] · [secondlife:///app/agent/{id}/im Resident] · [secondlife:///app/agent/{id}/pay Resident]"
         ),

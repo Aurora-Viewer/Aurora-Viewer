@@ -2574,6 +2574,14 @@ splash-update-installing = Installing the update…
 splash-update-cache = Clearing the cache…
 splash-update-launching = Starting the new version…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: unable to initialize Metal: " }{ $e }
+app-graphics-start-memory-full =
+    The graphics card has no video memory left for Aurora Viewer: another program holds it.
+
+    What to try:
+    • close the programs that use the graphics card (another viewer, a game, a video or 3D editor), then start Aurora Viewer again;
+    • on a laptop with two graphics cards, check which one Aurora Viewer runs on.
+
+    The log of this start: { $log }
 app-graphics-start-failed-title = Aurora Viewer cannot start
 app-graphics-start-failed =
     Aurora Viewer could not open a graphics card to draw its window.
@@ -8840,6 +8848,7 @@ world-inventory-offers-check-failed = Inventory check unavailable. Offer again t
 world-inventory-offers-checked = Inventory checked. Review the original before offering again.
 world-inventory-offers-item-sent = { "Inventory item " }{ $item }{ " offered" }
 world-inventory-offers-folder-sent = { "Inventory folder " }{ $item }{ " offered" }
+world-inventory-offers-sent-anonymous = { "Inventory item offered to " }{ $name }
 world-inventory-offers-body-part = Body part
 world-mod-offers-you-friendship = { $from }{ " offers you friendship" }
 world-calling-card-title = Calling card
@@ -10015,6 +10024,7 @@ update-error-integrity = The download does not match the published checksum. It 
 update-error-filesystem = Unable to prepare installation. Check free space and folder write permissions, and close other Aurora instances.
 update-error-package = The package is incomplete or invalid. The current installation is preserved.
 update-error-unsupported = This release cannot be installed automatically from this folder. Download it from its page and extract it into a dedicated folder.
+update-error-protected = Aurora cannot replace itself here: this folder belongs to a sandboxed package (Flatpak, Snap, AppImage) or your account cannot write to it. Update it the way it was installed, or download the new version from its page.
 update-error-drive-root = Aurora cannot update itself in a folder at the root of a drive, like E:\Aurora Viewer. Move the folder one level down, for example to E:\Games\Aurora Viewer, start Aurora from there, then update.
 update-error-unsupported-macos = On macOS, a new version is installed by hand. Download it from its page, then replace Aurora Viewer in your Applications folder with the new one.
 update-error-startup = The update helper could not start. The current installation is preserved.
@@ -13257,6 +13267,9 @@ movement-running = Enhance running
 movement-fly-assist = Enhance flying
 movement-swimming = Enable swimming
 movement-jump-obstacles = Jump out of the water at steep obstacles
+movement-prim-water = Swim in prim water
+movement-prim-water-help = Phantom prims whose name or description contains one of these words become water for your own avatar: you swim inside them and leave them at their top. Only your viewer changes; others see you flying.
+movement-prim-water-words = Water words, separated by commas
 movement-key-unbound = Unassigned
 movement-key-double = Double-tap
 movement-water-submerge = At the surface: submerge
@@ -14429,6 +14442,7 @@ rlva-tools-col-restriction = Restriction
 rlva-tools-col-modifier = Modifier
 rlva-tools-col-value = Value
 rlva-tools-col-object = Object name
+rlva-tools-child = child
 rlva-modifier-fartouch = Fartouch distance
 rlva-modifier-recvim-min = RecvIM distance (min)
 rlva-modifier-recvim-max = RecvIM distance (max)

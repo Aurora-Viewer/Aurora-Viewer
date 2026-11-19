@@ -2535,6 +2535,14 @@ splash-update-installing = アップデートをインストール中…
 splash-update-cache = キャッシュを消去中…
 splash-update-launching = 新しいバージョンを起動中…
 app-aurora-viewer-unable-to-initialize-metal = { "Auroraビューア：Metalを初期化できませんでした：" }{ $e }
+app-graphics-start-memory-full =
+    グラフィックカードにAuroraビューアが使えるビデオメモリが残っていません。ほかのプログラムが使用しています。
+
+    試すべきこと：
+    ・グラフィックカードを使うプログラム（ほかのビューア、ゲーム、動画や３Ｄの編集ソフト）を閉じてから、Auroraビューアをもう一度起動してください。
+    ・グラフィックカードが２つあるノートＰＣでは、Auroraビューアがどちらで動いているか確認してください。
+
+    今回の起動のログ：{ $log }
 app-graphics-start-failed-title = Auroraビューアを起動できません
 app-graphics-start-failed =
     Auroraビューアはウィンドウを描画するためのグラフィックカードを開けませんでした。
@@ -8769,6 +8777,7 @@ world-inventory-offers-check-failed = インベントリを確認できません
 world-inventory-offers-checked = インベントリを確認しました。もう一度渡す前に元のアイテムを確認してください。
 world-inventory-offers-item-sent = { "インベントリのアイテム「" }{ $item }{ "」を送りました" }
 world-inventory-offers-folder-sent = { "インベントリのフォルダ「" }{ $item }{ "」を送りました" }
+world-inventory-offers-sent-anonymous = { $name }{ "にインベントリのアイテムを送りました" }
 world-inventory-offers-body-part = 身体部位
 world-mod-offers-you-friendship = { $from }{ "がフレンド登録を申し込んでいます" }
 world-calling-card-title = コーリングカード
@@ -9944,6 +9953,7 @@ update-error-integrity = ダウンロードしたファイルが公開されて�
 update-error-filesystem = インストールの準備ができません。空き容量とフォルダの書き込み権限を確認し、他のAuroraを閉じてください。
 update-error-package = パッケージが不完全または無効です。現在のインストールは保持されています。
 update-error-unsupported = このリリースはこのフォルダから自動的にインストールできません。リリースページからダウンロードし、専用のフォルダに展開してください。
+update-error-protected = ここではAuroraを置き換えられません。このフォルダはサンドボックス化されたパッケージ（Flatpak、Snap、AppImage）に属しているか、あなたのアカウントでは書き込めません。インストールした方法で更新するか、リリースページから新しいバージョンをダウンロードしてください。
 update-error-drive-root = E:\Aurora Viewer のようにドライブ直下にあるフォルダーでは、Auroraは自動更新できません。E:\Games\Aurora Viewer など一つ下の階層にフォルダーを移動し、そこからAuroraを起動してから更新してください。
 update-error-unsupported-macos = macOSでは、新しいバージョンは手動でインストールします。リリースページからダウンロードし、アプリケーションフォルダのAurora Viewerを新しいものに置き換えてください。
 update-error-startup = アップデートのヘルパーを起動できませんでした。現在のインストールは保持されています。
@@ -13162,6 +13172,9 @@ movement-running = 走行を強化
 movement-fly-assist = 飛行を強化
 movement-swimming = 泳ぎを有効にする
 movement-jump-obstacles = 急な障害物では水から飛び出す
+movement-prim-water = プリムの水で泳ぐ
+movement-prim-water-help = 名前または説明にこれらの単語のいずれかを含むファントムプリムが、自分のアバターにとって水になります。その中を泳ぎ、上面から出られます。変わるのは自分のビューアだけで、他の人には飛行しているように見えます。
+movement-prim-water-words = 水の単語（カンマ区切り）
 movement-key-unbound = 未割り当て
 movement-key-double = ２回押し
 movement-water-submerge = 水面で：潜る
@@ -14319,6 +14332,7 @@ rlva-tools-col-restriction = 制限
 rlva-tools-col-modifier = 修飾子
 rlva-tools-col-value = 値
 rlva-tools-col-object = オブジェクト名
+rlva-tools-child = 子プリム
 rlva-modifier-fartouch = 遠隔タッチの距離
 rlva-modifier-recvim-min = RecvIM の距離（最小）
 rlva-modifier-recvim-max = RecvIM の距離（最大）

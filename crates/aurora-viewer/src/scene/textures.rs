@@ -3420,6 +3420,15 @@ impl TextureStreamer {
         self.entries.insert(id, e);
     }
 
+    /// For the tests of its users: a texture used `refs` times, shown at
+    /// the discard level `decoded` (None: nothing on the GPU yet).
+    #[cfg(test)]
+    pub(crate) fn test_used(&mut self, id: Uuid, refs: u32, decoded: Option<u8>) {
+        let mut e = tests::entry(decoded, 0.0);
+        e.refs = refs;
+        self.entries.insert(id, e);
+    }
+
     /// For the tests of its users: the texture's sculpt map decoded.
     #[cfg(test)]
     pub(super) fn test_sculpt_map(&mut self, id: Uuid) {

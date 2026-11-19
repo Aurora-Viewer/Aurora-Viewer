@@ -2577,6 +2577,14 @@ splash-update-installing = Installation de la mise à jour…
 splash-update-cache = Vidage du cache…
 splash-update-launching = Lancement de la nouvelle version…
 app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: impossible d'initialiser Metal : " }{ $e }
+app-graphics-start-memory-full =
+    La carte graphique n’a plus de mémoire vidéo pour Aurora Viewer : un autre programme l’occupe.
+
+    À essayer :
+    • fermez les programmes qui utilisent la carte graphique (un autre viewer, un jeu, un éditeur vidéo ou 3D), puis relancez Aurora Viewer ;
+    • sur un portable à deux cartes graphiques, vérifiez sur laquelle Aurora Viewer tourne.
+
+    Le journal de ce démarrage : { $log }
 app-graphics-start-failed-title = Aurora Viewer ne peut pas démarrer
 app-graphics-start-failed =
     Aurora Viewer n'a pu ouvrir aucune carte graphique pour dessiner sa fenêtre.
@@ -8848,6 +8856,7 @@ world-inventory-offers-check-failed = La vérification de l’inventaire a écho
 world-inventory-offers-checked = Inventaire vérifié. Contrôlez l’original avant de proposer à nouveau le don.
 world-inventory-offers-item-sent = { "Objet de l’inventaire " }{ $item }{ " offert" }
 world-inventory-offers-folder-sent = { "Dossier de l’inventaire " }{ $item }{ " offert" }
+world-inventory-offers-sent-anonymous = { "Objet de l’inventaire offert à " }{ $name }
 world-inventory-offers-body-part = Partie du corps
 world-mod-offers-you-friendship = { $from }{ " vous propose son amitié" }
 world-calling-card-title = Carte de visite
@@ -10011,6 +10020,7 @@ update-error-integrity = Le fichier téléchargé ne correspond pas à l’empre
 update-error-filesystem = Impossible de préparer l’installation. Vérifiez l’espace libre et les droits d’écriture du dossier, puis fermez les autres instances d’Aurora.
 update-error-package = Le paquet est incomplet ou invalide. L’installation actuelle est conservée.
 update-error-unsupported = Cette release ne permet pas l’installation automatique depuis ce dossier. Téléchargez-la depuis sa page et décompressez-la dans un dossier dédié.
+update-error-protected = Aurora ne peut pas se remplacer ici : ce dossier appartient à un paquet isolé (Flatpak, Snap, AppImage) ou votre compte ne peut pas y écrire. Mettez Aurora à jour comme elle a été installée, ou téléchargez la nouvelle version depuis sa page.
 update-error-drive-root = Aurora ne peut pas se mettre à jour dans un dossier placé à la racine d’un disque, comme E:\Aurora Viewer. Déplacez le dossier d’un niveau, par exemple dans E:\Jeux\Aurora Viewer, lancez Aurora depuis cet endroit, puis mettez à jour.
 update-error-unsupported-macos = Sur macOS, une nouvelle version s’installe à la main. Téléchargez-la depuis sa page, puis remplacez Aurora Viewer dans votre dossier Applications par la nouvelle.
 update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
@@ -13262,6 +13272,9 @@ movement-running = Améliorer la course
 movement-fly-assist = Améliorer le vol
 movement-swimming = Activer la nage
 movement-jump-obstacles = Sauter hors de l’eau devant un obstacle raide
+movement-prim-water = Nager dans l’eau en prims
+movement-prim-water-help = Les prims fantômes dont le nom ou la description contient l’un de ces mots deviennent de l’eau pour votre propre avatar : vous y nagez et en sortez par le dessus. Seul votre viewer change ; les autres vous voient voler.
+movement-prim-water-words = Mots de l’eau, séparés par des virgules
 movement-key-unbound = Non attribué
 movement-key-double = Double appui
 movement-water-submerge = En surface : couler
@@ -14434,6 +14447,7 @@ rlva-tools-col-restriction = Restriction
 rlva-tools-col-modifier = Modificateur
 rlva-tools-col-value = Valeur
 rlva-tools-col-object = Nom de l’objet
+rlva-tools-child = enfant
 rlva-modifier-fartouch = Distance de toucher (fartouch)
 rlva-modifier-recvim-min = Distance RecvIM (min)
 rlva-modifier-recvim-max = Distance RecvIM (max)
