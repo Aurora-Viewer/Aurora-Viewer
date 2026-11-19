@@ -55,6 +55,7 @@ impl Fixture {
                     &Icons::default(),
                     &mut self.world,
                     &mut self.state,
+                    None,
                     &mut self.prefs,
                     &mut false,
                     false,
