@@ -180,6 +180,21 @@ New base angles, stopping and physical speed changes reset it; changing the
 parent with the same base angle retains the turn, as in the Legacy Viewer.
 Motion corrections fade towards the base angle with that retained turn
 applied, rather than fading the turn away.
+Full and terse reports carry separate receipt and application times into
+the object store. Receipt time anchors motion extrapolation; application
+time starts position, rotation and scale damping from the current visual
+pose. Time in the event queue therefore cannot consume a scripted transition.
+Volume corrections retain a drawable transform across reports, including a
+change from zero velocity to physical motion. Each frame follows
+`LLDrawable::updateXform`: a 0.06 s half-life, normalized quaternion interpolation,
+and one post-step stopping test for position, rotation and scale, relative to
+camera distance. `Scene::drawable_damping_view` supplies the preceding view's
+spatial visibility, independent of face transparency or draw-record count;
+selection prevents a new correction but does not cancel an existing one.
+`world/object_motion_trace.rs` optionally records short captures of volume
+reports, damping decisions and final render-record gaps, controlled by a local
+request file. It tracks at most 64 slots for 20 seconds and excludes object
+names, UUIDs, absolute positions and network payloads.
 
 `world/appearance_xml.rs` snapshots only the agent’s current visual parameters
 and joint palette for Legacy Viewer-compatible `linden_genepool` XML export.
