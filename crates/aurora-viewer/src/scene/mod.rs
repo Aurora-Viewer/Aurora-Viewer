@@ -1253,6 +1253,9 @@ struct MeshNeed {
 #[derive(Clone, Copy)]
 pub struct CullView {
     pub planes: [Vec4; 6],
+    /// The second camera's frustum (app/second_camera.rs), when its window
+    /// shows our avatar: what either view sees is in view.
+    pub second: Option<[Vec4; 6]>,
     pub eye: Vec3,
     pub screen_height: f32,
     pub tan_half_fov: f32,
@@ -1270,22 +1273,9 @@ pub struct CullView {
 
 impl CullView {
     pub fn new(view_proj: Mat4, eye: Vec3, screen_height: f32, fov_y: f32) -> CullView {
-        let m = view_proj.transpose();
-        let r0 = m.x_axis;
-        let r1 = m.y_axis;
-        let r2 = m.z_axis;
-        let r3 = m.w_axis;
-        let norm = |p: Vec4| p / p.truncate().length().max(1e-6);
-        // reverse-Z infinite: near plane is r3 - r2, far plane absent (use r2 as "far" accept-all)
         CullView {
-            planes: [
-                norm(r3 + r0),
-                norm(r3 - r0),
-                norm(r3 + r1),
-                norm(r3 - r1),
-                norm(r3 - r2),
-                Vec4::new(0.0, 0.0, 0.0, 1.0),
-            ],
+            planes: Self::frustum_planes(view_proj),
+            second: None,
             eye,
             screen_height,
             tan_half_fov: (fov_y * 0.5).tan(),
@@ -1307,14 +1297,29 @@ impl CullView {
         self
     }
 
+    /// The side and near planes of a view (reverse-Z infinite: the near
+    /// plane is r3 - r2, no far plane, the sixth accepts all).
+    pub fn frustum_planes(view_proj: Mat4) -> [Vec4; 6] {
+        let m = view_proj.transpose();
+        let r0 = m.x_axis;
+        let r1 = m.y_axis;
+        let r2 = m.z_axis;
+        let r3 = m.w_axis;
+        let norm = |p: Vec4| p / p.truncate().length().max(1e-6);
+        [
+            norm(r3 + r0),
+            norm(r3 - r0),
+            norm(r3 + r1),
+            norm(r3 - r1),
+            norm(r3 - r2),
+            Vec4::new(0.0, 0.0, 0.0, 1.0),
+        ]
+    }
+
     #[inline]
     pub fn sphere_visible(&self, c: Vec3, r: f32) -> bool {
-        for p in &self.planes {
-            if p.truncate().dot(c) + p.w < -r {
-                return false;
-            }
-        }
-        true
+        let inside = |planes: &[Vec4; 6]| planes.iter().all(|p| p.truncate().dot(c) + p.w >= -r);
+        inside(&self.planes) || self.second.as_ref().is_some_and(inside)
     }
 
     /// Approximate projected diameter in pixels.

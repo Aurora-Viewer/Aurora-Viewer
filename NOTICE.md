@@ -105,6 +105,15 @@ GPL-3.0-or-later as described above.
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
+## Ideas from other viewers
+
+Some features of Aurora Viewer follow an idea first shown by another viewer,
+written anew for Aurora, without its code. Their authors are thanked here.
+
+| The idea and its author | In Aurora (`crates/`) |
+|---|---|
+| Second camera, a small window that keeps one's own avatar in view (face or whole body) while the main camera looks elsewhere: SnowPastel's [multi-view-viewer](https://github.com/snowpastel/multi-view-viewer) | `aurora-viewer/src/camera/second.rs`, `ui/second_camera.rs`, `app/second_camera.rs`; `aurora-render/src/second_view.rs` |
+
 ## Bundled assets
 
 | Asset | Location | License |

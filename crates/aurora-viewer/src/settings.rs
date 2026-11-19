@@ -647,6 +647,8 @@ pub struct Settings {
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -2376,6 +2378,7 @@ impl Default for Settings {
             game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
