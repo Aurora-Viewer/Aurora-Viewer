@@ -20,6 +20,10 @@ def load(name, path):
 
 
 convert = load("aurora_maya_convert", ROOT / "maya" / "aurora_live_maya" / "convert.py")
+import sys
+sys.path.insert(0, str(ROOT / "maya"))
+from aurora_live_maya import shape_rules  # noqa: E402  (relative imports need the package)
+from aurora_live_maya import convert as package_convert  # noqa: E402
 client = load("aurora_maya_client", ROOT / "blender" / "aurora_live" / "client.py")
 
 
@@ -313,6 +317,149 @@ class Lods(unittest.TestCase):
         weights = [(1.0, 0, 0, 0)] * 4
         result, _weights = convert.transfer(high, joints, weights, [0, 1, 2], [(0.9, 0.1, 0), (0.1, 0.8, 0), (-9, 0, 0)])
         self.assertEqual([j[0] for j in result], [1, 2, 0])
+
+
+def shape_payload(action="create"):
+    joints = shape_rules.skeleton()
+    names = [name for name, _parent in joints]
+    entries = []
+    for index, name in enumerate(names):
+        head = [0.01 * index, 0.0, 1.0]
+        entries.append({"name": name, "head": head, "tail": [head[0], 0.0, 1.03], "rotation": [0, 0, 0, 1],
+                        "inverse_bind": convert.column_major(convert.translation([-v for v in head])),
+                        "reference_bind": convert.column_major(convert.identity())})
+    part = {"name": "upper", "positions": [[0, 0, 1], [0.1, 0, 1], [0, 0.1, 1]], "uvs": [[0, 0], [1, 0], [0, 1]],
+            "weights": [[[0, 1.0]], [[0, 0.5], [1, 0.5]], [[2, 1.0]]], "triangles": [[0, 1, 2]]}
+    return {"id": "3f1c9a52-7d10-4f4e-9a55-2a1b3c4d5e6f", "name": "My shape", "action": action, "params": {"80": 1.0},
+            "names": names, "joints": entries, "parts": [part]}
+
+
+class Shape(unittest.TestCase):
+    def test_the_bundled_skeleton_has_every_sl_joint_in_pre_order(self):
+        joints = shape_rules.skeleton()
+        self.assertEqual(len(joints), 159)
+        self.assertEqual(joints[0], ("mPelvis", None))
+        parents = {name: parent for name, parent in joints}
+        seen = set()
+        for name, parent in joints:
+            self.assertTrue(parent is None or parent in seen, name)  # parents come first
+            seen.add(name)
+        self.assertEqual(parents["mChest"], "mSpine4")  # Bento spine joints sit between
+
+    def test_a_valid_transfer_passes_and_bad_ones_are_refused(self):
+        joints = shape_rules.skeleton()
+        shape_rules.validate(shape_payload(), joints)
+        shape_rules.validate(shape_payload("apply"), joints)
+        cases = []
+        bad = shape_payload(); bad["names"] = bad["names"][:-1]; cases.append(bad)
+        bad = shape_payload(); bad["joints"][3]["rotation"] = [0, 0, 0, 2]; cases.append(bad)
+        bad = shape_payload(); bad["joints"][3]["inverse_bind"] = convert.column_major(convert.identity()); cases.append(bad)
+        bad = shape_payload(); bad["joints"][3]["head"] = [math.nan, 0, 0]; cases.append(bad)
+        bad = shape_payload(); bad["parts"][0]["weights"][1] = [[0, 0.5], [1, 0.4]]; cases.append(bad)
+        bad = shape_payload(); bad["parts"][0]["triangles"] = [[0, 1, 9]]; cases.append(bad)
+        bad = shape_payload(); bad["parts"][0]["name"] = "hair"; cases.append(bad)
+        bad = shape_payload(); bad["action"] = "delete"; cases.append(bad)
+        bad = shape_payload(); bad["params"] = {"x": 1}; cases.append(bad)
+        bad = shape_payload(); bad["id"] = "not a uuid"; cases.append(bad)
+        bad = shape_payload("apply"); bad["joints"][0]["reference_bind"] = [0] * 16; cases.append(bad)
+        for case in cases:
+            with self.assertRaises(ValueError):
+                shape_rules.validate(case, joints)
+
+    def test_a_new_skeleton_comes_back_to_the_shapes_positions(self):
+        # Built with placement(), captured with the frame capture finds for
+        # it (base, then the facing turn): the SL positions round trip.
+        left, right, pelvis = (0.0, 0.2, 1.4), (0.0, -0.2, 1.4), (0.0, 0.0, 1.0)
+        for up, unit in (("y", 0.01), ("z", 0.01), ("y", 1.0), ("z", 1.0)):
+            to_maya = shape_rules.placement(up, unit)
+            maya = {name: package_convert.point(to_maya, p) for name, p in
+                    (("mShoulderLeft", left), ("mShoulderRight", right), ("mPelvis", pelvis))}
+            base = package_convert.base_frame(up, unit)
+            heads = {name: package_convert.point(base, p) for name, p in maya.items()}
+            frame = package_convert.multiply(package_convert.facing(heads), base)
+            for name, sl in (("mShoulderLeft", left), ("mShoulderRight", right), ("mPelvis", pelvis)):
+                self.assertTrue(close(package_convert.point(frame, maya[name]), sl), (up, unit, name))
+        # A Y-up skeleton stands up Maya's Y and faces +Z, left on +X.
+        to_maya = shape_rules.placement("y", 0.01)
+        self.assertTrue(close(package_convert.point(to_maya, (0, 0, 1)), (0, 100, 0)))
+        self.assertTrue(close(package_convert.point(to_maya, (1, 0, 0)), (0, 0, 100)))
+        self.assertTrue(close(package_convert.point(to_maya, (0, 1, 0)), (100, 0, 0)))
+
+    def test_shaped_joints_use_the_transferred_bind(self):
+        frame = convert.TO_SL
+        shaped_bind = convert.column_major(convert.chain(convert.scale(0.8), convert.translation((0, 0, -1.1))))
+        # Bound where the shape put the joint: the transferred bind as it is.
+        bind_pre = {"mPelvis": convert.translation((0, -110, 0))}
+        [values] = convert.inverse_binds(["mPelvis"], bind_pre, frame, shaped={"mPelvis": (shaped_bind, [0, 0, 1.1])})
+        self.assertTrue(close(values, shaped_bind))
+        # The rig moved 1 m before binding: the offset is taken back out.
+        moved = {"mPelvis": convert.translation((-100, -110, 0))}
+        [values] = convert.inverse_binds(["mPelvis"], moved, frame, shaped={"mPelvis": (shaped_bind, [0, 0, 1.1])})
+        local = convert.point(convert.from_column_major(values), (1.0, 0, 1.1))
+        self.assertTrue(close(local, (0, 0, 0)))
+
+    def test_node_names_are_safe(self):
+        self.assertEqual(shape_rules.node_name("My shape (v2)"), "My_shape__v2")
+        self.assertEqual(shape_rules.node_name("2nd"), "Shape_2nd")
+        self.assertEqual(shape_rules.node_name("ゆき"), "Shape")
+
+
+class ShapeTransport(unittest.TestCase):
+    def test_the_maya_client_receives_a_shape_and_answers(self):
+        token = b"0123456789abcdef" * 4
+        client.read_token = lambda port: token
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        received = {}
+
+        def receive(connection, size):
+            data = b""
+            while len(data) < size:
+                chunk = connection.recv(size - len(data))
+                if not chunk:
+                    raise EOFError
+                data += chunk
+            return data
+
+        def frame(connection):
+            return receive(connection, struct.unpack("<I", receive(connection, 4))[0])
+
+        def viewer():
+            connection, _ = server.accept()
+            with connection:
+                receive(connection, len(client.MAGIC) + len(token))
+                hello = {"protocol": 1, "joints": ["mPelvis"],
+                         "features": ["pbr-materials", "shape-transfer", "shape-apply", "import-lods"]}
+                connection.sendall(json.dumps(hello).encode() + b"\n")
+                received["control"] = json.loads(frame(connection))
+                connection.sendall(json.dumps({"ok": True, "shape": {"id": "3f1c9a52-7d10-4f4e-9a55-2a1b3c4d5e6f",
+                                                                     "action": "create"}}).encode() + b"\n")
+                while True:
+                    body = json.loads(frame(connection) or b"{}")
+                    if body.get("type") == "shape-result":
+                        received["result"] = body
+                        connection.sendall(b'{"ok":true}\n')
+                        return
+                    connection.sendall(b'{"ok":true,"revision":1}\n')
+
+        thread = threading.Thread(target=viewer)
+        thread.start()
+        live = client.Client(server.getsockname()[1], capabilities=("import-lods", "shape-transfer"))
+        payload = None
+        for _ in range(200):
+            payload = live.take_shape()
+            if payload:
+                break
+            threading.Event().wait(0.02)
+        self.assertIsNotNone(payload)
+        live.shape_result(payload["id"])
+        thread.join(10)
+        live.close()
+        server.close()
+        # Shape creation and Import / LOD; never shape-apply.
+        self.assertEqual(received["control"], {"type": "features", "features": ["shape-transfer", "import-lods"]})
+        self.assertEqual(received["result"], {"type": "shape-result", "id": payload["id"], "error": None})
 
 
 class Transport(unittest.TestCase):

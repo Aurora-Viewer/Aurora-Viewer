@@ -202,7 +202,7 @@ def facing(heads):
     return identity()
 
 
-def inverse_binds(names, bind_pre, frame, axes_mode=False, rest_axes=None):
+def inverse_binds(names, bind_pre, frame, axes_mode=False, rest_axes=None, shaped=None):
     """Inverse bind matrices in SL's frame, column-major.
 
     `bind_pre` maps each joint name to its skinCluster bindPreMatrix (inverse
@@ -213,11 +213,25 @@ def inverse_binds(names, bind_pre, frame, axes_mode=False, rest_axes=None):
     (`rest_axes`, from its hello), keeping only its bind position: the Blender
     plug-in's rule for bones without bind data, for rigs whose joint
     orientations do not follow Second Life's.
+
+    `shaped` maps a joint received from Aurora's shape transfer to that
+    shape's (inverse bind, head), both in SL metres: its inverse bind cancels
+    the shape, scale included, before Aurora applies the wearer's own, offset
+    by how far the bind head sits from the shape's head (the Blender
+    plug-in's aurora_shape_bind).
     """
     frame_inverse = inverse(frame)
     result = []
     for name in names:
         converted = chain(frame, bind_pre[name], frame_inverse)
+        if shaped and name in shaped:
+            bind, reference = shaped[name]
+            head = translation_of(inverse(converted))
+            matrix = from_column_major(bind)
+            if abs(determinant3(matrix)) < 1e-8:
+                raise ValueError("Invalid transferred shape bind: " + name)
+            result.append(column_major(multiply(matrix, translation([r - h for r, h in zip(reference, head)]))))
+            continue
         if axes_mode:
             head = translation_of(inverse(converted))
             values = (rest_axes or {}).get(name)

@@ -790,7 +790,7 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.2.1). It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.3.0). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
@@ -863,7 +863,22 @@ now** sends at once and reloads the texture files.
   matched to High's by shading group, so a lower level can drop a material
   but not add one. Existing skinned levels must be bound to the same rig as
   High (same bind matrices).
-- **Not in this version:** shape transfer, rig creation, posing helpers and
+- **Send your shape to Maya.** **Add a skeleton with my shape** in Aurora's
+  LiveMesh window works with Maya too, with the same rights check as for
+  Blender (your own worn shape, with Modify). Maya then gets a new group in
+  its own namespace (`AuroraShape`, `AuroraShape2`…): the 159-joint Second
+  Life skeleton at your shape's proportions, world-aligned joints named
+  `mPelvis`, `mChest`… (collision volumes hidden), and the neutral reference
+  body (head, torso, legs, eyes, eyelashes) skinned to it. A Y-up scene gets
+  it facing +Z with its left on +X, a Z-up scene in Second Life's axes; it is
+  built at real size, or at one centimetre per metre when **Scene units** says
+  so. One undo removes it; receiving the same shape again does not duplicate
+  it. Each joint keeps the shape's bind (`auroraShapeBind`,
+  `auroraShapeHead`), so a garment skinned to this skeleton previews with
+  your shape once, not twice. Nothing existing is changed and nothing is
+  added to the live list.
+- **Not in this version:** **Apply my shape to the selected skeleton** (Aurora
+  says it needs the Blender plug-in), rig creation, posing helpers and
   explicit grouping. Use the Blender plug-in for those.
 
 The plug-in's pure rules (frames, binds, weights, packing, colour tables) have

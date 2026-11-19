@@ -10,6 +10,8 @@ data at upload, indra/llprimitive/lldaeloader.cpp). A mesh without a skin keeps
 its rotation and scale and drops its world position, like the Blender plug-in.
 """
 
+import math
+
 import maya.api.OpenMaya as om
 import maya.api.OpenMayaAnim as oma
 from maya import cmds
@@ -89,7 +91,7 @@ def _skin(shape_path, skin, supported):
         raise ValueError("The skin's input geometry is not a mesh")
     bind_shape = _maya_matrix(_node_plug(skin, "geomMatrix"))
     pre_plug = _node_plug(skin, "bindPreMatrix")
-    bind_pre, per_vertex = {}, {}
+    bind_pre, per_vertex, shaped = {}, {}, {}
     for path in fn.influenceObjects():
         name = convert.joint_name(path.partialPathName(), _joint_override(path))
         logical = fn.indexForInfluenceObject(path)
@@ -111,9 +113,27 @@ def _skin(shape_path, skin, supported):
         if name not in supported:
             raise ValueError("Unsupported weighted joint: " + name)
         bind_pre[name] = _maya_matrix(pre_plug.elementByLogicalIndex(logical))
+        received = _shape_bind(path)
+        if received:
+            shaped[name] = received
         for vertex, weight in affected:
             per_vertex.setdefault(vertex, []).append((name, weight))
-    return om.MFnMesh(geometry), bind_shape, bind_pre, per_vertex
+    return om.MFnMesh(geometry), bind_shape, bind_pre, per_vertex, shaped
+
+
+def _shape_bind(path):
+    """The (inverse bind, head) a joint keeps from Aurora's shape transfer."""
+    node = om.MFnDependencyNode(path.node())
+    if not (node.hasAttribute("auroraShapeBind") and node.hasAttribute("auroraShapeHead")):
+        return None
+    try:
+        bind = list(om.MFnDoubleArrayData(node.findPlug("auroraShapeBind", False).asMObject()).array())
+        head = list(om.MFnDoubleArrayData(node.findPlug("auroraShapeHead", False).asMObject()).array())
+    except RuntimeError:
+        return None
+    if len(bind) != 16 or len(head) != 3 or not all(math.isfinite(v) for v in bind + head):
+        raise ValueError("Invalid transferred shape bind: " + node.name())
+    return bind, head
 
 
 def _rig_heads(skin):
@@ -209,14 +229,14 @@ class Source:
         self.shape_fn = om.MFnMesh(self.shape_path)
         self.skin = skin_of(self.shape)
         if self.skin:
-            self.fn, bind_shape, self.bind_pre, self.per_vertex = _skin(self.shape_path, self.skin, supported)
+            self.fn, bind_shape, self.bind_pre, self.per_vertex, self.shaped = _skin(self.shape_path, self.skin, supported)
             if self.fn.numPolygons != self.shape_fn.numPolygons:
                 raise ValueError("The skin's input mesh and the shape differ; delete non-deformer history")
             heads = {name: convert.point(base, head) for name, head in _rig_heads(self.skin).items()}
             self.frame = convert.multiply(convert.facing(heads), base)
             self.matrix = convert.multiply(self.frame, bind_shape)
         else:
-            self.fn, self.per_vertex, self.bind_pre = self.shape_fn, None, {}
+            self.fn, self.per_vertex, self.bind_pre, self.shaped = self.shape_fn, None, {}, {}
             world = convert.from_maya(_values(self.shape_path.inclusiveMatrix()))
             # Rotation and scale stay; the world position is the preview's own.
             self.frame = base
@@ -306,7 +326,8 @@ def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False, bas
     surfaces, surface_groups = faces(packed, geometry, source.shape, images, warnings)
     if groups is not None:
         groups.extend(surface_groups)
-    inverse_bind = convert.inverse_binds(names, source.bind_pre, source.frame, axes_mode, rest_axes) if names else []
+    inverse_bind = (convert.inverse_binds(names, source.bind_pre, source.frame, axes_mode, rest_axes, source.shaped)
+                    if names else [])
     return ({"name": source.name, "joints": names, "inverse_bind": inverse_bind, "faces": surfaces},
             convert.corner_count(packed))
 

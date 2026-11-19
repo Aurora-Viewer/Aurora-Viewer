@@ -72,7 +72,23 @@ const MAYA_FILES: &[(&str, &[u8])] = &[
         "aurora_live_maya/lods.py",
         include_bytes!("../../../../maya/aurora_live_maya/lods.py"),
     ),
+    (
+        "aurora_live_maya/shape.py",
+        include_bytes!("../../../../maya/aurora_live_maya/shape.py"),
+    ),
+    (
+        "aurora_live_maya/shape_rules.py",
+        include_bytes!("../../../../maya/aurora_live_maya/shape_rules.py"),
+    ),
     ("aurora_live_maya/ui.py", include_bytes!("../../../../maya/aurora_live_maya/ui.py")),
+    (
+        "aurora_live_maya/avatar_skeleton.xml",
+        include_bytes!("../../assets/character/avatar_skeleton.xml"),
+    ),
+    (
+        "aurora_live_maya/SKELETON-NOTICE.txt",
+        include_bytes!("../../../../blender/aurora_live/SKELETON-NOTICE.txt"),
+    ),
     (
         "aurora_live_maya/client.py",
         include_bytes!("../../../../blender/aurora_live/client.py"),

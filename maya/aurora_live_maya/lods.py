@@ -84,7 +84,8 @@ def prepare(request, transform, settings, supported, rest_axes, base, axes_mode)
         names, joints, weights = capture.skin_weights(source.per_vertex, geometry)
     else:
         names, joints, weights = [], None, None
-    inverse_bind = convert.inverse_binds(names, source.bind_pre, source.frame, axes_mode, rest_axes) if names else []
+    inverse_bind = (convert.inverse_binds(names, source.bind_pre, source.frame, axes_mode, rest_axes, source.shaped)
+                    if names else [])
     packed = geometry.pack(joints, weights)
     high_faces, high_groups = capture.faces(packed, geometry, source.shape, images, warnings)
     high = _plain({"name": source.name, "source_id": source_id, "joints": names, "inverse_bind": inverse_bind,

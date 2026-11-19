@@ -13,7 +13,7 @@ import uuid
 import maya.api.OpenMaya as om
 from maya import cmds
 
-from . import capture, client, convert, lods, materials
+from . import capture, client, convert, lods, materials, shape
 
 SOURCES_KEY = "auroraLiveMayaSources"
 BIND_KEY = "auroraLiveMayaBindAxes"
@@ -151,8 +151,8 @@ class Session:
     def connect(self, port):
         self.disconnect()
         set_option(PORT, int(port))
-        # Import / LOD only: shape transfer and its apply stay Blender's.
-        self.client = client.Client(int(port), capabilities=("import-lods",))
+        # Import / LOD and shape creation; applying a shape stays Blender's.
+        self.client = client.Client(int(port), capabilities=("import-lods", "shape-transfer"))
         self.revision, self.last_content, self.forced = 0, None, True
         self._start_timer()
 
@@ -298,6 +298,9 @@ class Session:
         request = self.client.take_import()
         if request is not None:
             self._import(request, supported)
+        received = self.client.take_shape()
+        if received is not None:
+            self._shape(received)
         now = time.monotonic()
         auto = bool(option(AUTO, 1))
         interval = max(0.1, float(option(INTERVAL, DEFAULT_INTERVAL)))
@@ -336,6 +339,19 @@ class Session:
         except Exception as error:  # Aurora waits for an answer: always send one.
             result = dict(request, error=(str(error) or type(error).__name__)[:512])
         self.client.import_result(result)
+
+    def _shape(self, payload):
+        """Build the skeleton Aurora sent with the worn shape; Aurora reports
+        success only once this answers."""
+        identity = payload.get("id", "") if isinstance(payload, dict) else ""
+        try:
+            unit = capture.scene_unit(self.units(), [self.node(key) for key in self.sources if self.node(key)])
+            group = shape.create(payload, capture.up_axis(), unit)
+            self.message = "Shape received: " + group.rsplit("|", 1)[-1]
+            self.client.shape_result(identity)
+        except Exception as error:  # Aurora waits for an answer: always send one.
+            self.message = str(error) or type(error).__name__
+            self.client.shape_result(identity, self.message[:512])
 
     def _issues(self):
         revision, issues = self.client.issues()
