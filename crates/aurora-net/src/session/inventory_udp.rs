@@ -109,8 +109,9 @@ impl Session<'_> {
                 message.inventory_block.old_item_id = target;
                 message.inventory_block.type_ = if folder { LINK_FOLDER } else { LINK };
                 message.inventory_block.inv_type = inv_type;
-                message.inventory_block.name = aurora_msg::str_field(&name);
-                message.inventory_block.description = aurora_msg::str_field(&desc);
+                // the same plain-ASCII strings as over AIS (link_inventory_array)
+                message.inventory_block.name = aurora_msg::str_field(&crate::outfits::link_name(&name));
+                message.inventory_block.description = aurora_msg::str_field(&crate::outfits::link_desc(&desc));
                 self.send_main(&message, true);
             }
             UdpEdit::RemoveItem(id) => {
