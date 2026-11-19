@@ -1,5 +1,9 @@
 # Aurora Viewer architecture
 
+`ui/chat/select/document.rs` scopes the transcript's rich-text selection to
+group notice bodies, in group profiles and notification cards. It retains
+selection for the Copy menu without replacing clickable links or emoji.
+
 Static local mesh assemblies are baked by `imports/local/scene.rs` on the
 import worker, preserving every instance transform and face slot across LODs.
 Their render-only asset uses `import_mesh::encode::local_asset` (45 faces);

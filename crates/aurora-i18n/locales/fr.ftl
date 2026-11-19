@@ -3833,6 +3833,10 @@ ui-options-camera-transition-duration = Durée des transitions
 ui-options-fade-duration-when-you-change-the-environment-yourself-selector = Durée du fondu quand vous changez l'environnement vous-même (sélecteur, heure du jour) ; 0 = immédiat, comme le Legacy Viewer
 ui-land-access-duration-in-hours = Durée en heures :
 build-ui-features-dynamic = Dynamique
+build-ui-features-probe-update = Mise à jour de la sonde
+build-ui-features-probe-static = Statique
+build-ui-features-probe-mirror-environment = Miroir (environnement)
+build-ui-features-probe-mirror-everything = Miroir (tout)
 world-appearance-tank-top = Débardeur
 ui-perf-throughput = Débit
 common-unblock = Débloquer

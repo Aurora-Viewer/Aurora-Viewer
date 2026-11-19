@@ -105,7 +105,7 @@ pub(crate) fn show(
         if truncate {
             ui.add(egui::Label::new(rich.strong()).truncate()).on_hover_text(text);
         } else {
-            ui.add(egui::Label::new(rich).wrap().selectable(true));
+            super::super::chat::select::label(ui, rich);
         }
         return None;
     }
@@ -135,11 +135,19 @@ pub(crate) fn show(
         job.wrap = egui::text::TextWrapping::truncate_at_width(job.wrap.max_width);
     }
     let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let response = ui.add(
-        egui::Label::new(galley.clone())
-            .selectable(activate && !truncate)
-            .sense(if activate { egui::Sense::click() } else { egui::Sense::hover() }),
-    );
+    let response = if !truncate && super::super::chat::select::current_seq().is_some() {
+        super::super::chat::select::label_with_sense(
+            ui,
+            galley.clone().into(),
+            if activate { egui::Sense::click() } else { egui::Sense::hover() },
+        )
+    } else {
+        ui.add(
+            egui::Label::new(galley.clone())
+                .selectable(activate && !truncate)
+                .sense(if activate { egui::Sense::click() } else { egui::Sense::hover() }),
+        )
+    };
     let hovered = ui
         .input(|i| i.pointer.hover_pos())
         .filter(|pos| response.rect.intersect(ui.clip_rect()).contains(*pos))
