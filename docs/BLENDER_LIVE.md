@@ -790,7 +790,7 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.3.1). It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.3.2). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 

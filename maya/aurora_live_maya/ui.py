@@ -191,7 +191,7 @@ class Window:
                     cmds.textScrollList(self.list, edit=True, selectIndexedItem=index)
             self._rows = rows
         unit = self.live.unit
-        text = "" if unit is None else "1 Maya cm = {:g} m, {}-up".format(unit * 100, capture_up())
+        text = "" if unit is None else "1 Maya cm = {:g} m, {}-up".format(unit, capture_up())
         if cmds.text(self.unit_text, query=True, label=True) != text:
             cmds.text(self.unit_text, edit=True, label=text)
         message = "\n".join(text for text in (self.live.message, self.live.notice) if text)
