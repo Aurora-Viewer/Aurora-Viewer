@@ -12,6 +12,30 @@ fn unproject(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     return world.xyz / world.w;
 }
 
+// A pixel's place from the eye (`params.camera`). `unproject`'s is told to
+// a float's precision at the eye's own place in the region, 0.015 mm at
+// 200 m, which is the width of a pixel seen from very close (a zoom on a
+// face narrows the view to a few degrees): the difference of two
+// neighbours was then noise, and so were the normal and the pixel's size
+// made from it, which showed as specks in the lamps' shadows and in the
+// indirect light. The eye's place is taken out of each column before they
+// are summed, so only what is left of it, the same for every pixel,
+// carries that error.
+fn from_eye(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
+    let ndc = (vec2<f32>(pixel) + vec2<f32>(0.5)) * params.screen.zw * vec2<f32>(2.0, -2.0)
+        + vec2<f32>(-1.0, 1.0);
+    let m = params.world_from_clip;
+    let eye = params.camera.xyz;
+    let place = (m[0].xyz - eye * m[0].w) * ndc.x + (m[1].xyz - eye * m[1].w) * ndc.y
+        + (m[2].xyz - eye * m[2].w) * depth + (m[3].xyz - eye * m[3].w);
+    return place / (m[0].w * ndc.x + m[1].w * ndc.y + m[2].w * depth + m[3].w);
+}
+
+// The width of a pixel on the surface at `pixel` (m).
+fn pixel_width(pixel: vec2<i32>, depth: f32) -> f32 {
+    return distance(from_eye(pixel + vec2<i32>(1, 0), depth), from_eye(pixel, depth));
+}
+
 fn depth_at(pixel: vec2<i32>) -> f32 {
     let size = vec2<i32>(params.screen.xy);
     return textureLoad(depth_tex, clamp(pixel, vec2<i32>(0), size - vec2<i32>(1)), 0);
@@ -19,26 +43,27 @@ fn depth_at(pixel: vec2<i32>) -> f32 {
 
 // The surface's normal from depth: of the two neighbours on each axis, the
 // one nearer in depth, so an edge does not bend the normal of the surface
-// in front of it.
-fn normal_at(pixel: vec2<i32>, world: vec3<f32>, depth: f32) -> vec3<f32> {
+// in front of it. Their places are taken from the eye (`from_eye`).
+fn normal_at(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
+    let here = from_eye(pixel, depth);
     let dl = depth_at(pixel - vec2<i32>(1, 0));
     let dr = depth_at(pixel + vec2<i32>(1, 0));
     let du = depth_at(pixel - vec2<i32>(0, 1));
     let dd = depth_at(pixel + vec2<i32>(0, 1));
     var dx: vec3<f32>;
     if (abs(dr - depth) < abs(dl - depth)) {
-        dx = unproject(pixel + vec2<i32>(1, 0), dr) - world;
+        dx = from_eye(pixel + vec2<i32>(1, 0), dr) - here;
     } else {
-        dx = world - unproject(pixel - vec2<i32>(1, 0), dl);
+        dx = here - from_eye(pixel - vec2<i32>(1, 0), dl);
     }
     var dy: vec3<f32>;
     if (abs(dd - depth) < abs(du - depth)) {
-        dy = unproject(pixel + vec2<i32>(0, 1), dd) - world;
+        dy = from_eye(pixel + vec2<i32>(0, 1), dd) - here;
     } else {
-        dy = world - unproject(pixel - vec2<i32>(0, 1), du);
+        dy = here - from_eye(pixel - vec2<i32>(0, 1), du);
     }
     var n = normalize(cross(dy, dx));
-    if (dot(n, params.camera.xyz - world) < 0.0) {
+    if (dot(n, here) > 0.0) {
         n = -n;
     }
     return n;

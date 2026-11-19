@@ -80,7 +80,7 @@ fn seen(p: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let dist = length(to_p);
     let facing = abs(dot(n, to_p / dist));
     // a pixel's width at `p`, and how much farther the face is a pixel on
-    let across = distance(unproject(corner, ndc.z), unproject(corner + vec2<i32>(1, 0), ndc.z));
+    let across = pixel_width(corner, ndc.z);
     let slope = across * sqrt(max(1.0 - facing * facing, 0.0)) / max(facing, 0.05);
     let near = 0.05 + 0.01 * dist + slope;
     var sum = vec4<f32>(0.0);

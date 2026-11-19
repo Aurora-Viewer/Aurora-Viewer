@@ -60,7 +60,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let world = unproject(pixel, depth);
-    let n = normal_at(pixel, world, depth);
+    let n = normal_at(pixel, depth);
     let dist = distance(world, params.camera.xyz);
     let origin = ray_origin(world, n, dist);
     var dir = params.light.xyz;
