@@ -129,6 +129,18 @@ pub(super) fn build(
             aurora_i18n::tr!("inventory-view-combination"),
             ExplorerView::Combination,
         ),
+        (
+            "view-compact",
+            "columns-3-filled",
+            aurora_i18n::tr!("inventory-view-compact"),
+            ExplorerView::Compact,
+        ),
+        (
+            "view-tiles",
+            "layout-cards-filled",
+            aurora_i18n::tr!("inventory-view-tiles"),
+            ExplorerView::Tiles,
+        ),
     ] {
         c.add(key, &view, icon, label, true, Command::Explorer(ExplorerCommand::View(mode)));
         check(c, key, prefs.explorer.view == mode);

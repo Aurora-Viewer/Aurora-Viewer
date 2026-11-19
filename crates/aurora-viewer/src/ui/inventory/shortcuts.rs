@@ -52,6 +52,9 @@ pub(crate) enum Command {
     Filter,
     /// Explorer's Alt+P: the details pane shows what the selection holds.
     Preview,
+    /// Explorer's Ctrl+Shift+1…6: the large, medium and small pictures, the
+    /// Compact view, the Details (the list), the Tiles.
+    View(u8),
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -84,6 +87,12 @@ impl Command {
             Command::Search => Action::InvSearch,
             Command::Filter => Action::InvFilter,
             Command::Preview => Action::InvPreview,
+            Command::View(1) => Action::InvViewLarge,
+            Command::View(2) => Action::InvViewMedium,
+            Command::View(3) => Action::InvViewSmall,
+            Command::View(4) => Action::InvViewCompact,
+            Command::View(5) => Action::InvViewDetails,
+            Command::View(_) => Action::InvViewTiles,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
     }
@@ -104,7 +113,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 16] = [
+pub(crate) const REBINDABLE: [Command; 22] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -114,6 +123,12 @@ pub(crate) const REBINDABLE: [Command; 16] = [
     Command::Search,
     Command::Filter,
     Command::Preview,
+    Command::View(1),
+    Command::View(2),
+    Command::View(3),
+    Command::View(4),
+    Command::View(5),
+    Command::View(6),
     Command::SelectAll,
     Command::InvertSelection,
     Command::ToggleSelection,

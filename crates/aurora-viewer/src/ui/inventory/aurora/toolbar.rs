@@ -72,6 +72,12 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
             "layout-board-split-filled",
             aurora_i18n::tr!("inventory-view-combination"),
         ),
+        (
+            ExplorerView::Compact,
+            "columns-3-filled",
+            aurora_i18n::tr!("inventory-view-compact"),
+        ),
+        (ExplorerView::Tiles, "layout-cards-filled", aurora_i18n::tr!("inventory-view-tiles")),
     ];
     let current = prefs.explorer.view;
     let icon = views
@@ -88,7 +94,8 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
         menu::separator(ui, p);
         menu::section(ui, p, aurora_i18n::tr!("inventory-tile-size"));
         let side = super::gallery::side(&prefs.explorer) as u16;
-        let tiles = current != ExplorerView::List;
+        // the pictures' side: the gallery's and the combination view's
+        let tiles = matches!(current, ExplorerView::Gallery | ExplorerView::Combination);
         for (size, label) in [
             (96, aurora_i18n::tr!("inventory-tile-small")),
             (128, aurora_i18n::tr!("inventory-tile-medium")),

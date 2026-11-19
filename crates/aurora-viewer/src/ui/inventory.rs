@@ -574,6 +574,8 @@ pub struct InventoryUi {
     focus_folder_filter: bool,
     /// Alt+P was pressed: the preview pane turns on or off.
     toggle_preview: bool,
+    /// Ctrl+Shift+1…6 was pressed: the view it gives (`aurora::set_view`).
+    view_key: Option<u8>,
     /// The notecards' texts the preview pane asked for, the main window's
     /// for every pane (`Facts::pane_texts`).
     pub pane_texts: std::sync::Arc<std::collections::HashMap<Uuid, PaneText>>,

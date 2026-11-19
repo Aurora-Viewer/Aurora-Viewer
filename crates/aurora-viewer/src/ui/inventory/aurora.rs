@@ -146,6 +146,8 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-columns-all"
             | "aurora-explorer-filter"
             | "aurora-explorer-preview"
+            | "aurora-compact"
+            | "aurora-tiles"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -309,6 +311,25 @@ pub(super) fn contents(
         Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
     }
     row_menu(ui, p, inv, st, prefs, facts, actions);
+}
+
+/// Windows Explorer's Ctrl+Shift+1…6, in its order: the gallery's large,
+/// medium (the Legacy Viewer's 128) and small pictures, the Compact view,
+/// the Details (the list), the Tiles.
+pub(super) fn set_view(prefs: &mut view::ExplorerPreferences, key: u8) {
+    use view::ExplorerView;
+    let (view, side) = match key {
+        1 => (ExplorerView::Gallery, Some(192)),
+        2 => (ExplorerView::Gallery, Some(0)),
+        3 => (ExplorerView::Gallery, Some(96)),
+        4 => (ExplorerView::Compact, None),
+        5 => (ExplorerView::List, None),
+        _ => (ExplorerView::Tiles, None),
+    };
+    prefs.view = view;
+    if let Some(side) = side {
+        prefs.tile_size = side;
+    }
 }
 
 /// Where the window's folders start: the root, or a folder window's folder.
@@ -535,6 +556,9 @@ fn explorer_list(
     let Some(mut frame) = st.aurora else { return };
     frame.rights = prefs.rights;
     frame.columns = prefs.explorer;
+    if let Some(key) = st.view_key.take() {
+        set_view(&mut prefs.explorer, key);
+    }
     // Alt+P: the details pane, shown if hidden, previews the selection
     if std::mem::take(&mut st.toggle_preview) {
         prefs.preview_pane = !prefs.preview_pane || !prefs.show_details;
@@ -595,9 +619,12 @@ fn explorer_list(
             view::ExplorerView::List => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
                 list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
             }),
-            view::ExplorerView::Gallery => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
-                gallery::gallery(ui, p, icons, inv, st, prefs, facts, images, actions, list_h, browse)
-            }),
+            view::ExplorerView::Gallery | view::ExplorerView::Compact | view::ExplorerView::Tiles => {
+                in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+                    let style = gallery::Style::of(shown);
+                    gallery::gallery(ui, p, icons, inv, st, prefs, facts, images, actions, list_h, browse, style)
+                })
+            }
             view::ExplorerView::Combination => {
                 gallery::combination(ui, p, icons, inv, st, prefs, facts, images, actions, list_rect, list_id, browse)
             }
@@ -890,6 +917,65 @@ mod tests {
         h.st.wanted_images.clear();
         h.frames(2);
         assert!(!h.st.wanted_images.contains(&asset), "@viewtexture: the picture stays");
+    }
+
+    #[test]
+    fn ctrl_shift_digits_switch_the_views_and_compact_and_tiles_keep_the_list_order() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let listed = h.st.flat.order.clone();
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let digit = |h: &mut Harness, key| {
+            let modifiers = if cfg!(target_os = "macos") {
+                egui::Modifiers {
+                    alt: true,
+                    mac_cmd: true,
+                    command: true,
+                    ..Default::default()
+                }
+            } else {
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT | egui::Modifiers::COMMAND
+            };
+            h.run(vec![egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }]);
+            h.frames(3);
+        };
+        for (key, view, side) in [
+            (egui::Key::Num1, view::ExplorerView::Gallery, 192),
+            (egui::Key::Num3, view::ExplorerView::Gallery, 96),
+            (egui::Key::Num2, view::ExplorerView::Gallery, 0),
+            (egui::Key::Num4, view::ExplorerView::Compact, 0),
+            (egui::Key::Num6, view::ExplorerView::Tiles, 0),
+            (egui::Key::Num5, view::ExplorerView::List, 0),
+        ] {
+            digit(&mut h, key);
+            assert_eq!(h.prefs.explorer.view, view, "{key:?}");
+            assert_eq!(h.prefs.explorer.tile_size, side, "{key:?}");
+            // the selected entry stays in sight, drawn in the view
+            assert!(rows::tests::drawn(&h.ctx, Uuid::from_u128(8100)).is_some(), "{view:?}");
+            if matches!(view, view::ExplorerView::Compact | view::ExplorerView::Tiles) {
+                assert_eq!(h.st.flat.order, listed, "{view:?} keeps the list's order");
+                assert_eq!(h.st.flat.tiles, listed.len());
+            }
+        }
+        // a cell of the Compact view selects and opens as a row
+        h.prefs.explorer.view = view::ExplorerView::Compact;
+        h.frames(3);
+        let note = h.row(8103);
+        h.actions.clear();
+        h.double_click(note.left_center() + egui::vec2(30.0, 0.0));
+        assert!(
+            h.actions
+                .iter()
+                .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103)))
+        );
     }
 
     /// Aurora's window `width` wide in a headless context.

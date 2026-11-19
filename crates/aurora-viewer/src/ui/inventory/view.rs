@@ -782,6 +782,12 @@ pub enum ExplorerView {
     List,
     Gallery,
     Combination,
+    /// Dolphin's Compact view, Windows Explorer's List: the names alone,
+    /// side by side in as many columns as fit (Aurora's).
+    Compact,
+    /// Windows Explorer's Tiles: a picture beside the name, the type and
+    /// the date (Aurora's).
+    Tiles,
 }
 
 impl InventoryPreferences {

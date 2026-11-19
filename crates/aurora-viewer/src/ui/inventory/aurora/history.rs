@@ -240,6 +240,7 @@ pub(crate) fn input(
                 | Command::Search
                 | Command::Filter
                 | Command::Preview
+                | Command::View(_)
         )
     };
     for command in shortcuts::take(ui, navigation) {
@@ -253,6 +254,7 @@ pub(crate) fn input(
             Command::Search => st.focus_search = true,
             Command::Filter => super::filter::open(st),
             Command::Preview => st.toggle_preview = true,
+            Command::View(view) => st.view_key = Some(view),
             _ => {}
         }
     }

@@ -96,6 +96,8 @@ pub enum Tiles {
     None,
     All,
     Pictured,
+    /// Every entry, in the list's own order (the Compact and Tiles views).
+    Listed,
 }
 
 #[derive(Default)]
@@ -242,10 +244,11 @@ impl PlainTree {
             .collect();
         match tiles {
             Tiles::All => entries.sort_by_key(|&(_, is_folder, pictured)| (!is_folder, !pictured)),
+            Tiles::Listed => {}
             _ => entries.sort_by_key(|&(_, _, pictured)| !pictured),
         }
         self.tiles = match tiles {
-            Tiles::All => entries.len(),
+            Tiles::All | Tiles::Listed => entries.len(),
             _ => entries.iter().filter(|(_, _, pictured)| *pictured).count(),
         };
         for (id, is_folder, _) in entries {

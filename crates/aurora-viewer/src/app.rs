@@ -23445,6 +23445,8 @@ impl ApplicationHandler for App {
                         | "aurora-columns-all"
                         | "aurora-explorer-filter"
                         | "aurora-explorer-preview"
+                        | "aurora-compact"
+                        | "aurora-tiles"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
                         | "aurora-system-folders"
@@ -23593,6 +23595,16 @@ impl ApplicationHandler for App {
                                 ui::inventory::view::ExplorerView::Combination
                             } else {
                                 ui::inventory::view::ExplorerView::Gallery
+                            };
+                        }
+                        // the Compact and Tiles views of the right-click
+                        // tests, with the gallery's pictures
+                        if view == "aurora-compact" || view == "aurora-tiles" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.settings.inventory.explorer.view = if view == "aurora-tiles" {
+                                ui::inventory::view::ExplorerView::Tiles
+                            } else {
+                                ui::inventory::view::ExplorerView::Compact
                             };
                         }
                         if view.ends_with("system-folders") {
