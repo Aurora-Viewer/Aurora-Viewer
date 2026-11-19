@@ -70,6 +70,7 @@ impl Scene {
         self.lists.hud_debug_blue.clear();
         self.hud_own.clear();
         self.lists.hud_select_faces.clear();
+        self.lists.hud_select_pattern.clear();
         if !visible {
             return;
         }
@@ -90,7 +91,9 @@ impl Scene {
             let Some(g) = self.gpu.get(idx) else {
                 continue;
             };
-            if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() {
+            // (the bridge being set up is worn on a HUD point: neither drawn,
+            // nor counted in the view, nor picked)
+            if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() || world.concealed(idx) {
                 continue;
             }
             self.hud_own.push(idx);
@@ -126,12 +129,11 @@ impl Scene {
                         _ => {}
                     }
                 }
-                if self
-                    .selection_faces
-                    .get(&idx)
-                    .is_some_and(|mask| mask & 1u64.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
-                {
+                if super::face_pattern::has_face(&self.selection_faces, idx, face.te_index) {
                     self.lists.hud_select_faces.push(face.cmd);
+                }
+                if super::face_pattern::has_face(&self.pattern_faces, idx, face.te_index) {
+                    self.lists.hud_select_pattern.push(face.cmd);
                 }
                 match face.pass {
                     Pass::Hidden => {}
@@ -220,6 +222,7 @@ impl Scene {
             };
             if !g.hud
                 || g.owner_avatar != Some(own)
+                || world.concealed(idx)
                 || (!include_hidden
                     && !matches!(mode, picking::FacePick::Surface | picking::FacePick::HudClick)
                     && g.faces.iter().all(|f| f.pass == Pass::Hidden))
@@ -349,6 +352,30 @@ mod tests {
             [13, 12, 10],
             "independent of world camera and HUD viewport zoom"
         );
+    }
+
+    #[test]
+    fn the_bridge_being_set_up_is_neither_drawn_nor_picked() {
+        let (mut world, mut scene, idx) = layered_hud();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let avatar = world.objects.get(own).unwrap().key;
+        let item = Uuid::from_u128(0xB21D);
+        let o = world.objects.get_mut(idx).unwrap();
+        o.parent_id = avatar.local_id;
+        o.parent_region = avatar.region;
+        o.name_values = format!("AttachItemID STRING RW SV {item}");
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        assert_eq!(scene.hud_own, [idx]);
+
+        world.concealed_attachment = item;
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        // (the picks walk `hud_own`)
+        assert!(scene.hud_own.is_empty() && scene.lists.hud_view.is_none());
+        assert!(scene.lists.hud_blend.is_empty() && scene.lists.hud_opaque.is_empty());
+
+        world.concealed_attachment = Uuid::nil();
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        assert_eq!(blended_records(&scene), [13, 12, 10]);
     }
 
     #[test]

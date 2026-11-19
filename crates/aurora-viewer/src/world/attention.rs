@@ -126,13 +126,25 @@ impl World {
 
     /// A system notification of the notification just pushed: its title
     /// and body (the Legacy list names it, growl_notifications.xml).
+    ///
+    /// The notice is not settled yet (`Notifications::settle`): what RLVa's
+    /// `@shownames` and `@showloc` hide of it is rewritten here, as it will
+    /// be in the list.
     pub(crate) fn notice_of(&self, id: u64, open: Open) -> Option<Notice> {
         let n = self.notifications.list.iter().find(|n| n.id == id)?;
-        Some(Notice {
-            title: n.title.clone(),
-            body: n.body.clone(),
-            open,
-        })
+        let text = self.notifications.text_of(n);
+        let (title, body) = if n.kind.as_received() {
+            (n.title.clone(), n.body.clone())
+        } else {
+            let filter = self.rlva_filter_in(text.names);
+            let body = if text.rewritten {
+                filter.apply(&n.body).into_owned()
+            } else {
+                n.body.clone()
+            };
+            (filter.apply(&n.title).into_owned(), body)
+        };
+        Some(Notice { title, body, open })
     }
 }
 

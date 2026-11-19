@@ -22,6 +22,7 @@
 
 mod link_stats;
 pub mod protocol;
+mod receive_gain;
 mod session;
 mod state;
 mod transmit;
@@ -225,6 +226,16 @@ impl VoiceSession {
         let _ = self.cmd_tx.send(Cmd::Data(protocol::user_gain_message(id, volume)));
     }
 
+    /// The viewer's own volume on everything received (0..=1, 0.5 = as
+    /// sent, 1 = 200 %), for a private call's channel, where the server
+    /// ignores [`VoiceSession::set_user_volume`] and the received track
+    /// carries the other resident's voice alone (see `receive_gain`). Keep it
+    /// at 0.5 on a channel that mixes several voices. Kept across
+    /// reconnections; changes ramp over 20 ms.
+    pub fn set_receive_volume(&self, volume: f32) {
+        self.shared.rx_gain.set_volume(volume);
+    }
+
     /// Mutes / unmutes a participant for this viewer (mute list).
     pub fn set_user_mute(&self, id: Uuid, mute: bool) {
         {
@@ -245,7 +256,14 @@ impl VoiceSession {
 }
 
 impl Drop for VoiceSession {
+    /// The microphone leaves the session at once: the logout that follows
+    /// can take up to its timeout, and the audio task sends until the peer
+    /// connection closes after it. From the next poll (10 ms) the channel
+    /// gets the muted track's silence, and the capture is free for the
+    /// session that replaces this one (it must have a single reader).
     fn drop(&mut self) {
+        self.shared.tx.set_transmit(false);
+        *self.shared.tx.mic.lock() = None;
         let _ = self.cmd_tx.send(Cmd::Shutdown);
     }
 }
@@ -332,5 +350,18 @@ mod tests {
         assert_eq!(p.agent_id, me);
         assert_eq!(p.level, 0.5);
         assert!(p.speaking);
+    }
+
+    /// Leaving a channel (a drop) stops the microphone before the logout.
+    #[test]
+    fn a_dropped_session_lets_go_of_the_microphone() {
+        let s = VoiceSession::connect(reqwest::Client::new(), params("vivox"), VoiceSink::null());
+        let (_feed, mic) = aurora_audio::MicCapture::virtual_input();
+        s.set_mic(Some(mic));
+        s.set_transmit(true);
+        let shared = s.shared.clone();
+        drop(s);
+        assert!(!shared.tx.transmit());
+        assert!(shared.tx.mic.lock().is_none());
     }
 }

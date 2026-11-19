@@ -25,7 +25,7 @@ fn rename_id(edit: &Rename) -> Id {
 
 pub(super) fn begin_rename(tool: &mut BuildTool, world: &World, object: Uuid, item: Uuid) {
     let Some(idx) = world.objects.index_of_uuid(&object) else { return };
-    if !tool.contents_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
+    if !tool.contents_items_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
         return;
     }
     if tool.ui.contents_selection.object != Some(object) || !tool.ui.contents_selection.items.contains(&item) {
@@ -57,7 +57,7 @@ pub(super) fn finish_rename(tool: &mut BuildTool, world: &World) {
     let Some(idx) = world.objects.index_of_uuid(&edit.object) else {
         return;
     };
-    if !tool.contents_editable(world, idx) {
+    if !tool.contents_items_editable(world, idx) {
         return;
     }
     let Some(item) = tool.contents.objects.get(&edit.object).and_then(|inv| {

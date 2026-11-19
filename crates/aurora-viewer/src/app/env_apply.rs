@@ -215,6 +215,11 @@ impl App {
     /// The environment lists' and Personal Lighting's choices.
     pub(super) fn env_actions(&mut self, actions: impl IntoIterator<Item = crate::ui::environment::EnvAction>) {
         use crate::ui::environment::EnvAction;
+        // @setenv: the lists and presets are greyed, and whatever still
+        // asks changes nothing, neither now nor once the restriction lifts
+        if self.world.eep.rlva_locked {
+            return;
+        }
         for action in actions {
             match action {
                 EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),

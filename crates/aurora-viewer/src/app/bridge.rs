@@ -13,6 +13,8 @@ impl App {
         if !self.in_world() {
             return;
         }
+        // FSSelfToggleMoveLock (llviewermenu.cpp)
+        self.world.ui_sounds.push(UiSound::MovelockToggle);
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         prefs.enabled = !prefs.enabled;
         if prefs.enabled && self.bridge_runtime.error.is_some() {
@@ -88,7 +90,8 @@ impl App {
             .data_mut(|d| d.insert_temp(egui::Id::unique("movelock_requested"), prefs.enabled));
         if self.demo {
             let mode = std::env::var("AURORA_DEMO_MOVELOCK").unwrap_or_default();
-            self.bridge_demo.startup_stalled = mode == "timeout";
+            self.bridge_demo.container = mode == "container";
+            self.bridge_demo.startup_stalled = mode == "timeout" || mode == "container";
             self.bridge_demo.invalid_endpoint = mode == "endpoint";
             self.bridge_demo.halt = mode == "halted";
             let prefs = self.settings.bridge.get(&self.world.agent_id).copied().unwrap_or_default();

@@ -70,6 +70,8 @@ struct MicShared {
     /// Name of the device being captured ("" = none).
     device: Mutex<String>,
     fallback: AtomicBool,
+    /// The device is held closed ([`MicCapture::set_paused`]).
+    paused: AtomicBool,
 }
 
 impl MicShared {
@@ -82,6 +84,7 @@ impl MicShared {
             captured: AtomicU64::new(0),
             device: Mutex::new(String::new()),
             fallback: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
         }
     }
 
@@ -209,6 +212,8 @@ impl InputAdapter {
 /// Requests to the capture thread.
 enum MicCmd {
     SetDevice(Option<String>),
+    /// [`MicShared::paused`] changed: close or reopen the device.
+    Pause,
 }
 
 struct MicInner {
@@ -308,7 +313,16 @@ impl MicCapture {
     /// Fails with [`AudioError::NoDevice`] when there is no input device at
     /// all. Once open, a lost device is reopened in the background.
     pub fn open(device: Option<String>) -> Result<Self, AudioError> {
+        Self::open_with(device, false)
+    }
+
+    /// [`MicCapture::open`], already paused when `paused` is set: the
+    /// capture thread starts but the device stays closed (no OS microphone
+    /// indicator) until [`MicCapture::set_paused`]`(false)`. Still fails with
+    /// [`AudioError::NoDevice`] when there is no input device at all.
+    pub fn open_with(device: Option<String>, paused: bool) -> Result<Self, AudioError> {
         let (writer, mic) = Self::with_ring();
+        mic.inner.shared.paused.store(paused, Ordering::Relaxed);
         let writer = Arc::new(Mutex::new(writer));
         let (ready_tx, ready_rx) = bounded::<Result<(), AudioError>>(1);
         let (ctl_tx, ctl_rx) = unbounded::<MicCmd>();
@@ -356,8 +370,28 @@ impl MicCapture {
         }
     }
 
+    /// Closes the device while `paused` (the OS microphone indicator goes
+    /// off, a Bluetooth headset leaves its hands-free mode) and reopens it
+    /// when `paused` is cleared, keeping this handle, its gain and its
+    /// reader. Both happen on the capture thread: this returns at once, and
+    /// an unchanged value sends nothing, so it can be called every frame.
+    /// Nothing is captured while paused (the reader gets no samples, the
+    /// level falls to 0). No device effect on a virtual input.
+    pub fn set_paused(&self, paused: bool) {
+        if self.inner.shared.paused.swap(paused, Ordering::Relaxed) != paused
+            && let Some(tx) = self.inner.ctl.lock().as_ref()
+        {
+            let _ = tx.send(MicCmd::Pause);
+        }
+    }
+
+    /// Whether [`MicCapture::set_paused`] holds the device closed.
+    pub fn is_paused(&self) -> bool {
+        self.inner.shared.paused.load(Ordering::Relaxed)
+    }
+
     /// Name of the device being captured; `None` while no device is open
-    /// (unplugged, reopening).
+    /// (unplugged, reopening, paused).
     pub fn device_name(&self) -> Option<String> {
         let name = self.inner.shared.device.lock();
         (!name.is_empty()).then(|| name.clone())
@@ -496,6 +530,24 @@ fn capture_main(
     let mut output = [0.0; BLOCK];
     let mut fill = 0;
     loop {
+        if shared.paused.load(Ordering::Relaxed) {
+            // Held closed: tell `open_with` whether a device exists at all,
+            // then wait for a resume, a device change or the close.
+            if let Some(tx) = ready.take() {
+                let found = devices::pick(Direction::Input, wanted.as_deref()).is_some();
+                let _ = tx.send(if found { Ok(()) } else { Err(AudioError::NoDevice) });
+                if !found {
+                    return;
+                }
+                log::info!("audio input: paused");
+            }
+            match ctl.recv() {
+                Ok(MicCmd::SetDevice(name)) => wanted = name,
+                Ok(MicCmd::Pause) => {}
+                Err(_) => return,
+            }
+            continue;
+        }
         let mut reopen_now = false;
         let (raw_prod, mut raw_cons) = rtrb::RingBuffer::new(RING_SAMPLES);
         let raw_prod = Arc::new(Mutex::new(raw_prod));
@@ -554,6 +606,13 @@ fn capture_main(
                                 break;
                             }
                         }
+                        Ok(MicCmd::Pause) => {
+                            if shared.paused.load(Ordering::Relaxed) {
+                                log::info!("audio input: paused");
+                                reopen_now = true;
+                                break;
+                            }
+                        }
                         Err(RecvTimeoutError::Timeout) => {
                             if failed.load(Ordering::Relaxed) {
                                 log::warn!("audio input lost; reopening the device");
@@ -606,7 +665,7 @@ fn capture_main(
         }
         match ctl.recv_timeout(Duration::from_secs(1)) {
             Ok(MicCmd::SetDevice(name)) => wanted = name,
-            Err(RecvTimeoutError::Timeout) => {}
+            Ok(MicCmd::Pause) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -714,6 +773,26 @@ mod tests {
         assert!(output[480..].iter().all(|&v| v == 0.0));
         feed.push(&[0.0; 14_400]);
         assert_eq!(mic.level(), 0.0);
+    }
+
+    #[test]
+    fn pausing_wakes_the_capture_thread_only_on_a_change() {
+        let (_writer, mic) = MicCapture::with_ring();
+        let (tx, rx) = unbounded();
+        *mic.inner.ctl.lock() = Some(tx);
+        assert!(!mic.is_paused());
+        // called every frame: the thread is told once per change
+        for _ in 0..3 {
+            mic.set_paused(true);
+        }
+        assert!(mic.is_paused());
+        assert!(matches!(rx.try_recv(), Ok(MicCmd::Pause)));
+        assert!(rx.try_recv().is_err());
+        mic.set_paused(false);
+        mic.set_paused(false);
+        assert!(!mic.is_paused());
+        assert!(matches!(rx.try_recv(), Ok(MicCmd::Pause)));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

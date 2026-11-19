@@ -12,19 +12,16 @@ impl World {
             && self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
                 self.avatar_lib.attach_points.get(&point).is_some_and(|point| point.hud)
                     && (!self.rlva_attachment_remove_at(item, point, Uuid::nil())
-                        || self
-                            .inventory
-                            .items
-                            .get(&item)
-                            .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, Uuid::nil())))
+                        || !self.rlva_item_folders_removable_in(&locks, item, Uuid::nil()))
             })
     }
 
     /// RlvAttachmentLocks::hasLockedAttachmentPoint(RLV_LOCK_REMOVE)
     /// (rlvlocks.h): a point is locked against removal (@remattach, or
     /// @detach with a point, worn or not), or a worn attachment cannot come
-    /// off (its own @detach=n, a folder lock). Advanced › Release Keys is
-    /// greyed out then (LLToolsEnableReleaseKeys, llviewermenu.cpp).
+    /// off (its own @detach=n, a lock on its folder or on the folder of one
+    /// of its links under #RLV). Advanced › Release Keys is greyed out then
+    /// (LLToolsEnableReleaseKeys, llviewermenu.cpp).
     pub fn rlva_has_locked_attachment(&self) -> bool {
         if !self.rlva.inventory_locked() {
             return false;
@@ -37,12 +34,7 @@ impl World {
         }
         let locks = super::inventory::FolderLocks::default();
         self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
-            !self.rlva_attachment_remove_at(item, point, nil)
-                || self
-                    .inventory
-                    .items
-                    .get(&item)
-                    .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, nil))
+            !self.rlva_attachment_remove_at(item, point, nil) || !self.rlva_item_folders_removable_in(&locks, item, nil)
         })
     }
 
@@ -137,15 +129,21 @@ impl World {
             .is_some_and(|object| object.attachment_point() != 0 && self.rlva_attachment_remove_at(item, object.attachment_point(), actor))
     }
 
+    /// An attachment with no inventory record yet counts too: an object worn
+    /// from the ground comes back with an item the inventory has not heard
+    /// of, and only its point can be judged. RlvAttachmentLockWatchdog::onAttach
+    /// (rlvlocks.cpp, originally LGPL 2.1) only refuses what a recorded wear
+    /// or a pending reattach refuses, so this is never looser than it.
     pub(super) fn rlva_temporary_addable(&self, item: Uuid, point: u8, _actor: Uuid) -> bool {
-        let Some(key) = self.rlva_temporary_attachment(item) else {
+        let Some(worn) = self
+            .rlva_temporary_attachment(item)
+            .and_then(|key| self.objects.index_of(&key))
+            .or_else(|| self.worn_attachment(&item))
+        else {
             return false;
         };
         let point = if point == 0 {
-            self.objects
-                .index_of(&key)
-                .and_then(|i| self.objects.get(i))
-                .map_or(0, |o| o.attachment_point())
+            self.objects.get(worn).map_or(0, |o| o.attachment_point())
         } else {
             point
         };
