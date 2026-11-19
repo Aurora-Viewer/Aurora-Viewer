@@ -4489,6 +4489,16 @@ impl App {
                 if let Some(path) = self.name_cache_path() {
                     self.world.social.avatar_names.load(&path);
                 }
+                let notify_ended = self.settings.notify_friendship_ended || (self.demo && crate::demo::notifs::friendship_ended_demo());
+                self.world.notifications.toasts.friendship_ended = notify_ended;
+                if !self.demo {
+                    let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                    let path = crate::settings::account_dir(&l.agent_id).join(crate::world::friend_snapshot::file_name(&grid));
+                    let previous = crate::world::friend_snapshot::load(&path);
+                    self.world.reconcile_friend_snapshot(Some(path), previous, notify_ended);
+                } else if let Some(previous) = crate::demo::notifs::offline_ended_snapshot() {
+                    self.world.reconcile_friend_snapshot(None, Some(previous), notify_ended);
+                }
                 self.screen = Screen::Loading { since: Instant::now() };
                 self.world.notifications.started = false;
                 self.loading_frac = 0.0;
@@ -6380,6 +6390,7 @@ impl App {
             // or click them
             im_in_bell: self.settings.ims_in_notification_center
                 || (self.demo && crate::demo::toasts::mode().is_some_and(|m| matches!(m.as_str(), "bell" | "click" | "minimized"))),
+            friendship_ended: self.settings.notify_friendship_ended || (self.demo && crate::demo::notifs::friendship_ended_demo()),
         };
         // a conversation in sight: its tab shown in the Conversations window
         // or its own window (FSFloaterIM visible), whether or not the viewer
@@ -7199,6 +7210,7 @@ impl App {
         crate::login_accounts::save_before_exit();
         crate::spelling::dictionaries::save_before_exit();
         crate::world::flying_at_exit::save_before_exit();
+        crate::world::friend_snapshot::save_before_exit();
         crate::world::derender::save_before_exit();
         crate::world::region_tracker::save_before_exit();
         crate::autoreplace::save_before_exit();
@@ -7253,6 +7265,7 @@ impl App {
                 &crate::settings::account_dir(&self.world.agent_id).join(crate::world::flying_at_exit::FILE),
                 self.world.agent.flying,
             );
+            self.world.save_friend_snapshot();
         }
     }
 
@@ -9448,6 +9461,7 @@ impl App {
         self.world.social.avatar_names.idle();
         self.world.sync_contact_aliases();
         self.world.flush_online_notices();
+        self.world.flush_friendship_ended_notices();
     }
 
     /// Display name cache file (avatar_name_cache.xml; per grid; none in
@@ -9555,7 +9569,7 @@ impl App {
                 match &cmd {
                     // LLAvatarTracker::terminateBuddy forgets the friend at once
                     NetCommand::TerminateFriendship(id) => {
-                        self.world.social.end_friendship(id);
+                        self.world.end_friendship_local(id);
                     }
                     NetCommand::GrantUserRights { .. } => self.world.profile_command(&cmd),
                     _ => {}
@@ -13860,9 +13874,26 @@ impl App {
             {
                 self.run_app_link(crate::slapp::AppLink::Inventory { id: inbox, name: None });
             }
-            if self.frame_count == 850 && mode == "object-history" {
-                if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
-                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Decline);
+            if self.frame_count == 850 && matches!(mode.as_str(), "object-history" | "friendship-ended-history") {
+                let is_friendship = mode == "friendship-ended-history";
+                let target = if is_friendship {
+                    self.world
+                        .notifications
+                        .list
+                        .iter()
+                        .rev()
+                        .find(|n| n.kind == crate::world::notifications::Kind::Friendship)
+                        .map(|n| n.id)
+                } else {
+                    self.world.notifications.list.first().map(|n| n.id)
+                };
+                if let Some(id) = target {
+                    let answer = if is_friendship {
+                        crate::world::notifications::Response::Dismiss
+                    } else {
+                        crate::world::notifications::Response::Decline
+                    };
+                    let (commands, _) = self.world.respond_notification(id, answer);
                     for command in commands {
                         self.send(command);
                     }
