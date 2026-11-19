@@ -774,7 +774,8 @@ mod tests {
         // the fonts are read in a frame, once egui has them
         let in_frame = |ctx: &egui::Context| {
             let mut family = None;
-            let _ = ctx.run_ui(Default::default(), |ui| family = game_control(ui.ctx()));
+            let mut output = ctx.run_ui(Default::default(), |ui| family = game_control(ui.ctx()));
+            output.textures_delta.clear();
             family
         };
         assert_eq!(in_frame(&ctx), None, "a context without the viewer's fonts");
