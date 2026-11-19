@@ -1873,6 +1873,12 @@ pub(crate) struct Backend {
     surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
+    /// What the second camera's renderer is made from (second_view.rs):
+    /// the window's start, kept (`seed` is let go once the start is over);
+    /// None for an external renderer, or once one could not be made.
+    second_seed: Option<Box<BackendInit>>,
+    /// The second camera's renderer and picture, while its window is open.
+    second: Option<Box<SecondView>>,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     vr: Arc<crate::vr_control::Control>,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -2169,6 +2175,15 @@ impl std::ops::DerefMut for EguiSlot {
     fn deref_mut(&mut self) -> &mut egui_wgpu::Renderer {
         self.0.as_mut().expect("egui renderer: only taken inside remake_refused")
     }
+}
+
+/// The second camera's renderer (second_view.rs): an external backend, as
+/// an eye of VR, and the texture egui shows its picture from.
+struct SecondView {
+    backend: Backend,
+    target: Option<crate::second_view::Target>,
+    /// Frames since the last one that asked for the view.
+    idle: u32,
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -3738,6 +3753,7 @@ impl Backend {
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
+        let second_seed = (!init.external).then(|| Box::new(init.clone()));
         let BackendInit {
             device,
             queue,
@@ -4388,6 +4404,8 @@ impl Backend {
             surface: std::mem::ManuallyDrop::new(surface),
             config,
             external,
+            second_seed,
+            second: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -7628,6 +7646,7 @@ impl Backend {
             crate::label_depth::skip(&mut ui.primitives);
             // the previews draw into targets of their own: they stay, and
             // egui-wgpu gets meshes, not callbacks it does not know
+            crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
                 &self.device,
                 &self.queue,
@@ -7972,6 +7991,7 @@ impl Backend {
             equirect: None,
             histogram: None,
             thumbnail: None,
+            second_view: None,
             motion_cut: packet.motion_cut,
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
@@ -8111,7 +8131,112 @@ impl Backend {
         } else {
             packet
         };
-        self.render_view(packet)
+        let mut packet = packet;
+        let second = self.second_view_packet(&mut packet);
+        let result = self.render_view(packet);
+        self.render_second_view(second);
+        result
+    }
+
+    /// The egui texture of the second camera's last picture.
+    fn second_view_texture(&self) -> Option<egui::TextureId> {
+        self.second.as_ref().and_then(|s| s.target.as_ref()).map(|t| t.id)
+    }
+
+    /// The second camera's copy of this frame (second_view.rs), when the
+    /// viewer asks for it. A photo, a film or a 360° face drawn offscreen,
+    /// and a frame drawn into a caller's texture, draw none.
+    fn second_view_packet(&mut self, packet: &mut FramePacket) -> Option<FramePacket> {
+        let job = packet.second_view.take()?;
+        let offscreen = packet.output.is_some() || matches!(packet.capture, Some(Capture::Snapshot(_) | Capture::Film(..)));
+        if offscreen || self.external || self.lost.get() || self.second_seed.is_none() || job.size.contains(&0) {
+            return None;
+        }
+        Some(crate::second_view::packet(packet, &job))
+    }
+
+    /// Draw the second camera's view after the window's frame, into its
+    /// texture: the renderer is made the first time (as VR's eyes are, on
+    /// this thread), and let go once the view is no longer asked for.
+    fn render_second_view(&mut self, packet: Option<FramePacket>) {
+        let Some(mut packet) = packet else {
+            if let Some(second) = &mut self.second {
+                second.idle += 1;
+                if second.idle >= crate::second_view::IDLE_FRAMES {
+                    self.drop_second_view();
+                }
+            }
+            return;
+        };
+        if self.second.is_none() {
+            let Some(seed) = self.second_seed.as_ref() else {
+                return;
+            };
+            let mut init = (**seed).clone();
+            init.external = true;
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            {
+                init.xr = None;
+            }
+            init.width = packet.surface.width;
+            init.height = packet.surface.height;
+            init.output_format = Some(self.config.format);
+            init.scene = packet.scene.clone();
+            let started = Instant::now();
+            match Backend::new(init) {
+                Ok(backend) => {
+                    log::info!("second camera: renderer made ({} ms)", started.elapsed().as_millis());
+                    self.second = Some(Box::new(SecondView {
+                        backend,
+                        target: None,
+                        idle: 0,
+                    }));
+                }
+                Err(e) => {
+                    // (not tried again every frame: the window stays empty)
+                    log::warn!("second camera: renderer could not be made: {e}");
+                    self.second_seed = None;
+                    return;
+                }
+            }
+        }
+        let Some(second) = self.second.as_mut() else {
+            return;
+        };
+        second.idle = 0;
+        let size = [packet.surface.width, packet.surface.height];
+        if second.target.as_ref().is_none_or(|t| t.size != size) {
+            // (the interface drawn with the old picture is already submitted)
+            if let Some(old) = second.target.take() {
+                self.egui.free_texture(&old.id);
+            }
+            second.target = Some(crate::second_view::Target::new(
+                &self.device,
+                &mut self.egui,
+                self.config.format,
+                size,
+            ));
+        }
+        packet.output = second.target.as_ref().map(|t| t.texture.clone());
+        // the window's reflection probes, captured by this renderer: the
+        // second one's own stay empty, and without them the ambient light
+        // of everything in shade is black
+        if second.backend.probes.share_cubes(&self.probes) {
+            second.backend.remake_frame_groups();
+        }
+        let _ = second.backend.render_view(packet);
+    }
+
+    /// The second camera's renderer let go, with its picture.
+    fn drop_second_view(&mut self) {
+        if let Some(mut second) = self.second.take() {
+            if let Some(target) = second.target.take() {
+                self.egui.free_texture(&target.id);
+            }
+            // (a pipeline set still compiling is this one's to wait for)
+            self.adopt_pipeline_workers(&mut second.backend);
+            log::info!("second camera: renderer let go");
+        }
     }
 
     /// The renderer made again, whole, from what it was first made from:
@@ -8133,7 +8258,9 @@ impl Backend {
         init.scene = scene.clone();
         // what this one holds for a world it no longer draws is let go
         // first: a card with room for one renderer but not two would
-        // otherwise refuse every try
+        // otherwise refuse every try (the second camera's renderer too: it
+        // is made again for the new one)
+        self.drop_second_view();
         self.shed_world();
         // (how long a try holds the frame: the render thread makes the
         // whole renderer, its pipelines included)
@@ -8211,6 +8338,8 @@ impl Backend {
             equirect: _,
             histogram,
             thumbnail,
+            // (taken by `render_frame` before the frame)
+            second_view: _,
             motion_cut,
             world_shift,
             input_at,
@@ -12244,6 +12373,7 @@ impl Backend {
             } else {
                 crate::label_depth::skip(labels);
             }
+            crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews
                 .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
             extra_cmds = self
