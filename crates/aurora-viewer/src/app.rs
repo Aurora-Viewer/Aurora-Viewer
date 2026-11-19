@@ -175,7 +175,6 @@ mod uninstall;
 mod update_notice;
 mod viewer_stats;
 mod viewfinder;
-mod water_volumes;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
@@ -456,10 +455,6 @@ pub struct App {
     movement_ui: ui::movement::MovementUi,
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
-    /// Prim water around our avatar (#2008), and the water height the last
-    /// movement frame used (a volume's top, else the region's).
-    water_volumes: water_volumes::Detector,
-    movement_water: Option<f32>,
     pass_wall_at: Option<Instant>,
     /// The fly override's first-use caution is up (ui::fly_override).
     fly_override_caution: bool,
@@ -1866,8 +1861,6 @@ impl App {
             movement_ui: Default::default(),
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
-            water_volumes: Default::default(),
-            movement_water: None,
             pass_wall_at: None,
             fly_override_caution: false,
             force_agent_update: false,
@@ -4212,7 +4205,6 @@ impl App {
                     self.area_search_feed.on_closed_properties(&props);
                 }
                 self.world.ik_targets.on_properties(&props);
-                self.water_volumes.on_properties(&self.world, &props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);
@@ -12480,8 +12472,6 @@ impl App {
         self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
-            // prim water (#2008): its bubbles and splashes too
-            self.scene.set_water_volumes(self.water_volumes.near());
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
