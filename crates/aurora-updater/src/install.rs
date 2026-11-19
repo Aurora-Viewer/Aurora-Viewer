@@ -43,6 +43,34 @@ pub struct FailedUpdate {
 /// Written by the new viewer once its startup splash is on screen: the
 /// helper's own update window can then go without a gap.
 const SPLASH_SHOWN: &str = "splash-shown";
+/// Written by the new viewer each time its start moves on (a pipeline made,
+/// the next step): the helper waits as long as it keeps moving
+/// ([`gives_up`]). Older viewers never write it.
+const START_PROGRESS: &str = "start-progress";
+
+/// The new viewer is ended when it showed no sign of its start for this
+/// long: since its launch while it writes no [`START_PROGRESS`] (a viewer
+/// stuck before its renderer, or one older than this rule: the fixed 90 s
+/// every helper waited before), since its last step otherwise. A first start
+/// compiles every pipeline again (the cache's identity names the build), and
+/// slower PCs took more than 90 s for them while the splash counted them:
+/// those updates were rolled back (#3072, #3273, #4100 and others).
+const START_STALL: Duration = Duration::from_secs(90);
+/// However far it moves, a start that has shown no frame after this long is
+/// ended.
+const START_CEILING: Duration = Duration::from_secs(15 * 60);
+
+/// Whether the helper ends the new viewer, `since_launch` after its launch
+/// and `since_progress` after its last step (`None`: none seen).
+fn gives_up(since_launch: Duration, since_progress: Option<Duration>) -> bool {
+    since_launch >= START_CEILING || since_progress.unwrap_or(since_launch) >= START_STALL
+}
+
+/// The step of a [`START_PROGRESS`] file, when it is this transaction's
+/// (`expected`: its token and version, one per line).
+fn progress_step<'a>(text: &'a str, expected: &str) -> Option<&'a str> {
+    text.strip_prefix(expected)?.strip_prefix('\n').filter(|s| !s.is_empty())
+}
 
 /// What the helper is doing, for the window the viewer's `main` shows over
 /// the whole switch (`splash/`): between the old window's close and the new
@@ -589,9 +617,7 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
             hidden(&mut command);
             fs::write(work.join(LAUNCHING), b"")?;
             let mut child = command.spawn()?;
-            let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
-                stage(HelperStage::Handed)
-            });
+            let result = await_frame(&mut child, &work, &plan.token, &plan.version, &mut || stage(HelperStage::Handed));
             if !matches!(result, Ok(true)) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -686,10 +712,13 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
 }
 
 /// `handed` runs once the new viewer's splash shows, or its first frame.
-fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, timeout: Duration, handed: &mut dyn FnMut()) -> Result<bool> {
+/// Waits while the start moves on ([`gives_up`]).
+fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, handed: &mut dyn FnMut()) -> Result<bool> {
     let start = Instant::now();
     let expected = format!("{token}\n{version}");
     let mut splash = false;
+    // the last step read, and when it changed
+    let mut progress: Option<(String, Instant)> = None;
     loop {
         if child.try_wait()?.is_some() {
             return Ok(false);
@@ -704,12 +733,72 @@ fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, timeo
             splash = true;
             handed();
         }
-        if start.elapsed() >= timeout {
+        if let Some(text) = fs::read_to_string(work.join(START_PROGRESS)).ok()
+            && let Some(step) = progress_step(&text, &expected)
+            && progress.as_ref().is_none_or(|(last, _)| last != step)
+        {
+            progress = Some((step.to_owned(), Instant::now()));
+        }
+        if gives_up(start.elapsed(), progress.as_ref().map(|(_, at)| at.elapsed())) {
             let _ = child.kill();
             let _ = child.wait();
             return Ok(false);
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// This viewer was started by an update's helper, which waits for its first
+/// frame.
+pub fn started_by_update() -> bool {
+    std::env::var_os(ACK_ENV).is_some()
+}
+
+/// On the new viewer started by an update: `step` is read every 250 ms on a
+/// thread of its own and written for the helper when it changes, until it
+/// gives `None` (the first frame is shown). Nothing when the viewer was not
+/// started by an update. `step` is any value that changes as the start moves
+/// on; the helper only compares it with the last one.
+pub fn report_start(step: impl Fn() -> Option<u64> + Send + 'static) {
+    let Some(path) = std::env::var_os(ACK_ENV) else { return };
+    let spawned = std::thread::Builder::new().name("aurora-update-progress".into()).spawn(move || {
+        let opened = (|| -> Result<(PathBuf, Plan)> {
+            let work = PathBuf::from(path);
+            let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
+            validate_work(&work, &plan)?;
+            ensure!(plan.version == aurora_version::version(), "update acknowledgement mismatch");
+            Ok((work, plan))
+        })();
+        let (work, plan) = match opened {
+            Ok(o) => o,
+            Err(e) => {
+                log::warn!("update start progress: {e:#}");
+                return;
+            }
+        };
+        let mut written = None;
+        let mut warned = false;
+        while let Some(now) = step() {
+            if written != Some(now) {
+                // a new file swapped in whole: the helper never reads half
+                let part = work.join(format!("{START_PROGRESS}.part"));
+                let wrote = fs::write(&part, format!("{}\n{}\n{now}", plan.token, plan.version))
+                    .and_then(|()| fs::rename(&part, work.join(START_PROGRESS)));
+                match wrote {
+                    Ok(()) => written = Some(now),
+                    // tried again at the next step; the helper waits 90 s
+                    Err(e) if !warned => {
+                        warned = true;
+                        log::warn!("update start progress: {e}");
+                    }
+                    Err(_) => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+    if let Err(e) = spawned {
+        log::warn!("update start progress: no thread ({e})");
     }
 }
 
@@ -858,6 +947,36 @@ impl Parent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_start_that_says_nothing_is_ended_after_90_s_as_before() {
+        assert!(!gives_up(Duration::from_secs(89), None));
+        assert!(gives_up(Duration::from_secs(90), None));
+    }
+
+    #[test]
+    fn a_start_that_moves_on_is_waited_for_until_it_stalls_90_s() {
+        let min = |m: u64| Duration::from_secs(m * 60);
+        // compiling for 5 min, its last pipeline 10 s ago
+        assert!(!gives_up(min(5), Some(Duration::from_secs(10))));
+        // its last step 89 s ago, then 90
+        assert!(!gives_up(min(5), Some(Duration::from_secs(89))));
+        assert!(gives_up(min(5), Some(Duration::from_secs(90))));
+        // still moving, but no frame after 15 min
+        assert!(!gives_up(min(15) - Duration::from_secs(1), Some(Duration::ZERO)));
+        assert!(gives_up(min(15), Some(Duration::ZERO)));
+    }
+
+    #[test]
+    fn only_this_transactions_progress_counts() {
+        let expected = "0b6e4b5c-1f6f-4c4e-9a55-2d2f4e8f0a11\n0.9.12";
+        assert_eq!(progress_step(&format!("{expected}\n42"), expected), Some("42"));
+        // another transaction, another version, a file being written
+        assert_eq!(progress_step("ffffffff-1f6f-4c4e-9a55-2d2f4e8f0a11\n0.9.12\n42", expected), None);
+        assert_eq!(progress_step(&format!("{expected}0\n42"), expected), None);
+        assert_eq!(progress_step(&format!("{expected}\n"), expected), None);
+        assert_eq!(progress_step(expected, expected), None);
+    }
 
     #[test]
     fn a_folder_directly_at_a_drive_root_is_told_apart() {

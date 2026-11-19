@@ -214,6 +214,9 @@ fn main() -> anyhow::Result<()> {
     // the interface language file, read with the settings before the log
     language_file::report();
     splash::settings();
+    // started by an update: its helper waits while the start moves on
+    splash::report_to_update();
+    splash::test_slow_start();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers
     // (crash/mod.rs), so the window never waits for this log line
