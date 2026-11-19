@@ -15551,7 +15551,6 @@ admin-unfreeze-question = { $name } mit welcher Nachricht auftauen?
 admin-kick-message = Ein Administrator hat Sie abgemeldet.
 admin-freeze-message = Du bist eingefroren. Sie können sich nicht bewegen oder chatten. Ein Administrator wird Sie per Sofortnachricht (IM) kontaktieren.
 admin-unfreeze-message = Du bist nicht mehr eingefroren.
-ui-weather = Wetter
 ui-weather-aurora = Aurora-Wetter
 ui-bars-aurora-weather = Aurora-Wetter…
 ui-weather-precipitation = Fallen

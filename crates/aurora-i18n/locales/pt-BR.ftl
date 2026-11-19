@@ -15547,7 +15547,6 @@ admin-unfreeze-question = Com qual mensagem você quer liberar { $name }?
 admin-kick-message = Um administrador desconectou você.
 admin-freeze-message = Você foi imobilizado e não pode se mover nem conversar. Um administrador entrará em contato por mensagem privada.
 admin-unfreeze-message = Você já pode se mover e conversar novamente.
-ui-weather = Clima
 ui-weather-aurora = Clima do Aurora
 ui-bars-aurora-weather = Clima do Aurora…
 ui-weather-precipitation = Queda

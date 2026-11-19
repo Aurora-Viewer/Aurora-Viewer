@@ -15384,7 +15384,6 @@ admin-unfreeze-question = 要附带什么提示消息为 { $name } 解除冻结�
 admin-kick-message = 管理员已将你登出。
 admin-freeze-message = 你已被冻结，无法移动或聊天。管理员会通过私聊（IM）联系你。
 admin-unfreeze-message = 你已不再被冻结。
-ui-weather = 天气
 ui-weather-aurora = Aurora 天气
 ui-bars-aurora-weather = Aurora天气…
 ui-weather-precipitation = 降水

@@ -15902,7 +15902,6 @@ admin-unfreeze-question = Какое сообщение показать рез�
 admin-kick-message = Администратор завершил ваш сеанс.
 admin-freeze-message = Вы заморожены. Вы не можете двигаться и писать в чат. Администратор свяжется с вами в личных сообщениях.
 admin-unfreeze-message = Вы разморожены.
-ui-weather = Погода
 ui-weather-aurora = Погода Aurora
 ui-bars-aurora-weather = Погода Aurora…
 ui-weather-precipitation = Осадки
