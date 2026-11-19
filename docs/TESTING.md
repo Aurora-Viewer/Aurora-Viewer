@@ -7429,7 +7429,7 @@ failure. Grid validation and any paid upload are performed by the human.
   Regression filter `inventory_hover_cache` exercises 1,000 successive images,
   real egui handle release, active/recent retention, expiry, shared world/UI
   source references, bounded workers and replies arriving after cancellation.
-- **`AURORA_DEMO_INVENTORY=aurora-explorer|aurora-explorer-path|aurora-explorer-menu|aurora-explorer-medium|aurora-explorer-filter`**:
+- **`AURORA_DEMO_INVENTORY=aurora-explorer|aurora-explorer-path|aurora-explorer-menu|aurora-explorer-medium|aurora-explorer-filter|aurora-explorer-preview`**:
   the wide explorer (medium for `-medium`) in the right-click tests folder,
   come from the top: Back and Up lit, the breadcrumb with its chevrons, the
   folder and its subfolder pinned under Quick access. `-path` opens the
@@ -7438,7 +7438,11 @@ failure. Grid validation and any paid upload are performed by the human.
   selection, each with its keys); `-filter` opens the folder filter's bar
   (Ctrl+I, Cmd+Option+F on a Mac) holding `demo o`: only the names with
   both words are listed, the status counts them, Esc or the bar's × at its
-  start closes it and lists everything again. By hand: Alt+← / → / ↑ and the mouse's
+  start closes it and lists everything again; `-preview` turns on the
+  details pane's preview (Alt+P, Cmd+Shift+P on a Mac) with the demo's
+  notecard selected: its text in place of its picture; select the texture
+  (shown whole) or the sound (Play locally); a notecard without copy says it
+  cannot be read. By hand: Alt+← / → / ↑ and the mouse's
   side buttons, Backspace, a right-click
   on Back; a chevron's subfolders; Ctrl+L (the path starts with `~/`), typing
   `Cl`, Tab, Enter, then `~/` alone (the top); a drag

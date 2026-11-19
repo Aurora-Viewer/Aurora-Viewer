@@ -23444,6 +23444,7 @@ impl ApplicationHandler for App {
                         | "aurora-columns-hidden"
                         | "aurora-columns-all"
                         | "aurora-explorer-filter"
+                        | "aurora-explorer-preview"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
                         | "aurora-system-folders"
@@ -23602,6 +23603,10 @@ impl ApplicationHandler for App {
                             self.panels.camera_controls = false;
                         }
                         // the Ctrl+I bar open on the right-click tests' folder
+                        if view == "aurora-explorer-preview" {
+                            self.settings.inventory.preview_pane = true;
+                            self.settings.inventory.show_details = true;
+                        }
                         if view == "aurora-explorer-filter" {
                             self.inventory_ui.demo_folder_filter("demo o");
                         }

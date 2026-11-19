@@ -50,6 +50,8 @@ pub(crate) enum Command {
     Search,
     /// Dolphin's Ctrl+I: the bar that filters the folder shown.
     Filter,
+    /// Explorer's Alt+P: the details pane shows what the selection holds.
+    Preview,
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -81,6 +83,7 @@ impl Command {
             Command::Purge => Action::InvPurge,
             Command::Search => Action::InvSearch,
             Command::Filter => Action::InvFilter,
+            Command::Preview => Action::InvPreview,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
     }
@@ -101,7 +104,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 15] = [
+pub(crate) const REBINDABLE: [Command; 16] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -110,6 +113,7 @@ pub(crate) const REBINDABLE: [Command; 15] = [
     Command::EditPath,
     Command::Search,
     Command::Filter,
+    Command::Preview,
     Command::SelectAll,
     Command::InvertSelection,
     Command::ToggleSelection,

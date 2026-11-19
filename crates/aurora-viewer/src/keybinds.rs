@@ -580,6 +580,7 @@ pub enum Action {
     InvEditPath,
     InvSearch,
     InvFilter,
+    InvPreview,
     InvSelectAll,
     InvInvertSelection,
     InvToggleSelection,
@@ -604,6 +605,7 @@ pub fn is_inventory(a: Action) -> bool {
             | Action::InvEditPath
             | Action::InvSearch
             | Action::InvFilter
+            | Action::InvPreview
             | Action::InvSelectAll
             | Action::InvInvertSelection
             | Action::InvToggleSelection
@@ -881,6 +883,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::InvEditPath, aurora_i18n::tr!("inventory-path-edit")),
                     (Action::InvSearch, aurora_i18n::tr!("keybinds-inventory-search")),
                     (Action::InvFilter, aurora_i18n::tr!("keybinds-inventory-filter")),
+                    (Action::InvPreview, aurora_i18n::tr!("keybinds-inventory-preview")),
                     (Action::InvSelectAll, aurora_i18n::tr!("common-select-all")),
                     (Action::InvInvertSelection, aurora_i18n::tr!("inventory-invert-selection")),
                     (Action::InvToggleSelection, aurora_i18n::tr!("keybinds-inventory-toggle")),
@@ -1052,6 +1055,18 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
         ),
         // F3 is Mission Control on most Macs
         (Action::InvSearch, [if mac { None } else { k(K::F3) }, None]),
+        // Explorer's preview pane; Finder's Show Preview on a Mac
+        (
+            Action::InvPreview,
+            [
+                if mac {
+                    kmod(K::KeyP, true, true)
+                } else {
+                    kalt(K::KeyP, false, false)
+                },
+                None,
+            ],
+        ),
         // Dolphin's filter bar; Cmd+I is Finder's Get Info on a Mac
         (
             Action::InvFilter,

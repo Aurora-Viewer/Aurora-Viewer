@@ -1450,6 +1450,7 @@ inventory-up = Up one level
 keybinds-inventory-root = Go to the top
 keybinds-inventory-search = Search the inventory
 keybinds-inventory-filter = Filter the folder
+keybinds-inventory-preview = Show the preview pane
 keybinds-inventory-toggle = Select or unselect the row in focus
 keybinds-inventory-menu = Open the menu of the selection
 keybinds-inventory-purge = Purge from the Trash

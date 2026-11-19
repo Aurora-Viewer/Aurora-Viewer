@@ -239,6 +239,7 @@ pub(crate) fn input(
                 | Command::EditPath
                 | Command::Search
                 | Command::Filter
+                | Command::Preview
         )
     };
     for command in shortcuts::take(ui, navigation) {
@@ -251,6 +252,7 @@ pub(crate) fn input(
             Command::EditPath => super::breadcrumb::edit(inv, st),
             Command::Search => st.focus_search = true,
             Command::Filter => super::filter::open(st),
+            Command::Preview => st.toggle_preview = true,
             _ => {}
         }
     }

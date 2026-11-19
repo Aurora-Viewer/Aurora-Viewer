@@ -1453,6 +1453,7 @@ inventory-up = Dossier parent
 keybinds-inventory-root = Aller tout en haut
 keybinds-inventory-search = Rechercher dans l’inventaire
 keybinds-inventory-filter = Filtrer le dossier
+keybinds-inventory-preview = Afficher le volet d’aperçu
 keybinds-inventory-toggle = Sélectionner ou désélectionner la ligne active
 keybinds-inventory-menu = Ouvrir le menu de la sélection
 keybinds-inventory-purge = Purger de la corbeille

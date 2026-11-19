@@ -145,6 +145,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-columns-hidden"
             | "aurora-columns-all"
             | "aurora-explorer-filter"
+            | "aurora-explorer-preview"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -534,6 +535,11 @@ fn explorer_list(
     let Some(mut frame) = st.aurora else { return };
     frame.rights = prefs.rights;
     frame.columns = prefs.explorer;
+    // Alt+P: the details pane, shown if hidden, previews the selection
+    if std::mem::take(&mut st.toggle_preview) {
+        prefs.preview_pane = !prefs.preview_pane || !prefs.show_details;
+        prefs.show_details |= prefs.preview_pane;
+    }
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let explore = !filtered && !root.is_nil();
     // the folder filter's bar, for the folder shown (a search has its own)
@@ -832,6 +838,58 @@ mod tests {
         let fitted = h.prefs.explorer.columns.slot(ColumnId::Date).width;
         assert!((40..200).contains(&fitted), "fitted to its dates and title, got {fitted}");
         assert_eq!(h.prefs.sort, sort, "a fit does not sort");
+    }
+
+    #[test]
+    fn alt_p_previews_a_notecards_text_and_a_texture_in_the_details_pane() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8103));
+        h.frames(4);
+        let row = h.row(8103);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let alt_p = if cfg!(target_os = "macos") {
+            egui::Modifiers {
+                shift: true,
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            }
+        } else {
+            egui::Modifiers::ALT
+        };
+        h.actions.clear();
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: Some(egui::Key::P),
+            pressed: true,
+            repeat: false,
+            modifiers: alt_p,
+        }]);
+        h.frames(2);
+        assert!(h.prefs.preview_pane && h.prefs.show_details);
+        let note = Uuid::from_u128(8103);
+        assert!(
+            h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note)),
+            "the text is asked for"
+        );
+        // as the app answers
+        h.facts.pane_texts = std::sync::Arc::new([(note, PaneText::Text("Hello from the notecard".into()))].into());
+        h.frames(2);
+        let shown = h.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        assert_eq!(shown.as_deref(), Some("Hello from the notecard"));
+        // a texture asks for its picture, unless RLVa's @viewtexture hides it
+        let texture = Uuid::from_u128(8104);
+        h.st.selection.clear();
+        h.st.selection.insert(texture);
+        h.st.selected = Some(texture);
+        h.st.wanted_images.clear();
+        h.frames(2);
+        let asset = h.inv.items[&texture].asset_id;
+        assert!(h.st.wanted_images.contains(&asset));
+        h.inv.rlva_preview_mask = 1;
+        h.st.wanted_images.clear();
+        h.frames(2);
+        assert!(!h.st.wanted_images.contains(&asset), "@viewtexture: the picture stays");
     }
 
     /// Aurora's window `width` wide in a headless context.

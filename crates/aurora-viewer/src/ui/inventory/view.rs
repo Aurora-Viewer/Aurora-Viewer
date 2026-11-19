@@ -459,6 +459,10 @@ pub struct InventoryPreferences {
     /// Aurora's window shows the selection's details: the card at the
     /// bottom of the narrow and medium widths, the pane of the wide one.
     pub show_details: bool,
+    /// The wide width's details pane previews the selection (Alt+P): a
+    /// texture whole, a notecard's text, a sound to play. Aurora's (Windows
+    /// Explorer's preview pane); off by default.
+    pub preview_pane: bool,
     /// Aurora's dual-panel layout: two panes side by side in the Inventory
     /// window, each with its own folder, search and selection. Off by
     /// default (the Legacy Viewer has one pane).
@@ -517,6 +521,7 @@ impl Default for InventoryPreferences {
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,
+            preview_pane: false,
             dual_panel: false,
             folder_colors_enabled: true,
             folder_colors: Default::default(),

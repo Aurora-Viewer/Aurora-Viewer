@@ -549,7 +549,138 @@ pub(super) fn pane(
         }
         return;
     };
-    // The picture: a click changes it.
+    // Alt+P: what the selection holds, in place of its picture
+    if prefs.preview_pane && preview(ui, p, inv, id, facts, images, &mut st.wanted_images, actions) {
+        return details_below(ui, p, inv, st, prefs, facts, actions, id);
+    }
+    details_below_picture(ui, p, icons, inv, st, prefs, facts, images, actions, id);
+}
+
+/// What the preview pane shows of an item (Alt+P; Windows Explorer's
+/// preview pane): a texture whole (the rule of the rows' tooltips,
+/// `hover::asset`, RLVa's @viewtexture included), a notecard's text when the
+/// agent may read it (`preview::can_read`), a sound to play here. False
+/// for anything else, which keeps its picture.
+#[allow(clippy::too_many_arguments)]
+fn preview(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    facts: &Facts,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+    actions: &mut Vec<InvAction>,
+) -> bool {
+    let Some(original) = rules::original(inv, id).and_then(|id| inv.items.get(&id)) else {
+        return false;
+    };
+    let width = ui.available_width();
+    let height = (ui.available_height() * 0.5).clamp(176.0, 420.0);
+    match original.asset_type {
+        0 => {
+            let Some(asset) = super::super::hover::asset(inv, original.id) else {
+                return false;
+            };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            wanted.insert(asset);
+            match images.get(&asset) {
+                Some(texture) => {
+                    let size = texture.size_vec2();
+                    let scale = (rect.width() / size.x.max(1.0)).min(rect.height() / size.y.max(1.0));
+                    let shown = Rect::from_center_size(rect.center(), size * scale);
+                    ui.painter().image(
+                        texture.id(),
+                        shown,
+                        Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        widgets::PICTURE_TINT,
+                    );
+                }
+                None => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        aurora_i18n::tr!("common-loading-2"),
+                        egui::FontId::proportional(13.0),
+                        p.muted,
+                    );
+                }
+            }
+            true
+        }
+        7 => {
+            let text = facts.pane_texts.get(&original.id);
+            if text.is_none() {
+                actions.push(InvAction::PaneText(original.id));
+            }
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            let mut inner = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect.shrink(8.0))
+                    .id_salt(("aurora_preview_text", original.id)),
+            );
+            match text {
+                Some(PaneText::Text(text)) => {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut inner, |ui| {
+                        // the embedded items' marks, one character each
+                        let shown: String = text
+                            .chars()
+                            .map(|c| if ('\u{F0000}'..='\u{10FFFF}').contains(&c) { '•' } else { c })
+                            .collect();
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::unique("inventory_preview_text"), shown.clone()));
+                        ui.add(egui::Label::new(egui::RichText::new(shown).size(12.5).color(p.ink)).wrap());
+                    });
+                }
+                Some(PaneText::Unavailable(reason)) => {
+                    inner.label(egui::RichText::new(reason).size(12.5).color(p.muted));
+                }
+                _ => {
+                    inner.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
+                }
+            }
+            true
+        }
+        1 if !original.asset_id.is_nil() => {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 120.0), Sense::hover());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
+            let button = Rect::from_center_size(rect.center(), Vec2::new(160.0, 34.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button));
+            if widgets::action_button(
+                &mut child,
+                p,
+                "player-play-filled",
+                aurora_i18n::tr!("common-play-locally"),
+                widgets::ActionKind::Flat,
+                button.size(),
+            )
+            .clicked()
+            {
+                actions.push(InvAction::Sound(original.asset_id));
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The pane under its picture: the picture first, a click changing it.
+#[allow(clippy::too_many_arguments)]
+fn details_below_picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    actions: &mut Vec<InvAction>,
+    id: Uuid,
+) {
     let width = ui.available_width();
     let (picture_rect, _) = ui.allocate_exact_size(Vec2::new(width, 176.0), Sense::hover());
     let writable =
@@ -563,6 +694,22 @@ pub(super) fn pane(
             st.thumbnail.open(id);
         }
     }
+    details_below(ui, p, inv, st, prefs, facts, actions, id);
+}
+
+/// The pane under its picture or preview: the name, what it is, its
+/// actions and facts.
+#[allow(clippy::too_many_arguments)]
+fn details_below(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+    id: Uuid,
+) {
     // The name, and its renaming.
     let name = if id == inv.root || id == inv.lib_root {
         folder_name(inv, id)

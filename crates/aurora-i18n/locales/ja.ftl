@@ -1420,6 +1420,7 @@ inventory-up = 1つ上のフォルダへ
 keybinds-inventory-root = 最上位へ移動
 keybinds-inventory-search = インベントリを検索
 keybinds-inventory-filter = フォルダーを絞り込む
+keybinds-inventory-preview = プレビューウィンドウを表示
 keybinds-inventory-toggle = フォーカス中の行を選択／選択解除
 keybinds-inventory-menu = 選択項目のメニューを開く
 keybinds-inventory-purge = ごみ箱から完全に削除

@@ -168,6 +168,8 @@ pub enum InvAction {
         start: bool,
     },
     Sound(Uuid),
+    /// The preview pane wants a notecard's text (`InventoryUi::pane_texts`).
+    PaneText(Uuid),
     /// Play a sound in the world, heard by everyone around (send_sound_trigger).
     TriggerSound(Uuid),
     /// Copy a Library wearable into the inventory, then wear the copy
@@ -270,6 +272,7 @@ pub struct Facts {
     pub names: std::collections::HashMap<Uuid, String>,
     /// The creator column's names by creator and owner (`None`: not known
     /// yet), RLVa's `@shownames` stand-ins included.
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<Uuid, PaneText>>,
     pub creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
     /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
     /// the field that shows them (`resident_scopes`): it opens no profile.
@@ -327,6 +330,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            pane_texts: Default::default(),
             creator_names: Default::default(),
             hidden_names: Default::default(),
             pictures: Default::default(),
@@ -568,6 +572,11 @@ pub struct InventoryUi {
     /// keeps, `None` while its bar is closed.
     folder_filter: Option<String>,
     focus_folder_filter: bool,
+    /// Alt+P was pressed: the preview pane turns on or off.
+    toggle_preview: bool,
+    /// The notecards' texts the preview pane asked for, the main window's
+    /// for every pane (`Facts::pane_texts`).
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<Uuid, PaneText>>,
     bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
@@ -935,6 +944,13 @@ impl InventoryUi {
                 self.row_menu = Some((here, egui::pos2(760.0, 420.0)));
                 self.background_menu = true;
             }
+            // the preview pane on the demo's notecard
+            "aurora-explorer-preview" => {
+                let note = Uuid::from_u128(8103);
+                self.selection.clear();
+                self.selection.insert(note);
+                self.selected = Some(note);
+            }
             _ => {}
         }
     }
@@ -1211,6 +1227,16 @@ pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, cr
     use crate::world::names::NameScope;
     let owner = if it.group_owned { Uuid::nil() } else { it.owner };
     [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
+}
+
+/// A notecard's text for the preview pane.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaneText {
+    Loading,
+    Text(String),
+    /// Not to be read here (`world::inventory::preview::can_read`), or the
+    /// download failed: why.
+    Unavailable(String),
 }
 
 /// The stand-ins of the owners and creators `@shownames` hides, each by the
@@ -2564,6 +2590,7 @@ pub fn show(
     } else {
         Facts::default()
     };
+    facts.pane_texts = st.pane_texts.clone();
     fn property_names(st: &InventoryUi, world: &World, facts: &mut Facts) {
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
