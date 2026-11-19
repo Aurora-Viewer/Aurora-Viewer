@@ -5204,6 +5204,50 @@ mod tests {
         );
     }
 
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// (indra/newview/rlvhandler.cpp) disables the "My Outfits" tab button
+    /// alone: a click on the gallery tab opens the gallery, and a click on the
+    /// list tab changes nothing.
+    #[test]
+    fn rlva_showinv_gallery_tab_is_clickable_and_outfits_tab_is_not() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        world.rlva.configure(true);
+        let command = aurora_net::ChatMessage {
+            from_name: String::new(),
+            source_id: Uuid::from_u128(9000),
+            owner_id: Uuid::from_u128(1),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@showinv=n".into(),
+        };
+        assert!(world.rlva.receive(&command));
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let gallery = aurora_i18n::tr!("ui-appearance-outfit-gallery");
+        let list = aurora_i18n::tr!("ui-appearance-outfits");
+        let pos = label_position(&ctx, &mut world, &mut st, gallery);
+        modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert_eq!(st.tab, 0, "the gallery tab opens under @showinv");
+        let pos = label_position(&ctx, &mut world, &mut st, list);
+        modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert_eq!(st.tab, 0, "the list tab refuses the click under @showinv");
+    }
+
     #[test]
     fn outfit_original_controls_obey_showinv_and_recover_after_release_or_disable() {
         for profile in [false, true] {
