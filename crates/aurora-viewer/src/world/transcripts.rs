@@ -1398,10 +1398,10 @@ mod tests {
             vec![
                 // an older display name, the Legacy Viewer's lower-case user
                 // name, the "first.last" and the plain legacy forms
-                entry("Older Name (odessa)"),
-                entry("Some Name (Odessa Resident)"),
-                entry("Some Name (odessa.resident)"),
-                entry("odessa resident"),
+                entry("Older Name (nova)"),
+                entry("Some Name (Nova Resident)"),
+                entry("Some Name (nova.resident)"),
+                entry("nova resident"),
                 entry("Jane Doe (jane.doe)"),
                 entry("Bob (bob.smith)"),
             ]
@@ -1419,7 +1419,7 @@ mod tests {
             agent_id: me,
             session_id: Uuid::nil(),
             secure_session_id: Uuid::nil(),
-            first_name: "Odessa".into(),
+            first_name: "Nova".into(),
             last_name: "Resident".into(),
             sim_ip: std::net::Ipv4Addr::LOCALHOST,
             sim_port: 0,
@@ -1439,7 +1439,7 @@ mod tests {
         assert_eq!(kinds(&w), expected);
         // no login, our name cached: its id tells (findIdByName)
         w.login = None;
-        w.social.avatar_names.on_legacy(me, "Odessa", "Resident");
+        w.social.avatar_names.on_legacy(me, "Nova", "Resident");
         assert_eq!(kinds(&w), expected);
         // neither: the lines are the other resident's, as before
         w.social.avatar_names = Default::default();
