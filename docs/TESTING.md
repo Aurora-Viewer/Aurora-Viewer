@@ -6473,6 +6473,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
+| `AURORA_DEMO_GLASS=0\|1` | Glass off or on for this run (Preferences › Accessibility › Disable glass), never saved |
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_OPACITY=active:<0-1>,inactive:…,conversations:…,bars:…,menus:…,console:…,tags:…,minimap:…` | See-through surfaces of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
@@ -8181,6 +8182,13 @@ failure. Grid validation and any paid upload are performed by the human.
   and the bar islands, black text on the light violet accent; combine with
   `AURORA_DEMO_OPTIONS=14` (the Accessibility page) or
   `AURORA_DEMO_COLORBLIND`, which applies after it.
+- **`AURORA_DEMO_GLASS=0|1`**: the glass of windows, bars, menus and
+  dialogs for this run, as Preferences › Accessibility › Vision › Disable
+  glass does, without touching the saved settings (`0` turns it off, `1`
+  forces it on). What to look for: opaque windows and bars in the skin's
+  colours, the world sharp behind them; combine with
+  `AURORA_DEMO_OPTIONS=14` (the Accessibility page). High contrast already
+  skips the glass by making surfaces opaque.
 - **`AURORA_DEMO_OPACITY=active:1,inactive:0.3,bars:0.5`**: the opacity
   sliders for this run, any of them, as Preferences › Appearance › Skin ›
   Opacity does, without touching the saved settings. What to look for: the
