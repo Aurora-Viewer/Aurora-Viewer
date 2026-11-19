@@ -281,9 +281,10 @@ fn sphere_far(d: vec3f, r: f32) -> f32 {
 // Whether a y-up ray from the camera goes down into the sea: the sphere
 // under the layer's, `u.planet.y` below the camera.
 fn meets_sea(d: vec3f) -> bool {
-    let sea = max(r_planet() - u.planet.y, 0.0);
+    let h = min(u.planet.y, r_planet());
     let b = r_planet() * d.y;
-    return b < 0.0 && b * b >= r_planet() * r_planet() - sea * sea;
+    // R² - (R - h)², written so that it does not cancel on a large planet
+    return b < 0.0 && b * b >= h * (2.0 * r_planet() - h);
 }
 
 struct Res {

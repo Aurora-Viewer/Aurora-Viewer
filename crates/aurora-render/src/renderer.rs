@@ -9185,6 +9185,13 @@ impl Backend {
         };
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
+            // The mirror flips z after the bend: a point bent down by the
+            // drop would come out raised by it, its reflection twice the
+            // drop too high. Bent up, it comes out as the reflection of the
+            // flat world bent down, as the water it is seen in (exact for
+            // this horizontal plane; a mirror's tilted plane is near the
+            // camera, where the drop is nothing)
+            u.curvature[2] = -u.curvature[2];
             u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));

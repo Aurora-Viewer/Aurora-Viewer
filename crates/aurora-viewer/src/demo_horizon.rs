@@ -42,7 +42,10 @@ fn parse(value: &str) -> Option<Scenario> {
     let radius_km = match parts.next().map(str::trim) {
         None | Some("") => Some(crate::settings::PLANET_RADIUS_KM),
         Some("flat") => None,
-        Some(r) => Some(r.parse::<f32>().ok().filter(|r| r.is_finite() && *r > 0.0)?),
+        Some(r) => Some(r.parse::<f32>().ok().filter(|r| r.is_finite() && *r > 0.0)?.clamp(
+            *crate::settings::PLANET_RADIUS_KM_RANGE.start(),
+            *crate::settings::PLANET_RADIUS_KM_RANGE.end(),
+        )),
     };
     Some(Scenario { height, radius_km })
 }
@@ -100,6 +103,8 @@ mod tests {
                 radius_km: earth
             })
         );
+        // within the setting's radii, as the renderer draws them
+        assert_eq!(parse("10:50").and_then(|s| s.radius_km), Some(100.0));
         assert_eq!(parse("high"), None);
         assert_eq!(parse("10:-5"), None);
     }

@@ -1141,10 +1141,10 @@ mod tests {
 
     #[test]
     fn the_uniform_matches_the_shader() {
-        // U in shaders/clouds.wgsl: 2 mat4x4 + 8 vec4 + 3 vec4<u32>
-        assert_eq!(std::mem::size_of::<CloudU>(), 2 * 64 + 8 * 16 + 3 * 16);
+        // U in shaders/clouds.wgsl: 2 mat4x4 + 8 vec4 + 3 vec4<u32> + 1 vec4
+        assert_eq!(std::mem::size_of::<CloudU>(), 2 * 64 + 8 * 16 + 3 * 16 + 16);
         let src = include_str!("shaders/clouds.wgsl");
-        assert!(src.contains("sizes: vec4u") && src.contains("gen: vec4u"));
+        assert!(src.contains("sizes: vec4u") && src.contains("gen: vec4u") && src.contains("planet: vec4f"));
     }
 
     #[test]

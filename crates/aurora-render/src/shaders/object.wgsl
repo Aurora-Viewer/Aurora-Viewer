@@ -267,8 +267,9 @@ fn prev_placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
 // their motion is left out.
 fn motion_clips(rec: DrawRecord, in: VsIn, ep: vec4<f32>) -> mat2x4<f32> {
     let prev = prev_placed_model(rec, in, frame.eye.xyz) * vec4<f32>(vertex_position(rec, in), 1.0);
-    // both on this frame's curved planet: its centre moves with the camera
-    // by under a millimetre of drop a frame, no motion to show
+    // both on this frame's curved planet: its centre moves with the camera,
+    // which changes the drop by d·Δ/R (a camera moving a metre a frame: a
+    // fifth of a millimetre at 1 km on the Earth), no motion to show
     return mat2x4<f32>(frame.motion_vp * curve_eye(ep), frame.motion_prev_vp * curve_eye(prev));
 }
 

@@ -3167,11 +3167,7 @@ impl Scene {
 
         step(&mut slow, "origin");
         self.sync_terrain(renderer, world, view.eye);
-        self.water.sync(
-            renderer,
-            world,
-            water::void_reach(view.eye, world.main_water_height(), self.planet_radius),
-        );
+        self.water.sync(renderer, world, view.eye, self.planet_radius);
         step(&mut slow, "terrain");
 
         if self.gpu.len() < world.objects.slots.len() {

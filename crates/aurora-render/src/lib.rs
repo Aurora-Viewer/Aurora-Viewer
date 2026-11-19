@@ -657,6 +657,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                     r#"
 struct Frame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:Frame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 @vertex fn vertex(@builtin(vertex_index) v:u32,@builtin(instance_index) layer:u32)->WaterOut {{

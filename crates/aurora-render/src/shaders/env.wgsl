@@ -1122,7 +1122,7 @@ fn fs_terrain_depth(in: TerrainPbrOut) {
 fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     terrain_depth_mask(in);
     // the terrain stays put: the camera's motion alone
-    let ep = vec4<f32>(in.world_pos - frame.eye.xyz, 1.0);
+    let ep = curve_eye(vec4<f32>(in.world_pos - frame.eye.xyz, 1.0));
     return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep, 0.0);
 }
 
@@ -1284,7 +1284,9 @@ fn water_exterior(surface:vec3<f32>,direction:vec3<f32>)->vec4<f32> {
     var point=surface+direction*200.0;
     var uv=vec2<f32>(0.5);
     for(var i=0u;i<3u;i++) {
-        let clip=frame.water_air_vp*vec4<f32>(point,1.0);
+        // the capture is drawn on the curved planet: bend the point to find
+        // it, and take the bend back from what its depth gives
+        let clip=frame.water_air_vp*vec4<f32>(apply_curvature(point,frame.curvature),1.0);
         if(clip.w<=0.0001){return vec4<f32>(0.0);}
         uv=clip.xy/clip.w*vec2<f32>(0.5,-0.5)+0.5;
         if(any(uv<vec2<f32>(0.001)) || any(uv>vec2<f32>(0.999))){return vec4<f32>(0.0);}
@@ -1292,7 +1294,7 @@ fn water_exterior(surface:vec3<f32>,direction:vec3<f32>)->vec4<f32> {
         let depth=textureLoad(water_air_depth,vec2<i32>(uv*vec2<f32>(size)),0);
         if(depth<=0.0){break;}
         let world=frame.water_air_inv_vp*vec4<f32>(uv*vec2<f32>(2.0,-2.0)+vec2<f32>(-1.0,1.0),depth,1.0);
-        let source=world.xyz/world.w;
+        let source=remove_curvature(world.xyz/world.w,frame.curvature);
         let along=dot(source-surface,direction);
         if(along<=0.0){return vec4<f32>(0.0);}
         point=surface+direction*along;

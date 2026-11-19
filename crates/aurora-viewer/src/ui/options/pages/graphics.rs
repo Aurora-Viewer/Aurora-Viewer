@@ -99,6 +99,7 @@ fn environment(cx: &mut Cx) {
                     ui.add(
                         egui::Slider::new(&mut s.planet_radius_km, crate::settings::PLANET_RADIUS_KM_RANGE)
                             .logarithmic(true)
+                            .step_by(1.0)
                             .custom_parser(aurora_i18n::parse_number)
                             .suffix(" km")
                             .trailing_fill(true),
