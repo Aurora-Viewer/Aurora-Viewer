@@ -3144,13 +3144,7 @@ impl Scene {
         // environment selector's items)
         for id in world.eep.wanted_settings() {
             match self.settings.get(id) {
-                settings::SettingsState::Ready(s) => {
-                    // its Aurora Weather, from its name, before it applies
-                    if let settings::MapState::Ready(map) = self.settings.map(id) {
-                        world.eep.note_asset_weather(id, crate::weather::region::of_settings(&map));
-                    }
-                    world.eep.on_settings(id, Some(s));
-                }
+                settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
                 settings::SettingsState::Failed => world.eep.on_settings(id, None),
                 settings::SettingsState::Pending => {}
             }

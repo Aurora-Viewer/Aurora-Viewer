@@ -99,9 +99,6 @@ fn paint_selector_label(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, 
 
 #[derive(Default)]
 pub struct EnvironmentUi {
-    /// Who sets the weather now (kept by the app): the Weather window
-    /// says so when it is not its own settings.
-    pub weather_source: crate::weather::WeatherSource,
     /// The Weather window's clean-up button was pressed (taken by the app:
     /// the snow lying, the wet ground and puddles, the footprints and the
     /// snow on avatars go at once).
@@ -196,7 +193,7 @@ impl EnvironmentUi {
                 Some(time_of_day),
                 LABEL_W,
                 lighting,
-                Some((&mut weather_open, &mut *weather)),
+                Some(&mut weather_open),
                 &mut out,
             );
             self.weather_open = weather_open;
@@ -226,7 +223,6 @@ impl EnvironmentUi {
         // left of the Environment window, which it opens beside
         let left = screen.right() - 750.0 - super::weather_window::WINDOW_W;
         let pos = egui::pos2(left.max(screen.left() + 10.0), screen.top() + 90.0);
-        let source = self.weather_source;
         let actions = Floater::new(
             "aurora_weather",
             aurora_i18n::tr!("ui-weather-aurora"),
@@ -235,7 +231,7 @@ impl EnvironmentUi {
         )
         .auto_height()
         .help(aurora_i18n::tr!("ui-weather-window-help"))
-        .show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather, source));
+        .show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather));
         if let Some(actions) = actions {
             self.weather_clean |= actions.clean;
             self.weather_fill |= actions.fill;
@@ -256,7 +252,7 @@ impl EnvironmentUi {
         time_of_day: Option<u8>,
         label_w: f32,
         lighting: &mut bool,
-        weather: Option<(&mut bool, &mut WeatherSettings)>,
+        weather_open: Option<&mut bool>,
         out: &mut Vec<EnvAction>,
     ) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
@@ -317,12 +313,9 @@ impl EnvironmentUi {
             ) {
                 out.push(EnvAction::Shared);
             }
-            // Aurora Weather after them ("Aurora" in the aurora gradient),
-            // with its own way back to the region's: it turns "Let regions
-            // set the weather" on, still an opt in, by my own hand. One way,
-            // as the sky's: greyed once the region's is followed (turned off
-            // again in the Weather window).
-            let Some((open, weather)) = weather else {
+            // Aurora Weather after them ("Aurora" in the aurora gradient):
+            // this viewer's own weather, nothing for a region to set
+            let Some(open) = weather_open else {
                 return;
             };
             ui.add_space(12.0);
@@ -335,16 +328,6 @@ impl EnvironmentUi {
                     .clicked()
                 {
                     *open = !*open;
-                }
-                let following = weather.region_weather;
-                let tip = if following {
-                    aurora_i18n::tr!("ui-weather-follow-region-on-tip")
-                } else {
-                    aurora_i18n::tr!("ui-weather-follow-region-tip")
-                };
-                if widgets::icon_button(ui, p, "restore", tip, !following) {
-                    weather.region_weather = true;
-                    weather.touched = true;
                 }
             }
         });
@@ -793,7 +776,6 @@ pub fn settings_list(
             .to_owned(),
         Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
     };
-    let selected_weather = item.is_some_and(|c| c.weather);
     let mut picked = None;
     // `width` at most: a long name is cut, never widening its window
     let size = Vec2::new(width, ui.spacing().interact_size.y);
@@ -834,7 +816,7 @@ pub fn settings_list(
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(max_content_height)
-            .selected_text(tagged_name(p, &text, selected_weather, Some(p.ink)))
+            .selected_text(RichText::new(&text).size(12.0).color(p.ink))
             .truncate()
             // a click in the search field must not close the list
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -904,7 +886,7 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, None))
+                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0))
                             .on_hover_text(&c.name)
                             .clicked()
                         {
@@ -932,32 +914,6 @@ pub fn settings_list(
         picked = env_select::step(list, env_select::shown_index(list, shown), true);
     }
     picked
-}
-
-/// A settings item's name as the lists show it (the catalog's, without its
-/// code): one carrying Aurora Weather tagged " [Aurora Weather]" as the
-/// inventory's rows are (testers looked for which of their skies set the
-/// weather); any other as it is. Without `color`, the name takes the row's
-/// own (hovered, selected), tagged or not.
-fn tagged_name(p: &Palette, name: &str, weather: bool, color: Option<egui::Color32>) -> egui::WidgetText {
-    if !weather {
-        let text = RichText::new(name).size(12.0);
-        return match color {
-            Some(c) => text.color(c),
-            None => text,
-        }
-        .into();
-    }
-    let font = egui::FontId::proportional(12.0);
-    let mut job = egui::text::LayoutJob::default();
-    // (PLACEHOLDER: painted in the row's text colour)
-    job.append(
-        name,
-        0.0,
-        egui::TextFormat::simple(font.clone(), color.unwrap_or(egui::Color32::PLACEHOLDER)),
-    );
-    super::inventory::weather_tag(p, &mut job, font);
-    job.into()
 }
 
 /// A list to open on its next frame, with this text in its search field
@@ -1032,7 +988,6 @@ mod tests {
                     item: Uuid::from_u128(n + 1),
                     asset: Uuid::from_u128(n + 101),
                     name: format!("A very long environment name for the scrolling sky list {n}"),
-                    weather: n % 2 == 0,
                 })
                 .collect(),
             ..Default::default()
@@ -1125,7 +1080,6 @@ mod tests {
                     item: Uuid::from_u128(n + 1),
                     asset: Uuid::from_u128(n + 101),
                     name: format!("Sky {n}"),
-                    weather: false,
                 })
                 .collect(),
             ..Default::default()
@@ -1162,42 +1116,6 @@ mod tests {
             let edge = |r: egui::Rect| if below { r.top() } else { r.bottom() };
             assert!((edge(initial) - edge(full)).abs() < 2.0 && (edge(filtered) - edge(restored)).abs() < 2.0);
         }
-    }
-
-    #[test]
-    fn a_tagged_list_row_takes_the_rows_own_colour_as_a_plain_one() {
-        // a selected row of the sky list: its name in the colour egui gives
-        // that state, whether it carries the Aurora Weather tag or not (it
-        // took the plain text colour, the same hovered, selected or not)
-        fn text_shape(shape: &egui::Shape, starts: &str) -> Option<egui::epaint::TextShape> {
-            match shape {
-                egui::Shape::Text(t) if t.galley.text().starts_with(starts) => Some(t.clone()),
-                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_shape(s, starts)),
-                _ => None,
-            }
-        }
-        let theme = crate::theme::Theme::default();
-        let p = theme.palette();
-        let ctx = egui::Context::default();
-        theme.apply(&ctx, 1.0);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widgets::search_list_item(ui, true, tagged_name(&p, "Plain sky", false, None));
-            widgets::search_list_item(ui, true, tagged_name(&p, "Stormy sky", true, None));
-        });
-        output.textures_delta.clear();
-        let shapes: Vec<egui::Shape> = output.shapes.into_iter().map(|s| s.shape).collect();
-        let find = |starts| shapes.iter().find_map(|s| text_shape(s, starts)).expect("row drawn");
-        let (plain, tagged) = (find("Plain sky"), find("Stormy sky"));
-        assert_eq!(tagged.fallback_color, plain.fallback_color);
-        let name = &tagged.galley.job.sections[0];
-        assert_eq!(name.format.color, egui::Color32::PLACEHOLDER, "the name takes the row's colour");
-        assert!(tagged.galley.text().ends_with(']'), "{}", tagged.galley.text());
-        // the box's own text keeps the colour it is given
-        let job = match tagged_name(&p, "Stormy sky", true, Some(p.ink)) {
-            egui::WidgetText::LayoutJob(job) => job,
-            _ => panic!("a layout job"),
-        };
-        assert_eq!(job.sections[0].format.color, p.ink);
     }
 
     #[test]
