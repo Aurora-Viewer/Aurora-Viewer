@@ -161,6 +161,15 @@ impl WornCache {
         self.copies.values().map(Vec::len).sum()
     }
 
+    /// The copies of `avatar` standing in for objects the region has not
+    /// sent yet: the cloud gate counts them as come (scene/loading.rs), or
+    /// the avatar would stay hidden while they are drawn.
+    pub fn standing_in(&self, avatar: &Uuid) -> usize {
+        self.copies
+            .get(avatar)
+            .map_or(0, |v| v.iter().filter(|c| c.real_since.is_none()).count())
+    }
+
     /// Give a set read elsewhere (the demo, the tests).
     pub fn insert_set(&mut self, avatar: Uuid, set: WornSet) {
         self.sets.insert(avatar, Some(Arc::new(set)));

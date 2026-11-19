@@ -516,9 +516,16 @@ pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
         [0.545, 0.361, 0.965, 1.0]
     };
     let teal = [0.369, 0.918, 0.831, 1.0];
+    // (AURORA_DEMO_WORN_CACHE gives the wolf the classic look, whose big
+    // hair hides the hat: a taller one, and a larger orb, for that scenario)
+    let (hat_at, hat_size, orb) = if worn_cache::enabled() {
+        (Vec3::new(0.0, 0.0, 0.3), Vec3::new(0.36, 0.36, 0.34), 0.2)
+    } else {
+        (Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), 0.12)
+    };
     [
-        (9100u32, 2u8, Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), cyl, hat),
-        (9101, 6, Vec3::new(0.0, 0.0, -0.06), Vec3::splat(0.12), sphere, teal),
+        (9100u32, 2u8, hat_at, hat_size, cyl, hat),
+        (9101, 6, Vec3::new(0.0, 0.0, -0.06), Vec3::splat(orb), sphere, teal),
     ]
     .into_iter()
     .map(|(id, point, pos, scale, volume, color)| {

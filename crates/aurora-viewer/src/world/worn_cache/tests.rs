@@ -244,6 +244,8 @@ fn a_copy_goes_when_its_object_is_no_longer_worn() {
     let other = world.objects.index_of_uuid(&OTHER).expect("the other avatar");
     let listed = world.worn_vs_listed(other).expect("an avatar");
     assert_eq!((listed.arrived, listed.missing.len()), (0, 1), "the scarf is still missing");
+    // but the cloud gate sees it come, as a copy
+    assert_eq!(world.worn_cache.standing_in(&OTHER), 1);
 
     // we take the hat off elsewhere, they take the scarf off
     outfit_links(&mut world, &[]);
@@ -312,4 +314,41 @@ fn only_wanted_objects_not_there_yet_are_drawn() {
     assert_eq!(ids(wanted(&set, false, &outfit, &listed, |_| false)), vec![2, 3]);
     assert!(fresh(100, 100 + MAX_AGE.as_secs()));
     assert!(!fresh(100, 101 + MAX_AGE.as_secs()));
+}
+
+#[test]
+fn a_copy_keeps_the_textures_of_its_object() {
+    let (mut world, _, _) = setup();
+    let original = crate::demo::wolf_attachments(true);
+    let set = WornSet {
+        saved_at: unix_now(),
+        objects: original
+            .iter()
+            .map(|o| WornObject {
+                root_id: o.full_id,
+                item_id: Uuid::nil(),
+                point: o.state.rotate_left(4),
+                prims: vec![file::WornPrim {
+                    update_flags: 0,
+                    data: aurora_net::objects::encode_compressed(o),
+                    overrides: Vec::new(),
+                }],
+            })
+            .collect(),
+    };
+    world.worn_cache.insert_set(OTHER, set);
+    let listed = original.iter().map(|o| (o.full_id, o.state.rotate_left(4))).collect();
+    world.apply(NetEvent::Appearance(appearance(OTHER, listed)));
+    world.update_worn_cache(Instant::now());
+    let copies = copies_of(&world, &OTHER);
+    assert_eq!(copies.len(), 2);
+    for (copy, o) in copies.iter().zip(&original) {
+        let te = world.objects.get(*copy).and_then(|c| c.te.clone()).expect("a texture entry");
+        let want = o.texture_entry.as_ref().expect("texture entry");
+        assert_eq!(te.faces[0].texture, want.faces[0].texture);
+        // (a colour travels as bytes)
+        for (got, want) in te.faces[0].color.iter().zip(want.faces[0].color) {
+            assert!((got - want).abs() < 1.0 / 255.0, "{got} for {want}");
+        }
+    }
 }

@@ -532,14 +532,17 @@ impl Scene {
                 continue;
             }
             let own = id == world.agent_id;
-            // (not the copies drawn from the cache: the region's objects are
-            // what is compared, world/worn_cache)
+            // the region's objects, and the copies drawn from the cache for
+            // those not there yet, each once (world/worn_cache): an avatar
+            // whose objects were kept shows with their copies, where the
+            // Legacy Viewer keeps it a cloud until the region sends them
             let worn = world
                 .objects
                 .children_of(&o.key)
                 .iter()
                 .filter(|&&i| world.objects.get(i).is_some_and(|c| !c.is_client_preview()))
-                .count();
+                .count()
+                + world.worn_cache.standing_in(&id);
             // (ours is not compared with the simulator's list: `!isSelf()`,
             // nor the animation editor's mirror of us, which has no HUDs)
             let announced = if own || world.is_mirror(&id) {

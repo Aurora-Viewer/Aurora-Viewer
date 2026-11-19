@@ -645,7 +645,9 @@ impl Scene {
                 let Some(att) = world.objects.get(c) else {
                     continue;
                 };
-                if (31..=38).contains(&att.attachment_point()) {
+                // (nor the copies drawn from the cache, world/worn_cache:
+                // drawn as they are, they never hold the avatar's line)
+                if (31..=38).contains(&att.attachment_point()) || crate::world::worn_cache::is_copy(att.key) {
                     out.pop();
                     continue;
                 }
@@ -1180,7 +1182,9 @@ impl Scene {
 
         // objects synced for the first time
         for idx in std::mem::take(&mut rez.arrivals) {
-            let Some(o) = world.objects.get(idx) else {
+            // (a copy drawn from the cache shows as it is: no grid, no line,
+            // and never one of its avatar's members, world/worn_cache)
+            let Some(o) = world.objects.get(idx).filter(|o| !crate::world::worn_cache::is_copy(o.key)) else {
                 continue;
             };
             let region_since = *rez.regions.entry(o.key.region).or_insert(now);
