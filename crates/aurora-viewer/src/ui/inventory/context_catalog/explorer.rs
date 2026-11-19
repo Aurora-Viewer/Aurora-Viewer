@@ -150,7 +150,7 @@ pub(super) fn build(
         true,
         Command::Explorer(ExplorerCommand::ByDate(false)),
     );
-    check(c, "sort-name", !prefs.sort.by_date);
+    check(c, "sort-name", !prefs.sort.by_date && prefs.sort.column.is_none());
     c.add(
         "sort-date",
         &sort,
@@ -159,7 +159,7 @@ pub(super) fn build(
         true,
         Command::Explorer(ExplorerCommand::ByDate(true)),
     );
-    check(c, "sort-date", prefs.sort.by_date);
+    check(c, "sort-date", prefs.sort.by_date && prefs.sort.column.is_none());
     c.divider("sort-folders", &sort);
     c.add(
         "sort-folders-by-name",
@@ -201,7 +201,7 @@ pub(super) fn build(
 pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     match command {
         ExplorerCommand::View(view) => prefs.explorer.view = view,
-        ExplorerCommand::ByDate(by_date) => prefs.sort.by_date = by_date,
+        ExplorerCommand::ByDate(by_date) => prefs.sort.set_by_date(by_date),
         ExplorerCommand::FoldersByName => prefs.sort.folders_by_name = !prefs.sort.folders_by_name,
         ExplorerCommand::SystemFirst => prefs.sort.system_first = !prefs.sort.system_first,
         ExplorerCommand::SelectAll => super::super::select_keys::select_all(st),

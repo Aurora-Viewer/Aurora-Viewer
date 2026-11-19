@@ -271,20 +271,20 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
         p,
         "clock-filled",
         aurora_i18n::tr!("ui-inventory-controls-newest-first"),
-        sort.by_date,
+        sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = true;
+        sort.set_by_date(true);
     }
     if menu::check(
         ui,
         p,
         "sort-ascending-letters",
         aurora_i18n::tr!("common-by-name"),
-        !sort.by_date,
+        !sort.by_date && sort.column.is_none(),
         true,
     ) {
-        sort.by_date = false;
+        sort.set_by_date(false);
     }
     menu::toggle(
         ui,
@@ -810,11 +810,21 @@ fn chip(ui: &mut egui::Ui, p: &Palette, text: &str, types: &[i32]) -> bool {
 
 /// The text of the sort order, at the right end of the chips.
 fn sort_text(prefs: &InventoryPreferences, tab: usize) -> String {
+    use super::super::view::SortColumn;
     let sort = prefs.sort_for(tab);
-    let order = if sort.by_date {
-        aurora_i18n::tr!("inventory-sort-date")
+    let order = match sort.column {
+        Some(SortColumn::Kind) => aurora_i18n::tr!("common-type"),
+        Some(SortColumn::Rights) => super::rights::heading(prefs.rights),
+        Some(SortColumn::Description) => aurora_i18n::tr!("inventory-sort-description"),
+        None if sort.by_date => aurora_i18n::tr!("inventory-sort-date"),
+        None => aurora_i18n::tr!("inventory-sort-name"),
+    };
+    let reversed;
+    let order = if sort.descending {
+        reversed = aurora_i18n::tr!("inventory-sort-reversed", order = order);
+        reversed.as_str()
     } else {
-        aurora_i18n::tr!("inventory-sort-name")
+        order
     };
     if sort.system_first {
         aurora_i18n::tr!("inventory-sort-folders-first", order = order)

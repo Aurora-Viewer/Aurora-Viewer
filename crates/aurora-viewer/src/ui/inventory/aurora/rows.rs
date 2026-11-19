@@ -695,27 +695,78 @@ pub(in super::super) fn folder(
 }
 
 /// The titles of the columns above a list whose scroll area is `list`.
-pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id, prefs: &mut view::ExplorerPreferences) {
+/// The titles of the details' columns. A click sorts by a column, a second
+/// reverses it (Windows Explorer, Dolphin; Aurora difference: the Legacy
+/// Viewer sorts by name or date only, from its menu); the arrow shows the
+/// order followed.
+pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id, prefs: &mut InventoryPreferences, tab: usize) {
+    use super::super::view::{SortColumn, SortHeader};
     let width = widgets::header_width(ui, list);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-    let cols = super::columns::resize(ui, p, frame, Rect::from_min_size(rect.min, Vec2::new(width, rect.height())), prefs);
+    let area = Rect::from_min_size(rect.min, Vec2::new(width, rect.height()));
+    // The titles go under the dividers' handles, which sit in the gaps.
+    let mut shown = frame;
+    shown.columns = prefs.explorer;
+    let before = Columns::new(shown, area);
+    let mut titles = vec![(
+        SortHeader::Name,
+        aurora_i18n::tr!("common-name").to_owned(),
+        Rangef::new(area.left() + PAD, before.name_end),
+    )];
+    if let Some(kind) = before.kind {
+        titles.push((
+            SortHeader::Column(SortColumn::Kind),
+            aurora_i18n::tr!("common-type").to_owned(),
+            kind,
+        ));
+    }
+    if let Some(range) = before.rights {
+        titles.push((
+            SortHeader::Column(SortColumn::Rights),
+            rights::heading(frame.rights).to_owned(),
+            range,
+        ));
+    }
+    if let Some(date) = before.date {
+        titles.push((SortHeader::Date, aurora_i18n::tr!("inventory-column-modified").to_owned(), date));
+    }
+    let (sorted, descending) = prefs.sort_for(tab).header();
+    let mut clicked = None;
+    for (header, text, range) in &titles {
+        let hit = Rect::from_x_y_ranges(*range, rect.y_range());
+        let response = ui
+            .interact(hit, ui.scope_id().with(("inventory_column_title", text.as_str())), Sense::click())
+            .on_hover_text(aurora_i18n::tr!("inventory-sort-by-column"));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_column_title", *header)), hit));
+        if response.clicked() {
+            clicked = Some(*header);
+        }
+        let active = *header == sorted;
+        let ink = if active || response.hovered() { p.ink } else { p.muted };
+        let arrow = if active { 14.0 } else { 0.0 };
+        let galley = cut(ui, text, 11.5, ink, (range.span() - arrow).max(0.0), false);
+        let text_right = range.min + galley.size().x;
+        widgets::paint_row_text(ui.painter(), galley, range.min, rect.center().y, ink);
+        // The date's own order is the newest first: its arrow points down.
+        let down = descending != (*header == SortHeader::Date);
+        if active && let Some(texture) = crate::ui::icons::global(if down { "caret-down-filled" } else { "caret-up-filled" }) {
+            ui.painter().image(
+                texture.id(),
+                Rect::from_center_size(egui::pos2(text_right + 8.0, rect.center().y), Vec2::splat(10.0)),
+                Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                ink,
+            );
+        }
+    }
+    if let Some(header) = clicked {
+        prefs.sort_for_mut(tab).click(header);
+    }
+    let _cols = super::columns::resize(ui, p, frame, area, &mut prefs.explorer);
     #[cfg(test)]
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_header_columns"), cols));
-    let title = |text: &str, range: Rangef| {
-        let galley = cut(ui, text, 11.5, p.muted, range.span(), false);
-        widgets::paint_row_text(ui.painter(), galley, range.min, rect.center().y, p.muted);
-    };
-    title(aurora_i18n::tr!("common-name"), Rangef::new(rect.left() + PAD, cols.name_end));
-    if let Some(kind) = cols.kind {
-        title(aurora_i18n::tr!("common-type"), kind);
-    }
-    if let Some(range) = cols.rights {
-        title(rights::heading(frame.rights), range);
-    }
-    if let Some(date) = cols.date {
-        title(aurora_i18n::tr!("inventory-column-modified"), date);
-    }
+        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_header_columns"), _cols));
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, widgets::divider_stroke(p));
 }
 

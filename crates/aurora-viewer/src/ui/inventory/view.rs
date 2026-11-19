@@ -123,6 +123,7 @@ fn received_filing_view_pins_marketplace_and_scopes_sender_search_without_server
                     by_date,
                     folders_by_name: !by_date,
                     system_first,
+                    ..Default::default()
                 },
                 ..Default::default()
             };
@@ -185,6 +186,12 @@ pub struct Sort {
     pub by_date: bool,
     pub folders_by_name: bool,
     pub system_first: bool,
+    /// A column of the explorer's details sorts instead of the name or the
+    /// date (Aurora difference: the Legacy Viewer sorts by name or date only).
+    pub column: Option<SortColumn>,
+    /// The order is reversed, inside the same groups: the system folders and
+    /// the folders keep their place (LLFolderBridge::getSortGroup).
+    pub descending: bool,
 }
 impl Default for Sort {
     fn default() -> Self {
@@ -192,15 +199,84 @@ impl Default for Sort {
             by_date: true,
             folders_by_name: true,
             system_first: true,
+            column: None,
+            descending: false,
         }
     }
+}
+
+impl Sort {
+    /// The Legacy Viewer's order by name or by date, without a column.
+    pub fn set_by_date(&mut self, by_date: bool) {
+        self.by_date = by_date;
+        self.column = None;
+        self.descending = false;
+    }
+
+    /// A click on a header of the explorer's details: sorts by it, a second
+    /// click reverses it (Windows Explorer, Dolphin).
+    pub fn click(&mut self, header: SortHeader) {
+        let current = match self.column {
+            Some(column) => SortHeader::Column(column),
+            None if self.by_date => SortHeader::Date,
+            None => SortHeader::Name,
+        };
+        if current == header {
+            self.descending = !self.descending;
+            return;
+        }
+        self.descending = false;
+        match header {
+            SortHeader::Name => self.set_by_date(false),
+            SortHeader::Date => self.set_by_date(true),
+            SortHeader::Column(column) => self.column = Some(column),
+        }
+    }
+
+    /// The header the order follows, and whether it is reversed, for its arrow.
+    pub fn header(self) -> (SortHeader, bool) {
+        let header = match self.column {
+            Some(column) => SortHeader::Column(column),
+            None if self.by_date => SortHeader::Date,
+            None => SortHeader::Name,
+        };
+        (header, self.descending)
+    }
+
+    /// The order the selectors inherit: the Legacy Viewer's, without the
+    /// explorer's columns.
+    pub fn legacy(self) -> Self {
+        Self {
+            column: None,
+            descending: false,
+            ..self
+        }
+    }
+}
+
+/// The columns of the explorer's details that sort by something else than
+/// the name or the date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortColumn {
+    Kind,
+    Rights,
+    Description,
+}
+
+/// A header of the explorer's details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SortHeader {
+    Name,
+    Date,
+    Column(SortColumn),
 }
 
 /// The main inventory's saved order is published once per UI frame. All
 /// inventory selectors inherit it, as LLInventoryPanel's DEFAULT_SORT_ORDER
 /// does (indra/newview/llinventorypanel.cpp).
 pub fn set_picker_sort(ctx: &egui::Context, sort: Sort) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("inventory_picker_sort"), sort));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("inventory_picker_sort"), sort.legacy()));
 }
 
 pub fn picker_sort(ctx: &egui::Context) -> Sort {
@@ -573,6 +649,11 @@ struct Entry {
     trash: bool,
     outfit: bool,
     library: bool,
+    /// What a column sorts by (`Sort::column`): the type's name, or the
+    /// description; empty for the name or the date.
+    key: String,
+    /// The rights held, for the rights column: more rights sort later.
+    rank: u32,
 }
 
 #[derive(PartialEq, Eq)]
@@ -595,7 +676,7 @@ struct Query {
 
 #[derive(Default)]
 pub struct ViewCache {
-    version: Option<(Uuid, Uuid, u64, Sort)>,
+    version: Option<(Uuid, Uuid, u64, Sort, &'static str)>,
     entries: Vec<Entry>,
     children: IdMap<Vec<Uuid>>,
     result_children: IdMap<Vec<Uuid>>,
@@ -614,7 +695,7 @@ pub struct ViewCache {
 
 impl ViewCache {
     pub fn prepare(&mut self, inv: &Inventory, sort: Sort) {
-        let version = (inv.root, inv.lib_root, inv.generation, sort);
+        let version = (inv.root, inv.lib_root, inv.generation, sort, aurora_i18n::language());
         if self.version == Some(version) {
             return;
         }
@@ -635,6 +716,8 @@ impl ViewCache {
                 trash: trash.contains(&at),
                 outfit: outfits.contains(&at),
                 library: rules::library(inv, id),
+                key: String::new(),
+                rank: 0,
             }
         };
         self.entries = inv
@@ -710,6 +793,13 @@ impl ViewCache {
             entry.date = dates.get(&entry.id).copied().unwrap_or(0);
         }
         self.folder_dates = dates;
+        if let Some(column) = sort.column {
+            self.entries.par_iter_mut().filter(|e| !e.folder).for_each(|e| match column {
+                SortColumn::Kind => e.key = super::aurora::rows::kind_name(inv, e.id).to_lowercase(),
+                SortColumn::Description => e.key.clone_from(&e.desc),
+                SortColumn::Rights => e.rank = rights_rank(inv, e.id),
+            });
+        }
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
         self.folders = inv.folders.keys().copied().collect();
         // Keep the lists' memory: a folder gone keeps an empty list.
@@ -737,7 +827,7 @@ impl ViewCache {
     /// The rendered sort, without the model generation: a late Delete respects
     /// a new sort while ordinary inventory updates keep the same intent.
     pub(super) fn selection_sort(&self) -> Option<Sort> {
-        self.version.map(|(_, _, _, sort)| sort)
+        self.version.map(|(_, _, _, sort, _)| sort)
     }
 
     /// The date a folder sorts by: its newest descendant's, 0 when it holds
@@ -1326,16 +1416,43 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     } else {
         b.folder.cmp(&a.folder)
     };
+    if let Some(column) = sort.column {
+        // Folders have no type, rights or description: they keep their names.
+        let key = match column {
+            SortColumn::Rights => a.rank.cmp(&b.rank),
+            SortColumn::Kind | SortColumn::Description => cmp_folded(&a.key, &b.key),
+        };
+        let key = if sort.descending { key.reverse() } else { key };
+        return groups
+            .then_with(|| key)
+            .then_with(|| cmp_folded(&a.name, &b.name))
+            .then_with(|| a.id.cmp(&b.id));
+    }
     let by_name = !sort.by_date || (sort.folders_by_name && a.folder && b.folder);
     groups
         .then_with(|| {
-            if by_name {
+            let order = if by_name {
                 cmp_folded(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
             } else {
                 b.date.cmp(&a.date).then_with(|| cmp_folded(&a.name, &b.name))
-            }
+            };
+            if sort.descending { order.reverse() } else { order }
         })
         .then_with(|| a.id.cmp(&b.id))
+}
+
+/// The rank of an item's rights for the rights column: modify, copy and
+/// transfer each count (`actions::held`, the rights the column shows).
+fn rights_rank(inv: &Inventory, id: Uuid) -> u32 {
+    use crate::world::inventory::actions;
+    super::permissions::Permissions::inventory(inv, id)
+        .and_then(|p| p.owner())
+        .map_or(0, |mask| {
+            1 + [actions::MODIFY, actions::COPY, actions::TRANSFER]
+                .iter()
+                .filter(|bit| mask & **bit != 0)
+                .count() as u32
+        })
 }
 
 fn matches_text(value: &str, query: &str) -> bool {
@@ -1777,6 +1894,7 @@ mod tests {
                         by_date,
                         folders_by_name,
                         system_first,
+                        ..Default::default()
                     };
                     set_picker_sort(&ctx, sort);
                     let order = picker_order(&ctx, &inv);
@@ -1822,6 +1940,7 @@ mod tests {
                         by_date,
                         system_first,
                         folders_by_name: false,
+                        ..Default::default()
                     },
                     ..Default::default()
                 };
@@ -1848,6 +1967,117 @@ mod tests {
         inv.remove(&[id(10)]);
         cache.prepare(&inv, prefs.sort);
         assert!(!cache.children(id(2), &prefs, inv.lib_root).contains(&id(10)));
+    }
+
+    #[test]
+    fn header_clicks_sort_by_a_column_and_reverse_it() {
+        let mut sort = Sort::default();
+        assert_eq!(
+            sort.header(),
+            (SortHeader::Date, false),
+            "the Legacy Viewer's default, newest first"
+        );
+        sort.click(SortHeader::Name);
+        assert_eq!((sort.by_date, sort.column, sort.descending), (false, None, false));
+        sort.click(SortHeader::Name);
+        assert_eq!(sort.header(), (SortHeader::Name, true), "a second click reverses");
+        sort.click(SortHeader::Column(SortColumn::Kind));
+        assert_eq!(
+            sort.header(),
+            (SortHeader::Column(SortColumn::Kind), false),
+            "another column starts ascending"
+        );
+        sort.click(SortHeader::Date);
+        assert_eq!((sort.by_date, sort.column, sort.descending), (true, None, false));
+        sort.click(SortHeader::Column(SortColumn::Rights));
+        sort.set_by_date(false);
+        assert_eq!(sort.header(), (SortHeader::Name, false), "the menus' orders leave the column");
+        sort.click(SortHeader::Column(SortColumn::Description));
+        sort.descending = true;
+        assert_eq!(
+            sort.legacy(),
+            Sort {
+                by_date: false,
+                ..Sort::default()
+            },
+            "selectors keep the Legacy order"
+        );
+    }
+
+    #[test]
+    fn columns_sort_items_and_keep_folders_and_system_folders_in_place() {
+        let (mut inv, _) = fixture();
+        folder(&mut inv, 7, id(2), -1, "sub");
+        let mut notecard = item(13, id(2), "B notecard", 200);
+        (notecard.asset_type, notecard.inv_type) = (7, 7);
+        notecard.desc = "zebra".into();
+        notecard.owner_mask = rules::COPY;
+        let mut texture = item(14, id(2), "C texture", 250);
+        (texture.asset_type, texture.inv_type) = (0, 0);
+        texture.desc = "apple".into();
+        inv.add_items(vec![notecard, texture]);
+        let children = |sort: Sort| {
+            let mut prefs = InventoryPreferences {
+                sort,
+                ..Default::default()
+            };
+            prefs.sort = sort;
+            let mut cache = ViewCache::default();
+            cache.prepare(&inv, sort);
+            cache.children(id(2), &prefs, inv.lib_root)
+        };
+        let by_name = Sort {
+            by_date: false,
+            ..Sort::default()
+        };
+        assert_eq!(children(by_name), [id(7), id(10), id(13), id(14), id(12), id(11)]);
+        assert_eq!(
+            children(Sort {
+                descending: true,
+                ..by_name
+            }),
+            [id(7), id(11), id(12), id(14), id(13), id(10)],
+            "reversed, the folder stays above the items"
+        );
+        let mut kinds: Vec<_> = [10, 11, 12, 13, 14]
+            .map(|n| (super::super::aurora::rows::kind_name(&inv, id(n)).to_lowercase(), n))
+            .into_iter()
+            .collect();
+        // the same type keeps the names' order
+        let name = |n: u128| inv.items[&id(n)].name.to_lowercase();
+        kinds.sort_by(|a, b| cmp_folded(&a.0, &b.0).then_with(|| cmp_folded(&name(a.1), &name(b.1))));
+        let kind = Sort {
+            column: Some(SortColumn::Kind),
+            ..by_name
+        };
+        let expected: Vec<_> = std::iter::once(id(7)).chain(kinds.iter().map(|(_, n)| id(*n))).collect();
+        assert_eq!(children(kind), expected);
+        let description = Sort {
+            column: Some(SortColumn::Description),
+            ..by_name
+        };
+        // no description first, by name, then "apple" and "zebra"
+        assert_eq!(children(description), [id(7), id(10), id(12), id(11), id(14), id(13)]);
+        let rights = Sort {
+            column: Some(SortColumn::Rights),
+            ..by_name
+        };
+        assert_eq!(
+            children(rights)[..2],
+            [id(7), id(13)],
+            "the copy-only notecard holds the fewest rights"
+        );
+        let root = |sort: Sort| {
+            let prefs = InventoryPreferences::default();
+            let mut cache = ViewCache::default();
+            cache.prepare(&inv, sort);
+            cache.children(inv.root, &prefs, inv.lib_root)
+        };
+        assert_eq!(
+            root(Sort { descending: true, ..kind })[0],
+            root(kind)[0],
+            "the system folders stay first when reversed"
+        );
     }
 
     #[test]
@@ -2321,11 +2551,13 @@ mod tests {
                 by_date: false,
                 system_first: false,
                 folders_by_name: false,
+                ..Default::default()
             },
             received_sort: Sort {
                 by_date: true,
                 folders_by_name: true,
                 system_first: false,
+                ..Default::default()
             },
             filter_defaults: Filters {
                 links: Links::Exclude,
@@ -2353,7 +2585,8 @@ mod tests {
             Sort {
                 by_date: false,
                 folders_by_name: true,
-                system_first: false
+                system_first: false,
+                ..Default::default()
             }
         );
         assert_eq!(
@@ -2361,7 +2594,8 @@ mod tests {
             Sort {
                 by_date: true,
                 folders_by_name: false,
-                system_first: true
+                system_first: true,
+                ..Default::default()
             }
         );
     }
@@ -2468,6 +2702,7 @@ mod tests {
             by_date: false,
             folders_by_name: true,
             system_first: false,
+            ..Default::default()
         };
         let saved = serde_json::to_string(&prefs).expect("save");
         let restored: InventoryPreferences = serde_json::from_str(&saved).expect("reload");

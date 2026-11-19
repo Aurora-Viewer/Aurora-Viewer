@@ -537,7 +537,7 @@ fn explorer_list(
     let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
     // the combination view titles its list under its tiles
     if shown == view::ExplorerView::List {
-        rows::header(ui, p, frame, list_id, &mut prefs.explorer);
+        rows::header(ui, p, frame, list_id, prefs, st.tab);
         frame.columns = prefs.explorer;
     }
     st.aurora = Some(frame);
@@ -743,6 +743,34 @@ mod tests {
             h.click(h.row(8101).center(), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "ordinary row selection still works");
         }
+    }
+
+    #[test]
+    fn header_titles_sort_and_reverse_without_selecting_or_acting() {
+        use view::{SortColumn, SortHeader};
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(8);
+        h.actions.clear();
+        let selection = h.st.selection.clone();
+        let title = |h: &Harness, header: SortHeader| {
+            h.ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_title", header))))
+                .expect("title drawn")
+                .center()
+        };
+        let kind = SortHeader::Column(SortColumn::Kind);
+        h.click(title(&h, kind), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (kind, false));
+        h.click(title(&h, kind), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (kind, true), "a second click reverses");
+        h.click(title(&h, SortHeader::Name), Default::default());
+        h.frames(2);
+        assert_eq!(h.prefs.sort.header(), (SortHeader::Name, false));
+        assert_eq!(h.st.selection, selection);
+        assert!(h.actions.is_empty(), "sorting performs no inventory operation");
     }
 
     /// Aurora's window `width` wide in a headless context.
