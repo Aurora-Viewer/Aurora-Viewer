@@ -368,6 +368,25 @@ impl OutfitRestore {
 
     pub fn update(&mut self, mut w: OutfitInputs, now: Instant) {
         self.wear_known(&mut w, now);
+        let restore_deadline = match self.stage {
+            Stage::Settle => Some(self.ready_at.unwrap_or(now) + MAX_SETTLE),
+            Stage::Attaching { since, .. } => Some(since + RETRY_AFTER),
+            _ => None,
+        };
+        if let Some(deadline) = restore_deadline {
+            if !w.ready || !w.inventory.folders.get(&self.cof).is_some_and(|f| f.state == FetchState::Fetched) {
+                if now >= deadline + FETCH_TIMEOUT {
+                    log::info!("outfit: login restore timed out waiting for Current Outfit and region readiness");
+                    self.stage = Stage::Done;
+                }
+                return;
+            }
+            // A login retry can outlive the outfit snapshot that started it.
+            let linked = cof_objects(w.inventory, self.cof);
+            self.objects.retain(|id| linked.contains(id) && !self.user_removed.contains(id));
+            self.worn_objects.retain(|id| self.objects.contains(id));
+            self.knocked_off.retain(|id| self.objects.contains(id));
+        }
         match self.stage {
             Stage::Done => {}
             Stage::Waiting => {
@@ -910,6 +929,67 @@ mod tests {
         assert!(restore.is_idle());
         assert!(restore.objects.is_empty());
         assert!(restore.commands.is_empty());
+    }
+
+    #[test]
+    fn recovery_late_attachment_retry_waits_for_the_cof_and_respects_its_unlink() {
+        let (mut inv, mut restore) = deferred_login_original();
+        let now = Instant::now();
+        let cof = Uuid::from_u128(11);
+        inv.add_items(vec![item(201, Uuid::from_u128(10), ASSET_OBJECT, INV_OBJECT, 0)]);
+        restore.update(inputs(&mut inv, &[]), now);
+        assert_eq!(requested(&restore.commands), vec![201]);
+        restore.commands.clear();
+
+        inv.folders.get_mut(&cof).unwrap().state = FetchState::Fetching;
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER);
+        assert!(
+            restore.commands.is_empty(),
+            "the old outfit cannot authorize a retry during refresh"
+        );
+
+        fetch_cof(&mut inv, &[]);
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER + Duration::from_secs(1));
+        assert!(restore.commands.is_empty(), "the new outfit removed this attachment");
+        assert!(restore.is_idle());
+    }
+
+    #[test]
+    fn recovery_unavailable_cof_ends_active_restore_without_dropping_pending_originals() {
+        let (mut inv, mut restore) = deferred_login_original();
+        let now = Instant::now();
+        let cof = Uuid::from_u128(11);
+        restore.stage = Stage::Attaching {
+            since: now,
+            retried: false,
+        };
+        inv.folders.get_mut(&cof).unwrap().state = FetchState::Failed;
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER + FETCH_TIMEOUT);
+        assert!(restore.is_done());
+        assert!(!restore.is_idle());
+        assert!(restore.commands.is_empty());
+
+        fetch_cof(&mut inv, &[201]);
+        restore.update(inputs(&mut inv, &[]), now + RETRY_AFTER + FETCH_TIMEOUT + Duration::from_secs(1));
+        assert_eq!(requested(&restore.commands), vec![201]);
+    }
+
+    #[test]
+    fn recovery_explicit_detach_cancels_an_attachment_queued_for_rewear() {
+        let (mut inv, mut restore) = deferred_login_original();
+        let now = Instant::now();
+        let id = Uuid::from_u128(201);
+        inv.add_items(vec![item(201, Uuid::from_u128(10), ASSET_OBJECT, INV_OBJECT, 0)]);
+        restore.update(inputs(&mut inv, &[]), now);
+        restore.commands.clear();
+        restore.update(inputs(&mut inv, &[201]), now + Duration::from_secs(1));
+        let loss = now + Duration::from_secs(2);
+        restore.update(inputs(&mut inv, &[]), loss);
+        assert_eq!(restore.knocked_off, vec![id]);
+
+        restore.on_detach_requested(&[id]);
+        restore.update(inputs(&mut inv, &[]), loss + QUIET);
+        assert!(restore.commands.is_empty(), "an explicit detach cancels the queued rewear");
     }
 
     #[test]
