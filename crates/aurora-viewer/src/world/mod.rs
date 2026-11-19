@@ -2918,7 +2918,7 @@ impl World {
         self.objects
             .children_of(&me.key)
             .iter()
-            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment()))
+            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment() && !o.is_client_preview()))
             .count()
     }
 

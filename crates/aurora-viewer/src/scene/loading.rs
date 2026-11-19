@@ -532,7 +532,14 @@ impl Scene {
                 continue;
             }
             let own = id == world.agent_id;
-            let worn = world.objects.children_of(&o.key).len();
+            // (not the copies drawn from the cache: the region's objects are
+            // what is compared, world/worn_cache)
+            let worn = world
+                .objects
+                .children_of(&o.key)
+                .iter()
+                .filter(|&&i| world.objects.get(i).is_some_and(|c| !c.is_client_preview()))
+                .count();
             // (ours is not compared with the simulator's list: `!isSelf()`,
             // nor the animation editor's mirror of us, which has no HUDs)
             let announced = if own || world.is_mirror(&id) {

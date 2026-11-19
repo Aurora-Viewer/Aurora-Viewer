@@ -803,7 +803,10 @@ mod tests {
             },
         };
         let back = parse_compressed(&encode_compressed(&u), u.update_flags).expect("decodes");
-        assert_eq!((back.local_id, back.full_id, back.parent_id, back.pcode), (42, u.full_id, 7, u.pcode));
+        assert_eq!(
+            (back.local_id, back.full_id, back.parent_id, back.pcode),
+            (42, u.full_id, 7, u.pcode)
+        );
         assert_eq!((back.state, back.crc, back.material, back.click_action), (0x23, 1234, 3, 1));
         assert_eq!((back.scale, back.position), (u.scale, u.position));
         assert!(back.rotation.angle_between(u.rotation) < 1e-5);

@@ -63,7 +63,8 @@ impl World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| self.objects.get(*i))
-            .filter(|o| o.attachment_point() != 0)
+            // (not the copies drawn from the cache, world/worn_cache)
+            .filter(|o| o.attachment_point() != 0 && !o.is_client_preview())
             .map(|o| {
                 (
                     o.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(o.full_id),
@@ -82,7 +83,12 @@ impl World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| self.objects.get(*i))
-            .find(|o| o.full_id == item && o.attachment_point() != 0 && o.attachment_item_id().is_none_or(|id| id.is_nil() || id == item))
+            .find(|o| {
+                !o.is_client_preview()
+                    && o.full_id == item
+                    && o.attachment_point() != 0
+                    && o.attachment_item_id().is_none_or(|id| id.is_nil() || id == item)
+            })
             .map(|o| o.key)
     }
 

@@ -297,7 +297,9 @@ impl Scene {
             }
         }
         for &att in world.objects.children_of(&av.key) {
-            let Some(root) = world.objects.get(att) else {
+            // (nor the copies drawn from the cache, world/worn_cache: the
+            // region's objects count once they come)
+            let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };
             // HUD attachments (points 31..=38) do not count

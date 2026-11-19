@@ -102,7 +102,11 @@ impl World {
         // what we wear, parents before their children; not the HUDs, which
         // would show twice on the screen
         for idx in self.objects.subtree(own).into_iter().skip(1) {
-            let Some(object) = self.objects.get(idx) else { continue };
+            // (nor the copies drawn from the cache, which go when the
+            // region's objects come: the mirror would keep them)
+            let Some(object) = self.objects.get(idx).filter(|o| !super::worn_cache::is_copy(o.key)) else {
+                continue;
+            };
             let Some(&parent) = object.parent_key().and_then(|key| locals.get(&key)) else {
                 continue;
             };

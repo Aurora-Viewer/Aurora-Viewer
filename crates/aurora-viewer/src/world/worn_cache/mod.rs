@@ -182,6 +182,11 @@ impl WornCache {
     }
 }
 
+/// A prim of a copy drawn from the cache (other client previews are not).
+pub fn is_copy(key: ObjKey) -> bool {
+    key.region == PREVIEW_REGION && (FIRST_LOCAL..=LAST_LOCAL).contains(&key.local_id)
+}
+
 /// The id of the copy of the object `id`: fixed, like the mirror's.
 pub fn copy_id(id: Uuid) -> Uuid {
     Uuid::from_u128(id.as_u128() ^ 0x776f_726e_0000_0000_0000_0000_0000_0001)
@@ -291,7 +296,12 @@ impl World {
                 continue;
             };
             let window = if own { WINDOW_OWN } else { WINDOW };
-            if self.worn_cache.first_seen.get(&id).is_none_or(|t| now.saturating_duration_since(*t) > window) {
+            if self
+                .worn_cache
+                .first_seen
+                .get(&id)
+                .is_none_or(|t| now.saturating_duration_since(*t) > window)
+            {
                 continue;
             }
             let listed: HashSet<Uuid> = if own {
@@ -334,6 +344,11 @@ impl World {
 
     /// Draw a copy of `object` on the avatar `avatar`; its root's key.
     fn insert_worn_copy(&mut self, avatar: ObjKey, object: &WornObject) -> Option<ObjKey> {
+        // (never a HUD, even from a file of another version: its prims
+        // would be picked and selected on the screen)
+        if capture::is_hud_point(object.point) {
+            return None;
+        }
         let mut locals: HashMap<u32, u32> = HashMap::new();
         let mut root = None;
         for (i, prim) in object.prims.iter().enumerate() {
@@ -438,10 +453,12 @@ impl World {
             let own = *avatar == self.agent_id;
             let current = self.objects.index_of_uuid(avatar).and_then(|i| self.objects.get(i)).map(|o| o.key);
             let window = if own { WINDOW_OWN } else { WINDOW };
-            let late = self.worn_cache.first_seen.get(avatar).is_none_or(|t| now.saturating_duration_since(*t) > window);
-            let listed: Option<HashSet<Uuid>> = (!own).then(|| {
-                self.listed_attachments(avatar).iter().map(|(o, _)| *o).collect()
-            });
+            let late = self
+                .worn_cache
+                .first_seen
+                .get(avatar)
+                .is_none_or(|t| now.saturating_duration_since(*t) > window);
+            let listed: Option<HashSet<Uuid>> = (!own).then(|| self.listed_attachments(avatar).iter().map(|(o, _)| *o).collect());
             list.retain_mut(|c| {
                 let real = if own {
                     worn_items.get(&c.item_id).copied()
@@ -491,7 +508,11 @@ impl World {
         if self.worn_cache.io.is_none() {
             return;
         }
-        if self.worn_cache.last_capture.is_some_and(|t| now.saturating_duration_since(t) < CAPTURE_EVERY) {
+        if self
+            .worn_cache
+            .last_capture
+            .is_some_and(|t| now.saturating_duration_since(t) < CAPTURE_EVERY)
+        {
             return;
         }
         self.worn_cache.last_capture = Some(now);
@@ -534,7 +555,9 @@ impl World {
             .into_iter()
             .filter_map(|i| self.objects.get(i).map(|o| o.full_id))
             .collect();
-        self.listed_attachments(&id).iter().all(|(object, point)| capture::is_hud_point(*point) || roots.contains(object))
+        self.listed_attachments(&id)
+            .iter()
+            .all(|(object, point)| capture::is_hud_point(*point) || roots.contains(object))
     }
 }
 

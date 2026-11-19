@@ -49,20 +49,19 @@ impl WornCacheDemo {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let wolf = crate::demo::wolf_attachments(true);
-        let listed = wolf
-            .iter()
-            .map(|o| (o.full_id, attach_point(o.state)))
-            .collect::<Vec<_>>();
-        world.worn_cache.insert_set(crate::demo::DEMO_LOUP, kept_set(&wolf, saved_at, |_| Uuid::nil()));
+        let listed = wolf.iter().map(|o| (o.full_id, attach_point(o.state))).collect::<Vec<_>>();
+        world
+            .worn_cache
+            .insert_set(crate::demo::DEMO_LOUP, kept_set(&wolf, saved_at, |_| Uuid::nil()));
         let outfit: Vec<ObjectUpdate> = KEPT_OUTFIT
             .iter()
             .map(|&(item, point)| crate::demo::outfit_attachment(&request(Uuid::from_u128(item), point)))
             .collect();
         // (the demo's outfit objects take their item's id)
-        world.worn_cache.insert_set(world.agent_id, kept_set(&outfit, saved_at, |o| o.full_id));
-        if let Some(NetEvent::Appearance(mut look)) =
-            crate::demo::classic_events(&world.avatar_lib.shape_params).into_iter().nth(1)
-        {
+        world
+            .worn_cache
+            .insert_set(world.agent_id, kept_set(&outfit, saved_at, |o| o.full_id));
+        if let Some(NetEvent::Appearance(mut look)) = crate::demo::classic_events(&world.avatar_lib.shape_params).into_iter().nth(1) {
             look.attachments = listed;
             let _ = world.apply(NetEvent::Appearance(look));
         }

@@ -59,9 +59,7 @@ fn worn(template: &ObjectUpdate, parent: u32, local: u32, id: u128, point: u8, i
     root.parent_id = parent;
     root.state = (point & 0x0F) << 4 | (point >> 4);
     root.position = Vec3::ZERO;
-    root.name_values = item.map_or_else(String::new, |i| {
-        format!("AttachItemID STRING RW SV {}", Uuid::from_u128(i))
-    });
+    root.name_values = item.map_or_else(String::new, |i| format!("AttachItemID STRING RW SV {}", Uuid::from_u128(i)));
     root.text = "floating text".into();
     let mut child = root.clone();
     child.local_id = local + 1;
@@ -141,7 +139,10 @@ fn what_we_wore_is_kept_without_what_a_copy_leaves_out() {
     assert_eq!(set.saved_at, 7);
     assert_eq!(set.objects.len(), 1, "the HUD is not kept");
     let hat = &set.objects[0];
-    assert_eq!((hat.root_id, hat.item_id, hat.point), (Uuid::from_u128(900), Uuid::from_u128(HAT_ITEM), 2));
+    assert_eq!(
+        (hat.root_id, hat.item_id, hat.point),
+        (Uuid::from_u128(900), Uuid::from_u128(HAT_ITEM), 2)
+    );
     assert_eq!(hat.prims.len(), 2);
     let root = aurora_net::objects::parse_compressed(&hat.prims[0].data, 0).expect("root");
     assert!(root.name_values.is_empty() && root.text.is_empty());
@@ -236,6 +237,13 @@ fn a_copy_goes_when_its_object_is_no_longer_worn() {
     world.update_worn_cache(t0);
     assert_eq!(copies_of(&world, &ME).len(), 1, "our hat only (the scarf is no outfit item)");
     assert_eq!(copies_of(&world, &OTHER).len(), 1, "the listed scarf only (the hat is not listed)");
+    // a copy is no worn object: not ours (the arrival's patience), not for
+    // RLVa, not against the simulator's list (J2)
+    assert_eq!(world.own_attachment_count(), 0);
+    assert!(world.rlva_temporary_attachment(copy_id(Uuid::from_u128(900))).is_none());
+    let other = world.objects.index_of_uuid(&OTHER).expect("the other avatar");
+    let listed = world.worn_vs_listed(other).expect("an avatar");
+    assert_eq!((listed.arrived, listed.missing.len()), (0, 1), "the scarf is still missing");
 
     // we take the hat off elsewhere, they take the scarf off
     outfit_links(&mut world, &[]);
@@ -297,7 +305,10 @@ fn only_wanted_objects_not_there_yet_are_drawn() {
     let outfit: HashSet<Uuid> = [Uuid::from_u128(10), Uuid::from_u128(20)].into();
     let listed: HashSet<Uuid> = [Uuid::from_u128(2), Uuid::from_u128(3)].into();
     assert_eq!(ids(wanted(&set, true, &outfit, &listed, |_| false)), vec![1, 2]);
-    assert_eq!(ids(wanted(&set, true, &outfit, &listed, |o| o.item_id == Uuid::from_u128(10))), vec![2]);
+    assert_eq!(
+        ids(wanted(&set, true, &outfit, &listed, |o| o.item_id == Uuid::from_u128(10))),
+        vec![2]
+    );
     assert_eq!(ids(wanted(&set, false, &outfit, &listed, |_| false)), vec![2, 3]);
     assert!(fresh(100, 100 + MAX_AGE.as_secs()));
     assert!(!fresh(100, 101 + MAX_AGE.as_secs()));

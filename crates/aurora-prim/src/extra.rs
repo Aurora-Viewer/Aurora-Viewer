@@ -370,7 +370,10 @@ mod tests {
         let f = back.flexible.expect("flexible");
         assert_eq!(f.softness, 2);
         assert!((f.tension - 1.5).abs() < 0.01);
-        assert_eq!(parse_extra_params(&pack_extra_params(&ExtraParams::default())), ExtraParams::default());
+        assert_eq!(
+            parse_extra_params(&pack_extra_params(&ExtraParams::default())),
+            ExtraParams::default()
+        );
     }
 
     #[test]
