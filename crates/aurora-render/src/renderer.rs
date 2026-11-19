@@ -8201,6 +8201,12 @@ impl Backend {
             ));
         }
         packet.output = second.target.as_ref().map(|t| t.texture.clone());
+        // the window's reflection probes, captured by this renderer: the
+        // second one's own stay empty, and without them the ambient light
+        // of everything in shade is black
+        if second.backend.probes.share_cubes(&self.probes) {
+            second.backend.remake_frame_groups();
+        }
         let _ = second.backend.render_view(packet);
     }
 

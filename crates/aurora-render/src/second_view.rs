@@ -152,6 +152,9 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
     params.part_pick = None;
     // focused for the window's camera
     params.dof = None;
+    // the probes are the window's (`Probes::share_cubes`): its renderer
+    // captures them
+    params.probes.capture = None;
     FramePacket {
         output: None,
         index: main.index,
