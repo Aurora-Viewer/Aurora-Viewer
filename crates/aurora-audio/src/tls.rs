@@ -103,7 +103,7 @@ impl ServerCertVerifier for Lenient {
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
         {
             Err(rustls::Error::InvalidCertificate(error)) => {
-                let issue = classify(&error, end_entity);
+                let issue = classify(&error, end_entity, now);
                 log::warn!("music stream: {server_name:?} certificate refused by the system ({error}), playing anyway: {issue:?}");
                 *self.issue.lock() = Some(issue);
                 Ok(ServerCertVerified::assertion())
@@ -137,31 +137,68 @@ impl ServerCertVerifier for Lenient {
 
 /// The category of a certificate failure; an expiry carries its date, read
 /// from the certificate when the verifier does not give it (Windows does not).
-pub(crate) fn classify(error: &CertificateError, end_entity: &CertificateDer<'_>) -> CertificateIssue {
+/// macOS names only a few failures and reports an expired or self-signed
+/// certificate as a bare "other" error: the certificate itself then says which
+/// it is, at the time of the handshake (`now`).
+pub(crate) fn classify(error: &CertificateError, end_entity: &CertificateDer<'_>, now: UnixTime) -> CertificateIssue {
     match error {
         CertificateError::ExpiredContext { not_after, .. } => CertificateIssue::Expired {
             not_after: i64::try_from(not_after.as_secs()).ok(),
         },
         CertificateError::Expired => CertificateIssue::Expired {
-            not_after: not_after(end_entity),
+            not_after: Facts::read(end_entity).map(|facts| facts.not_after),
         },
         CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => CertificateIssue::NotYetValid,
         CertificateError::UnknownIssuer | CertificateError::BadSignature => CertificateIssue::Untrusted,
         CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => CertificateIssue::WrongName,
         CertificateError::Revoked => CertificateIssue::Revoked,
-        _ => CertificateIssue::Other,
+        _ => match Facts::read(end_entity) {
+            Some(facts) => facts.issue_at(i64::try_from(now.as_secs()).unwrap_or(i64::MAX)),
+            None => CertificateIssue::Other,
+        },
     }
 }
 
-/// The end of validity of a certificate, in Unix seconds.
-fn not_after(cert: &CertificateDer<'_>) -> Option<i64> {
-    let (_, parsed) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
-    Some(parsed.validity().not_after.timestamp())
+/// What the certificate itself says, for the failures the verifier leaves
+/// unnamed.
+struct Facts {
+    not_before: i64,
+    not_after: i64,
+    self_issued: bool,
+}
+
+impl Facts {
+    fn read(cert: &CertificateDer<'_>) -> Option<Self> {
+        let (_, parsed) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+        let validity = parsed.validity();
+        Some(Self {
+            not_before: validity.not_before.timestamp(),
+            not_after: validity.not_after.timestamp(),
+            self_issued: parsed.issuer() == parsed.subject(),
+        })
+    }
+
+    fn issue_at(&self, now: i64) -> CertificateIssue {
+        if now > self.not_after {
+            CertificateIssue::Expired {
+                not_after: Some(self.not_after),
+            }
+        } else if now < self.not_before {
+            CertificateIssue::NotYetValid
+        } else if self.self_issued {
+            CertificateIssue::Untrusted
+        } else {
+            CertificateIssue::Other
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-11-19 00:00:00 UTC, the day after the test certificate expires.
+    const NOW: UnixTime = UnixTime::since_unix_epoch(std::time::Duration::from_secs(1_795_046_400));
 
     fn certificate(not_after: (i32, u8, u8)) -> CertificateDer<'static> {
         let mut params = rcgen::CertificateParams::new(vec!["radio.example".to_string()]).unwrap();
@@ -177,17 +214,17 @@ mod tests {
         // 2026-11-18 00:00:00 UTC
         let end = Some(1_794_960_000);
         assert_eq!(
-            classify(&CertificateError::Expired, &cert),
+            classify(&CertificateError::Expired, &cert, NOW),
             CertificateIssue::Expired { not_after: end }
         );
         let context = CertificateError::ExpiredContext {
             time: UnixTime::since_unix_epoch(std::time::Duration::from_secs(1_795_000_000)),
             not_after: UnixTime::since_unix_epoch(std::time::Duration::from_secs(1_794_960_000)),
         };
-        assert_eq!(classify(&context, &cert), CertificateIssue::Expired { not_after: end });
+        assert_eq!(classify(&context, &cert, NOW), CertificateIssue::Expired { not_after: end });
         let unreadable = CertificateDer::from(vec![1, 2, 3]);
         assert_eq!(
-            classify(&CertificateError::Expired, &unreadable),
+            classify(&CertificateError::Expired, &unreadable, NOW),
             CertificateIssue::Expired { not_after: None }
         );
     }
@@ -201,10 +238,28 @@ mod tests {
             (CertificateError::NotValidForName, CertificateIssue::WrongName),
             (CertificateError::NotValidYet, CertificateIssue::NotYetValid),
             (CertificateError::Revoked, CertificateIssue::Revoked),
-            (CertificateError::BadEncoding, CertificateIssue::Other),
         ];
         for (error, issue) in cases {
-            assert_eq!(classify(&error, &cert), issue, "{error:?}");
+            assert_eq!(classify(&error, &cert, NOW), issue, "{error:?}");
         }
+    }
+
+    /// macOS gives no category for an expired or self-signed certificate: the
+    /// certificate's own dates and issuer name it.
+    #[test]
+    fn an_unnamed_failure_is_read_from_the_certificate() {
+        let unnamed = CertificateError::Other(rustls::OtherError(Arc::new(std::io::Error::other("trust failed"))));
+        assert_eq!(
+            classify(&unnamed, &certificate((2026, 11, 18)), NOW),
+            CertificateIssue::Expired {
+                not_after: Some(1_794_960_000)
+            }
+        );
+        assert_eq!(classify(&unnamed, &certificate((2030, 1, 1)), NOW), CertificateIssue::Untrusted);
+        let early = UnixTime::since_unix_epoch(std::time::Duration::from_secs(1_500_000_000));
+        assert_eq!(classify(&unnamed, &certificate((2030, 1, 1)), early), CertificateIssue::NotYetValid);
+        let unreadable = CertificateDer::from(vec![1, 2, 3]);
+        assert_eq!(classify(&unnamed, &unreadable, NOW), CertificateIssue::Other);
+        assert_eq!(classify(&CertificateError::BadEncoding, &unreadable, NOW), CertificateIssue::Other);
     }
 }
