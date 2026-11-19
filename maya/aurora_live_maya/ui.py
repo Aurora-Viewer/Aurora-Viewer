@@ -74,7 +74,7 @@ class Window:
         self.lod_frame = cmds.frameLayout(label="Import / LOD", collapsable=True, collapse=True, marginWidth=4)
         self.lod_name = cmds.text(label="Select one mesh in the list.", align="left")
         self.lod_rows = {}
-        for level, _ratio in convert.LOD_LEVELS:
+        for level, ratio in convert.LOD_LEVELS:
             cmds.rowLayout(numberOfColumns=5, adjustableColumn=3, columnWidth5=(52, 130, 80, 84, 60))
             cmds.text(label=level.title())
             mode = cmds.optionMenu(changeCommand=lambda *_: self.save_lods())
@@ -86,7 +86,9 @@ class Window:
             budget = cmds.optionMenu(changeCommand=lambda *_: self.save_lods())
             for label in LOD_BUDGETS:
                 cmds.menuItem(label=label)
-            value = cmds.floatField(minValue=0.1, maxValue=200000, precision=1, changeCommand=lambda *_: self.save_lods())
+            # A starting value: Maya warns when a field starts below its minimum.
+            value = cmds.floatField(minValue=0.1, maxValue=200000, value=ratio, precision=1,
+                                    changeCommand=lambda *_: self.save_lods())
             cmds.setParent("..")
             self.lod_rows[level] = (mode, name, budget, value)
         cmds.text(label="Click Import in Aurora's LiveMesh list. Your meshes stay unchanged.", align="left",
