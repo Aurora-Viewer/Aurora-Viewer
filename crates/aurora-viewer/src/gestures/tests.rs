@@ -427,3 +427,41 @@ fn firestorm_key_codes_and_ctrl_g_default() {
         Some(crate::keybinds::Action::Gestures)
     );
 }
+
+/// A failed preload may retry, and a decoded sound may be evicted while a
+/// gesture waits. Neither can suspend an already-started gesture (#2931).
+#[test]
+fn gesture_preload_is_checked_once_before_steps_start() {
+    let mut manager = Manager::default();
+    let item = Uuid::from_u128(2931);
+    let sound = Uuid::from_u128(2932);
+    let now = Instant::now();
+    manager.play(
+        item,
+        Gesture {
+            steps: vec![
+                Step::Sound {
+                    name: String::new(),
+                    asset: sound,
+                    flags: 0,
+                },
+                Step::Wait {
+                    seconds: 0.3,
+                    flags: WAIT_TIME,
+                },
+                chat("done"),
+            ],
+            ..Default::default()
+        },
+        None,
+    );
+    assert!(manager.tick_ready(now, &BTreeSet::new(), |_| false).is_empty());
+    let loaded = now + Duration::from_secs(5);
+    assert_eq!(manager.tick_ready(loaded, &BTreeSet::new(), |_| true), [Effect::Sound(sound)]);
+    assert_eq!(
+        manager.tick_ready(loaded + Duration::from_millis(301), &BTreeSet::new(), |_| false),
+        [Effect::Chat("done".into())],
+        "later reloads must not stall the running steps"
+    );
+    assert!(!manager.is_playing(item));
+}

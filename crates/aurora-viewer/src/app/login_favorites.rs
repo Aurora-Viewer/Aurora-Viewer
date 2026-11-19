@@ -81,7 +81,7 @@ impl App {
         let ids = self.world.favorites.list(&self.world.inventory).to_vec();
         let mut current = Vec::with_capacity(ids.len());
         for id in ids {
-            let Some(item) = self.world.inventory.items.get(&id) else {
+            let Some(item) = crate::world::landmarks::inventory_item(&self.world.inventory, id) else {
                 continue;
             };
             let (asset, name) = (item.asset_id, item.name.clone());

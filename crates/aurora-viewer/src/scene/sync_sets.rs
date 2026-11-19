@@ -955,6 +955,67 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
 
+    #[test]
+    fn what_moves_however_slowly_is_out_of_the_shelter_map() {
+        use crate::scene::{ObjGpu, Scene};
+        use std::time::{Duration, Instant};
+        let mut f = Fixture::new();
+        let root = f.add(9100, 0, false);
+        let child = f.add(9101, 9100, false);
+        let other = f.add(9102, 0, false);
+        let now = Instant::now();
+        let mut gpu: Vec<ObjGpu> = (0..=root.max(child).max(other)).map(|_| ObjGpu::default()).collect();
+        let moving = |f: &Fixture, gpu: &[ObjGpu], idx: usize, at: Instant| Scene::moves_for_shelter(&f.world, gpu, idx, at);
+        assert!(!moving(&f, &gpu, root, now));
+        // a slow turn (0.005 rad/s, 0.3°/s: under the old 1e-4 threshold),
+        // drawn turning: out, its linked prims too
+        f.update(root, |u| u.angular_velocity = Vec3::Z * 0.005);
+        assert!(moving(&f, &gpu, root, now));
+        assert!(moving(&f, &gpu, child, now));
+        assert!(!moving(&f, &gpu, other, now));
+        f.update(root, |u| u.angular_velocity = Vec3::ZERO);
+        assert!(!moving(&f, &gpu, child, now));
+        // a rotation a script steps (no motion reported): its own pose
+        // changed at its last sync, out for a while with its linked prims,
+        // then back (the pose given here, so that no correction fading
+        // counts as motion)
+        let (p, r) = {
+            let o = f.world.objects.get(root).expect("object");
+            (o.position, o.rotation)
+        };
+        assert!(!gpu[root].shelter.note(p, r, now));
+        assert!(gpu[root].shelter.note(p, r * Quat::from_rotation_z(0.26), now));
+        assert!(moving(&f, &gpu, child, now + Duration::from_secs(1)));
+        let end = gpu[root].shelter.end().expect("held");
+        assert!(!moving(&f, &gpu, child, end));
+        // physical
+        f.update(other, |u| u.update_flags |= 1);
+        assert!(moving(&f, &gpu, other, now));
+    }
+
+    #[test]
+    fn a_region_crossing_moves_nothing_out_of_the_shelter_map() {
+        use crate::scene::{ObjGpu, Scene};
+        use std::time::Instant;
+        let mut f = Fixture::new();
+        let root = f.add(9110, 0, false);
+        let now = Instant::now();
+        let mut gpu: Vec<ObjGpu> = (0..=root).map(|_| ObjGpu::default()).collect();
+        let (p, r) = {
+            let o = f.world.objects.get(root).expect("object");
+            (o.position, o.rotation)
+        };
+        // drawn once, then synced again after the render origin shifted (a
+        // region crossing, the GPU's recovery): every model matrix changed,
+        // but the hold reads the object's own pose, which did not
+        assert!(!gpu[root].shelter.note(p, r, now));
+        assert!(!gpu[root].shelter.note(p, r, now));
+        assert!(!Scene::moves_for_shelter(&f.world, &gpu, root, now));
+        // a move of its own does start a hold
+        assert!(gpu[root].shelter.note(p + Vec3::X * 0.5, r, now));
+        assert!(Scene::moves_for_shelter(&f.world, &gpu, root, now));
+    }
+
     /// Test double of the scene state: rigged meshes, objects needing a
     /// sync beyond their flags, pending geometry.
     #[derive(Default)]
@@ -1164,6 +1225,16 @@ mod tests {
         assert!(f.world.objects.get(child).expect("scaling prim").has_motion());
         assert_eq!(f.frame(&state), vec![child]);
         assert_eq!(f.quiet_frame(&all, &state), vec![child]);
+        f.world.objects.damp_drawables(
+            1.0,
+            |_| false,
+            |_| {
+                Some(crate::world::motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
         f.world
             .objects
             .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
@@ -1355,6 +1426,7 @@ mod tests {
         assert_eq!(f.frame(&state), vec![avatar, att_child]);
         assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child]);
         // faded: placed once more, back on its anchor, then left to the GPU
+        f.world.objects.settle_drawables();
         f.world
             .objects
             .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
@@ -1824,18 +1896,18 @@ mod tests {
         let mut f = Fixture::new();
         let state = State::default();
         let objs: Vec<usize> = (0..100).map(|i| f.add(9000 + i, 0, false)).collect();
-        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         assert_eq!(f.frame_events(&state, &[], 0.0), objs);
         for &idx in &objs {
             f.sets.lod.watch(idx, if idx % 2 == 0 { 1.0 } else { 30.0 });
         }
         // the camera at rest: nobody, frame after frame
         for _ in 0..3 * LOD_PERIOD {
-            f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+            f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
             assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
         }
         // 2 m: those 1 m from a change of level, a slice of the slab per frame
-        f.sets.lod.advance(Vec3::X * 2.0, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::X * 2.0, 2.0, 1.0, 0.5);
         let n = f.world.objects.slots.len();
         let most = n.div_ceil(LOD_PERIOD as usize);
         let mut seen = Vec::new();
@@ -1850,7 +1922,7 @@ mod tests {
         assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
         // one waits for its first sync: its turn does not list it
         f.sets.arrivals.push(objs[1]);
-        f.sets.lod.advance(Vec3::X * 40.0, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::X * 40.0, 2.0, 1.0, 0.5);
         let mut seen = Vec::new();
         for _ in 0..LOD_PERIOD {
             seen.extend(f.frame_events(&state, &[], 0.0));
@@ -1879,7 +1951,7 @@ mod tests {
         let avatar = f.add(9000, 0, true);
         let worn: Vec<usize> = (0..60).map(|i| f.add(9001 + i, 9000, false)).collect();
         let still = f.add(9900, 0, false);
-        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         f.frame_events(&state, &[], 0.0);
         state.anchored.extend(worn.iter().copied());
         f.sets.lod.watch(still, 100.0);

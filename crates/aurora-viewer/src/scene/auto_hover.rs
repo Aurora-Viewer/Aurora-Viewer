@@ -5,7 +5,7 @@
 //! streamed physical size, world contact and animated render palettes.
 use super::meshes::MeshView;
 use super::{GpuGeom, Scene, anim, avatar::AvatarLibrary};
-use crate::world::World;
+use crate::world::{World, objects::Object};
 use aurora_assets::{MeshFace, SkinInfo};
 use aurora_render::SkinVertex;
 use crossbeam_channel::{Receiver, Sender};
@@ -33,6 +33,9 @@ pub(super) struct AutoHover {
     tx: Sender<(u64, Option<Measurement>)>,
     rx: Receiver<(u64, Option<Measurement>)>,
     measurement: Option<Measurement>,
+    // Pose placement retains the last successful height while the current
+    // outfit is recalibrated. Only value() may authorize hover publication.
+    grounding: Option<(uuid::Uuid, f32)>,
     offset: Option<f32>,
     base: Option<Arc<anim::SkeletonBase>>,
     base_hash: u64,
@@ -52,6 +55,7 @@ impl Default for AutoHover {
             tx,
             rx,
             measurement: None,
+            grounding: None,
             offset: None,
             base: None,
             base_hash: 0,
@@ -72,6 +76,7 @@ pub(super) struct RemoteSoles {
 }
 
 struct SoleSnapshot {
+    avatar: uuid::Uuid,
     signature: u64,
     ready: bool,
     estimate: Estimate,
@@ -87,6 +92,11 @@ impl AutoHover {
             .then_some(self.measurement)
             .flatten()
             .map(|measurement| measurement.height)
+    }
+
+    fn grounding_value(&self, avatar: uuid::Uuid) -> Option<f32> {
+        self.observed?;
+        self.grounding.filter(|(owner, _)| *owner == avatar).map(|(_, height)| height)
     }
 
     fn prepare_base(&mut self, rig: &anim::Rig, base: &Arc<anim::SkeletonBase>) {
@@ -107,6 +117,7 @@ impl AutoHover {
     /// one avatar; a retired cache's late job cannot reach its replacement.
     fn update(&mut self, snapshot: SoleSnapshot, jobs: &super::jobs::Jobs, now: Instant) -> bool {
         let SoleSnapshot {
+            avatar,
             signature,
             ready,
             estimate,
@@ -126,6 +137,9 @@ impl AutoHover {
             if ready && self.observed == Some(stamp) {
                 self.finished = Some(stamp);
                 self.measurement = result;
+                if let Some(measurement) = result {
+                    self.grounding = Some((avatar, measurement.height));
+                }
                 completed = true;
             }
         }
@@ -143,9 +157,19 @@ impl AutoHover {
     }
 }
 
+/// `hidden`: one bit per texture-entry face the renderer never draws
+/// (`hidden_faces`); those faces are not measured.
 enum Surface {
-    Mesh { mesh: Box<MeshView>, rigid: Option<Mat4> },
-    Geometry { geom: Arc<GpuGeom>, model: Mat4 },
+    Mesh {
+        mesh: Box<MeshView>,
+        rigid: Option<Mat4>,
+        hidden: u64,
+    },
+    Geometry {
+        geom: Arc<GpuGeom>,
+        model: Mat4,
+        hidden: u64,
+    },
 }
 
 struct Estimate {
@@ -188,6 +212,26 @@ fn lower_leg_joint(rig: &anim::Rig, mut joint: usize) -> bool {
         joint = parent;
     }
     false
+}
+
+/// The faces the renderer never draws: a zero texture-entry alpha
+/// (`te_invisible`, LL's PASS_ALPHA_INVISIBLE) or the transparent texture
+/// without a glTF material (`classify`'s `Pass::Hidden`). Mesh bodies and
+/// boots carry every foot variant (flat, high, paws…) and hide the unused
+/// ones from their HUDs this way: a hidden variant is not a sole, and
+/// switching variants must recalibrate (#3962).
+fn hidden_faces(object: &Object) -> u64 {
+    (0..aurora_prim::te::MAX_TES.min(64))
+        .filter(|&face| {
+            super::te_invisible(object, face)
+                || (object.visual_texture_face(face).texture == aurora_prim::te::TRANSPARENT_TEXTURE
+                    && object.visual_material(face).is_none())
+        })
+        .fold(0, |mask, face| mask | 1 << face)
+}
+
+fn face_shown(hidden: u64, face: usize) -> bool {
+    face >= 64 || hidden & (1 << face) == 0
 }
 
 fn bits(values: &[f32], hash: &mut impl Hasher) {
@@ -263,9 +307,12 @@ impl Scene {
             self.auto_hover.second_life,
         )?;
         let adjustment = if owner == world.agent_id {
-            self.automatic_hover_base(world).unwrap_or(0.0)
+            self.auto_hover.grounding_value(owner).unwrap_or(0.0)
         } else {
-            self.remote_soles.entries.get(&owner).and_then(AutoHover::value)?
+            self.remote_soles
+                .entries
+                .get(&owner)
+                .and_then(|state| state.grounding_value(owner))?
         };
         Some(skeleton.neutral_root_height - height * 0.5 - adjustment)
     }
@@ -293,6 +340,7 @@ impl Scene {
         if !enabled && !self.ground_avatar_feet {
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
+            self.auto_hover.grounding = None;
             self.auto_hover.offset = None;
             while self.auto_hover.rx.try_recv().is_ok() {
                 self.auto_hover.pending = false;
@@ -444,8 +492,10 @@ impl Scene {
                 bits(&object.rotation.to_array(), &mut hash);
                 // Calibration uses the reported pose, so use its full size
                 // too, without following temporary render damping.
-                let scale = object.render.local_scale.unwrap_or(object.scale);
+                let scale = object.local_preview_scale(object.scale);
                 bits(&scale.to_array(), &mut hash);
+                let hidden = hidden_faces(object);
+                hidden.hash(&mut hash);
                 let volume = object.visual_volume();
                 if volume.is_mesh() {
                     if let Some(sculpt) = volume.sculpt {
@@ -469,6 +519,7 @@ impl Scene {
                                     surfaces.push(Surface::Mesh {
                                         mesh: Box::new(mesh),
                                         rigid: (!own_rig).then(|| model * Mat4::from_scale(scale)),
+                                        hidden,
                                     });
                                 }
                             }
@@ -487,6 +538,7 @@ impl Scene {
                         Some(geom) => surfaces.push(Surface::Geometry {
                             geom,
                             model: model * Mat4::from_scale(scale),
+                            hidden,
                         }),
                         None => ready = false,
                     }
@@ -497,6 +549,7 @@ impl Scene {
             }
         }
         Some(SoleSnapshot {
+            avatar,
             signature: hash.finish(),
             ready,
             estimate: Estimate {
@@ -549,10 +602,24 @@ fn skinned_point(position: Vec3, vertex: &SkinVertex, transforms: &[Mat4], feet:
     Some(point)
 }
 
-fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, rig: &anim::Rig, matrices: &[Mat4]) -> Option<f32> {
+fn mesh_min(
+    faces: &[MeshFace],
+    hidden: u64,
+    skin: Option<&SkinInfo>,
+    rigid: Option<Mat4>,
+    rig: &anim::Rig,
+    matrices: &[Mat4],
+) -> Option<f32> {
     let mut min = None;
+    let shown = || {
+        faces
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| face_shown(hidden, *i))
+            .map(|(_, face)| face)
+    };
     if let Some(model) = rigid {
-        for face in faces {
+        for face in shown() {
             for &index in &face.indices {
                 if let Some(p) = face.positions.get(index as usize) {
                     lower(&mut min, model.transform_point3(Vec3::from_array(*p)));
@@ -581,7 +648,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
         .collect();
     // Same packing as jobs::mesh_to_faces, without rebuilding normals, UVs
     // and GPU buffers for an already loaded mesh just to measure its feet.
-    for face in faces {
+    for face in shown() {
         if face.positions.len() > 65536
             || face.indices.len() < 3
             || face.joints.len() != face.positions.len()
@@ -595,7 +662,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
             let mut vertex = SkinVertex::default();
             for k in 0..4 {
                 vertex.joints[k] = (face.joints[i][k] as usize).min(skin.joint_names.len() - 1) as u8;
-                vertex.weights[k] = (face.weights[i][k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                vertex.weights[k] = aurora_render::pack_skin_weight(face.weights[i][k]);
             }
             if let Some(point) = skinned_point(
                 skin.bind_shape.transform_point3(Vec3::from_array(*position)),
@@ -648,8 +715,9 @@ impl Estimate {
                 let mut min = None;
                 let rigged = matches!(&surface, Surface::Mesh { rigid: None, .. });
                 match surface {
-                    Surface::Geometry { geom, model } => {
-                        for face in geom.pick_faces.iter().flatten() {
+                    Surface::Geometry { geom, model, hidden } => {
+                        let shown = geom.pick_faces.iter().enumerate().filter(|(i, _)| face_shown(hidden, *i));
+                        for face in shown.filter_map(|(_, face)| face.as_ref()) {
                             for &index in &face.indices {
                                 if let Some(p) = face.positions.get(index as usize) {
                                     lower(&mut min, model.transform_point3(Vec3::from_array(*p)));
@@ -661,11 +729,11 @@ impl Estimate {
                             "auto hover rigid surface: size {size:.3?}, neutral center {center:.3?}, rotation {rotation:.4?}, lowest {min:?}"
                         );
                     }
-                    Surface::Mesh { mesh, rigid } => {
+                    Surface::Mesh { mesh, rigid, hidden } => {
                         // the finest level held (the high one, as LLVOAvatar reads)
                         let section = mesh.lod_section(3).ok_or(())?;
                         let faces = aurora_assets::decode_mesh_lod(section).map_err(|_| ())?;
-                        if let Some(z) = mesh_min(&faces, mesh.skin.as_deref(), rigid, rig, &matrices) {
+                        if let Some(z) = mesh_min(&faces, hidden, mesh.skin.as_deref(), rigid, rig, &matrices) {
                             lower(&mut min, Vec3::Z * z);
                         }
                         if let Some(model) = rigid {
@@ -763,30 +831,30 @@ mod tests {
     fn only_drawn_vertices_with_nonzero_foot_weights_select_the_minimum() {
         let lib = library();
         let matrices = vec![Mat4::IDENTITY; lib.rig.len()];
-        assert!((mesh_min(&[face()], Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
+        assert!((mesh_min(&[face()], 0, Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
         let mut unrelated = face();
         unrelated.weights.fill([0.0, 1.0, 0.0, 0.0]);
-        assert_eq!(mesh_min(&[unrelated], Some(&skin()), None, &lib.rig, &matrices), None);
+        assert_eq!(mesh_min(&[unrelated], 0, Some(&skin()), None, &lib.rig, &matrices), None);
     }
 
     #[test]
     fn tiny_weights_rounded_to_zero_do_not_select_low_vertices() {
         let lib = library();
         let mut geometry = face();
-        geometry.weights[1] = [0.0001, 0.9999, 0.0, 0.0];
+        geometry.weights[1] = [0.000001, 0.999999, 0.0, 0.0];
         let matrices = vec![Mat4::IDENTITY; lib.rig.len()];
-        assert!((mesh_min(&[geometry], Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
+        assert!((mesh_min(&[geometry], 0, Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
     }
 
     #[test]
     fn selected_vertices_blend_every_joint_and_normalize_packed_weights() {
         let vertex = SkinVertex {
             joints: [0, 1, 0, 0],
-            weights: [64, 191, 0, 0],
+            weights: [16384, 49151, 0, 0],
         };
         let matrices = [Mat4::from_translation(-Vec3::Z), Mat4::from_translation(Vec3::Z)];
         let point = skinned_point(Vec3::ZERO, &vertex, &matrices, &[true, false]).unwrap();
-        assert!((point.z - 127.0 / 255.0).abs() < 1e-6);
+        assert!((point.z - 32767.0 / 65535.0).abs() < 1e-6);
         assert_eq!(skinned_point(Vec3::ZERO, &vertex, &matrices, &[false, false]), None);
         assert_eq!(skinned_point(Vec3::ZERO, &SkinVertex::default(), &matrices, &[true, true]), None);
     }
@@ -800,7 +868,7 @@ mod tests {
         let mut skin = skin();
         skin.inverse_bind[0] = Mat4::from_translation(Vec3::Z * 0.1);
         // (-.1 - .2 + .1) * 2 + .4 = 0
-        assert!(mesh_min(&[face()], Some(&skin), None, &lib.rig, &matrices).unwrap().abs() < 1e-5);
+        assert!(mesh_min(&[face()], 0, Some(&skin), None, &lib.rig, &matrices).unwrap().abs() < 1e-5);
     }
 
     #[test]
@@ -813,7 +881,7 @@ mod tests {
         let mut geometry = face();
         geometry.positions[1][2] = 0.0;
         geometry.weights.fill([0.5, 0.5, 0.0, 0.0]);
-        let actual = mesh_min(&[geometry], Some(&skin), None, &lib.rig, &matrices).unwrap();
+        let actual = mesh_min(&[geometry], 0, Some(&skin), None, &lib.rig, &matrices).unwrap();
         // The drawn minimum is -.1 -.2 + .5 * pelvis height (1 m).
         assert!(
             (actual - 0.2).abs() < 1e-5,
@@ -831,7 +899,7 @@ mod tests {
         geometry.positions[1][2] = 0.0;
         geometry.joints.fill([254, 0, 0, 0]);
         geometry.weights.fill([1.0, 0.0, 0.0, 0.0]);
-        let actual = mesh_min(&[geometry], Some(&skin), None, &lib.rig, &matrices);
+        let actual = mesh_min(&[geometry], 0, Some(&skin), None, &lib.rig, &matrices);
         assert!(
             actual.is_some_and(|height| (height + 0.3).abs() < 1e-5),
             "invalid index must reach the final foot joint: {actual:?}"
@@ -866,7 +934,7 @@ mod tests {
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_4),
             Vec3::Z * -0.2,
         );
-        assert!((mesh_min(&[geometry], None, Some(model), &lib.rig, &[]).unwrap() + 0.2).abs() < 1e-5);
+        assert!((mesh_min(&[geometry], 0, None, Some(model), &lib.rig, &[]).unwrap() + 0.2).abs() < 1e-5);
     }
 
     fn fixture() -> (World, Scene, Instant) {
@@ -1021,6 +1089,7 @@ mod tests {
             surfaces: vec![Surface::Mesh {
                 mesh: Box::new(mesh.unwrap()),
                 rigid: None,
+                hidden: 0,
             }],
         };
         assert!((estimate.calculate().unwrap().height - 0.18).abs() < 0.001);
@@ -1350,7 +1419,7 @@ mod tests {
             .world_with(&lib.rig.local_rot, Vec3::ZERO, &skeleton.base.local_pos, &skeleton.base.scale);
         let mesh = scene.meshes.view(&fixture.mesh).unwrap();
         let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3).unwrap()).unwrap();
-        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &neutral).unwrap();
+        let lowest = mesh_min(&faces, 0, mesh.skin.as_deref(), None, &lib.rig, &neutral).unwrap();
         let hover = skeleton.neutral_root_height - half - lowest;
         world.objects.get_mut(index).unwrap().position = Vec3::new(serial as f32 * 3.0, 0.0, half + hover);
         scene.palette_base(fixture.avatar);
@@ -1371,7 +1440,7 @@ mod tests {
             .zip(&lib.rig.default_world_inv)
             .map(|(pose, inv)| *pose * inv.inverse())
             .collect();
-        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
+        let lowest = mesh_min(&faces, 0, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
         let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
         Scene::object_transform(world, index, at, 0).unwrap().0.z - lib.pelvis.z + lowest
     }
@@ -1562,7 +1631,7 @@ mod tests {
                     .zip(&lib.rig.default_world_inv)
                     .map(|(posed, inv)| *posed * inv.inverse())
                     .collect();
-                let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
+                let lowest = mesh_min(&faces, 0, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
                 let root = Scene::object_transform(&world, owner, at, 0).unwrap().0;
                 let sole = root.z - lib.pelvis.z + lowest;
                 assert!(sole.abs() < 0.003, "frame {frame}: stopping changed the sole height to {sole:.6} m");
@@ -1593,7 +1662,7 @@ mod tests {
         let mesh = scene.meshes.view(&crate::demo::auto_hover::MESH).unwrap();
         let section = mesh.bytes.section(mesh.header.lods[3].unwrap()).unwrap();
         let faces = aurora_assets::decode_mesh_lod(section).unwrap();
-        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &scene.auto_hover.matrices).unwrap();
+        let lowest = mesh_min(&faces, 0, mesh.skin.as_deref(), None, &lib.rig, &scene.auto_hover.matrices).unwrap();
         let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
         let bottom_world = root.z - lib.pelvis.z + lowest;
         assert!(
@@ -2036,6 +2105,127 @@ mod tests {
     }
 
     #[test]
+    fn own_foot_placement_keeps_its_last_sole_while_recalibrating() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        scene.ground_avatar_feet = true;
+        crate::demo::auto_hover::install_mesh(&world.avatar_lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        settle(&mut scene, &mut world, now);
+        let owner = world.agent_id;
+        let previous_stamp = scene.auto_hover.finished.unwrap();
+        let previous_sole = scene.grounding_sole_height(&world, owner).unwrap();
+        let previous_height = scene.automatic_hover_base(&world).unwrap();
+        assert_eq!(
+            scene.auto_hover.grounding_value(uuid::Uuid::nil()),
+            None,
+            "another avatar cannot reuse the retained sole"
+        );
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let shoe = world
+            .objects
+            .index_of_uuid(&crate::demo::u(crate::demo::auto_hover::LEFT.into()))
+            .unwrap();
+        // A rigged attachment's object transform is not its skinned sole.
+        // Updating that transform invalidates the outfit without moving it.
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = now + Duration::from_secs(1);
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        assert_eq!(scene.automatic_hover_base(&world), None, "new outfit is not ready to publish");
+        assert_eq!(
+            scene.grounding_sole_height(&world, owner),
+            Some(previous_sole),
+            "recalibration discarded the visible shoe compensation"
+        );
+        scene
+            .auto_hover
+            .tx
+            .send((
+                previous_stamp,
+                Some(Measurement {
+                    height: 1.7,
+                    lowest: Some(0.0),
+                }),
+            ))
+            .unwrap();
+        scene.update_auto_hover(&mut world, true, 0.1, true, at);
+        assert_eq!(
+            world.hover_height.value(),
+            0.35,
+            "an offset edit must not publish a retained or stale height"
+        );
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        // A failed replacement is not a new valid sole either.
+        scene.auto_hover.tx.send((scene.auto_hover.observed.unwrap(), None)).unwrap();
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        assert_eq!(scene.automatic_hover_base(&world), None);
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = at + Duration::from_millis(50);
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        for _ in 0..2 {
+            scene.update_auto_hover(&mut world, false, 0.0, true, at + SETTLE);
+        }
+        assert_eq!(scene.automatic_hover_base(&world), Some(previous_height));
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        assert_eq!(world.hover_height.value(), 0.35, "foot placement must preserve manual hover");
+        scene.ground_avatar_feet = false;
+        scene.update_auto_hover(&mut world, false, 0.0, true, at + Duration::from_secs(1));
+        assert_eq!(scene.automatic_hover_base(&world), None);
+        assert_ne!(
+            scene.grounding_sole_height(&world, owner),
+            Some(previous_sole),
+            "disabled calibration retained a usable height"
+        );
+    }
+
+    #[test]
+    fn remote_foot_placement_stays_active_while_its_sole_is_recalibrated() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        scene.ground_avatar_feet = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.06);
+        let avatar = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(avatar).unwrap().velocity = Vec3::ZERO;
+        for frame in 0..90 {
+            remote_step(&mut scene, &mut world, now + Duration::from_millis(frame * 16));
+        }
+        let previous_sole = scene.grounding_sole_height(&world, resident.avatar).unwrap();
+        let previous_height = scene.remote_soles.entries[&resident.avatar].value().unwrap();
+        let shoe = world
+            .objects
+            .index_of(&crate::world::objects::ObjKey {
+                region: 1,
+                local_id: resident.shoe,
+            })
+            .unwrap();
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = now + Duration::from_secs(2);
+        remote_step(&mut scene, &mut world, at);
+        assert_eq!(scene.remote_soles.entries[&resident.avatar].value(), None);
+        assert_eq!(scene.grounding_sole_height(&world, resident.avatar), Some(previous_sole));
+        let avatar = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        assert!(
+            scene.grounding_frame(&world, avatar, at).is_some(),
+            "recalibration switched off remote foot placement"
+        );
+        for frame in 1..=45 {
+            let at = at + Duration::from_millis(frame * 16);
+            remote_step(&mut scene, &mut world, at);
+            assert!(
+                rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003,
+                "recalibration moved the rendered sole at frame {frame}"
+            );
+        }
+        assert_eq!(scene.remote_soles.entries[&resident.avatar].value(), Some(previous_height));
+    }
+
+    #[test]
     fn rigid_foot_linksets_include_the_linked_heel_and_defer_until_geometry_arrives() {
         use super::super::{GeomKey, GeomState, ObjGpu, picking::PickFace};
         let (mut world, mut scene, now) = fixture();
@@ -2111,6 +2301,86 @@ mod tests {
         );
     }
 
+    fn install_variant_shoes(scene: &mut Scene, lib: &AvatarLibrary, drop: f32) {
+        crate::demo::auto_hover::install_variant_mesh(lib, scene, drop).unwrap();
+    }
+
+    fn set_face(world: &mut World, local_id: u32, face: usize, edit: impl FnOnce(&mut aurora_prim::te::TextureFace)) {
+        let index = world
+            .objects
+            .index_of(&crate::world::objects::ObjKey { region: 1, local_id })
+            .unwrap();
+        let object = world.objects.get_mut(index).unwrap();
+        let mut te = object.te.as_deref().cloned().unwrap_or_default();
+        edit(&mut te.faces[face]);
+        object.te = Some(Arc::new(te));
+    }
+
+    #[test]
+    fn hidden_foot_variants_are_not_soles_and_switching_them_recalibrates() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        scene.ground_avatar_feet = true;
+        install_variant_shoes(&mut scene, &world.avatar_lib, 0.3);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        settle(&mut scene, &mut world, now);
+        let shown = scene.automatic_hover_base(&world).unwrap();
+        let owner = world.agent_id;
+        let shown_sole = scene.grounding_sole_height(&world, owner).unwrap();
+        // The HUD hides the lower variant: a zero alpha, as the renderer omits.
+        set_face(&mut world, crate::demo::auto_hover::LEFT, 1, |face| face.color[3] = 0.0);
+        settle(&mut scene, &mut world, now + Duration::from_secs(1));
+        let hidden = scene.automatic_hover_base(&world).unwrap();
+        assert!(
+            (shown - hidden - 0.3).abs() < 0.01,
+            "a hidden variant still set the sole: {shown} -> {hidden}"
+        );
+        assert!((scene.grounding_sole_height(&world, owner).unwrap() - shown_sole - 0.3).abs() < 0.01);
+        // The transparent texture hides it too, as the renderer's Pass::Hidden.
+        set_face(&mut world, crate::demo::auto_hover::LEFT, 1, |face| {
+            face.color[3] = 1.0;
+            face.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+        });
+        settle(&mut scene, &mut world, now + Duration::from_secs(2));
+        assert!((scene.automatic_hover_base(&world).unwrap() - hidden).abs() < 1e-5);
+        // Showing it again measures it again.
+        set_face(&mut world, crate::demo::auto_hover::LEFT, 1, |face| {
+            face.texture = aurora_prim::te::DEFAULT_TEXTURE;
+        });
+        settle(&mut scene, &mut world, now + Duration::from_secs(3));
+        assert!((scene.automatic_hover_base(&world).unwrap() - shown).abs() < 1e-5);
+        // A tint or a texture change of a shown face is no outfit change.
+        let stamp = scene.auto_hover.finished;
+        set_face(&mut world, crate::demo::auto_hover::LEFT, 0, |face| {
+            face.color = [0.2, 0.4, 0.6, 1.0]
+        });
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + Duration::from_secs(4));
+        assert_eq!(scene.auto_hover.finished, stamp, "a tint recalibrated the outfit");
+    }
+
+    #[test]
+    fn hidden_face_mask_follows_the_renderer() {
+        let (mut world, _scene, _now) = fixture();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        let left = crate::demo::auto_hover::LEFT;
+        set_face(&mut world, left, 2, |face| face.color[3] = 0.0);
+        set_face(&mut world, left, 3, |face| face.texture = aurora_prim::te::TRANSPARENT_TEXTURE);
+        set_face(&mut world, left, 4, |face| face.color[3] = 0.5);
+        let index = world
+            .objects
+            .index_of(&crate::world::objects::ObjKey { region: 1, local_id: left })
+            .unwrap();
+        let mask = hidden_faces(world.objects.get(index).unwrap());
+        assert_eq!(mask & 0b11111, 0b01100, "alpha 0 and the transparent texture only");
+        assert!(face_shown(mask, 4) && !face_shown(mask, 2) && face_shown(mask, 64));
+    }
+
     #[test]
     fn invalid_loaded_mesh_keeps_the_previous_height_instead_of_applying_a_partial_estimate() {
         let lib = library();
@@ -2131,11 +2401,13 @@ mod tests {
                         physics_convex: None,
                         physics_mesh: None,
                         version: 1,
+                        creator: uuid::Uuid::nil(),
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
                     skin: None,
                 }),
                 rigid: Some(Mat4::IDENTITY),
+                hidden: 0,
             }],
         };
         assert_eq!(estimate.calculate(), None);

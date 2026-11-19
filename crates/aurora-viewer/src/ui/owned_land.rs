@@ -96,8 +96,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
             }
         });
     });
+    // LLFloaterLandHoldings::buttonCore: trackLocation, then the map opens
+    // centred on the parcel ("center")
     if let Some((x, y)) = map_destination {
-        world.map.track_location(x, y, agent_z, false);
+        world.map.show_location(x, y, agent_z);
     }
     if refresh {
         world.group_money.request_owned_land();

@@ -311,14 +311,39 @@ impl Editor<'_> {
                     .show(ui, |ui| body(self, ui));
             })
             .response;
-        if let Some(payload) = response.dnd_release_payload::<super::super::inventory::InvDrag>()
-            && !self.state.busy()
-        {
-            push(
-                self.out,
-                self.state,
-                inventory::add(self.inv, self.set, self.state.state, payload.0, self.state.container),
-            );
+        self.inventory_drop(ui, response.rect);
+    }
+
+    /// Animations dragged from the inventory: one item or a selection
+    /// (FloaterAO::handleDragAndDrop, ACCEPT_YES_MULTI). The cursor and the
+    /// outline say before the release whether the whole batch is taken: a
+    /// folder or any entry that is not an animation refuses it.
+    fn inventory_drop(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        use super::super::inventory::{drag, tree};
+        if !ui.rect_contains_pointer(rect) {
+            return;
+        }
+        let Some(ids) = drag::carried_ids(ui.ctx()) else { return };
+        let allowed = !self.state.busy() && !ids.is_empty() && ids.iter().all(|&id| inventory::animation(self.inv, id).is_some());
+        tree::drop_outline(ui, self.p, rect, allowed);
+        drag::feedback(
+            ui.ctx(),
+            if allowed {
+                egui::CursorIcon::Copy
+            } else {
+                egui::CursorIcon::NotAllowed
+            },
+        );
+        if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            if !self.state.busy() {
+                // A refused batch still says why, as a refused single item did.
+                push(
+                    self.out,
+                    self.state,
+                    inventory::add_many(self.inv, self.set, self.state.state, &ids, self.state.container),
+                );
+            }
         }
     }
 
@@ -391,8 +416,13 @@ impl Editor<'_> {
                     }
                 }
                 if widgets::icon_button(ui, self.p, "trash-filled", aurora_i18n::tr!("common-remove"), !self.state.busy()) {
-                    if matches!(list, List::Main) {
+                    // FloaterAO::onClickTrash (indra/newview/ao.cpp) removes
+                    // an animation at once: it is only a link. A group or a
+                    // track is a folder that goes to the Trash with what it
+                    // holds, so it asks first (#3675).
+                    if self.inv.folders.contains_key(&id) {
                         self.state.remove = Some(id);
+                        widgets::bring_floater_front(ui.ctx(), "ao_remove");
                     } else {
                         push(self.out, self.state, inventory::remove(self.inv, id));
                     }

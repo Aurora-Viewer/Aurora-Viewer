@@ -172,6 +172,7 @@ pub fn show(
     open: &mut bool,
     movement: &mut super::movement::MovementUi,
     movement_prefs: &mut crate::movement::Preferences,
+    water_volumes: &mut crate::movement::water_volume::Settings,
     keys: &crate::keybinds::KeyBindings,
     movement_status: &str,
 ) -> Vec<Action> {
@@ -209,7 +210,7 @@ pub fn show(
                     let actions = egui::ScrollArea::vertical()
                         .id_salt("ao_movement")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| movement.show(ui, p, movement_prefs, keys, movement_status))
+                        .show(ui, |ui| movement.show(ui, p, movement_prefs, water_volumes, keys, movement_status))
                         .inner;
                     if actions.changed {
                         out.push(Action::MovementPreferences);
@@ -270,6 +271,8 @@ pub fn show(
                         }
                         if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), true) {
                             state.remove = Some(set.id);
+                            // the question left folded to its title bar opens again
+                            widgets::bring_floater_front(ui.ctx(), "ao_remove");
                         }
                     }
                 });
@@ -478,7 +481,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         )
         .show(ctx, p, &mut open, |ui| {
             ui.label(aurora_i18n::tr!("ao-picker-help"));
-            ui.text_edit_singleline(&mut state.filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut state.filter, |edit| edit);
             let key = (
                 inv.generation,
                 state.filter.clone(),

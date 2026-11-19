@@ -21,6 +21,8 @@ pub(super) struct EditorResult {
     pub save: bool,
     pub open: Option<char>,
     pub copy: Option<char>,
+    /// an embedded object dragged out of the text, to rez in the world
+    pub drag: Option<char>,
     pub drop: Option<(usize, Uuid)>,
     #[cfg(test)]
     galley: Option<std::sync::Arc<egui::Galley>>,
@@ -266,7 +268,7 @@ pub(super) fn editor(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(url.as_ref());
             if output.response.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(url.as_ref()));
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::OpenUrl(url.to_string()));
             }
         }
     }
@@ -305,11 +307,16 @@ pub(super) fn editor(
             let response = ui.interact(
                 rect.intersect(output.text_clip_rect),
                 id.with(("attachment", index)),
-                egui::Sense::click(),
+                egui::Sense::click_and_drag(),
             );
             // LLViewerTextEditor::handleMouseUp opens items on a single click.
             if response.clicked() {
                 result.open = Some(marker);
+            }
+            // handleHover begins a drag past the threshold. Only an object
+            // has somewhere to go here: the world (dropObject).
+            if response.drag_started() && attachment.item.asset_type == 6 {
+                result.drag = Some(marker);
             }
             response
                 .clone()
@@ -353,8 +360,14 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
+    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
+    // a texture preview already open closes when @viewtexture applies, as
+    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
+    if !inv.can_preview(0) {
+        st.attachment_preview = None;
+    }
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(
