@@ -474,10 +474,12 @@ fn valid_option(c: &Command) -> bool {
         "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" | "shownames" | "accepttp"
         | "accepttprequest" | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "showhovertext" => Uuid::parse_str(&c.option).is_ok(),
-        // (the same null key, naming no one; not @sendimto, whose mere
-        // presence makes `rlva_can_send_session` check every session)
-        "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "startimto" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
-        "sendimto" => Uuid::parse_str(&c.option).is_ok(),
+        // (the same null key, naming no one; @sendimto's mere presence
+        // still makes `rlva_can_send_session` check every session, as
+        // FSFloaterIM::sendMsgFromInputEditor does)
+        "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "startimto" | "sendimto" => {
+            c.option.is_empty() || Uuid::parse_str(&c.option).is_ok()
+        }
         "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v > 0),
         "redirchat" | "rediremote" => c.option.parse::<i32>().is_ok_and(|v| v > 0 && v != i32::MAX),
         _ => c.option.is_empty(),
@@ -514,6 +516,10 @@ pub struct Rlva {
     pub wardrobe: wardrobe::Wardrobe,
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
+    /// The residents whose profile window is open, as the interface last
+    /// showed them (LLAvatarActions::profileVisible, which
+    /// RlvUIEnabler::hasOpenProfile asks, indra/newview/rlvui.cpp).
+    pub open_profiles: std::collections::HashSet<Uuid>,
     pub(crate) locked_folders: inventory::LockedFoldersCache,
     pub(crate) wear_locks: wear_locks::WearLocksCache,
     /// The point each object was last seen attached to, per account.

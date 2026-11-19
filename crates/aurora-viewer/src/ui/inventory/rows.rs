@@ -377,12 +377,9 @@ pub(super) fn scroll(
     st.plain.open_all(st.reveal_path.iter().copied());
     st.plain.prepare(&st.view, inv, root, show_root, prefs.show_library);
     let navigated = keyboard::navigate(ui, inv, st, false);
+    let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
-        if inv
-            .folders
-            .get(id)
-            .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
-        {
+        if inv.shown_needs_fetch(*id, now) {
             inv.request(*id);
         }
     }
@@ -496,10 +493,11 @@ fn rows(
                 }
                 Kind::Item => item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions),
                 Kind::Empty => {
-                    let text = if inv.folders.get(&row.id).is_some_and(|f| f.state == FetchState::Fetched) {
-                        aurora_i18n::tr!("status-empty")
-                    } else {
-                        aurora_i18n::tr!("ui-inventory-loading-folder")
+                    let text = match inv.folders.get(&row.id).map(|f| f.state) {
+                        Some(FetchState::Fetched) => aurora_i18n::tr!("status-empty"),
+                        // asked again after `SHOWN_RETRY`, not loading meanwhile
+                        Some(FetchState::Failed) => aurora_i18n::tr!("ui-inventory-folder-not-loaded"),
+                        _ => aurora_i18n::tr!("ui-inventory-loading-folder"),
                     };
                     if st.aurora.is_some() {
                         ui.add_space(super::aurora::rows::LEAD);

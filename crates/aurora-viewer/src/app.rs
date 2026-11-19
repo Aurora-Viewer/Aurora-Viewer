@@ -152,6 +152,7 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod second_camera;
 mod selection_turn;
 mod settings_backup;
 mod shape_editor;
@@ -173,6 +174,7 @@ mod uninstall;
 mod update_notice;
 mod viewer_stats;
 mod viewfinder;
+mod water_volumes;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
@@ -453,6 +455,10 @@ pub struct App {
     movement_ui: ui::movement::MovementUi,
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
+    /// Prim water around our avatar (#2008), and the water height the last
+    /// movement frame used (a volume's top, else the region's).
+    water_volumes: water_volumes::Detector,
+    movement_water: Option<f32>,
     pass_wall_at: Option<Instant>,
     /// The fly override's first-use caution is up (ui::fly_override).
     fly_override_caution: bool,
@@ -906,6 +912,13 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The second camera (app/second_camera.rs): its framing and where it
+    /// is, its window, the picture that window showed last frame, and the
+    /// view asked of the renderer this frame.
+    second_camera: crate::camera::second::SecondCamera,
+    second_camera_ui: ui::second_camera::SecondCameraUi,
+    second_camera_picture: Option<ui::second_camera::Picture>,
+    second_camera_job: Option<aurora_render::second_view::SecondViewJob>,
     /// Mark ▸ Custom color… of the radar and mini-map menus, and the last
     /// colour it gave this session.
     avatar_mark_ui: Option<ui::avatar_marks::CustomMark>,
@@ -981,6 +994,10 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    /// "Create an account" of the login screen (LLFloaterJoin), and
+    /// whether `AURORA_DEMO_SIGNUP` opened it yet.
+    signup_ui: ui::signup::SignupUi,
+    signup_demo_opened: bool,
     /// The toolbar's `avatar` (LLFloaterAvatarWelcomePack), and the folders
     /// its page asked to wear (app/avatar_welcome.rs).
     avatar_welcome_ui: ui::avatar_welcome::AvatarWelcomeUi,
@@ -1845,6 +1862,8 @@ impl App {
             movement_ui: Default::default(),
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
+            water_volumes: Default::default(),
+            movement_water: None,
             pass_wall_at: None,
             fly_override_caution: false,
             force_agent_update: false,
@@ -2090,6 +2109,10 @@ impl App {
             experience_profile_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            second_camera: Default::default(),
+            second_camera_ui: Default::default(),
+            second_camera_picture: None,
+            second_camera_job: None,
             avatar_mark_ui: None,
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
@@ -2144,6 +2167,8 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            signup_ui: Default::default(),
+            signup_demo_opened: false,
             avatar_welcome_ui: Default::default(),
             welcome_wears: Default::default(),
             destinations_ui: Default::default(),
@@ -3308,6 +3333,9 @@ impl App {
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
+        // the sign-up window is the login screen's: its browser stops now
+        self.signup_ui.close();
+        self.signup_ui.drop_retired();
         // a previous session of this account may still be on the grid
         if self.hold_login() {
             return;
@@ -4184,6 +4212,7 @@ impl App {
                     self.area_search_feed.on_closed_properties(&props);
                 }
                 self.world.ik_targets.on_properties(&props);
+                self.water_volumes.on_properties(&self.world, &props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);
@@ -5076,6 +5105,11 @@ impl App {
                 self.world.eep.edit_personal(crate::demo::env::edit_lighting);
             }
             Step::OpenList(kind) => self.env_ui.open_list = Some(kind),
+            Step::PhotoList => {
+                let salt = ("photo_env_list", SettingsKind::Sky as u8);
+                self.egui_ctx
+                    .data_mut(|d| d.insert_temp(ui::environment::demo_open_id(&salt), String::new()));
+            }
             Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
         }
     }
@@ -5422,7 +5456,19 @@ impl App {
             Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
-            Action::Appearance => ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance),
+            // The shortcut of Me › Appearance (menu_viewer.xml's "Outfits"),
+            // which LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp)
+            // greys while RlvActions::canStand refuses: a greyed entry's
+            // shortcut does nothing.
+            Action::Appearance => {
+                let held = self.world.agent.is_sitting()
+                    && !self
+                        .world
+                        .rlva_allows_command(&NetCommand::OneShotControl(control::STAND_UP), uuid::Uuid::nil());
+                if !held {
+                    ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
+                }
+            }
             Action::Quit => self.request_exit(),
             Action::TextureLibrary => ui::widgets::toggle_floater(
                 &self.egui_ctx,
@@ -7739,11 +7785,19 @@ impl App {
                 );
             } else {
                 // the name is a link to the resident, as in the Legacy Viewer's chat;
-                // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
+                // checked for keywords as nearby chat (FSRadar::radarAlertMsg).
+                // Under RLVa's `@shownames` the line is from
+                // FSRadarEntry::getRadarName, everyone's stand-in, and the
+                // chat writes it as plain text (`mRlvNamesFiltered`).
                 let name = ui::people::radar_name(&self.world, &id, s.name_format);
                 self.world
                     .keyword_alert(id, &name, &text, true, crate::world::attention::Open::NearbyChat);
-                self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
+                let line = if self.world.rlva.has("shownames") {
+                    format!("{name} {text}")
+                } else {
+                    format!("secondlife:///app/agent/{id}/about {text}")
+                };
+                self.world.system_message(line);
             }
         }
     }
@@ -8359,6 +8413,20 @@ impl App {
                 _ => None,
             }
         };
+        // LLToolSelect::handleObjectSelection (lltoolselect.cpp): under
+        // @fartouch, a click on a surface within 1.5 m of an object whose
+        // own place is too far leaves the build tools (leaveBuildMode); on a
+        // farther surface it selects nothing and the tools stay.
+        if let (Some(idx), Some(point)) = (target, hit)
+            && self.build.tool == crate::build::Tool::Edit
+            && crate::build::selectable_within(&self.world, idx)
+            && !self.world.rlva_within_fartouch(idx)
+            && point.distance(self.world.agent.position) <= 1.5
+        {
+            self.build.close(&mut self.world, &mut self.settings.build);
+            self.flush_build();
+            return true;
+        }
         let used = self.build.mouse_down(
             &mut self.world,
             &mut self.settings.build,
@@ -9472,7 +9540,11 @@ impl App {
     fn poll_names(&mut self) {
         let s = &self.settings;
         let options = crate::world::names::NameOptions {
-            use_display_names: s.use_display_names,
+            // RLVa's `@shownames` forces display names on, so that both
+            // forms of a name are known to its filter
+            // (LLAvatarNameCache::setForceDisplayNames in the toggle handler
+            // of RLV_BHVR_SHOWNAMES, indra/newview/rlvhandler.cpp)
+            use_display_names: s.use_display_names || self.world.rlva.has("shownames"),
             show_usernames: s.show_usernames,
             legacy_format: s.legacy_username_format,
             trim_resident: s.trim_resident,
@@ -11102,8 +11174,13 @@ impl App {
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
-            self.world
-                .advance_motion(world_now(), &self.net.stats.simulators.lock(), |key| build.is_selected(key));
+            let scene = &self.scene;
+            self.world.advance_motion(
+                world_now(),
+                &self.net.stats.simulators.lock(),
+                |key| build.is_selected(key),
+                |idx| scene.drawable_damping_view(idx),
+            );
             if self.demo && self.demo_link_cfg.is_some() {
                 // offline through a simulated link, as on a grid
                 self.drive_demo_link(ml, dt);
@@ -11172,6 +11249,7 @@ impl App {
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
                 follow_joint_offset: None,
+                head_offset: self.scene.head_offset(&self.world, &self.world.agent_id),
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
@@ -11523,6 +11601,10 @@ impl App {
             texture_aspect,
             camera_fast,
         );
+        // what the second camera sees is listed too (its terrain, water and
+        // blended faces: our avatar's hair seen from the front)
+        self.second_camera_frame(now, dt);
+        cull.second = self.second_camera_planes();
         // The experimental XR worker can look in any direction after these
         // CPU lists are prepared; per-eye GPU culling still uses the real frusta.
         if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
@@ -11953,6 +12035,7 @@ impl App {
                     texture_aspect,
                     camera_fast,
                 );
+                cull.second = self.second_camera_planes();
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
@@ -12506,6 +12589,8 @@ impl App {
         self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
+            // prim water (#2008): its bubbles and splashes too
+            self.scene.set_water_volumes(self.water_volumes.near());
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
@@ -13717,6 +13802,8 @@ impl App {
         if !self.exit_prompt.quitting() {
             gfx.renderer.set_rain_surfaces(raining);
         }
+        // the second camera's view, drawn after this frame
+        gfx.renderer.second_view = self.second_camera_job;
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
@@ -17252,9 +17339,42 @@ impl App {
         }
     }
 
+    /// "Create an account": the sign-up window over the login screen, on
+    /// the same plugins and browser settings as the other web windows; the
+    /// new account's name and password it hands back go to the login form.
+    /// AURORA_DEMO_SIGNUP=1 (or a page) opens it once in demo.
+    fn signup_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if self.demo && !self.signup_demo_opened {
+            self.signup_demo_opened = true;
+            match std::env::var("AURORA_DEMO_SIGNUP").ok().filter(|v| !v.trim().is_empty()) {
+                Some(page) if page.trim() == "1" => self.signup_ui.open(ui::signup::SignupPage::SecondLife),
+                Some(page) => self.signup_ui.open_demo(page.trim()),
+                None => {}
+            }
+        }
+        if let Some(page) = self.login_form.create_account.take() {
+            self.signup_ui.open(page);
+        }
+        if !self.signup_ui.is_open() {
+            self.signup_ui.drop_retired();
+            return;
+        }
+        let paths = self.media.plugins(&self.settings.media).cloned();
+        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+        let env = ui::signup::SignupWeb {
+            paths: paths.as_ref(),
+            browser: &browser,
+        };
+        if let Some(account) = self.signup_ui.show(ctx, p, &env) {
+            log::info!("sign-up: the new account's details are in the login form");
+            ui::login::fill_from_signup(&mut self.settings, &mut self.login_form, account.username, account.password);
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
-        self.profile_ui.web_has_focus()
+        self.signup_ui.web_has_focus()
+            || self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
@@ -17265,8 +17385,9 @@ impl App {
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
     /// receives keys before chat, gestures or viewer commands.
     fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
-        self.profile_ui
+        self.signup_ui
             .focused_web()
+            .or_else(|| self.profile_ui.focused_web())
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
@@ -17452,7 +17573,11 @@ impl App {
                 }
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
-                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::Activate(group) => {
+                    if self.world.rlva_can_change_group() {
+                        self.send(NetCommand::ActivateGroup(group));
+                    }
+                }
                 GroupAction::SetTitle { group, role } => {
                     if !self.world.rlva.has("setgroup") {
                         self.world.group_data.set_title(group, role);
@@ -18140,6 +18265,7 @@ impl App {
                     .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
                 self.command_line_login();
                 self.poll_login_wait(&ctx);
+                self.login_form.signup_open = self.signup_ui.is_open();
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 a.login = ui::login::show(
                     ui,
@@ -18160,6 +18286,7 @@ impl App {
                 if self.panels.settings {
                     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(ui::options::WINDOW)));
                 }
+                self.signup_window(&ctx, &p);
                 // Keep disconnected script drafts accessible for copying.
                 for action in self
                     .script_editors
@@ -19691,6 +19818,7 @@ impl App {
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = Some(to);
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -20475,6 +20603,7 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
+                self.second_camera_window(&ctx, &p);
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);
@@ -20692,6 +20821,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                let mut shown = std::mem::take(&mut self.world.rlva.open_profiles);
+                self.profile_ui
+                    .open_residents(&ctx, &self.world, self.settings.classic_profiles, &mut shown);
+                self.world.rlva.open_profiles = shown;
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
                 self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
@@ -20727,6 +20860,7 @@ impl App {
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = None;
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first
@@ -21342,7 +21476,7 @@ impl ApplicationHandler for App {
             Err(e) => {
                 log::error!("cannot create window: {e}");
                 crate::splash::close();
-                graphics_start::report(&e.to_string(), capture);
+                graphics_start::report(&e.to_string(), false, capture);
                 event_loop.exit();
                 return;
             }
@@ -21376,7 +21510,8 @@ impl ApplicationHandler for App {
                 }
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
-                graphics_start::report(&e.to_string(), capture);
+                let memory_full = matches!(e, aurora_render::RenderError::VideoMemoryFull);
+                graphics_start::report(&e.to_string(), memory_full, capture);
                 event_loop.exit();
                 return;
             }
@@ -22315,6 +22450,9 @@ impl ApplicationHandler for App {
             // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
+                if crate::demo::group::profile_wide() {
+                    ui::widgets::size_floater(&self.egui_ctx, "group_profile", egui::Vec2::new(900.0, 640.0));
+                }
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
                 }

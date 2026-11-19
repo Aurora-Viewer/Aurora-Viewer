@@ -647,6 +647,8 @@ pub struct Settings {
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -669,6 +671,8 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Swimming in prims named as water (#2008), for every account.
+    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -2374,6 +2378,7 @@ impl Default for Settings {
             game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
@@ -2499,6 +2504,7 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),

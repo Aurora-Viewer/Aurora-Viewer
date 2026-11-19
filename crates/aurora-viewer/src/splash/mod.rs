@@ -180,6 +180,68 @@ pub fn start() {
     }
 }
 
+/// Started by an update: the start's steps go to its helper too, which
+/// waits as long as they move on (`aurora_updater::install::report_start`),
+/// with or without the splash window.
+pub fn report_to_update() {
+    aurora_updater::install::report_start(|| {
+        let viewer = VIEWER.load(Ordering::Relaxed);
+        if viewer == ViewerPhase::Shown as u8 || CLOSE.load(Ordering::Relaxed) {
+            return None;
+        }
+        let render = aurora_render::start_progress::snapshot();
+        Some(
+            (u64::from(viewer) << 56)
+                | ((render.phase as u64) << 48)
+                | (u64::from(TEST_STEPS.load(Ordering::Relaxed)) << 32)
+                | u64::from(render.pipelines),
+        )
+    });
+}
+
+/// The seconds of a simulated slow start that moved on
+/// ([`test_slow_start`]).
+static TEST_STEPS: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]`: the start waits that
+/// long before its renderer, one step a second for the helper, or none with
+/// `stuck`. Only in the builds of `scripts/test-update.ps1`, and only when
+/// an update started this viewer (the helper's wait, `install.rs`).
+pub fn test_slow_start() {
+    if !aurora_version::update_test_build() || !aurora_updater::install::started_by_update() {
+        return;
+    }
+    let Some((seconds, stuck)) = std::env::var("AURORA_UPDATE_TEST_SLOW_START")
+        .ok()
+        .as_deref()
+        .and_then(parse_slow_start)
+    else {
+        return;
+    };
+    log::info!("update test: a slow start of {seconds} s{}", if stuck { ", stuck" } else { "" });
+    for _ in 0..seconds {
+        std::thread::sleep(Duration::from_secs(1));
+        if !stuck {
+            TEST_STEPS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// `<seconds>[,stuck]`, from 1 s to an hour.
+fn parse_slow_start(value: &str) -> Option<(u16, bool)> {
+    let (seconds, stuck) = match value.split_once(',') {
+        Some((s, mode)) if mode.trim() == "stuck" => (s, true),
+        Some(_) => return None,
+        None => (value, false),
+    };
+    seconds
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|s| (1..=3600).contains(s))
+        .map(|s| (s, stuck))
+}
+
 /// The viewer reads its settings and caches (after the log is open).
 pub fn settings() {
     VIEWER.fetch_max(ViewerPhase::Settings as u8, Ordering::Relaxed);
@@ -268,6 +330,17 @@ fn feed(started: Instant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slow_start_is_read_in_seconds_and_stuck_or_not() {
+        assert_eq!(parse_slow_start("150"), Some((150, false)));
+        assert_eq!(parse_slow_start("150,stuck"), Some((150, true)));
+        assert_eq!(parse_slow_start(" 150 , stuck"), Some((150, true)));
+        assert_eq!(parse_slow_start("0"), None);
+        assert_eq!(parse_slow_start("3601"), None);
+        assert_eq!(parse_slow_start("150,slow"), None);
+        assert_eq!(parse_slow_start("soon"), None);
+    }
 
     #[test]
     fn captures_have_no_splash_unless_they_capture_it() {

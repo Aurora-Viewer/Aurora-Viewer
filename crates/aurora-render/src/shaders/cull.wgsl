@@ -77,6 +77,9 @@ const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
 const OBJ_HIDDEN: u32 = 128u;
 // physical (moves on its own): not in the rain's shelter map
 const OBJ_PHYSICAL: u32 = 256u;
+// left out of the photo's picture only (snapshot::isolate::View::Unseen):
+// out of the main view, still casting and in the reflections (#2316)
+const OBJ_UNSEEN: u32 = 512u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -385,7 +388,7 @@ fn face_mask(i: u32) -> u32 {
     }
     let fl = frame.sizes.w;
     // LLAgent::needsRenderHead / LLVOAvatarSelf::updateAttachmentVisibility.
-    let viewed = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
+    let viewed = (o.flags & OBJ_UNSEEN) == 0u && sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
     let shadow_reach = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
     let reflect_reach = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
     // a capture measures from its probe, not from the camera

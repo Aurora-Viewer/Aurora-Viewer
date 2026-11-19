@@ -105,6 +105,10 @@ pub struct Entry {
     pub outcome: Outcome,
     #[serde(default)]
     pub follow: Follow,
+    /// The notice named its resident whatever RLVa's `@shownames` hides
+    /// (`Notifications::name_resident`): the entry keeps naming them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub named: bool,
 }
 
 fn info() -> Look {
@@ -315,6 +319,7 @@ mod tests {
             name_links: Vec::new(),
             outcome: Outcome::Read,
             follow: Follow::Restore,
+            named: false,
         }
     }
 

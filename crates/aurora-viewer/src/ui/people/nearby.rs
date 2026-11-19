@@ -973,7 +973,7 @@ fn paint_rich(
     let mut name = semibold(ui, 13.0, name_color);
     name.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), name);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 13.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
@@ -1072,7 +1072,7 @@ fn paint_compact(
     let mut format = egui::TextFormat::simple(FontId::proportional(12.0), name_color);
     format.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 12.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let g = ui.painter().layout_job(job);

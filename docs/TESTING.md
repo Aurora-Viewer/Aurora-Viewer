@@ -1108,6 +1108,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
+| `AURORA_DEMO_SECOND_CAMERA=face\|body\|back` | The second camera's window open on that framing (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1160,6 +1161,15 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_SECOND_CAMERA=face|body|back`**: at frame 300, the second
+  camera's window (View › Second camera) opens on that framing, the main
+  camera staying behind our avatar (`second camera demo: Face` in the log,
+  then `second camera: renderer made (… ms)` with the first picture). Look
+  for the face, the whole body or the back in the window, with the colours
+  of the 3D view, its own shadows, and the hair's blended faces in front of
+  the face; hovered, the window shows its three framings over the bottom of
+  the picture. Closed, the log says `second camera: renderer let go` about
+  two seconds later.
 - **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha|orbit|capture|anim|montage|titles|render`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
@@ -2072,6 +2082,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending\|passage-refused` | Movement options, local swimming poses, synthetic passage feedback and a refused passage |
 | `AURORA_DEMO_FLEXIBLE=1\|missing-params` | Flexible prims: gravity, tension, wind, force, moving parent and default-parameter fallback |
+| `AURORA_DEMO_PRIM_WATER=name\|description\|custom\|plane\|nomatch\|off` | Swimming in a phantom prim named as water (#2008); with `AURORA_DEMO_MOVELOCK=off` |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
@@ -3298,6 +3309,13 @@ simulator: each object keeps its placements before each edit, the updates of
 one drag (closer than 0.4 s) making one step.
 
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
+
+With `AURORA_DEMO_BUILD=move,object:mirror` and the Features tab, the
+plaza's existing mirror probe is selected. Check its four Probe update
+modes in Aurora and Legacy layouts (`AURORA_DEMO_BUILD_STYLE`): both
+mirror modes require Box and disable Ambient/Coverage; Static and Dynamic
+restore those controls. The mode remains readable with graphics mirrors
+disabled (#3376).
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
 scenarios; `shape` opens the renamed Object section. `+weights`, `+media` and `+permissions` open the related dialogs;
@@ -3549,6 +3567,8 @@ cannot be acknowledged by this viewer; this fixture tests known loaded clips.
 **`AURORA_DEMO_MOVELOCK=on|off|moving|seated|error|timeout|endpoint|halted`** — Aurora's bridge and position lock. The demo seeds the library object, runs the nested inventory creation/copy/attach/script-upload/save callbacks, opens the options and shows the requested activation immediately in the bottom toolbar (the bottom-left indicator is off by default; tick it in the options); provisioning remains a separate diagnostic. `moving` and `seated` change physical maintenance internally while the button, enabled label and indicator remain active; `error` simulates failed compilation; `timeout` withholds the first hello and reports the script-startup timeout after 60 seconds; `endpoint` supplies an untrusted address and must show a refused connection response without exposing its URL. `halted` stops the script once it is ready, as a Stack-Heap Collision does: every request then times out; about ten seconds later the viewer finds the script not running, says it is reinstalling the bridge, recompiles it and saves it again (detach/reattach), and Movelock returns without any action. After three automatic reinstalls in ten minutes it stops and leaves Repair to the user. The demo installs both scripts of the bridge (controller and read-only query service) and answers the discovery probe with both hellos. A real bridge also reports the controller's lowest free memory with each status: the log line `script memory low mark` shows the margin left in Mono's 64 KB. The normal fixture uses the current secondlife.io simulator domain. Click the lock icon or press Ctrl+Alt+P to toggle; its right-click menu opens the options. Settings are saved per avatar. The human must validate real LSL permissions, physical bump resistance, movement/sitting, relog and region changes. Confirm a single existing object is reused/moved into inventory root → `#Aurora` → `Aurora Bridge`, with `#Aurora` sorted above system folders. The stable object/script name remains `#Aurora Bridge v1.0`; the installed protocol is 1.8. The factory waits for the new script to respond before detaching, then five seconds after detachment before reattaching, without requiring an inventory asset UUID update. A lost hello is repeated until confirmed; a stopped script can be started once. Startup, movement permission, simulator connection, inventory save and rejected responses have distinct progress/timeout messages. HTTPS must use the same simulator TLS trust as the other capability requests; redirects remain disabled. on_rez must preserve the queued attach event. Readiness must follow the real TAKE_CONTROLS grant without a script-debug error. The visible enabled state follows the user selection even while physically moving, seated, being pushed, waiting for acknowledgements or encountering a connection error; diagnostics remain in the options. Physical convergence (within 0.35 m of the anchor and below 0.5 m/s) remains internal. Region changes keep activation enabled; the obsolete region-off option is ignored. Movelock has no timeout/keepalive: it must still resist pushes after a long gap without viewer HTTP, until explicitly disabled. LSL control events alone release/reanchor the hold. Movement always releases the hold through simulator control events and relocks at the new position on release; all movement/nudge keys remain available. Old hard-lock settings are ignored. Toggling from the toolbar, shortcut or options emits no dedicated Movelock sound. Detach it explicitly: Movelock turns off, enhanced movement pauses and the bridge stays detached for the current session until enabled, worn or repaired again. The internal installation save must still reattach after its delay. Check explicit unlock and cleanup at logout; no elapsed timer may disable Movelock. Demo validates lifecycle and UI; it does not execute simulator physics. The human validated Movelock on 2026-10-15; the new movement motors retain its hold/reanchor functions.
 
 **`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending|passage-refused`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, while swimming assignments belong to Aurora’s own set.
+
+**`AURORA_DEMO_PRIM_WATER=name|description|custom|plane|nomatch|off`** — Swimming in prim water (#2008). At frame 360 a pool is raised 40 m above the region water (a solid floor, its water a phantom 8 × 8 × 2.4 m prim), the movement-design AO is seeded and the AO's Movement tab opens; swimming is switched on once the set is ready, and "Swim in prim water" is on except in `off`. Run it with `AURORA_DEMO_MOVELOCK=off`: swimming waits for the bridge. The water prim is named `AuroraWater` (`name`), has the word in its description (`description`), is a "Garden pond" found through the added word `pond` (`custom`), is a 5 cm plane over the floor (`plane`) or a "Liverpool sign" that the word `pool` must not match (`nomatch`). The offline demo has no prim collision nor bridge motor, so the avatar is moved in a 12 s loop: at the surface, swimming 6 m across 1.4 m under it (bubbles from the head), 3 m above the top, then falling back in (splashes); the water effects' bubbles and splashes are switched on for the run. With `RUST_LOG=info,aurora_viewer::water_contacts=trace` the `water part` lines show their surface at the pool's top (62.4) and only particle kinds (1 bubbles, 0/5/7 splashes and sprays), never the region water's ripples or wakes. Swimming waits for the window's focus as everywhere: a capture in a window without it shows Flight. The `aurora_viewer::prim_water` log lines give, per phase, the names known/asked/matched, the movement state and the water height: Surface, Submerged, Flight then Surface with water 62.4 in the first four modes; region water (20) and no swimming in `nomatch` and `off`, and in `off` no name is asked. Real swimming, buoyancy and the pool's floor need the grid.
 
 Water gestures (2026-10-17, bridge 1.23): use the configured ascent/descent actions (PageUp/PageDown by default). Tap descent at the surface: complete a physical dive after release and retain depth. Tap ascent underwater: return to the adjusted flotation height; holding/releasing that same press must never start flight or jump on arrival. Repeated ascent presses continue the return; descent cancels it. Current surface gesture: a single ascent press jumps, whether stationary or moving; at a solid shore with a safe landing it uses the rise-then-advance jump. A second distinct press within 400 ms requests higher flight when allowed; holding a key must not request flight. A no-fly parcel still allows a surface jump. Check the correct surface/underwater forward AO list across ascent and idle, short/tall avatars and float offsets from -0.5 to +0.5 m. Bridge 1.23 increases the surface return command to 3-5 m/s with stronger acceleration and braking near the goal; these are command limits, not measured Havok speeds. Inspect actual ascent duration and overshoot on the grid. Ceilings/occupied landings must stop the physical target; sitting, suspension, disable, bridge loss and timeout release pending phases. Check remapped keys, native/enhanced flight handover, shallow/deep water and automatic shore exits. Offline unit tests, LSL lint and prescribed native trajectories verify controls/animation continuity; they do not simulate Havok.
 
@@ -5398,7 +5418,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -5413,6 +5433,10 @@ both open states and the selection count. Capture at frame 620.
   line cut to the list's width.
   `search-back`: "zzz" typed (2510) then erased (2520): the whole list is
   back at its full height, without a scroll bar.
+  `photo-list`, with `AURORA_DEMO_SNAPSHOT=viewfinder-light`: adds forty
+  sky inventory copies and opens the photo's sky list at frame 900. Keep
+  it open, scroll, search and clear the search: its width must stay stable,
+  also with `AURORA_TEXT_SIZE=1.5` or `2` (#3421).
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -5517,6 +5541,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
+| `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
@@ -5897,6 +5922,17 @@ both open states and the selection count. Capture at frame 620.
   for good: every later try of the render targets fails on the `frame
   mask` bind group. Made with no usage, as for `AURORA_GPU_OOM_TARGETS`,
   so the log holds `Invalid usage flags` lines a real card does not.
+- **`AURORA_GPU_OOM_UI=1`** (demo or grid): the small mapped buffer the
+  renderer makes first, in scopes of its own, before egui's renderer and
+  anything else (`gpu_alloc::mapped_buffer_refused`), counts as refused, as
+  on a card already full when the viewer opens (another viewer holding it,
+  #3867). The start stops with the message box "Aurora Viewer cannot start"
+  that says the video memory is full and which programs to close (no driver
+  advice), and the log says `egui buffers: refused by AURORA_GPU_OOM_UI`
+  then `renderer initialisation failed: the graphics card's video memory is
+  full`. Before, egui-wgpu's `Renderer::new` panicked on its first refused
+  buffer (`create_buffer_init`) and the crash window followed. In an
+  automated capture the box is skipped and the viewer ends.
 - **`AURORA_GPU_OOM_FIRST_USE=<seconds>`** (demo or grid): for that long
   after the first one is made, every target made on first use counts as
   refused by a full video memory. An effect the frame can go without is
@@ -6106,6 +6142,15 @@ both open states and the selection count. Capture at frame 620.
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
+  - With `AURORA_DEMO_GPU_LOST=<frame>`, the textures come back after the
+    recovery: the scenario decodes its checkers again on the new device
+    (a quarter of their size, then full size, as on arrival), gives the
+    `j2k=` files again where the streamer finds no data, and lets the
+    streamer download the `net=` ones again. The log says `demo stream:
+    GPU recovery, … textures to show again`, then `demo stream: textures
+    shown again … s after the GPU recovery`; the objects show their
+    checkers again instead of the loading look. After `,leave`, the
+    released textures are not brought back.
 - **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]`**:
   an arrival in a busy region, to measure what the loading shows first.
   With `meshfail=`, the server answers 403 to every mesh request for that
@@ -6434,6 +6479,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_DEMO_REMEMBER_REFUSED=1` | The credential store refuses the password at login |
+| `AURORA_DEMO_SIGNUP=1\|<page>` | The sign-up window of "Create an account" open over the login screen (see Details) |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, a frozen viewer ended from outside, out of memory, stack overflow or a critical thread's death |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
@@ -6458,6 +6504,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
+| `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]` | The updated viewer of this test starts slowly, moving on or stuck |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
@@ -6563,7 +6610,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic]` | Group profile window, as a member, officer, owner or guest, in either look |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
@@ -6696,18 +6743,22 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   direction with FOV limits. `camera-prefs` opens Camera preferences under
   an exclusive camera lock: preset, offset, distance and viewing-angle
   controls must be disabled while unrelated options remain editable.
-  `camera-zoom-max` sets `setcam_origindistmax:8` on an alt camera 7.6 m
-  from its focus point and scrolls out five clicks from frame 740, then one
-  back in at frame 810; `camera-zoom-min` does the same inward with
-  `setcam_origindistmin:6`. The log gives the camera's distance to the focus
-  at frames 800 and 840: held at the limit at 800, already back inside at
-  840 (the zoom past the limit is not kept). `camera-zoom-both` sets
-  `setcam_avdistmax:7` and `setcam_origindistmin:7.2`, which both hold the
-  camera, then scrolls one click out at frame 760 and one back in at 810;
-  the log gives both distances and the zoom fraction at frames 750, 800 and
-  840: the camera stays held at 7.2 m from the focus, the click out changes
-  the zoom fraction (the zoom is not refused both ways) and the click back
-  in is refused, since the focus limit still holds.
+  The `camera-zoom-*` scenarios start from an alt camera 7.6 m from its
+  focus point, which is over the avatar: 5.2 m from where the avatar's own
+  view would put the camera (its origin) and 7.6 m from the head. They
+  scroll five clicks past the limit from frame 740 and one back at frame
+  810, and the log gives the three distances at frames 730, 800 and 840.
+  `camera-zoom-max` sets `setcam_origindistmax:8`: 8.000 m from the origin
+  at 800 (10.5 m from the head: the origin's limit is not measured from the
+  avatar), 6.7 m at 840 (the zoom past the limit is not kept).
+  `camera-zoom-min` sets `setcam_origindistmin:5` and scrolls in: 5.000 m
+  at 800, 5.3 m at 840. `camera-zoom-both` sets `setcam_avdistmax:5` with
+  `setcam_origindistmax:8`: the same figures as `camera-zoom-max`, 10.5 m
+  from the head at 800, since the origin's limit holds the camera alone
+  while the avatar's two ends differ. `camera-zoom-locked` sets
+  `setcam_avdistmin:5`, `setcam_avdistmax:5` and `setcam_origindistmax:8`:
+  the avatar's limits made equal hold the camera alone, 5.000 m from the
+  head at the three frames, whatever the wheel does.
   `offset-zoom` sets `setcam_eyeoffset:-6/0/1` and
   `setcam_eyeoffsetscale:1.5` on the avatar's own view (9.12 m behind it),
   then scrolls four clicks out from frame 740 and four back in from frame
@@ -6717,14 +6768,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   does not come back. `no-mouselook` sets `camdistmin:1`, presses the
   mouselook key at frame 740 and scrolls nineteen clicks in from frame 752.
   The log at frames 741, 790 and 880 must say `mouselook=false` and
-  `cursor held=false`, the camera about 1.4 m from the avatar at 880 (the
-  closest zoom): mouselook is refused up front instead of entered and left
-  a frame later. `avatar-zoom` sets `camdistmax:5` on the avatar's own
-  view, scrolls four clicks out from frame 740 (the second already reaches
-  the limit) and one back in at frame 800. The log gives the camera's
-  distance to the avatar at frames 730, 790 and 880: about 3.3 m, 5 m (held
-  at the limit) and about 4.3 m (the click in moved the camera at once: no
-  zoom was kept past the limit).
+  `cursor held=false`, the camera 1.000 m from the head at 880 (the limit,
+  measured from the head): mouselook is refused up front
+  (RlvActions::canChangeToMouselook) instead of entered and left a frame
+  later, and the wheel all the way in does not enter it either.
+  `avatar-zoom` sets `camdistmax:5` on the avatar's own view, scrolls four
+  clicks out from frame 740 (the third reaches the limit) and one back in
+  at frame 800. The log gives the camera's distance to the head at frames
+  730, 790 and 880: about 3.0 m, 5.000 m (held at the limit) and about
+  4.2 m (the click in moved the camera at once: no zoom was kept past the
+  limit).
   `sitting` sends a forced object sit at frame 700, then sitground at 740.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
@@ -6752,8 +6805,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   report; the same lines are in the log with the prefix `rlva-selftest:`.
   The run's waits are in seconds, not in frames (about fifteen seconds in
   all), so capture late: `AURORA_FPS_LIMIT=60` and
-  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 61 `PASS`,
-  B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
+  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 65 `PASS`,
+  A02b and B05 `SKIPPED` (the demo avatar wears no HUD and no bridge). The refusal
   notices that pile up during the run are the cases' own refused attempts;
   the avatar ends beside where its seat was. No grid is contacted.
 
@@ -8786,6 +8839,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_REMEMBER_REFUSED=1`**, with `remember_password` on in the demo profile: the login behaves as if the credential store had refused the password (Linux with no Secret Service, for example). The nearby chat shows the notice and the login form's "Remember password" is off after a logout (`AURORA_DEMO_EXIT=logout`). The store itself is not touched; the switch stays off in the demo profile until it is turned on again.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
+- **`AURORA_DEMO_SIGNUP=1|<page>`** (#3796, `ui/signup.rs`): opens the sign-up window of the login screen's "Create an account" once, at the first frame of the login screen. `1` loads Second Life's sign-up page (join.secondlife.com, so the network and the media plugins are needed); any other value is the address of a page shown in its place (an `https://` or `file:///` page), for a capture without the network. That page's `secondlife:///app/floaterjoin/close`, `tos`, `tc` and `privacy` work as on the real page (close the window, open the Terms of Service, the Terms and Conditions or the Privacy Policy over it); `join/<name>/<password>` is refused from any page that is not https on secondlife.com, as outside the demo, so it never fills the form from a test page. The log says `sign-up: opening …`, `sign-up: the page asks …` (the command, never the name or password) and `sign-up: window closed`. Never type real details into the sign-up form in a test: the account would be created on the grid.
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
 - **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 - **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
@@ -9004,6 +9058,30 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   disabled with the blocking reason even if the fields are filled. In
   any isolated installation, a label indicates that login to a grid
   is disabled; only enter synthetic values for this test.
+  The helper ends the new viewer after 90 s without a step of its start
+  (`start-progress` in the transaction folder: a pipeline made, the next
+  step), 15 min at most. To see it, set
+  `AURORA_UPDATE_TEST_SLOW_START=<seconds>` before the script: the viewer
+  the update starts (and only it, and only in these binaries) waits that
+  long before its renderer, one step a second, and must come up after the
+  wait (`150`: past the old fixed 90 s). With `,stuck` it takes no step:
+  at 90 s the helper ends it and 0.2.100 comes back with "The new version
+  did not start correctly". The log of the new viewer says
+  `update test: a slow start of <s> s`.
+  On Linux, `scripts/test-update-linux.py`
+  (`python3 scripts/test-update-linux.py`) prepares the same two packages as
+  `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
+  tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
+  `--reset-settings` and `--required` in place of the switches, and no
+  server PID to stop: the feed runs inside the script, which keeps serving
+  while the viewer it launched, or the one the update restarted, runs and
+  stops three seconds after the last of them is closed — a Check for updates
+  made after the restart therefore answers "up to date", as on a real
+  installation. Keep the viewer's folder path plain and writable: that is
+  what lets it replace itself. To see the refusal of a protected folder, copy
+  the package into a folder root owns (`sudo cp -r`) and run it from there:
+  the update window says the folder belongs to a sandbox or another account,
+  links the release page, and nothing is downloaded or replaced.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
 - **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
@@ -10069,7 +10147,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -10132,7 +10210,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   as soon as the window opens): "Sandbox doors", General, owned by the
   group, land-scope; "Profile ›" opens the experience profile, whose
   Allow / Forget / Block log `demo group: experience permission …`.
-  `:classic` last (for example `owner:admin:classic`) shows the classic
+  `:wide` opens the profile at 900 × 640 for layout comparisons. Compare
+  `officer:notices:classic` with `officer:notices:classic:wide`, also at
+  `AURORA_TEXT_SIZE=1.5`: narrow notices put the list above the message;
+  the attachment name and Save action must stay separate and readable.
+  `:classic` (for example `owner:admin:classic`) shows the classic
   window (Preferences › Aurora › Profiles, not saved), scrolled to the
   section of the tab asked for and opened: with `owner:members:classic`,
   "Members and roles" manages the members in the Legacy panel's narrow
@@ -12476,6 +12558,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
+| `AURORA_OBJECT_MOTION_TRACE=<request-file>` | A changed request-file timestamp records 20 seconds of volume reports, damping decisions and rendered transform gaps under `object motion trace`; excludes names, UUIDs, absolute positions and packet contents. Watches at most 64 recent slots. The human performs any grid login and actions. |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |

@@ -1043,7 +1043,7 @@ impl SearchUi {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(id));
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
+                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Search)
                 });
             }
             (Tab::Groups, Key::Id(id)) if resp.double_clicked() => crate::ui::group_profile::request_open(ui.ctx(), id),

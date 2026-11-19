@@ -702,11 +702,13 @@ fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
         !f.im_blocked && named,
         CtxAction::Im(id),
     );
-    // Avatar.GiveCard (RLV.CanShowName)
+    // Avatar.GiveCard (RLV.CanShowName). Its handler (LLAvatarGiveCard)
+    // does nothing while `@shownames` is set, for an exception too: greyed
+    // here, where the Legacy Viewer leaves an entry that does nothing.
     ui.item_if(
         "id-filled",
         aurora_i18n::tr!("ui-context-give-my-calling-card"),
-        named,
+        named && !f.names_hidden,
         CtxAction::GiveCallingCard(id),
     );
     // Avatar.EnableCall: enable_avatar_call tests canShowName first
@@ -1153,11 +1155,13 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
 /// FSFloaterAddToContactSet's list in a submenu, then its "+"
 /// (AddNewContactSet), as `contact_set_submenu` of the lists.
 fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
-    // Avatar.AddToContactSet: RLV.CanShowName
+    // Avatar.AddToContactSet: RLV.CanShowName. Its handler
+    // (FSAddToContactSet) opens nothing while `@shownames` is set, for an
+    // exception too: greyed here.
     ui.submenu(
         "users-group",
         aurora_i18n::tr!("ui-context-add-to-contact-set"),
-        !f.name_hidden,
+        !f.name_hidden && !f.names_hidden,
         |ui| {
             if f.contact_sets.is_empty() {
                 ui.disabled("users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"));

@@ -835,6 +835,7 @@ impl World {
                 origin: Origin::Log,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             }
         })
         .collect()
