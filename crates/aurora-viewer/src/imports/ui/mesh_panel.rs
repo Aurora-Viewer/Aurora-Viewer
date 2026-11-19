@@ -278,6 +278,7 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
         mesh::LodSource::File => aurora_i18n::tr!("import-source-file"),
         mesh::LodSource::Auto => aurora_i18n::tr!("import-lod-auto"),
+        mesh::LodSource::Quality => aurora_i18n::tr!("import-lod-quality"),
         mesh::LodSource::Combine => aurora_i18n::tr!("import-lod-combine"),
         mesh::LodSource::Fast => aurora_i18n::tr!("import-lod-fast"),
         mesh::LodSource::Reliable => aurora_i18n::tr!("import-lod-reliable"),
@@ -414,6 +415,7 @@ fn mesh_controls(
                                 for choice in [
                                     mesh::LodSource::File,
                                     mesh::LodSource::Legacy,
+                                    mesh::LodSource::Quality,
                                     mesh::LodSource::Auto,
                                     mesh::LodSource::Combine,
                                     mesh::LodSource::Fast,
@@ -1107,8 +1109,10 @@ mod tests {
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
         let mut draft = crate::imports::tests::mesh_fixture();
-        // Automatic generation: the Legacy chain keeps a box whole.
-        draft.set_lod_profile(mesh::LodProfile::Aurora);
+        // Test the budget-driven method independently of the Quality preset.
+        for lod in &mut draft.lods[..3] {
+            lod.source = mesh::LodSource::Auto;
+        }
         // A closed surface can reduce as the error rises; an isolated quad cannot.
         let model = &mut Arc::make_mut(&mut draft.scene).models[0];
         model.center = glam::Vec3::ZERO;

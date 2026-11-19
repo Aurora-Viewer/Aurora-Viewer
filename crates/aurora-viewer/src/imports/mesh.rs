@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum LodSource {
     File,
     Auto,
+    Quality,
     Combine,
     Fast,
     Reliable,
@@ -37,28 +38,25 @@ pub enum LodProfile {
     /// (#3433).
     #[default]
     Linden,
-    /// Aurora's own: each level a quarter of the one above, all by the
-    /// automatic method, which keeps the seams. Both profiles use an
-    /// adaptive hull from Lowest when no collision model was chosen.
+    /// The same triangle targets, with quality generation: locked material,
+    /// UV and normal seams, and attribute-aware reduction. The target is
+    /// soft; both profiles use adaptive default collision from Lowest.
     Aurora,
 }
 impl LodProfile {
-    /// Triangle targets of the Lowest, Low, Medium and High LODs. Linden
-    /// divides by 3 per level, as genMeshOptimizerLODs with decimation 3
-    /// (`base_triangles / pow(3, LOD_HIGH - lod)`, truncated); Aurora by 4.
+    /// Both profiles share the Legacy Viewer's targets: divide by 3 per
+    /// level, as genMeshOptimizerLODs with decimation 3
+    /// (`base_triangles / pow(3, LOD_HIGH - lod)`, truncated).
     /// A target is at least 1, as the Legacy `llmax(triangle_limit, 1)`.
     pub fn targets(self, high_triangles: usize) -> [usize; 4] {
-        let divisor: usize = match self {
-            Self::Linden => 3,
-            Self::Aurora => 4,
-        };
+        let divisor: usize = 3;
         std::array::from_fn(|level| (high_triangles / divisor.pow((3 - level) as u32)).max(1))
     }
     /// How a generated level (0 Lowest to 2 Medium) is made.
     pub fn source(self, _level: usize) -> LodSource {
         match self {
             Self::Linden => LodSource::Legacy,
-            Self::Aurora => LodSource::Auto,
+            Self::Aurora => LodSource::Quality,
         }
     }
 }
@@ -507,6 +505,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                             error: if spec.error_mode { spec.error } else { 1.0 },
                             method: match method {
                                 LodSource::Auto => process::Method::Auto,
+                                LodSource::Quality => process::Method::Quality,
                                 LodSource::Reliable => process::Method::Reliable,
                                 LodSource::Legacy => process::Method::Legacy,
                                 LodSource::Fast => process::Method::Fast,
@@ -518,6 +517,21 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         &draft.cancel,
                     )?,
                 };
+                // Attribute-aware collapse order can stop a few triangles
+                // earlier for a larger target. Both default Quality levels
+                // use the same error bound from High: reuse the already
+                // valid smaller result rather than increase detail farther
+                // away. Explicit error thresholds and file LODs stay independent.
+                if spec.source == LodSource::Quality
+                    && !spec.error_mode
+                    && let Some(previous_spec) = draft.lods.get(level + 1)
+                    && previous_spec.source == LodSource::Quality
+                    && !previous_spec.error_mode
+                    && let Some(previous) = lods.get(level + 1).and_then(Option::as_ref)
+                    && previous.triangles() < model.triangles()
+                {
+                    model = previous.clone();
+                }
                 if options.normals {
                     for face in &mut model.faces {
                         process::normals(face, options.crease)?;

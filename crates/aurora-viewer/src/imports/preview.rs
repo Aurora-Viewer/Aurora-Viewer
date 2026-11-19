@@ -1029,8 +1029,11 @@ mod tests {
     #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
         let mut draft = crate::imports::tests::mesh_fixture();
-        // Automatic generation reduces the box; the Legacy chain keeps it whole.
-        draft.set_lod_profile(super::super::mesh::LodProfile::Aurora);
+        // This preview regression needs visibly different LODs; Quality
+        // deliberately retains the box instead of stripping its seams.
+        for lod in &mut draft.lods[..3] {
+            lod.source = super::super::mesh::LodSource::Auto;
+        }
         draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
         let avatars = crate::scene::avatar::AvatarLibrary::load();
         let mut counts = Vec::new();

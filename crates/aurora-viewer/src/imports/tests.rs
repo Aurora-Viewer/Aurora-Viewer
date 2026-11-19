@@ -1211,10 +1211,10 @@ fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
 #[test]
 fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
     let mut draft = mesh_fixture();
-    // Automatic generation: the Legacy chain leaves a box at 12 triangles,
-    // as the Legacy Viewer does.
-    draft.set_lod_profile(mesh::LodProfile::Aurora);
+    // Exercise the budget-driven method explicitly. The Quality preset
+    // deliberately keeps this box whole rather than relaxing its seams.
     for lod in &mut draft.lods[..3] {
+        lod.source = mesh::LodSource::Auto;
         lod.error = 0.0;
     }
     let prepared = mesh::prepare(&draft).expect("prepare");

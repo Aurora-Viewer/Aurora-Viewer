@@ -162,7 +162,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-loading"
         | "material-confirm" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
-        | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
+        | "mesh-quality" | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
         "animation" | "animation-own" | "animation-custom" | "animation-native-metadata" => Choice::Animation,
         "sound" | "sound-split" | "sound-folder" | "sound-confirm" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
@@ -367,6 +367,15 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                             if mode == "mesh-low" {
                                 for entry in &mut loaded {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                        draft.preview_lod = 0;
+                                    }
+                                }
+                            }
+                            if mode == "mesh-quality" {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                        draft.set_lod_profile(mesh::LodProfile::Aurora);
+                                        draft.invalidate();
                                         draft.preview_lod = 0;
                                     }
                                 }

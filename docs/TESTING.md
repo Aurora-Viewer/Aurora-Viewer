@@ -7081,6 +7081,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   a price line.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
+- **`AURORA_DEMO_IMPORTS=mesh-quality`** selects Aurora's Quality generation
+  and previews Lowest, using the synthetic cube or `AURORA_DEMO_IMPORT_FILE`.
+  Check the Quality labels, the same targets as Linden, and retained triangles
+  above target when seams block further reduction; compare the textured LODs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
@@ -7364,11 +7368,18 @@ a local dense/thin mesh. Visual LODs, materials and source files must stay intac
 review the approximated collisions, particularly openings, before quoting.
 The `mesh_physics` regression filter covers the fee guard, worker result,
 pointer actions and collision-only conversion.
-The default convex hull and the four default LOD triangle targets are not
-visible in the offline demo (it returns fixed costs). Compare them on a grid
-only: upload the same file in both viewers, Calculate, and check physics cost,
-Land Impact and the LOD triangle counts.
-Automatic collision now starts from the smallest nonempty LOD in both profiles.
+The offline demo shows generated LOD geometry and triangle counts, but returns
+fixed upload costs. Compare real costs on a grid: load the same file in both
+viewers, Calculate, and check physics cost, Land Impact and LOD triangle counts.
+Both profiles use the same triangle targets (High divided by 3, 9 and 27).
+Aurora selects Quality generation: locked UV/normal seams and material
+boundaries, UV/normal-aware simplification, and a soft triangle budget. Its
+default combined geometry/attribute error limit is 0.01 (an approximate metric,
+not a pointwise UV or pixel guarantee); explicit error mode uses its selected
+threshold. Compare textured LOD previews on an atlas, a curved UV island and
+a model with multiple materials. Expect protected models to exceed their
+triangle target; compare the resulting quote rather than assuming a lower cost.
+Automatic collision starts from the smallest nonempty LOD in both profiles.
 Its adaptive simplification allows up to 0.25% additional distance error relative
 to that LOD's bounded convex hull, with instance scales and upload quantization
 accounted for. Compare Calculate fees with no custom collision source, then

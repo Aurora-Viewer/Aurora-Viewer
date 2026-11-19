@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+`aurora-assets/src/import_mesh/process/quality.rs` generates Aurora's quality
+LODs with meshoptimizer's attribute-aware simplifier. Coincident UV, normal,
+skin and material discontinuities are locked; UVs and normals also contribute
+to the simplification error inside each surface. Triangle targets match the
+Linden preset and remain soft. No fallback strips attributes to reach them.
+
 `aurora-assets/src/import_mesh/process/adaptive.rs` simplifies default collision
 hulls by adding their worst-approximated point until the extra distance error
 is within 0.25% of the hull diagonal. Support-plane extremes remain, instance

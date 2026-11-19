@@ -241,7 +241,9 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
     assert_eq!(LodProfile::Linden.targets(1400), [51, 155, 466, 1400]);
     // 10 / 27 truncates to 0 there; the target stays at least 1.
     assert_eq!(LodProfile::Linden.targets(10), [1, 1, 3, 10]);
-    assert_eq!(LodProfile::Aurora.targets(3000), [46, 187, 750, 3000]);
+    for count in [0, 10, 1400, 3000, 124228] {
+        assert_eq!(LodProfile::Aurora.targets(count), LodProfile::Linden.targets(count));
+    }
     let mut scene = Scene::default();
     scene.models.push(Model {
         name: "Counted".into(),
@@ -268,10 +270,10 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
     draft.lods[1].source = LodSource::File;
     draft.lods[2].error_mode = true;
     draft.set_lod_profile(LodProfile::Aurora);
-    assert_eq!(targets(&draft), [46, 187, 750, 3000]);
+    assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
     assert_eq!(
         sources(&draft),
-        [LodSource::Auto, LodSource::File, LodSource::Auto, LodSource::File]
+        [LodSource::Quality, LodSource::File, LodSource::Quality, LodSource::File]
     );
     assert!(!draft.lods[2].error_mode, "a generated level is back on its triangle target");
     draft.set_lod_profile(LodProfile::Linden);
