@@ -460,6 +460,14 @@
         "necklace",
         "diamond stud",
         "diamond studs",
+        "nose stud",
+        "nose studs",
+        "face chain",
+        "face chains",
+        "ear cuff",
+        "ear cuffs",
+        "earcuff",
+        "earcuffs",
         "necklaces",
         "earrings",
         "earring",
@@ -472,6 +480,7 @@
         "piercing",
         "piercings",
         "anklet",
+        "anklets",
         "jewelry",
         "jewellery",
         "pendant",
@@ -528,6 +537,10 @@
         "hair clips",
         "hair pin",
         "hair pins",
+        "hairpin",
+        "hairpins",
+        "hairband",
+        "hairbands",
         "hair flower",
         "hair flowers",
         "cat eye",
@@ -656,6 +669,10 @@
         "room divider",
         "stepladder",
         "bar counter",
+        "bar cart",
+        "bar carts",
+        "folding screen",
+        "folding screens",
         "bathtubs",
         "tub"
       ]
@@ -703,6 +720,17 @@
         "mesh logos",
         "animated logo",
         "subscriber kiosk",
+        "dj stage",
+        "dj booth",
+        "lighting truss",
+        "stage light",
+        "stage lights",
+        "accent light",
+        "accent lights",
+        "garden building kit",
+        "gazebo",
+        "pergola",
+        "lattice trellis",
         "popcorn machine",
         "dress form",
         "print",
@@ -873,6 +901,18 @@
       "words": [
         "hud",
         "huds"
+      ]
+    },
+    {
+      "category": "environment",
+      "words": [
+        "sky settings",
+        "windlight settings",
+        "windlight preset",
+        "windlight presets",
+        "pbr windlights",
+        "eep preset",
+        "eep presets"
       ]
     },
     {

@@ -3479,6 +3479,11 @@ fn the_shared_read_ends_whatever_the_trash_and_failed_folders_hold() {
     add_folder(&mut inv, 902, 1, "Huge");
     inv.folders.get_mut(&id(902)).expect("folder").state = FetchState::Unknown;
     inv.too_big.insert(id(902));
+    add_folder(&mut inv, 903, 901, "Cached child of failed read");
+    add_folder(&mut inv, 904, 902, "Cached child of oversized folder");
+    for n in [903, 904] {
+        inv.folders.get_mut(&id(n)).expect("folder").state = FetchState::Unknown;
+    }
     let progress = read_progress(&inv);
     assert_eq!(progress.pending, 0, "nothing left to come");
     assert_eq!(progress.failed, 2);
@@ -4592,6 +4597,50 @@ fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
     add_item(&mut inv, 201, 71, "MoonCove - Velvet Top / Reborn [DEMO]", NEW);
     add_item(&mut inv, 202, 71, "MoonCove - Velvet Top / Hourglass [DEMO]", NEW);
     assert_eq!(target_from_items(&inv, id(70), &Preferences::default(), None), None);
+}
+
+#[test]
+fn sorter_uses_native_types_for_environment_presets_and_materials() {
+    for (kind, category) in [(56, Category::Environment), (57, Category::Materials)] {
+        assert_eq!(
+            destination("Lara X Velvet Dress Squish", kind, 0, &[]),
+            Some(vec![category_folder(category)])
+        );
+    }
+    assert_eq!(
+        destination("Twilight Sky Settings", -1, 0, &[]),
+        Some(vec![category_folder(Category::Environment)])
+    );
+}
+
+#[test]
+fn sorter_uses_creator_hints_to_explain_what_stays_inside_deliveries() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 90, OBJECTS, "[Moss Vale] Vesper [box]");
+    add_item(&mut inv, 200, 90, "Vesper", 0);
+    add_item(&mut inv, 201, 90, "Glimmer", 0);
+    add_item(&mut inv, 202, 90, "Beacon", 0);
+    for (at, creator) in [(200, 801), (201, 802), (202, 802)] {
+        inv.items.get_mut(&id(at)).expect("item").creator = id(creator);
+    }
+    let prefs = Preferences {
+        store_hints: vec![StoreHint {
+            category: Category::Decor,
+            creator: Some(id(801)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let none = HashSet::new();
+    let planned = plan_whole(&inv, &prefs, &none, &none);
+    assert!(planned.moves.is_empty(), "the package remains intact");
+    assert!(
+        planned
+            .kept_list
+            .iter()
+            .any(|(name, why)| name == "Vesper" && *why == Kept::Delivery)
+    );
+    assert!(planned.unknown.iter().any(|name| name == "Glimmer"));
 }
 
 #[test]

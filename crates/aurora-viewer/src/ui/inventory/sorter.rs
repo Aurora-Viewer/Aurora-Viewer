@@ -666,6 +666,11 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
     let piece = loop {
         let Some(piece) = job.pieces.pop_front() else { return };
         let piece = match piece {
+            // A refused child or a new arrival can leave this folder
+            // occupied. Deleting the container would delete that entry.
+            sorter::purge::Piece::Emptied(id) if inv.folders.get(&id).is_some_and(|f| !f.items.is_empty() || !f.children.is_empty()) => {
+                continue;
+            }
             sorter::purge::Piece::Folder(id) | sorter::purge::Piece::Emptied(id)
                 if inv.folders.contains_key(&id)
                     && inside(id)

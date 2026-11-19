@@ -539,6 +539,8 @@ pub enum Category {
     Sounds,
     Textures,
     Gestures,
+    Environment,
+    Materials,
 }
 
 impl Category {
@@ -581,6 +583,8 @@ impl Category {
             Category::Sounds => aurora_i18n::tr!("inventory-sorter-sounds"),
             Category::Textures => aurora_i18n::tr!("inventory-sorter-textures"),
             Category::Gestures => aurora_i18n::tr!("inventory-sorter-gestures"),
+            Category::Environment => aurora_i18n::tr!("inventory-sorter-environment"),
+            Category::Materials => aurora_i18n::tr!("inventory-sorter-materials"),
         }
     }
 
@@ -596,6 +600,8 @@ impl Category {
             10 => Category::Scripts,
             20 => Category::Animations,
             21 => Category::Gestures,
+            56 => Category::Environment,
+            57 => Category::Materials,
             5 | 13 => match flags & 0xff {
                 0 => Category::Shapes,
                 1 => Category::Skins,
@@ -984,7 +990,7 @@ impl Default for StoreHint {
 
 impl Category {
     /// Every category, in folder order, for the store hints' list.
-    pub const ALL: [Category; 37] = [
+    pub const ALL: [Category; 39] = [
         Category::Tattoos,
         Category::Skins,
         Category::Makeup,
@@ -1022,6 +1028,8 @@ impl Category {
         Category::Sounds,
         Category::Textures,
         Category::Gestures,
+        Category::Environment,
+        Category::Materials,
     ];
 }
 
@@ -1163,6 +1171,8 @@ pub fn target_by(
                 | Category::Scripts
                 | Category::Sounds
                 | Category::Textures
+                | Category::Environment
+                | Category::Materials
         )
     );
     path.extend(found.body.filter(|_| worn).map(Body::folder));
@@ -1188,7 +1198,7 @@ pub fn target_by(
     // Waifus and Squish versions of clothes get their folder below the
     // category; the Waifus mod itself is a body add-on and gets none.
     let mod_itself = found.category == Some(Category::BodyAddons);
-    if !path.is_empty() && !mod_itself && (found.squish || found.waifus) {
+    if !path.is_empty() && worn && !mod_itself && (found.squish || found.waifus) {
         path.push(variant_folder(found.waifus, found.squish));
     }
     (!path.is_empty()).then_some(Dest::Path(path))
@@ -1576,10 +1586,10 @@ pub fn unread_tops(inv: &Inventory, limit: usize) -> Vec<Uuid> {
             continue;
         }
         let Some(f) = inv.folders.get(&id) else { continue };
-        if f.library || matches!(f.info.type_default, 14 | 50 | 53) {
+        if f.library || matches!(f.info.type_default, 14 | 50 | 53) || inv.too_big.contains(&id) {
             continue;
         }
-        if f.state == FetchState::Unknown && !inv.too_big.contains(&id) {
+        if f.state == FetchState::Unknown {
             out.push(id);
             continue;
         }
@@ -1605,13 +1615,16 @@ pub fn read_progress(inv: &Inventory) -> ReadProgress {
             continue;
         }
         progress.total += 1;
-        match f.state {
-            FetchState::Fetched => progress.read += 1,
-            FetchState::Failed => progress.failed += 1,
-            FetchState::Unknown if inv.too_big.contains(&id) => progress.failed += 1,
-            FetchState::Unknown | FetchState::Fetching => progress.pending += 1,
+        match (f.state, inv.too_big.contains(&id)) {
+            // The loader cannot fetch past this boundary. Cached children
+            // underneath it cannot keep the snapshot waiting for reads.
+            (FetchState::Failed, _) | (_, true) => progress.failed += 1,
+            (FetchState::Fetched, false) => {
+                progress.read += 1;
+                stack.extend(f.children.iter().copied());
+            }
+            (FetchState::Unknown | FetchState::Fetching, false) => progress.pending += 1,
         }
-        stack.extend(f.children.iter().copied());
     }
     progress
 }
@@ -4685,7 +4698,22 @@ fn plan_with(
     }
     let reviewed: Vec<_> = child_review
         .into_par_iter()
-        .map(|it| (it, target(&it.name, it.asset_type, it.flags, None, &[], false).is_some()))
+        .map(|it| {
+            let creator = by_creator.then(|| maker(inv, it)).flatten();
+            let recognized = target_by(
+                &it.name,
+                it.asset_type,
+                it.flags,
+                None,
+                &[],
+                false,
+                &prefs.store_hints,
+                creator,
+                None,
+            )
+            .is_some();
+            (it, recognized)
+        })
         .collect();
     for (it, recognized) in reviewed {
         if recognized {

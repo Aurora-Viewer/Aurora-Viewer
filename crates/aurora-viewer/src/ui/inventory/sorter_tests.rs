@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn the_sorter_purge_never_deletes_an_emptied_piece_with_contents_left() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem, operations::Operation};
+
+    let root = Uuid::from_u128(1);
+    let folder = Uuid::from_u128(2);
+    let child = Uuid::from_u128(3);
+    let item = Uuid::from_u128(4);
+    for (has_folder, has_item) in [(true, false), (false, true), (false, false)] {
+        let mut inv = Inventory {
+            root,
+            ..Default::default()
+        };
+        for (id, parent, children) in [
+            (root, Uuid::nil(), vec![folder]),
+            (folder, root, if has_folder { vec![child] } else { Vec::new() }),
+            (child, folder, Vec::new()),
+        ] {
+            inv.folders.insert(
+                id,
+                Folder {
+                    info: InvFolder {
+                        id,
+                        parent,
+                        type_default: -1,
+                        ..Default::default()
+                    },
+                    children,
+                    items: Vec::new(),
+                    state: FetchState::Fetched,
+                    library: false,
+                },
+            );
+        }
+        if has_item {
+            inv.add_items(vec![InvItem {
+                id: item,
+                parent: folder,
+                ..Default::default()
+            }]);
+        }
+        let mut st = InventoryUi::default();
+        st.sorter.purge = Some(PurgeJob {
+            folder: root,
+            pieces: [sorter::purge::Piece::Emptied(folder)].into(),
+            total: 1,
+            done: 0,
+            failed: 0,
+            in_flight: None,
+            request: None,
+            answered: None,
+            paused: false,
+            next_at: None,
+            stopping: false,
+            refused_in_row: 0,
+        });
+        let mut actions = Vec::new();
+        send_purge_piece(&inv, &mut st, &HashSet::new(), &mut actions, true);
+        if has_folder || has_item {
+            assert!(actions.is_empty());
+        } else {
+            let [InvAction::Edit(change)] = actions.as_slice() else {
+                panic!("an empty folder can be deleted")
+            };
+            assert!(matches!(change.operations.as_slice(), [Operation::Delete { id, folder: true }] if *id == folder));
+        }
+    }
+}
+
+#[test]
 fn auto_sort_is_offered_on_one_folder_of_the_agent_and_one_item_sorts_alone() {
     let agent = Uuid::from_u128(2);
     // a loaded inventory has its root (nothing is open before it)

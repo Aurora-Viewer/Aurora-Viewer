@@ -67,6 +67,8 @@ impl Category {
             Category::Scripts => "scripts",
             Category::Sounds => "sounds",
             Category::Textures => "textures",
+            Category::Environment => "environment",
+            Category::Materials => "materials",
             Category::Gestures => "gestures",
         }
     }
