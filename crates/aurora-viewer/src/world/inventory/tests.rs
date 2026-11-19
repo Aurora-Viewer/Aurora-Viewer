@@ -27,6 +27,77 @@ fn id(n: u128) -> Uuid {
 }
 
 #[test]
+fn an_open_folder_whose_read_failed_waits_before_it_is_asked_again() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let now = std::time::Instant::now();
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Unknown;
+    assert!(inv.shown_needs_fetch(root, now), "never read: asked at once");
+    inv.request(root);
+    assert!(!inv.shown_needs_fetch(root, now), "being read");
+    inv.failed_at_time(&[root], now);
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    // not every frame: only once the pause is over
+    assert!(!inv.shown_needs_fetch(root, now));
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY / 2));
+    assert!(inv.shown_needs_fetch(root, now + SHOWN_RETRY));
+    // a folder that failed with no time recorded is not left behind
+    inv.failed_at.clear();
+    assert!(inv.shown_needs_fetch(root, now));
+    // a read folder and an unknown id are never asked for
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetched;
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY));
+    assert!(!inv.shown_needs_fetch(id(999_999), now));
+}
+
+#[test]
+fn shown_folder_retries_keep_the_background_owner_and_the_open_view_pause() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let now = std::time::Instant::now();
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetching;
+    inv.failed_at_time(&[root], now);
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.request_shown(root, now + SHOWN_RETRY / 2);
+    assert!(inv.queue.is_empty(), "no retry each frame before the pause");
+    inv.request_shown(root, now + SHOWN_RETRY);
+    inv.request_shown(root, now + SHOWN_RETRY);
+    assert_eq!(inv.queue, [(root, false)], "one read after the pause");
+    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    inv.queue.clear();
+
+    inv.failed_at_time(&[root], now);
+    inv.retrying_folders.insert(root);
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY * 100));
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    inv.retry(root);
+    assert!(inv.queue.is_empty(), "neither open views nor clicks steal a background retry");
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.retrying_folders.remove(&root);
+    inv.too_big.insert(root);
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY * 100));
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    assert!(inv.queue.is_empty(), "an over-limit folder is not polled");
+
+    inv.too_big.remove(&root);
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    assert_eq!(inv.queue, [(root, false)], "the view resumes once recovery releases ownership");
+}
+
+#[test]
+fn explicit_folder_open_retries_without_waiting_for_the_view_poll() {
+    let mut inv = fixture();
+    let root = inv.root;
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetching;
+    inv.failed_at_time(&[root], std::time::Instant::now());
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.request(root);
+    assert!(inv.queue.is_empty(), "ordinary automatic demand does not restart failures");
+    inv.retry(root);
+    assert_eq!(inv.queue, [(root, false)], "an explicit open keeps main's immediate retry");
+}
+
+#[test]
 fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
     let mut inv = fixture();
     let mut selected = vec![id(8000), id(8001)];

@@ -302,12 +302,18 @@ async fn refusal_reply(mut response: reqwest::Response) -> Option<Llsd> {
     aurora_llsd::from_xml(&bytes).ok()
 }
 
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): every AIS command
+/// waits up to three minutes for its reply. A write the server is still
+/// carrying out when the viewer gives up is done anyway, and the viewer then
+/// reads a folder the server is busy with.
+const AIS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(aurora_llsd::to_xml(body))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(AIS_TIMEOUT)
         .send()
         .await
         .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;

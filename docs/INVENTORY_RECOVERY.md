@@ -47,7 +47,12 @@ never also enter ordinary or attachment inventory events.
 
 ## Folder retries
 
-Automatic folder requests must consult the background cooldown ownership.
+Integration with main's #4198 keeps the ten-second retry for a failed folder
+shown open through `request_shown`. It does not steal a background retry's
+ownership or re-read an over-limit folder. Sidebar opens explicitly use `retry`;
+ordinary automatic demand remains limited to unknown folders.
+
+Generic automatic folder requests must consult the background cooldown ownership.
 They only enqueue Unknown folders; a Failed or over-limit folder is not
 restarted by automatic UI demand. The existing once-per-region recovery uses
 an explicit retry method, while manual refresh re-arms the model deliberately.
@@ -136,6 +141,20 @@ its upstream event budget. The complete `scripts/check.ps1` passed with pinned
 Rust 1.100.0 on Windows MSVC: 10,668 tests, zero failures, 61 existing ignored
 tests; script checks, formatting and Clippy also passed. This is local
 integration validation, not an additional live-grid test.
+
+The 2026-11-18 integration includes main at
+`c6a2ed8126e9e2e3da29d195f0dc7045159a8a9c`, after the 0.9.12 beta.2 tag.
+It preserves #4198's shown-folder retries through the owned recovery path.
+The complete `scripts/check.ps1` passed with pinned Rust 1.100.0 on Windows
+MSVC: 10,935 tests, zero failures, 61 existing ignored (601 network; 9,177
+viewer, 20 viewer ignored). Two new regressions cover actual queued retries,
+the ten-second boundary, repeated frames, background ownership, over-limit
+folders and explicit opens. No new live-grid validation is claimed.
+
+The complementary subtree deadlines, watchdog and N4 report remain proposed
+in #4094, independently of this implementation. Its overlapping model-level
+item claims and temporary broken-link state should be reconciled with the
+session-owned reader before integration; a clean text merge is insufficient.
 
 The reporter manually validated the original candidate on a large account:
 four partial/warm-cache sessions completed with no terminal item/folder failure

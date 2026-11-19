@@ -131,6 +131,21 @@ pub(super) fn show(
                 let galley = ui.painter().layout_job(job);
                 crate::ui::widgets::paint_row_text(ui.painter(), galley, line.left() + 26.0, line.center().y, p.muted);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+            } else if let Some(id) = st.selected.filter(|id| sidebar::kind(world, id) == sidebar::Kind::Private)
+                && world.chat_service.loading(id)
+            {
+                // the Chat Service's history is read or fetched (the IM
+                // window's loading panel, Snapshot::service_work_active)
+                // painted, not placed: `ui.put` would move the cursor up to
+                // the spinner's bottom and lift the box under the line
+                let spin = egui::Rect::from_center_size(egui::pos2(line.left() + 10.0, line.center().y), egui::vec2(12.0, 12.0));
+                egui::Spinner::new().size(12.0).color(p.violet_light).paint_at(ui, spin);
+                let galley = ui.painter().layout_no_wrap(
+                    aurora_i18n::tr!("ui-chat-history-loading").to_string(),
+                    egui::FontId::proportional(11.0),
+                    p.muted,
+                );
+                crate::ui::widgets::paint_row_text(ui.painter(), galley, line.left() + 26.0, line.center().y, p.muted);
             }
             // ---- the box
             let mut draft = std::mem::take(st.draft_mut(st.selected));

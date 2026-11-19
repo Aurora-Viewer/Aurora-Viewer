@@ -300,6 +300,7 @@ impl App {
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.im_blocked = !w.rlva_can_start_im(*id);
+                f.name_hidden = !w.rlva_can_name(*id);
                 f.pay_blocked = !crate::ui::context::can_pay_resident(w) || !w.rlva_can_name(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
@@ -1026,7 +1027,7 @@ impl App {
             CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
-                self.history_ui.show_file(title, file);
+                self.open_history(conversation, title, file);
             }
         }
     }

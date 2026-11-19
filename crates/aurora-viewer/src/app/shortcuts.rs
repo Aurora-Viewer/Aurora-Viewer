@@ -1,8 +1,8 @@
 //! The keyboard shortcuts of the Legacy Viewer's menus that run an Aurora
 //! feature reached otherwise from a menu, a window or the toolbar
-//! (menu_viewer.xml accelerators): People on a tab, the master mute,
-//! double-click teleport, selection outlines, the camera's angles and the
-//! build selection's focus.
+//! (menu_viewer.xml accelerators): People on a tab, Contacts, the master
+//! mute, double-click teleport, selection outlines, the camera's angles and
+//! the build selection's focus.
 
 use super::App;
 use crate::autopilot::DoubleClick;
@@ -29,6 +29,38 @@ impl App {
             }
             self.panels.people_tab = tab;
         }
+    }
+
+    /// Communicate › Contacts (menu_viewer.xml, "Contacts",
+    /// Floater.Toggle imcontacts; FSFloaterContacts::onOpen): the Contacts
+    /// pane of Conversations, or its torn-off window. A command, not a
+    /// switch: shown already, it stays and comes to the front.
+    pub(super) fn reveal_contacts(&mut self) {
+        match crate::ui::contacts::placement(self.settings.contacts.torn_off) {
+            crate::ui::contacts::Placement::TornOff => {
+                crate::ui::widgets::open_floater(&self.egui_ctx, "contacts", &mut self.panels.contacts);
+            }
+            crate::ui::contacts::Placement::Docked => {
+                // the tab is drawn only while Preferences › Chat shows it
+                self.settings.show_contacts_tab = true;
+                // addFloater(this, true): docked into Conversations, selected
+                self.settings.contacts.torn_off = false;
+                self.panels.contacts = false;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "conversations", &mut self.panels.chat);
+                self.chat_ui.contacts = true;
+            }
+        }
+    }
+
+    /// Preferences › Chat › Show the Contacts tab turned on: a torn-off
+    /// Contacts goes back into Conversations (LLMultiFloater::addFloater),
+    /// its window left as it is, as closing the torn-off one does.
+    pub(super) fn dock_contacts(&mut self) {
+        // LLMultiFloater::addFloater(this, true): docked into Conversations,
+        // selected
+        self.settings.contacts.torn_off = false;
+        self.panels.contacts = false;
+        self.chat_ui.contacts = true;
     }
 
     /// World.ToggleMasterAudio: all sound off, or back on, as the speaker of

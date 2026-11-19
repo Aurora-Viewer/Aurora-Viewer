@@ -98,6 +98,9 @@ pub struct GesturesUi {
     editor_order: Vec<Uuid>,
     raise_editor: Option<Uuid>,
     pub message: String,
+    /// Gestures (item, asset) that could not be loaded, with why: shown on
+    /// their row, and not loaded again in the background until Refresh.
+    pub failed: BTreeMap<(Uuid, Uuid), String>,
     selected: BTreeSet<Uuid>,
     anchor: Option<Uuid>,
     filter: String,
@@ -200,8 +203,12 @@ pub fn show(
                         ui.push_id(id, |ui| {
                             let active = manager.active.contains(&id);
                             let selected = state.selected.contains(&id);
-                            let response = ui.add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, ""));
+                            let failed = state.failed.get(&(id, it.asset_id));
+                            let mut response = ui.add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, ""));
                             response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &it.name));
+                            if let Some(reason) = failed {
+                                response = response.on_hover_text(reason.as_str());
+                            }
                             ui.scope_builder(
                                 egui::UiBuilder::new()
                                     .max_rect(response.rect)
@@ -213,6 +220,8 @@ pub fn show(
                                     }
                                     let text = RichText::new(&it.name).color(if selected {
                                         p.on_accent
+                                    } else if failed.is_some() {
+                                        p.warn
                                     } else if active {
                                         p.ink
                                     } else {

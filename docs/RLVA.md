@@ -219,7 +219,44 @@ script authors; the command lists below describe this branch specifically.
   shownearby. Display names, rich chat, notifications, hover text, maps and
   radar use privacy projections while canonical identities and transcript
   filenames stay intact. Hidden-name avatar menus expose the reference's
-  limited actions. Application links and place details filter labels and
+  limited actions. The right-click menu of an avatar in the world (and of what
+  they wear) greys View profile, Become friends, Add to contact set, Send IM,
+  Give my calling card, Voice call, Invite to group, Ignore and Offer teleport
+  while `@shownames` hides that resident (`RLV.CanShowName`,
+  `Avatar.EnableAddFriend`, `Avatar.EnableCall` and `Object.EnableMute`,
+  menu_avatar_other.xml); Block voice follows Ignore and a name-plate click
+  that would run one of them does nothing (both stricter than the Legacy
+  Viewer, which has neither). A conversation (an IM, a group chat, its
+  members and header), the notices about them (an IM, a friendship offer),
+  the friends, group and search lists, the group profile, About Land and the
+  estate and region windows name their people whoever is around, and a click
+  on such a name opens the profile. The menu of a name greys View profile and
+  Zoom in while `@shownames` is set (FSCommon::checkIsActionEnabled) and keeps
+  the friendship offer, the history and the copies; the people lists offer no
+  friendship to a hidden resident (PeopleContextMenu). A name the
+  restriction hides in a chat (a speaker of the nearby chat, a rewritten
+  mention) opens no menu, as the Legacy Viewer writes it as plain text
+  (FSChatHistory). The owner and the creator of an item, in the inventory or
+  in an object's contents, follow LLSidepanelItemInfo field by field: the
+  owner is hidden unless excepted, the creator when they also own the item
+  or stand nearby, and a hidden one is a plain stand-in that opens no
+  profile. A bare link to a resident in chat keeps the
+  name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
+  label of a labelled link is filtered like the text around it
+  (RlvUtil::filterNames and filterLocation). A `/mention` link is rewritten
+  where RlvUtil::filterMentions runs: on every line of the nearby chat and in
+  what an object or the system says, not in a script's prompt, where it reads
+  "@" and the name of its resident (LLUrlEntryAgentMention has no RLVa
+  test). `@shownames` and `@showloc` rewrite the names and the places in
+  what no resident typed: an object's chat and IMs, the system's messages,
+  the viewer's notices. What a resident typed, in the nearby chat or in an
+  IM session, ours included, is shown as typed
+  (LLFloaterIMNearbyChatHandler::processChat filters only when the source is
+  not an avatar). A script's prompt (its dialog or text box, its permission
+  question, its link prompt) is shown as the simulator sent it, the name of
+  the object's owner included (process_script_dialog and
+  process_script_question have no RLVa test); a click on that name opens no
+  profile while the restriction hides the resident. Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure

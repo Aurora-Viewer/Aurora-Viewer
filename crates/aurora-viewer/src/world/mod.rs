@@ -19,12 +19,14 @@ pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
+pub mod chat_service;
 pub mod collisions;
 pub mod complexity_notice;
 pub mod contact_markers;
 pub mod contact_sets;
 pub mod derender;
 pub mod dialog_names;
+pub mod direct_history;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -197,6 +199,9 @@ pub struct Region {
     /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
     /// post links in chat applies here, so the role editor shows it.
     pub group_chat_post_links: bool,
+    /// SimulatorFeatures' GameControlEnabled: the region reads
+    /// GameControlData (LLViewerRegion::gameControlEnabled).
+    pub game_control: bool,
     pub max_link_children: Option<u32>,
     /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
     /// window's "Region settings".
@@ -294,6 +299,18 @@ impl ChatKind {
     /// A card (an invitation, an offer with their buttons, a payment).
     pub fn is_card(self) -> bool {
         matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_))
+    }
+
+    /// The text of a line of this kind, in a conversation that shows the
+    /// names of `names` (`names::TextScope`): what a resident typed, we
+    /// included, in the nearby chat or in an IM session, is shown as typed
+    /// under RLVa's `@shownames` and `@showloc`; an object's line, the
+    /// viewer's notices and the cards are rewritten.
+    pub fn text_in(self, names: names::NameScope) -> names::TextScope {
+        match self {
+            ChatKind::Local(_) | ChatKind::Own(_) | ChatKind::Im => names::TextScope::verbatim(names),
+            _ => names.into(),
+        }
     }
 
     /// Not sent by a person: what an object or a script says (its owner-say
@@ -472,6 +489,8 @@ pub struct World {
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
+    /// The Chat Service's direct-IM history (direct_history.rs).
+    pub chat_service: direct_history::ChatService,
     /// The last import's result, for the app.
     pub import_report: Option<chat_log::import::Report>,
     /// History of the nearby chat (asked once per login).
@@ -591,6 +610,9 @@ pub struct World {
     pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
+    /// The last LL_SIM_STAT_FPS of a SimStats, from any region: it paces
+    /// GameControlData (`game_control::Engine::set_server_fps`).
+    pub sim_fps: Option<f32>,
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
@@ -1000,6 +1022,7 @@ impl World {
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
+            chat_service: Default::default(),
             import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
@@ -1060,6 +1083,7 @@ impl World {
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
+            sim_fps: None,
             frozen: false,
             god_level: 0,
             held_kills: Vec::new(),
@@ -1185,6 +1209,10 @@ impl World {
         self.save_open_ims();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
+        // LLChatServiceHistory::stop; the manager stays, so that no ticket
+        // of this login is taken for one of the next
+        self.chat_service_logout();
+        let chat_service = std::mem::take(&mut self.chat_service);
         let mut chat_log = std::mem::take(&mut self.chat_log);
         chat_log.logout();
         // a setting, not the session's: the arrival's lines follow it too
@@ -1196,6 +1224,7 @@ impl World {
         *self = World::new(lib);
         self.omnifilter = omnifilter;
         self.chat_log = chat_log;
+        self.chat_service = chat_service;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
         self.blocked_chat = blocked_chat;
@@ -2564,6 +2593,7 @@ impl World {
             currency_symbol: String::new(),
             export_supported: false,
             group_chat_post_links: false,
+            game_control: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -3076,6 +3106,8 @@ impl World {
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
+                // LLChatServiceHistory::start, in the account's own folder
+                self.chat_service_login();
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {
@@ -3203,6 +3235,7 @@ impl World {
                 currency_symbol,
                 export_supported,
                 group_chat_post_links,
+                game_control,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
@@ -3214,6 +3247,7 @@ impl World {
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
                 r.group_chat_post_links = group_chat_post_links;
+                r.game_control = game_control;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4405,6 +4439,10 @@ impl World {
                 }
                 None
             }
+            NetEvent::SimFrameRate(fps) => {
+                self.sim_fps = Some(fps);
+                None
+            }
             NetEvent::Health(health) => {
                 // the app compares with UISndHealthReductionThreshold
                 self.health_changes.push((self.health, health));
@@ -4915,6 +4953,10 @@ impl World {
                 }
                 None
             }
+            NetEvent::ChatServiceResponse { id, status, body } => {
+                self.chat_service_response(id, status, body);
+                None
+            }
             other => Some(other),
         }
     }
@@ -4957,7 +4999,12 @@ impl World {
             return;
         }
         let mut c = c;
-        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
+        // `@shownames` and `@showloc` rewrite what an object or the system
+        // says, never what a resident typed ("avatar => filter only their
+        // name", process_chat_from_simulator; `names::TextScope`)
+        if c.source_type != aurora_net::ChatSourceType::Agent
+            && let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message)
+        {
             c.message = text;
         }
         let own_attachment = self.rlva.enabled()
@@ -5223,7 +5270,11 @@ impl World {
                 beyond_range: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
+            let (line_time, line_text) = (line.time, line.text.clone());
             self.conversation_push(im.from_agent_id, line, true);
+            // the Chat Service's capture and activity, offline too
+            // (processNewMessage, LL viewer 26.5)
+            self.direct_incoming(im.from_agent_id, line_time, &line_text, &im.message, im.offline, im.timestamp);
             // sessionAdded with has_offline_msg: the log marks it unread
             if im.offline && opened {
                 self.log_conversation(im.from_agent_id, true);
@@ -6269,6 +6320,12 @@ impl World {
         self.main().is_some_and(|r| r.export_supported)
     }
 
+    /// The region we are in reads GameControlData (gAgent.getRegion()'s
+    /// gameControlEnabled).
+    pub fn game_control_enabled(&self) -> bool {
+        self.main().is_some_and(|r| r.game_control)
+    }
+
     /// The region we are in applies the ability to post links in group
     /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
     pub fn group_chat_post_links(&self) -> bool {
@@ -6338,6 +6395,9 @@ impl World {
             .map(|l| social::format_name(&l.first_name, &l.last_name))
             .unwrap_or_default();
         self.social.session_mut(to);
+        // the newest service id known before it is sent
+        // (History::outgoingContext, LL viewer 26.5)
+        let context = self.direct_outgoing_context(to);
         let line = ChatLine {
             time: SystemTime::now(),
             from: me,
@@ -6348,7 +6408,11 @@ impl World {
             blocked: false,
             beyond_range: false,
         };
+        let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
+        if let Some(context) = context {
+            self.direct_outgoing(to, context, line_time, &line_text);
+        }
     }
 
     /// Add a line said at its own time to a conversation, opening it (the
@@ -9838,6 +9902,7 @@ mod motion_tests {
                 currency_symbol: String::new(),
                 export_supported: false,
                 group_chat_post_links: false,
+                game_control: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

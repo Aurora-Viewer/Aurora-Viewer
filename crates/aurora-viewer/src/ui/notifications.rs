@@ -213,7 +213,7 @@ pub(super) fn look_style(p: &Palette, look: crate::world::notification_history::
 /// The start of a message on its card: its links by their labels first,
 /// then cut, so never inside an address (#947).
 fn message_excerpt(world: &World, body: &str) -> String {
-    let body = super::chat::resolved_text_in(world, Kind::Message.names(), body);
+    let body = super::chat::resolved_text_in(world, Kind::Message.text(), body);
     let mut text: String = body.chars().take(MESSAGE_CHARS).collect();
     if body.chars().count() > MESSAGE_CHARS {
         text.push('…');
@@ -275,7 +275,7 @@ pub(super) fn person_card(
                         n.title.clone()
                     };
                     ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                        name_hover = text::show(ui, p, &title, &n.name_links, 12.5, p.ink, true, false);
+                        name_hover = text::show(ui, p, &title, &n.name_links, 12.5, p.ink, true, false, n.kind.names());
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -297,7 +297,7 @@ pub(super) fn person_card(
                 let shown = world.notification_body(n);
                 if !shown.is_empty() {
                     let text = message_excerpt(world, &shown);
-                    name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
+                    name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links, n.kind.names()));
                 }
             });
         });
@@ -339,7 +339,7 @@ pub(super) fn person_card(
     let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
     if cover.clicked() {
         if !on_close && let Some(target) = name_hover {
-            text::open(ui.ctx(), target);
+            text::open(ui.ctx(), n.kind.names(), target);
             return None;
         }
         return Some(if on_close || !n.opens() {
@@ -431,7 +431,7 @@ pub(super) fn card(
                         let title = super::notification_center::aurora::title(ui, p, &n.title, 12.5);
                         ui.add(egui::Label::new(title).wrap());
                     } else {
-                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true, n.kind.names());
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -469,12 +469,18 @@ pub(super) fn card(
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_links(ui, p, world, n.kind.names(), &shown, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, n.kind.text(), &shown, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, n.kind.names(), &shown, &n.name_links, 12.0, p.muted);
+                        if matches!(n.data, Data::GroupNotice { .. }) {
+                            super::chat::select::document(ui, p, n.id, &shown, |ui, line| {
+                                super::chat::text_with_links(ui, p, world, n.kind.text(), line, &n.name_links, 12.0, p.muted);
+                            });
+                        } else {
+                            super::chat::text_with_links(ui, p, world, n.kind.text(), &shown, &n.name_links, 12.0, p.muted);
+                        }
                     });
                 }
             }

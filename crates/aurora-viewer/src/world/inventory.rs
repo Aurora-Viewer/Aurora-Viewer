@@ -67,6 +67,8 @@ pub struct Inventory {
     /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
     /// items cannot be read; search and refresh do not ask again in a loop.
     pub too_big: HashSet<Uuid>,
+    /// When each folder's last read failed (`shown_needs_fetch`).
+    pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
@@ -88,6 +90,10 @@ pub struct Inventory {
 /// Failed read results before the automatic producer's retry budget ends.
 /// Exhaustion does not establish that the original was deleted.
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+
+/// The pause before a folder shown open whose read failed is asked for
+/// again (`Inventory::shown_needs_fetch`).
+pub const SHOWN_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 
 // v3 could store a no-copy original as removed even when the offer never
 // reached a simulator. The folder version alone cannot distinguish that cache.
@@ -270,6 +276,30 @@ impl Inventory {
             folder.state = FetchState::Unknown;
         }
         self.request(id);
+    }
+
+    /// A shown folder keeps main's paced retry without bypassing background
+    /// ownership. Other automatic producers still only request unknown folders.
+    pub fn request_shown(&mut self, id: Uuid, now: std::time::Instant) {
+        if self.shown_needs_fetch(id, now) {
+            self.retry(id);
+        }
+    }
+
+    /// Whether a folder shown open should be asked for now: one never read,
+    /// or one whose last read failed `SHOWN_RETRY` ago or more. The windows
+    /// ask every frame; without the pause, a folder the server is busy with
+    /// (a large link creation still running) or refuses at once was asked
+    /// again and again, and stayed "loading" for good.
+    pub fn shown_needs_fetch(&self, id: Uuid, now: std::time::Instant) -> bool {
+        if self.retrying_folders.contains(&id) || self.too_big.contains(&id) {
+            return false;
+        }
+        match self.folders.get(&id).map(|f| f.state) {
+            Some(FetchState::Unknown) => true,
+            Some(FetchState::Failed) => self.failed_at.get(&id).is_none_or(|at| now.duration_since(*at) >= SHOWN_RETRY),
+            _ => false,
+        }
     }
 
     /// Apply folder snapshots. A snapshot older than the contents already
@@ -586,12 +616,17 @@ impl Inventory {
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
+        self.failed_at_time(folders, std::time::Instant::now());
+    }
+
+    fn failed_at_time(&mut self, folders: &[Uuid], now: std::time::Instant) {
         self.generation += 1;
         for id in folders {
             if let Some(f) = self.folders.get_mut(id)
                 && f.state != FetchState::Fetched
             {
                 f.state = FetchState::Failed;
+                self.failed_at.insert(*id, now);
             }
         }
     }

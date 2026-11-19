@@ -2768,6 +2768,12 @@ impl Scene {
         Self::object_transform_raw(world, idx, now, 0, None)
     }
 
+    /// An avatar's standing height from its shape, before mesh joint
+    /// overrides (the server's agent size), once its skeleton is built.
+    pub fn neutral_body_height(&self, avatar: &Uuid) -> Option<f32> {
+        self.skeletons.get(avatar).map(|s| s.neutral_body_height)
+    }
+
     /// Where our avatar's object is (render space) while it sits on another:
     /// its seat-relative position through the seat's transform, without the
     /// shape offset of the drawn root (sitting branch of

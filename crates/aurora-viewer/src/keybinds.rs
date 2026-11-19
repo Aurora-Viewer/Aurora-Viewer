@@ -432,6 +432,11 @@ pub enum Action {
     PushToTalk,
     ToggleMic,
     Conversations,
+    /// Communicate › Contacts (menu_viewer.xml, "Contacts",
+    /// shortcut="control|alt|shift|F", Floater.Toggle imcontacts): the
+    /// Contacts tab of Conversations, or its torn-off window
+    /// (FSFloaterContacts::onOpen).
+    Contacts,
     /// Communicate › Nearby Chat (menu_viewer.xml, `shortcut="control|H"`,
     /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
     NearbyChat,
@@ -711,6 +716,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
+                    (Action::Contacts, aurora_i18n::tr!("common-contacts")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Friends, aurora_i18n::tr!("common-friends")),
                     (Action::Groups, aurora_i18n::tr!("common-groups")),
@@ -948,6 +954,8 @@ impl KeyBindings {
             (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
+            // menu_viewer.xml: Contacts, shortcut="control|alt|shift|F"
+            (Action::Contacts, [kalt(K::KeyF, true, true), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             // menu_viewer.xml: Friends, Groups, Contact Sets
             (Action::Friends, [kmod(K::KeyF, true, true), None]),
@@ -2095,6 +2103,7 @@ mod tests {
             (KeyCode::KeyQ, m(true, false, false), Action::Quit),
             (KeyCode::KeyO, m(true, false, false), Action::Appearance),
             (KeyCode::KeyF, m(true, true, false), Action::Friends),
+            (KeyCode::KeyF, m(true, true, true), Action::Contacts),
             (KeyCode::KeyG, m(true, true, false), Action::Groups),
             (KeyCode::KeyC, m(true, true, true), Action::ContactSets),
             (KeyCode::KeyI, m(true, true, false), Action::NewInventoryWindow),
