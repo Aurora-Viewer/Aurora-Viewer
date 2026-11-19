@@ -278,7 +278,6 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
         mesh::LodSource::File => aurora_i18n::tr!("import-source-file"),
         mesh::LodSource::Auto => aurora_i18n::tr!("import-lod-auto"),
-        mesh::LodSource::Quality => aurora_i18n::tr!("import-lod-quality"),
         mesh::LodSource::Combine => aurora_i18n::tr!("import-lod-combine"),
         mesh::LodSource::Fast => aurora_i18n::tr!("import-lod-fast"),
         mesh::LodSource::Reliable => aurora_i18n::tr!("import-lod-reliable"),
@@ -352,23 +351,6 @@ fn mesh_controls(
     }
     ui.add_space(2.0);
     if section == 0 {
-        ui.horizontal(|ui| {
-            ui.label(aurora_i18n::tr!("import-lod-profile"));
-            let linden = aurora_i18n::tr!("import-lod-profile-linden");
-            let aurora = aurora_i18n::tr!("import-lod-profile-aurora");
-            let mut selected = usize::from(draft.lod_profile == mesh::LodProfile::Aurora);
-            if widgets::segmented(ui, p, &mut selected, &[(linden, false), (aurora, true)]) {
-                let profile = if selected == 1 {
-                    mesh::LodProfile::Aurora
-                } else {
-                    mesh::LodProfile::Linden
-                };
-                draft.set_lod_profile(profile);
-                prefs.mesh_lod_profile = profile;
-                changed = true;
-            }
-            widgets::icon_button(ui, p, "help-circle-filled", aurora_i18n::tr!("import-lod-profile-help"), true);
-        });
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 7.0;
             for level in (0..4).rev() {
@@ -415,7 +397,6 @@ fn mesh_controls(
                                 for choice in [
                                     mesh::LodSource::File,
                                     mesh::LodSource::Legacy,
-                                    mesh::LodSource::Quality,
                                     mesh::LodSource::Auto,
                                     mesh::LodSource::Combine,
                                     mesh::LodSource::Fast,
@@ -1109,7 +1090,7 @@ mod tests {
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
         let mut draft = crate::imports::tests::mesh_fixture();
-        // Test the budget-driven method independently of the Quality preset.
+        // Exercise Automatic generation explicitly; Legacy keeps a box whole.
         for lod in &mut draft.lods[..3] {
             lod.source = mesh::LodSource::Auto;
         }

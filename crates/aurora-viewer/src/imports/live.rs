@@ -28,7 +28,6 @@ fn entry(source: PreparedSource, images: Vec<PreparedImage>, prefs: &Preferences
     draft.lod_suffixes = prefs.mesh_suffixes.clone();
     draft.upload_timeout = prefs.mesh_upload_timeout;
     draft.options.textures = draft.scene.materials.iter().any(|m| m.images[0].is_some());
-    draft.set_lod_profile(prefs.mesh_lod_profile);
     // Keep the captured weights and bind matrices; joint-position overrides
     // remain off. This is the same rest mesh as the live attachment.
     if prefs.mesh_reliable_default {

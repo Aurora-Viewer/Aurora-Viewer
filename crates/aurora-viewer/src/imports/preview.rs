@@ -1029,8 +1029,7 @@ mod tests {
     #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
         let mut draft = crate::imports::tests::mesh_fixture();
-        // This preview regression needs visibly different LODs; Quality
-        // deliberately retains the box instead of stripping its seams.
+        // Select different LODs explicitly; Legacy keeps this box whole.
         for lod in &mut draft.lods[..3] {
             lod.source = super::super::mesh::LodSource::Auto;
         }

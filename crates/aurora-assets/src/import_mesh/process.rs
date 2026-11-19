@@ -7,13 +7,11 @@ use parry3d::{math::Vector, transformation::try_convex_hull};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod adaptive;
-mod quality;
 pub use adaptive::base_hull as adaptive_base_hull;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Auto,
-    Quality,
     Reliable,
     Precise,
     Fast,
@@ -295,9 +293,6 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
     if options.method == Method::Legacy {
         return legacy_lod(model, options, cancel);
     }
-    if options.method == Method::Quality {
-        return quality::lod(model, options, cancel);
-    }
     let source_triangles = model.triangles().max(1);
     let mut reduced = model.clone();
     if options.method == Method::Auto {
@@ -403,7 +398,7 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
         };
         let flags = match options.method {
             Method::Reliable => meshopt::SimplifyOptions::LockBorder,
-            Method::Auto | Method::Quality | Method::Precise | Method::Legacy => meshopt::SimplifyOptions::None,
+            Method::Auto | Method::Precise | Method::Legacy => meshopt::SimplifyOptions::None,
             Method::Fast => meshopt::SimplifyOptions::Permissive | meshopt::SimplifyOptions::Prune,
         };
         face.indices = if target == 0 && !options.error_only {

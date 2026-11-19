@@ -278,7 +278,6 @@ pub(super) fn load(
             draft.lods[3].path = Some(path.to_owned());
             draft.options.skin &= prefs.mesh_auto_weights;
             draft.preview_weights &= prefs.mesh_auto_preview_weights && draft.options.skin;
-            draft.set_lod_profile(prefs.mesh_lod_profile);
             if prefs.mesh_reliable_default {
                 for lod in &mut draft.lods[..3] {
                     lod.source = mesh::LodSource::Reliable;

@@ -234,16 +234,13 @@ fn mesh_base_hull_keeps_custom_collision_first_then_uses_the_smallest_nonempty_l
 }
 
 #[test]
-fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
-    // Linden: genMeshOptimizerLODs truncates base / 3^(3 - level).
-    assert_eq!(LodProfile::Linden.targets(3000), [111, 333, 1000, 3000]);
+fn mesh_default_lods_use_legacy_generation_and_one_third_targets() {
+    // genMeshOptimizerLODs truncates base / 3^(3 - level).
+    assert_eq!(default_lod_targets(3000), [111, 333, 1000, 3000]);
     // #3433's 1,400 triangles: 466, 155 and 51 below the High LOD.
-    assert_eq!(LodProfile::Linden.targets(1400), [51, 155, 466, 1400]);
+    assert_eq!(default_lod_targets(1400), [51, 155, 466, 1400]);
     // 10 / 27 truncates to 0 there; the target stays at least 1.
-    assert_eq!(LodProfile::Linden.targets(10), [1, 1, 3, 10]);
-    for count in [0, 10, 1400, 3000, 124228] {
-        assert_eq!(LodProfile::Aurora.targets(count), LodProfile::Linden.targets(count));
-    }
+    assert_eq!(default_lod_targets(10), [1, 1, 3, 10]);
     let mut scene = Scene::default();
     scene.models.push(Model {
         name: "Counted".into(),
@@ -257,56 +254,37 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
             material: 0,
         }],
     });
-    let mut draft = Draft::from_shared(Arc::new(scene), HashMap::new());
+    let draft = Draft::from_shared(Arc::new(scene), HashMap::new());
     let sources = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.source);
     let targets = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.triangles);
-    assert_eq!(draft.lod_profile, LodProfile::Linden);
     assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
     assert_eq!(
         sources(&draft),
         [LodSource::Legacy, LodSource::Legacy, LodSource::Legacy, LodSource::File]
     );
-    // A LOD loaded from a file keeps its file; the others start again.
-    draft.lods[1].source = LodSource::File;
-    draft.lods[2].error_mode = true;
-    draft.set_lod_profile(LodProfile::Aurora);
-    assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
-    assert_eq!(
-        sources(&draft),
-        [LodSource::Quality, LodSource::File, LodSource::Quality, LodSource::File]
-    );
-    assert!(!draft.lods[2].error_mode, "a generated level is back on its triangle target");
-    draft.set_lod_profile(LodProfile::Linden);
-    assert_eq!(
-        sources(&draft),
-        [LodSource::Legacy, LodSource::File, LodSource::Legacy, LodSource::File]
-    );
 }
 
 #[test]
-fn mesh_adaptive_default_uses_lowest_in_both_profiles_but_preserves_explicit_collision() {
-    for profile in [LodProfile::Linden, LodProfile::Aurora] {
-        let mut draft = crate::imports::tests::mesh_fixture();
-        draft.set_lod_profile(profile);
-        let mut lowest = draft.scene.as_ref().clone();
-        lowest.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
-        draft.lods[0].source = LodSource::File;
-        draft.lods[0].file = Some(Arc::new(lowest));
-        let prepared = prepare(&draft).expect("prepare");
-        let hull = prepared.hulls[0].base.as_ref().expect("base hull");
-        assert!(hull.vertices.contains(&[4.0; 3]), "the Lowest file defines the default collision");
-        assert!(prepared.physics[0].is_none(), "no collision model was chosen");
-        draft.options.physics_source = 4;
-        let prepared = prepare(&draft).expect("explicit bounding box");
-        assert!(prepared.physics[0].is_some());
-        assert!(
-            prepared.hulls[0]
-                .base
-                .as_ref()
-                .expect("custom hull")
-                .vertices
-                .iter()
-                .all(|p| p.iter().all(|v| v.abs() <= 0.5))
-        );
-    }
+fn mesh_adaptive_default_uses_lowest_but_preserves_explicit_collision() {
+    let mut draft = crate::imports::tests::mesh_fixture();
+    let mut lowest = draft.scene.as_ref().clone();
+    lowest.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
+    draft.lods[0].source = LodSource::File;
+    draft.lods[0].file = Some(Arc::new(lowest));
+    let prepared = prepare(&draft).expect("prepare");
+    let hull = prepared.hulls[0].base.as_ref().expect("base hull");
+    assert!(hull.vertices.contains(&[4.0; 3]), "the Lowest file defines the default collision");
+    assert!(prepared.physics[0].is_none(), "no collision model was chosen");
+    draft.options.physics_source = 4;
+    let prepared = prepare(&draft).expect("explicit bounding box");
+    assert!(prepared.physics[0].is_some());
+    assert!(
+        prepared.hulls[0]
+            .base
+            .as_ref()
+            .expect("custom hull")
+            .vertices
+            .iter()
+            .all(|p| p.iter().all(|v| v.abs() <= 0.5))
+    );
 }

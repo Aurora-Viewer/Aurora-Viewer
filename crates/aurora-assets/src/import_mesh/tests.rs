@@ -359,33 +359,6 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
     }
     assert_eq!(source.triangles(), 400);
     assert!(source.faces.iter().all(|face| face.vertices.len() == 600));
-    let quality = process::lod(
-        &source,
-        process::LodOptions {
-            method: process::Method::Quality,
-            ..options
-        },
-        &cancel,
-    )
-    .expect("protected quality LOD");
-    assert!(quality.triangles() > 180, "quality must keep fragmented UV islands over its target");
-    for (face, original) in quality.faces.iter().zip(&source.faces) {
-        for triangle in face.indices.as_chunks::<3>().0 {
-            let corners = triangle.map(|i| &face.vertices[i as usize]);
-            assert!(
-                original
-                    .indices
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .any(|t| corners.iter().all(|v| t.iter().any(|i| {
-                        let o = &original.vertices[*i as usize];
-                        o.position == v.position && o.uv == v.uv
-                    }))),
-                "a protected UV island must keep its original mapping"
-            );
-        }
-    }
     let error_lod = process::lod(
         &source,
         process::LodOptions {

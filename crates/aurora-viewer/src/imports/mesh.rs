@@ -19,7 +19,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum LodSource {
     File,
     Auto,
-    Quality,
     Combine,
     Fast,
     Reliable,
@@ -27,38 +26,11 @@ pub enum LodSource {
     /// The Legacy Viewer's automatic chain, part by part.
     Legacy,
 }
-/// Which defaults the generated LODs start from, chosen in the LOD tab.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LodProfile {
-    /// The Legacy Viewer's: each level a third of the one above, made by its
-    /// own automatic chain (LLModelPreview::genMeshOptimizerLODs with
-    /// MESH_OPTIMIZER_AUTO), part by part: a part keeps the precise result
-    /// when it nearly reaches the target, and goes to the sloppy pass when
-    /// it cannot. Its LODs and download cost match the Legacy Viewer's
-    /// (#3433).
-    #[default]
-    Linden,
-    /// The same triangle targets, with quality generation: locked material,
-    /// UV and normal seams, and attribute-aware reduction. The target is
-    /// soft; both profiles use adaptive default collision from Lowest.
-    Aurora,
-}
-impl LodProfile {
-    /// Both profiles share the Legacy Viewer's targets: divide by 3 per
-    /// level, as genMeshOptimizerLODs with decimation 3
-    /// (`base_triangles / pow(3, LOD_HIGH - lod)`, truncated).
-    /// A target is at least 1, as the Legacy `llmax(triangle_limit, 1)`.
-    pub fn targets(self, high_triangles: usize) -> [usize; 4] {
-        let divisor: usize = 3;
-        std::array::from_fn(|level| (high_triangles / divisor.pow((3 - level) as u32)).max(1))
-    }
-    /// How a generated level (0 Lowest to 2 Medium) is made.
-    pub fn source(self, _level: usize) -> LodSource {
-        match self {
-            Self::Linden => LodSource::Legacy,
-            Self::Aurora => LodSource::Quality,
-        }
-    }
+/// Lowest, Low, Medium and High targets, following
+/// LLModelPreview::genMeshOptimizerLODs (indra/newview/llmodelpreview.cpp):
+/// base triangles / 3^(3 - level), truncated and at least one triangle.
+pub fn default_lod_targets(high_triangles: usize) -> [usize; 4] {
+    std::array::from_fn(|level| (high_triangles / 3usize.pow((3 - level) as u32)).max(1))
 }
 #[derive(Clone)]
 pub struct Lod {
@@ -122,7 +94,6 @@ pub struct Draft {
     pub physics_path: Option<PathBuf>,
     pub options: Options,
     pub lod_suffixes: [String; 5],
-    pub lod_profile: LodProfile,
     pub upload_timeout: u32,
     pub prepared: Option<Arc<Prepared>>,
     pub quote: Option<aurora_net::inventory::mesh_upload::Quote>,
@@ -195,16 +166,17 @@ impl Draft {
     }
     pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
+        let targets = default_lod_targets(triangles);
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         let mut draft = Self {
             inspector: inspector::Inspector::new(&scene),
             scene,
             images,
             lods: std::array::from_fn(|i| Lod {
-                source: if i == 3 { LodSource::File } else { LodProfile::default().source(i) },
+                source: if i == 3 { LodSource::File } else { LodSource::Legacy },
                 file: None,
                 path: None,
-                triangles: LodProfile::default().targets(triangles)[i],
+                triangles: targets[i],
                 error: 0.01,
                 error_mode: false,
             }),
@@ -215,7 +187,6 @@ impl Draft {
                 ..Default::default()
             },
             lod_suffixes: Preferences::default().mesh_suffixes,
-            lod_profile: LodProfile::default(),
             upload_timeout: 600,
             prepared: None,
             quote: None,
@@ -235,19 +206,6 @@ impl Draft {
         };
         draft.clamp_scale();
         draft
-    }
-    /// Starts the generated LODs again from `profile`: their method and
-    /// triangle target. A level loaded from a file keeps its file.
-    pub fn set_lod_profile(&mut self, profile: LodProfile) {
-        self.lod_profile = profile;
-        let targets = profile.targets(self.scene.models.iter().map(Model::triangles).sum());
-        for (level, lod) in self.lods.iter_mut().enumerate() {
-            lod.triangles = targets[level];
-            if level < 3 && lod.source != LodSource::File {
-                lod.source = profile.source(level);
-                lod.error_mode = false;
-            }
-        }
     }
     /// LLModelPreview::rebuildUploadData clamps a newly loaded oversized
     /// scene to the per-prim and linkset limits before calculating its fee.
@@ -505,7 +463,6 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                             error: if spec.error_mode { spec.error } else { 1.0 },
                             method: match method {
                                 LodSource::Auto => process::Method::Auto,
-                                LodSource::Quality => process::Method::Quality,
                                 LodSource::Reliable => process::Method::Reliable,
                                 LodSource::Legacy => process::Method::Legacy,
                                 LodSource::Fast => process::Method::Fast,
@@ -517,21 +474,6 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         &draft.cancel,
                     )?,
                 };
-                // Attribute-aware collapse order can stop a few triangles
-                // earlier for a larger target. Both default Quality levels
-                // use the same error bound from High: reuse the already
-                // valid smaller result rather than increase detail farther
-                // away. Explicit error thresholds and file LODs stay independent.
-                if spec.source == LodSource::Quality
-                    && !spec.error_mode
-                    && let Some(previous_spec) = draft.lods.get(level + 1)
-                    && previous_spec.source == LodSource::Quality
-                    && !previous_spec.error_mode
-                    && let Some(previous) = lods.get(level + 1).and_then(Option::as_ref)
-                    && previous.triangles() < model.triangles()
-                {
-                    model = previous.clone();
-                }
                 if options.normals {
                     for face in &mut model.faces {
                         process::normals(face, options.crease)?;
@@ -646,7 +588,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
 /// Custom collision comes first, as LLMeshUploadThread::generateHulls
 /// (indra/newview/llmeshrepository.cpp) requires for volumetric physics files
 /// on flat visual parts (#4213). The human-requested adaptive default starts
-/// at Lowest in both profiles, then falls back through Low, Medium and High.
+/// at Lowest, then falls back through Low, Medium and High.
 /// This deliberately differs from the Legacy Viewer's Low-first default.
 fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
     [physics, lods[0].as_ref(), lods[1].as_ref(), lods[2].as_ref()]
