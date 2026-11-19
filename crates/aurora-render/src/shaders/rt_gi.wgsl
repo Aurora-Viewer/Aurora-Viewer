@@ -31,7 +31,9 @@
 // Jacobian), so the light found by one pixel serves those around; shadow
 // rays keep it from crossing what stands between, and count only the
 // neighbours that could have found the hit themselves (the paper's
-// unbiased form), so no light is lost or gained by it. The pick left
+// unbiased form), each by how likely it was to find it (the balance
+// heuristic), so no light is lost or gained by it and a hit lights no
+// pixel more than the one that found it. The pick left
 // lights the pixel this frame and goes no further: a pixel's pick of last
 // frame is of its own rays alone. (Kept for the next frame, as ReSTIR
 // does for lamps, a pick taken from a neighbour is weighed again by the
@@ -739,23 +741,41 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         // neighbours could not see from where they are: a third of the
         // indirect light over the demo's plaza, most of it on the avatars
         // and in the corners.
-        var among = own.rays;
+        //
+        // Each of them counts by how likely it was to draw the hit: its
+        // rays times how the hit stands before it (its own target; the
+        // hit's light is the same for all and goes out), in this pixel's
+        // measure (`carried`). That is the balance heuristic between the
+        // pixels (Bitterli et al. 2020, "Spatiotemporal reservoir
+        // resampling", section 4.4's weights). Shared by the rays alone, a
+        // hit that grazed a neighbour, drawn there once in many rays and
+        // heavy for it, came here at that weight where the surface is
+        // turned towards it: on a curved surface (an avatar, a pillar) a
+        // frame had hundreds of pixels lit many times their mean. Weighed
+        // so, a neighbour's hit lights this pixel no more than it lights
+        // the neighbour, by the rays of each.
+        let facing = max(dot(n, normalize(pick.hit - origin)), 0.0);
+        var among = own.rays * facing;
+        var drawn = facing;
         for (var k = 0u; k < NEIGHBOURS; k++) {
             if (near_rays[k] <= 0.0) {
                 continue;
             }
-            if (k != source) {
-                if (carried(pick.hit, pick.normal, near_at[k], near_n[k], origin, n) < 0.0) {
-                    continue;
-                }
-                if (!sees(near_at[k], near_dist[k], pick.hit)) {
-                    continue;
-                }
+            let gain = carried(pick.hit, pick.normal, near_at[k], near_n[k], origin, n);
+            if (gain < 0.0) {
+                continue;
             }
-            among += near_rays[k];
+            if (k != source && !sees(near_at[k], near_dist[k], pick.hit)) {
+                continue;
+            }
+            let there = max(dot(near_n[k], normalize(pick.hit - near_at[k])), 0.0) / gain;
+            among += near_rays[k] * there;
+            if (k == source) {
+                drawn = there;
+            }
         }
-        let weight = min(sum / (among * p), WEIGHT_MAX);
-        sample = capped(pick.light * (max(dot(n, normalize(pick.hit - origin)), 0.0) / PI * weight));
+        let weight = min(sum * drawn / (among * p), WEIGHT_MAX);
+        sample = capped(pick.light * (facing / PI * weight));
     }
     var moment = luma(sample) * luma(sample);
 
