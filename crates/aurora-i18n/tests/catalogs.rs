@@ -102,6 +102,25 @@ fn advertised_names_match_fluent_catalogs() {
 }
 
 #[test]
+fn russian_is_available_and_uses_russian_plural_forms() {
+    use fluent_bundle::FluentArgs;
+
+    let languages: Vec<_> = aurora_i18n::available_languages().collect();
+    assert!(languages.iter().any(|&(code, name)| code == "ru" && name == "Русский"));
+    let codes: Vec<_> = languages.iter().map(|&(code, _)| code).collect();
+    assert_eq!(resolve_language("default", "ru-RU", &codes), "ru");
+    assert_eq!(resolve_language("en", "ru-RU", &codes), "en");
+
+    for (count, ending) in [(1, "1 строка)"), (2, "2 строки)"), (5, "5 строк)"), (21, "21 строка)")] {
+        let mut args = FluentArgs::new();
+        args.set("name", "ru.ftl");
+        args.set("count", count);
+        let status = aurora_i18n::format_in("ru", "language-file-in-use", &args);
+        assert!(status.ends_with(ending), "{status}");
+    }
+}
+
+#[test]
 fn saved_choice_system_locale_and_english_fallback() {
     let languages = ["en", "fr"];
     assert_eq!(resolve_language("en", "fr-FR", &languages), "en");

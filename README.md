@@ -415,7 +415,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In English, French, Japanese, Simplified Chinese and Traditional Chinese**: the interface follows
+- **In English, French, Japanese, Simplified Chinese, Traditional Chinese and Russian**: the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -788,7 +788,7 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 ### Language
 
 The viewer ships English, French, Japanese (日本語), Simplified Chinese
-(简体中文) and Traditional Chinese (繁體中文). It detects the system language
+(简体中文), Traditional Chinese (繁體中文) and Russian (Русский). It detects the system language
 by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
