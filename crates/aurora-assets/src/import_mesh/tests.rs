@@ -376,6 +376,47 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
 }
 
 #[test]
+fn a_flat_part_gets_a_base_hull_of_at_least_four_points_that_is_not_flat() {
+    // #4213: a walkway quad, two triangles with unshared corners as exported.
+    let corner = |x: f32, y: f32| Vertex {
+        position: [x, y, 0.0],
+        normal: [0.0, 0.0, 1.0],
+        uv: [0.0; 2],
+        joints: [0; 4],
+        weights: [0.0; 4],
+    };
+    let quad = Model {
+        name: "Walk".into(),
+        submodel: 0,
+        center: Vec3::ZERO,
+        size: Vec3::ONE,
+        skin: None,
+        faces: vec![Face {
+            material: 0,
+            vertices: vec![
+                corner(-0.5, -0.5),
+                corner(0.5, -0.5),
+                corner(0.5, 0.5),
+                corner(-0.5, -0.5),
+                corner(0.5, 0.5),
+                corner(-0.5, 0.5),
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+        }],
+    };
+    let hull = process::base_hull(&quad).expect("hull of a flat part");
+    assert!(hull.vertices.len() >= 4, "the server refuses fewer: {}", hull.vertices.len());
+    let (low, high) = hull
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(low, high), p| (low.min(p[2]), high.max(p[2])));
+    assert!(high > low, "a hull with volume, not the plane again: {:?}", hull.vertices);
+    for axis in 0..2 {
+        assert!(hull.vertices.iter().any(|p| p[axis] <= -0.5) && hull.vertices.iter().any(|p| p[axis] >= 0.5));
+    }
+}
+
+#[test]
 fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
     let source = cube();
     let hull = process::base_hull(&source).expect("hull");
