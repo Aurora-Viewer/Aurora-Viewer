@@ -6120,6 +6120,15 @@ both open states and the selection count. Capture at frame 620.
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
+  - With `AURORA_DEMO_GPU_LOST=<frame>`, the textures come back after the
+    recovery: the scenario decodes its checkers again on the new device
+    (a quarter of their size, then full size, as on arrival), gives the
+    `j2k=` files again where the streamer finds no data, and lets the
+    streamer download the `net=` ones again. The log says `demo stream:
+    GPU recovery, … textures to show again`, then `demo stream: textures
+    shown again … s after the GPU recovery`; the objects show their
+    checkers again instead of the loading look. After `,leave`, the
+    released textures are not brought back.
 - **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]`**:
   an arrival in a busy region, to measure what the loading shows first.
   With `meshfail=`, the server answers 403 to every mesh request for that
