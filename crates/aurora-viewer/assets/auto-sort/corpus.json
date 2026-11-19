@@ -2,6 +2,61 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Faux Fur Boa - Short",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Stage Feather Boa",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Boa Constrictor",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Blood Moon Vampire Tooth PACK",
+   "type": -1,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Vampire Tooth Install Guide",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Friendly Fangs",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Stone Steps A2",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Stone Steps Diffuse",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Copper Rain Chains",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Reclaimed Wood Floor Panel",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Floor Panel Concrete NORMAL",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
    "name": "Vintage Phone Typer",
    "type": 6,
    "expect": "{accessories}"
