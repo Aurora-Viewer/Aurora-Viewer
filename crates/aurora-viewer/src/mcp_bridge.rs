@@ -201,6 +201,9 @@ struct PendingNotecardDrop {
 /// Main-thread state for the Model Context Protocol (MCP) bridge.
 #[derive(Default)]
 pub struct McpBridge {
+    /// The MCP camera holds the free camera (set_free_view): release and the
+    /// lease's rollback end it rather than leave the view parked.
+    camera_free: bool,
     rx: Option<mpsc::Receiver<McpRequestEnvelope>>,
     server_handle: Option<McpServerHandle>,
     status_snapshot: Option<Arc<std::sync::RwLock<Value>>>,
@@ -1046,11 +1049,7 @@ impl App {
                             return None;
                         }
                         let desc = props.map(|p| p.description.clone()).unwrap_or_default();
-                        let owner_id = if !o.owner_id.is_nil() {
-                            o.owner_id
-                        } else {
-                            props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
-                        };
+                        let owner_id = self.linkset_owner(idx);
                         let attach_pt = o.attachment_point();
                         let attach_name = (attach_pt != 0).then(|| {
                             self.world
@@ -1409,6 +1408,9 @@ impl App {
                 };
                 match command {
                     CameraCommand::FollowAvatar | CameraCommand::Release => {
+                        if std::mem::take(&mut self.mcp_bridge.camera_free) {
+                            self.camera.end_free(&self.settings.camera);
+                        }
                         self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
                     }
                     CameraCommand::FocusObject {
@@ -1427,15 +1429,17 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.camera.set_free_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.mcp_bridge.camera_free = true;
                     }
                     CameraCommand::ManualTransform { position, focus, fov_deg } => {
-                        self.camera.set_view(
+                        self.camera.set_free_view(
                             Vec3::from_array(position),
                             Vec3::from_array(focus),
                             &mut self.world.agent,
                             &self.settings.camera,
                         );
+                        self.mcp_bridge.camera_free = true;
                         if let Some(fov) = fov_deg {
                             let rad = fov.clamp(10.0, 140.0).to_radians();
                             self.settings.camera.fov = rad;
@@ -1449,12 +1453,23 @@ impl App {
                     } => {
                         let current_dist = (self.camera.position - self.camera.target).length().max(0.5);
                         let new_dist = (current_dist + zoom_delta).max(0.5);
-                        self.camera.demo_orbit(
-                            delta_yaw_deg.to_radians(),
-                            delta_pitch_deg.to_radians(),
-                            Some(new_dist),
-                            &self.settings.camera,
-                        );
+                        if self.mcp_bridge.camera_free {
+                            // orbit the shot itself, around what it looks at
+                            let target = self.camera.target;
+                            let off = self.camera.position - target;
+                            let yaw = off.y.atan2(off.x) + delta_yaw_deg.to_radians();
+                            let pitch = (off.z / off.length().max(1e-4)).clamp(-1.0, 1.0).asin() + delta_pitch_deg.to_radians();
+                            let pitch = pitch.clamp(-1.5, 1.5);
+                            let eye = target + new_dist * Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin());
+                            self.camera.set_free_view(eye, target, &mut self.world.agent, &self.settings.camera);
+                        } else {
+                            self.camera.demo_orbit(
+                                delta_yaw_deg.to_radians(),
+                                delta_pitch_deg.to_radians(),
+                                Some(new_dist),
+                                &self.settings.camera,
+                            );
+                        }
                     }
                     CameraCommand::MeshPreview {
                         yaw_deg,
@@ -1468,7 +1483,8 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.camera.set_free_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.mcp_bridge.camera_free = true;
                     }
                 }
                 let state = json!({
@@ -1537,7 +1553,11 @@ impl App {
                     let _ = reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
                 }
                 CaptureBufferType::ColorRgb => {
-                    if renderer.is_none() {
+                    // Only a real CPU-headless run has no renderer at all. A
+                    // request handled between frames (about_to_wait) arrives
+                    // without this frame's renderer, but the window has one:
+                    // queue it, and the next frame takes the picture.
+                    if renderer.is_none() && self.gfx.is_none() && crate::cli::get().headless {
                         let _ = reply_tx.send(Err(McpError::Internal(
                             "viewport_capture ColorRgb is unavailable in CPU --headless mode; restart with --offscreen-gpu".into(),
                         )));
@@ -1750,8 +1770,9 @@ impl App {
                 paths,
                 choice,
                 include_textures,
+                entry_ids,
             } => {
-                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures);
+                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures, entry_ids);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::InventoryRezObject { item_id, position, select } => {
@@ -2699,20 +2720,46 @@ impl App {
         Ok((idx, root_uuid))
     }
 
+    /// Who owns a prim. A linkset has one owner, and the simulator sends
+    /// ObjectProperties for the root it was asked about, not for every
+    /// child: a child link with no owner of its own takes its root's.
+    fn linkset_owner(&self, idx: usize) -> Uuid {
+        let own = |i: usize| {
+            self.world.objects.get(i).map_or(Uuid::nil(), |o| {
+                if !o.owner_id.is_nil() {
+                    o.owner_id
+                } else {
+                    self.build.props.get(&o.full_id).map_or(Uuid::nil(), |p| p.owner_id)
+                }
+            })
+        };
+        let mine = own(idx);
+        if !mine.is_nil() {
+            return mine;
+        }
+        let Some(o) = self.world.objects.get(idx) else { return mine };
+        if o.parent_id == 0 {
+            return mine;
+        }
+        self.world
+            .objects
+            .index_of(&crate::world::objects::ObjKey {
+                region: o.key.region,
+                local_id: o.parent_id,
+            })
+            .map_or(mine, own)
+    }
+
     fn check_object_modify_permission(&self, obj_idx: usize) -> Result<(), McpError> {
         let Some(obj) = self.world.objects.get(obj_idx) else {
             return Err(McpError::InvalidParams("Object not found".into()));
         };
         if self.world.god_level == 0 {
             let props = self.build.props.get(&obj.full_id);
-            let owner_id = if !obj.owner_id.is_nil() {
-                obj.owner_id
-            } else {
-                props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
-            };
+            let owner_id = self.linkset_owner(obj_idx);
             if owner_id.is_nil() {
                 return Err(McpError::PermissionDenied(
-                    "object ownership is unknown; fetch object properties before modifying".into(),
+                    "object ownership is unknown: fetch its root's properties first (radar_scan_objects near it, or object_contents on the root), then retry".into(),
                 ));
             }
             if owner_id != self.world.agent_id {
@@ -2735,6 +2782,10 @@ impl App {
         for spec in &transforms {
             let (idx, _) = self.resolve_prim_by_local_id(spec.local_id)?;
             self.check_object_modify_permission(idx)?;
+            // UPD_LINKED_SETS: without it a root's move left every child where
+            // it was (an Incubator's lamp and eggs stayed 23 cm up when its root
+            // was lowered, 15 Nov)
+            let is_root = self.world.objects.get(idx).is_some_and(|o| o.parent_id == 0);
             let new_pos = spec.position.map(Vec3::from_array);
             let new_rot = if let Some(q) = spec.rotation_quat {
                 Some(Quat::from_array(q).normalize())
@@ -2749,7 +2800,7 @@ impl App {
                     position: new_pos,
                     rotation: new_rot,
                     scale: new_scale,
-                    linked: false,
+                    linked: is_root && !spec.root_only,
                     uniform: false,
                 });
             }
@@ -3417,12 +3468,18 @@ impl App {
                     focus,
                     fov,
                 } => {
-                    self.camera.set_view(
-                        Vec3::from_array(position),
-                        Vec3::from_array(focus),
-                        &mut self.world.agent,
-                        &self.settings.camera,
-                    );
+                    if std::mem::take(&mut self.mcp_bridge.camera_free) {
+                        // the shot ends: the view goes back to the avatar (or the
+                        // script's camera), not to a parked copy of it
+                        self.camera.end_free(&self.settings.camera);
+                    } else {
+                        self.camera.set_view(
+                            Vec3::from_array(position),
+                            Vec3::from_array(focus),
+                            &mut self.world.agent,
+                            &self.settings.camera,
+                        );
+                    }
                     self.settings.camera.fov = fov;
                     self.camera.fov_y = fov;
                     restored += 1;
@@ -3762,8 +3819,19 @@ impl App {
         paths: Vec<String>,
         choice_str: Option<&str>,
         include_textures: Option<bool>,
+        entry_ids: Vec<String>,
     ) -> Result<ViewerResponse, McpError> {
         let act = action.trim().to_ascii_lowercase();
+        let wanted: Vec<Uuid> = entry_ids.iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect();
+        if wanted.len() != entry_ids.len() {
+            return Err(McpError::InvalidParams(
+                "entry_ids must be entry ids from asset_upload status".into(),
+            ));
+        }
+        if let Some(missing) = wanted.iter().find(|id| self.imports.entries.iter().all(|e| e.id != **id)) {
+            return Err(McpError::InvalidParams(format!("no staged entry {missing}")));
+        }
+        let picked = |id: Uuid| wanted.is_empty() || wanted.contains(&id);
         let parse_choice = |s: Option<&str>, first_path: Option<&str>| -> crate::imports::Choice {
             match s.unwrap_or("").trim().to_ascii_lowercase().as_str() {
                 "mesh" => crate::imports::Choice::Mesh,
@@ -3820,6 +3888,9 @@ impl App {
                 let inc_tex = include_textures.unwrap_or(true);
                 let mut ids = Vec::new();
                 for entry in &mut self.imports.entries {
+                    if !picked(entry.id) {
+                        continue;
+                    }
                     if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
                         draft.options.textures = inc_tex;
                         ids.push(entry.id);
@@ -3832,6 +3903,23 @@ impl App {
                 }
             }
             "upload" | "start" => {
+                if !wanted.is_empty() {
+                    for entry in &mut self.imports.entries {
+                        entry.selected = wanted.contains(&entry.id);
+                    }
+                }
+                // the builder's rule: nothing is sent before its fee and land
+                // impact have been read
+                if let Some(e) = self.imports.entries.iter().find(|e| {
+                    e.selected
+                        && matches!(e.status, crate::imports::Status::Ready)
+                        && matches!(&e.source, Some(crate::imports::Source::Mesh(d)) if d.quote.is_none())
+                }) {
+                    return Err(McpError::InvalidParams(format!(
+                        "'{}' has no quote yet: run asset_upload quote, read upload_price_l$ and land_impact in status, then upload",
+                        e.name
+                    )));
+                }
                 if let Some(inc_tex) = include_textures {
                     for entry in &mut self.imports.entries {
                         if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
@@ -3857,10 +3945,28 @@ impl App {
                 self.imports
                     .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
             }
+            "clear" | "remove" => {
+                if self.imports.busy() {
+                    return Err(McpError::InvalidParams("the importer is uploading: wait, then clear".into()));
+                }
+                for index in (0..self.imports.entries.len()).rev() {
+                    if picked(self.imports.entries[index].id) && !self.imports.entries[index].local {
+                        let entry = self.imports.entries.remove(index);
+                        self.scene.jobs.discard(entry);
+                    }
+                }
+                if self
+                    .imports
+                    .active
+                    .is_some_and(|id| self.imports.entries.iter().all(|e| e.id != id))
+                {
+                    self.imports.active = self.imports.entries.first().map(|e| e.id);
+                }
+            }
             "status" => {}
             other => {
                 return Err(McpError::InvalidParams(format!(
-                    "Unknown asset_upload action '{other}'. Use status, stage, quote, or upload."
+                    "Unknown asset_upload action '{other}'. Use status, stage, quote, upload, or clear."
                 )));
             }
         }
@@ -4009,18 +4115,24 @@ impl App {
         let obj = self.world.objects.get_mut(idx).unwrap();
         let mut te = obj.te.as_deref().cloned().unwrap_or_default();
 
+        // the object's own faces (a 2-face mesh has 2, though its texture
+        // entry may carry 8)
+        let faces_here = (num_faces as usize).clamp(1, te.faces.len().max(1));
         let target_indices: Vec<usize> = match face {
-            Some(f) if f >= 0 => vec![(f as usize).min(te.faces.len().saturating_sub(1))],
-            _ => (0..te.faces.len()).collect(),
+            Some(f) if f >= 0 && (f as usize) < faces_here => vec![f as usize],
+            Some(f) if f >= 0 => {
+                return Err(McpError::InvalidParams(format!(
+                    "face {f} does not exist: this prim has {faces_here} faces (0..{})",
+                    faces_here - 1
+                )));
+            }
+            _ => (0..faces_here).collect(),
         };
 
         for &fi in &target_indices {
             if let Some(tf) = te.faces.get_mut(fi) {
                 if let Some(tex) = texture_id {
                     tf.texture = tex;
-                }
-                if let Some(mat) = material_id {
-                    tf.material_id = mat;
                 }
                 if let Some(rgba) = color {
                     tf.color = rgba;
@@ -4056,28 +4168,74 @@ impl App {
             }
         }
 
-        let packed = aurora_prim::te::pack_texture_entry(&te, num_faces);
-        let media_url = obj.media_url.clone();
-        obj.te = Some(Arc::new(te));
-        obj.material_dirty = true;
-        self.send(NetCommand::Build(BuildCmd::SetTextures {
-            handle,
-            local_id,
-            media_url,
-            texture_entry: packed,
-        }));
+        let te_changed = texture_id.is_some()
+            || color.is_some()
+            || repeats.is_some()
+            || offsets.is_some()
+            || rotation_rad.is_some()
+            || glow.is_some()
+            || bump_shiny.is_some()
+            || fullbright.is_some()
+            || alpha_mode.is_some();
+        if te_changed {
+            let packed = aurora_prim::te::pack_texture_entry(&te, num_faces);
+            let media_url = obj.media_url.clone();
+            obj.te = Some(Arc::new(te));
+            obj.material_dirty = true;
+            self.send(NetCommand::Build(BuildCmd::SetTextures {
+                handle,
+                local_id,
+                media_url,
+                texture_entry: packed,
+            }));
+        }
+
+        // material_id is the PBR (glTF) material, PRIM_RENDER_MATERIAL: it goes
+        // by ModifyMaterialParams, as dropping a material on a face does, not
+        // into the texture entry (whose material id is the old Blinn-Phong
+        // one, and which the simulator ignored: the face read back NULL_KEY).
+        // An inventory item's id is taken to its asset; NULL_KEY removes.
+        let mut material_asset = None;
+        if let Some(mat) = material_id {
+            let asset = match self.world.inventory.items.get(&mat) {
+                Some(item) if item.asset_type == 57 => item.asset_id,
+                Some(item) => {
+                    return Err(McpError::InvalidParams(format!(
+                        "inventory item '{}' is not a material (asset_type {})",
+                        item.name, item.asset_type
+                    )));
+                }
+                None => mat,
+            };
+            let updates = target_indices
+                .iter()
+                .map(|&fi| crate::build::materials::GltfUpdate {
+                    object: idx,
+                    face: fi as u8,
+                    asset: Some(asset),
+                    over: None,
+                })
+                .collect();
+            self.build.gltf_update(&mut self.world, updates);
+            self.flush_build();
+            material_asset = Some(asset);
+        }
 
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "local_id": local_id,
             "face": face.unwrap_or(-1),
-            "num_faces": num_faces,
+            "num_faces": faces_here,
+            "faces_set": target_indices,
+            "render_material": material_asset.map(|a| a.to_string()),
+            "note": material_asset.map(|_| "sent by ModifyMaterialParams: read it back with PRIM_RENDER_MATERIAL, or radar/object properties, after a moment"),
         })))
     }
 
     // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
 
     fn handle_mcp_mesh_upload_status(&self) -> Result<ViewerResponse, McpError> {
+        const LEVEL_NAMES: [&str; 4] = ["lowest", "low", "medium", "high"];
         let mut entries_json = Vec::new();
         for entry in &self.imports.entries {
             let mut item = json!({
@@ -4100,15 +4258,42 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(level, lod)| {
+                        let tris = |s: &aurora_assets::import_mesh::Scene| {
+                            s.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>()
+                        };
+                        // a level from a file reports that file's triangles; a
+                        // generated one reports its target
+                        let file = match (&lod.file, level) {
+                            (Some(scene), _) => Some(tris(scene)),
+                            (None, 3) if matches!(lod.source, crate::imports::mesh::LodSource::File) => Some(tris(&draft.scene)),
+                            _ => None,
+                        };
                         json!({
                             "level": level,
+                            "name": LEVEL_NAMES[level],
                             "source": format!("{:?}", lod.source),
-                            "triangles": lod.triangles,
+                            "triangles": file.unwrap_or(lod.triangles),
+                            "from_file": file.is_some(),
+                            "path": lod.path.as_ref().map(|p| p.display().to_string()),
                             "error": lod.error,
                         })
                     })
                     .collect();
                 obj.insert("lods".into(), json!(lod_counts));
+                obj.insert(
+                    "links".into(),
+                    json!(draft.scene.models.iter().map(|m| m.name.clone()).collect::<Vec<_>>()),
+                );
+                obj.insert(
+                    "physics".into(),
+                    json!({
+                        "path": draft.physics_path.as_ref().filter(|_| draft.physics_file.is_some()).map(|p| p.display().to_string()),
+                        "source": draft.options.physics_source,
+                    }),
+                );
+                if draft.quote.is_none() {
+                    obj.insert("quote".into(), json!(null));
+                }
                 obj.insert("scale".into(), json!(draft.options.scale));
                 obj.insert("include_textures".into(), json!(draft.options.textures));
                 obj.insert("warnings".into(), json!(draft.scene.warnings));
@@ -4337,9 +4522,9 @@ impl App {
         } else if p.ends_with("/blender_live/stop") {
             let _ = self.handle_mcp_livemesh_control("stop", None)?;
         } else if p.ends_with("/calculate_fees") {
-            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None)?;
+            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/import") {
-            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None)?;
+            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/cancel") {
             self.imports.cancel_remaining();
         } else if let Some(floater_name) = p.strip_prefix("/main_view/floaters/")
@@ -4380,7 +4565,7 @@ impl App {
         if (path.contains("local_mesh") || path.contains("import"))
             && let Some(choice_str) = value.as_str()
         {
-            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None);
+            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None, Vec::new());
         }
         Ok(ViewerResponse::Json(json!({
             "ok": true,

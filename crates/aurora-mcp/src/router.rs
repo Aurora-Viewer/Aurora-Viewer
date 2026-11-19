@@ -830,6 +830,10 @@ impl McpRouter {
                         )
                         .await?;
                     let _ = self.handle_camera_response(cam_resp);
+                    // the free camera is placed at once, but a frame already in
+                    // flight was drawn from the old view: let a few go by so the
+                    // picture is the one the manifest names
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
                     let frame_resp = self
                         .send_to_viewer(
@@ -1054,6 +1058,7 @@ impl McpRouter {
                         scale: parse_vec3(args, "scale").ok(),
                         name: args.get("name").and_then(Value::as_str).map(str::to_owned),
                         description: args.get("description").and_then(Value::as_str).map(str::to_owned),
+                        root_only: args.get("root_only").and_then(Value::as_bool).unwrap_or(false),
                     }]
                 };
                 let resp = self
@@ -1311,6 +1316,11 @@ impl McpRouter {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let include_textures = args.get("include_textures").and_then(Value::as_bool);
+                let entry_ids: Vec<String> = args
+                    .get("entry_ids")
+                    .and_then(Value::as_array)
+                    .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .unwrap_or_default();
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1319,6 +1329,7 @@ impl McpRouter {
                             paths,
                             choice,
                             include_textures,
+                            entry_ids,
                         },
                         25_000,
                     )
@@ -2954,7 +2965,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "prim_transform".into(),
-            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence.".into(),
+            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence. A root prim's position is region coordinates and its rotation region-relative; a child link's (parent_id != 0) are relative to its root, like LSL's PRIM_POS_LOCAL / PRIM_ROT_LOCAL (radar_scan_objects reports them as local_position and rotation_quat). A child link is moved on its own; its owner is its root's. A root prim moves, turns or scales its whole linkset, as the build tool does; root_only: true moves the root prim alone and leaves its children where they are.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -2965,6 +2976,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                     "scale": { "type": "array", "items": { "type": "number" } },
                     "name": { "type": "string" },
                     "description": { "type": "string" },
+                    "root_only": { "type": "boolean", "default": false, "description": "on a root prim: move it alone, not its linkset" },
                     "transforms": { "type": "array", "items": { "type": "object" } }
                 }
             }),
@@ -3183,7 +3195,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["status", "stage", "quote", "upload"],
+                        "enum": ["status", "stage", "quote", "upload", "clear"],
                         "default": "status"
                     },
                     "paths": { "type": "array", "items": { "type": "string" } },
@@ -3192,7 +3204,8 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "enum": ["mesh", "texture", "sound", "animation", "material", "bulk", "local"]
                     },
-                    "include_textures": { "type": "boolean", "default": true }
+                    "include_textures": { "type": "boolean", "default": true },
+                    "entry_ids": { "type": "array", "items": { "type": "string" }, "description": "clear / upload / quote: only these entries (ids from status); upload deselects every other entry" }
                 }
             }),
             in_compact_profile: false,
