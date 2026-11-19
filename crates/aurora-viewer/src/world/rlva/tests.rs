@@ -4531,3 +4531,28 @@ fn inventory_offer_receipts_preserve_the_share_restriction_and_its_resident_exce
     assert!(world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
     assert!(!world.rlva_allows_command(&offer(B), Uuid::nil()));
 }
+
+#[test]
+fn the_second_camera_pauses_while_rlva_holds_the_view() {
+    for restriction in [
+        "@setcam_unlock=n",
+        "@camdistmax:2=n",
+        "@camunlock=n",
+        "@setsphere=n",
+        "@setoverlay=n",
+        "@camtextures=n",
+        "@showself=n",
+        "@showselfhead=n",
+    ] {
+        let mut r = enabled();
+        assert!(!r.second_camera_blocked(), "{restriction}");
+        command(&mut r, A, restriction);
+        assert!(r.second_camera_blocked(), "{restriction}");
+        command(&mut r, A, "@clear");
+        assert!(!r.second_camera_blocked(), "{restriction} cleared");
+    }
+    // a restriction that does not touch the view leaves it alone
+    let mut r = enabled();
+    command(&mut r, A, "@tplm=n");
+    assert!(!r.second_camera_blocked());
+}

@@ -1108,6 +1108,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
+| `AURORA_DEMO_SECOND_CAMERA=face\|body\|back` | The second camera's window open on that framing (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1160,6 +1161,15 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_SECOND_CAMERA=face|body|back`**: at frame 300, the second
+  camera's window (View › Second camera) opens on that framing, the main
+  camera staying behind our avatar (`second camera demo: Face` in the log,
+  then `second camera: renderer made (… ms)` with the first picture). Look
+  for the face, the whole body or the back in the window, with the colours
+  of the 3D view, its own shadows, and the hair's blended faces in front of
+  the face; hovered, the window shows its three framings over the bottom of
+  the picture. Closed, the log says `second camera: renderer let go` about
+  two seconds later.
 - **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha|orbit|capture|anim|montage|titles|render`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
@@ -12548,6 +12558,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
+| `AURORA_OBJECT_MOTION_TRACE=<request-file>` | A changed request-file timestamp records 20 seconds of volume reports, damping decisions and rendered transform gaps under `object motion trace`; excludes names, UUIDs, absolute positions and packet contents. Watches at most 64 recent slots. The human performs any grid login and actions. |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
