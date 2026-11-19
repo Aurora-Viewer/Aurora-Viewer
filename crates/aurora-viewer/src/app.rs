@@ -1037,6 +1037,8 @@ pub struct App {
     music_status: ui::audio::MusicStatus,
     /// Stations whose failure was told in the local chat this session.
     music_error_said: std::collections::HashSet<String>,
+    /// Stations played under a failed certificate, told this session.
+    music_certificate_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -2190,6 +2192,7 @@ impl App {
             parcel_music: Default::default(),
             music_status: Default::default(),
             music_error_said: Default::default(),
+            music_certificate_said: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -6955,7 +6958,7 @@ impl App {
         // StreamTitleDisplay: metadata follows the actual connection, never the
         // radio toggle. Leave the offline title scenario's metadata in place.
         let title = match status {
-            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
+            aurora_audio::StreamStatus::Playing { title, .. } if !self.stream_url.is_empty() => title,
             _ => None,
         };
         if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
@@ -6983,6 +6986,16 @@ impl App {
         {
             self.world
                 .system_message(aurora_i18n::tr!("music-error-notice", status = self.music_status.text()));
+        }
+        // A station played under a failed certificate says so once, as a
+        // warning; the radio's tooltip keeps it while it plays.
+        if let Some(issue) = self.music_status.certificate()
+            && parcel_music::first_error_notice(&mut self.music_certificate_said, self.parcel_music.station())
+        {
+            self.world.system_notice(
+                aurora_i18n::tr!("music-error-notice", status = ui::audio::certificate_warning(issue)),
+                crate::world::notice_topics::Topic::Warning,
+            );
         }
     }
 

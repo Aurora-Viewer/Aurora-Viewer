@@ -15582,6 +15582,14 @@ music-error-format = 音声形式が無効、または未対応です
 music-error-interrupted = 音声ストリームが中断されました
 music-error-notice = 区画の音楽：{ $status }
 music-error-worker = 音楽プレーヤーを起動できません
+music-certificate-expired-on = このラジオのセキュリティ証明書は{ $date }{ $time }に期限切れになりました
+music-certificate-expired = このラジオのセキュリティ証明書は期限切れです
+music-certificate-not-yet-valid = このラジオのセキュリティ証明書はまだ有効ではありません（またはこのパソコンの時計がずれています）
+music-certificate-untrusted = このラジオのセキュリティ証明書は自己署名か、信頼されていません
+music-certificate-wrong-name = このラジオのセキュリティ証明書は別のサーバーのものです
+music-certificate-revoked = このラジオのセキュリティ証明書は失効しています
+music-certificate-other = このラジオのセキュリティ証明書は無効です
+music-certificate-warning = { $reason }。ラジオは再生されますが、接続は安全ではありません。
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。

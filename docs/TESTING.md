@@ -12297,6 +12297,12 @@ What the inventory must show with these scenarios:
   Windows/macOS use the system's certificate verifier, which can complete
   missing intermediate chains. Linux uses the system CA bundle and still
   needs the intermediates from the server or its trust store.
+  A station whose certificate fails that check (expired, self-signed, for
+  another name) still plays: the radio button carries a red warning sign,
+  its tooltip says in red what is wrong (an expiry with its date, in local
+  time), and the nearby chat says it once per station and session. The log
+  gives `certificate refused by the system (…), playing anyway`. Any
+  `https://` station whose certificate has expired shows it.
   AzuraCast public player URLs also resolve their exported PLS playlist before
   decoding. Use `https://login-na2.lightmanstreams.com/public/auto_dj_44` and
   compare its direct `/listen/auto_dj_44/live` stream: both should play without
