@@ -13,7 +13,9 @@ use egui::{Rangef, Rect, Sense};
 
 pub(super) const GAP: f32 = 12.0;
 pub(super) const PAD: f32 = 8.0;
-const NAME_MIN: f32 = 80.0;
+/// The room the name keeps however many columns are shown: they shrink
+/// first, down to their least widths (human request of 2026-11-19).
+const NAME_MIN: f32 = 160.0;
 const MAX: f32 = 1600.0;
 
 /// Where each shown column is drawn this frame, in their order.
@@ -69,10 +71,11 @@ fn default_width(id: ColumnId, frame: Frame) -> f32 {
 
 fn minimum(id: ColumnId, frame: Frame) -> f32 {
     match id {
-        ColumnId::Rights => rights::width(frame.rights).max(56.0),
-        ColumnId::Count => 40.0,
-        ColumnId::Worn => 48.0,
-        _ => 64.0,
+        // the rights' letters, whole
+        ColumnId::Rights => rights::width(frame.rights).max(24.0),
+        ColumnId::Count => 28.0,
+        ColumnId::Worn | ColumnId::Date => 40.0,
+        _ => 36.0,
     }
 }
 
@@ -178,6 +181,41 @@ pub(super) fn fit_all(prefs: &mut ExplorerPreferences, measured: &ColumnFit, fra
     }
 }
 
+/// A divider dragged by `delta`: the column on its right is `right` among
+/// the shown `widths` (the name on the left of the first). The column on
+/// the divider's side grows; the others give way one after the other down
+/// to their least widths, as Windows Explorer pushes its columns: going
+/// right, the columns from `right` on; going left, those before it, then the
+/// name down to its own least. Returns the widths, the name's last.
+fn push(widths: &[f32], minima: &[f32], name: f32, right: usize, delta: f32) -> (Vec<f32>, f32) {
+    let mut widths = widths.to_vec();
+    let mut name = name;
+    if delta > 0.0 {
+        let room: f32 = (right..widths.len()).map(|j| (widths[j] - minima[j]).max(0.0)).sum();
+        let mut left = delta.min(room);
+        match right.checked_sub(1) {
+            Some(grown) => widths[grown] += left,
+            None => name += left,
+        }
+        for j in right..widths.len() {
+            let give = left.min((widths[j] - minima[j]).max(0.0));
+            widths[j] -= give;
+            left -= give;
+        }
+    } else if delta < 0.0 {
+        let room: f32 = (0..right).map(|j| (widths[j] - minima[j]).max(0.0)).sum::<f32>() + (name - NAME_MIN).max(0.0);
+        let mut left = (-delta).min(room);
+        widths[right] += left;
+        for j in (0..right).rev() {
+            let give = left.min((widths[j] - minima[j]).max(0.0));
+            widths[j] -= give;
+            left -= give;
+        }
+        name -= left;
+    }
+    (widths, name)
+}
+
 pub(super) fn resize(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -188,9 +226,11 @@ pub(super) fn resize(
 ) -> Columns {
     frame.columns = *prefs;
     let cols = Columns::new(frame, rect);
-    let mut previous: Option<(ColumnId, f32)> = None;
-    let mut left_width = cols.name_end - rect.left() - PAD;
-    for (index, (id, range)) in cols.iter().enumerate() {
+    let shown: Vec<(ColumnId, Rangef)> = cols.iter().collect();
+    let widths: Vec<f32> = shown.iter().map(|(_, range)| range.span()).collect();
+    let minima: Vec<f32> = shown.iter().map(|(id, _)| minimum(*id, frame)).collect();
+    let name = cols.name_end - rect.left() - PAD;
+    for (index, &(id, range)) in shown.iter().enumerate() {
         let x = range.min - GAP * 0.5;
         let hit = Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(8.0, rect.height()));
         let response = ui
@@ -200,7 +240,6 @@ pub(super) fn resize(
         #[cfg(test)]
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_column_handle", index)), hit));
-        let _ = index;
         if response.hovered() || response.dragged() {
             ui.painter().vline(
                 x,
@@ -209,28 +248,20 @@ pub(super) fn resize(
             );
         }
         if response.double_clicked() {
-            match previous {
+            match index.checked_sub(1) {
                 // the column on the divider's left fits what it shows
-                Some((left, _)) => fit(prefs, measured, left, frame),
+                Some(left) => fit(prefs, measured, shown[left].0, frame),
                 // the name takes what is left: its divider resets the column
                 None => prefs.columns.slot_mut(id).width = 0,
             }
-        } else if response.dragged() {
-            let left_min = previous.map_or(NAME_MIN, |(left, _)| minimum(left, frame));
-            let right_min = minimum(id, frame);
-            let delta = response
-                .drag_delta()
-                .x
-                .clamp(-(left_width - left_min).max(0.0), (range.span() - right_min).max(0.0));
-            if delta != 0.0 {
-                prefs.columns.slot_mut(id).width = (range.span() - delta).round() as u16;
-                if let Some((left, _)) = previous {
-                    prefs.columns.slot_mut(left).width = (left_width + delta).round() as u16;
+        } else if response.dragged() && response.drag_delta().x != 0.0 {
+            let (pushed, _) = push(&widths, &minima, name, index, response.drag_delta().x);
+            for ((shown, _), (before, after)) in shown.iter().zip(widths.iter().zip(&pushed)) {
+                if (before - after).abs() > 0.01 {
+                    prefs.columns.slot_mut(*shown).width = after.round() as u16;
                 }
             }
         }
-        previous = Some((id, range.span()));
-        left_width = range.span();
     }
     frame.columns = *prefs;
     Columns::new(frame, rect)
@@ -434,6 +465,28 @@ mod tests {
     }
 
     #[test]
+    fn a_dragged_divider_pushes_the_columns_that_give_way_in_turn() {
+        let minima = [40.0, 40.0, 40.0];
+        // right: the first column grows, the next ones give way in turn
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 1, 30.0);
+        assert_eq!((widths, name), (vec![130.0, 40.0, 60.0], 300.0));
+        // as far as they all can, then no further
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 1, 500.0);
+        assert_eq!((widths, name), (vec![150.0, 40.0, 40.0], 300.0));
+        // from the name's divider: the name grows
+        let (widths, name) = push(&[100.0, 50.0, 80.0], &minima, 300.0, 0, 20.0);
+        assert_eq!((widths, name), (vec![80.0, 50.0, 80.0], 320.0));
+        // left: the earlier columns give way, then the name down to its least
+        let (widths, name) = push(&[45.0, 50.0, 80.0], &minima, NAME_MIN + 40.0, 2, -60.0);
+        assert_eq!((widths, name), (vec![40.0, 40.0, 135.0], NAME_MIN), "and no further");
+        let (widths, name) = push(&[40.0, 40.0, 80.0], &minima, NAME_MIN + 10.0, 2, -100.0);
+        assert_eq!((widths, name), (vec![40.0, 40.0, 90.0], NAME_MIN));
+        let total = |w: &[f32], n: f32| w.iter().sum::<f32>() + n;
+        let (widths, name) = push(&[70.0, 90.0, 60.0], &minima, 260.0, 1, -75.0);
+        assert_eq!(total(&widths, name), 70.0 + 90.0 + 60.0 + 260.0, "the room is shared, never made");
+    }
+
+    #[test]
     fn a_fit_takes_the_widest_text_the_last_frame_measured() {
         let mut fit = ColumnFit::default();
         assert_eq!(fit.width(ColumnId::Kind), None, "nothing drawn, nothing to fit");
@@ -455,7 +508,7 @@ mod tests {
         fit.note(ColumnId::Date, 9000.0);
         fit.note(ColumnId::Creator, 200.0);
         fit_all(&mut prefs, &fit, frame);
-        assert_eq!(prefs.columns.slot(ColumnId::Kind).width, 64, "never under the column's least width");
+        assert_eq!(prefs.columns.slot(ColumnId::Kind).width, 36, "never under the column's least width");
         assert_eq!(prefs.columns.slot(ColumnId::Date).width, 1600, "nor over the most");
         assert_eq!(prefs.columns.slot(ColumnId::Creator).width, 0, "a hidden column keeps its width");
     }

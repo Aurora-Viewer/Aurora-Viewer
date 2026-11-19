@@ -823,7 +823,7 @@ mod tests {
         h.double_click(handle.center());
         h.frames(2);
         let fitted = h.prefs.explorer.columns.slot(ColumnId::Date).width;
-        assert!((64..200).contains(&fitted), "fitted to its dates and title, got {fitted}");
+        assert!((40..200).contains(&fitted), "fitted to its dates and title, got {fitted}");
         assert_eq!(h.prefs.sort, sort, "a fit does not sort");
     }
 
@@ -1282,7 +1282,7 @@ mod tests {
             h.click(row.center(), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
             if width >= 800.0 {
-                let sub = h.row(8001).center();
+                let sub = h.row(8001).left_center() + egui::vec2(60.0, 0.0);
                 h.double_click(sub);
                 assert_eq!(h.st.browse, Uuid::from_u128(8001), "{width} px: going into a subfolder");
             }
@@ -1596,16 +1596,17 @@ mod tests {
             let object = Uuid::from_u128(8100);
             h.st.show_original(&h.inv, object);
             h.frames(4);
+            // on the name, left of the quick buttons the hovered row shows
             let sibling = h.row(8101);
-            h.click(sibling.center(), Default::default());
+            h.click(sibling.left_center() + egui::vec2(60.0, 0.0), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
             assert_eq!(h.st.selection.len(), 1);
             // Ctrl adds the next one.
             let next = h.row(8102);
-            h.click(next.center(), egui::Modifiers::COMMAND);
+            h.click(next.left_center() + egui::vec2(60.0, 0.0), egui::Modifiers::COMMAND);
             assert_eq!(h.st.selection.len(), 2, "{width} px");
             // A double-click opens a notecard.
-            let note = h.row(8103).center();
+            let note = h.row(8103).left_center() + egui::vec2(60.0, 0.0);
             h.actions.clear();
             h.double_click(note);
             assert!(
