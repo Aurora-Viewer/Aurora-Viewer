@@ -1,32 +1,20 @@
 # Aurora Viewer architecture
 
-Outfit recovery retains still-linked originals after the initial metadata
-grace period without sending repeated reads. Known attachments restore while
-late records remain pending; an accepted original resumes the bounded attachment
-confirmation/retry window. Explicit detaches, authoritative COF changes,
-confirmed absence and non-attachable originals cancel pending intent. Region
-readiness and the existing login-settling policy still apply.
+`Inventory::retrying_folders` owns background cooldowns. The walker checks each
+target before retrying it. Open views retry after ten seconds through
+`Inventory::request_shown`, honoring cooldown ownership and folder limits.
+Explicit retries use `Inventory::retry`.
 
-Inventory read recovery is owned jointly by the model and the session. The
-model's `retrying_folders` prevents UI producers from bypassing background
-cooldowns; delayed retries reconcile each target before reading it again.
-`session/inventory_reads.rs` coalesces AIS item reads and bounds their active
-work per session. After folder-version validation, the app acknowledges known
-originals with `InventoryItemsKnown`, canceling redundant ordinary reads while
-retaining attachment metadata repair. Request generations isolate late
-cancelation and superseded capability results. See `docs/INVENTORY_RECOVERY.md`.
-The acknowledgment runs inside `pump_network_events`, after main's event
-dispatcher has applied accepted records. The dispatcher retains Director's
-render-timestamp conversion; network profiling keeps the real receipt timestamp
-and gaming mode keeps its existing event budget. Main's `CheckInventoryOffer` reads
-keep their separate authoritative/private reply path; they are not coalesced
-with ordinary work or canceled by model acknowledgments.
+`session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
+owner and item within a session and admits up to 16 at once. After applying
+folder data, `pump_network_events` acknowledges known originals to cancel
+redundant ordinary reads. Attachment metadata repair has its own delivery event.
+`CheckInventoryOffer` uses a separate fresh server read and private reply.
 
-Open inventory views use `Inventory::request_shown`, retaining main's ten-second
-retry after failure while respecting background cooldown ownership and over-limit
-folders. Explicit sidebar opens use `retry`; ordinary automatic producers still
-only request unknown folders. This preserves #4198 without reopening #3853's
-cross-producer retry bypass.
+Outfit restoration keeps still-linked originals pending past the initial
+metadata grace period. Accepted late metadata resumes attachment restoration.
+Explicit detaches, confirmed absence and authoritative outfit changes cancel
+pending intent. Temporary read failures leave existence unconfirmed.
 
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
