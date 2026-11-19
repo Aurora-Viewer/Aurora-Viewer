@@ -1824,9 +1824,31 @@ pub(crate) struct Targets {
     /// made one after the other, at one size).
     serial: u64,
     pub result: wgpu::TextureView,
-    pub reflect: Option<wgpu::TextureView>,
+    pub reflect: Option<ReflectTargets>,
     pub gi: Option<GiTargets>,
     pub lights: Option<LightTargets>,
+}
+
+/// The traced reflections' images (shaders/rt_reflect.wgsl), the three
+/// SSR's composite reads and the glossy ones' history behind the last.
+pub(crate) struct ReflectTargets {
+    /// The mirror ray's reflection: rgb, and 1 on a hit.
+    pub sharp: wgpu::TextureView,
+    /// The base colour of the metal pixels (`base_under`).
+    pub base: wgpu::TextureView,
+    /// The glossy reflection at the full resolution: rgb, and its cover.
+    pub gloss: wgpu::TextureView,
+    half: (u32, u32),
+    /// The glossy reflection's history at half resolution, its denoiser
+    /// guide and its cover (two of each: one read while the other is
+    /// written).
+    color: [wgpu::TextureView; 2],
+    guide: [wgpu::TextureView; 2],
+    cover: [wgpu::TextureView; 2],
+    /// The denoiser's two images, and its first pass, kept: next frame's
+    /// history takes its light from it.
+    ping: [wgpu::TextureView; 2],
+    fed: wgpu::TextureView,
 }
 
 /// The traced point lights' choices and share (two of each: one read while
@@ -2042,6 +2064,16 @@ struct Gi {
 }
 
 const REFLECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const REFLECT_BASE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The share of a glossy pixel's rays that met something.
+const REFLECT_COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// The variance under which the denoiser leaves a glossy reflection alone:
+/// a deviation of a thousandth of white does not show in one.
+const GLOSS_NOISE_FLOOR: f32 = 1e-6;
+/// The rays of a glossy pixel on a frame with no history to average them
+/// with: the view's first, and a photo's, which is traced once.
+const GLOSS_FIRST_RAYS: u32 = 4;
+const GLOSS_STILL_RAYS: u32 = STILL_ROUNDS;
 
 /// The reflection pass's constants (must match `Params` in rt_reflect.wgsl).
 #[repr(C)]
@@ -2053,6 +2085,12 @@ struct ReflectU {
     lit: [[f32; 4]; 5],
     screen: [f32; 4],
     mode: [f32; 4],
+    prev_clip_from_world: [[f32; 4]; 4],
+    prev_camera: [f32; 4],
+    half: [f32; 4],
+    gloss: [f32; 4],
+    changed: [[f32; 4]; crate::rt_light_changes::MAX_CHANGES],
+    changes: [f32; 4],
 }
 
 /// The frame's view and light, as the reflections and the GI shade what
@@ -2098,12 +2136,30 @@ impl TraceLight {
     }
 }
 
-/// The traced reflections' pass (shaders/rt_reflect.wgsl).
+/// The traced reflections' passes (shaders/rt_reflect.wgsl): the mirror
+/// ray's, then the glossy rays', their denoiser and their filter.
 struct Reflect {
     layout: wgpu::BindGroupLayout,
+    gloss_layout: wgpu::BindGroupLayout,
+    filter_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+    gloss: wgpu::ComputePipeline,
+    filter: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
+    denoise: Denoise,
     timer: Option<Timer>,
+    /// The glossy history written last frame (`ReflectTargets::color`,
+    /// `guide` and `cover`), and the targets it was written to
+    /// (`Targets::serial`), None before the first frame.
+    last: usize,
+    history_for: Option<u64>,
+    prev_clip_from_world: glam::Mat4,
+    prev_camera: glam::Vec3,
+    frame: u32,
+    /// When the last frame was traced, and the frames' length smoothed
+    /// (`gi_history_frames`).
+    traced_at: Option<std::time::Instant>,
+    frame_seconds: f32,
 }
 
 /// What the last frame traced (AURORA_PROFILE).
@@ -2857,6 +2913,7 @@ fn source(parts: &[&str]) -> String {
 const RT_VIEW: &str = include_str!("shaders/rt_view.wgsl");
 const RT_LIGHT: &str = include_str!("shaders/rt_light.wgsl");
 const RT_HISTORY: &str = include_str!("shaders/rt_history.wgsl");
+const RT_PROBES: &str = include_str!("shaders/rt_probes.wgsl");
 
 /// A posed face's geometry: `vertices` unindexed, three a triangle; an
 /// alpha-masked face is tested at its hits.
@@ -2903,22 +2960,37 @@ impl Targets {
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
         let reflect = options.reflections.then(|| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("rt reflections"),
-                    size: wgpu::Extent3d {
-                        width: size.0,
-                        height: size.1,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: REFLECT_FORMAT,
-                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            let half = (size.0.div_ceil(2), size.1.div_ceil(2));
+            let view = |label: &'static str, (width, height): (u32, u32), format: wgpu::TextureFormat| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            let pair = |label: &'static str, format: wgpu::TextureFormat| [view(label, half, format), view(label, half, format)];
+            ReflectTargets {
+                sharp: view("rt reflections", size, REFLECT_FORMAT),
+                base: view("rt reflections base", size, REFLECT_BASE_FORMAT),
+                gloss: view("rt reflections glossy", size, REFLECT_FORMAT),
+                half,
+                color: pair("rt reflections history", REFLECT_FORMAT),
+                guide: pair("rt reflections guide", GUIDE_FORMAT),
+                cover: pair("rt reflections cover", REFLECT_COVER_FORMAT),
+                ping: pair("rt reflections denoise", DENOISE_FORMAT),
+                fed: view("rt reflections denoise fed", half, DENOISE_FORMAT),
+            }
         });
         let gi = options.indirect.then(|| {
             let half = (size.0.div_ceil(2), size.1.div_ceil(2));
@@ -3723,54 +3795,89 @@ impl Reflect {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt reflections"),
-            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")]).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                source(&[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")]).into(),
+            ),
         });
         let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rt reflections"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ReflectU>() as u64),
-                    },
-                    count: None,
-                },
+                uniform_entry::<ReflectU>(),
                 texture_entry(1, wgpu::TextureSampleType::Depth),
                 texture_entry(2, unfiltered),
                 texture_entry(3, unfiltered),
                 tlas_entry(4),
                 tlas_entry(5),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: REFLECT_FORMAT,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
+                storage_texture_entry(6, REFLECT_FORMAT),
                 storage_entry(7, true),
                 texture_entry(8, unfiltered),
+                storage_texture_entry(9, REFLECT_BASE_FORMAT),
+                storage_entry(21, true),
+                probe_cubes_entry(22),
+                probe_sampler_entry(23),
+                probe_cubes_entry(24),
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rt reflections"),
-            bind_group_layouts: &[Some(&layout), Some(scene_layout), Some(textures)],
-            immediate_size: 0,
+        let gloss_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt reflections glossy"),
+            entries: &[
+                uniform_entry::<ReflectU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(2, unfiltered),
+                texture_entry(3, unfiltered),
+                tlas_entry(4),
+                tlas_entry(5),
+                storage_entry(7, true),
+                texture_entry(8, unfiltered),
+                texture_entry(10, unfiltered),
+                texture_entry(11, unfiltered),
+                storage_texture_entry(12, REFLECT_FORMAT),
+                storage_texture_entry(13, GUIDE_FORMAT),
+                texture_entry(14, unfiltered),
+                texture_entry(15, unfiltered),
+                storage_texture_entry(16, REFLECT_COVER_FORMAT),
+                storage_entry(21, true),
+                probe_cubes_entry(22),
+                probe_sampler_entry(23),
+                probe_cubes_entry(24),
+            ],
         });
-        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("rt reflections"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("cs_reflect"),
-            compilation_options: Default::default(),
-            cache: None,
+        let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt reflections filter"),
+            entries: &[
+                uniform_entry::<ReflectU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(2, unfiltered),
+                texture_entry(8, unfiltered),
+                texture_entry(17, unfiltered),
+                texture_entry(18, unfiltered),
+                texture_entry(19, unfiltered),
+                storage_texture_entry(20, REFLECT_FORMAT),
+            ],
         });
+        let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let trace = pipeline("rt reflections", &[Some(&layout), Some(scene_layout), Some(textures)], "cs_reflect");
+        let gloss = pipeline(
+            "rt reflections glossy",
+            &[Some(&gloss_layout), Some(scene_layout), Some(textures)],
+            "cs_gloss",
+        );
+        let filter = pipeline("rt reflections filter", &[Some(&filter_layout)], "cs_gloss_filter");
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rt reflections"),
             size: std::mem::size_of::<ReflectU>() as u64,
@@ -3780,10 +3887,46 @@ impl Reflect {
         log::info!("ray tracing: reflections on, in SSR's place");
         Reflect {
             layout,
-            pipeline,
+            gloss_layout,
+            filter_layout,
+            pipeline: trace,
+            gloss,
+            filter,
             buffer,
-            timer: Timer::new(device, queue, 2),
+            denoise: Denoise::new(device, "rt reflections denoise", GLOSS_NOISE_FLOOR, false),
+            timer: Timer::new(device, queue, 5),
+            last: 0,
+            history_for: None,
+            prev_clip_from_world: glam::Mat4::IDENTITY,
+            prev_camera: glam::Vec3::ZERO,
+            frame: 0,
+            traced_at: None,
+            frame_seconds: 1.0 / 60.0,
         }
+    }
+}
+
+/// The reflection probes' cubes (probes.rs `array_view`, `irradiance_view`)
+/// and their sampler, as rt_probes.wgsl reads them.
+fn probe_cubes_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::CubeArray,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn probe_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
     }
 }
 
@@ -4828,8 +4971,9 @@ impl RtShadows {
     }
 
     /// Traces the reflections of the glossy pixels of `gbuf` into the
-    /// targets' reflection texture, after the shadows' pass built this
-    /// frame's levels; the view's hits read `scene_copy`.
+    /// targets' reflection images, after the shadows' pass built this
+    /// frame's levels; the view's hits read `scene_copy`. `still`: a photo's
+    /// frame, traced once with no history.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_reflections(
         &mut self,
@@ -4844,17 +4988,46 @@ impl RtShadows {
         black: &wgpu::TextureView,
         scene_copy: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
+        probes: &crate::probes::Probes,
+        still: bool,
     ) {
         let scene_group = self.scene_group(device, scene);
         let lamps_shadowed = self.traces_lights();
-        let (Some(r), Some(tlas), Some(out)) = (self.reflect.as_mut(), self.tlas.as_ref(), t.reflect.as_ref()) else {
+        let (Some(r), Some(tlas), Some(rt)) = (self.reflect.as_mut(), self.tlas.as_ref(), t.reflect.as_ref()) else {
             return;
         };
         if let Some(timer) = &mut r.timer
             && let Some((ms, frames)) = timer.harvest()
         {
-            log::info!("rt reflections: trace {:.3} ms (GPU, mean of {frames} frames)", ms[0]);
+            log::info!(
+                "rt reflections: trace {:.3} ms, glossy trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} glossy rays)",
+                ms[0],
+                ms[1],
+                ms[2],
+                ms[3],
+                rt.half.0,
+                rt.half.1
+            );
         }
+        let (read, write) = (r.last, 1 - r.last);
+        let valid = !still && r.history_for == Some(t.serial);
+        if still {
+            // (a photo is no frame of the view: the next one's length is
+            // counted from itself)
+            r.traced_at = None;
+        } else {
+            let now = std::time::Instant::now();
+            if let Some(before) = r.traced_at.replace(now) {
+                // a pause (a window left aside) is not a frame's length
+                let seconds = now.duration_since(before).as_secs_f32().min(0.1);
+                r.frame_seconds += (seconds - r.frame_seconds) * 0.05;
+            }
+        }
+        let rays = match (valid, still) {
+            (true, _) => 1,
+            (false, false) => GLOSS_FIRST_RAYS,
+            (false, true) => GLOSS_STILL_RAYS,
+        };
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
         let u = ReflectU {
             clip_from_world: light.clip_from_world.to_cols_array_2d(),
@@ -4868,58 +5041,107 @@ impl RtShadows {
                 self.lamps_count as f32,
                 if lamps_shadowed { 1.0 } else { 0.0 },
             ],
+            prev_clip_from_world: r.prev_clip_from_world.to_cols_array_2d(),
+            prev_camera: r.prev_camera.extend(1.0).to_array(),
+            half: [
+                rt.half.0 as f32,
+                rt.half.1 as f32,
+                (r.frame % (1 << 20)) as f32,
+                gi_history_frames(r.frame_seconds),
+            ],
+            gloss: [if valid { 1.0 } else { 0.0 }, rays as f32, 0.0, 0.0],
+            changed: [[0.0; 4]; crate::rt_light_changes::MAX_CHANGES],
+            changes: [0.0; 4],
         };
         queue.write_buffer(&r.buffer, 0, bytemuck::bytes_of(&u));
+        let params = wgpu::BindGroupEntry {
+            binding: 0,
+            resource: r.buffer.as_entire_binding(),
+        };
+        let levels = [
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::AccelerationStructure(tlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                // without posed faces the scene's stands in, unread
+                resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+            },
+        ];
+        let lamps = wgpu::BindGroupEntry {
+            binding: 7,
+            resource: self.lamps.as_entire_binding(),
+        };
+        let motion = normals.unwrap_or(black);
+        let probe_entries = [
+            wgpu::BindGroupEntry {
+                binding: 21,
+                resource: probes.buffer.as_entire_binding(),
+            },
+            view(22, &probes.array_view),
+            wgpu::BindGroupEntry {
+                binding: 23,
+                resource: wgpu::BindingResource::Sampler(&probes.sampler),
+            },
+            view(24, &probes.irradiance_view),
+        ];
+        let [probe_set, probe_cubes, probe_sampler, probe_irradiance] = &probe_entries;
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rt reflections"),
             layout: &r.layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: r.buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(gbuf),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(scene_copy),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::AccelerationStructure(tlas),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    // without posed faces the scene's stands in, unread
-                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(out),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: self.lamps.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::TextureView(normals.unwrap_or(black)),
-                },
+                params.clone(),
+                view(1, depth),
+                view(2, gbuf),
+                view(3, scene_copy),
+                levels[0].clone(),
+                levels[1].clone(),
+                view(6, &rt.sharp),
+                lamps.clone(),
+                view(8, motion),
+                view(9, &rt.base),
+                probe_set.clone(),
+                probe_cubes.clone(),
+                probe_sampler.clone(),
+                probe_irradiance.clone(),
             ],
         });
+        let gloss_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt reflections glossy"),
+            layout: &r.gloss_layout,
+            entries: &[
+                params.clone(),
+                view(1, depth),
+                view(2, gbuf),
+                view(3, scene_copy),
+                levels[0].clone(),
+                levels[1].clone(),
+                lamps,
+                view(8, motion),
+                view(10, &rt.color[read]),
+                view(11, &rt.guide[read]),
+                view(12, &rt.color[write]),
+                view(13, &rt.guide[write]),
+                view(14, &rt.fed),
+                view(15, &rt.cover[read]),
+                view(16, &rt.cover[write]),
+                probe_set.clone(),
+                probe_cubes.clone(),
+                probe_sampler.clone(),
+                probe_irradiance.clone(),
+            ],
+        });
+        let timer = r.timer.as_ref();
         {
+            // the mirror rays then the glossy ones: the timestamp between
+            // the two is the second pass's first
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt reflections"),
-                timestamp_writes: r.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: None,
                 }),
             });
             pass.set_pipeline(&r.pipeline);
@@ -4928,9 +5150,80 @@ impl RtShadows {
             pass.set_bind_group(2, &scene.textures, &[]);
             pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
         }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt reflections glossy"),
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            pass.set_pipeline(&r.gloss);
+            pass.set_bind_group(0, &gloss_group, &[]);
+            pass.set_bind_group(1, &scene_group, &[]);
+            pass.set_bind_group(2, &scene.textures, &[]);
+            pass.dispatch_workgroups(rt.half.0.div_ceil(8), rt.half.1.div_ceil(8), 1);
+        }
+        r.denoise
+            .prepare(device, queue, encoder, rt.half, false, Some(r.frame), Round::Live);
+        let denoised = {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt reflections denoise"),
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            r.denoise
+                .encode(
+                    device,
+                    &mut pass,
+                    rt.half,
+                    &rt.color[write],
+                    &rt.guide[write],
+                    &rt.ping,
+                    Some(&rt.fed),
+                    None,
+                )
+                .0
+        };
+        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt reflections filter"),
+            layout: &r.filter_layout,
+            entries: &[
+                params,
+                view(1, depth),
+                view(2, gbuf),
+                view(8, motion),
+                view(17, denoised),
+                view(18, &rt.guide[write]),
+                view(19, &rt.cover[write]),
+                view(20, &rt.gloss),
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt reflections filter"),
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(3),
+                    end_of_pass_write_index: Some(4),
+                }),
+            });
+            pass.set_pipeline(&r.filter);
+            pass.set_bind_group(0, &filter_group, &[]);
+            pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        }
         if let Some(timer) = &mut r.timer {
             timer.resolve(encoder);
         }
+        r.last = write;
+        r.history_for = Some(t.serial);
+        r.prev_clip_from_world = light.clip_from_world;
+        r.prev_camera = light.camera;
+        r.frame = r.frame.wrapping_add(1);
     }
 }
 
@@ -5034,12 +5327,28 @@ mod tests {
         assert_eq!(gi_history_frames(0.0), 128.0);
     }
 
+    /// rt_probes.wgsl reads the probes' buffer the shading fills: its
+    /// structs are common.wgsl's.
+    #[test]
+    fn rt_probes_structs_are_the_shadings() {
+        let block = |src: &str, from: &str, to: &str| {
+            let start = src.find(from).expect("the block's first line");
+            let end = start + src[start..].find(to).expect("the block's last line") + to.len();
+            src[start..end].replace("\r\n", "\n")
+        };
+        let (from, to) = ("const MAX_PROBES: u32", "    probes: array<Probe, MAX_PROBES>,\n};");
+        assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
+    }
+
     #[test]
     fn rt_shadows_shaders_are_valid() {
         for (name, parts) in [
             ("rt_shadows", &[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")][..]),
             ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
-            ("rt_reflect", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")][..]),
+            (
+                "rt_reflect",
+                &[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")][..],
+            ),
             ("rt_gi", &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")][..]),
             // standalone: no scene, no ray queries
             ("rt_denoise", &[include_str!("shaders/rt_denoise.wgsl")][..]),

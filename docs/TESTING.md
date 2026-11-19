@@ -4757,6 +4757,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_GLOSSY_BUMPS=1` | An upright polished PBR panel with a bump normal map, seen along its face (ray-traced reflections) |
+| `AURORA_DEMO_SATIN=1\|room` | Satin PBR metal from a roughness of 0.15 to 0.55 and a frame of thin dark bars (blurred ray-traced reflections); `room`: inside the closed room of `AURORA_DEMO_PROBE_ROOM` |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
@@ -4993,12 +4994,26 @@ both open states and the selection count. Capture at frame 620.
   the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
   second to the next.
 - **`AURORA_DEMO_GLOSSY_BUMPS=1`**: ahead of the start position, an
-  upright 7 × 3 m polished panel (PBR, roughness 0.1) with the bump normal
+  upright 7 × 3 m polished panel (PBR, roughness 0.05) with the bump normal
   map, seen along its face, in front of the panel with holes. With
   `AURORA_RT_REFLECTIONS=1`, the far slope of each bump mirrors what
   stands before the panel (the lilac panel, the lamps), never the holes of
   the panel behind it: the mirror ray of such a slope is kept on its own
   side of the face (rt_reflect.wgsl `kept_above`).
+- **`AURORA_DEMO_SATIN=1`**: ahead of the start position, five strips of
+  white PBR metal on the ground, from a roughness of 0.15 (the nearest) to
+  0.55, the left half of each with the bump normal map, and to the right a
+  window frame of thin dark metal bars (roughness 0.35). With
+  `AURORA_RT_REFLECTIONS=1` the strips mirror what stands on and beyond
+  them (the glowing cube, the panels, the lamps) more blurred from one
+  strip to the next, with no grain, the view still or moving
+  (`AURORA_DEMO_CAMERA=alt,2200,1250`, a capture at frame 626), and the
+  bars stay dark; without it they show the probes' image, the same on
+  every strip (rt_reflect.wgsl `cs_gloss`). `room` puts them inside the
+  closed room (with `AURORA_DEMO_PROBE_ROOM=1,box` and
+  `AURORA_DEMO_POS="100,100"`) and adds an upright satin panel that faces
+  the start position: it mirrors the wall behind the camera in the room's
+  own warm colour, not in the sky's (rt_probes.wgsl).
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light

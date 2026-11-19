@@ -5566,8 +5566,71 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_SATIN=1: satin metal (PBR, metallic 1) ahead of the start
+    // position, for the glossy ray-traced reflections (rt_reflect.wgsl
+    // `cs_gloss`): five strips on the ground from a roughness of 0.15 to
+    // 0.55, the nearest the smoothest, which blur what stands beyond them
+    // more and more, a normal map's bumps on half of each; and a window
+    // frame of thin dark bars (a roughness of 0.35), which stay dark
+    if let Ok(satin) = std::env::var("AURORA_DEMO_SATIN") {
+        // `room`: inside the closed room of AURORA_DEMO_PROBE_ROOM, with an
+        // upright satin panel that faces the start position: what it
+        // mirrors stands behind the camera, lit by the room and not the sky
+        let room = satin.trim() == "room";
+        let (bx, by, floor) = if room {
+            (101.5, 100.0, height(100.0, 100.0) + 0.2)
+        } else {
+            (134.0, 126.0, height(cx, cy) + 0.35)
+        };
+        let metal = |id: u32, pos: Vec3, scale: Vec3, mat: Uuid| {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                boxp,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, mat)).collect(),
+                    ..Default::default()
+                },
+                "",
+            )
+        };
+        for (k, (plain, bumpy)) in MAT_PBR_SATIN.into_iter().zip(MAT_PBR_SATIN_BUMPS).enumerate() {
+            let x = bx + 1.1 * k as f32;
+            for (y, mat) in [(by - 1.25, plain), (by + 1.25, bumpy)] {
+                add(metal(id, Vec3::new(x, y, floor + 0.03), Vec3::new(1.0, 2.5, 0.06), mat));
+                id += 1;
+            }
+        }
+        if room {
+            add(metal(
+                id,
+                Vec3::new(bx + 6.0, by, floor + 1.3),
+                Vec3::new(0.1, 5.0, 2.4),
+                MAT_PBR_SATIN[1],
+            ));
+            id += 1;
+        }
+        // the frame: two posts, three rails
+        let (fx, fy, fz) = (bx + 1.0, by - 3.8, floor + 1.3);
+        for y in [-1.0, 1.0] {
+            add(metal(id, Vec3::new(fx, fy + y, fz), Vec3::new(0.06, 0.06, 2.6), MAT_PBR_SATIN_DARK));
+            id += 1;
+        }
+        for z in [-1.27, 0.0, 1.27] {
+            add(metal(id, Vec3::new(fx, fy, fz + z), Vec3::new(0.06, 2.0, 0.06), MAT_PBR_SATIN_DARK));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_GLOSSY_BUMPS=1: an upright polished panel (PBR, roughness
-    // 0.1) with the bump normal map, seen along its face from the start
+    // 0.05) with the bump normal map, seen along its face from the start
     // position: the far slope of each bump turns its mirror ray into the
     // panel (rt_reflect.wgsl `kept_above`)
     if std::env::var_os("AURORA_DEMO_GLOSSY_BUMPS").is_some() {
@@ -9787,6 +9850,24 @@ const MAT_PBR_METAL: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0013),
 ];
 
+/// Satin metals of AURORA_DEMO_SATIN, by roughness (`SATIN_ROUGHNESS`):
+/// plain, with the bump normal map, and the frame's dark one.
+const MAT_PBR_SATIN: [Uuid; 5] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0018),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0019),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001A),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001B),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001C),
+];
+const MAT_PBR_SATIN_BUMPS: [Uuid; 5] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0028),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0029),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002A),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002B),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002C),
+];
+const MAT_PBR_SATIN_DARK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001D);
+const SATIN_ROUGHNESS: [f32; 5] = [0.15, 0.25, 0.35, 0.45, 0.55];
 /// Polished bumpy panel of AURORA_DEMO_GLOSSY_BUMPS.
 const MAT_PBR_GLOSSY_BUMPS: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0017);
 
@@ -9819,12 +9900,34 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    for (k, roughness) in SATIN_ROUGHNESS.into_iter().enumerate() {
+        for (mat, normal_texture) in [(MAT_PBR_SATIN[k], None), (MAT_PBR_SATIN_BUMPS[k], Some(TEX_BUMPS))] {
+            list.push((
+                mat,
+                aurora_assets::PbrMaterial {
+                    normal_texture,
+                    metallic_factor: 1.0,
+                    roughness_factor: roughness,
+                    ..Default::default()
+                },
+            ));
+        }
+    }
+    list.push((
+        MAT_PBR_SATIN_DARK,
+        aurora_assets::PbrMaterial {
+            base_color_factor: [0.12, 0.1, 0.08, 1.0],
+            metallic_factor: 1.0,
+            roughness_factor: 0.35,
+            ..Default::default()
+        },
+    ));
     list.push((
         MAT_PBR_GLOSSY_BUMPS,
         aurora_assets::PbrMaterial {
             normal_texture: Some(TEX_BUMPS),
             metallic_factor: 0.0,
-            roughness_factor: 0.1,
+            roughness_factor: 0.05,
             ..Default::default()
         },
     ));
