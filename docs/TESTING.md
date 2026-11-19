@@ -7364,6 +7364,10 @@ a local dense/thin mesh. Visual LODs, materials and source files must stay intac
 review the approximated collisions, particularly openings, before quoting.
 The `mesh_physics` regression filter covers the fee guard, worker result,
 pointer actions and collision-only conversion.
+The default convex hull and the four default LOD triangle targets are not
+visible in the offline demo (it returns fixed costs). Compare them on a grid
+only: upload the same file in both viewers, Calculate, and check physics cost,
+Land Impact and the LOD triangle counts.
 The convex section exposes Analyze and five VHACD parameters. Adjust Vertices
 per hull before analysis to control the hull budget. There is no separate
 Simplify action or target-percentage field. Statistics, preview and encoded

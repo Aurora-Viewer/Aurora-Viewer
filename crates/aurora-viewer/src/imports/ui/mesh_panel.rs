@@ -350,6 +350,23 @@ fn mesh_controls(
     }
     ui.add_space(2.0);
     if section == 0 {
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("import-lod-profile"));
+            let linden = aurora_i18n::tr!("import-lod-profile-linden");
+            let aurora = aurora_i18n::tr!("import-lod-profile-aurora");
+            let mut selected = usize::from(draft.lod_profile == mesh::LodProfile::Aurora);
+            if widgets::segmented(ui, p, &mut selected, &[(linden, false), (aurora, true)]) {
+                let profile = if selected == 1 {
+                    mesh::LodProfile::Aurora
+                } else {
+                    mesh::LodProfile::Linden
+                };
+                draft.set_lod_profile(profile);
+                prefs.mesh_lod_profile = profile;
+                changed = true;
+            }
+            widgets::icon_button(ui, p, "help-circle-filled", aurora_i18n::tr!("import-lod-profile-help"), true);
+        });
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 7.0;
             for level in (0..4).rev() {

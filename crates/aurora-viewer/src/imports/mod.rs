@@ -133,6 +133,8 @@ pub struct Preferences {
     pub mesh_auto_weights: bool,
     pub mesh_auto_preview_weights: bool,
     pub mesh_reliable_default: bool,
+    /// The LOD tab's last Linden / Aurora choice, for the next drafts.
+    pub mesh_lod_profile: mesh::LodProfile,
     pub mesh_model_limit: u32,
     pub mesh_upload_timeout: u32,
     pub mesh_suffixes: [String; 5],
@@ -172,6 +174,7 @@ impl Default for Preferences {
             mesh_auto_weights: true,
             mesh_auto_preview_weights: true,
             mesh_reliable_default: false,
+            mesh_lod_profile: mesh::LodProfile::default(),
             mesh_model_limit: aurora_assets::import_mesh::DEFAULT_MODEL_LIMIT,
             mesh_upload_timeout: 600,
             mesh_suffixes: ["LOD0".into(), "LOD1".into(), "LOD2".into(), String::new(), "PHYS".into()],
@@ -1411,13 +1414,14 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
+                                    let targets = draft.lod_profile.targets(triangles);
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;
                                             lod.path = None;
                                             lod.source = mesh::LodSource::Auto;
                                         }
-                                        lod.triangles = (triangles / 4usize.pow((3 - i) as u32)).max(1);
+                                        lod.triangles = targets[i];
                                     }
                                     draft.lods[3].file = None;
                                     draft.lods[3].path = Some(path.clone());

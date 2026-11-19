@@ -227,3 +227,68 @@ fn mesh_base_hull_comes_from_the_collision_model_then_the_low_lod_like_the_legac
     lods[2] = None;
     assert_eq!(hull_source(None, &lods, high).name, high.name);
 }
+
+#[test]
+fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
+    // Linden: genMeshOptimizerLODs truncates base / 3^(3 - level).
+    assert_eq!(LodProfile::Linden.targets(3000), [111, 333, 1000, 3000]);
+    // #3433's 1,400 triangles: 466, 155 and 51 below the High LOD.
+    assert_eq!(LodProfile::Linden.targets(1400), [51, 155, 466, 1400]);
+    // 10 / 27 truncates to 0 there; the target stays at least 1.
+    assert_eq!(LodProfile::Linden.targets(10), [1, 1, 3, 10]);
+    assert_eq!(LodProfile::Aurora.targets(3000), [46, 187, 750, 3000]);
+    let mut scene = Scene::default();
+    scene.models.push(Model {
+        name: "Counted".into(),
+        submodel: 0,
+        skin: None,
+        center: glam::Vec3::ZERO,
+        size: glam::Vec3::ONE,
+        faces: vec![codec::Face {
+            vertices: Vec::new(),
+            indices: vec![0; 3000 * 3],
+            material: 0,
+        }],
+    });
+    let mut draft = Draft::from_shared(Arc::new(scene), HashMap::new());
+    let sources = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.source);
+    let targets = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.triangles);
+    assert_eq!(draft.lod_profile, LodProfile::Linden);
+    assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
+    assert_eq!(
+        sources(&draft),
+        [LodSource::Fast, LodSource::Fast, LodSource::Auto, LodSource::File]
+    );
+    // A LOD loaded from a file keeps its file; the others start again.
+    draft.lods[1].source = LodSource::File;
+    draft.lods[2].error_mode = true;
+    draft.set_lod_profile(LodProfile::Aurora);
+    assert_eq!(targets(&draft), [46, 187, 750, 3000]);
+    assert_eq!(
+        sources(&draft),
+        [LodSource::Auto, LodSource::File, LodSource::Auto, LodSource::File]
+    );
+    assert!(!draft.lods[2].error_mode, "a generated level is back on its triangle target");
+    draft.set_lod_profile(LodProfile::Linden);
+    assert_eq!(
+        sources(&draft),
+        [LodSource::Fast, LodSource::File, LodSource::Auto, LodSource::File]
+    );
+}
+
+#[test]
+fn mesh_default_hull_is_made_from_the_low_lod_when_no_collision_is_chosen() {
+    // #3433: the hull from the High LOD made the physics cost 2.6 times the
+    // Legacy Viewer's. A Low LOD file with one corner moved tells them apart.
+    let mut draft = crate::imports::tests::mesh_fixture();
+    let mut low = draft.scene.as_ref().clone();
+    low.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
+    draft.lods[1].source = LodSource::File;
+    draft.lods[1].file = Some(Arc::new(low));
+    let prepared = prepare(&draft).expect("prepare");
+    let from_low = process::base_hull(prepared.lods[0][1].as_ref().expect("low")).expect("low hull");
+    let from_high = process::base_hull(&draft.scene.models[0]).expect("high hull");
+    assert_ne!(from_low.vertices, from_high.vertices, "the fixture tells Low from High");
+    assert_eq!(prepared.hulls[0].base.as_ref().expect("base hull").vertices, from_low.vertices);
+    assert!(prepared.physics[0].is_none(), "no collision model was chosen");
+}

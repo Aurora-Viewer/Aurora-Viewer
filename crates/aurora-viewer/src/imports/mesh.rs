@@ -15,7 +15,7 @@ use aurora_llsd::{Llsd, llsd_map};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
     Auto,
@@ -23,6 +23,42 @@ pub enum LodSource {
     Fast,
     Reliable,
     Above,
+}
+/// Which defaults the generated LODs start from, chosen in the LOD tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LodProfile {
+    /// The Legacy Viewer's: each level a third of the one above, Medium by
+    /// the automatic method, Low and Lowest by the fast one. What its older
+    /// meshoptimizer (0.22) ends up doing: its precise pass cannot reach
+    /// the Low and Lowest targets with the texture and shading seams kept,
+    /// and LLModelPreview::genMeshOptimizerLODs (MESH_OPTIMIZER_AUTO) falls
+    /// back to the sloppy one. Close to its download cost (#3433).
+    #[default]
+    Linden,
+    /// Aurora's own: each level a quarter of the one above, all by the
+    /// automatic method, which keeps the seams. Better looking far away,
+    /// and a higher download cost on small objects.
+    Aurora,
+}
+impl LodProfile {
+    /// Triangle targets of the Lowest, Low, Medium and High LODs. Linden
+    /// divides by 3 per level, as genMeshOptimizerLODs with decimation 3
+    /// (`base_triangles / pow(3, LOD_HIGH - lod)`, truncated); Aurora by 4.
+    /// A target is at least 1, as the Legacy `llmax(triangle_limit, 1)`.
+    pub fn targets(self, high_triangles: usize) -> [usize; 4] {
+        let divisor: usize = match self {
+            Self::Linden => 3,
+            Self::Aurora => 4,
+        };
+        std::array::from_fn(|level| (high_triangles / divisor.pow((3 - level) as u32)).max(1))
+    }
+    /// How a generated level (0 Lowest to 2 Medium) is made.
+    pub fn source(self, level: usize) -> LodSource {
+        match (self, level) {
+            (Self::Linden, 0 | 1) => LodSource::Fast,
+            _ => LodSource::Auto,
+        }
+    }
 }
 #[derive(Clone)]
 pub struct Lod {
@@ -86,6 +122,7 @@ pub struct Draft {
     pub physics_path: Option<PathBuf>,
     pub options: Options,
     pub lod_suffixes: [String; 5],
+    pub lod_profile: LodProfile,
     pub upload_timeout: u32,
     pub prepared: Option<Arc<Prepared>>,
     pub quote: Option<aurora_net::inventory::mesh_upload::Quote>,
@@ -164,10 +201,10 @@ impl Draft {
             scene,
             images,
             lods: std::array::from_fn(|i| Lod {
-                source: if i == 3 { LodSource::File } else { LodSource::Auto },
+                source: if i == 3 { LodSource::File } else { LodProfile::default().source(i) },
                 file: None,
                 path: None,
-                triangles: (triangles / 4usize.pow((3 - i) as u32)).max(1),
+                triangles: LodProfile::default().targets(triangles)[i],
                 error: 0.01,
                 error_mode: false,
             }),
@@ -178,6 +215,7 @@ impl Draft {
                 ..Default::default()
             },
             lod_suffixes: Preferences::default().mesh_suffixes,
+            lod_profile: LodProfile::default(),
             upload_timeout: 600,
             prepared: None,
             quote: None,
@@ -197,6 +235,19 @@ impl Draft {
         };
         draft.clamp_scale();
         draft
+    }
+    /// Starts the generated LODs again from `profile`: their method and
+    /// triangle target. A level loaded from a file keeps its file.
+    pub fn set_lod_profile(&mut self, profile: LodProfile) {
+        self.lod_profile = profile;
+        let targets = profile.targets(self.scene.models.iter().map(Model::triangles).sum());
+        for (level, lod) in self.lods.iter_mut().enumerate() {
+            lod.triangles = targets[level];
+            if level < 3 && lod.source != LodSource::File {
+                lod.source = profile.source(level);
+                lod.error_mode = false;
+            }
+        }
     }
     /// LLModelPreview::rebuildUploadData clamps a newly loaded oversized
     /// scene to the per-prim and linkset limits before calculating its fee.
