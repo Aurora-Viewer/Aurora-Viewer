@@ -35,11 +35,25 @@ use uuid::Uuid;
 /// Ask to open a profile from anywhere in the interface (names and agent
 /// links in text); the app reads it once per frame (LLAgentHandler).
 pub fn request_open(ctx: &egui::Context, id: Uuid) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), id));
+    request_open_in(ctx, NameScope::World, id);
 }
 
+/// `request_open` from a place that shows names in `scope` (a conversation
+/// names its people whoever is around: `ProfileUi::open_in`).
+pub fn request_open_in(ctx: &egui::Context, scope: NameScope, id: Uuid) {
+    // only the two places that name people in a text matter here; any other
+    // scope asks as the world does, the stricter one
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), (scope == NameScope::Roster, id)));
+}
+
+#[cfg(test)]
 pub fn take_open_request(ctx: &egui::Context) -> Option<Uuid> {
-    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("aurora_open_profile")))
+    take_open_request_in(ctx).map(|(_, id)| id)
+}
+
+pub fn take_open_request_in(ctx: &egui::Context) -> Option<(NameScope, Uuid)> {
+    ctx.data_mut(|d| d.remove_temp::<(bool, Uuid)>(egui::Id::unique("aurora_open_profile")))
+        .map(|(roster, id)| (if roster { NameScope::Roster } else { NameScope::World }, id))
 }
 
 pub enum ProfileAction {
@@ -506,6 +520,28 @@ impl ProfileUi {
         }
     }
 
+    /// The residents whose profile is shown, written over `out`: RLVa asks
+    /// it for the giver of an inventory offer (`World::rlva_names_giver`).
+    /// LLAvatarActions::profileVisible is LLFloater::isShown: a minimized
+    /// window does not count, nor one that is not drawn (a resident whose
+    /// name the window may not show).
+    pub(crate) fn open_residents(&self, ctx: &egui::Context, world: &World, classic: bool, out: &mut std::collections::HashSet<Uuid>) {
+        out.clear();
+        out.extend(
+            self.windows
+                .iter()
+                .filter(|w| {
+                    let win_id = if classic {
+                        format!("profile-{}", w.id)
+                    } else {
+                        aurora::window_id(w.id)
+                    };
+                    w.open && world.rlva_shows_name(w.scope, w.id) && !widgets::floater_minimized(ctx, &win_id)
+                })
+                .map(|w| w.id),
+        );
+    }
+
     /// The windows open and the place each one names its resident from.
     #[cfg(test)]
     pub(crate) fn opened(&self) -> Vec<(Uuid, NameScope)> {
@@ -594,6 +630,7 @@ impl ProfileUi {
         // several at once: "edit:3", "compact:2"
         for option in option.split(':') {
             match option {
+                "classic" => {} // selected by the app; keep the chosen tab
                 "edit" => w.editing = true,
                 "form" => w.demo_classified = Some(false),
                 "publish" => w.demo_classified = Some(true),
@@ -1639,13 +1676,13 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui
-                .add_enabled(
-                    super::context::can_pay_resident(world),
-                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
-                )
-                .clicked()
-            {
+            // Pay stays enabled under @pay: updateButtons
+            // (indra/newview/llpanelprofile.cpp) never tests it, and the
+            // click's LLAvatarActions::pay is refused where the pay window
+            // opens, with the "blocked" notice
+            // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>,
+            // indra/newview/rlvhandler.cpp; here `App::open_pay`).
+            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
@@ -1712,8 +1749,9 @@ fn overflow_menu(
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        let payable = super::context::can_pay_resident(world);
-        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), payable) {
+        // LLPanelProfileSecondLife::onEnableMenu has no rule for "pay": the
+        // entry stays enabled under @pay, like the button (`action_buttons`).
+        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
@@ -1769,7 +1807,7 @@ fn overflow_menu(
 fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, scope: NameScope, id: Uuid) {
     let names = &world.social.avatar_names;
     let display = names.get_in(scope, &id).map(|n| n.display(&names.options));
-    let legacy = world.legacy_name(&id);
+    let legacy = world.legacy_name_in(scope, &id);
     widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
         let display_name = aurora_i18n::tr!("ui-profile-copy-display-name");
         if menu::item_if(ui, p, "id-filled", display_name, display.is_some()) {
@@ -1866,7 +1904,7 @@ fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
     }
-    world.legacy_name(id).map(|n| {
+    world.legacy_name_in(scope, id).map(|n| {
         let mut it = n.split_whitespace();
         let first = it.next().unwrap_or("");
         match it.next() {
@@ -2102,14 +2140,20 @@ fn pick_detail(
     if !snapshot.is_nil() {
         wanted_images.insert(snapshot);
     }
-    widgets::picture(
+    if widgets::picture(
         ui,
         p,
         c.images.get(&snapshot),
         Vec2::new(width, width * 179.0 / 290.0),
         "user-filled",
         "",
-    );
+    )
+    .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo"))
+    .clicked()
+    {
+        // Same read-only preview as the Aurora profile: no asset id or export.
+        w.open_photo(PictureSlot::Pick(w.id), snapshot);
+    }
     ui.label(RichText::new(aurora_i18n::tr!("common-name-2")).size(12.0).strong().color(p.ink));
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(width).char_limit(63));
@@ -2309,16 +2353,20 @@ fn classifieds_tab(
                 .id_salt(("classified", sel))
                 .max_height(height)
                 .auto_shrink([false, true])
-                .show(ui, |ui| classified_detail(ui, c, emoji, info, want_names, wanted_images, actions));
+                .show(ui, |ui| {
+                    classified_detail(ui, c, emoji, w, info, want_names, wanted_images, actions)
+                });
         });
     });
 }
 
 /// panel_profile_classified.xml (read only).
+#[allow(clippy::too_many_arguments)]
 fn classified_detail(
     ui: &mut egui::Ui,
     c: &TabCtx,
     emoji: &mut super::emoji::Emoji,
+    w: &mut Window,
     info: &aurora_net::ClassifiedInfo,
     want_names: &mut HashSet<Uuid>,
     wanted_images: &mut HashSet<Uuid>,
@@ -2329,14 +2377,19 @@ fn classified_detail(
     if !info.snapshot.is_nil() {
         wanted_images.insert(info.snapshot);
     }
-    widgets::picture(
+    if widgets::picture(
         ui,
         p,
         c.images.get(&info.snapshot),
         Vec2::new(width, width * 161.0 / 260.0),
         "user-filled",
         "",
-    );
+    )
+    .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo"))
+    .clicked()
+    {
+        w.open_photo(PictureSlot::Classified(w.id), info.snapshot);
+    }
     ui.label(RichText::new(&info.name).size(14.0).strong().color(p.ink));
     let row = |ui: &mut egui::Ui, label: &str, value: &str| {
         ui.horizontal_top(|ui| {
@@ -2534,6 +2587,118 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 mod tests {
     use super::*;
 
+    #[test]
+    fn classic_pick_and_classified_pictures_open_the_read_only_preview() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let snapshot = Uuid::from_u128(3869);
+        let pick = PickInfo {
+            id: Uuid::from_u128(3870),
+            parcel: Uuid::from_u128(3871),
+            snapshot,
+            ..Default::default()
+        };
+        world.profiles.picks.insert(pick.id, pick.clone());
+        world.profiles.parcels.insert(
+            pick.parcel,
+            aurora_net::ParcelSummary {
+                id: pick.parcel,
+                ..Default::default()
+            },
+        );
+        let classified = aurora_net::ClassifiedInfo {
+            snapshot,
+            ..Default::default()
+        };
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        let c = TabCtx {
+            p: &p,
+            world: &world,
+            images: &images,
+            own: false,
+        };
+        for is_pick in [true, false] {
+            let mut frames = Frames::new();
+            let mut w = Window::new(Uuid::from_u128(3868));
+            let mut names = HashSet::new();
+            let mut wanted = HashSet::new();
+            let mut actions = Vec::new();
+            let mut draw = |ui: &mut egui::Ui| {
+                let mut child = ui
+                    .new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(egui::pos2(40.0, 40.0), Vec2::new(300.0, 700.0))));
+                if is_pick {
+                    pick_detail(&mut child, &c, &mut emoji, &mut w, pick.id, &mut names, &mut wanted, &mut actions);
+                } else {
+                    classified_detail(
+                        &mut child,
+                        &c,
+                        &mut emoji,
+                        &mut w,
+                        &classified,
+                        &mut names,
+                        &mut wanted,
+                        &mut actions,
+                    );
+                }
+            };
+            frames.run(Vec::new(), &mut draw);
+            let pos = egui::pos2(100.0, 100.0);
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+            let photo = w.photo.expect("click opens the preview");
+            assert_eq!(photo.asset, snapshot);
+            assert!(matches!(
+                (is_pick, photo.slot),
+                (true, PictureSlot::Pick(_)) | (false, PictureSlot::Classified(_))
+            ));
+            assert!(actions.is_empty(), "viewing a photo sends no command");
+        }
+    }
+
+    /// A profile asked for from a place that names its resident (a group's
+    /// founder, a conversation) opens under RLVa's `@shownames`; one asked
+    /// for from the world around us does not (issue #3547).
+    #[test]
+    fn a_profile_asked_from_a_place_that_names_the_resident_opens_under_shownames() {
+        let ctx = egui::Context::default();
+        let id = Uuid::from_u128(0x35475);
+        request_open_in(&ctx, NameScope::Roster, id);
+        assert_eq!(take_open_request_in(&ctx), Some((NameScope::Roster, id)));
+        request_open(&ctx, id);
+        assert_eq!(take_open_request_in(&ctx), Some((NameScope::World, id)));
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let mut ui = ProfileUi::default();
+        ui.open_in(&mut world, NameScope::World, id);
+        assert!(ui.windows.is_empty(), "the world's name is hidden");
+        ui.open_in(&mut world, NameScope::Roster, id);
+        assert_eq!(ui.windows.len(), 1, "a group's founder opens");
+    }
+
     /// Inventory released on another resident's profile gives it to them, in
     /// both styles, wherever on the window; never on our own, nor beside it
     /// (#991).
@@ -2688,6 +2853,63 @@ mod tests {
             let requests = take_requests(&frames.ctx);
             assert_eq!(requests.len(), usize::from(received != 0 && online));
             assert!(requests.iter().all(|a| matches!(a, CtxAction::ShowOnMap(target) if *target == id)));
+            assert!(actions.is_empty());
+        }
+    }
+
+    /// LLPanelProfileSecondLife::updateButtons (indra/newview/llpanelprofile.cpp)
+    /// leaves Pay enabled under @pay: the click reaches the pay window's
+    /// opening, which is what refuses (`App::open_pay`).
+    #[test]
+    fn classic_profile_pay_button_stays_enabled_under_rlva_pay() {
+        use crate::ui::context::{CtxAction, take_requests};
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let w = Window::new(id);
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        for restricted in [false, true] {
+            if restricted {
+                assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                    from_name: String::new(),
+                    source_id: Uuid::from_u128(9000),
+                    owner_id: Uuid::from_u128(1),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::OwnerSay,
+                    region: None,
+                    position: glam::Vec3::ZERO,
+                    message: "@pay=n".into(),
+                }));
+            }
+            assert_eq!(world.rlva_can_pay(), !restricted);
+            let mut point = egui::Pos2::ZERO;
+            for _ in 0..2 {
+                let texts = frames.run(Vec::new(), |ui| action_buttons(ui, &p, &world, &w, false, &mut actions));
+                point = painted(&texts, aurora_i18n::tr!("common-pay")).rect.center();
+            }
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    |ui| action_buttons(ui, &p, &world, &w, false, &mut actions),
+                );
+            }
+            let requests = take_requests(&frames.ctx);
+            assert!(
+                matches!(requests.as_slice(), [CtxAction::PayResident(target)] if *target == id),
+                "restricted {restricted}: {} request(s)",
+                requests.len()
+            );
             assert!(actions.is_empty());
         }
     }

@@ -114,11 +114,16 @@ pub(super) fn show(
     let row = found.as_ref();
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let (content, bottom) = frame(ui, p);
+    // The friendship action can need a second row (translations or large
+    // text). Reserve the measured footer above the sheet's bottom edge.
+    let mut inner = child(ui, content.union(bottom), ("people-sheet-inner", id));
+    inner.spacing_mut().item_spacing.y = 8.0;
+    let (above, foot) = widgets::above_footer(&mut inner);
     if !data.pics.contains_key(&id) {
         st.want_pic(id, ui.input(|i| i.time));
     }
     // The head stays put above what scrolls.
-    let (top, rest) = split_head(content);
+    let (top, rest) = split_head(above.max_rect());
     let closed = head(
         &mut child(ui, top, ("people-sheet-head", id)),
         p,
@@ -158,13 +163,9 @@ pub(super) fn show(
                 }
             }
         });
-    let mut foot = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("people-sheet-foot", id))
-            .max_rect(bottom)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    footer(&mut foot, p, world, id, friend.as_ref());
+    foot.show(&mut inner, |ui| {
+        ui.horizontal_wrapped(|ui| footer(ui, p, world, id, friend.as_ref()));
+    });
     closed
 }
 
@@ -679,8 +680,9 @@ pub(super) fn scroll_bar_crossings(height: f32, mut draw: impl FnMut(&mut egui::
     let crossing = rects
         .iter()
         .map(|w| w.rect)
-        // the bar itself and the containers around it
-        .filter(|r| *r != bar && !r.contains_rect(bar) && r.area() > 0.0)
+        // The bar itself and its containers. Nested layouts can round their
+        // shared right edge differently by a fraction of a pixel.
+        .filter(|r| *r != bar && !r.expand(0.5).contains_rect(bar) && r.area() > 0.0)
         .filter(|r| r.intersect(bar).area() > 0.0)
         .collect();
     (Some(bar), crossing)
@@ -690,6 +692,66 @@ pub(super) fn scroll_bar_crossings(height: f32, mut draw: impl FnMut(&mut egui::
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn friendship_footer_keeps_its_text_inside_the_sheet() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let friend = Friend {
+            id: Uuid::from_u128(2),
+            online: true,
+            rights_given: 3,
+            rights_has: 7,
+        };
+        world.social.friends.push(friend.clone());
+        let radar = crate::world::radar::Radar::default();
+        let mut settings = super::super::RadarSettings::default();
+        let (voice, pics) = (HashMap::new(), HashMap::new());
+        let data = RadarData {
+            radar: &radar,
+            settings: &mut settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            second_life: true,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut st = PeopleUi::default();
+        let mut actions = Vec::new();
+        for scale in [1.0, 1.5, 2.0] {
+            let mut frames = Frames::new();
+            theme.apply(&frames.ctx, scale);
+            let rect = Rect::from_min_size(Pos2::new(40.0, 40.0), Vec2::new(super::super::nearby::SHEET_W, 400.0));
+            let mut texts = Vec::new();
+            for _ in 0..4 {
+                texts = frames.run(Vec::new(), |ui| {
+                    let mut sheet = child(ui, rect, "footer-test");
+                    show(
+                        &mut sheet,
+                        &p,
+                        &world,
+                        &data,
+                        &mut st,
+                        friend.id,
+                        NameScope::Roster,
+                        false,
+                        true,
+                        &mut actions,
+                    );
+                });
+            }
+            for key in ["common-map", "common-pay", "ui-profile-aurora-remove-friend"] {
+                let text = painted(&texts, aurora_i18n::text(key));
+                assert!(
+                    !text.cut && rect.contains_rect(text.rect),
+                    "{scale}: {key} at {:?} in {rect:?}",
+                    text.rect
+                );
+            }
+        }
+    }
 
     /// A sheet shorter than its content: its scroll bar is there, in a
     /// strip of its own, crossing no switch, button, value nor the cross,

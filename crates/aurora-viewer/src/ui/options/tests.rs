@@ -248,6 +248,7 @@ const BEFORE: &[&str] = &[
     "log_im",
     "log_nearby",
     "log_show_history",
+    "chat_service_history",
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
@@ -1920,50 +1921,12 @@ fn the_confirmations_page_lists_every_question_and_warning() {
 }
 
 #[test]
-fn the_weather_lives_in_graphics_only() {
-    // (and in the Aurora Weather window; Preferences › Aurora, the choices
-    // between Aurora's look and the Legacy Viewer's, has none of it)
+fn the_weather_lives_in_its_own_window_only() {
+    // every weather setting is in the Aurora Weather window: Preferences
+    // has none of them, so that each is set in one place
     let paths = collected();
-    let elsewhere: Vec<_> = paths
-        .iter()
-        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
-        .collect();
-    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
-}
-
-#[test]
-fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
-    // behind the puddles' cog, the wet ground's distance still acts with
-    // them off (the wet ground is drawn in any rain), their ice does not:
-    // the label's ink, found by a search for its own text (the tests may
-    // run in French)
-    let p = crate::theme::Theme::default().palette();
-    let ink = |label: &str| {
-        let mut s = Settings::default();
-        s.weather.puddles = false;
-        let d = Settings::default();
-        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
-        let mut frames = Frames::new();
-        let mut shapes = Vec::new();
-        for _ in 0..3 {
-            shapes = frames.shapes(Vec::new(), |ui| {
-                ui.set_width(700.0);
-                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Search, label);
-                // Sky and environment, where the weather is
-                run_page(&mut cx, Page::Graphics, Some(2));
-            });
-        }
-        shapes
-            .iter()
-            .find_map(|shape| match shape {
-                // a row behind a cog is found as "Puddles › <its label>"
-                egui::Shape::Text(t) if t.galley.text().ends_with(&format!("› {label}")) => Some(t.fallback_color),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("the row {label}"))
-    };
-    assert_eq!(ink(aurora_i18n::tr!("ui-weather-distance")), p.ink, "the wet ground's distance");
-    assert_eq!(ink(aurora_i18n::tr!("ui-weather-ice")), p.muted, "the puddles' ice");
+    let rows: Vec<_> = paths.iter().filter(|(_, p)| p.starts_with("weather.")).collect();
+    assert!(rows.is_empty(), "weather rows in Preferences: {rows:?}");
 }
 
 #[test]
@@ -2205,4 +2168,11 @@ fn the_system_font_search_filters_and_resets() {
 #[test]
 fn the_system_font_search_resets_above_its_button() {
     font_search(420.0);
+}
+
+#[test]
+fn every_page_icon_is_built_in() {
+    for page in Page::ALL {
+        assert!(crate::ui::icons::embedded(page.icon()), "{page:?}: {}", page.icon());
+    }
 }

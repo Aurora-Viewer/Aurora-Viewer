@@ -192,6 +192,11 @@ impl App {
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
         self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
+        // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
+        // streamer could load them again from
+        if let Some(demo) = &mut self.stream_demo {
+            demo.gpu_reset();
+        }
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
@@ -267,7 +272,13 @@ impl App {
         };
         let maximized = old_win.is_maximized();
         let mut renderer = old.renderer;
+        let released = Instant::now();
         self.forget_gpu_scene(&mut renderer);
+        // (#2997: a scene paged out to the disk once took over 10 s here)
+        log::info!(
+            "GPU recovery: the scene let go of the lost device in {} ms",
+            released.elapsed().as_millis()
+        );
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);

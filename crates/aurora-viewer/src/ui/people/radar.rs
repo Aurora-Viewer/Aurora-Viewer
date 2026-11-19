@@ -681,7 +681,9 @@ fn paint_row(
                 }
                 let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
                 // a member of the Aurora team's tag after the name, cut before it
-                let mark = crate::world::staff::mark(world, &row.id);
+                // (none on an anonymous row: FSRadarEntry::onAvatarNameCache
+                // clears `mIsLinden` under RLVa's `@shownames`)
+                let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
                 let staff = crate::ui::staff::width(ui, p, mark, 13.0);
                 let staff = if staff > 0.0 && room - staff - 6.0 >= 40.0 {
                     staff + 6.0

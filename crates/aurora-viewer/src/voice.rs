@@ -9,6 +9,7 @@ use aurora_net::parcel_flags;
 use aurora_voice::{ChannelKind, VoiceConnectParams, VoiceSession, VoiceStatus};
 use glam::{DVec3, Quat};
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Channel the session is joined to.
@@ -49,6 +50,8 @@ pub struct VoiceInputs<'a> {
     pub processing: aurora_audio::MicProcessing,
     pub ear: crate::settings::VoiceEar,
     pub transmit: bool,
+    /// Close the microphone while muted (StopMicCaptureWhenMuted; [`MicGate`]).
+    pub stop_mic_when_muted: bool,
     /// Global positions (metres) and rotations of the avatar and the camera.
     pub avatar: (DVec3, Quat),
     pub listener: (DVec3, Quat),
@@ -74,6 +77,8 @@ pub struct Voice {
     session: Option<(ChannelKey, VoiceSession)>,
     mic: Option<MicCapture>,
     mic_device: String,
+    /// Whether the open microphone captures or is held closed.
+    mic_gate: MicGate,
     /// Status line for the UI.
     pub status: String,
     pub connected: bool,
@@ -194,13 +199,26 @@ impl Voice {
         if let Some((_, session)) = &self.session {
             session.set_transmit(transmit && self.mic.is_some());
         }
+        // a paused microphone reopens now, not at the next frame ([`MicGate`])
+        if transmit
+            && self.connected
+            && let Some(m) = &self.mic
+        {
+            m.set_paused(false);
+        }
     }
 
     pub fn update(&mut self, v: VoiceInputs) {
         // microphone: open while voice is on in world, or for the settings meter
         let want_mic = v.enabled && (v.in_world || v.tuning);
+        // with "Better in-world audio", the device itself is closed while
+        // muted; this frame's connection state is last frame's
+        let capturing = self.mic_gate.update(
+            Instant::now(),
+            capture_wanted(v.stop_mic_when_muted, v.tuning, v.transmit, self.connected || v.offline),
+        );
         if want_mic && self.mic.is_none() {
-            match MicCapture::open(non_empty(v.input_device)) {
+            match MicCapture::open_with(non_empty(v.input_device), !capturing) {
                 Ok(m) => {
                     self.mic_device = v.input_device.to_owned();
                     self.mic = Some(m);
@@ -216,11 +234,13 @@ impl Voice {
         } else if !want_mic && self.mic.is_some() {
             // closing it removes Windows' "microphone in use" indicator
             self.mic = None;
+            self.mic_gate = MicGate::default();
             if let Some((_, s)) = &self.session {
                 s.set_mic(None);
             }
         }
         if let Some(m) = &self.mic {
+            m.set_paused(!capturing);
             if self.mic_device != v.input_device {
                 m.set_device(non_empty(v.input_device));
                 self.mic_device = v.input_device.to_owned();
@@ -478,6 +498,50 @@ fn listening_positions(mut avatar: (DVec3, Quat), camera: (DVec3, Quat), ear: cr
     (avatar, listener)
 }
 
+/// `MUTE_FADE_DELAY_MS` (indra/newview/llvoicewebrtc.cpp): with
+/// StopMicCaptureWhenMuted, the delay between muting and the end of the
+/// capture, so that the 20 ms fade and the silence after it are sent first.
+const MIC_STOP_DELAY: Duration = Duration::from_millis(500);
+
+/// Whether the microphone should capture this frame. With
+/// `stop_when_muted` (StopMicCaptureWhenMuted, the LL viewer 26.5's
+/// "Bluetooth only: Better in-world audio", on), only while unmuted with the
+/// voice audio up, or for the meter of the preferences (tuning); without
+/// it, the whole time voice is on, as before 26.5. Port of
+/// LLWebRTCImpl::workerStartRecording and intSetMute
+/// (indra/llwebrtc/llwebrtc.cpp, originally LGPL 2.1).
+fn capture_wanted(stop_when_muted: bool, tuning: bool, transmit: bool, audio_up: bool) -> bool {
+    !stop_when_muted || tuning || (transmit && audio_up)
+}
+
+/// Turns [`capture_wanted`] into the microphone's state: it starts at once
+/// and stops [`MIC_STOP_DELAY`] after it stopped being wanted. Unmuting
+/// within that delay keeps it open: the LL viewer's `mute_sequence` cancels
+/// the delayed stop the same way (LLWebRTCImpl::intSetMute). Closed until
+/// first wanted, as the LL viewer holds capture off before the first unmute.
+#[derive(Debug, Default)]
+struct MicGate {
+    active: bool,
+    idle_since: Option<Instant>,
+}
+
+impl MicGate {
+    /// Whether the microphone captures at `now`.
+    fn update(&mut self, now: Instant, wanted: bool) -> bool {
+        if wanted {
+            self.active = true;
+            self.idle_since = None;
+        } else if self.active {
+            let since = *self.idle_since.get_or_insert(now);
+            if now.duration_since(since) >= MIC_STOP_DELAY {
+                self.active = false;
+                self.idle_since = None;
+            }
+        }
+        self.active
+    }
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
@@ -514,6 +578,46 @@ mod tests {
         assert_eq!(receive_volume(&nearby, Some(peer), &saved), 0.5);
     }
 
+    #[test]
+    fn the_microphone_captures_while_unmuted_with_better_in_world_audio() {
+        // (stop when muted, tuning, transmit, audio up)
+        assert!(capture_wanted(true, false, true, true));
+        assert!(!capture_wanted(true, false, false, true), "muted");
+        assert!(!capture_wanted(true, false, true, false), "voice audio not up yet");
+        assert!(capture_wanted(true, true, false, false), "the preferences' meter");
+        // "Better voice": open the whole time voice is on
+        assert!(capture_wanted(false, false, false, false));
+        assert!(capture_wanted(false, false, true, true));
+    }
+
+    #[test]
+    fn the_microphone_stops_half_a_second_after_muting_and_starts_at_once() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut gate = MicGate::default();
+        assert!(!gate.update(t0, false), "closed until first wanted");
+        assert!(gate.update(ms(10), true), "unmuting opens it at once");
+        assert!(gate.update(ms(20), false), "muted: still open for the fade");
+        assert!(gate.update(ms(519), false));
+        assert!(!gate.update(ms(520), false), "closed 500 ms after muting");
+        assert!(!gate.update(ms(2000), false));
+        assert!(gate.update(ms(2001), true));
+    }
+
+    #[test]
+    fn unmuting_within_the_delay_cancels_the_stop() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut gate = MicGate::default();
+        gate.update(t0, true);
+        gate.update(ms(100), false);
+        assert!(gate.update(ms(400), true), "unmuted before the stop");
+        // the next mute waits its own 500 ms, not what was left of the first
+        assert!(gate.update(ms(500), false));
+        assert!(gate.update(ms(999), false));
+        assert!(!gate.update(ms(1000), false));
+    }
+
     fn inputs(http: &reqwest::Client) -> VoiceInputs<'_> {
         VoiceInputs {
             enabled: true,
@@ -534,6 +638,7 @@ mod tests {
             processing: Default::default(),
             ear: crate::settings::VoiceEar::Avatar,
             transmit: true,
+            stop_mic_when_muted: true,
             avatar: (DVec3::ZERO, Quat::IDENTITY),
             listener: (DVec3::ZERO, Quat::IDENTITY),
             call: None,

@@ -1411,13 +1411,14 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
+                                    let targets = mesh::default_lod_targets(triangles);
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;
                                             lod.path = None;
-                                            lod.source = mesh::LodSource::Auto;
+                                            lod.source = mesh::LodSource::Legacy;
                                         }
-                                        lod.triangles = (triangles / 4usize.pow((3 - i) as u32)).max(1);
+                                        lod.triangles = targets[i];
                                     }
                                     draft.lods[3].file = None;
                                     draft.lods[3].path = Some(path.clone());

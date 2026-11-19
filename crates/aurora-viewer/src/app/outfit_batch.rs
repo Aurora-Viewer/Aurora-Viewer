@@ -855,6 +855,10 @@ impl App {
                 outfits.sort_by_key(|id| inv.folders.get(id).map(|f| f.info.name.to_lowercase()));
                 log::info!("demo: outfit batch ({mode})");
                 self.open_outfit_batch(outfits);
+                if mode == "batch-settings" {
+                    self.panels.appearance = false;
+                    window::demo_settings(&self.egui_ctx);
+                }
                 if mode.starts_with("batch-hd") {
                     if let Some(b) = &mut self.outfit_batch {
                         b.settings.hd = true;

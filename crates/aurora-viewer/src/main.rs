@@ -54,6 +54,7 @@ mod fast_hash;
 mod film_sound;
 mod frame_par;
 mod frame_profile;
+mod game_control;
 mod gestures;
 mod gif_search;
 mod gpu_driver;
@@ -71,6 +72,7 @@ mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
+mod language_file;
 mod legacy_profile;
 mod link_preview;
 mod link_trust;
@@ -218,8 +220,13 @@ fn main() -> anyhow::Result<()> {
     // Preferences › Network › Proxy: before the first connection of the
     // viewer (LLStartUp::startLLProxy, at startup)
     proxy::install(&settings::Settings::load().proxy);
+    // the interface language file, read with the settings before the log
+    language_file::report();
     if !cli::get().headless {
         splash::settings();
+        // started by an update: its helper waits while the start moves on
+        splash::report_to_update();
+        splash::test_slow_start();
     }
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers

@@ -4,7 +4,14 @@
 use super::*;
 use aurora_llsd::{Llsd, llsd_map};
 use flate2::{Compression, write::ZlibEncoder};
-use std::io::Write;
+use rayon::prelude::*;
+use std::{io::Write, num::NonZeroU64};
+
+#[derive(Clone, Copy)]
+enum CompressionMode {
+    Local,
+    Upload,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Options {
@@ -28,14 +35,30 @@ fn quantize(value: f32, min: f32, max: f32) -> u16 {
         ((value - min) / (max - min) * 65535.0).clamp(0.0, 65535.0).floor() as u16
     }
 }
-fn compressed(value: &Llsd) -> Result<Vec<u8>, AssetError> {
+fn compressed(value: &Llsd, mode: CompressionMode) -> Result<Vec<u8>, AssetError> {
     let bytes = aurora_llsd::to_binary(value);
     if bytes.len() > i32::MAX as usize {
         return Err(AssetError::TooLarge("mesh section"));
     }
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    // zip_llsd (indra/llcommon/llsdserialize.cpp) uses Z_BEST_COMPRESSION:
+    // compressed LOD sizes contribute to the server's download weight.
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
     encoder.write_all(&bytes).map_err(|e| AssetError::invalid(e.to_string()))?;
-    encoder.finish().map_err(|e| AssetError::invalid(e.to_string()))
+    let standard = encoder.finish().map_err(|e| AssetError::invalid(e.to_string()))?;
+    if matches!(mode, CompressionMode::Local) {
+        return Ok(standard);
+    }
+    // Same zlib stream and decoded bytes, with more work spent on the upload
+    // size. Local previews must not pay for these five optimization passes.
+    let options = zopfli::Options {
+        iteration_count: NonZeroU64::new(5).expect("five compression passes are nonzero"),
+        ..Default::default()
+    };
+    let mut optimized = Vec::new();
+    zopfli::compress(options, zopfli::Format::Zlib, bytes.as_slice(), &mut optimized).map_err(|e| AssetError::invalid(e.to_string()))?;
+    // Zopfli can be larger on an individual section; never increase its
+    // download weight compared with the existing encoder.
+    Ok(if optimized.len() < standard.len() { optimized } else { standard })
 }
 
 pub fn lod(model: &Model, include_skin: bool) -> Result<Llsd, AssetError> {
@@ -191,13 +214,32 @@ pub fn asset(
     decomposition: &process::Physics,
     options: Options,
 ) -> Result<Vec<u8>, AssetError> {
-    asset_with_face_limit(lods, physics, decomposition, options, 8)
+    asset_with_face_limit(lods, physics, decomposition, options, 8, CompressionMode::Local)
+}
+
+/// Freeze the mesh used by both the fee query and upload. Five-pass Zopfli
+/// reduces download weight without altering the LLSD or geometry. Call on
+/// a worker: local previews use `asset` instead.
+pub fn upload_asset(
+    lods: &[Option<Model>; 4],
+    physics: Option<&Model>,
+    decomposition: &process::Physics,
+    options: Options,
+) -> Result<Vec<u8>, AssetError> {
+    asset_with_face_limit(lods, physics, decomposition, options, 8, CompressionMode::Upload)
 }
 
 /// Render-only assemblies may use the prim's 45 texture-entry slots. These
-/// bytes stay in memory; uploads must continue through `asset` and its 8-face limit.
+/// bytes stay in memory; uploads must continue through `upload_asset` and its 8-face limit.
 pub fn local_asset(lods: &[Option<Model>; 4]) -> Result<Vec<u8>, AssetError> {
-    asset_with_face_limit(lods, None, &process::Physics::default(), Options::default(), 45)
+    asset_with_face_limit(
+        lods,
+        None,
+        &process::Physics::default(),
+        Options::default(),
+        45,
+        CompressionMode::Local,
+    )
 }
 
 fn asset_with_face_limit(
@@ -206,21 +248,22 @@ fn asset_with_face_limit(
     decomposition: &process::Physics,
     options: Options,
     face_limit: usize,
+    mode: CompressionMode,
 ) -> Result<Vec<u8>, AssetError> {
     let high = lods[3].as_ref().ok_or_else(|| AssetError::invalid("mesh has no high LOD"))?;
     if high.faces.len() > face_limit {
         return Err(AssetError::TooLarge("mesh textureable faces"));
     }
-    let mut sections = Vec::<(&str, Vec<u8>)>::new();
+    let mut sections = Vec::new();
     if options.skin
         && let Some(value) = &high.skin
     {
-        sections.push(("skin", compressed(&skin(value, options)?)?));
+        sections.push(("skin", skin(value, options)?));
     }
     let has_decomposition = decomposition.base.is_some() || !decomposition.hulls.is_empty();
     let secondary = options.secondary.filter(|_| !has_decomposition);
     if has_decomposition || secondary.is_some() {
-        sections.push(("physics_convex", compressed(&convex(decomposition)?)?));
+        sections.push(("physics_convex", convex(decomposition)?));
     }
     for (index, key) in ["lowest_lod", "low_lod", "medium_lod", "high_lod"].into_iter().enumerate() {
         if let Some(model) = &lods[index] {
@@ -240,15 +283,20 @@ fn asset_with_face_limit(
             {
                 return Err(AssetError::invalid("missing or invalid LOD skin weights"));
             }
-            sections.push((key, compressed(&lod(model, options.skin && high.skin.is_some())?)?));
+            sections.push((key, lod(model, options.skin && high.skin.is_some())?));
         }
     }
     if secondary.is_none()
         && decomposition.hulls.is_empty()
         && let Some(model) = physics
     {
-        sections.push(("physics_mesh", compressed(&lod(model, false)?)?));
+        sections.push(("physics_mesh", lod(model, false)?));
     }
+    let encode_section = |(key, value)| compressed(&value, mode).map(|bytes| (key, bytes));
+    let sections: Vec<_> = match mode {
+        CompressionMode::Local => sections.into_iter().map(encode_section).collect::<Result<_, _>>()?,
+        CompressionMode::Upload => sections.into_par_iter().map(encode_section).collect::<Result<_, _>>()?,
+    };
     let mut header = llsd_map! { "version" => 1 };
     if let Some(index) = secondary {
         header.insert("submodel_id", Llsd::Integer(index as i32));
@@ -312,6 +360,7 @@ mod tests {
             model.faces = vec![model.faces[0].clone(); count];
             let lods = [None, None, None, Some(model)];
             assert!(asset(&lods, None, &process::Physics::default(), Options::default()).is_err());
+            assert!(upload_asset(&lods, None, &process::Physics::default(), Options::default()).is_err());
             let local = local_asset(&lods);
             if count > 45 {
                 assert!(local.is_err());
@@ -324,7 +373,7 @@ mod tests {
         }
     }
 
-    fn section(encoded: &[u8], key: &str) -> Llsd {
+    fn raw_section(encoded: &[u8], key: &str) -> Vec<u8> {
         use std::io::Read;
 
         let (header, start) = aurora_llsd::from_binary(encoded).expect("asset header");
@@ -335,9 +384,68 @@ mod tests {
         flate2::read::ZlibDecoder::new(&encoded[offset..offset + size])
             .read_to_end(&mut bytes)
             .expect("zlib section");
+        bytes
+    }
+
+    fn section(encoded: &[u8], key: &str) -> Llsd {
+        let bytes = raw_section(encoded, key);
         let (value, consumed) = aurora_llsd::from_binary(&bytes).expect("binary section");
         assert_eq!(consumed, bytes.len());
         value
+    }
+
+    #[test]
+    fn zopfli_upload_preserves_every_section_and_never_increases_lod_sizes() {
+        let mut model = triangle();
+        model.skin = Some(Skin {
+            names: vec!["mPelvis".into()],
+            inverse_bind: vec![Mat4::IDENTITY],
+            alternate_bind: vec![Mat4::IDENTITY],
+            bind_shape: Mat4::IDENTITY,
+            pelvis_offset: 0.0,
+        });
+        for vertex in &mut model.faces[0].vertices {
+            vertex.weights = [1.0, 0.0, 0.0, 0.0];
+        }
+        let lods = std::array::from_fn(|_| Some(model.clone()));
+        let physics = process::Physics {
+            base: Some(process::base_hull(&model).expect("base hull")),
+            hulls: Vec::new(),
+        };
+        let options = Options {
+            skin: true,
+            joints: true,
+            lock_scale: true,
+            pelvis_offset: 0.5,
+            ..Default::default()
+        };
+        let local = asset(&lods, Some(&model), &physics, options).expect("local asset");
+        let upload = upload_asset(&lods, Some(&model), &physics, options).expect("upload asset");
+        let (local_header, _) = aurora_llsd::from_binary(&local).expect("local header");
+        let (upload_header, _) = aurora_llsd::from_binary(&upload).expect("upload header");
+        for key in [
+            "lowest_lod",
+            "low_lod",
+            "medium_lod",
+            "high_lod",
+            "skin",
+            "physics_convex",
+            "physics_mesh",
+        ] {
+            assert_eq!(raw_section(&upload, key), raw_section(&local, key), "{key}: exact decoded bytes");
+            assert!(
+                upload_header[key]["size"].as_i32() <= local_header[key]["size"].as_i32(),
+                "{key}: no size regression"
+            );
+        }
+        let header = crate::parse_mesh_header(&upload).expect("production header decoder");
+        for (offset, size) in header.lods.into_iter().flatten() {
+            let faces = crate::decode_mesh_lod(&upload[offset..offset + size]).expect("production LOD decoder");
+            assert_eq!(
+                faces[0].indices.iter().copied().map(u32::from).collect::<Vec<_>>(),
+                model.faces[0].indices
+            );
+        }
     }
 
     #[test]

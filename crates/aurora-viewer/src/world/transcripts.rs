@@ -128,7 +128,7 @@ fn minute(t: SystemTime) -> u64 {
 
 impl World {
     /// The transcript file of a conversation, from what is known now.
-    fn transcript_stem(&self, session: &Uuid) -> Option<String> {
+    pub(super) fn transcript_stem(&self, session: &Uuid) -> Option<String> {
         let group = self.groups.group(session);
         let info = self.groups.sessions.get(session);
         if group.is_some() || info.is_some_and(|i| i.group) {
@@ -195,12 +195,22 @@ impl World {
         if self.social.ims[i].log.stem.is_none() {
             self.social.ims[i].log.stem = self.transcript_stem(&session);
         }
-        let log = &mut self.social.ims[i].log;
+        // a direct conversation under the Chat Service reads its stitched
+        // history (direct_history.rs), not the transcript's tail
+        let direct = self.is_direct(&session);
+        if direct {
+            self.direct_open(session);
+        }
+        let Some(log) = self.social.ims.iter_mut().find(|s| s.other == session).map(|s| &mut s.log) else {
+            return;
+        };
         let Some(stem) = log.stem.clone() else {
             return;
         };
         if log.history == HistoryState::NotAsked {
-            log.history = if self.chat_log.request_history(session, &stem) {
+            log.history = if direct {
+                HistoryState::Done
+            } else if self.chat_log.request_history(session, &stem) {
                 HistoryState::Asked
             } else {
                 HistoryState::Done
@@ -216,11 +226,13 @@ impl World {
     /// nearby chat's transcript hides what the chat hides under RLVa's
     /// `@shownames` (`NameScope::World`), a conversation's names its
     /// residents (`NameScope::Roster`).
-    fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
+    pub(super) fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
         let names = &self.social.avatar_names;
         let from = match line.kind {
             ChatKind::System => String::new(),
             ChatKind::Own(_) => names.complete(&self.agent_id).unwrap_or_else(|| line.from.clone()),
+            // the stand-in the line keeps (`ChatLine::anonymous`)
+            ChatKind::Local(_) if line.anonymous() => line.from.clone(),
             ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => {
                 names.complete_in(scope, &line.source).unwrap_or_else(|| line.from.clone())
             }
@@ -232,16 +244,20 @@ impl World {
             Some(ChatType::Whisper) => "whispers: ",
             _ => "",
         };
-        let text = format::encode_mentions(&line.text, |id| self.social.name_in(scope, &id));
+        // (a mention `@shownames` hides is no link any more:
+        // `World::rlva_freeze_mentions`)
+        let text = format::encode_mentions(&line.text, |id| self.social.name_in(NameScope::Roster, &id));
         (
             self.rlva_filter_text_in(scope, &from).into_owned(),
-            self.rlva_filter_text_in(scope, &format!("{verb}{text}")).into_owned(),
+            self.rlva_filter_text_in(line.kind.text_in(scope), &format!("{verb}{text}"))
+                .into_owned(),
         )
     }
 
     /// A line enters a conversation: written to its transcript (new lines,
     /// when instant messages are logged), kept in memory within `MAX_CHAT`.
-    pub(super) fn conversation_push(&mut self, session: Uuid, line: ChatLine, unread: bool) {
+    pub(super) fn conversation_push(&mut self, session: Uuid, mut line: ChatLine, unread: bool) {
+        self.rlva_freeze_line(NameScope::Roster, &mut line);
         self.session_lines(session);
         self.ensure_transcript(session);
         // LLConversationLog::onNewMessageReceived
@@ -295,7 +311,8 @@ impl World {
     }
 
     /// A line enters the nearby chat (same bound).
-    pub(super) fn nearby_push(&mut self, line: ChatLine) {
+    pub(super) fn nearby_push(&mut self, mut line: ChatLine) {
+        self.rlva_freeze_line(NameScope::World, &mut line);
         self.log_nearby(&line);
         self.chat.push_back(line);
         self.chat_clock.pushed_back();
@@ -330,7 +347,7 @@ impl World {
     /// The conversation log's entry of a conversation as it is now
     /// (LLConversation from an LLIMSession): a group chat, a conference or
     /// an instant message with a resident; never with ourselves.
-    fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
+    pub(super) fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
         if key.is_nil() || key == self.agent_id {
             return None;
         }
@@ -466,6 +483,7 @@ impl World {
 
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
+        self.poll_chat_service();
         self.poll_conversation_log();
         if self.chat_log.identity().is_none() {
             return;
@@ -517,7 +535,7 @@ impl World {
     }
 
     /// Our names as a transcript may have them.
-    fn own_log_names(&self) -> Vec<String> {
+    pub(super) fn own_log_names(&self) -> Vec<String> {
         let mut out = vec!["You".to_owned(), self.own_name()];
         if let Some(n) = self.social.avatar_names.complete(&self.agent_id) {
             out.push(n);
@@ -528,6 +546,40 @@ impl World {
         }
         out.retain(|n| !n.trim().is_empty());
         out
+    }
+
+    /// A transcript's sender is us: one of `own` (`own_log_names`) as
+    /// written, or a name whose legacy form is ours. The Legacy Viewer tells
+    /// its own lines by the id that findIdByName gives the legacy name
+    /// (LLIMSession::addMessagesFromHistoryCache, then from_id == gAgentID
+    /// in LLChatHistory::appendMessage); comparing our legacy name too keeps
+    /// a line written under an older display name, or another name format
+    /// ("Name (first.last)", "Name (First Last)"), ours while our own name
+    /// is not cached. Without it such a line was taken for the other
+    /// resident's, and showed their picture.
+    pub(super) fn is_own_log_name(&self, own: &[String], from: &str) -> bool {
+        if own.iter().any(|n| n == from) {
+            return true;
+        }
+        let names = &self.social.avatar_names;
+        let legacy = super::names::build_legacy_name(from, names.options.trim_resident);
+        if names.find_id_by_name(&legacy) == Some(self.agent_id) && !self.agent_id.is_nil() {
+            return true;
+        }
+        // our legacy names, from the login and from the name cache, compared
+        // without case and without " Resident" (user names ignore both)
+        let bare = |n: &str| {
+            let n = n.trim().to_lowercase();
+            n.strip_suffix(" resident").map(str::to_owned).unwrap_or(n)
+        };
+        let from_login = self.login.as_ref().map(|l| (l.first_name.as_str(), l.last_name.as_str()));
+        let cached = names.get(&self.agent_id);
+        let from_cache = cached.map(|n| (n.legacy_first.as_str(), n.legacy_last.as_str()));
+        let legacy = bare(&legacy);
+        [from_login, from_cache]
+            .into_iter()
+            .flatten()
+            .any(|(first, last)| !first.trim().is_empty() && legacy == bare(&format!("{first} {last}")))
     }
 
     /// The lines of a transcript's end as conversation lines
@@ -548,7 +600,7 @@ impl World {
                 last = e.time.unwrap_or(last);
                 let kind = if e.is_system() || e.from.is_empty() {
                     ChatKind::System
-                } else if own.contains(&e.from) {
+                } else if self.is_own_log_name(&own, &e.from) {
                     ChatKind::OWN
                 } else if nearby {
                     ChatKind::Local(ChatType::Normal)
@@ -573,6 +625,7 @@ impl World {
                     origin: Origin::Log,
                     blocked: false,
                     beyond_range: false,
+                    speaker: Default::default(),
                 }
             })
             .collect()
@@ -668,6 +721,7 @@ impl World {
                     origin: Origin::ServerLog,
                     blocked: false,
                     beyond_range: false,
+                    speaker: Default::default(),
                 }
             })
             .collect();
@@ -918,6 +972,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -1324,6 +1379,71 @@ mod tests {
             .map(|l| l.source)
             .collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn our_history_lines_stay_ours_under_another_name_form() {
+        let root = temp();
+        let (me, jane, bob) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut w = world(&root, me);
+        w.social.avatar_names.on_legacy(bob, "Bob", "Smith");
+        let entry = |from: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hi".into(),
+        };
+        let entries = || {
+            vec![
+                // an older display name, the Legacy Viewer's lower-case user
+                // name, the "first.last" and the plain legacy forms
+                entry("Older Name (nova)"),
+                entry("Some Name (Nova Resident)"),
+                entry("Some Name (nova.resident)"),
+                entry("nova resident"),
+                entry("Jane Doe (jane.doe)"),
+                entry("Bob (bob.smith)"),
+            ]
+        };
+        let kinds = |w: &World| -> Vec<(bool, Uuid)> {
+            w.history_lines(entries(), false, false, Some(jane))
+                .iter()
+                .map(|l| (l.kind.is_own(), l.source))
+                .collect()
+        };
+        let ours = (true, Uuid::nil());
+        let expected = [ours, ours, ours, ours, (false, jane), (false, bob)];
+        // our own name not cached yet: the login's legacy name tells
+        w.login = Some(Arc::new(aurora_net::LoginResponse {
+            agent_id: me,
+            session_id: Uuid::nil(),
+            secure_session_id: Uuid::nil(),
+            first_name: "Nova".into(),
+            last_name: "Resident".into(),
+            sim_ip: std::net::Ipv4Addr::LOCALHOST,
+            sim_port: 0,
+            circuit_code: 0,
+            region_x: 0,
+            region_y: 0,
+            region_size_x: 256,
+            region_size_y: 256,
+            seed_capability: String::new(),
+            look_at: glam::Vec3::X,
+            message: String::new(),
+            agent_appearance_service: String::new(),
+            inventory_root: Uuid::nil(),
+            mfa_hash: None,
+            raw: aurora_llsd::Llsd::Undef,
+        }));
+        assert_eq!(kinds(&w), expected);
+        // no login, our name cached: its id tells (findIdByName)
+        w.login = None;
+        w.social.avatar_names.on_legacy(me, "Nova", "Resident");
+        assert_eq!(kinds(&w), expected);
+        // neither: the lines are the other resident's, as before
+        w.social.avatar_names = Default::default();
+        assert!(kinds(&w).iter().all(|(own, _)| !own));
         clean(&w, &root);
     }
 

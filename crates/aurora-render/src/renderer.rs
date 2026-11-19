@@ -911,6 +911,8 @@ pub enum RenderError {
     Surface(String),
     #[error("the graphics driver lost the device while the viewer was starting (see the log)")]
     DeviceLost,
+    #[error("the graphics card's video memory is full")]
+    VideoMemoryFull,
 }
 
 /// A device lost while the backend is being made: the error, at the points
@@ -1871,6 +1873,12 @@ pub(crate) struct Backend {
     surface: Option<std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
+    /// What the second camera's renderer is made from (second_view.rs):
+    /// the window's start, kept (`seed` is let go once the start is over);
+    /// None for an external renderer, or once one could not be made.
+    second_seed: Option<Box<BackendInit>>,
+    /// The second camera's renderer and picture, while its window is open.
+    second: Option<Box<SecondView>>,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     vr: Arc<crate::vr_control::Control>,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -2171,6 +2179,15 @@ impl std::ops::DerefMut for EguiSlot {
     }
 }
 
+/// The second camera's renderer (second_view.rs): an external backend, as
+/// an eye of VR, and the texture egui shows its picture from.
+struct SecondView {
+    backend: Backend,
+    target: Option<crate::second_view::Target>,
+    /// Frames since the last one that asked for the view.
+    idle: u32,
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct XrWorld {
     backends: [Backend; 2],
@@ -2403,6 +2420,9 @@ fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::
     }
 }
 
+#[path = "pipeline_batch.rs"]
+mod pipeline_batch;
+use pipeline_batch::Resolve as _;
 #[cfg(test)]
 #[path = "part_tests.rs"]
 mod part_tests;
@@ -3734,6 +3754,7 @@ impl Backend {
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
+        let second_seed = (!init.external).then(|| Box::new(init.clone()));
         let BackendInit {
             device,
             queue,
@@ -3808,6 +3829,23 @@ impl Backend {
         if !external && let Some(surface) = &surface {
             crate::present::configure(surface, &device, &config);
         }
+        // egui's renderer first, while the most video memory is free: its
+        // buffers come from wgpu's `create_buffer_init`, which panics on one
+        // the memory refused (egui-wgpu's `Renderer::new`, #3867), and the
+        // notice of a full memory is drawn with it. A card too full even for
+        // those: the start stops with that message instead of the panic.
+        let egui = if egui_later {
+            EguiSlot(None)
+        } else {
+            if let Some(refused) = crate::gpu_alloc::mapped_buffer_refused(&device) {
+                return Err(refused);
+            }
+            EguiSlot(Some(egui_wgpu::Renderer::new(
+                &device,
+                format,
+                egui_wgpu::RendererOptions::default(),
+            )))
+        };
 
         // ---- layouts
         // (the entries kept: the stochastic transparency's sample mask shader
@@ -4368,7 +4406,6 @@ impl Backend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {
@@ -4377,6 +4414,8 @@ impl Backend {
             surface: surface.map(std::mem::ManuallyDrop::new),
             config,
             external,
+            second_seed,
+            second: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -4888,7 +4927,9 @@ impl Backend {
             unclipped_depth: false,
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
-        let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
+        // compiled together once every one is described (pipeline_batch.rs)
+        let batch = pipeline_batch::Batch::default();
+        let pipe = |d: PipeDesc| batch.add(&module, &scene_layout, d);
         let hud_constants = [("HUD_SRGB_TARGET", if surface_format.is_srgb() { 1.0 } else { 0.0 })];
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
@@ -5142,12 +5183,11 @@ impl Backend {
                 immediate_size: 0,
             })
         });
-        let order_sided = |layout: &wgpu::PipelineLayout, desc: PipeDesc| -> SidedPipelines {
+        let order_sided = |desc: PipeDesc| -> [pipeline_batch::Slot; 2] {
             std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
+                batch.add(
                     &module,
-                    layout,
+                    &vis_layout,
                     PipeDesc {
                         cull: blend_cull(side != 0),
                         ..desc
@@ -5162,22 +5202,18 @@ impl Backend {
             operation: wgpu::BlendOperation::Add,
         };
         let haze_blend = crate::blend_exact::once_blend();
-        let blend_once = order_sided(
-            &vis_layout,
-            PipeDesc {
-                blend: Some(haze_blend),
-                write_mask: wgpu::ColorWrites::ALL,
-                format: Some(crate::blend_exact::HAZE_FORMAT),
-                range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
-                samples: 1,
-                depth_write: false,
-                depth_compare: static_compare,
-                constants: &[("WATER_CLIP", 1.0)],
-                ..base("blend once", "vs_main", "fs_blend_once")
-            },
-        );
-        let blend_cut = make_pipeline(
-            device,
+        let blend_once = order_sided(PipeDesc {
+            blend: Some(haze_blend),
+            write_mask: wgpu::ColorWrites::ALL,
+            format: Some(crate::blend_exact::HAZE_FORMAT),
+            range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
+            samples: 1,
+            depth_write: false,
+            depth_compare: static_compare,
+            constants: &[("WATER_CLIP", 1.0)],
+            ..base("blend once", "vs_main", "fs_blend_once")
+        });
+        let blend_cut = batch.add(
             &module,
             &vis_layout,
             PipeDesc {
@@ -5195,8 +5231,7 @@ impl Backend {
         );
         // over the screen, whatever the depth
         let screen = |label: &'static str, fs: &'static str, blend: wgpu::BlendState, write_mask: wgpu::ColorWrites| {
-            make_pipeline(
-                device,
+            batch.add(
                 &module,
                 &exact_layout,
                 PipeDesc {
@@ -5859,13 +5894,12 @@ impl Backend {
             polygon_line: false,
             unclipped_depth: false,
         };
-        let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
+        let shadow = batch.add(&module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
         // opaque casters: `fs_shadow` discards nothing of them, so the same
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
-        let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
-        let shadow_terrain = make_pipeline(
-            device,
+        let shadow_depth = batch.add(&module, &shadow_pl, shadow_desc("shadow depth", None));
+        let shadow_terrain = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5878,8 +5912,7 @@ impl Backend {
             slope_scale: 0.0,
             clamp: 0.0,
         };
-        let shelter = make_pipeline(
-            device,
+        let shelter = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5887,8 +5920,7 @@ impl Backend {
                 ..shadow_desc("rain shelter", Some("fs_shadow"))
             },
         );
-        let shelter_terrain = make_pipeline(
-            device,
+        let shelter_terrain = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5906,8 +5938,7 @@ impl Backend {
             bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
             immediate_size: 0,
         });
-        let post = make_pipeline(
-            device,
+        let post = batch.add(
             &post_module,
             &post_pl,
             PipeDesc {
@@ -5932,110 +5963,111 @@ impl Backend {
                 unclipped_depth: false,
             },
         );
+        let mut done = batch.run(device);
         Pipelines {
-            creation_preview,
-            physics_fill,
-            physics_wire,
-            hud_opaque,
-            hud_blend,
-            hud_debug_red,
-            hud_debug_blue,
-            sky,
-            clouds_weather,
-            terrain,
-            terrain_pbr,
-            pre_terrain,
-            pre_terrain_normal,
-            pre_terrain_msaa,
-            opaque,
-            opaque_2s,
-            mask,
-            mask_2s,
-            water,
-            water_unclipped,
-            water_mask,
-            water_exclusion,
-            blend,
-            blend_late,
-            blend_depth,
-            blend_depth_mask,
-            blend_depth_color,
-            blend_depth_opaque,
-            blend_depth_solid,
-            blend_depth_fringe,
-            blend_depth_fringe_depth,
-            blend_once,
-            blend_cut,
-            blend_over,
-            blend_glow,
-            blend_both,
-            blend_under,
-            blend_under_depth_ss,
-            blend_under_depth_msaa,
-            particles,
-            water_particles,
-            water_particles_under,
-            rain,
-            rain_wet,
-            rain_wet_g,
-            rain_splash,
-            snow_mesh,
-            rain_far,
-            rain_wet_update,
-            snow_trail_update,
-            glow,
-            glow_water,
-            glow_max,
-            glow_suppress,
-            debug_red,
-            land_overlay,
-            debug_blue,
-            debug_green,
-            debug_yellow,
-            debug_wire,
-            select_root_wire,
-            select_child_wire,
-            selection_mask,
-            selection_pattern,
-            selection_pattern_hdr,
-            part_mask,
-            part_pick,
-            ssr: ssr_pipe,
-            pre_opaque,
-            pre_opaque_2s,
-            pre_portal,
-            pre_portal_2s,
-            pre_mask,
-            pre_mask_2s,
-            pre_normal,
-            pre_normal_portal,
-            pre_contact,
-            pre_contact_normal,
-            fsr_blend_normal,
-            pre_msaa,
-            refl_sky,
-            refl_terrain,
-            refl_terrain_pbr,
-            refl_obj,
-            refl_blend_rigged,
-            refl_blend,
-            shadow,
-            shadow_depth,
-            shadow_terrain,
-            shelter,
-            shelter_terrain,
-            post,
-            pick,
-            pick_terrain,
-            pick_terrain_mask,
-            pick_2s,
-            pick_visible,
-            pick_left,
-            pick_left_2s,
-            pick_mask,
-            pick_mask_2s,
-            pick_left_visible,
-            pick_overlay,
+            creation_preview: creation_preview.resolve(&mut done),
+            physics_fill: physics_fill.resolve(&mut done),
+            physics_wire: physics_wire.resolve(&mut done),
+            hud_opaque: hud_opaque.resolve(&mut done),
+            hud_blend: hud_blend.resolve(&mut done),
+            hud_debug_red: hud_debug_red.resolve(&mut done),
+            hud_debug_blue: hud_debug_blue.resolve(&mut done),
+            sky: sky.resolve(&mut done),
+            clouds_weather: clouds_weather.resolve(&mut done),
+            terrain: terrain.resolve(&mut done),
+            terrain_pbr: terrain_pbr.resolve(&mut done),
+            pre_terrain: pre_terrain.resolve(&mut done),
+            pre_terrain_normal: pre_terrain_normal.resolve(&mut done),
+            pre_terrain_msaa: pre_terrain_msaa.resolve(&mut done),
+            opaque: opaque.resolve(&mut done),
+            opaque_2s: opaque_2s.resolve(&mut done),
+            mask: mask.resolve(&mut done),
+            mask_2s: mask_2s.resolve(&mut done),
+            water: water.resolve(&mut done),
+            water_unclipped: water_unclipped.resolve(&mut done),
+            water_mask: water_mask.resolve(&mut done),
+            water_exclusion: water_exclusion.resolve(&mut done),
+            blend: blend.resolve(&mut done),
+            blend_late: blend_late.resolve(&mut done),
+            blend_depth: blend_depth.resolve(&mut done),
+            blend_depth_mask: blend_depth_mask.resolve(&mut done),
+            blend_depth_color: blend_depth_color.resolve(&mut done),
+            blend_depth_opaque: blend_depth_opaque.resolve(&mut done),
+            blend_depth_solid: blend_depth_solid.resolve(&mut done),
+            blend_depth_fringe: blend_depth_fringe.resolve(&mut done),
+            blend_depth_fringe_depth: blend_depth_fringe_depth.resolve(&mut done),
+            blend_once: blend_once.resolve(&mut done),
+            blend_cut: blend_cut.resolve(&mut done),
+            blend_over: blend_over.resolve(&mut done),
+            blend_glow: blend_glow.resolve(&mut done),
+            blend_both: blend_both.resolve(&mut done),
+            blend_under: blend_under.resolve(&mut done),
+            blend_under_depth_ss: blend_under_depth_ss.resolve(&mut done),
+            blend_under_depth_msaa: blend_under_depth_msaa.resolve(&mut done),
+            particles: particles.resolve(&mut done),
+            water_particles: water_particles.resolve(&mut done),
+            water_particles_under: water_particles_under.resolve(&mut done),
+            rain: rain.resolve(&mut done),
+            rain_wet: rain_wet.resolve(&mut done),
+            rain_wet_g: rain_wet_g.resolve(&mut done),
+            rain_splash: rain_splash.resolve(&mut done),
+            snow_mesh: snow_mesh.resolve(&mut done),
+            rain_far: rain_far.resolve(&mut done),
+            rain_wet_update: rain_wet_update.resolve(&mut done),
+            snow_trail_update: snow_trail_update.resolve(&mut done),
+            glow: glow.resolve(&mut done),
+            glow_water: glow_water.resolve(&mut done),
+            glow_max: glow_max.resolve(&mut done),
+            glow_suppress: glow_suppress.resolve(&mut done),
+            debug_red: debug_red.resolve(&mut done),
+            land_overlay: land_overlay.resolve(&mut done),
+            debug_blue: debug_blue.resolve(&mut done),
+            debug_green: debug_green.resolve(&mut done),
+            debug_yellow: debug_yellow.resolve(&mut done),
+            debug_wire: debug_wire.resolve(&mut done),
+            select_root_wire: select_root_wire.resolve(&mut done),
+            select_child_wire: select_child_wire.resolve(&mut done),
+            selection_mask: selection_mask.resolve(&mut done),
+            selection_pattern: selection_pattern.resolve(&mut done),
+            selection_pattern_hdr: selection_pattern_hdr.resolve(&mut done),
+            part_mask: part_mask.resolve(&mut done),
+            part_pick: part_pick.resolve(&mut done),
+            ssr: ssr_pipe.resolve(&mut done),
+            pre_opaque: pre_opaque.resolve(&mut done),
+            pre_opaque_2s: pre_opaque_2s.resolve(&mut done),
+            pre_portal: pre_portal.resolve(&mut done),
+            pre_portal_2s: pre_portal_2s.resolve(&mut done),
+            pre_mask: pre_mask.resolve(&mut done),
+            pre_mask_2s: pre_mask_2s.resolve(&mut done),
+            pre_normal: pre_normal.resolve(&mut done),
+            pre_normal_portal: pre_normal_portal.resolve(&mut done),
+            pre_contact: pre_contact.resolve(&mut done),
+            pre_contact_normal: pre_contact_normal.resolve(&mut done),
+            fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
+            pre_msaa: pre_msaa.resolve(&mut done),
+            refl_sky: refl_sky.resolve(&mut done),
+            refl_terrain: refl_terrain.resolve(&mut done),
+            refl_terrain_pbr: refl_terrain_pbr.resolve(&mut done),
+            refl_obj: refl_obj.resolve(&mut done),
+            refl_blend_rigged: refl_blend_rigged.resolve(&mut done),
+            refl_blend: refl_blend.resolve(&mut done),
+            shadow: shadow.resolve(&mut done),
+            shadow_depth: shadow_depth.resolve(&mut done),
+            shadow_terrain: shadow_terrain.resolve(&mut done),
+            shelter: shelter.resolve(&mut done),
+            shelter_terrain: shelter_terrain.resolve(&mut done),
+            post: post.resolve(&mut done),
+            pick: pick.resolve(&mut done),
+            pick_terrain: pick_terrain.resolve(&mut done),
+            pick_terrain_mask: pick_terrain_mask.resolve(&mut done),
+            pick_2s: pick_2s.resolve(&mut done),
+            pick_visible: pick_visible.resolve(&mut done),
+            pick_left: pick_left.resolve(&mut done),
+            pick_left_2s: pick_left_2s.resolve(&mut done),
+            pick_mask: pick_mask.resolve(&mut done),
+            pick_mask_2s: pick_mask_2s.resolve(&mut done),
+            pick_left_visible: pick_left_visible.resolve(&mut done),
+            pick_overlay: pick_overlay.resolve(&mut done),
         }
     }
 
@@ -7614,6 +7646,7 @@ impl Backend {
             crate::label_depth::skip(&mut ui.primitives);
             // the previews draw into targets of their own: they stay, and
             // egui-wgpu gets meshes, not callbacks it does not know
+            crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
                 &self.device,
                 &self.queue,
@@ -7960,6 +7993,7 @@ impl Backend {
             equirect: None,
             histogram: None,
             thumbnail: None,
+            second_view: None,
             motion_cut: packet.motion_cut,
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
@@ -8105,7 +8139,112 @@ impl Backend {
         } else {
             packet
         };
-        self.render_view(packet)
+        let mut packet = packet;
+        let second = self.second_view_packet(&mut packet);
+        let result = self.render_view(packet);
+        self.render_second_view(second);
+        result
+    }
+
+    /// The egui texture of the second camera's last picture.
+    fn second_view_texture(&self) -> Option<egui::TextureId> {
+        self.second.as_ref().and_then(|s| s.target.as_ref()).map(|t| t.id)
+    }
+
+    /// The second camera's copy of this frame (second_view.rs), when the
+    /// viewer asks for it. A photo, a film or a 360° face drawn offscreen,
+    /// and a frame drawn into a caller's texture, draw none.
+    fn second_view_packet(&mut self, packet: &mut FramePacket) -> Option<FramePacket> {
+        let job = packet.second_view.take()?;
+        let offscreen = packet.output.is_some() || matches!(packet.capture, Some(Capture::Snapshot(_) | Capture::Film(..)));
+        if offscreen || self.external || self.lost.get() || self.second_seed.is_none() || job.size.contains(&0) {
+            return None;
+        }
+        Some(crate::second_view::packet(packet, &job))
+    }
+
+    /// Draw the second camera's view after the window's frame, into its
+    /// texture: the renderer is made the first time (as VR's eyes are, on
+    /// this thread), and let go once the view is no longer asked for.
+    fn render_second_view(&mut self, packet: Option<FramePacket>) {
+        let Some(mut packet) = packet else {
+            if let Some(second) = &mut self.second {
+                second.idle += 1;
+                if second.idle >= crate::second_view::IDLE_FRAMES {
+                    self.drop_second_view();
+                }
+            }
+            return;
+        };
+        if self.second.is_none() {
+            let Some(seed) = self.second_seed.as_ref() else {
+                return;
+            };
+            let mut init = (**seed).clone();
+            init.external = true;
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            {
+                init.xr = None;
+            }
+            init.width = packet.surface.width;
+            init.height = packet.surface.height;
+            init.output_format = Some(self.config.format);
+            init.scene = packet.scene.clone();
+            let started = Instant::now();
+            match Backend::new(init) {
+                Ok(backend) => {
+                    log::info!("second camera: renderer made ({} ms)", started.elapsed().as_millis());
+                    self.second = Some(Box::new(SecondView {
+                        backend,
+                        target: None,
+                        idle: 0,
+                    }));
+                }
+                Err(e) => {
+                    // (not tried again every frame: the window stays empty)
+                    log::warn!("second camera: renderer could not be made: {e}");
+                    self.second_seed = None;
+                    return;
+                }
+            }
+        }
+        let Some(second) = self.second.as_mut() else {
+            return;
+        };
+        second.idle = 0;
+        let size = [packet.surface.width, packet.surface.height];
+        if second.target.as_ref().is_none_or(|t| t.size != size) {
+            // (the interface drawn with the old picture is already submitted)
+            if let Some(old) = second.target.take() {
+                self.egui.free_texture(&old.id);
+            }
+            second.target = Some(crate::second_view::Target::new(
+                &self.device,
+                &mut self.egui,
+                self.config.format,
+                size,
+            ));
+        }
+        packet.output = second.target.as_ref().map(|t| t.texture.clone());
+        // the window's reflection probes, captured by this renderer: the
+        // second one's own stay empty, and without them the ambient light
+        // of everything in shade is black
+        if second.backend.probes.share_cubes(&self.probes) {
+            second.backend.remake_frame_groups();
+        }
+        let _ = second.backend.render_view(packet);
+    }
+
+    /// The second camera's renderer let go, with its picture.
+    fn drop_second_view(&mut self) {
+        if let Some(mut second) = self.second.take() {
+            if let Some(target) = second.target.take() {
+                self.egui.free_texture(&target.id);
+            }
+            // (a pipeline set still compiling is this one's to wait for)
+            self.adopt_pipeline_workers(&mut second.backend);
+            log::info!("second camera: renderer let go");
+        }
     }
 
     /// The renderer made again, whole, from what it was first made from:
@@ -8127,7 +8266,9 @@ impl Backend {
         init.scene = scene.clone();
         // what this one holds for a world it no longer draws is let go
         // first: a card with room for one renderer but not two would
-        // otherwise refuse every try
+        // otherwise refuse every try (the second camera's renderer too: it
+        // is made again for the new one)
+        self.drop_second_view();
         self.shed_world();
         // (how long a try holds the frame: the render thread makes the
         // whole renderer, its pipelines included)
@@ -8205,6 +8346,8 @@ impl Backend {
             equirect: _,
             histogram,
             thumbnail,
+            // (taken by `render_frame` before the frame)
+            second_view: _,
             motion_cut,
             world_shift,
             input_at,
@@ -11747,8 +11890,7 @@ impl Backend {
                     &self.queue,
                     &mut encoder,
                     &crate::fsr::FrameInputs {
-                        view_proj: fu.proj * fu.view,
-                        prev_view_proj: self.prev_view_proj.unwrap_or(unjittered_vp),
+                        motion_reproj: main.motion_reproj,
                         proj: f.proj,
                         jitter: self.taa_jitter,
                         reset: taa.reset || self.prev_view_proj.is_none(),
@@ -12234,6 +12376,7 @@ impl Backend {
             } else {
                 crate::label_depth::skip(labels);
             }
+            crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews
                 .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
             extra_cmds = self

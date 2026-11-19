@@ -138,8 +138,10 @@ pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
+pub mod second_camera;
 pub mod shape;
 pub mod sheet;
+pub mod signup;
 pub mod sim_console;
 pub mod skin;
 pub mod sky_beacons;
@@ -163,6 +165,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod weather_window;
 pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
@@ -255,6 +258,9 @@ pub struct Panels {
     pub quick_prefs: bool,
     /// The Director (toolbar `director`): its window and its timeline.
     pub director: bool,
+    /// The second camera (View › Second camera, toolbar `second_camera`):
+    /// our avatar seen by a camera of its own (ui/second_camera.rs).
+    pub second_camera: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// The pose stand (toolbar `pose_stand`).
@@ -316,7 +322,12 @@ impl Panels {
             avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
-            contacts: false,
+            // FSFloaterContacts::onOpen: torn off, Contacts is its own window
+            // (ContactsTornOff). Closing that window puts the flag back to
+            // false (contacts.rs), so the flag alone says the window was
+            // open: keeping it while always starting closed left a torn-off
+            // Contacts with no way back to its tab.
+            contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
             places: false,
@@ -337,6 +348,7 @@ impl Panels {
             destinations: false,
             quick_prefs: false,
             director: false,
+            second_camera: false,
             voice_controls: false,
             pose_stand: false,
             omnifilter: false,
@@ -426,6 +438,18 @@ mod tests {
                 "the mini-map window is open: the radar does not repeat it"
             );
         }
+    }
+
+    /// A Contacts torn off at the last exit comes back as its own window: it
+    /// is where its tab went, and the settings record it.
+    #[test]
+    fn a_torn_off_contacts_comes_back_as_its_own_window() {
+        let mut settings = Settings::default();
+        settings.contacts.torn_off = true;
+        let panels = Panels::from_settings(&settings);
+        assert!(panels.contacts, "the torn-off Contacts window is open");
+        settings.contacts.torn_off = false;
+        assert!(!Panels::from_settings(&settings).contacts);
     }
 
     /// The radar in the top left corner, the mini-map in the top right one
