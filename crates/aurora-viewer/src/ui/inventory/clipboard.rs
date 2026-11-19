@@ -195,6 +195,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     // its right-click: the menu of the folder shown (Windows Explorer's
     // and Dolphin's menu of the empty space)
     if response.secondary_clicked()
+        && ui.input(|i| i.pointer.any_click())
         && st
             .aurora
             .is_some_and(|frame| frame.explorer && frame.layout != super::aurora::Layout::Compact)
@@ -204,7 +205,10 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         st.row_menu = Some((st.browse, pos));
         st.background_menu = true;
     }
+    // a real click only: egui also "clicks" a focused widget on Enter or
+    // Space, which would drop the selection Alt+Enter is about to open
     if response.clicked()
+        && ui.input(|i| i.pointer.any_click())
         && st.aurora.is_some_and(|frame| frame.explorer)
         && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
     {

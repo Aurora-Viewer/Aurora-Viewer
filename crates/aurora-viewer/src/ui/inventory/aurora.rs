@@ -858,6 +858,131 @@ mod tests {
     }
 
     #[test]
+    fn f2_renames_and_alt_enter_opens_the_properties_after_a_click() {
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        assert_eq!(h.st.selected, Some(Uuid::from_u128(8100)));
+        h.run(vec![key(egui::Key::Enter, egui::Modifiers::ALT)]);
+        h.frames(2);
+        assert!(
+            matches!(h.st.dialog, Some(EditDialog::Properties(id)) if id == Uuid::from_u128(8100)),
+            "Alt+Enter: {:?}, selection {:?}",
+            h.st.dialog.is_some(),
+            h.st.selection.len()
+        );
+        h.st.dialog = None;
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        h.run(vec![key(egui::Key::F2, egui::Modifiers::NONE)]);
+        h.frames(2);
+        assert_eq!(h.st.rename.as_ref().map(|r| r.id), Some(Uuid::from_u128(8100)), "F2 renames");
+    }
+
+    #[test]
+    fn a_pin_takes_left_and_right_clicks_and_drags_to_reorder() {
+        let mut h = Harness::new(WIDE_SIZE);
+        let (a, b) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        h.prefs.pinned = vec![a, b];
+        h.frames(4);
+        let pin = |h: &Harness, id: Uuid| {
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("aurora_pin", id))))
+                .expect("pin drawn")
+        };
+        // a left click shows it
+        h.click(pin(&h, b).center(), Default::default());
+        assert_eq!(h.st.browse, b);
+        // a right click opens its menu, not a drag
+        let at = pin(&h, a).center();
+        h.run(vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            h.run(vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+        h.frames(2);
+        assert!(egui::Popup::is_any_open(&h.ctx), "the pin's menu");
+        assert!(drag::carried_ids(&h.ctx).is_none());
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(2);
+        // dragged onto the other pin, it takes its place
+        let (from, to) = (pin(&h, b).center(), pin(&h, a).center());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![button(from, true)]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
+        }
+        h.run(vec![button(to, false)]);
+        h.frames(2);
+        assert_eq!(h.prefs.pinned, vec![b, a]);
+    }
+
+    #[test]
+    fn esc_during_a_drag_drops_nothing() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        let folder = h.row(8001);
+        let name = egui::pos2(row.left() + 40.0, row.center().y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(name)]);
+        h.run(vec![button(name, true)]);
+        for step in 1..=4 {
+            h.run(vec![egui::Event::PointerMoved(name + egui::vec2(0.0, 6.0 * step as f32))]);
+        }
+        assert!(drag::carried_ids(&h.ctx).is_some(), "the drag started");
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        let over = folder.center();
+        for _ in 0..3 {
+            h.run(vec![egui::Event::PointerMoved(over)]);
+        }
+        assert!(drag::carried_ids(&h.ctx).is_none(), "Esc ended the drag");
+        h.actions.clear();
+        h.run(vec![button(over, false)]);
+        h.frames(2);
+        assert!(
+            !h.actions.iter().any(|a| matches!(a, InvAction::Drop(_) | InvAction::Edit(_))),
+            "nothing dropped"
+        );
+    }
+
+    #[test]
     fn a_row_drags_by_its_name_and_its_other_columns_draw_the_band() {
         let mut h = Harness::new(WIDE_SIZE);
         h.st.show_original(&h.inv, Uuid::from_u128(8100));

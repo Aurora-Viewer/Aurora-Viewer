@@ -265,14 +265,19 @@ fn quick_access(
         let icon = tree::folder_icon(folder.info.type_default, false);
         let color = folder_colors::tint(prefs, id);
         let selected = st.tab == 0 && st.browse == id;
+        // a pin is moved by dragging it. The handle is laid out under the
+        // row, and senses clicks too: egui gives the row on top its clicks
+        // (left and right) and the handle the drag; a drag-only widget on
+        // top would take every press for a drag (egui's hit_test)
+        let at = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW));
+        let handle = ui.interact(at, ui.scope_id().with(("aurora_pin_drag", id)), Sense::click_and_drag());
         let response = entry_tinted(ui, p, icon, &name, None, 0, selected, 8.0, color);
         #[cfg(test)]
-        st.side.drawn.insert(id, response.rect);
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("aurora_pin", id)), response.rect));
         if response.clicked() {
             browse(st, prefs, id);
         }
-        // a pin is moved by dragging it (the row's own clicks stay)
-        let handle = ui.interact(response.rect, ui.scope_id().with(("aurora_pin_drag", id)), Sense::drag());
         if handle.drag_started() {
             handle.dnd_set_drag_payload(PinDrag(id));
         }
