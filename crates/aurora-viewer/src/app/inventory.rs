@@ -3,8 +3,18 @@
 use super::*;
 use crate::ui::inventory::InvAction;
 use crate::world::inventory::actions as rules;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use uuid::Uuid;
+
+/// What the undo history does with a change (`world::inventory::undo`).
+enum Undo {
+    /// Not the user's own (outfits, listings, scripts…): not recorded.
+    Skip,
+    /// The user's change: a step once the server accepts it.
+    Record,
+    /// An undo (true) or a redo of this step.
+    Step(bool, crate::world::inventory::undo::Step),
+}
 
 impl App {
     fn offer_feedback(&mut self, reason: crate::world::inventory::outgoing::Feedback) {
@@ -302,13 +312,31 @@ impl App {
     }
 
     pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
-        self.submit_inventory_edit(change, None, Uuid::nil());
+        self.submit_inventory_edit(change, None, Uuid::nil(), Undo::Skip);
     }
 
     pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
         self.inventory_ui.consume_clipboard = false;
         let editor = deletion.selection.window();
-        self.submit_inventory_edit(deletion.change, Some(deletion.selection), editor);
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection), editor, Undo::Record);
+    }
+
+    /// Ctrl+Z / Ctrl+Y and the menus' Undo and Redo (`undo` false for a
+    /// redo): the history's next step, through the inventory's rules, or
+    /// why not in the pane that asked.
+    fn inventory_history(&mut self, undo: bool, editor: Uuid) {
+        if self.inventory_ui.pending.is_some() || self.world.inventory.undo.busy() {
+            return;
+        }
+        let worn: HashSet<Uuid> = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+        let rules_of = crate::world::inventory::undo::Rules {
+            protected: &self.settings.inventory.protected,
+            worn: &worn,
+        };
+        match self.world.inventory.plan_history(undo, &rules_of) {
+            Ok((change, step)) => self.submit_inventory_edit(change, None, editor, Undo::Step(undo, step)),
+            Err(reason) => self.inventory_pane(editor).message = reason,
+        }
     }
 
     /// One inventory change at a time for the whole viewer (the main
@@ -319,6 +347,7 @@ impl App {
         mut change: aurora_net::inventory::operations::Mutation,
         selection: Option<ui::inventory::DeleteSelection>,
         editor: Uuid,
+        undo: Undo,
     ) {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
@@ -340,6 +369,14 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        let inv = &mut self.world.inventory;
+        let moves = crate::world::inventory::trash_origins::TrashOrigins::moves(inv, &change);
+        inv.trash_origins.begin(request, moves);
+        match undo {
+            Undo::Skip => {}
+            Undo::Record => inv.record_change(request, &change),
+            Undo::Step(undo, step) => inv.undo.begin(request, undo, step),
+        }
         if let Some(selection) = selection {
             self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
@@ -363,7 +400,7 @@ impl App {
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
             self.inventory_ui.consume_clipboard = cut;
-            self.submit_inventory_edit(change, None, editor);
+            self.submit_inventory_edit(change, None, editor, Undo::Record);
         }
     }
 
@@ -436,6 +473,7 @@ impl App {
                 }
             }
             InvAction::Drop(change) => self.edit_inventory(change, true, editor),
+            InvAction::History { undo } => self.inventory_history(undo, editor),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
@@ -733,6 +771,9 @@ impl App {
 
     pub(super) fn inventory_result(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
         if let Some(refresh) = self.inventory_ui.finish_copy(request, result.is_ok()) {
+            // the copies arrived: the step holds them now
+            let created = result.as_ref().map(|reply| reply.created.clone()).unwrap_or_default();
+            self.world.inventory.changed(request, result.is_ok(), &created);
             if let Err(reason) = result {
                 self.inventory_ui.message = reason;
                 for id in refresh {
@@ -751,7 +792,7 @@ impl App {
         }
         let editor = self.inventory_mutation_editor.unwrap_or_default();
         let thumbnail_upload = self.inventory_images.contains_request(request);
-        let result = match result {
+        let mut result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents.clone());
@@ -762,6 +803,7 @@ impl App {
                     pane.show_original(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
+                self.world.inventory.undo.created(request, &reply.created);
                 self.send(NetCommand::FinishInventoryCopies { request, reply });
                 return;
             }
@@ -783,11 +825,17 @@ impl App {
         } else {
             self.finish_inventory_image(request, result.as_ref().err().cloned());
         }
+        if let Ok(reply) = &mut result {
+            self.world.inventory.remove(&reply.removed);
+            self.world.inventory.apply(std::mem::take(&mut reply.contents));
+            self.world.inventory.created_folders(std::mem::take(&mut reply.folders));
+        }
+        // the history and the Trash's origins keep what the server accepted,
+        // once the inventory holds it
+        let created = result.as_ref().map(|reply| reply.created.clone()).unwrap_or_default();
+        self.world.inventory.changed(request, result.is_ok(), &created);
         match result {
             Ok(reply) => {
-                self.world.inventory.remove(&reply.removed);
-                self.world.inventory.apply(reply.contents);
-                self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     let sync = crate::world::appearance::sync_plan_keeping(
                         &self.world.inventory,

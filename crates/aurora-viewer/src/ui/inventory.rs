@@ -155,6 +155,11 @@ pub enum InvAction {
     /// The same change from a drag dropped on a folder: the listings ask
     /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
     Drop(Mutation),
+    /// Undo (true) or redo the inventory history's next step
+    /// (`world::inventory::undo`): Ctrl+Z / Ctrl+Y and the menus.
+    History {
+        undo: bool,
+    },
     Create {
         parent: Uuid,
         kind: NewItem,
@@ -891,9 +896,10 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
-    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu]`): the
-    /// explorer in the demo folder, come from the root (Back and Up lit),
-    /// with the path being typed or the menu of its empty space open.
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu|-undo]`):
+    /// the explorer in the demo folder, come from the root (Back and Up
+    /// lit), with the path being typed or the menu of its empty space open
+    /// (`-undo`: with its Undo and Redo entries, `world::inventory::undo`).
     pub fn demo_explorer(&mut self, mode: &str) {
         // applied once the demo folder has arrived (`demo_explorer_now`)
         self.demo_explorer = Some(mode.to_owned());
@@ -915,7 +921,7 @@ impl InventoryUi {
                 text.push(aurora::PATH_SEPARATOR);
                 self.path_edit = Some(aurora::PathEdit::new(text));
             }
-            "aurora-explorer-menu" => {
+            "aurora-explorer-menu" | "aurora-explorer-undo" => {
                 self.selection.clear();
                 self.selected = None;
                 self.row_menu = Some((here, egui::pos2(760.0, 420.0)));

@@ -1,8 +1,9 @@
 //! The menu entries of a desktop file manager, as customizable as the rest:
 //! "Copy path" and "Show in folder" on an entry, and the menu of the
 //! explorer's empty space (Windows Explorer's and Dolphin's background
-//! menu): View, Sort by, Select all, Invert selection, with the folder's
-//! own New, Paste, Paste as link, Reload and Properties. Aurora difference:
+//! menu): View, Sort by, Select all, Invert selection, Undo and Redo
+//! (`world::inventory::undo`), with the folder's own New, Paste, Paste as
+//! link, Reload and Properties. Aurora difference:
 //! the Legacy Viewer's single folder mode has no menu on its empty space
 //! and no path to copy.
 
@@ -38,7 +39,7 @@ pub(super) fn kept_in_background(entry: &Entry) -> bool {
 }
 
 /// The entries only the empty space's menu shows (and the editor).
-const BACKGROUND_ADDS: &[&str] = &["explorer-view", "explorer-sort", "select-all", "invert-selection"];
+const BACKGROUND_ADDS: &[&str] = &["explorer-view", "explorer-sort", "select-all", "invert-selection", "undo", "redo"];
 
 fn check(c: &mut Catalog, id: &str, on: bool) {
     if !c.editing
@@ -196,6 +197,29 @@ pub(super) fn build(
         true,
         Command::Explorer(ExplorerCommand::Invert),
     );
+    // Explorer's Undo / Redo, the step named ("Undo move of 3 items");
+    // the history is the session's (`world::inventory::undo`)
+    c.divider("explorer-history", TEXT);
+    let busy = inv.undo.busy() || st.pending.is_some();
+    for (key, icon, undo, step) in [
+        ("undo", "arrow-back-up", true, inv.undo.next_undo()),
+        ("redo", "arrow-forward-up", false, inv.undo.next_redo()),
+    ] {
+        let label = match (step, c.editing) {
+            (Some(step), false) if undo => aurora_i18n::tr!("inventory-undo-step", what = step.what()),
+            (Some(step), false) => aurora_i18n::tr!("inventory-redo-step", what = step.what()),
+            _ if undo => aurora_i18n::tr!("inventory-undo").to_owned(),
+            _ => aurora_i18n::tr!("inventory-redo").to_owned(),
+        };
+        c.add(
+            key,
+            TEXT,
+            icon,
+            &label,
+            step.is_some() && !busy,
+            Command::Invoke(InvAction::History { undo }),
+        );
+    }
 }
 
 pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {

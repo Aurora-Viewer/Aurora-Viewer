@@ -1459,6 +1459,33 @@ inventory-unpin = Désépingler de l’accès rapide
 inventory-quick-access = Accès rapide
 inventory-quick-access-drop = Déposez un dossier ici pour l’épingler
 inventory-invert-selection = Inverser la sélection
+inventory-undo = Annuler
+inventory-redo = Rétablir
+inventory-undo-step = Annuler { $what }
+inventory-redo-step = Rétablir { $what }
+inventory-history-move = { $count ->
+    [one] le déplacement d’un élément
+   *[other] le déplacement de { $count } éléments
+    }
+inventory-history-delete = { $count ->
+    [one] la suppression d’un élément
+   *[other] la suppression de { $count } éléments
+    }
+inventory-history-rename = le changement de nom
+inventory-history-new-folder = la création du dossier
+inventory-history-copy = { $count ->
+    [one] la copie d’un élément
+   *[other] la copie de { $count } éléments
+    }
+inventory-history-link = { $count ->
+    [one] le lien vers un élément
+   *[other] les liens vers { $count } éléments
+    }
+inventory-undo-nothing = Plus rien à annuler : ces éléments ont été déplacés ou n’existent plus.
+inventory-redo-nothing = Plus rien à rétablir : ces éléments ont été déplacés ou n’existent plus.
+inventory-restore-to = { "Restaurer dans « " }{ $folder }{ " »" }
+inventory-restore-to-origins = Restaurer dans leurs dossiers
+inventory-purge-no-undo = Annuler ne pourra pas les récupérer.
 inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rétablir leurs largeurs.
 inventory-resize-sidebar = Faites glisser pour redimensionner le panneau des dossiers. Double-cliquez pour rétablir sa largeur.
 inventory-resize-gallery = Faites glisser pour partager la place entre les vignettes et la liste. Double-cliquez pour la rétablir.

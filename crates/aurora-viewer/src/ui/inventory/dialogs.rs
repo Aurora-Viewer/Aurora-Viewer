@@ -183,6 +183,11 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                // a purge is the one change the inventory's Undo never takes
+                // back (`world::inventory::undo`)
+                if *purge {
+                    ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
+                }
                 // DeleteItems ignore box; PurgeSelectedItems has none (#2344).
                 if !*purge {
                     ui.add_space(8.0);
@@ -224,6 +229,7 @@ pub(super) fn show(
                 ui.label(aurora_i18n::tr!(
                     "ui-inventory-dialogs-all-items-in-trash-will-be-permanently-deleted"
                 ));
+                ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
                 if confirmation_buttons(
                     ui,
                     p,

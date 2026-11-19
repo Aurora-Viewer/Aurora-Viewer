@@ -67,7 +67,8 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
 
 /// The list's file-manager commands that act on the selection: a new
 /// folder (Ctrl+Shift+N, then its name typed as `created_selection` does
-/// for the New menu), its properties (Alt+Enter) and Shift+Delete.
+/// for the New menu), its properties (Alt+Enter), Shift+Delete, and the
+/// history's Ctrl+Z / Ctrl+Y.
 ///
 /// Shift+Delete purges (PurgeSelectedItems, with its confirmation that has
 /// no "don't ask again") only what is already in the Trash: Second Life
@@ -92,6 +93,8 @@ pub(super) fn commands(
                 | shortcuts::Command::Purge
                 | shortcuts::Command::ContextMenu
                 | shortcuts::Command::Refresh
+                | shortcuts::Command::Undo
+                | shortcuts::Command::Redo
         )
     };
     for command in shortcuts::take(ui, wanted) {
@@ -149,6 +152,13 @@ pub(super) fn commands(
                 }
             }
             shortcuts::Command::Purge => purge(inv, st, prefs, facts, actions),
+            // the history is the session's, not this list's: the app takes
+            // its next step (`world::inventory::undo`)
+            shortcuts::Command::Undo | shortcuts::Command::Redo if st.pending.is_none() => {
+                actions.push(InvAction::History {
+                    undo: command == shortcuts::Command::Undo,
+                });
+            }
             _ => {}
         }
     }

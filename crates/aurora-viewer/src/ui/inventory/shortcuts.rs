@@ -48,6 +48,9 @@ pub(crate) enum Command {
     Purge,
     /// F3, beside the search field's Ctrl+F.
     Search,
+    /// Ctrl+Z / Ctrl+Y: the inventory's history (`world::inventory::undo`).
+    Undo,
+    Redo,
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -78,6 +81,8 @@ impl Command {
             Command::ContextMenu => Action::InvContextMenu,
             Command::Purge => Action::InvPurge,
             Command::Search => Action::InvSearch,
+            Command::Undo => Action::InvUndo,
+            Command::Redo => Action::InvRedo,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
     }
@@ -98,7 +103,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 14] = [
+pub(crate) const REBINDABLE: [Command; 16] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -113,6 +118,8 @@ pub(crate) const REBINDABLE: [Command; 14] = [
     Command::Properties,
     Command::ContextMenu,
     Command::Purge,
+    Command::Undo,
+    Command::Redo,
 ];
 
 /// The inventory actions' bindings, as the user set them.
@@ -202,6 +209,8 @@ pub(crate) fn for_menu_entry(id: &str) -> Option<Command> {
         "reload" => Command::Refresh,
         "select-all" => Command::SelectAll,
         "invert-selection" => Command::InvertSelection,
+        "undo" => Command::Undo,
+        "redo" => Command::Redo,
         _ => return None,
     })
 }
@@ -317,6 +326,11 @@ mod tests {
         assert_eq!(hit(Key::N, CTRL.plus(Modifiers::SHIFT)), Some(Command::NewFolder));
         assert_eq!(hit(Key::N, CTRL), None);
         assert_eq!(hit(Key::F10, Modifiers::SHIFT), Some(Command::ContextMenu));
+        assert_eq!(hit(Key::Z, CTRL), Some(Command::Undo));
+        assert_eq!(hit(Key::Z, CTRL.plus(Modifiers::SHIFT)), Some(Command::Redo));
+        if !cfg!(target_os = "macos") {
+            assert_eq!(hit(Key::Y, CTRL), Some(Command::Redo));
+        }
         if cfg!(target_os = "macos") {
             // Finder's keys
             assert_eq!(hit(Key::I, CTRL), Some(Command::Properties));

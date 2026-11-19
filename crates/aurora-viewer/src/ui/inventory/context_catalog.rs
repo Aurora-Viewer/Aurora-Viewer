@@ -14,6 +14,9 @@ pub(super) enum Command {
     Upload(usize, Uuid),
     Empty(Uuid),
     DefaultFolder(Vec<Uuid>),
+    /// Out of the Trash, each to the folder it came from, else to the
+    /// default folder of its type (`trash_origins`).
+    Restore(Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
     Share(Vec<Uuid>),
     Open(Uuid),
@@ -494,9 +497,9 @@ fn build_mode(
             "restore",
             TEXT,
             "restore",
-            aurora_i18n::tr!("ui-inventory-context-restore-object"),
+            &restore_label(inv, &ids, c.editing),
             ready && movable,
-            Command::DefaultFolder(ids.clone()),
+            Command::Restore(ids.clone()),
         );
     }
     if !trash || all {
@@ -1198,6 +1201,28 @@ fn item_attachments(
     }
 }
 
+/// Where Restore puts `id` back: the folder it went to the Trash from
+/// (Windows' Recycle Bin), else the Legacy Viewer's place, the default
+/// folder of its type (LLItemBridge::restoreItem / LLFolderBridge::restoreItem,
+/// indra/newview/llinventorybridge.cpp).
+fn restore_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    inv.trash_origins.origin(inv, id).or_else(|| rules::default_folder(inv, id))
+}
+
+/// "Restore to “Clothes”" when every entry came from one folder still
+/// there, "Restore to their folders" when some came from others, the Legacy
+/// Viewer's "Restore" when none is known.
+fn restore_label(inv: &Inventory, ids: &[Uuid], editing: bool) -> String {
+    let origins: Vec<Option<Uuid>> = ids.iter().map(|id| inv.trash_origins.origin(inv, *id)).collect();
+    match origins.first() {
+        Some(Some(first)) if !editing && origins.iter().all(|o| *o == Some(*first)) => {
+            aurora_i18n::tr!("inventory-restore-to", folder = rules::name(inv, *first))
+        }
+        _ if !editing && origins.iter().any(Option::is_some) => aurora_i18n::tr!("inventory-restore-to-origins").to_owned(),
+        _ => aurora_i18n::tr!("ui-inventory-context-restore-object").to_owned(),
+    }
+}
+
 /// The properties of `ids`, each in a window of its own (one already open
 /// for an item is kept, not doubled), the list free behind them.
 pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
@@ -1248,6 +1273,16 @@ pub(super) fn execute(
         Command::DefaultFolder(ids) => {
             let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
                 let to = rules::default_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
+                let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
+                plan.operations.extend(change.operations);
+                plan.refresh.extend(change.refresh);
+                Ok::<_, String>(plan)
+            });
+            submit(plan);
+        }
+        Command::Restore(ids) => {
+            let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
+                let to = restore_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
                 let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
                 plan.operations.extend(change.operations);
                 plan.refresh.extend(change.refresh);

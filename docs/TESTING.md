@@ -7451,6 +7451,18 @@ failure. Grid validation and any paid upload are performed by the human.
   tooltip names F6; a key the list keeps (Enter, an arrow) is refused with a
   notice; Ctrl+Shift+A still opens People when the list does not have the
   keyboard, and unbinding Invert selection gives the chord back to People.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-undo`**: the wide explorer in
+  the right-click tests folder after a Delete of its notecard and an undone
+  rename of its animation, the menu of the empty space open: "Undo delete of
+  1 item" (Ctrl+Z) and "Redo rename" (Ctrl+Y). By hand: Ctrl+Z puts the
+  notecard back, Ctrl+Y renames the animation again, Ctrl+Shift+Z redoes too;
+  a drag, a Ctrl-drag copy, an Alt-drag link, a rename (F2), a new folder
+  (Ctrl+Shift+N), each undone (the copy, link and folder go to the Trash,
+  never purged) and redone; the Trash's entry menu offers "Restore to
+  Right-click tests" for an entry deleted from there, and the plain Restore
+  for one whose folder is gone; the Purge and Empty Trash confirmations say
+  Undo cannot bring them back. Wearing an item then undoing the change that
+  made it is refused with the reason, the step kept.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a

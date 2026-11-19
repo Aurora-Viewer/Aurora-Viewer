@@ -132,6 +132,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-explorer"
             | "aurora-explorer-path"
             | "aurora-explorer-menu"
+            | "aurora-explorer-undo"
             | "aurora-combination"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"

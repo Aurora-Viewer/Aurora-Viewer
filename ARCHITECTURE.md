@@ -372,6 +372,15 @@ script/notecard group rights stay in shared helpers, with notecard editing
 also gated by the containing object. Texture export still asks for the
 ordinary full permissions, independently of UUID visibility.
 
+`world/inventory/undo.rs` is the inventory's undo / redo history, one per
+session for every inventory window: `App::submit_inventory_edit` records the
+user's change (a draft of its step), `App::inventory_result` keeps it once
+the server accepts it (`Inventory::changed`), and an undo is planned through
+the same `actions` rules and sent back through `submit_inventory_edit`.
+`world/inventory/trash_origins.rs` notes the folder each Trash entry came
+from, in a per-account file written by its own thread, for "Restore to
+<folder>".
+
 `world/inventory/asset_ids.rs` is the asset id display rule shared by the Dev
 Toolbox texts (`scene/describe.rs`, `scene/animesh_report.rs`,
 `scene/sculpt_watch.rs`), the Sound and Animation Explorers, the Asset

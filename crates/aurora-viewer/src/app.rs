@@ -4378,6 +4378,13 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // where the Trash's entries came from (Restore to their
+                // folder); the demo keeps them in memory
+                if !self.demo {
+                    self.world.inventory.trash_origins = crate::world::inventory::trash_origins::TrashOrigins::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::inventory::trash_origins::FILE),
+                    );
+                }
                 // the saved smart searches of the inventory; the demo keeps
                 // them in memory
                 if !self.demo {
@@ -10725,6 +10732,7 @@ impl App {
             self.pump_network_events(t_ev);
         }
         self.poll_inventory_offers();
+        self.world.inventory.trash_origins.poll();
         self.net_profile.events_left(self.net.events.len());
         let corrections = self.world.agent.take_corrections();
         if corrections.count > 0 {
@@ -23483,6 +23491,7 @@ impl ApplicationHandler for App {
                         | "aurora-explorer-path"
                         | "aurora-explorer-menu"
                         | "aurora-explorer-medium"
+                        | "aurora-explorer-undo"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -23596,6 +23605,10 @@ impl ApplicationHandler for App {
                             // Back, Up, the breadcrumb's chevrons and two
                             // folders pinned to Quick access
                             self.inventory_ui.demo_explorer(&view);
+                            if view == "aurora-explorer-undo" {
+                                // a Delete to undo, a rename to redo
+                                self.world.inventory.demo_history(self.world.agent_id);
+                            }
                             // the column lists a pin once its folder is there
                             self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];
                             self.panels.camera_controls = false;

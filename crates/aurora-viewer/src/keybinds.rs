@@ -586,6 +586,10 @@ pub enum Action {
     InvProperties,
     InvContextMenu,
     InvPurge,
+    /// Explorer's Ctrl+Z / Ctrl+Y on the inventory's own changes
+    /// (`world::inventory::undo`); Ctrl+Shift+Z redoes too, as Dolphin's.
+    InvUndo,
+    InvRedo,
 }
 
 /// The inventory lists' shortcuts: matched on the list's key events and
@@ -609,6 +613,8 @@ pub fn is_inventory(a: Action) -> bool {
             | Action::InvProperties
             | Action::InvContextMenu
             | Action::InvPurge
+            | Action::InvUndo
+            | Action::InvRedo
     )
 }
 
@@ -885,6 +891,8 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::InvProperties, aurora_i18n::tr!("common-properties")),
                     (Action::InvContextMenu, aurora_i18n::tr!("keybinds-inventory-menu")),
                     (Action::InvPurge, aurora_i18n::tr!("keybinds-inventory-purge")),
+                    (Action::InvUndo, aurora_i18n::tr!("inventory-undo")),
+                    (Action::InvRedo, aurora_i18n::tr!("inventory-redo")),
                 ],
             ),
             (
@@ -1086,6 +1094,17 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
                 },
                 None,
             ],
+        ),
+        // Explorer's and Finder's (Cmd+Z, Cmd+Shift+Z): Ctrl+Y, and
+        // Ctrl+Shift+Z as Dolphin and most editors
+        (Action::InvUndo, [kmod(K::KeyZ, true, false), None]),
+        (
+            Action::InvRedo,
+            if mac {
+                [kmod(K::KeyZ, true, true), None]
+            } else {
+                [kmod(K::KeyY, true, false), kmod(K::KeyZ, true, true)]
+            },
         ),
     ]
 }

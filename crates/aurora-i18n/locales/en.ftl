@@ -1456,6 +1456,33 @@ inventory-unpin = Unpin from Quick access
 inventory-quick-access = Quick access
 inventory-quick-access-drop = Drop a folder here to pin it
 inventory-invert-selection = Invert selection
+inventory-undo = Undo
+inventory-redo = Redo
+inventory-undo-step = Undo { $what }
+inventory-redo-step = Redo { $what }
+inventory-history-move = { $count ->
+    [one] move of 1 item
+   *[other] move of { $count } items
+    }
+inventory-history-delete = { $count ->
+    [one] delete of 1 item
+   *[other] delete of { $count } items
+    }
+inventory-history-rename = rename
+inventory-history-new-folder = new folder
+inventory-history-copy = { $count ->
+    [one] copy of 1 item
+   *[other] copy of { $count } items
+    }
+inventory-history-link = { $count ->
+    [one] link to 1 item
+   *[other] links to { $count } items
+    }
+inventory-undo-nothing = Nothing left to undo: those items have moved or are gone.
+inventory-redo-nothing = Nothing left to redo: those items have moved or are gone.
+inventory-restore-to = Restore to “{ $folder }”
+inventory-restore-to-origins = Restore to their folders
+inventory-purge-no-undo = Undo cannot bring them back.
 inventory-resize-columns = Drag to resize columns. Double-click to reset their widths.
 inventory-resize-sidebar = Drag to resize the folder sidebar. Double-click to reset its width.
 inventory-resize-gallery = Drag to share the room between the tiles and the list. Double-click to reset it.
