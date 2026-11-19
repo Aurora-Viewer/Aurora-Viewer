@@ -4166,10 +4166,11 @@ impl Backend {
             ],
         });
         // the G-buffer, and the traced reflections ssr.wgsl's `fs_ssr_rt`
-        // reads (a black texture without them)
+        // reads: the mirror ray's, the glossy ones and the metals' base
+        // colour (black textures without them)
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gbuffer"),
-            entries: &[float_tex(0), float_tex(1)],
+            entries: &[float_tex(0), float_tex(1), float_tex(2), float_tex(3)],
         });
 
         let mk_frame_buffer = |label| {
@@ -6777,25 +6778,24 @@ impl Backend {
     fn rebuild_bind_groups(&mut self) {
         self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
+            let traced = self.targets.rt.as_ref().and_then(|t| t.reflect.as_ref());
+            let black = &self.dummies.black;
+            let views = [
+                g,
+                traced.map_or(black, |t| &t.sharp),
+                traced.map_or(black, |t| &t.gloss),
+                traced.map_or(black, |t| &t.base),
+            ];
+            let entries = views.map(wgpu::BindingResource::TextureView);
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries
+                .into_iter()
+                .zip(0..)
+                .map(|(resource, binding)| wgpu::BindGroupEntry { binding, resource })
+                .collect();
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
                 layout: &self.gbuf_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(g),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(
-                            self.targets
-                                .rt
-                                .as_ref()
-                                .and_then(|t| t.reflect.as_ref())
-                                .unwrap_or(&self.dummies.black),
-                        ),
-                    },
-                ],
+                entries: &entries,
             })
         });
         self.ssao_groups = self.targets.ao.as_ref().map(|(raw, _, _, _)| {
@@ -11425,6 +11425,8 @@ impl Backend {
                         &self.dummies.black,
                         &self.targets.scene_copy,
                         &scene,
+                        &self.probes,
+                        rt_still,
                     );
                     true
                 }

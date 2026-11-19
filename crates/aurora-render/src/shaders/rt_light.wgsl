@@ -166,13 +166,14 @@ fn lamp_ray(i: u32, start: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(to_l / max(dist, 1e-6), max(dist - max(lt.source.x, 0.05), 0.0));
 }
 
-// The light that falls on a hit's surface, for its diffuse: the sky's
-// hemisphere, the sun with a shadow ray (`offset` off the surface), and the
-// point lights (`lamps`), with shadow rays where the view traces theirs.
+// The light that falls on a hit's surface, for its diffuse: its `ambient`
+// (the sky's hemisphere, or the probes': rt_probes.wgsl `ambient_at`), the
+// sun with a shadow ray (`offset` off the surface), and the point lights
+// (`lamps`), with shadow rays where the view traces theirs.
 // shade_pbr's diffuse: the sunlight over pi on a PBR face, a third of it on
 // a legacy one.
-fn hit_light(lit: HitLight, s: Surface, hit: vec3<f32>, offset: f32, reach: f32, posed: bool, lamps: Lamps) -> vec3<f32> {
-    var light = hemisphere(lit, s.normal);
+fn hit_light(lit: HitLight, s: Surface, hit: vec3<f32>, offset: f32, reach: f32, posed: bool, lamps: Lamps, ambient: vec3<f32>) -> vec3<f32> {
+    var light = ambient;
     let pbr = (record_vec(s.record, RECORD_FLAGS).x & FLAG_PBR) != 0u;
     // the shadow rays (xyz the direction, w how far), and what each brings
     // if nothing stops it: one loop traces them all, for a pass pays for
@@ -239,5 +240,5 @@ fn hit_light(lit: HitLight, s: Surface, hit: vec3<f32>, offset: f32, reach: f32,
 // mip `lod`) under `hit_light`, plus its emission.
 fn hit_radiance(lit: HitLight, s: Surface, hit: vec3<f32>, lod: f32, offset: f32, reach: f32, posed: bool, lamps: Lamps) -> vec3<f32> {
     let base = base_color(s.record, s.uv, lod).rgb;
-    return base * hit_light(lit, s, hit, offset, reach, posed, lamps) + emissive_color(s.record);
+    return base * hit_light(lit, s, hit, offset, reach, posed, lamps, hemisphere(lit, s.normal)) + emissive_color(s.record);
 }
