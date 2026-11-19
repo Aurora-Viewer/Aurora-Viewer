@@ -148,7 +148,7 @@ fn person(
         .avatar_names
         .complete_in(NameScope::Roster, &id)
         .unwrap_or_else(|| row_name.to_owned());
-    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Name);
+    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Search);
     let buttons = [
         Btn::new("user-filled", aurora_i18n::tr!("search-aurora-profile")).primary(),
         Btn::new("message-circle-filled", aurora_i18n::tr!("search-aurora-message")).enabled(!own),

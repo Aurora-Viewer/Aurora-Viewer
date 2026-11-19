@@ -102,12 +102,12 @@ fn volumes(cx: &mut Cx) {
                 modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] != d.audio.volume[i]
                         || s.audio.muted[i] != d.audio.muted[i]
-                        || s.audio.enabled[i] != d.audio.enabled[i]
+                        || s.audio.channel_on(i) != d.audio.channel_on(i)
                 },
                 reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] = d.audio.volume[i];
                     s.audio.muted[i] = d.audio.muted[i];
-                    s.audio.enabled[i] = d.audio.enabled[i];
+                    *s.audio.channel_box(i) = d.audio.channel_on(i);
                 },
             };
             cx.wide().row(name, "", &t, |ui, s| {
@@ -148,9 +148,12 @@ fn volumes(cx: &mut Cx) {
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= widgets::checkbox(ui, &p, &mut a.enabled[i], "")
-                        .on_hover_text(tr!("ui-options-enable-this-channel"))
-                        .changed();
+                    let tip = if i == crate::settings::VOICE_CHANNEL {
+                        tr!("ui-options-enable-voice")
+                    } else {
+                        tr!("ui-options-enable-this-channel")
+                    };
+                    ch |= widgets::checkbox(ui, &p, a.channel_box(i), "").on_hover_text(tip).changed();
                 } else {
                     // the master has no enable box: its room kept, so that
                     // its slider lines up with the channels' (the row is
@@ -492,6 +495,14 @@ fn voice(cx: &mut Cx) {
             tr!("ui-options-toggle-click-once-to-enable-again-to-disable-hold"),
             &field!(audio.mic_hold),
             &[(false, tr!("ui-options-toggle"), false), (true, tr!("common-hold-to-talk"), false)],
+        );
+        // StopMicCaptureWhenMuted, the "bluetooth_behavior" radio group of
+        // the LL viewer 26.5's panel_preferences_sound.xml
+        cx.choice(
+            tr!("voice-bluetooth-only"),
+            tr!("voice-bluetooth-hint"),
+            &field!(audio.stop_mic_when_muted),
+            &[(false, tr!("voice-better-voice"), false), (true, tr!("voice-better-audio"), false)],
         );
         let push = crate::keybinds::Action::PushToTalk;
         let t = Custom {

@@ -35,6 +35,8 @@ mod pie;
 #[cfg(test)]
 mod radar_menu_tests;
 #[cfg(test)]
+mod search_menu_tests;
+#[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
 #[cfg(test)]
@@ -770,6 +772,9 @@ pub enum AvatarList {
     Friend,
     /// A name in the chat or a conversation (menu_url_agent.xml).
     Name,
+    /// A resident found by Search › People (menu_fs_avatar_search.xml,
+    /// FSAvatarSearchMenu, indra/newview/fsavatarsearchmenu.cpp).
+    Search,
 }
 
 /// A resident's voice row, only while they are in our voice channel and are
@@ -886,9 +891,10 @@ fn name_menu_restricted(kind: AvatarList, own_menu: bool, shownames: bool) -> bo
 /// (PeopleContextMenu "can_add", indra/newview/llpanelpeoplemenus.cpp,
 /// LLPanelPeople::updateButtons); the menu of a name does not
 /// (FS_RGSTR_ACT_ADD_FRIEND of FSCommon::checkIsActionEnabled asks only for
-/// someone else who is not a friend).
+/// someone else who is not a friend), nor does the search's
+/// (FSAvatarSearchMenu "can_add": anyone who is not a friend yet).
 fn offers_friendship(kind: AvatarList, friend: bool, named: bool) -> bool {
-    !friend && (kind == AvatarList::Name || named)
+    !friend && (matches!(kind, AvatarList::Name | AvatarList::Search) || named)
 }
 
 /// A name `@shownames` hides in `scope` has no menu in a chat: the Legacy
@@ -1287,6 +1293,56 @@ fn avatar_menu_reporting(
                 ));
             }
             block(ui);
+            menu::separator(ui, p);
+            copy(ui);
+        }
+        AvatarList::Search => {
+            // menu_fs_avatar_search.xml's entries in its order, then the
+            // ones Aurora's menu of a name had already given the search
+            // (history, zoom, teleport to, go to and follow, report, copy)
+            profile(ui);
+            add_friend(ui);
+            contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            remove_friend(ui);
+            im(ui);
+            // "can_call": LLAvatarActions::canCall, and @startim as above
+            if menu::item_if(
+                ui,
+                p,
+                "phone-filled",
+                aurora_i18n::tr!("common-voice-call"),
+                world.calls.voice_enabled && can_im,
+            ) {
+                act(CtxAction::Call(id));
+            }
+            menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
+                act(CtxAction::PayResident(id));
+            }
+            offer_tp(ui);
+            request_tp(ui);
+            // Avatar.GroupInvite: always enabled
+            if menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+                act(CtxAction::InviteToGroup(id));
+            }
+            menu::separator(ui, p);
+            history(ui);
+            zoom(ui);
+            tp_to(ui);
+            navigation(ui);
+            menu::separator(ui, p);
+            if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("ui-context-report-abuse")) {
+                act(CtxAction::ReportAbuse(
+                    report.clone().unwrap_or(crate::report_abuse::ReportTarget::Avatar(id)),
+                ));
+            }
+            block(ui);
+            // "group_ban_separator" and BanFromAllGroups: shown only where
+            // we may ban them in one group at least (canBanFromAnyGroup)
+            if crate::world::group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
+                menu::separator(ui, p);
+                super::chat::moderation::ban_all_entries(ui, p, world, id, false);
+            }
             menu::separator(ui, p);
             copy(ui);
         }
@@ -1846,13 +1902,13 @@ mod tests {
             rights_has: 0,
         });
         let p = crate::theme::Theme::default().palette();
-        for kind in [AvatarList::Friend, AvatarList::Name, AvatarList::Nearby] {
+        for kind in [AvatarList::Friend, AvatarList::Name, AvatarList::Nearby, AvatarList::Search] {
             for (key, map) in [
                 ("common-teleport-to", false),
                 ("common-show-on-map-2", true),
                 ("common-zoom-2", false),
             ] {
-                if map && kind == AvatarList::Name {
+                if map && matches!(kind, AvatarList::Name | AvatarList::Search) {
                     continue;
                 }
                 let mut frames = Frames::new();
@@ -1915,7 +1971,7 @@ mod tests {
                 }));
                 assert!(!can_pay_resident(&world) && !can_show_on_map(&world));
             }
-            for kind in [AvatarList::Friend, AvatarList::Nearby] {
+            for kind in [AvatarList::Friend, AvatarList::Nearby, AvatarList::Search] {
                 let mut frames = Frames::new();
                 let mut point = egui::Pos2::ZERO;
                 for _ in 0..2 {
@@ -1951,7 +2007,7 @@ mod tests {
         let other = Uuid::from_u128(7);
         let p = crate::theme::Theme::default().palette();
         let admin = aurora_i18n::text("admin-menu");
-        for kind in [AvatarList::Nearby, AvatarList::Friend, AvatarList::Name] {
+        for kind in [AvatarList::Nearby, AvatarList::Friend, AvatarList::Name, AvatarList::Search] {
             for (level, id, shown) in [(0, other, false), (200, other, true), (200, world.agent_id, false)] {
                 world.god_level = level;
                 let mut frames = Frames::new();
@@ -2135,6 +2191,11 @@ mod tests {
         assert!(offers_friendship(AvatarList::Name, false, false));
         assert!(offers_friendship(AvatarList::Name, false, true));
         assert!(!offers_friendship(AvatarList::Name, true, true));
+        // FSAvatarSearchMenu: no `@shownames` test either (its results name
+        // their residents), neither on the profile nor on "can_add"
+        assert!(!name_menu_restricted(AvatarList::Search, true));
+        assert!(offers_friendship(AvatarList::Search, false, false));
+        assert!(!offers_friendship(AvatarList::Search, true, true));
     }
 
     /// `@shownames=n` hides no name in a conversation (issue #3547): the
