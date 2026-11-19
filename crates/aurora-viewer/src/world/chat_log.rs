@@ -108,6 +108,26 @@ fn legacy_folder(first: &str, last: &str, grid: &str) -> Option<String> {
     .chat_folder()
 }
 
+/// The transcripts' part of a Chat Service delete (`ChatLog::service_sweep`),
+/// run on the transcript thread before the service's own files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceSweep {
+    /// Aurora's own folder: its transcripts are erased.
+    Erase(PathBuf),
+    /// A folder shared with the Legacy Viewer: every transcript stays.
+    Shared,
+}
+
+impl ServiceSweep {
+    /// The number of transcript files removed.
+    pub fn run(&self) -> std::io::Result<usize> {
+        match self {
+            ServiceSweep::Erase(dir) => store::erase(dir),
+            ServiceSweep::Shared => Ok(0),
+        }
+    }
+}
+
 struct Open {
     identity: Identity,
     dir: PathBuf,
@@ -434,6 +454,25 @@ impl ChatLog {
         };
         self.erasing = self.worker().map(|w| w.erase(dir));
         self.erasing.is_some()
+    }
+
+    /// The transcripts' part of a Chat Service delete, asked now or resumed
+    /// at login (deleteTranscriptContent in runDelete,
+    /// indra/newview/llchatservicehistory.cpp, LL viewer 26.5): the folder
+    /// placed now. None while none is placed: the sweep fails and the
+    /// delete stays pending, as before. A folder shared with the Legacy
+    /// Viewer is never erased, as with `erase`: the delete then finishes on
+    /// the service's own files and every transcript stays (an Aurora
+    /// difference: the LL viewer has no shared folder). The path is taken
+    /// here, on the main thread: a layout switched before the job runs
+    /// cannot turn the erase onto the shared folder.
+    pub fn service_sweep(&self) -> Option<ServiceSweep> {
+        let dir = self.dir()?;
+        Some(if self.shared() {
+            ServiceSweep::Shared
+        } else {
+            ServiceSweep::Erase(dir.to_path_buf())
+        })
     }
 
     /// The folder chosen in the preferences (None: the default one), for the
@@ -1085,6 +1124,27 @@ mod tests {
         default.set_legacy_layout(true);
         default.login_named(me, JANE);
         assert!(!default.shared());
+    }
+
+    #[test]
+    fn the_service_sweep_never_erases_a_shared_folder() {
+        let root = temp();
+        let me = Uuid::from_u128(0xA11CE);
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        assert_eq!(log.service_sweep(), None, "no folder placed");
+        log.login_named(me, JANE);
+        let own = log.dir().unwrap().to_path_buf();
+        assert_eq!(log.service_sweep(), Some(ServiceSweep::Erase(own)));
+        log.set_legacy_layout(true);
+        let shared = root.join("jane_doe");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("Bob Smith.txt"), "kept").unwrap();
+        let sweep = log.service_sweep().unwrap();
+        assert_eq!(sweep, ServiceSweep::Shared);
+        assert_eq!(sweep.run().unwrap(), 0);
+        assert_eq!(std::fs::read(shared.join("Bob Smith.txt")).unwrap(), b"kept");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
