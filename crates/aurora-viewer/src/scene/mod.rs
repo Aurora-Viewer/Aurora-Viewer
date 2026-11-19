@@ -454,11 +454,18 @@ pub struct ObjGpu {
     pub built_faces: usize,
     pub is_avatar: bool,
     pub parcel_hidden: bool,
-    /// Left out by the photo's isolation (`snapshot::isolate`) or by a
-    /// hidden rendering type (`render_types`): kept, only flagged for the
-    /// GPU lists (`object_flags::HIDDEN`) and left out of the CPU ones and
-    /// of the picking, so that it comes back at once.
+    /// Left out by a hidden rendering type (`render_types`), the avatar
+    /// studio or, for an avatar and what it wears, the photo's isolation
+    /// (`snapshot::isolate::View::Gone`): kept, only flagged for the GPU
+    /// lists (`object_flags::HIDDEN`) and left out of the CPU ones and of
+    /// the picking, so that it comes back at once.
     pub hidden: bool,
+    /// A linkset the photo's isolation leaves out of the picture only
+    /// (`snapshot::isolate::View::Unseen`, `object_flags::UNSEEN`): out of
+    /// the main view and of the picking, still casting its shadow and in
+    /// the reflections and probes, so that the subject keeps the scene's
+    /// light (#2316).
+    pub unseen: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -558,6 +565,7 @@ impl ObjGpu {
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.hidden, object_flags::HIDDEN),
+            (self.unseen, object_flags::UNSEEN),
             (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
@@ -668,7 +676,9 @@ fn object_visibility(
     if d - sr > ctx.draw_distance && !g.is_avatar {
         return None;
     }
-    let in_view = ctx.view.sphere_visible(sc, sr);
+    // (left out of the photo's picture only: out of the view, the rest
+    // as the entire scene, #2316)
+    let in_view = !g.unseen && ctx.view.sphere_visible(sc, sr);
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
     let probes = ctx.reflections;
@@ -2503,14 +2513,23 @@ impl Scene {
             self.textures.release(&id);
         }
         self.clear(old);
-        // every GpuGeom holds allocations of the lost device's arena
-        self.geoms.clear();
+        // every GpuGeom holds allocations of the lost device's arena. The
+        // tables go to the trash thread whole (`Jobs::discard`), as the
+        // geometries collected each frame do: freeing them touches every
+        // geometry's picking faces and joint bounds, and after a driver
+        // reset Windows has often paged the viewer's memory out, so each
+        // free read it back from the disk first. Two freeze reports
+        // (#2997, #2998) stopped there, in `forget_gpu`, with the window
+        // not answering for 10 s.
+        self.jobs.discard((
+            std::mem::take(&mut self.geoms),
+            std::mem::take(&mut self.geom_waiting),
+            std::mem::take(&mut self.geom_delayed),
+        ));
+        self.geom_trash.empty(&self.jobs);
         self.geom_zero.clear();
         self.geom_pending = 0;
-        self.geom_waiting.clear();
         self.geom_waiting_spare.clear();
-        self.geom_delayed.clear();
-        self.geom_trash = Default::default();
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
@@ -2768,6 +2787,12 @@ impl Scene {
         Self::object_transform_raw(world, idx, now, 0, None)
     }
 
+    /// An avatar's standing height from its shape, before mesh joint
+    /// overrides (the server's agent size), once its skeleton is built.
+    pub fn neutral_body_height(&self, avatar: &Uuid) -> Option<f32> {
+        self.skeletons.get(avatar).map(|s| s.neutral_body_height)
+    }
+
     /// Where our avatar's object is (render space) while it sits on another:
     /// its seat-relative position through the seat's transform, without the
     /// shape offset of the drawn root (sitting branch of
@@ -2885,8 +2910,17 @@ impl Scene {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
-        // (a HUD is no rendering type: it stays)
-        let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
+        // (hidden, unseen); a HUD is no rendering type: it stays
+        let left_out = |idx: usize, hud: bool| {
+            if !hud && types.hides_object(world, idx) {
+                return (true, false);
+            }
+            match isolate::object_view(world, idx) {
+                isolate::View::Drawn => (false, false),
+                isolate::View::Unseen => (false, true),
+                isolate::View::Gone => (true, false),
+            }
+        };
         let studio_roots = if world.avatar_studio {
             isolate::studio_roots(world)
         } else {
@@ -2902,16 +2936,16 @@ impl Scene {
             self.studio_visible = world.avatar_studio;
             self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
-                let hidden = left_out(idx, g.hud);
-                if g.hidden != hidden {
-                    g.hidden = hidden;
+                let out = left_out(idx, g.hud);
+                if (g.hidden, g.unseen) != out {
+                    (g.hidden, g.unseen) = out;
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
         } else if iso.hides() || types.any_object() || world.avatar_studio {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
-                    g.hidden = left_out(idx, g.hud);
+                    (g.hidden, g.unseen) = left_out(idx, g.hud);
                 }
             }
         }
@@ -6281,6 +6315,16 @@ impl Scene {
     }
 }
 
+/// An avatar's head as a lens sees it, in the world: mHead, the way the
+/// face looks (the head's X axis) and the joints of its two eyes, left
+/// then right (None on a skeleton without them).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Face {
+    pub head: Vec3,
+    pub forward: Vec3,
+    pub eyes: Option<(Vec3, Vec3)>,
+}
+
 impl Scene {
     /// World position of an avatar's head as posed last frame.
     pub fn head_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
@@ -6293,6 +6337,30 @@ impl Scene {
             Some(h) => p + r * (h - world.avatar_lib.pelvis),
             None => p + r * Vec3::new(0.0, 0.0, 0.65),
         })
+    }
+
+    /// An avatar's head as a lens sees it (`Face`), as posed last frame.
+    pub fn face_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Face> {
+        let head = self.head_world(world, id, now)?;
+        let idx = world.objects.index_of_uuid(id)?;
+        let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            let eyes = self
+                .joint_world(world, id, "mEyeLeft", now)
+                .zip(self.joint_world(world, id, "mEyeRight", now));
+            return Some(Face {
+                head,
+                forward: r * Vec3::X,
+                eyes,
+            });
+        }
+        let motion = self.motions.get(id);
+        let eyes = motion.and_then(|c| c.eyes_each()).map(|(left, right)| {
+            let place = |e: Vec3| p + r * (e - world.avatar_lib.pelvis);
+            (place(left), place(right))
+        });
+        let forward = r * motion.and_then(|c| c.head_rot()).unwrap_or(Quat::IDENTITY) * Vec3::X;
+        Some(Face { head, forward, eyes })
     }
 
     /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),
@@ -6317,6 +6385,12 @@ impl Scene {
     /// Camera placement can then apply the hover-camera preference directly.
     pub fn eyes_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
         Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
+    }
+
+    /// The head joint as last posed, relative to the avatar root (as
+    /// `eyes_offset`).
+    pub fn head_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
+        Some(self.motions.get(id)?.head_pos()? - world.avatar_lib.pelvis)
     }
 
     /// A posed skeleton joint's displacement from the avatar's own shaped
@@ -7393,6 +7467,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
+                head_offset: scene.head_offset(&world, &owner),
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.0,
@@ -7458,6 +7533,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
+            head_offset: scene.head_offset(&world, &owner),
             draw_distance: 128.0,
             region_width: 256.0,
             aspect: 1.0,

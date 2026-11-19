@@ -163,6 +163,14 @@ impl Rlva {
         self.camera_number(name, minimum).unwrap_or(default)
     }
 
+    /// RlvActions::getCameraAvatarDistanceLimits and
+    /// getCameraOriginDistanceLimits (indra/newview/rlvactions.cpp): the two
+    /// limits once one of them is set, the other at its default.
+    pub fn camera_distance_limits(&self, low: &str, high: &str) -> Option<(f32, f32)> {
+        let (min, max) = (self.camera_number(low, true), self.camera_number(high, false));
+        (min.is_some() || max.is_some()).then(|| (min.unwrap_or(0.0), max.unwrap_or(f32::INFINITY)))
+    }
+
     fn camera_number(&self, name: &str, minimum: bool) -> Option<f32> {
         self.camera_winner(name, minimum).map(|(value, _)| value)
     }

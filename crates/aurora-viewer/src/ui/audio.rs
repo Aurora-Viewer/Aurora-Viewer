@@ -73,8 +73,7 @@ fn toggle_master_mute(audio: &mut AudioSettings) {
 /// Preferences › Sound › Voice. Music and media switch their channel.
 fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
     match i {
-        6 => Some(&mut audio.voice_enabled),
-        _ if PANEL_TOGGLES.contains(&i) => Some(&mut audio.enabled[i]),
+        _ if PANEL_TOGGLES.contains(&i) => Some(audio.channel_box(i)),
         _ => None,
     }
 }

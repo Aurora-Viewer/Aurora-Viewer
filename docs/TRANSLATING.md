@@ -120,6 +120,19 @@ the parity of the keys and variables with English, as well as selection,
 fallback and plurals. `scripts/check.ps1` also runs the viewer and network
 tests.
 
+## Trying a translation without building
+
+Preferences › Language and updates › "Use a language file (.ftl)" loads a
+catalogue file of your own instead of the list's language, without building
+the viewer: start from a copy of `en.ftl`, name it after its language (`de.ftl`,
+`pt-BR.ftl`, which gives the plural rules), translate, choose it with
+Browse… and start the viewer again. The file is read at startup only. The
+texts it lacks are shown in English, and the line under the button counts
+the texts it holds and the entries Fluent could not read. The file must be
+UTF-8 (Notepad's byte order mark is accepted). To add the language to the
+viewer for everyone, put the file in `crates/aurora-i18n/locales/` as
+described above.
+
 To compare the languages without changing the preferences:
 
 ```powershell
