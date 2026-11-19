@@ -7,6 +7,7 @@
 //
 // Group 1 is the scene, group 2 the renderer's bindless textures.
 
+const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_ALPHA_MASK: u32 = 2u;
 const FLAG_PBR: u32 = 8u;
 const FLAG_TERRAIN: u32 = 64u;

@@ -1028,6 +1028,11 @@ pub struct PointLight {
     /// that near the light (its bulb, its lamp's body) does not shadow it in
     /// the traced light (rt_lights.wgsl). 0 for lights of no prim.
     pub source_radius: f32,
+    /// What the light shines from, the same number at every frame, for what
+    /// follows a light from a frame to the next (how far it moved, for the
+    /// history of its traced shadow). 0 for lights of no prim, which stay
+    /// where they are.
+    pub source_id: u32,
 }
 
 /// Frustum and texture of a projector (a prim light with a light texture),

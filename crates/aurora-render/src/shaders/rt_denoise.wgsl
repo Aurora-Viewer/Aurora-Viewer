@@ -15,7 +15,10 @@
 // noise: the noisy parts blur wide, the edges and the real changes stay.
 // A tile whose own pixels and its neighbours' have none (a light's share
 // lit through or shadowed through, most of the image) is copied as it is:
-// the filter would leave each of its pixels unchanged.
+// the filter would leave each of its pixels unchanged. The passes write to
+// two images in turn, so from the third on the image a pass writes to
+// holds such a tile already, from the pass before the last: it is copied
+// once to each image and left alone after (`params.mode.z`, `.w`).
 //
 // The image filtered: rgb a value, a its history's frames (`cs_variance`'s
 // input) or its variance (`cs_atrous`'s). The guide (rt_history.wgsl
@@ -37,7 +40,10 @@ struct Params {
     // width, height of the image, z: this pass's step (pixels), w: the
     // variance under which a pixel has no noise worth filtering
     size: vec4<f32>,
-    // x: 1 when the pair has a tint beside (`input_tint`)
+    // x: 1 when the pair has a tint beside (`input_tint`); y: over 0 when
+    // `cs_atrous`'s image is kept as the next frame's history, a number
+    // that changes with the frame (`dithered`); z: 1 when `output` holds
+    // the tiles with no noise already, w: 1 when `output_tint` does
     mode: vec4<f32>,
 };
 
@@ -73,6 +79,29 @@ fn unpack_normal(e: vec2<f32>) -> vec3<f32> {
         n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
     }
     return normalize(n);
+}
+
+// A hash of `v` (PCG).
+fn pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+// `c` as a 16-bit float holds it, each channel rounded up or down by
+// chance so that its mean is `c` (rt_gi.wgsl `dithered`, which says why):
+// for the image kept as a history, another chance for each pixel `p` at
+// each `frame`.
+fn dithered(c: vec3<f32>, p: vec2<u32>, frame: u32) -> vec3<f32> {
+    let a = pcg(p.x + pcg(p.y + pcg(frame)));
+    let b = pcg(a);
+    let u = vec3<f32>(f32(a >> 8u), f32(b >> 8u), f32(pcg(b) >> 8u)) / 16777216.0;
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(65504.0));
+    let e = max(floor(log2(max(x, vec3<f32>(1.0e-30)))), vec3<f32>(-14.0));
+    let step = exp2(e - vec3<f32>(10.0));
+    let q = x / step;
+    let lo = floor(q);
+    return (lo + vec3<f32>(u < (q - lo))) * step;
 }
 
 fn inside(q: vec2<i32>) -> bool {
@@ -202,11 +231,13 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
     if (!inside(p)) {
         return;
     }
-    let c = textureLoad(input, p, 0);
     if (calm(vec2<i32>(tile.xy))) {
-        textureStore(output, p, c);
+        if (params.mode.z < 0.5) {
+            textureStore(output, p, textureLoad(input, p, 0));
+        }
         return;
     }
+    let c = textureLoad(input, p, 0);
     let g = textureLoad(guide, p, 0);
     if (g.z <= 0.0) {
         textureStore(output, p, c);
@@ -261,7 +292,11 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
         textureStore(output, p, c);
         return;
     }
-    textureStore(output, p, vec4<f32>(sum / w_sum, variance / (w_sum * w_sum)));
+    var value = sum / w_sum;
+    if (params.mode.y > 0.5) {
+        value = dithered(value, vec2<u32>(id.xy), u32(params.mode.y));
+    }
+    textureStore(output, p, vec4<f32>(value, variance / (w_sum * w_sum)));
 }
 
 // The share's variance (x) and the sun's (y) at pixel `p`, written with
@@ -348,15 +383,20 @@ fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgro
     if (!inside(p)) {
         return;
     }
-    let c = textureLoad(input, p, 0);
     let tinted = params.mode.x > 0.5;
+    if (calm(vec2<i32>(tile.xy))) {
+        if (params.mode.z < 0.5) {
+            textureStore(output, p, textureLoad(input, p, 0));
+        }
+        if (tinted && params.mode.w < 0.5) {
+            textureStore(output_tint, p, textureLoad(input_tint, p, 0));
+        }
+        return;
+    }
+    let c = textureLoad(input, p, 0);
     var t = vec4<f32>(0.0);
     if (tinted) {
         t = textureLoad(input_tint, p, 0);
-    }
-    if (calm(vec2<i32>(tile.xy))) {
-        store_pair(p, c, t);
-        return;
     }
     let g = textureLoad(guide, p, 0);
     if (g.z <= 0.0) {

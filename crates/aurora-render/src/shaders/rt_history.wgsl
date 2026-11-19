@@ -5,7 +5,8 @@
 //
 // Expects `params.prev_clip_from_world`, `params.camera` (w: 1 when
 // `motion_tex` is the prepass's and not a black stand-in),
-// `params.prev_camera`, `params.screen` and `motion_tex` (the prepass's
+// `params.prev_camera`, `params.screen`, `params.changed` and
+// `params.changes` (`light_changed`), and `motion_tex` (the prepass's
 // normals and motion target: xy the mesh's smooth normal, object.wgsl
 // `depth_normal`; zw the pixel's screen motion since last frame, in uv, 0
 // where nothing moved or no motion was drawn).
@@ -94,4 +95,25 @@ fn pack_normal(n: vec3<f32>) -> vec2<f32> {
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Whether the light that falls at `p` changed lately: a lamp there came,
+// went, moved or changed its brightness, or the sun's or the sky's light
+// jumped (rt_light_changes.rs). The pass's `params` keep the places
+// (`changed`: xyz and a radius each) and `changes`: x how many, y 1 when
+// the light changed everywhere, z the frames a history averages at most
+// where it did.
+fn light_changed(p: vec3<f32>) -> bool {
+    if (params.changes.y > 0.5) {
+        return true;
+    }
+    let count = u32(params.changes.x);
+    for (var i = 0u; i < count; i++) {
+        let c = params.changed[i];
+        let d = p - c.xyz;
+        if (dot(d, d) < c.w * c.w) {
+            return true;
+        }
+    }
+    return false;
 }

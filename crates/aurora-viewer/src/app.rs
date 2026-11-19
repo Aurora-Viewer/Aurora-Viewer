@@ -1171,6 +1171,8 @@ pub struct App {
     texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
     /// AURORA_DEMO_SLIDESHOW: a panel whose texture changes every few seconds.
     slideshow_demo: Option<crate::demo::slideshow::SlideshowDemo>,
+    /// The lamp of `AURORA_DEMO_LAMP_BLINK` and `AURORA_DEMO_LAMP_MOVE`.
+    lamp_demo: Option<crate::demo::lamp::LampDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -2286,6 +2288,7 @@ impl App {
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             slideshow_demo: None,
+            lamp_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -14835,6 +14838,10 @@ impl App {
                 self.camera.forward(),
             );
         }
+        // AURORA_DEMO_LAMP_BLINK: a lamp switched off and on
+        if let Some(demo) = &mut self.lamp_demo {
+            demo.tick(self.frame_count, &mut self.world, self.camera.position, self.camera.forward());
+        }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
         if let Some(reply) = self
@@ -23889,6 +23896,7 @@ impl ApplicationHandler for App {
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.slideshow_demo = crate::demo::slideshow::SlideshowDemo::from_env();
+            self.lamp_demo = crate::demo::lamp::LampDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();

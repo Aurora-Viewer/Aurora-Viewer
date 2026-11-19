@@ -30,6 +30,12 @@
 // share is what the denoiser measures the noise by (rt_denoise.wgsl): its
 // guide keeps the second moment beside.
 // The samples merged become the choice the next frame starts from.
+// The history follows its lights: a light that moves takes the frames over
+// which it goes a quarter of its diameter (`light_fresh`), so the shadows
+// it carries across a floor do not trail behind it, and where a lamp came,
+// went or changed its brightness
+// (rt_history.wgsl `light_changed`) the history holds a few frames, so a
+// lamp switched on has its shadows at once.
 // The sun's soft shadow shares this history: `cs_lights_reuse` averages
 // the sun's ray of each frame (rt_shadows.wgsl) beside the share, and where
 // a shadow moved off a still surface (a walking avatar's, off the floor)
@@ -68,14 +74,21 @@ struct Params {
     // frame's number, w: 1 when last frame's history is valid, 3 when its
     // choices are of the same lights too.
     mode: vec4<f32>,
-};
-
-// A light of the frame's list (the frame uniform's `lights`, in order).
-struct Light {
-    pos_radius: vec4<f32>,
-    color_falloff: vec4<f32>,
-    // x: the radius of the prim it shines from, y: 1 for a projector.
-    source: vec4<f32>,
+    // Where a lamp changed lately (rt_light_changes.rs): xyz a ball's
+    // centre, w its radius.
+    changed: array<vec4<f32>, 8>,
+    // x: how many of them, y: 0 (the sun's and the sky's light are not
+    // this history's), z: the frames the history averages at most where
+    // one did.
+    changes: vec4<f32>,
+    // The lights by screen tile and depth (light_tiles.rs `LightSets`, the
+    // main view's): xyz the camera's forward axis, w: 1 when the sets
+    // below narrow the list; then the lights of each column, each row and
+    // each slice of depth, two sets per element.
+    sets: vec4<f32>,
+    columns: array<vec4<u32>, 16>,
+    rows: array<vec4<u32>, 16>,
+    slices: array<vec4<u32>, 16>,
 };
 
 // Candidates a pixel draws among the lights reaching it.
@@ -108,6 +121,7 @@ const MID_DRAWN: u32 = 0x200u;
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
+// the frame's point lights (rt_light.wgsl `Light`)
 @group(0) @binding(2) var<storage, read> lights: array<Light>;
 
 // A choice: the light's index, its weight, its confidence (ReSTIR's M).
@@ -200,19 +214,84 @@ fn unpack_reset(z: u32) -> vec4<f32> {
     return vec4<f32>(vec3<f32>(t) / 511.0, f32(z & 0xFu) / f32(RESET_RAYS));
 }
 
+// Sets of lights, a bit each in the list's order, as common.wgsl walks
+// them (`light_set`, `next_light`). A pixel walked the whole list, three
+// times and more where many lights reach it, for the few whose sphere holds
+// it: it walks the lights of its screen tile and its depth, which the frame
+// has sorted for the shading. The same lights in the same order, so the
+// same picture.
+
+// The first `n` lights.
+fn first_lights(n: u32) -> vec2<u32> {
+    let part = (1u << (n & 31u)) - 1u;
+    let lo = select(part, 0xffffffffu, n >= 32u);
+    let hi = select(select(part, 0xffffffffu, n >= 64u), 0u, n <= 32u);
+    return vec2<u32>(lo, hi);
+}
+
+fn set_of(pair: vec4<u32>, i: u32) -> vec2<u32> {
+    return select(pair.xy, pair.zw, (i & 1u) == 1u);
+}
+
+// The lights that can reach `world`, seen at `pixel`, of the `listed`.
+fn lights_near(pixel: vec2<i32>, world: vec3<f32>, listed: u32) -> vec2<u32> {
+    var held = first_lights(listed);
+    if (params.sets.w > 0.5) {
+        let at = (vec2<f32>(pixel) + vec2<f32>(0.5)) * params.screen.zw * 32.0;
+        let column = min(u32(at.x), 31u);
+        let row = min(u32(at.y), 31u);
+        // common.wgsl `tile_cell`: LIGHT_SLICE_NEAR, LIGHT_SLICES_PER_OCTAVE
+        let depth = dot(world - params.camera.xyz, params.sets.xyz);
+        let slice = min(u32(log2(max(depth, 0.25) / 0.25) * 3.0), 31u);
+        held &= set_of(params.columns[column >> 1u], column)
+            & set_of(params.rows[row >> 1u], row)
+            & set_of(params.slices[slice >> 1u], slice);
+    }
+    return held;
+}
+
+// The first light of `among`, taken out of it; `MAX_LIGHTS` when it is empty.
+fn next_light(among: ptr<function, vec2<u32>>) -> u32 {
+    let lo = (*among).x;
+    if (lo != 0u) {
+        (*among).x = lo & (lo - 1u);
+        return firstTrailingBit(lo);
+    }
+    let hi = (*among).y;
+    if (hi != 0u) {
+        (*among).y = hi & (hi - 1u);
+        return 32u + firstTrailingBit(hi);
+    }
+    return MAX_LIGHTS;
+}
+
+fn with_light(among: vec2<u32>, i: u32) -> vec2<u32> {
+    let bit = 1u << (i & 31u);
+    return among | select(vec2<u32>(bit, 0u), vec2<u32>(0u, bit), i >= 32u);
+}
+
+// The light of `among` after `nth` others, which has more than `nth`.
+fn nth_light(among: vec2<u32>, nth: u32) -> u32 {
+    let low = countOneBits(among.x);
+    let high = nth >= low;
+    var word = select(among.x, among.y, high);
+    let skip = select(nth, nth - low, high);
+    for (var k = 0u; k < skip; k++) {
+        word &= word - 1u;
+    }
+    return select(0u, 32u, high) + firstTrailingBit(word);
+}
+
 // The light ray `r` of a frame with no history goes to: the lights reaching
-// the pixel (`total` their light in all) drawn in proportion to their light
-// at even steps from `start` (systematic sampling).
-fn reset_light(r: u32, start: f32, total: f32, listed: u32, world: vec3<f32>, n: vec3<f32>) -> u32 {
+// the pixel (`reaching`, `total` their light in all) drawn in proportion to
+// their light at even steps from `start` (systematic sampling).
+fn reset_light(r: u32, start: f32, total: f32, reaching: vec2<u32>, world: vec3<f32>, n: vec3<f32>) -> u32 {
     let goal = (f32(r) + start) / f32(RESET_RAYS) * total;
     var reached = 0.0;
     var to = 0u;
-    for (var i = 0u; i < listed; i++) {
-        let p = light_target(i, world, n);
-        if (p <= 0.0) {
-            continue;
-        }
-        reached += p;
+    var walk = reaching;
+    for (var i = next_light(&walk); i < MAX_LIGHTS; i = next_light(&walk)) {
+        reached += light_target(i, world, n);
         to = i;
         if (goal < reached) {
             break;
@@ -223,6 +302,18 @@ fn reset_light(r: u32, start: f32, total: f32, listed: u32, world: vec3<f32>, n:
 
 fn light_size(i: u32) -> f32 {
     return clamp(lights[i].source.x, LIGHT_SIZE_MIN, LIGHT_SIZE_MAX);
+}
+
+// The share of a frame in light `i`'s history: one of `HISTORY` for a
+// light that stands, more for one that moves. Its shadows move with it, by
+// as much as its penumbras are wide for each diameter it goes, and the
+// history is late by its length times the light's step: kept within a
+// quarter of the light's diameter, an eighth of a penumbra. (Measured on
+// the shadow a lamp carried at 3 m/s swept across a floor, 60 frames a
+// second: 9 levels of 255 off at worst with the 12 frames, 6 within a
+// diameter, 4 within a quarter; the shadow's grain the same.)
+fn light_fresh(i: u32) -> f32 {
+    return clamp(2.0 * lights[i].source.z / light_size(i), 1.0 / HISTORY, 1.0);
 }
 
 // The ray from `origin` to the point `u` (two numbers in 0..1) of the disc
@@ -315,11 +406,14 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     var count = 0u;
     var total = 0.0;
     let listed = min(u32(params.mode.x), MAX_LIGHTS);
-    for (var i = 0u; i < listed; i++) {
+    var reaching = vec2<u32>(0u);
+    var near = lights_near(pixel, world, listed);
+    for (var i = next_light(&near); i < MAX_LIGHTS; i = next_light(&near)) {
         let p = light_target(i, world, n);
         if (p > 0.0) {
             count += 1u;
             total += p;
+            reaching = with_light(reaching, i);
         }
     }
 
@@ -338,11 +432,9 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         if (few) {
             let at = turn(id.xy, u32(params.mode.z)) * total;
             var reached = 0.0;
-            for (var i = 0u; i < listed; i++) {
+            var walk = reaching;
+            for (var i = next_light(&walk); i < MAX_LIGHTS; i = next_light(&walk)) {
                 let p = light_target(i, world, n);
-                if (p <= 0.0) {
-                    continue;
-                }
                 reached += p;
                 chosen = i;
                 chosen_target = p;
@@ -354,23 +446,13 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         } else {
             for (var k = 0u; k < CANDIDATES; k++) {
                 let entry = min(u32(rand(&seed) * f32(count)), count - 1u);
-                // the entry-th light reaching the pixel
-                var seen_so_far = 0u;
-                for (var i = 0u; i < listed; i++) {
-                    let p = light_target(i, world, n);
-                    if (p <= 0.0) {
-                        continue;
-                    }
-                    if (seen_so_far == entry) {
-                        let weight = p * f32(count) / f32(CANDIDATES);
-                        sum += weight;
-                        if (rand(&seed) * sum < weight) {
-                            chosen = i;
-                            chosen_target = p;
-                        }
-                        break;
-                    }
-                    seen_so_far += 1u;
+                let i = nth_light(reaching, entry);
+                let p = light_target(i, world, n);
+                let weight = p * f32(count) / f32(CANDIDATES);
+                sum += weight;
+                if (rand(&seed) * sum < weight) {
+                    chosen = i;
+                    chosen_target = p;
                 }
             }
         }
@@ -415,7 +497,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var r = 0u; r < rays; r++) {
             var to = chosen;
             if (reset) {
-                to = reset_light(r, start, total, listed, world, n);
+                to = reset_light(r, start, total, reaching, world, n);
             }
             let blocked = light_blocked(to, origin, flat, fract(at + f32(r) * vec2<f32>(0.7548777, 0.5698403)));
             if (blocked < 0.0) {
@@ -432,7 +514,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
             var sent = vec3<f32>(0.0);
             var got = vec3<f32>(0.0);
             for (var r = 0u; r < RESET_RAYS; r++) {
-                let tint = light_tint(reset_light(r, start, total, listed, world, n));
+                let tint = light_tint(reset_light(r, start, total, reaching, world, n));
                 sent += tint;
                 got += select(vec3<f32>(0.0), tint, (arrived & (1u << r)) != 0u);
             }
@@ -481,11 +563,15 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var count = 0u;
     var total = 0.0;
-    for (var i = 0u; i < listed; i++) {
+    // a frame's share in the history: each light's, by its light here
+    var fresh = 0.0;
+    var near = lights_near(pixel, world, listed);
+    for (var i = next_light(&near); i < MAX_LIGHTS; i = next_light(&near)) {
         let p = light_target(i, world, n);
         if (p > 0.0) {
             count += 1u;
             total += p;
+            fresh += p * light_fresh(i);
         }
     }
 
@@ -619,7 +705,14 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back.xy, 0);
         let longest = select(HISTORY, HISTORY_MOVING, back.z > 0);
-        frames = min(h.a + 1.0, longest);
+        var kept = longest;
+        if (total > 0.0) {
+            kept = min(kept, total / fresh);
+        }
+        if (light_changed(world)) {
+            kept = min(kept, params.changes.z);
+        }
+        frames = min(h.a + 1.0, kept);
         share = mix(h.r, sample, 1.0 / frames);
         moment = mix(textureLoad(prev_guide, back.xy, 0).w, moment, 1.0 / frames);
         if (tinted) {
@@ -648,9 +741,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
                     hi = max(hi, v);
                 }
             }
-            let kept = clamp(was, lo, hi);
-            sun_frames = max(sun_frames * (1.0 - abs(kept - was)), 1.0);
-            was = kept;
+            let within = clamp(was, lo, hi);
+            sun_frames = max(sun_frames * (1.0 - abs(within - was)), 1.0);
+            was = within;
         }
         sun = mix(was, sun_now, 1.0 / sun_frames);
         // (the mask has 8 bits: nearer than that to lit or dark is it)

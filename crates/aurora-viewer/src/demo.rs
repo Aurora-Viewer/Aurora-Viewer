@@ -178,6 +178,9 @@ pub mod im_announce;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
+/// A lamp switched off and on every few frames (AURORA_DEMO_LAMP_BLINK).
+#[path = "demo_lamp.rs"]
+pub mod lamp;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;

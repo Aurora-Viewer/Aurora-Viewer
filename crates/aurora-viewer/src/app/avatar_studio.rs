@@ -308,6 +308,7 @@ impl App {
                     falloff: 0.5,
                     projector: None,
                     source_radius: 0.0,
+                    source_id: 0,
                 })
                 .collect();
         }
