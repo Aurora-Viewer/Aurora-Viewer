@@ -133,6 +133,16 @@ UTF-8 (Notepad's byte order mark is accepted). To add the language to the
 viewer for everyone, put the file in `crates/aurora-i18n/locales/` as
 described above.
 
+For an in-progress language, keep only translated messages in the file.
+After a viewer update, new messages absent from the file use the English
+text shipped with that build. Invalid Fluent entries are skipped. If a
+translated message cannot be formatted (for example, it still uses a
+variable removed from the call), the viewer tries English with the same
+arguments. If English also has no usable message, the key is displayed.
+When updating a catalogue, review existing translations against changes to
+the English text, since an older entry can still render after its meaning
+changes.
+
 To compare the languages without changing the preferences:
 
 ```powershell
