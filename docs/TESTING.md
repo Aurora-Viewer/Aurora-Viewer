@@ -4937,6 +4937,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
 | `AURORA_DEMO_CLOUDS_PITCH=<degrees>` | Camera pitch of `AURORA_DEMO_CLOUDS` (default 12; 2 shows the clouds at the horizon) |
+| `AURORA_DEMO_HORIZON=<eye height m>[:flat\|:<radius km>]` | Planet curvature on (the Earth's radius, or the one given; `flat` off) and a level view over the void sea from that height |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
@@ -5304,6 +5305,18 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_HORIZON=<eye height m>[:flat|:<radius km>]`**: turns on
+  Preferences › Graphics › Sky and environment › Planet curvature for this
+  launch (in memory) with the Earth's radius, or the radius given in km;
+  `flat` keeps it off for the before / after (`demo_horizon.rs`). The camera
+  stands over the sea at the demo region's southern edge, that many metres
+  above the water (1 to 3000), and looks level to the south over the void
+  water. What to look at: flat, the sea runs out to the middle of the
+  picture; curved, it ends at a sharp horizon just under the middle, with
+  the sky below it (from 10 m on the Earth only ~0.1°, 2 px at 1080p; from
+  300 m 0.56°; `10:200` puts a 200 km planet's horizon ~2 km out). The sea
+  has no seam or step where the region's cells meet the far slabs, and
+  nothing in the region moves. Capture from `AURORA_CAPTURE_FRAMES=800`.
 - **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on
   Preferences › Aurora › Clouds › Volumetric for this launch (in memory,
   `AURORA_CLOUDS=legacy` keeps the Legacy Viewer's flat layer under the

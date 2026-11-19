@@ -7,9 +7,35 @@ use aurora_render::{DrawCmd, DrawRecord, MeshAlloc, Renderer, Vertex};
 use glam::{Mat4, Vec2, Vec3};
 
 /// Void water: region-sized cells within this many regions of the main
-/// one, then four large slabs out to `VOID_EXTENT`.
+/// one, then four large slabs out to `VOID_EXTENT`, or as far as the
+/// horizon of a curved planet (`void_reach`).
 const VOID_CELLS: i32 = 4;
 const VOID_EXTENT: f32 = 16384.0;
+/// The farthest the void water reaches on a curved planet (m): the
+/// horizon from ~3 km up on the Earth. Past it, region coordinates in
+/// single precision step by more than a centimetre.
+const VOID_EXTENT_MAX: f32 = 262_144.0;
+/// Cells per side of the slabs' grid on a curved planet. The drop is a
+/// parabola (constant curvature), so a flat cell of side s strays from it
+/// by s² / 8R wherever it lies: ~2 cm for a 1 km cell on the Earth.
+const FAR_GRID: usize = 32;
+
+/// How far the void water must reach from the main region's origin: to
+/// the horizon seen from `eye` (with a margin) on a curved planet, rounded
+/// up to a power of two so that the water is rebuilt only when the camera
+/// climbs or descends a long way; `VOID_EXTENT` when flat.
+pub fn void_reach(eye: Vec3, water: f32, radius: Option<f32>) -> f32 {
+    let Some(radius) = radius else {
+        return VOID_EXTENT;
+    };
+    let height = (eye.z - water).max(2.0);
+    // the horizon plus the camera's distance from the origin, and a margin
+    let reach = aurora_render::curvature::horizon_distance(height, radius) * 1.25 + eye.truncate().length();
+    if !reach.is_finite() {
+        return VOID_EXTENT_MAX;
+    }
+    ((reach.max(VOID_EXTENT) as u64).next_power_of_two() as f32).min(VOID_EXTENT_MAX)
+}
 
 struct Tile {
     origin: Vec3,
@@ -21,6 +47,8 @@ struct Tile {
 #[derive(Default)]
 pub struct WaterGpu {
     quad: Option<MeshAlloc>,
+    /// The slabs' grid on a curved planet (FAR_GRID).
+    far_grid: Option<MeshAlloc>,
     grids: [Option<MeshAlloc>; 4],
     near_grids: [Option<MeshAlloc>; 4],
     tiles: Vec<Tile>,
@@ -36,8 +64,8 @@ impl WaterGpu {
         for r in self.records.drain(..) {
             renderer.records.free(r);
         }
-        if let Some(q) = self.quad.take() {
-            renderer.free_mesh(q);
+        for mesh in [self.quad.take(), self.far_grid.take()].into_iter().flatten() {
+            renderer.free_mesh(mesh);
         }
         for grid in self.grids.iter_mut().chain(&mut self.near_grids) {
             if let Some(g) = grid.take() {
@@ -49,7 +77,7 @@ impl WaterGpu {
     }
 
     /// Rebuild the water records when regions, sizes or heights change.
-    pub fn sync(&mut self, renderer: &mut Renderer, world: &World) {
+    pub fn sync(&mut self, renderer: &mut Renderer, world: &World, reach: f32) {
         let Some(main) = world.main_region else {
             self.height = None;
             return;
@@ -74,6 +102,7 @@ impl WaterGpu {
                 ^ (hgt.to_bits() as u64).rotate_left(40);
         }
         key ^= (main_height.to_bits() as u64) << 3;
+        key ^= (reach.to_bits() as u64).rotate_left(23);
         if key == self.key && self.quad.is_some() {
             return;
         }
@@ -82,6 +111,7 @@ impl WaterGpu {
         }
         if self.quad.is_none() {
             self.quad = mesh(renderer, 1);
+            self.far_grid = mesh(renderer, FAR_GRID);
             for (i, n) in [32, 48, 64, 96].into_iter().enumerate() {
                 self.grids[i] = mesh(renderer, n);
             }
@@ -143,15 +173,18 @@ impl WaterGpu {
         }
         let lo = -VOID_CELLS as f32 * 256.0;
         let hi = (VOID_CELLS + 1) as f32 * 256.0;
-        let e = VOID_EXTENT;
+        let e = reach;
         add(renderer, -e, hi, 2.0 * e, e - hi, main_height); // north
         add(renderer, -e, -e, 2.0 * e, e + lo, main_height); // south
         add(renderer, -e, lo, e + lo, hi - lo, main_height); // west
         add(renderer, hi, lo, e - hi, hi - lo, main_height); // east
     }
 
-    pub fn draws(&self, view: &super::CullView, quality: Option<u8>) -> impl Iterator<Item = DrawCmd> + '_ {
+    /// `radius`: planet curvature's (m), None when flat.
+    pub fn draws(&self, view: &super::CullView, quality: Option<u8>, radius: Option<f32>) -> impl Iterator<Item = DrawCmd> + '_ {
         let view = *view;
+        let curvature = aurora_render::curvature::Curvature::new(view.eye, radius);
+        let far_grid = self.far_grid.filter(|_| !curvature.is_flat());
         let grid = quality.and_then(|q| self.grids[q.min(3) as usize]);
         let near_grid = quality.and_then(|q| self.near_grids[q.min(3) as usize]);
         let quad = self.quad;
@@ -166,7 +199,11 @@ impl WaterGpu {
                         return None;
                     }
                     let center = origin + size.extend(0.0) * 0.5;
-                    if !view.sphere_visible(center, size.length() * 0.5 + 0.7) {
+                    // drawn lower than it lies by up to the drop at its
+                    // farthest corner (the frustum test is flat)
+                    let far = (view.eye.truncate() - center.truncate()).abs() + size * 0.5;
+                    let sag = curvature.drop_at(view.eye.truncate() + far);
+                    if !view.sphere_visible(center - Vec3::Z * sag * 0.5, size.length() * 0.5 + 0.7 + sag * 0.5) {
                         return None;
                     }
                     let nearest = (view.eye.truncate() - origin.truncate()).clamp(Vec2::ZERO, size) + origin.truncate();
@@ -178,6 +215,9 @@ impl WaterGpu {
                         near_grid.or(grid).or(quad)
                     } else if dense {
                         grid.or(quad)
+                    } else if size.max_element() > 2048.0 {
+                        // the slabs, bent on a curved planet
+                        far_grid.or(quad)
                     } else {
                         quad
                     };
@@ -211,4 +251,35 @@ fn mesh(renderer: &mut Renderer, n: usize) -> Option<MeshAlloc> {
         }
     }
     renderer.upload_mesh(&vertices, &indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EARTH: Option<f32> = Some(aurora_render::curvature::EARTH_RADIUS);
+
+    #[test]
+    fn flat_void_water_keeps_its_extent() {
+        assert_eq!(void_reach(Vec3::new(128.0, 128.0, 5000.0), 20.0, None), VOID_EXTENT);
+    }
+
+    #[test]
+    fn curved_void_water_reaches_past_the_horizon() {
+        for (z, eye) in [
+            (30.0, Vec3::new(128.0, 128.0, 30.0)),
+            (120.0, Vec3::new(700.0, -300.0, 120.0)),
+            (1020.0, Vec3::new(128.0, 128.0, 1020.0)),
+        ] {
+            let reach = void_reach(eye, 20.0, EARTH);
+            let horizon = aurora_render::curvature::horizon_distance(z - 20.0, EARTH.unwrap());
+            // every slab's far edge lies past the horizon, in every direction
+            assert!(reach - eye.x.abs().max(eye.y.abs()) > horizon, "{z} m: {reach} vs {horizon}");
+            assert!(reach >= VOID_EXTENT && reach.log2().fract() == 0.0, "{reach}");
+        }
+        // standing on the water: the regions' own extent already reaches it
+        assert_eq!(void_reach(Vec3::new(128.0, 128.0, 22.0), 20.0, EARTH), VOID_EXTENT);
+        // from very high up, capped
+        assert_eq!(void_reach(Vec3::new(0.0, 0.0, 50_000.0), 20.0, EARTH), VOID_EXTENT_MAX);
+    }
 }

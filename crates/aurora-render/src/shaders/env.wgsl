@@ -1159,7 +1159,7 @@ fn water_vertex(in: VsIn) -> WaterOut {
     let near = 1.0-smoothstep(80.0,160.0,distance(wp.xyz,frame.camera_pos.xyz));
     wp = vec4<f32>(wp.xyz+wave*geometry*near,1.0);
     var out: WaterOut;
-    out.clip = frame.view_proj * wp;
+    out.clip = world_clip(wp.xyz);
     out.world_pos = wp.xyz;
     out.level = (rec.model * vec4<f32>(in.pos,1.0)).z;
     return out;
@@ -1206,7 +1206,7 @@ fn water_scene_ray(origin:vec3<f32>,direction:vec3<f32>,level:f32,above:bool)->v
     var t=0.1*growth;var previous=0.0;
     for(var i=0u;i<steps;i++) {
         let p=origin+direction*t;
-        let clip=frame.view_proj*vec4<f32>(p,1.0);
+        let clip=world_clip(p);
         if(clip.w<=0.01){break;}
         let ndc=clip.xyz/clip.w;
         let uv=vec2<f32>(ndc.x*0.5+0.5,0.5-ndc.y*0.5);
@@ -1219,7 +1219,7 @@ fn water_scene_ray(origin:vec3<f32>,direction:vec3<f32>,level:f32,above:bool)->v
                 var lo=previous;var hi=t;var hit_uv=uv;
                 for(var k=0u;k<4u;k++) {
                     let mid=(lo+hi)*0.5;
-                    let c=frame.view_proj*vec4<f32>(origin+direction*mid,1.0);
+                    let c=world_clip(origin+direction*mid);
                     let q=c.xyz/c.w;
                     let u=vec2<f32>(q.x*0.5+0.5,0.5-q.y*0.5);
                     if(scene_depth_at(u)>q.z){hi=mid;hit_uv=u;}else{lo=mid;}
@@ -1258,7 +1258,7 @@ fn water_bottom_reflection(surface:vec3<f32>,direction:vec3<f32>,level:f32)->vec
         t=clamp((water_fx_bed(p.xy).x-surface.z)/floor_ray.z,0.05,200.0);
     }
     let bottom=surface+floor_ray*t;
-    let c=frame.view_proj*vec4<f32>(bottom,1.0);
+    let c=world_clip(bottom);
     if(c.w<=0.01){return frame.water_fog.rgb;}
     // Outside the image, extend blurred bottom radiance rather than inventing
     // sharp offscreen geometry or falling through to black gaps between SSR hits.
@@ -1315,7 +1315,7 @@ fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f3
     let fog=water_fog_segment(surface-frame.camera_pos.xyz,frame.water_normal.w,max(camera_water_level()-frame.camera_pos.z,0.0),0.0);
     if(!water_fx_on(512u)) {
         // The disabled/master-off path keeps inexpensive baseline transparency.
-        let clip=frame.view_proj*vec4<f32>(surface,1.0);
+        let clip=world_clip(surface);
         let ndc=clip.xy/clip.w;
         let uv=vec2<f32>(ndc.x*0.5+0.5,0.5-ndc.y*0.5);
         var distorted=clamp(uv+normal.xy*0.008,vec2<f32>(0.001),vec2<f32>(0.999));
@@ -1710,7 +1710,7 @@ struct WaterDepthOut {
 };
 
 fn water_physical_depth(world:vec3<f32>)->f32 {
-    let clip=frame.view_proj*vec4<f32>(world,1.0);
+    let clip=world_clip(world);
     return clamp(clip.z/max(clip.w,0.000001),0.0,1.0);
 }
 
@@ -1722,7 +1722,7 @@ fn fs_water_unclipped(in:WaterOut)->WaterDepthOut {
 fn water_interface_depth(world:vec3<f32>)->f32 {
     // Standard near-clamped depth merges all interfaces before near. This
     // ordering retains their true distance, including millimetre crossings.
-    let clip=frame.view_proj*vec4<f32>(world,1.0);
+    let clip=world_clip(world);
     return 1.0/(1.0+max(clip.w,0.0));
 }
 
@@ -1849,7 +1849,7 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         life=smoothstep(0.0,0.035,age)*(1.0-smoothstep(0.65,1.2,age))*smoothstep(0.0,0.05,height);
         if(age<0.0 || !water_fx_on(64u)){life=0.0;}
         var crown:WaterParticleOut;
-        crown.clip=frame.view_proj*vec4<f32>(pos,1.0);crown.world=pos;crown.uv=vec2<f32>(u*2.0-1.0,top*2.0-1.0);
+        crown.clip=world_clip(pos);crown.world=pos;crown.uv=vec2<f32>(u*2.0-1.0,top*2.0-1.0);
         crown.life=life;crown.kind=2u;crown.level=event.params.z;
         crown.normal=normalize(vec3<f32>(direction,-top));
         return crown;
@@ -1873,7 +1873,7 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         life=smoothstep(0.0,0.025,age)*smoothstep(0.0,select(0.035,0.012,footfall),height);
         if(age<0.0 || !water_fx_on(64u)){life=0.0;}
         var sheet:WaterParticleOut;
-        sheet.clip=frame.view_proj*vec4<f32>(pos,1.0);sheet.world=pos;sheet.uv=vec2<f32>(across,corner.y);
+        sheet.clip=world_clip(pos);sheet.world=pos;sheet.uv=vec2<f32>(across,corner.y);
         sheet.life=life;sheet.kind=4u;sheet.level=event.params.z;
         sheet.normal=normalize(vec3<f32>(radial,-top*1.3));
         return sheet;
@@ -1884,7 +1884,7 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     let across=vec2<f32>(along.y,-along.x);
     let offset=across*corner.x*size+along*corner.y*(size+elongation);
     pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
-    var out: WaterParticleOut; out.clip=frame.view_proj*vec4<f32>(pos,1.0);out.world=pos;out.uv=corner;
+    var out: WaterParticleOut; out.clip=world_clip(pos);out.world=pos;out.uv=corner;
     out.life=life;out.kind=select(select(0u,3u,entry),1u,bubble);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
     return out;
 }
@@ -2052,8 +2052,8 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     // a drop's real width; where that is under RAIN_MIN_PX pixels it is
     // drawn that wide but fainter by as much (its coverage), so far rain
     // turns into a faint haze instead of thick lines
-    let clip0 = frame.view_proj * vec4<f32>(pos, 1.0);
-    let clip1 = frame.view_proj * vec4<f32>(pos + side, 1.0);
+    let clip0 = world_clip(pos);
+    let clip1 = world_clip(pos + side);
     let px_per_m = length((clip1.xy / max(clip1.w, 1e-3) - clip0.xy / max(clip0.w, 1e-3)) * frame.screen.xy * 0.5);
     let real = diameter * 0.001;
     let width = max(real, RAIN_MIN_PX / max(px_per_m, 1e-3)) * 0.5;
@@ -2070,7 +2070,7 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     var life = smoothstep(0.35, 1.6, dist) * (1.0 - smoothstep(0.62, 0.95, edge)) * pow(coverage, 0.6);
 
     var out: RainOut;
-    out.clip = frame.view_proj * vec4<f32>(world, 1.0);
+    out.clip = world_clip(world);
     out.world = world;
     out.uv = c;
     out.side = side;
@@ -2418,7 +2418,7 @@ fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f
 // The screen position of `p` and how far behind what the depth prepass
 // saw there it is (m, along the view; > 0: behind it). w < 0: off screen.
 fn rain_reflect_probe(p: vec3<f32>) -> vec4<f32> {
-    let clip = frame.view_proj * vec4<f32>(p, 1.0);
+    let clip = world_clip(p);
     if (clip.w <= 0.0) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
     let ndc = clip.xy / clip.w;
     let suv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
@@ -3514,8 +3514,8 @@ fn snow_landed(vertex: u32, instance: u32) -> RainOut {
     let a = rain_rand(seed + 4u) * 6.2831853;
     let side = vec3<f32>(cos(a), sin(a), 0.0);
     let ahead = vec3<f32>(-sin(a), cos(a), 0.0);
-    let clip0 = frame.view_proj * vec4<f32>(pos, 1.0);
-    let clip1 = frame.view_proj * vec4<f32>(pos + side, 1.0);
+    let clip0 = world_clip(pos);
+    let clip1 = world_clip(pos + side);
     let px_per_m = length((clip1.xy / max(clip1.w, 1e-3) - clip0.xy / max(clip0.w, 1e-3)) * frame.screen.xy * 0.5);
     let width = max(real * 0.5, RAIN_MIN_PX / max(px_per_m, 1e-3) * 0.5);
     let coverage = clamp(real / (width * 2.0), 0.0, 1.0);
@@ -3525,7 +3525,7 @@ fn snow_landed(vertex: u32, instance: u32) -> RainOut {
     let c = corners[vertex % 6u];
     let world = pos + side * c.x * width + ahead * c.y * width;
     var out: RainOut;
-    out.clip = frame.view_proj * vec4<f32>(world, 1.0);
+    out.clip = world_clip(world);
     out.world = world;
     out.uv = c;
     out.side = side;
@@ -3577,8 +3577,8 @@ fn vs_rain_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) i
     let speed = max(length(velocity), 0.05);
     let axis = velocity / speed;
     let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
-    let clip0 = frame.view_proj * vec4<f32>(pos, 1.0);
-    let clip1 = frame.view_proj * vec4<f32>(pos + side, 1.0);
+    let clip0 = world_clip(pos);
+    let clip1 = world_clip(pos + side);
     let px_per_m = length((clip1.xy / max(clip1.w, 1e-3) - clip0.xy / max(clip0.w, 1e-3)) * frame.screen.xy * 0.5);
     let real = (0.6 + rain_rand(ds + 3u) * 0.6) * 0.001;
     let width = max(real, RAIN_MIN_PX / max(px_per_m, 1e-3)) * 0.5;
@@ -3591,7 +3591,7 @@ fn vs_rain_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) i
     let world = pos + side * c.x * width + axis * c.y * length_m * 0.5;
 
     var out: RainOut;
-    out.clip = frame.view_proj * vec4<f32>(world, 1.0);
+    out.clip = world_clip(world);
     out.world = world;
     out.uv = c;
     out.side = side;
@@ -4011,7 +4011,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     }
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
-        out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
+        out.clip = world_clip(out.world);
         return out;
     }
     // a puff, not a slab: toward a jump of the surface under it (a roof's
@@ -4048,7 +4048,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let nrm = normalize(vec3<f32>(h[1] - h[0], h[3] - h[2], 2.0 * cell));
     // 8 mm above the surface where only a dusting lies: no fighting with it
     out.world = vec3<f32>(xy, top + 0.008);
-    out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
+    out.clip = world_clip(out.world);
     out.n = nrm;
     out.valid = select(0.0, 1.0, whole);
     return out;

@@ -33,6 +33,10 @@ pub mod texture_library;
 #[path = "demo_water.rs"]
 pub mod water;
 
+/// Planet curvature over the void sea (AURORA_DEMO_HORIZON).
+#[path = "demo_horizon.rs"]
+pub mod horizon;
+
 pub(crate) const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.

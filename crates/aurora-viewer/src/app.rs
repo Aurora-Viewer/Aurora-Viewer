@@ -1570,6 +1570,7 @@ fn apply_test_overrides(settings: &mut Settings) {
         crate::demo::clouds::scenario().is_some(),
         settings.volumetric_clouds,
     );
+    crate::demo::horizon::apply(settings);
     if std::env::var_os("AURORA_DEMO").is_some() && ui::bars::demo::get().graphics_profiles {
         crate::graphics_presets::saved::demo(settings);
     }
@@ -11647,6 +11648,7 @@ impl App {
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             self.scene.hidden_types = self.settings.debug.hidden_types;
+            self.scene.planet_radius = self.settings.planet_radius();
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
             }
@@ -12916,6 +12918,7 @@ impl App {
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             hide_sky: self.settings.debug.hidden_types.sky,
+            curvature: self.settings.planet_radius(),
             look: None,
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
@@ -25476,6 +25479,19 @@ impl App {
     /// stray press) did so in some runs, which then captured the avatar
     /// instead of the sky.
     fn hold_demo_sky_view(&mut self) {
+        // AURORA_DEMO_HORIZON: level over the void sea, from the free camera
+        // (the avatar's camera stays within reach of the avatar, and the
+        // horizon is seen from up to 3 km), held until the capture
+        if let Some((eye, target)) = crate::demo::horizon::view()
+            && self.camera.initialized()
+            && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            && self.capture.as_ref().is_some_and(|(frames, _)| !frames.is_empty())
+        {
+            self.camera.start_free(&mut self.world.agent, &self.settings.camera);
+            if let Some(free) = self.camera.free_mut() {
+                *free = crate::camera::FreeCamera::from_view(eye, target);
+            }
+        }
         let Some(view) = self.demo_sky_view else { return };
         if self.capture.as_ref().is_none_or(|(frames, _)| frames.is_empty()) {
             self.demo_sky_view = None;

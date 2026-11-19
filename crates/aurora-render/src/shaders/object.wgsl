@@ -267,7 +267,9 @@ fn prev_placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
 // their motion is left out.
 fn motion_clips(rec: DrawRecord, in: VsIn, ep: vec4<f32>) -> mat2x4<f32> {
     let prev = prev_placed_model(rec, in, frame.eye.xyz) * vec4<f32>(vertex_position(rec, in), 1.0);
-    return mat2x4<f32>(frame.motion_vp * ep, frame.motion_prev_vp * prev);
+    // both on this frame's curved planet: its centre moves with the camera
+    // by under a millimetre of drop a frame, no motion to show
+    return mat2x4<f32>(frame.motion_vp * curve_eye(ep), frame.motion_prev_vp * curve_eye(prev));
 }
 
 // World matrix of a vertex.
@@ -290,8 +292,11 @@ fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
 // worn layer lying exactly on the body wins on every face whatever the order
 // of the draw records. Rank 0 leaves the depth untouched. Every pass that
 // tests depth against another goes through it (prepasses and scene pass).
+// The planet's curvature bends it here (curve_eye), and only here: the
+// prepasses and the scene pass keep the same operations, and `ep` stays
+// the flat position the rest of the vertex uses.
 fn eye_clip(rec: DrawRecord, ep: vec4<f32>) -> vec4<f32> {
-    let clip = frame.eye_view_proj * ep;
+    let clip = frame.eye_view_proj * curve_eye(ep);
     let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
     // reverse Z: a greater depth is nearer
     return vec4<f32>(clip.xy, clip.z * (1.0 + f32(rank) * LAYER_DEPTH_STEP), clip.w);
@@ -559,7 +564,7 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
         out.world_pos.z = max(out.world_pos.z, rec.params.y);
     }
     out.world_pos.z += 0.025;
-    out.clip = frame.eye_view_proj * vec4<f32>(out.world_pos - frame.eye.xyz, 1.0);
+    out.clip = frame.eye_view_proj * curve_eye(vec4<f32>(out.world_pos - frame.eye.xyz, 1.0));
     return out;
 }
 
@@ -3632,7 +3637,7 @@ fn vs_particle(in: PartIn) -> PartOut {
     }
     let wp = in.pos + offset;
     var out: PartOut;
-    out.clip = frame.view_proj * vec4<f32>(wp, 1.0);
+    out.clip = world_clip(wp);
     out.uv = uv;
     out.color = vec4<f32>(srgb_to_linear(in.color.rgb), in.color.a);
     // glow brightens the particle (no bloom pass)
@@ -3727,7 +3732,7 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let tile = (in.tile & ~(IMPOSTOR_FULLBRIGHT | IMPOSTOR_PENDING)) % (per * per);
     let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
-    out.clip = frame.view_proj * vec4<f32>(p, 1.0);
+    out.clip = world_clip(p);
     out.uv = (origin + vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5)) / impostor_tiles_per_row;
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));

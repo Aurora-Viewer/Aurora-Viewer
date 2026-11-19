@@ -133,6 +133,7 @@ struct Frame {
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
+    curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -147,6 +148,52 @@ const FEATURE_FACE_SELECT_SLOT: u32 = 2u;
 
 fn deferred_emissive_off() -> bool {
     return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;
+}
+
+// ------------------------------------------------------ planet curvature
+//
+// Aurora's own, off by default (curvature.rs). Regions are flat, so open
+// water runs out to eye level; on a planet of radius R it falls away under
+// the camera by the sagitta d^2 / 2R of a horizontal distance d, and from
+// 10 m up the sea ends ~11 km out, ~0.1 degrees under eye level, with the
+// sky below it. (The exact drop R - sqrt(R^2 - d^2) differs by d^4 / 8R^3:
+// about a millimetre at 40 km on the Earth.)
+//
+// The bend is a projection, not a change of the world: only positions
+// going to clip space are lowered (world_clip, eye_clip, motion_clips), and
+// world_from_depth raises what the depth gives back by the same amount.
+// Lighting, shadows, fog, the waterline tests and every other use of a
+// world position stay those of the flat region, as the simulator has it;
+// the shadow maps, made in that flat world, need no bend of their own. The
+// drop depends on x and y alone, so the inverse is exact.
+//
+// `c`: xy the main camera (the centre of the bend in every pass:
+// reflections, mirrors and probes see the planet the camera stands on),
+// z 1 / 2R, 0 for a flat world.
+fn curvature_drop(p: vec2<f32>, c: vec4<f32>) -> f32 {
+    let d = p - c.xy;
+    return dot(d, d) * c.z;
+}
+
+fn apply_curvature(p: vec3<f32>, c: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(p.xy, p.z - curvature_drop(p.xy, c));
+}
+
+fn remove_curvature(p: vec3<f32>, c: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(p.xy, p.z + curvature_drop(p.xy, c));
+}
+
+// A position relative to the frame's eye (object vertices), bent: the
+// distance is taken from the eye's offsets, so that no region coordinate
+// is rounded on the way.
+fn curve_eye(ep: vec4<f32>) -> vec4<f32> {
+    let d = ep.xy + (frame.eye.xy - frame.curvature.xy);
+    return vec4<f32>(ep.x, ep.y, ep.z - dot(d, d) * frame.curvature.z, ep.w);
+}
+
+// Clip position of a region position, on the curved planet.
+fn world_clip(p: vec3<f32>) -> vec4<f32> {
+    return frame.view_proj * vec4<f32>(apply_curvature(p, frame.curvature), 1.0);
 }
 
 struct DrawRecord {
@@ -898,7 +945,12 @@ fn screen_uv(frag: vec2<f32>) -> vec2<f32> {
 fn world_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let w = frame.inv_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
-    return w.xyz / w.w;
+    // the point of the flat region the curved one was drawn from (the sky,
+    // at depth 0, stays the far point it was)
+    if (depth <= 0.0) {
+        return w.xyz / w.w;
+    }
+    return remove_curvature(w.xyz / w.w, frame.curvature);
 }
 
 fn scene_depth_at(uv: vec2<f32>) -> f32 {
@@ -1235,7 +1287,7 @@ fn camera_underwater() -> bool {
 // LLDrawPoolWaterExclusion: the nearest front-facing exclusion surface
 // hides water only when it is in front of the nearest water interface.
 fn water_excluded(world_pos:vec3<f32>) -> bool {
-    let clip=frame.view_proj*vec4<f32>(world_pos,1.0);
+    let clip=world_clip(world_pos);
     if(clip.w<=0.0){return false;}
     let uv=clip.xy/clip.w*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5);
     let size=vec2<i32>(textureDimensions(water_exclusion_mask));
@@ -1990,7 +2042,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
     var prev_t = 0.0;
     for (var i = 0; i < steps; i++) {
         let p = origin + dir * t;
-        let c = frame.view_proj * vec4<f32>(p, 1.0);
+        let c = world_clip(p);
         if (c.w <= 0.01) {
             break;
         }
@@ -2012,7 +2064,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                 for (var k = 0; k < 5; k++) {
                     let mid = (lo + hi) * 0.5;
                     let mp = origin + dir * mid;
-                    let mc = frame.view_proj * vec4<f32>(mp, 1.0);
+                    let mc = world_clip(mp);
                     let mn = mc.xyz / mc.w;
                     let muv = vec2<f32>(mn.x * 0.5 + 0.5, 0.5 - mn.y * 0.5);
                     if (scene_depth_at(muv) > mn.z) {
