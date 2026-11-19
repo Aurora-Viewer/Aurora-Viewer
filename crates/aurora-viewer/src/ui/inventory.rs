@@ -971,6 +971,14 @@ impl InventoryUi {
 
     /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
     /// filters on, their list open.
+    /// Demo: `id` selected and scrolled to in the folder that holds it.
+    pub fn demo_reveal(&mut self, id: Uuid) {
+        self.selection.clear();
+        self.selection.insert(id);
+        self.selected = Some(id);
+        self.reveal = Some(id);
+    }
+
     /// The demo's folder filter (`AURORA_DEMO_INVENTORY=aurora-explorer-filter`).
     pub fn demo_folder_filter(&mut self, text: &str) {
         self.folder_filter = Some(text.to_owned());

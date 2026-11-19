@@ -410,6 +410,58 @@ pub(super) fn shown(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     let texture = textures.next()?;
     (!texture.is_nil() && textures.next().is_none()).then_some(texture)
 }
+/// The folder's items looked at, at most, for its preview: a folder's tile
+/// is drawn every frame.
+const PREVIEW_SCAN: usize = 256;
+
+/// Dolphin's folder previews (Aurora's): the pictures a folder without one
+/// of its own borrows from its items, at most `max`: their own pictures
+/// first, then its textures, in the folder's order. Only a folder already
+/// loaded, its own items (never a subfolder's), and nothing while RLVa
+/// forbids previews (@viewtexture), as for the tiles' pictures.
+pub(super) fn folder_preview(inv: &Inventory, id: Uuid, max: usize) -> Vec<Uuid> {
+    let Some(folder) = inv.folders.get(&id) else {
+        return Vec::new();
+    };
+    if max == 0 || !inv.can_preview(0) || folder.state != FetchState::Fetched || shown(inv, id).is_some() {
+        return Vec::new();
+    }
+    let mut pictures = Vec::new();
+    let mut textures = Vec::new();
+    for item in folder.items.iter().take(PREVIEW_SCAN) {
+        if let Some(picture) = shown(inv, *item) {
+            if !pictures.contains(&picture) {
+                pictures.push(picture);
+            }
+        } else if let Some(texture) = rules::original(inv, *item)
+            .and_then(|id| inv.items.get(&id))
+            .filter(|it| it.asset_type == 0 && !it.asset_id.is_nil())
+            .map(|it| it.asset_id)
+            && !textures.contains(&texture)
+        {
+            textures.push(texture);
+        }
+        if pictures.len() >= max {
+            break;
+        }
+    }
+    pictures.extend(textures.into_iter().filter(|t| !pictures.contains(t)).collect::<Vec<_>>());
+    pictures.truncate(max);
+    pictures
+}
+
+/// How many pictures a folder's tile of `side` points borrows: none on
+/// small tiles, one on medium ones, four from the large ones up.
+pub(super) fn preview_count(side: f32) -> usize {
+    if side < 112.0 {
+        0
+    } else if side < 176.0 {
+        1
+    } else {
+        4
+    }
+}
+
 /// The picture of an entry's tile: none while RLVa forbids previews, as for
 /// its tooltip.
 pub(super) fn tile_picture(inv: &Inventory, id: Uuid) -> Option<Uuid> {
@@ -594,6 +646,40 @@ fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thumbnail_of(inv: &Inventory, id: Uuid) -> Uuid {
+        shown(inv, id).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_loaded_folder_borrows_its_items_pictures_then_its_textures() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let folder = Uuid::from_u128(8000);
+        let (texture, object) = (Uuid::from_u128(8104), Uuid::from_u128(8100));
+        let texture_asset = inv.items[&texture].asset_id;
+        assert_eq!(folder_preview(&inv, folder, 4), vec![texture_asset], "a texture, without pictures");
+        crate::world::inventory::demo::seed_gallery(&mut inv);
+        let pictures = folder_preview(&inv, folder, 4);
+        assert_eq!(pictures.len(), 4);
+        let own: Vec<Uuid> = inv.folders[&folder].items.iter().map(|id| thumbnail_of(&inv, *id)).collect();
+        assert!(
+            pictures.iter().all(|p| own.contains(p)),
+            "the items' own pictures before the textures"
+        );
+        assert!(own.contains(&inv.items[&object].thumbnail));
+        assert_eq!(folder_preview(&inv, folder, 1).len(), 1);
+        assert!(folder_preview(&inv, folder, 0).is_empty(), "small tiles: the icon");
+        // a folder with a picture of its own keeps it
+        assert!(folder_preview(&inv, Uuid::from_u128(8001), 4).is_empty());
+        // nothing while RLVa forbids previews, nor before the folder is loaded
+        inv.rlva_preview_mask = 1;
+        assert!(folder_preview(&inv, folder, 4).is_empty());
+        inv.rlva_preview_mask = 0;
+        inv.folders.get_mut(&folder).unwrap().state = FetchState::Unknown;
+        assert!(folder_preview(&inv, folder, 4).is_empty(), "never fetched for it");
+        assert_eq!((preview_count(96.0), preview_count(128.0), preview_count(192.0)), (0, 1, 4));
+    }
 
     #[test]
     fn an_item_image_takes_a_texture_the_agent_may_copy_and_transfer() {

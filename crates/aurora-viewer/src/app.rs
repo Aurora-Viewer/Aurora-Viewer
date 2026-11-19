@@ -23447,6 +23447,7 @@ impl ApplicationHandler for App {
                         | "aurora-explorer-preview"
                         | "aurora-compact"
                         | "aurora-groups"
+                        | "aurora-folder-previews"
                         | "aurora-tiles"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
@@ -23618,11 +23619,23 @@ impl ApplicationHandler for App {
                             self.inventory_ui.demo_browse_root(&self.world.inventory);
                             self.panels.camera_controls = false;
                         }
-                        // the Ctrl+I bar open on the right-click tests' folder
+                        // the preview pane on the demo's notecard
                         if view == "aurora-explorer-preview" {
                             self.settings.inventory.preview_pane = true;
                             self.settings.inventory.show_details = true;
                         }
+                        // the folders' borrowed pictures: the top in the
+                        // large gallery
+                        if view == "aurora-folder-previews" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.settings.inventory.explorer.view = ui::inventory::view::ExplorerView::Gallery;
+                            self.settings.inventory.explorer.tile_size = 192;
+                            // the right-click tests, which hold pictures
+                            self.inventory_ui.demo_reveal(uuid::Uuid::from_u128(8000));
+                            self.panels.camera_controls = false;
+                        }
+                        // the Ctrl+I bar open on the right-click tests' folder
                         if view == "aurora-explorer-filter" {
                             self.inventory_ui.demo_folder_filter("demo o");
                         }

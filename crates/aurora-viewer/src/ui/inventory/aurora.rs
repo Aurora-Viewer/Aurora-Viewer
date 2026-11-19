@@ -148,6 +148,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-explorer-preview"
             | "aurora-compact"
             | "aurora-groups"
+            | "aurora-folder-previews"
             | "aurora-tiles"
             | "aurora-received-filing"
             | "aurora-received-unread"
@@ -1061,6 +1062,27 @@ mod tests {
         assert_eq!(h.st.folder_filter.as_deref(), Some(folder_name(&h.inv, sub).as_str()));
         assert!(h.st.flat.order.contains(&sub) && h.st.flat.order.contains(&twin), "both listed");
         assert!(h.st.path_edit.is_none());
+    }
+
+    #[test]
+    fn a_folders_tile_asks_for_its_items_pictures_by_the_tiles_size() {
+        let folder = Uuid::from_u128(8000);
+        for (side, wanted) in [(96, 0), (128, 1), (192, 4)] {
+            let mut h = Harness::new(WIDE_SIZE);
+            crate::world::inventory::demo::seed_gallery(&mut h.inv);
+            h.prefs.explorer.view = view::ExplorerView::Gallery;
+            h.prefs.explorer.tile_size = side;
+            h.st.demo_reveal(folder);
+            h.frames(6);
+            let previews = thumbnail::folder_preview(&h.inv, folder, 4);
+            let asked = previews.iter().filter(|asset| h.st.wanted_images.contains(asset)).count();
+            assert!(asked >= wanted, "{side} px: {asked} of {wanted}");
+            if wanted == 0 {
+                // small tiles: the folder's icon, nothing asked for it
+                assert!(rows::tests::drawn(&h.ctx, folder).is_some());
+                assert_eq!(asked, 0);
+            }
+        }
     }
 
     /// Aurora's window `width` wide in a headless context.

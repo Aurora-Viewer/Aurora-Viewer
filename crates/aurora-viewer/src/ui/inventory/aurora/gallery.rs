@@ -670,6 +670,19 @@ fn tile(
     let draw_picture = |ui: &egui::Ui, st: &mut InventoryUi| {
         ui.painter().rect_filled(picture, radius, p.field);
         let shown = thumbnail::tile_picture(inv, id);
+        // a folder without a picture of its own: those of its items
+        if shown.is_none() && folder.is_some() {
+            let previews = thumbnail::folder_preview(inv, id, thumbnail::preview_count(side));
+            if paint_previews(ui, p, &previews, picture, images, &mut st.wanted_images) {
+                let corner = Rect::from_min_size(
+                    Pos2::new(picture.left() + 4.0, picture.bottom() - 4.0 - ICON - 4.0),
+                    Vec2::splat(ICON + 4.0),
+                );
+                ui.painter().rect_filled(corner, radius, p.panel.gamma_multiply(0.85));
+                paint_icon(ui, icons, icon, corner.center(), ICON, tint);
+                return;
+            }
+        }
         let texture = shown.and_then(|asset| {
             st.wanted_images.insert(asset);
             images.get(&asset)
@@ -897,6 +910,17 @@ fn small_tile(
     };
     let draw_picture = |ui: &egui::Ui, st: &mut InventoryUi| {
         // the card's picture, the type's icon until it has one
+        // a folder without a picture borrows one of its items' (a card's
+        // picture is smaller than a medium tile's)
+        if card && folder.is_some() && thumbnail::tile_picture(inv, id).is_none() {
+            let previews = thumbnail::folder_preview(inv, id, 1);
+            if images_ready(&previews, images) {
+                ui.painter().rect_filled(picture, radius, p.field);
+            }
+            if paint_previews(ui, p, &previews, picture, images, &mut st.wanted_images) {
+                return;
+            }
+        }
         let texture = card.then(|| thumbnail::tile_picture(inv, id)).flatten().and_then(|asset| {
             st.wanted_images.insert(asset);
             images.get(&asset)
@@ -1017,6 +1041,57 @@ fn small_tile(
         }
         _ => {}
     }
+}
+
+/// Whether any of `previews` is loaded.
+fn images_ready(previews: &[Uuid], images: &HashMap<Uuid, egui::TextureHandle>) -> bool {
+    previews.iter().any(|asset| images.contains_key(asset))
+}
+
+/// A folder's borrowed pictures in `rect`: one whole, or two to four in a
+/// two by two grid (Dolphin's folder previews), each with its proportions
+/// kept. Asks for them; false while none of them is loaded, the folder's
+/// icon showing meanwhile.
+fn paint_previews(
+    ui: &egui::Ui,
+    p: &Palette,
+    previews: &[Uuid],
+    rect: Rect,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+) -> bool {
+    wanted.extend(previews.iter().copied());
+    if !images_ready(previews, images) {
+        return false;
+    }
+    let cells: Vec<Rect> = if previews.len() == 1 {
+        vec![rect]
+    } else {
+        let half = (rect.size() - Vec2::splat(2.0)) / 2.0;
+        (0..4)
+            .map(|n| {
+                let offset = Vec2::new((n % 2) as f32 * (half.x + 2.0), (n / 2) as f32 * (half.y + 2.0));
+                Rect::from_min_size(rect.min + offset, half)
+            })
+            .collect()
+    };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    for (asset, cell) in previews.iter().zip(cells) {
+        if previews.len() > 1 {
+            ui.painter().rect_filled(cell, radius, p.panel);
+        }
+        if let Some(texture) = images.get(asset) {
+            let size = texture.size_vec2();
+            let scale = (cell.width() / size.x.max(1.0)).min(cell.height() / size.y.max(1.0));
+            ui.painter().image(
+                texture.id(),
+                Rect::from_center_size(cell.center(), size * scale),
+                Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                widgets::PICTURE_TINT,
+            );
+        }
+    }
+    true
 }
 
 fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, center: Pos2, size: f32, tint: Color32) {
