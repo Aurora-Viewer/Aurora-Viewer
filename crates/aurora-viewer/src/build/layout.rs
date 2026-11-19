@@ -42,6 +42,8 @@ pub enum Item {
     LandGroup,
     #[serde(rename = "followEdit")]
     FollowEdit,
+    #[serde(rename = "wheelOnHover")]
+    WheelOnHover,
     #[serde(rename = "actions")]
     Actions,
     #[serde(rename = "nav-section-general")]
@@ -69,7 +71,7 @@ pub enum Item {
 
 pub const MANIPULATION_ITEMS: [Item; 4] = [Item::MoveMode, Item::RotateMode, Item::StretchMode, Item::AlignMode];
 
-pub const ITEMS: [Item; 28] = [
+pub const ITEMS: [Item; 29] = [
     Item::MoveMode,
     Item::ScaleBoth,
     Item::StretchTextures,
@@ -88,6 +90,7 @@ pub const ITEMS: [Item; 28] = [
     Item::Surrounding,
     Item::LandGroup,
     Item::FollowEdit,
+    Item::WheelOnHover,
     Item::General,
     Item::Shape,
     Item::Features,
@@ -151,7 +154,7 @@ impl Item {
             Panel::Navigation
         } else if matches!(
             self,
-            Self::OwnedOnly | Self::MovableOnly | Self::Surrounding | Self::LandGroup | Self::FollowEdit
+            Self::OwnedOnly | Self::MovableOnly | Self::Surrounding | Self::LandGroup | Self::FollowEdit | Self::WheelOnHover
         ) {
             Panel::Settings
         } else {
@@ -430,6 +433,9 @@ pub struct Options {
     pub surrounding: bool,
     pub land_group: bool,
     pub follow_edit: bool,
+    /// Absent from notecards exported before it existed: off.
+    #[serde(default)]
+    pub wheel_on_hover: bool,
 }
 fn surrounding_default() -> bool {
     true
@@ -479,6 +485,7 @@ impl Profile {
                 surrounding: s.select_surrounding,
                 land_group: s.rez_under_land_group,
                 follow_edit: s.follow_edit_object,
+                wheel_on_hover: s.wheel_on_hover,
             },
             ruler: Ruler {
                 grid_unit: s.grid_resolution,
@@ -552,6 +559,7 @@ impl Profile {
         s.select_surrounding = self.options.surrounding;
         s.rez_under_land_group = self.options.land_group;
         s.follow_edit_object = self.options.follow_edit;
+        s.wheel_on_hover = self.options.wheel_on_hover;
         s.grid_resolution = self.ruler.grid_unit;
         s.grid_draw_size = self.ruler.grid_draw;
         s.decimal_precision = self.ruler.precision;
@@ -691,6 +699,7 @@ mod tests {
                 Item::Surrounding,
                 Item::LandGroup,
                 Item::FollowEdit,
+                Item::WheelOnHover,
             ]
         );
     }

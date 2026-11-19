@@ -123,6 +123,9 @@ pub struct EnvEditorUi {
     /// The sun and moon beacons (the sunbeacon / moonbeacon settings, kept
     /// by the app).
     pub beacons: [bool; 2],
+    /// Aurora Weather's preview: the sky's weather shown on this viewer
+    /// while the editor is open, and whether it is made to fall now.
+    pub weather_preview: Option<(crate::weather::region::SkyWeather, bool)>,
 }
 
 impl EnvEditorUi {
@@ -145,12 +148,16 @@ impl EnvEditorUi {
 
     /// "SaveSettingAs": the name prompt, filled with the settings' name.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
+        // without its Aurora Weather code (put back on at Save, as a
+        // rename keeps it): shown, it was easily deleted or retyped away
+        let readable = crate::weather::region::strip_code(&self.name);
+        self.save_as = Some(crate::text_validation::generated_name(readable, 63));
     }
 
-    /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).
+    /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon, and
+    /// Aurora's own Aurora Weather).
     pub fn set_tab(&mut self, tab: usize) {
-        self.tab = tab.min(2);
+        self.tab = tab.min(3);
     }
 
     /// Edit `doc` (a snapshot, an import, or a loaded item).
@@ -167,6 +174,7 @@ impl EnvEditorUi {
         self.save_as = None;
         self.picking = None;
         self.picker.open = false;
+        self.weather_preview = None;
     }
 
     /// An item's asset is being fetched (loadInventoryItem).
@@ -270,6 +278,7 @@ impl EnvEditorUi {
                     (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
                     (aurora_i18n::tr!("ui-environment-clouds"), true),
                     (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
+                    (aurora_i18n::tr!("ui-weather-aurora"), true),
                 ],
             );
             ui.add_space(4.0);
@@ -294,6 +303,7 @@ impl EnvEditorUi {
                     _ => match self.tab {
                         1 => self.clouds_panel(ui, p, images, out),
                         2 => self.sun_moon_panel(ui, p, images, out),
+                        3 => self.weather_panel(ui, p, out),
                         _ => self.atmosphere_panel(ui, p, out),
                     },
                 });
@@ -502,7 +512,10 @@ impl EnvEditorUi {
                     let enter = widgets::enter_pressed(ui);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() || enter {
                         // onSaveAsCommit: corrected, "Unnamed" when empty
-                        out.push(EditorAction::SaveAs(env_edit::correct_item_name(&name)));
+                        out.push(EditorAction::SaveAs(crate::weather::region::keep_code(
+                            &self.name,
+                            &env_edit::correct_item_name(&name),
+                        )));
                         close = true;
                     }
                     if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
@@ -615,6 +628,171 @@ impl EnvEditorUi {
     pub(crate) fn demo_cloud_picker(&mut self) {
         if let Some(doc) = &self.doc {
             self.open_texture(TexSlot::Cloud, aurora_i18n::tr!("ui-env-editor-cloud-image"), doc.sky().cloud_id);
+        }
+    }
+
+    /// "Aurora Weather" (Aurora's own): the weather of this sky's moment,
+    /// for the viewers that let regions set it, kept as a code at the end
+    /// of its name (weather/region.rs: the names reach every viewer, a
+    /// description does not). Saving the sky saves it. As EEP splits a sky's
+    /// look from the day's timing, the timing is the day's: where this sky
+    /// sits in a day cycle, and the day's period and seed (the day editor).
+    /// "Preview" shows it on this viewer while the editor is open.
+    fn weather_panel(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<EditorAction>) {
+        use crate::weather::AuroraColours;
+        use crate::weather::Precipitation;
+        use crate::weather::region::{AuroraSky, SkyWeather, strip_code, too_long_for};
+        use aurora_i18n::tr;
+        let base = strip_code(&self.name).to_owned();
+        let found = SkyWeather::from_name(&self.name);
+        let mut on = found.is_some();
+        let mut w = found.unwrap_or_default();
+        let before = (on, w);
+        ui.label(RichText::new(tr!("ui-env-editor-weather-note")).size(11.5).color(p.muted));
+        ui.add_space(6.0);
+        widgets::checkbox(ui, p, &mut on, tr!("ui-env-editor-weather-enable"));
+        ui.add_space(4.0);
+        ui.spacing_mut().slider_width = 200.0;
+        let step15 = |ui: &mut egui::Ui, v: &mut f32| {
+            ui.add(
+                egui::Slider::new(v, 0.0..=1.0)
+                    .step_by(1.0 / 15.0)
+                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+            )
+            .changed()
+        };
+        ui.add_enabled_ui(on, |ui| {
+            egui::Grid::new("env_editor_weather")
+                .num_columns(2)
+                .spacing(Vec2::new(10.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label(tr!("ui-weather-precipitation"));
+                    let mut i = usize::from(w.precipitation == Precipitation::Snow);
+                    if widgets::segmented(ui, p, &mut i, &[(tr!("ui-weather-rain"), true), (tr!("ui-weather-snow"), true)]) {
+                        w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-chance"))
+                        .on_hover_text(tr!("ui-env-editor-weather-chance-tip"));
+                    ui.add(
+                        egui::Slider::new(&mut w.chance, 0.0..=1.0)
+                            .step_by(1.0 / 31.0)
+                            .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                    );
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-amount-from"));
+                    if step15(ui, &mut w.amount.0) {
+                        w.amount.1 = w.amount.1.max(w.amount.0);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-amount-to"));
+                    if step15(ui, &mut w.amount.1) {
+                        w.amount.0 = w.amount.0.min(w.amount.1);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-wind"));
+                    if step15(ui, &mut w.wind.0) {
+                        w.wind.1 = w.wind.1.max(w.wind.0);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-gusts"));
+                    if step15(ui, &mut w.wind.1) {
+                        w.wind.0 = w.wind.0.min(w.wind.1);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-wind-from"));
+                    ui.horizontal(|ui| {
+                        let mut region = w.wind_from.is_none();
+                        if widgets::checkbox(ui, p, &mut region, tr!("ui-weather-wind-follow-region")).changed() {
+                            w.wind_from = if region { None } else { Some(270.0) };
+                        }
+                        if let Some(from) = &mut w.wind_from {
+                            ui.spacing_mut().slider_width = 120.0;
+                            ui.add(
+                                egui::Slider::new(from, 0.0..=337.5)
+                                    .step_by(22.5)
+                                    .custom_formatter(|v, _| format!("{v:.1}° {}", crate::ui::environment::compass_point(v as f32))),
+                            );
+                        }
+                    });
+                    ui.end_row();
+                    // thunder in rain only
+                    if w.precipitation == Precipitation::Rain {
+                        ui.label(tr!("ui-weather-thunder"));
+                        widgets::checkbox(ui, p, &mut w.thunder, "");
+                        ui.end_row();
+                        ui.label(tr!("ui-weather-strikes"));
+                        ui.add_enabled_ui(w.thunder, |ui| {
+                            ui.add(egui::Slider::new(&mut w.strikes, 0.0..=1.0).step_by(1.0 / 3.0).show_value(false));
+                        });
+                        ui.end_row();
+                    }
+                    // the northern lights in this sky's night (a longer code)
+                    ui.label(tr!("ui-weather-northern-lights"))
+                        .on_hover_text(tr!("ui-env-editor-northern-lights-tip"));
+                    let mut lights = w.aurora.is_some();
+                    if widgets::checkbox(ui, p, &mut lights, "").changed() {
+                        w.aurora = lights.then(AuroraSky::default);
+                    }
+                    ui.end_row();
+                    if let Some(a) = &mut w.aurora {
+                        ui.label(tr!("ui-weather-northern-lights-brightness"));
+                        step15(ui, &mut a.intensity);
+                        ui.end_row();
+                        ui.label(tr!("ui-weather-northern-lights-direction"));
+                        ui.add(
+                            egui::Slider::new(&mut a.heading, 0.0..=337.5)
+                                .step_by(22.5)
+                                .custom_formatter(|v, _| format!("{v:.1}° {}", crate::ui::environment::compass_point(v as f32))),
+                        );
+                        ui.end_row();
+                        ui.label(tr!("ui-weather-northern-lights-height"));
+                        ui.add(egui::Slider::new(&mut a.height, 0.0..=1.0).step_by(1.0 / 7.0).show_value(false));
+                        ui.end_row();
+                        ui.label(tr!("ui-weather-northern-lights-colours"));
+                        let names = crate::ui::environment::colour_names();
+                        let mut i = usize::from(a.colours.index());
+                        if widgets::segmented(ui, p, &mut i, &[(names[0], true), (names[1], true), (names[2], true)]) {
+                            a.colours = AuroraColours::ALL[i.min(2)];
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+        if on {
+            ui.add_space(6.0);
+            // the code as written in the name
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr!("ui-env-editor-weather-code")).size(11.5).color(p.muted));
+                ui.label(RichText::new(format!("~{}", w.code())).monospace().color(p.ink));
+            });
+            // the preview, on this viewer only, while the editor is open
+            ui.add_space(4.0);
+            let (mut preview, mut falling) = self.weather_preview.map_or((false, false), |(_, f)| (true, f));
+            ui.horizontal(|ui| {
+                widgets::checkbox(ui, p, &mut preview, tr!("ui-env-editor-weather-preview"))
+                    .on_hover_text(tr!("ui-env-editor-weather-preview-tip"));
+                ui.add_enabled_ui(preview, |ui| {
+                    widgets::checkbox(ui, p, &mut falling, tr!("ui-env-editor-weather-falling"))
+                        .on_hover_text(tr!("ui-env-editor-weather-falling-tip"));
+                });
+            });
+            self.weather_preview = preview.then_some((w, falling));
+        } else {
+            self.weather_preview = None;
+        }
+        if (on, w) != before {
+            if on && too_long_for(&base, w.code_len()) {
+                self.message = Some((tr!("ui-env-editor-weather-name-cut").into(), false));
+            }
+            self.name = if on { w.name_with(&base) } else { base };
+            if let Some(doc) = &mut self.doc {
+                doc.set_name(&self.name);
+            }
+            self.dirty = true;
+            // as the other tabs: the day editor writes its frame back on it
+            // (without it, a keyframe's weather never reached the day)
+            out.push(EditorAction::Changed);
         }
     }
 

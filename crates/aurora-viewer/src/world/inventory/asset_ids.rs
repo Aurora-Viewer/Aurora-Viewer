@@ -9,7 +9,7 @@
 //! be turned back into the id.
 
 use super::Inventory;
-use super::actions::FULL;
+use super::actions::{FULL, held};
 use std::collections::HashSet;
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -64,7 +64,11 @@ impl Inventory {
         let set: Arc<HashSet<Uuid>> = Arc::new(
             self.items
                 .values()
-                .filter(|it| it.owner_mask & FULL == FULL && !it.asset_id.is_nil())
+                // the rights the agent holds, not the owner's mask: a Library
+                // or someone else's item shows its id only when the agent
+                // itself has full permissions, as actions::asset_uuid_shown and
+                // LLViewerInventoryItem::getIsFullPerm (llviewerinventory.cpp)
+                .filter(|it| held(self, it) & FULL == FULL && !it.asset_id.is_nil())
                 .map(|it| it.asset_id)
                 .collect(),
         );
@@ -193,6 +197,40 @@ impl AssetIds {
             AssetId::Hidden(tag(&id))
         }
     }
+
+    /// `text` with every id it writes in full (8-4-4-4-12 hexadecimal
+    /// digits) passed through [`Self::id`]: for free text such as the log
+    /// lines the Dev Toolbox copies, whose ids may be anything (an asset,
+    /// an object, an agent). An id the rule does not show becomes its tag.
+    pub fn hide_in(&self, text: &str) -> String {
+        const LEN: usize = 36;
+        let bytes = text.as_bytes();
+        let hex = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_hexdigit);
+        let mut out = String::with_capacity(text.len());
+        let mut start = 0;
+        let mut i = 0;
+        while i + LEN <= bytes.len() {
+            let shaped = (i == 0 || !(hex(i - 1) || bytes[i - 1] == b'-'))
+                && !(hex(i + LEN) || bytes.get(i + LEN) == Some(&b'-'))
+                && (0..LEN).all(|k| {
+                    if matches!(k, 8 | 13 | 18 | 23) {
+                        bytes[i + k] == b'-'
+                    } else {
+                        hex(i + k)
+                    }
+                });
+            if shaped && let Ok(id) = Uuid::parse_str(&text[i..i + LEN]) {
+                out.push_str(&text[start..i]);
+                out.push_str(&self.id(id).to_string());
+                i += LEN;
+                start = i;
+            } else {
+                i += 1;
+            }
+        }
+        out.push_str(&text[start..]);
+        out
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +250,56 @@ mod tests {
             },
         );
         inv.generation += 1;
+    }
+
+    #[test]
+    fn an_asset_id_follows_the_agents_rights_not_the_owners_mask() {
+        let agent = Uuid::from_u128(0xA);
+        let mut inv = Inventory {
+            owner: agent,
+            ..Default::default()
+        };
+        let cases = [
+            // (owner, group owned, owner mask, everyone mask, shown)
+            ("own, full", agent, false, FULL, 0, true),
+            ("own, no copy", agent, false, MODIFY | TRANSFER, 0, false),
+            ("own, no transfer", agent, false, MODIFY | COPY, 0, false),
+            ("own, no modify", agent, false, COPY | TRANSFER, 0, false),
+            ("group owned", Uuid::from_u128(0x6), true, FULL, 0, false),
+            ("group owned, full for everyone", Uuid::from_u128(0x6), true, FULL, FULL, true),
+            ("someone else's", Uuid::from_u128(0xB), false, FULL, 0, false),
+            ("Library", Uuid::from_u128(0x11B), false, FULL, COPY, false),
+            ("Library, full for everyone", Uuid::from_u128(0x11B), false, FULL, FULL, true),
+        ];
+        for (n, (_, owner, group_owned, owner_mask, everyone_mask, _)) in cases.iter().enumerate() {
+            inv.items.insert(
+                Uuid::from_u128(n as u128 + 1),
+                InvItem {
+                    id: Uuid::from_u128(n as u128 + 1),
+                    asset_id: Uuid::from_u128(0x100 + n as u128),
+                    owner: *owner,
+                    group_owned: *group_owned,
+                    owner_mask: *owner_mask,
+                    everyone_mask: *everyone_mask,
+                    ..Default::default()
+                },
+            );
+        }
+        inv.generation += 1;
+        let ids = AssetIds::new(&inv, std::iter::empty(), false);
+        for (n, (case, .., shown)) in cases.iter().enumerate() {
+            let asset = Uuid::from_u128(0x100 + n as u128);
+            assert_eq!(ids.shown(&asset), *shown, "{case}");
+            assert_eq!(
+                ids.shown(&asset),
+                actions_rule(&inv, asset),
+                "{case}: the same as the picker's rule"
+            );
+        }
+    }
+
+    fn actions_rule(inv: &Inventory, asset: Uuid) -> bool {
+        crate::world::inventory::actions::asset_uuid_shown(inv, asset)
     }
 
     #[test]
@@ -271,7 +359,7 @@ mod tests {
     #[test]
     fn a_hidden_id_keeps_its_tag_and_leaves_nothing_of_the_id() {
         let inv = Inventory::default();
-        let ids = AssetIds::new(&inv, [], false);
+        let ids = AssetIds::new(&inv, std::iter::empty(), false);
         let (a, b) = (Uuid::from_u128(0x2bd25806_c894_2b00_807e_495a276ddcd5), Uuid::from_u128(0x71));
         let text = ids.id(a).to_string();
         assert!(text.starts_with(HIDDEN) && text.len() == HIDDEN.len() + TAG_LEN, "{text}");
@@ -368,7 +456,7 @@ mod tests {
                 ms(start.elapsed()) / calls as f64
             );
         }
-        let ids = AssetIds::new(&inv, [], false);
+        let ids = AssetIds::new(&inv, std::iter::empty(), false);
         let calls = 100_000u128;
         let start = Instant::now();
         for n in 0..calls {
@@ -391,5 +479,43 @@ mod tests {
             "item image source check, 50k items, id not found: {:.3} ms a call",
             ms(start.elapsed()) / 20.0
         );
+    }
+
+    #[test]
+    fn free_text_keeps_only_the_ids_the_rule_shows() {
+        let mut inv = Inventory::default();
+        let full = Uuid::from_u128(0xF0);
+        let theirs = Uuid::from_u128(0xB0);
+        item(&mut inv, 1, full, FULL);
+        item(&mut inv, 2, theirs, COPY);
+        let ids = AssetIds::new(&inv, std::iter::empty(), false);
+        let blank = aurora_prim::te::BLANK_TEXTURE;
+        let line = format!("settings asset {theirs}: unreadable; texture {full}, blank {blank} — é");
+        let hidden = ids.hide_in(&line);
+        assert!(!hidden.contains(&theirs.to_string()), "{hidden}");
+        assert!(
+            hidden.contains(&ids.id(theirs).to_string()),
+            "the same tag as the windows: {hidden}"
+        );
+        assert!(
+            hidden.contains(&full.to_string()) && hidden.contains(&blank.to_string()),
+            "{hidden}"
+        );
+        assert!(hidden.ends_with(" — é"));
+        assert_eq!(
+            ids.hide_in(&theirs.to_string().to_uppercase()),
+            ids.id(theirs).to_string(),
+            "any case"
+        );
+        // not an id: longer hexadecimal runs, a missing group, no ids at all
+        for text in [
+            format!("a{theirs}"),
+            format!("{theirs}-0"),
+            theirs.simple().to_string(),
+            "no id here".to_owned(),
+            String::new(),
+        ] {
+            assert_eq!(ids.hide_in(&text), text);
+        }
     }
 }

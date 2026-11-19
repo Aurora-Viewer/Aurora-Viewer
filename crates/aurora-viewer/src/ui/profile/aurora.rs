@@ -24,6 +24,7 @@ use crate::ui::presence::{self, Status};
 use crate::ui::widgets::{self, ActionKind, Floater, hero};
 use crate::ui::{emoji::Emoji, fonts, group_profile, icons, menu};
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::profiles::{self, Online};
 use crate::world::social::{Friend, rights};
 use aurora_llsd::llsd_map;
@@ -120,7 +121,7 @@ pub(super) fn window(ctx: &egui::Context, env: &mut Env, w: &mut Window, index: 
     let title = if own {
         aurora_i18n::tr!("ui-profile-aurora-my-profile").to_owned()
     } else {
-        display_name(world, &w.id)
+        display_name(world, w.scope, &w.id)
     };
     let screen = ctx.content_rect();
     let pos = screen.center() - DEFAULT_SIZE * 0.5 + Vec2::splat(24.0 * (index % 6) as f32);
@@ -135,21 +136,21 @@ pub(super) fn window(ctx: &egui::Context, env: &mut Env, w: &mut Window, index: 
 }
 
 /// The name in large: the display name, else the name the viewer has.
-pub(super) fn display_name(world: &World, id: &Uuid) -> String {
+pub(super) fn display_name(world: &World, scope: NameScope, id: &Uuid) -> String {
     world
         .social
         .avatar_names
-        .get(id)
+        .get_in(scope, id)
         .map(|n| n.display_name.clone())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| world.social.name_of(id))
+        .unwrap_or_else(|| world.social.name_in(scope, id))
 }
 
 /// The line under the name: the legacy name and the username, each when it
 /// differs from the name above.
-fn names_line(world: &World, id: &Uuid, shown: &str) -> Vec<String> {
+fn names_line(world: &World, scope: NameScope, id: &Uuid, shown: &str) -> Vec<String> {
     let mut parts = Vec::new();
-    let from_names = world.social.avatar_names.get(id).and_then(|n| {
+    let from_names = world.social.avatar_names.get_in(scope, id).and_then(|n| {
         let (first, last) = (n.legacy_first.trim(), n.legacy_last.trim());
         match (first.is_empty(), last.is_empty() || last.eq_ignore_ascii_case("resident")) {
             (true, _) => None,
@@ -157,13 +158,13 @@ fn names_line(world: &World, id: &Uuid, shown: &str) -> Vec<String> {
             (false, false) => Some(format!("{first} {last}")),
         }
     });
-    if let Some(legacy) = from_names.or_else(|| world.legacy_name(id)).filter(|n| n != shown) {
+    if let Some(legacy) = from_names.or_else(|| world.legacy_name_in(scope, id)).filter(|n| n != shown) {
         parts.push(legacy);
     }
     if let Some(user) = world
         .social
         .avatar_names
-        .get(id)
+        .get_in(scope, id)
         .map(|n| n.username.clone())
         .filter(|u| !u.is_empty() && u != shown && !parts.contains(u))
     {
@@ -420,6 +421,7 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         w.web.focused = false;
     }
     // the bar of the edits not saved stays at the bottom
+    w.pick_wait_notice(ui, env.p, env.world, env.actions);
     let closing = w.confirm_close;
     let bar = closing || (own && has_unsaved(w));
     let bar_h = if bar { 46.0 } else { 0.0 };
@@ -612,7 +614,7 @@ fn photo(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, rect: Rect, ring: f32
     let friend = world.social.friends.iter().find(|fr| fr.id == id);
     let pic = env.pics.get(&id);
     let status = status_of(world, &id, own, profile, friend);
-    paint_photo(ui, p, rect, ring, pic, &display_name(world, &id), status, w.editing);
+    paint_photo(ui, p, rect, ring, pic, &display_name(world, w.scope, &id), status, w.editing);
     let resp = ui.interact(rect, ui.scope_id().with(("profile-photo", id)), Sense::click());
     if pic.is_some() && !w.editing && resp.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
         w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
@@ -637,7 +639,7 @@ fn who_it_is(
     let (p, world) = (env.p, env.world);
     let id = w.id;
     let profile = world.profiles.get(&id);
-    let name = display_name(world, &id);
+    let name = display_name(world, w.scope, &id);
     ui.spacing_mut().item_spacing.y = 1.0;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
@@ -662,7 +664,7 @@ fn who_it_is(
             env.actions.push(ProfileAction::DisplayName);
         }
     });
-    let mut names = names_line(world, &id, &name);
+    let mut names = names_line(world, w.scope, &id, &name);
     let mut age = None;
     if compact {
         // the username alone, then the age (the mock-up's "orion.exemple · 19 ans")
@@ -904,13 +906,20 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
+        // LLPanelProfileSecondLife::updateButtons: greyed when @showloc
+        // forbids offering our location to them
         Act::OfferTeleport => (
             "send-filled",
             aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
             ActionKind::Flat,
-            true,
+            env.world.rlva_can_offer_teleport(id),
             None,
         ),
+        // Enabled under @pay too, as in the Legacy style
+        // (`profile::action_buttons`): LLPanelProfileSecondLife::updateButtons
+        // (indra/newview/llpanelprofile.cpp) never tests it, and the pay
+        // window refuses to open with the "blocked" notice
+        // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>, indra/newview/rlvhandler.cpp).
         Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
@@ -935,7 +944,13 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        Act::Done => ("check", aurora_i18n::tr!("ui-profile-aurora-done"), ActionKind::Primary, true, None),
+        Act::Done => (
+            "check",
+            aurora_i18n::tr!("ui-profile-aurora-done"),
+            ActionKind::Primary,
+            !w.pick_save_waits(),
+            None,
+        ),
     };
     // the block button and "…" are icons in the large header too
     let alone = look != Look::Labelled || matches!(act, Act::Block | Act::More);
@@ -975,10 +990,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
-        Act::Done => {
-            save_all(w, env.actions);
-            w.editing = false;
-        }
+        Act::Done => w.editing = !save_all(w, env.actions),
         Act::More => {}
     }
 }
@@ -989,9 +1001,11 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let (p, world) = (env.p, env.world);
     let id = w.id;
     let names = &world.social.avatar_names;
-    let display = names.get(&id).map(|n| n.display(&names.options));
-    let legacy = world.legacy_name(&id);
-    let mappable = world.can_locate_avatar(id);
+    let display = names.get_in(w.scope, &id).map(|n| n.display(&names.options));
+    let legacy = world.legacy_name_in(w.scope, &id);
+    // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
+    let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
+    crate::ui::chat::moderation::demo_mark(&resp.ctx, crate::ui::chat::moderation::DemoMark::ProfileMore, resp.rect);
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
@@ -1008,6 +1022,12 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
             act(CtxAction::RemoveFriend(id));
+        }
+        // menu_profile_other.xml: separator_group_bans, then the ban and its
+        // lifting in all our groups (Profile.EnableItem: canBanFromAnyGroup)
+        if crate::world::group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
+            menu::separator(ui, p);
+            crate::ui::chat::moderation::ban_all_entries(ui, p, world, id, true);
         }
         menu::separator(ui, p);
         if menu::item_if(
@@ -1150,7 +1170,7 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
     let soft = |c: Color32| c.gamma_multiply(0.14);
     match b {
         Badge::Friend => {
-            if env.world.contact_sets.appearance(&id).replace_friend {
+            if env.world.rlva_contact_appearance(&id).replace_friend {
                 return;
             }
             pill(
@@ -1176,7 +1196,7 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
             pill(ui, Some(Lead::Icon(icon)), name, None, fg, soft(fg), Sense::hover());
         }
         Badge::Set(name, color) => {
-            let appearance = env.world.contact_sets.appearance(&id);
+            let appearance = env.world.rlva_contact_appearance(&id);
             let icon = appearance.icons.iter().find(|icon| &icon.set == name);
             let lead = icon
                 .map(|icon| Lead::Icon(crate::world::contact_sets::appearance::ICONS[icon.icon]))
@@ -1724,7 +1744,8 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
     let (p, world) = (env.p, env.world);
     world.social.avatar_names.want(&partner);
     env.wanted_pics.insert(partner);
-    let name = display_name(world, &partner);
+    // LLPanelProfileSecondLife names the partner whatever `@shownames`
+    let name = display_name(world, NameScope::Roster, &partner);
     let font = semibold(ui, 12.5);
     let galley = ui.painter().layout_no_wrap(name.clone(), font, p.ink);
     let size = Vec2::new(2.0 + 20.0 + 6.0 + galley.size().x + 9.0, 24.0);
@@ -1739,7 +1760,7 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        super::request_open(ui.ctx(), partner);
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(partner));
     }
 }
 
@@ -1783,7 +1804,7 @@ fn picks_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     }
     if let Some(pick) = open {
         w.tab = TAB_PICKS;
-        if pick.is_some() {
+        if pick.is_some() && !w.pick_save_waits() {
             w.pick_sel = pick;
             w.pick_edit = None;
         }
@@ -2095,29 +2116,29 @@ fn unsaved_bar(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, closing: bool) 
                 ui.label(RichText::new(text).font(semibold(ui, 12.5)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 26.0);
-                    if widgets::action_button(
+                    if widgets::action_button_if(
                         ui,
                         p,
                         "device-floppy-filled",
                         aurora_i18n::tr!("common-save"),
                         ActionKind::Primary,
                         size,
+                        !w.pick_save_waits(),
                     )
                     .clicked()
                     {
-                        save_all(w, env.actions);
                         if closing {
-                            w.open = false;
+                            w.answer_close(super::CloseChoice::Save, env.actions);
+                        } else {
+                            save_all(w, env.actions);
                         }
-                        w.confirm_close = false;
                     }
                     if closing && widgets::action_button(ui, p, "", aurora_i18n::tr!("common-ignore"), ActionKind::Flat, size).clicked() {
-                        revert(w);
-                        w.open = false;
+                        w.answer_close(super::CloseChoice::Ignore, env.actions);
                     }
                     if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                         if closing {
-                            w.confirm_close = false;
+                            w.answer_close(super::CloseChoice::Cancel, env.actions);
                         } else {
                             revert(w);
                         }

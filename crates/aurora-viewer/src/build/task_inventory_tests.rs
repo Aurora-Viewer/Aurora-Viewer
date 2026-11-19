@@ -312,6 +312,6 @@ fn contents_folder_name_drops_what_an_inventory_name_cannot_hold() {
         ),
         "Boutique  Gift box"
     );
-    assert_eq!(contents_folder_name(" 	"), aurora_i18n::tr!("common-object"));
+    assert_eq!(contents_folder_name(" 	"), crate::text_validation::default_name("common-object"));
     assert_eq!(contents_folder_name(&"x".repeat(80)).chars().count(), 63);
 }

@@ -52,7 +52,6 @@
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Driver budget and usage for the heaps the texture streamer can use:
@@ -162,6 +161,60 @@ pub fn heap_sizes_mb(_adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u6
     None
 }
 
+/// Size of the video memory the CPU can map: the heap of the first memory
+/// type that is `DEVICE_LOCAL`, `HOST_VISIBLE` and `HOST_COHERENT`, the
+/// one the allocator tries first for every mappable buffer (gpu-allocator's
+/// `CpuToGpu`, `find_memorytype_index`: first match in index order). On a
+/// discrete GPU with no Resizable BAR this is a heap of its own of about
+/// 256 MB, the PCI window the whole desktop shares (#2171); with Resizable
+/// BAR, or on an integrated GPU, it is the whole video memory. None when
+/// the driver has no such type: mapped buffers then live in system memory.
+#[cfg(not(target_os = "macos"))]
+fn mappable_heap_bytes(memory: &vk::PhysicalDeviceMemoryProperties) -> Option<u64> {
+    let mappable = vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+    let ty = memory
+        .memory_types_as_slice()
+        .iter()
+        .find(|ty| ty.property_flags.contains(mappable))?;
+    memory.memory_heaps_as_slice().get(ty.heap_index as usize).map(|heap| heap.size)
+}
+
+/// [`mappable_heap_bytes`] of this adapter, in MB; `AURORA_MAPPABLE_MB`
+/// replaces the reading (a card with no Resizable BAR on one that has it).
+pub fn mappable_mb(adapter: &wgpu::Adapter) -> Option<u64> {
+    mappable_override(std::env::var("AURORA_MAPPABLE_MB").ok().as_deref()).or_else(|| mappable_mb_of(adapter))
+}
+
+/// The value of `AURORA_MAPPABLE_MB`, in MB; anything but a whole number
+/// leaves the adapter's reading.
+fn mappable_override(value: Option<&str>) -> Option<u64> {
+    value?.trim().parse().ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mappable_mb_of(adapter: &wgpu::Adapter) -> Option<u64> {
+    // SAFETY: the hal adapter is borrowed only for this physical-device query.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    // SAFETY: a read-only query of the physical device the hal adapter
+    // holds, valid from any thread.
+    let memory = unsafe {
+        hal.shared_instance()
+            .raw_instance()
+            .get_physical_device_memory_properties(hal.raw_physical_device())
+    };
+    mappable_heap_bytes(&memory).map(|bytes| bytes >> 20)
+}
+
+#[cfg(target_os = "macos")]
+fn mappable_mb_of(_adapter: &wgpu::Adapter) -> Option<u64> {
+    None
+}
+
+/// Under this much mappable video memory, the staging pool keeps to 64 MB
+/// (`upload::PoolSize::Window`): the large pool (256 MB) would fill a
+/// 256 MB window alone, and the other programs' mappings then fail (#2171).
+pub const SMALL_MAPPABLE_MB: u64 = 1024;
+
 /// AURORA_VRAM_BUDGET_MB: the driver's budget taken as this many megabytes
 /// (a smaller card on a large one: the texture budget, the Performance
 /// window's warning).
@@ -237,25 +290,84 @@ pub struct VideoMemoryProbe {
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How long the end of the sampler waits for a query under way before
+/// leaving it to the driver (a stuck driver never holds up the shutdown).
+const QUERY_GRACE: Duration = Duration::from_millis(50);
+/// How long it waits, at most, for the thread to let its adapter go.
+const RELEASE_WAIT: Duration = Duration::from_secs(2);
+
+/// Where the sampling thread is, for its end ([`BudgetSampler`]'s `Drop`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// Between two queries, waiting on the condition variable.
+    Idle,
+    /// In the driver's query.
+    Querying,
+    /// Stopped while in the query: the thread forgets its adapter instead of
+    /// dropping it when the query returns.
+    Abandoned,
+    /// Out of its loop, dropping what it holds (the adapter).
+    Releasing,
+    /// Gone: nothing of the GPU is held by it any more.
+    Done,
+}
+
+#[derive(Debug)]
+struct Control {
+    stop: bool,
+    phase: Phase,
+}
+
 /// The query runs without the cache lock. A stuck driver leaves the last
 /// budget available and cannot hold up a frame or the viewer's shutdown.
+///
+/// Its end waits for the thread to drop its copy of the adapter (#3963): left
+/// to itself, the thread woke up during the process's exit holding the last
+/// reference to the wgpu instance, and `vkDestroyInstance` unloaded the
+/// driver's library while `exit` was running that library's finalizers (a
+/// crash in `__cxa_finalize`, NVIDIA on Linux). A thread stuck in the driver
+/// is not waited for; it never drops its adapter afterwards either.
 struct BudgetSampler {
     latest: Arc<parking_lot::Mutex<Option<Sample>>>,
-    stopped: Arc<AtomicBool>,
+    control: Arc<(parking_lot::Mutex<Control>, parking_lot::Condvar)>,
 }
 
 impl BudgetSampler {
     fn new(mut query: impl FnMut() -> Option<(u64, u64, u64, u64)> + Send + 'static, interval: Duration) -> Self {
         let latest = Arc::new(parking_lot::Mutex::new(None));
-        let stopped = Arc::new(AtomicBool::new(false));
-        let (output, stop) = (latest.clone(), stopped.clone());
+        let control = Arc::new((
+            parking_lot::Mutex::new(Control {
+                stop: false,
+                phase: Phase::Idle,
+            }),
+            parking_lot::Condvar::new(),
+        ));
+        let (output, shared) = (latest.clone(), control.clone());
         let spawned = std::thread::Builder::new().name("aurora-vram".into()).spawn(move || {
+            let (lock, wake) = &*shared;
             let mut floor = BudgetFloor::default();
             let mut shared_floor = BudgetFloor::default();
             let mut tightest = SlidingMin::<i64>::default();
             let mut logged = None::<u64>;
-            while !stop.load(Ordering::Acquire) {
-                if let Some((dedicated_budget, dedicated_usage, shared_budget, shared_usage)) = query() {
+            loop {
+                {
+                    let mut c = lock.lock();
+                    if c.stop {
+                        break;
+                    }
+                    c.phase = Phase::Querying;
+                }
+                let reading = query();
+                {
+                    let mut c = lock.lock();
+                    if c.phase == Phase::Abandoned {
+                        break;
+                    }
+                    c.phase = Phase::Idle;
+                    // (an end waiting on the query goes on at once)
+                    wake.notify_all();
+                }
+                if let Some((dedicated_budget, dedicated_usage, shared_budget, shared_usage)) = reading {
                     let now = std::time::Instant::now();
                     let raw = dedicated_budget.saturating_add(shared_budget);
                     let usage = dedicated_usage.saturating_add(shared_usage);
@@ -291,13 +403,31 @@ impl BudgetSampler {
                         );
                     }
                 }
-                std::thread::sleep(interval);
+                let mut c = lock.lock();
+                if !c.stop {
+                    wake.wait_for(&mut c, interval);
+                }
             }
+            let mut c = lock.lock();
+            if c.phase == Phase::Abandoned {
+                // the end of the sampler has not waited: the process may be
+                // exiting, and the adapter may hold the last reference to
+                // the instance; never destroy it from here
+                drop(c);
+                std::mem::forget(query);
+                return;
+            }
+            c.phase = Phase::Releasing;
+            drop(c);
+            drop(query);
+            lock.lock().phase = Phase::Done;
+            wake.notify_all();
         });
         if let Err(e) = spawned {
             log::warn!("GPU memory budget: sampling thread not started ({e}); texture memory follows its setting only");
+            control.0.lock().phase = Phase::Done;
         }
-        Self { latest, stopped }
+        Self { latest, control }
     }
 
     fn read(&self) -> Option<(u64, u64, u64)> {
@@ -310,8 +440,29 @@ impl BudgetSampler {
 }
 
 impl Drop for BudgetSampler {
+    /// Stops the thread and waits for it to let the adapter go: a query
+    /// under way gets [`QUERY_GRACE`], then is left to the driver
+    /// (`Abandoned`); the release itself gets [`RELEASE_WAIT`] at most.
     fn drop(&mut self) {
-        self.stopped.store(true, Ordering::Release);
+        let (lock, wake) = &*self.control;
+        let mut c = lock.lock();
+        c.stop = true;
+        wake.notify_all();
+        let start = std::time::Instant::now();
+        while c.phase != Phase::Done {
+            let waited = start.elapsed();
+            if c.phase == Phase::Querying && waited >= QUERY_GRACE {
+                c.phase = Phase::Abandoned;
+                log::warn!("GPU memory budget: the driver's query did not return; the sampling thread is left to it");
+                return;
+            }
+            if waited >= RELEASE_WAIT {
+                log::warn!("GPU memory budget: the sampling thread did not end within {RELEASE_WAIT:?}");
+                return;
+            }
+            let limit = if c.phase == Phase::Querying { QUERY_GRACE } else { RELEASE_WAIT };
+            wake.wait_for(&mut c, limit.saturating_sub(waited));
+        }
     }
 }
 
@@ -568,6 +719,60 @@ mod tests {
         }
     }
 
+    /// #3963: once the sampler is dropped, its thread holds nothing of the
+    /// GPU any more (the `Arc` stands for its copy of the adapter), so it
+    /// never destroys the instance during the process's exit.
+    #[test]
+    fn the_end_of_the_sampler_waits_for_its_thread_to_let_go() {
+        let adapter = Arc::new(());
+        let held = adapter.clone();
+        let sampler = BudgetSampler::new(
+            move || {
+                let _ = &held;
+                Some((8_000 * MB, 1_000 * MB, 0, 0))
+            },
+            Duration::from_secs(60),
+        );
+        let start = Instant::now();
+        while sampler.read().is_none() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // the thread sleeps for a minute: the end wakes it instead
+        let start = Instant::now();
+        drop(sampler);
+        assert!(start.elapsed() < Duration::from_secs(1), "the end waited for the interval");
+        assert_eq!(Arc::strong_count(&adapter), 1, "the thread still holds its adapter");
+    }
+
+    /// A query stuck in the driver is not waited for, and when it returns
+    /// later the thread forgets its adapter instead of dropping it.
+    #[test]
+    fn a_query_left_to_the_driver_never_drops_its_adapter() {
+        let adapter = Arc::new(());
+        let held = adapter.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (returned_tx, returned_rx) = std::sync::mpsc::channel();
+        let sampler = BudgetSampler::new(
+            move || {
+                let _ = &held;
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                let _ = returned_tx.send(());
+                None
+            },
+            Duration::from_millis(1),
+        );
+        entered_rx.recv_timeout(Duration::from_secs(5)).expect("the query entered");
+        let start = Instant::now();
+        drop(sampler);
+        assert!(start.elapsed() < Duration::from_millis(250), "the end waited for a stuck query");
+        release_tx.send(()).expect("release the query");
+        returned_rx.recv_timeout(Duration::from_secs(5)).expect("the query returned");
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(Arc::strong_count(&adapter), 2, "the abandoned thread dropped its adapter");
+    }
+
     /// wgpu drops the extension from its own list on RADV: only the
     /// driver's list says the budget can be read there.
     #[cfg(not(target_os = "macos"))]
@@ -658,6 +863,87 @@ mod tests {
         assert_eq!(sampler.read(), Some((8312 * MB, 956 * MB, 7800 * MB)));
         drop(sampler);
         release_tx.send(()).expect("release the sampling thread");
+    }
+
+    /// Memory types of a discrete NVIDIA GPU: video memory alone, system
+    /// memory (plain and cached), and video memory the CPU can map, on the
+    /// heap `mappable_heap`.
+    #[cfg(not(target_os = "macos"))]
+    fn discrete_memory(heaps: &[(u64, bool)], mappable_heap: Option<u32>) -> vk::PhysicalDeviceMemoryProperties {
+        let host = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let mut memory = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: heaps.len() as u32,
+            memory_type_count: 3 + u32::from(mappable_heap.is_some()),
+            ..Default::default()
+        };
+        for (i, &(size, local)) in heaps.iter().enumerate() {
+            memory.memory_heaps[i].size = size;
+            if local {
+                memory.memory_heaps[i].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+            }
+        }
+        memory.memory_types[0].heap_index = 0;
+        memory.memory_types[0].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+        memory.memory_types[1].heap_index = 1;
+        memory.memory_types[1].property_flags = host;
+        memory.memory_types[2].heap_index = 1;
+        memory.memory_types[2].property_flags = host | vk::MemoryPropertyFlags::HOST_CACHED;
+        if let Some(heap) = mappable_heap {
+            memory.memory_types[3].heap_index = heap;
+            memory.memory_types[3].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL | host;
+        }
+        memory
+    }
+
+    #[test]
+    fn mappable_override_takes_whole_megabytes_only() {
+        assert_eq!(mappable_override(Some("246")), Some(246));
+        assert_eq!(mappable_override(Some(" 246 ")), Some(246));
+        assert_eq!(mappable_override(Some("0")), Some(0));
+        assert_eq!(mappable_override(None), None);
+        for bad in ["", "-1", "246MB", "2.5", "x"] {
+            assert_eq!(mappable_override(Some(bad)), None, "{bad:?}");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn mappable_video_memory_is_the_small_heap_without_resizable_bar() {
+        // Resizable BAR: the mappable type sits on the video memory itself
+        let whole = discrete_memory(&[(32_600 * MB, true), (46_400 * MB, false)], Some(0));
+        assert_eq!(mappable_heap_bytes(&whole), Some(32_600 * MB));
+        // without it: a third heap of the size of the PCI window
+        let window = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false), (246 * MB, true)], Some(2));
+        assert_eq!(mappable_heap_bytes(&window), Some(246 * MB));
+        // two such types: the first in index order, as the allocator takes
+        // it, not the largest heap
+        let mut two = window;
+        two.memory_type_count = 5;
+        two.memory_types[4].heap_index = 0;
+        two.memory_types[4].property_flags = two.memory_types[3].property_flags;
+        assert_eq!(mappable_heap_bytes(&two), Some(246 * MB));
+        // host-visible but not coherent: not the type the allocator asks for
+        let mut incoherent = window;
+        incoherent.memory_types[3].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE;
+        assert_eq!(mappable_heap_bytes(&incoherent), None);
+        // no mappable video memory: mapped buffers live in system memory
+        let none = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false)], None);
+        assert_eq!(mappable_heap_bytes(&none), None);
+        // a type naming a heap the driver did not list is no reading
+        let mut broken = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false)], Some(0));
+        broken.memory_types[3].heap_index = 7;
+        assert_eq!(mappable_heap_bytes(&broken), None);
+        // an integrated GPU: one heap, all of it mappable
+        let mut unified = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 1,
+            memory_type_count: 1,
+            ..Default::default()
+        };
+        unified.memory_heaps[0].size = 16_000 * MB;
+        unified.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        unified.memory_types[0].property_flags =
+            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        assert_eq!(mappable_heap_bytes(&unified), Some(16_000 * MB));
     }
 
     #[cfg(not(target_os = "macos"))]

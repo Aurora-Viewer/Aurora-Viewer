@@ -321,7 +321,9 @@ pub(super) fn pane(
         search.open_find();
     }
     // (the find field is in the head's row: the messages keep their height)
-    let lines_h = (pane.bottom() - ui.cursor().top() - compose::height(ui.ctx(), st.selected, st.recent_emojis.height())).max(60.0);
+    let recent = st.recent_emojis.height();
+    let cap = compose::field_cap(pane.bottom() - ui.cursor().top(), recent);
+    let lines_h = (pane.bottom() - ui.cursor().top() - compose::height(ui.ctx(), st.selected, recent, cap)).max(60.0);
     // ---- the messages, and the members beside them
     let read = mark_read(world, st.selected);
     note_new_line(ui, world, st, read);
@@ -397,7 +399,7 @@ pub(super) fn pane(
     }
     // ---- the field
     let strip_top = after_lines.max(ui.cursor().top() - 1.0);
-    compose::show(ui, p, icons, emoji, gestures, w, st, actions, quote);
+    compose::show(ui, p, icons, emoji, gestures, w, st, actions, quote, cap);
     // the strip between the messages and the box keeps the normal cursor
     // unless a drag goes through it (#422)
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
@@ -603,7 +605,8 @@ impl NewLines {
                 .max(first);
             // (without the focus, what is shown is not seen yet)
             self.seen.insert(conv, from);
-            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own());
+            // (a blocked resident's line, kept in the history, is no news)
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own() || l.blocked);
             match (from..next).find(|&seq| !mine(seq)) {
                 Some(seq) => {
                     self.at.insert(conv, seq);

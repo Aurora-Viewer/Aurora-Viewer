@@ -1,11 +1,13 @@
 //! Verify the published SHA-256 before extracting into an empty sibling.
-//! ZIP names are validated for Windows even when the tests run elsewhere.
+//! Archive names are validated for Windows even when the tests run elsewhere:
+//! a ZIP for the Windows package, a tar.gz for the Linux one.
 
 use crate::{
     Cancel, Failure, Progress,
     feed::{Release, Source},
 };
 use anyhow::{Context, Result, ensure};
+use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -13,6 +15,56 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
 };
+
+/// Limits on what an archive may hold once expanded: a package of the
+/// viewer weighs some hundreds of MB, never more.
+const MAX_ENTRIES: usize = 50_000;
+const MAX_EXPANDED: u64 = 4 * 1024 * 1024 * 1024;
+
+/// The archive a package is published in, told by its file name: `.zip` on
+/// Windows, `.tar.gz` on Linux (`package.ps1` and the release workflow).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Zip,
+    TarGz,
+}
+
+impl Format {
+    /// The format of `name`, when it is one this viewer installs.
+    pub fn of(name: &str) -> Option<Self> {
+        let name = name.to_ascii_lowercase();
+        if name.ends_with(".zip") {
+            Some(Self::Zip)
+        } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+            Some(Self::TarGz)
+        } else {
+            None
+        }
+    }
+    /// The download's name in the transaction folder, which also tells
+    /// [`extract`] the format.
+    fn file(self) -> &'static str {
+        match self {
+            Self::Zip => "download.zip",
+            Self::TarGz => "download.tar.gz",
+        }
+    }
+    /// The folder the package's entries sit under.
+    fn root(self, tag: &str) -> String {
+        match self {
+            Self::Zip => format!("Aurora-Viewer-{tag}-windows-x64"),
+            Self::TarGz => format!("Aurora-Viewer-{tag}-linux-x64"),
+        }
+    }
+    /// The viewer's executable inside the package, which is not this
+    /// system's: the tests extract the packages of both on any system.
+    fn exe(self) -> &'static str {
+        match self {
+            Self::Zip => "aurora-viewer.exe",
+            Self::TarGz => "aurora-viewer",
+        }
+    }
+}
 
 pub async fn download(
     source: &Source,
@@ -30,7 +82,8 @@ pub async fn download(
         .await
         .map_err(|e| failure(Failure::Network, e))?;
     let expected = parse_checksum(&expected, &archive.name).map_err(|e| failure(Failure::Integrity, e))?;
-    let path = work.join("download.zip");
+    let format = Format::of(&archive.name).ok_or(Failure::Unsupported)?;
+    let path = work.join(format.file());
     let fetch = Fetch {
         url: &archive.browser_download_url,
         size: archive.size,
@@ -135,7 +188,7 @@ pub(crate) fn parse_sha256(hex: &str) -> Result<[u8; 32]> {
 fn components(name: &str) -> Result<Vec<&str>> {
     ensure!(
         !name.starts_with('/') && !name.contains('\\') && !name.contains('\0'),
-        "unsafe ZIP path"
+        "unsafe archive path"
     );
     let mut parts = Vec::new();
     for part in name.trim_end_matches('/').split('/') {
@@ -159,15 +212,23 @@ fn components(name: &str) -> Result<Vec<&str>> {
     Ok(parts)
 }
 
+/// Extract the downloaded package, of the format its file name gives, into
+/// the new directory `root`, without the folder it is wrapped in.
 pub fn extract(path: &Path, root: &Path, tag: &str, cancel: &Cancel) -> Result<PathBuf> {
-    unpack(path, root, &format!("Aurora-Viewer-{tag}-windows-x64"), cancel)?;
+    let name = path.file_name().and_then(|n| n.to_str()).context("archive name")?;
+    let format = Format::of(name).context("unsupported archive format")?;
+    if format == Format::Zip {
+        unpack_zip(path, root, &format.root(tag), cancel)?;
+    } else {
+        unpack_tar_gz(path, root, &format.root(tag), cancel)?;
+    }
     let manifest: InstallManifest = serde_json::from_slice(&fs::read(root.join("aurora-install.json"))?)?;
     ensure!(
         manifest.schema == 1 && manifest.version == tag.trim_start_matches('v'),
         "package version mismatch"
     );
     ensure!(
-        root.join("aurora-viewer.exe").is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
+        root.join(format.exe()).is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
         "incomplete viewer package"
     );
     Ok(root.to_path_buf())
@@ -175,10 +236,10 @@ pub fn extract(path: &Path, root: &Path, tag: &str, cancel: &Cancel) -> Result<P
 
 /// Extract an archive whose every entry sits under the folder `prefix` into
 /// the new directory `root`, without that folder.
-pub(crate) fn unpack(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) -> Result<()> {
+pub(crate) fn unpack_zip(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) -> Result<()> {
     ensure!(!root.exists(), "staging directory already exists");
     let mut zip = zip::ZipArchive::new(File::open(path)?)?;
-    ensure!(!zip.is_empty() && zip.len() <= 50_000, "invalid ZIP entry count");
+    ensure!(!zip.is_empty() && zip.len() <= MAX_ENTRIES, "invalid ZIP entry count");
     let mut names = HashSet::new();
     let mut expanded = 0_u64;
     // Validate every entry before any extraction, including case collisions.
@@ -197,7 +258,7 @@ pub(crate) fn unpack(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) ->
         );
         ensure!(names.insert(name.trim_end_matches('/').to_lowercase()), "duplicate ZIP path");
         expanded = expanded.saturating_add(entry.size());
-        ensure!(expanded <= 4 * 1024 * 1024 * 1024, "expanded package too large");
+        ensure!(expanded <= MAX_EXPANDED, "expanded package too large");
     }
     fs::create_dir(root)?;
     for i in 0..zip.len() {
@@ -238,6 +299,79 @@ pub(crate) fn unpack(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) ->
     Ok(())
 }
 
+/// The path of a tar entry, as text: the packages' names are ASCII.
+fn tar_path<R: Read>(entry: &tar::Entry<'_, R>) -> Result<String> {
+    Ok(std::str::from_utf8(&entry.path_bytes())?.to_owned())
+}
+
+/// Extract a tar.gz whose every entry sits under the folder `prefix` into the
+/// new directory `root`, without that folder.
+pub(crate) fn unpack_tar_gz(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) -> Result<()> {
+    ensure!(!root.exists(), "staging directory already exists");
+    // Two passes, like the ZIP: nothing is written before every entry is known
+    // safe. The stream is decompressed twice, on a worker thread.
+    let mut count = 0_usize;
+    let mut names = HashSet::new();
+    let mut expanded = 0_u64;
+    for entry in tar::Archive::new(GzDecoder::new(File::open(path)?)).entries()? {
+        cancel.check()?;
+        let entry = entry?;
+        let name = tar_path(&entry)?;
+        let parts = components(&name)?;
+        // Only files and folders: a link, a device node or a sparse file
+        // would write outside the staging folder (the GNU tar of the release
+        // writes regular entries only).
+        ensure!(
+            parts[0] == prefix && matches!(entry.header().entry_type(), tar::EntryType::Regular | tar::EntryType::Directory),
+            "invalid package root or link"
+        );
+        ensure!(names.insert(name.trim_end_matches('/').to_lowercase()), "duplicate package path");
+        expanded = expanded.saturating_add(entry.size());
+        ensure!(expanded <= MAX_EXPANDED, "expanded package too large");
+        count += 1;
+        ensure!(count <= MAX_ENTRIES, "invalid package entry count");
+    }
+    ensure!(count > 0, "empty package");
+    fs::create_dir(root)?;
+    for entry in tar::Archive::new(GzDecoder::new(File::open(path)?)).entries()? {
+        cancel.check()?;
+        let mut entry = entry?;
+        let name = tar_path(&entry)?;
+        let parts = components(&name)?;
+        let target = parts.iter().skip(1).fold(root.to_path_buf(), |p, name| p.join(name));
+        if entry.header().entry_type() == tar::EntryType::Directory {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        ensure!(parts.len() > 1, "package root is a file");
+        fs::create_dir_all(target.parent().context("package file parent")?)?;
+        let mut out = OpenOptions::new().write(true).create_new(true).open(target)?;
+        let expected = entry.size();
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut size = 0_u64;
+        loop {
+            cancel.check()?;
+            let n = entry.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            size += n as u64;
+            ensure!(size <= expected, "package size mismatch");
+            out.write_all(&buffer[..n])?;
+        }
+        ensure!(size == expected, "truncated package member");
+        // Unix: the viewer and the media plugins' launcher must stay
+        // executable; only the permission bits are kept, never setuid
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            out.set_permissions(fs::Permissions::from_mode(entry.header().mode()? & 0o755))?;
+        }
+        out.sync_all()?;
+    }
+    Ok(())
+}
+
 #[derive(serde::Deserialize)]
 pub struct InstallManifest {
     pub schema: u32,
@@ -260,6 +394,31 @@ mod tests {
             assert!(parse_checksum(text.as_bytes(), "zip.zip").is_err());
         }
     }
+    #[test]
+    fn an_archive_format_is_told_by_its_name() {
+        assert_eq!(Format::of("Aurora-Viewer-v0.9.0-windows-x64.zip"), Some(Format::Zip));
+        assert_eq!(Format::of("Aurora-Viewer-v0.9.0-linux-x64.tar.gz"), Some(Format::TarGz));
+        assert_eq!(Format::of("PACKAGE.TAR.GZ"), Some(Format::TarGz));
+        for name in [
+            "aurora-update-policy.json",
+            "Aurora-Viewer-v0.9.0-macos-universal.dmg",
+            "package.tar.xz",
+            "package",
+        ] {
+            assert_eq!(Format::of(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn each_format_names_its_own_package_layout() {
+        assert_eq!(Format::Zip.root("v1.2.3"), "Aurora-Viewer-v1.2.3-windows-x64");
+        assert_eq!(Format::TarGz.root("v1.2.3"), "Aurora-Viewer-v1.2.3-linux-x64");
+        assert_eq!(Format::Zip.exe(), "aurora-viewer.exe");
+        assert_eq!(Format::TarGz.exe(), "aurora-viewer");
+        assert_eq!(Format::Zip.file(), "download.zip");
+        assert_eq!(Format::TarGz.file(), "download.tar.gz");
+    }
+
     #[test]
     fn windows_archive_paths() {
         assert!(components("Aurora/assets/character/a.llm").is_ok());
