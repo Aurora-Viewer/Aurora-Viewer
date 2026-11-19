@@ -2401,6 +2401,9 @@ fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::
     }
 }
 
+#[path = "pipeline_batch.rs"]
+mod pipeline_batch;
+use pipeline_batch::Resolve as _;
 #[cfg(test)]
 #[path = "part_tests.rs"]
 mod part_tests;
@@ -4893,7 +4896,9 @@ impl Backend {
             unclipped_depth: false,
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
-        let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
+        // compiled together once every one is described (pipeline_batch.rs)
+        let batch = pipeline_batch::Batch::default();
+        let pipe = |d: PipeDesc| batch.add(&module, &scene_layout, d);
         let hud_constants = [("HUD_SRGB_TARGET", if surface_format.is_srgb() { 1.0 } else { 0.0 })];
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
@@ -5147,12 +5152,11 @@ impl Backend {
                 immediate_size: 0,
             })
         });
-        let order_sided = |layout: &wgpu::PipelineLayout, desc: PipeDesc| -> SidedPipelines {
+        let order_sided = |desc: PipeDesc| -> [pipeline_batch::Slot; 2] {
             std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
+                batch.add(
                     &module,
-                    layout,
+                    &vis_layout,
                     PipeDesc {
                         cull: blend_cull(side != 0),
                         ..desc
@@ -5167,22 +5171,18 @@ impl Backend {
             operation: wgpu::BlendOperation::Add,
         };
         let haze_blend = crate::blend_exact::once_blend();
-        let blend_once = order_sided(
-            &vis_layout,
-            PipeDesc {
-                blend: Some(haze_blend),
-                write_mask: wgpu::ColorWrites::ALL,
-                format: Some(crate::blend_exact::HAZE_FORMAT),
-                range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
-                samples: 1,
-                depth_write: false,
-                depth_compare: static_compare,
-                constants: &[("WATER_CLIP", 1.0)],
-                ..base("blend once", "vs_main", "fs_blend_once")
-            },
-        );
-        let blend_cut = make_pipeline(
-            device,
+        let blend_once = order_sided(PipeDesc {
+            blend: Some(haze_blend),
+            write_mask: wgpu::ColorWrites::ALL,
+            format: Some(crate::blend_exact::HAZE_FORMAT),
+            range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
+            samples: 1,
+            depth_write: false,
+            depth_compare: static_compare,
+            constants: &[("WATER_CLIP", 1.0)],
+            ..base("blend once", "vs_main", "fs_blend_once")
+        });
+        let blend_cut = batch.add(
             &module,
             &vis_layout,
             PipeDesc {
@@ -5200,8 +5200,7 @@ impl Backend {
         );
         // over the screen, whatever the depth
         let screen = |label: &'static str, fs: &'static str, blend: wgpu::BlendState, write_mask: wgpu::ColorWrites| {
-            make_pipeline(
-                device,
+            batch.add(
                 &module,
                 &exact_layout,
                 PipeDesc {
@@ -5864,13 +5863,12 @@ impl Backend {
             polygon_line: false,
             unclipped_depth: false,
         };
-        let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
+        let shadow = batch.add(&module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
         // opaque casters: `fs_shadow` discards nothing of them, so the same
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
-        let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
-        let shadow_terrain = make_pipeline(
-            device,
+        let shadow_depth = batch.add(&module, &shadow_pl, shadow_desc("shadow depth", None));
+        let shadow_terrain = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5883,8 +5881,7 @@ impl Backend {
             slope_scale: 0.0,
             clamp: 0.0,
         };
-        let shelter = make_pipeline(
-            device,
+        let shelter = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5892,8 +5889,7 @@ impl Backend {
                 ..shadow_desc("rain shelter", Some("fs_shadow"))
             },
         );
-        let shelter_terrain = make_pipeline(
-            device,
+        let shelter_terrain = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
@@ -5911,8 +5907,7 @@ impl Backend {
             bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
             immediate_size: 0,
         });
-        let post = make_pipeline(
-            device,
+        let post = batch.add(
             &post_module,
             &post_pl,
             PipeDesc {
@@ -5937,110 +5932,111 @@ impl Backend {
                 unclipped_depth: false,
             },
         );
+        let mut done = batch.run(device);
         Pipelines {
-            creation_preview,
-            physics_fill,
-            physics_wire,
-            hud_opaque,
-            hud_blend,
-            hud_debug_red,
-            hud_debug_blue,
-            sky,
-            clouds_weather,
-            terrain,
-            terrain_pbr,
-            pre_terrain,
-            pre_terrain_normal,
-            pre_terrain_msaa,
-            opaque,
-            opaque_2s,
-            mask,
-            mask_2s,
-            water,
-            water_unclipped,
-            water_mask,
-            water_exclusion,
-            blend,
-            blend_late,
-            blend_depth,
-            blend_depth_mask,
-            blend_depth_color,
-            blend_depth_opaque,
-            blend_depth_solid,
-            blend_depth_fringe,
-            blend_depth_fringe_depth,
-            blend_once,
-            blend_cut,
-            blend_over,
-            blend_glow,
-            blend_both,
-            blend_under,
-            blend_under_depth_ss,
-            blend_under_depth_msaa,
-            particles,
-            water_particles,
-            water_particles_under,
-            rain,
-            rain_wet,
-            rain_wet_g,
-            rain_splash,
-            snow_mesh,
-            rain_far,
-            rain_wet_update,
-            snow_trail_update,
-            glow,
-            glow_water,
-            glow_max,
-            glow_suppress,
-            debug_red,
-            land_overlay,
-            debug_blue,
-            debug_green,
-            debug_yellow,
-            debug_wire,
-            select_root_wire,
-            select_child_wire,
-            selection_mask,
-            selection_pattern,
-            selection_pattern_hdr,
-            part_mask,
-            part_pick,
-            ssr: ssr_pipe,
-            pre_opaque,
-            pre_opaque_2s,
-            pre_portal,
-            pre_portal_2s,
-            pre_mask,
-            pre_mask_2s,
-            pre_normal,
-            pre_normal_portal,
-            pre_contact,
-            pre_contact_normal,
-            fsr_blend_normal,
-            pre_msaa,
-            refl_sky,
-            refl_terrain,
-            refl_terrain_pbr,
-            refl_obj,
-            refl_blend_rigged,
-            refl_blend,
-            shadow,
-            shadow_depth,
-            shadow_terrain,
-            shelter,
-            shelter_terrain,
-            post,
-            pick,
-            pick_terrain,
-            pick_terrain_mask,
-            pick_2s,
-            pick_visible,
-            pick_left,
-            pick_left_2s,
-            pick_mask,
-            pick_mask_2s,
-            pick_left_visible,
-            pick_overlay,
+            creation_preview: creation_preview.resolve(&mut done),
+            physics_fill: physics_fill.resolve(&mut done),
+            physics_wire: physics_wire.resolve(&mut done),
+            hud_opaque: hud_opaque.resolve(&mut done),
+            hud_blend: hud_blend.resolve(&mut done),
+            hud_debug_red: hud_debug_red.resolve(&mut done),
+            hud_debug_blue: hud_debug_blue.resolve(&mut done),
+            sky: sky.resolve(&mut done),
+            clouds_weather: clouds_weather.resolve(&mut done),
+            terrain: terrain.resolve(&mut done),
+            terrain_pbr: terrain_pbr.resolve(&mut done),
+            pre_terrain: pre_terrain.resolve(&mut done),
+            pre_terrain_normal: pre_terrain_normal.resolve(&mut done),
+            pre_terrain_msaa: pre_terrain_msaa.resolve(&mut done),
+            opaque: opaque.resolve(&mut done),
+            opaque_2s: opaque_2s.resolve(&mut done),
+            mask: mask.resolve(&mut done),
+            mask_2s: mask_2s.resolve(&mut done),
+            water: water.resolve(&mut done),
+            water_unclipped: water_unclipped.resolve(&mut done),
+            water_mask: water_mask.resolve(&mut done),
+            water_exclusion: water_exclusion.resolve(&mut done),
+            blend: blend.resolve(&mut done),
+            blend_late: blend_late.resolve(&mut done),
+            blend_depth: blend_depth.resolve(&mut done),
+            blend_depth_mask: blend_depth_mask.resolve(&mut done),
+            blend_depth_color: blend_depth_color.resolve(&mut done),
+            blend_depth_opaque: blend_depth_opaque.resolve(&mut done),
+            blend_depth_solid: blend_depth_solid.resolve(&mut done),
+            blend_depth_fringe: blend_depth_fringe.resolve(&mut done),
+            blend_depth_fringe_depth: blend_depth_fringe_depth.resolve(&mut done),
+            blend_once: blend_once.resolve(&mut done),
+            blend_cut: blend_cut.resolve(&mut done),
+            blend_over: blend_over.resolve(&mut done),
+            blend_glow: blend_glow.resolve(&mut done),
+            blend_both: blend_both.resolve(&mut done),
+            blend_under: blend_under.resolve(&mut done),
+            blend_under_depth_ss: blend_under_depth_ss.resolve(&mut done),
+            blend_under_depth_msaa: blend_under_depth_msaa.resolve(&mut done),
+            particles: particles.resolve(&mut done),
+            water_particles: water_particles.resolve(&mut done),
+            water_particles_under: water_particles_under.resolve(&mut done),
+            rain: rain.resolve(&mut done),
+            rain_wet: rain_wet.resolve(&mut done),
+            rain_wet_g: rain_wet_g.resolve(&mut done),
+            rain_splash: rain_splash.resolve(&mut done),
+            snow_mesh: snow_mesh.resolve(&mut done),
+            rain_far: rain_far.resolve(&mut done),
+            rain_wet_update: rain_wet_update.resolve(&mut done),
+            snow_trail_update: snow_trail_update.resolve(&mut done),
+            glow: glow.resolve(&mut done),
+            glow_water: glow_water.resolve(&mut done),
+            glow_max: glow_max.resolve(&mut done),
+            glow_suppress: glow_suppress.resolve(&mut done),
+            debug_red: debug_red.resolve(&mut done),
+            land_overlay: land_overlay.resolve(&mut done),
+            debug_blue: debug_blue.resolve(&mut done),
+            debug_green: debug_green.resolve(&mut done),
+            debug_yellow: debug_yellow.resolve(&mut done),
+            debug_wire: debug_wire.resolve(&mut done),
+            select_root_wire: select_root_wire.resolve(&mut done),
+            select_child_wire: select_child_wire.resolve(&mut done),
+            selection_mask: selection_mask.resolve(&mut done),
+            selection_pattern: selection_pattern.resolve(&mut done),
+            selection_pattern_hdr: selection_pattern_hdr.resolve(&mut done),
+            part_mask: part_mask.resolve(&mut done),
+            part_pick: part_pick.resolve(&mut done),
+            ssr: ssr_pipe.resolve(&mut done),
+            pre_opaque: pre_opaque.resolve(&mut done),
+            pre_opaque_2s: pre_opaque_2s.resolve(&mut done),
+            pre_portal: pre_portal.resolve(&mut done),
+            pre_portal_2s: pre_portal_2s.resolve(&mut done),
+            pre_mask: pre_mask.resolve(&mut done),
+            pre_mask_2s: pre_mask_2s.resolve(&mut done),
+            pre_normal: pre_normal.resolve(&mut done),
+            pre_normal_portal: pre_normal_portal.resolve(&mut done),
+            pre_contact: pre_contact.resolve(&mut done),
+            pre_contact_normal: pre_contact_normal.resolve(&mut done),
+            fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
+            pre_msaa: pre_msaa.resolve(&mut done),
+            refl_sky: refl_sky.resolve(&mut done),
+            refl_terrain: refl_terrain.resolve(&mut done),
+            refl_terrain_pbr: refl_terrain_pbr.resolve(&mut done),
+            refl_obj: refl_obj.resolve(&mut done),
+            refl_blend_rigged: refl_blend_rigged.resolve(&mut done),
+            refl_blend: refl_blend.resolve(&mut done),
+            shadow: shadow.resolve(&mut done),
+            shadow_depth: shadow_depth.resolve(&mut done),
+            shadow_terrain: shadow_terrain.resolve(&mut done),
+            shelter: shelter.resolve(&mut done),
+            shelter_terrain: shelter_terrain.resolve(&mut done),
+            post: post.resolve(&mut done),
+            pick: pick.resolve(&mut done),
+            pick_terrain: pick_terrain.resolve(&mut done),
+            pick_terrain_mask: pick_terrain_mask.resolve(&mut done),
+            pick_2s: pick_2s.resolve(&mut done),
+            pick_visible: pick_visible.resolve(&mut done),
+            pick_left: pick_left.resolve(&mut done),
+            pick_left_2s: pick_left_2s.resolve(&mut done),
+            pick_mask: pick_mask.resolve(&mut done),
+            pick_mask_2s: pick_mask_2s.resolve(&mut done),
+            pick_left_visible: pick_left_visible.resolve(&mut done),
+            pick_overlay: pick_overlay.resolve(&mut done),
         }
     }
 
