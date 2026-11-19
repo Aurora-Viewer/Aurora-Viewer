@@ -426,10 +426,11 @@ pub(super) fn show(
                     }
                 }
             }
-            s.texture.drop_target_slot(ui, rect, false, can_identity, 1);
+            s.texture.drop_target_slot_copy_transfer(ui, rect, can_identity, 1);
             if r.on_hover_text(aurora_i18n::tr!("common-click-to-select-an-image")).clicked() {
                 s.texture_snapshot = true;
-                s.texture.open(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
+                s.texture
+                    .open_copy_transfer(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
             }
         });
         ui.add_space(14.0);

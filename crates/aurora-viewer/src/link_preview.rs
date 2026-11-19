@@ -28,7 +28,7 @@
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod services;
 pub use services::{Service, blurred_until_clicked};
@@ -150,6 +150,7 @@ impl Settings {
                 .subtitles
                 .then(|| language_code(&self.subtitle_language).unwrap_or_else(|| language.clone())),
             language,
+            clock: false,
         }
     }
 }
@@ -163,6 +164,9 @@ pub struct PlayerOptions {
     pub subtitles: Option<String>,
     /// The language of the player's interface.
     pub language: String,
+    /// The page tells the viewer where the video is while it plays
+    /// (`video_time`): for what follows the music (`crate::oiia`).
+    pub clock: bool,
 }
 
 impl Default for PlayerOptions {
@@ -171,6 +175,7 @@ impl Default for PlayerOptions {
             volume: 100,
             subtitles: None,
             language: "en".to_owned(),
+            clock: false,
         }
     }
 }
@@ -374,8 +379,9 @@ impl Video {
         match player_server() {
             Some(port) => {
                 let cc = options.subtitles.as_ref().map(|l| format!("&cc={l}")).unwrap_or_default();
+                let clock = if options.clock { "&clock=1" } else { "" };
                 format!(
-                    "http://127.0.0.1:{port}/youtube/{}?start={}&vol={}&hl={}{cc}",
+                    "http://127.0.0.1:{port}/youtube/{}?start={}&vol={}&hl={}{cc}{clock}",
                     self.id, self.start, options.volume, options.language
                 )
             }
@@ -393,6 +399,9 @@ impl Video {
 fn player_page(id: &str, start: u32, options: &PlayerOptions, port: u16) -> String {
     let player = Video { id: id.to_owned(), start }.player(options);
     let volume = options.volume.min(100);
+    // The page also tells where the video is (`/time`), a few times a
+    // second: only for the player that asked for it.
+    let clock = u8::from(options.clock);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
@@ -402,11 +411,14 @@ fn player_page(id: &str, start: u32, options: &PlayerOptions, port: u16) -> Stri
          allow=\"autoplay; encrypted-media; picture-in-picture; fullscreen\" allowfullscreen \
          referrerpolicy=\"strict-origin-when-cross-origin\"></iframe>\
          <script>(function(){{var f=document.querySelector('iframe'),o='https://www.youtube-nocookie.com',\
-         v={volume},since=0;\
+         v={volume},since=0,clock={clock},state=-1;\
          function post(m){{f.contentWindow.postMessage(JSON.stringify(m),o);}}\
          f.addEventListener('load',function(){{post({{event:'listening',id:1,channel:'widget'}});}});\
          window.addEventListener('message',function(e){{if(e.origin!==o)return;var d;\
          try{{d=JSON.parse(e.data);}}catch(x){{return;}}\
+         if(clock&&d.info&&typeof d.info==='object'){{\
+         if(typeof d.info.playerState==='number')state=d.info.playerState;\
+         if(typeof d.info.currentTime==='number')new Image().src='/time?t='+d.info.currentTime.toFixed(3)+'&s='+state;}}\
          if(d.event==='onReady'){{post({{event:'command',func:'setVolume',args:[v]}});since=Date.now()+1500;return;}}\
          if(!since||Date.now()<since||d.event!=='infoDelivery'||!d.info||typeof d.info.volume!=='number')return;\
          var n=Math.round(d.info.volume);if(n!==v){{v=n;new Image().src='/volume?v='+n;}}}});}})();</script>\
@@ -430,8 +442,42 @@ fn player_answer(request: &str, port: u16) -> Option<String> {
         volume: param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100).min(100),
         subtitles: param("cc").and_then(language_code),
         language: param("hl").and_then(language_code).unwrap_or_else(|| "en".to_owned()),
+        clock: param("clock") == Some("1"),
     };
     Some(player_page(&id, start, &options, port))
+}
+
+/// Where a player's page says its video is (`GET /time?t=<seconds>&s=<state>`,
+/// the state YouTube's: 1 playing, 2 paused, 3 buffering, 0 ended).
+fn time_answer(request: &str) -> Option<(f64, i32)> {
+    let query = request.strip_prefix("GET /time?")?.split(' ').next()?;
+    let (seconds, state) = query.strip_prefix("t=")?.split_once("&s=")?;
+    let seconds = seconds.parse::<f64>().ok().filter(|t| (0.0..86_400.0).contains(t))?;
+    Some((seconds, state.parse::<i32>().ok().filter(|s| (-1..=5).contains(s))?))
+}
+
+/// Where the video of the player with a clock is: seconds into it, its
+/// state, and when that was said.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoTime {
+    pub seconds: f64,
+    /// YouTube's player state: 1 while it plays.
+    pub state: i32,
+    pub at: Instant,
+}
+
+static REPORTED_TIME: std::sync::Mutex<Option<VideoTime>> = std::sync::Mutex::new(None);
+
+/// The last thing a player with a clock (`PlayerOptions::clock`) said.
+pub fn video_time() -> Option<VideoTime> {
+    *REPORTED_TIME.lock().ok()?
+}
+
+/// Forgets it: another video is about to start.
+pub fn forget_video_time() {
+    if let Ok(mut slot) = REPORTED_TIME.lock() {
+        *slot = None;
+    }
 }
 
 /// A level the player's page reports (`GET /volume?v=<0-100>`).
@@ -469,6 +515,17 @@ fn player_server() -> Option<u16> {
                 let line = request.lines().next().unwrap_or("");
                 if let Some(volume) = volume_answer(line) {
                     REPORTED_VOLUME.store(i32::from(volume), std::sync::atomic::Ordering::Relaxed);
+                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                if let Some((seconds, state)) = time_answer(line) {
+                    if let Ok(mut slot) = REPORTED_TIME.lock() {
+                        *slot = Some(VideoTime {
+                            seconds,
+                            state,
+                            at: Instant::now(),
+                        });
+                    }
                     let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                     continue;
                 }
@@ -725,14 +782,19 @@ pub enum Failure {
 /// network: a redirect there stops, and names resolve to public addresses
 /// only (`PublicOnly`). A link written with such an address gets no preview
 /// in the first place (`link_trust`).
+///
+/// Behind a proxy of the viewer the proxy resolves the names, so the public
+/// address check cannot run on the resolved addresses: the link's own check
+/// (`link_trust::leads_to_local_network`) and the redirects' still run, and
+/// a public name the proxy's network resolves to one of its own machines is
+/// the remaining risk (stricter than the Legacy Viewer, which has no check).
 pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
-    builder(trusted_only)
-        .build()
+    aurora_proxy::http_client(|b| configure(trusted_only, b))
         .map_err(|e| log::warn!("link previews: no HTTP client: {e}"))
         .ok()
 }
 
-fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
+fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
@@ -745,13 +807,25 @@ fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .dns_resolver(PublicOnly)
+    public_only(
+        builder
+            .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy),
+    )
+}
+
+/// The `PublicOnly` resolver, when the names are resolved here: behind a
+/// proxy of the viewer it would only resolve the proxy's own name (and refuse
+/// a proxy on this computer or the local network).
+pub(crate) fn public_only(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if aurora_proxy::rule().proxies_http() {
+        builder
+    } else {
+        builder.dns_resolver(PublicOnly)
+    }
 }
 
 /// The name resolver of the previews: the system's, keeping only the
@@ -770,6 +844,7 @@ impl reqwest::dns::Resolve for PublicOnly {
 async fn public_addresses(host: String) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let lookup = host.clone();
     let found = tokio::task::spawn_blocking(move || {
+        // proxy-guard: only without a proxy of the viewer (`public_only`)
         std::net::ToSocketAddrs::to_socket_addrs(&(lookup.as_str(), 0)).map(|addrs| addrs.collect::<Vec<_>>())
     })
     .await??;
@@ -1645,7 +1720,8 @@ mod tests {
             PlayerOptions {
                 volume: 100,
                 subtitles: None,
-                language: "fr".into()
+                language: "fr".into(),
+                clock: false,
             }
         );
         s.video_volume = 0.304;
@@ -1904,7 +1980,11 @@ mod tests {
         let plain = test_client();
         assert!(rt.block_on(fetch_picture(&plain, &format!("{base}/a.png"))).is_ok());
         // the previews' clients stop at it
-        let guarded = builder(false).no_proxy().pool_max_idle_per_host(0).build().unwrap();
+        let guarded = configure(false, reqwest::Client::builder())
+            .no_proxy()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap();
         assert_eq!(
             rt.block_on(fetch_picture(&guarded, &format!("{base}/a.png"))).err(),
             Some(Failure::Unavailable)

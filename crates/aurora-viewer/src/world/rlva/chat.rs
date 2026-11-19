@@ -231,6 +231,7 @@ impl crate::world::World {
                 owner_id: Uuid::nil(),
                 source_type,
                 chat_type,
+                region: None,
                 position: glam::Vec3::ZERO,
                 message: text.into(),
             }));
@@ -258,6 +259,7 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.into(),
         }

@@ -156,6 +156,17 @@ pub enum MediaEvent {
     DebugMessage(String),
 }
 
+impl MediaEvent {
+    /// CEF marks a no-follow navigation as clicked when it has a user gesture.
+    /// The viewer's web windows and world media apply the same rule to links.
+    pub fn clicked_url(&self) -> Option<&str> {
+        match self {
+            Self::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
+            _ => None,
+        }
+    }
+}
+
 /// Dirty rectangle, in plugin coordinates (OpenGL style when
 /// `coords_opengl`: bottom > top is swapped so that top >= bottom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +231,14 @@ pub struct BrowserSettings {
     pub cookies_enabled: bool,
     pub javascript_enabled: bool,
     pub zoom_factor: f64,
+    /// The web proxy of Preferences › Network › Proxy (host, port), or
+    /// `None` for a direct browser (BrowserProxyEnabled).
+    pub proxy: Option<(String, u16)>,
+    /// Why the web browser plugin may not start (Preferences › Network ›
+    /// Proxy: it would connect around the proxy), shown to the user.
+    pub browser_refused: Option<String>,
+    /// The same for the video plugins (LibVLC, GStreamer).
+    pub video_refused: Option<String>,
 }
 
 impl Default for BrowserSettings {
@@ -233,6 +252,9 @@ impl Default for BrowserSettings {
             cookies_enabled: true,
             javascript_enabled: true,
             zoom_factor: 1.0,
+            proxy: None,
+            browser_refused: None,
+            video_refused: None,
         }
     }
 }
@@ -334,6 +356,15 @@ impl MediaPlugin {
         target: &str,
         in_world: bool,
     ) -> std::io::Result<MediaPlugin> {
+        // any plugin but the browser is a video one: refused with them
+        let refused = if plugin == "media_plugin_cef" {
+            &browser.browser_refused
+        } else {
+            &browser.video_refused
+        };
+        if let Some(why) = refused {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, why.clone()));
+        }
         let file = paths.plugin_file(plugin);
         if !file.is_file() {
             return Err(std::io::Error::new(
@@ -421,11 +452,19 @@ impl MediaPlugin {
         if !browser.user_agent.is_empty() {
             m.send(PluginMessage::new(CLASS_MEDIA_BROWSER, "set_user_agent").with("user_agent", browser.user_agent.as_str()));
         }
+        // LLViewerMediaImpl::initializePlugin (indra/newview/llviewermedia.cpp):
+        // the plugin writes `host:port` itself, so an IPv6 host goes in
+        // brackets
+        let (host, port) = match &browser.proxy {
+            Some((host, port)) if host.contains(':') => (format!("[{host}]"), *port),
+            Some((host, port)) => (host.clone(), *port),
+            None => (String::new(), 0),
+        };
         m.send(
             PluginMessage::new(CLASS_MEDIA_BROWSER, "proxy_setup")
-                .with("enable", false)
-                .with("host", "")
-                .with("port", 0),
+                .with("enable", browser.proxy.is_some())
+                .with("host", host.as_str())
+                .with("port", i32::from(port)),
         );
         m.send(
             PluginMessage::new(CLASS_MEDIA, "init")

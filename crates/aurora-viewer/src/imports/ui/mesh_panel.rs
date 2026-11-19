@@ -146,23 +146,37 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
         draft.preview_bend,
     );
     if entry.local {
+        let scene_supported = crate::imports::local::scene::supported(draft);
+        entry.local_scene &= scene_supported;
+        let mut model = (!entry.local_scene).then_some(entry.local_model);
         ui.label(aurora_i18n::tr!("import-local-mesh-instance"));
         egui::ComboBox::from_id_salt("local_mesh_instance")
             .width(ui.available_width() - 20.0)
-            .selected_text(
+            .selected_text(if entry.local_scene {
+                aurora_i18n::tr!("import-local-mesh-scene")
+            } else {
                 draft
                     .scene
                     .instances
                     .get(entry.local_model)
                     .map(|instance| instance.name.as_str())
-                    .unwrap_or(aurora_i18n::tr!("import-mesh")),
-            )
+                    .unwrap_or(aurora_i18n::tr!("import-mesh"))
+            })
             .show_ui(ui, |ui| {
+                if scene_supported {
+                    selection(ui, &mut model, None, aurora_i18n::tr!("import-local-mesh-scene"));
+                }
                 for (index, instance) in draft.scene.instances.iter().enumerate() {
-                    selection(ui, &mut entry.local_model, index, &instance.name);
+                    selection(ui, &mut model, Some(index), &instance.name);
                 }
             });
-        checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        entry.local_scene = model.is_none();
+        if let Some(model) = model {
+            entry.local_model = model;
+        }
+        ui.add_enabled_ui(!entry.local_scene, |ui| {
+            checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        });
     }
     checkbox(ui, p, &mut entry.view.edges, aurora_i18n::tr!("import-edges"));
     checkbox(ui, p, &mut draft.show_textures, aurora_i18n::tr!("import-textures"));
@@ -267,6 +281,7 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
         mesh::LodSource::Combine => aurora_i18n::tr!("import-lod-combine"),
         mesh::LodSource::Fast => aurora_i18n::tr!("import-lod-fast"),
         mesh::LodSource::Reliable => aurora_i18n::tr!("import-lod-reliable"),
+        mesh::LodSource::Legacy => aurora_i18n::tr!("import-lod-legacy"),
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
@@ -381,6 +396,7 @@ fn mesh_controls(
                             .show_ui(ui, |ui| {
                                 for choice in [
                                     mesh::LodSource::File,
+                                    mesh::LodSource::Legacy,
                                     mesh::LodSource::Auto,
                                     mesh::LodSource::Combine,
                                     mesh::LodSource::Fast,
@@ -1074,6 +1090,10 @@ mod tests {
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
         let mut draft = crate::imports::tests::mesh_fixture();
+        // Exercise Automatic generation explicitly; Legacy keeps a box whole.
+        for lod in &mut draft.lods[..3] {
+            lod.source = mesh::LodSource::Auto;
+        }
         // A closed surface can reduce as the error rises; an isolated quad cannot.
         let model = &mut Arc::make_mut(&mut draft.scene).models[0];
         model.center = glam::Vec3::ZERO;
@@ -1286,7 +1306,7 @@ mod tests {
         for _ in 0..3 {
             output = Some(frame(Vec::new(), &mut entry).0);
         }
-        let source = text_position(output.as_ref().expect("frame"), aurora_i18n::tr!("import-lod-auto"), false);
+        let source = text_position(output.as_ref().expect("frame"), aurora_i18n::tr!("import-lod-legacy"), false);
         for pressed in [true, false] {
             output = Some(frame(events(source, pressed), &mut entry).0);
         }
@@ -1311,7 +1331,7 @@ mod tests {
         );
         let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
         assert!(
-            draft.lods[2].source == mesh::LodSource::Auto,
+            draft.lods[2].source == mesh::LodSource::Legacy,
             "cancelled file picker keeps the working source"
         );
         assert_eq!(

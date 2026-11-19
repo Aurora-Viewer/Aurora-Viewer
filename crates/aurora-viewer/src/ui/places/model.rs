@@ -17,8 +17,6 @@ use uuid::Uuid;
 /// FT_LANDMARK and FT_FAVORITE.
 pub const FOLDER_LANDMARKS: i32 = 3;
 pub const FOLDER_FAVORITES: i32 = 23;
-/// AT_LANDMARK.
-const ASSET_LANDMARK: i32 = 3;
 /// A teleport that arrived this close to a landmark (horizontally) was a
 /// visit of it: a parcel's landing point puts the arrival away from the
 /// landmark's own position.
@@ -171,7 +169,7 @@ fn items_under(inv: &Inventory, kind: i32) -> Vec<Uuid> {
         out.extend(
             f.items
                 .iter()
-                .filter(|id| inv.items.get(*id).is_some_and(|it| it.asset_type == ASSET_LANDMARK)),
+                .filter(|id| crate::world::landmarks::inventory_item(inv, **id).is_some()),
         );
         // children in reverse so the first one is read first
         stack.extend(f.children.iter().rev().copied());
@@ -189,7 +187,9 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
     let favorite_items = items_under(inv, FOLDER_FAVORITES);
     let favorites: HashSet<Uuid> = favorite_items.iter().copied().collect();
     for id in items_under(inv, FOLDER_LANDMARKS).into_iter().chain(favorite_items) {
-        let Some(it) = inv.items.get(&id) else { continue };
+        let Some(it) = crate::world::landmarks::inventory_item(inv, id) else {
+            continue;
+        };
         let in_favorites = favorites.contains(&id);
         // a landmark with a nil asset is its own place
         let key = if it.asset_id.is_nil() { id } else { it.asset_id };
@@ -222,7 +222,7 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
             item: Some(id),
             asset: Some(key),
             favorite: in_favorites.then_some(id),
-            folder: (!in_favorites).then_some(it.parent),
+            folder: (!in_favorites).then(|| inv.items[&id].parent),
             note: it.desc.clone(),
             thumbnail: it.thumbnail,
             created: it.created_at,
@@ -350,21 +350,24 @@ fn add_folders(inv: &Inventory, parent: Uuid, depth: usize, out: &mut Vec<Folder
     }
 }
 
-/// "Today, 21:40", "Yesterday, 23:05", else "16 Oct." (Second Life time,
-/// like the days of the conversations).
-pub fn visit_label(date: f64, now: f64) -> String {
-    use crate::world::chat_log::format::Slt;
-    let at = |t: f64| std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(t.max(0.0));
-    let (d, today, yesterday) = (Slt::of(at(date)), Slt::of(at(now)), Slt::of(at(now - 86_400.0)));
-    let same = |a: &Slt, b: &Slt| (a.year, a.month, a.day) == (b.year, b.month, b.day);
-    let time = format!("{:02}:{:02}", d.hour, d.minute);
-    if same(&d, &today) {
+/// "Today, 21:40", "Yesterday, 23:05", else "16 Oct.", in the teleport
+/// history's zone (`offset`: seconds to add to UTC, Second Life time by
+/// default: FSTPHistoryTZ).
+pub fn visit_label(date: f64, now: f64, offset: f64) -> String {
+    const DAY: f64 = 86_400.0;
+    let zoned = |t: f64| t.max(0.0) + offset;
+    let day = |t: f64| (zoned(t) / DAY).floor() as i64;
+    let (d, today) = (day(date), day(now));
+    let minutes = (zoned(date).rem_euclid(DAY) / 60.0) as i64;
+    let time = format!("{:02}:{:02}", minutes / 60, minutes % 60);
+    if d == today {
         aurora_i18n::tr!("ui-places-visit-today", time = time).to_owned()
-    } else if same(&d, &yesterday) {
+    } else if d == today - 1 {
         aurora_i18n::tr!("ui-places-visit-yesterday", time = time).to_owned()
     } else {
-        let month = crate::ui::land::months()[(d.month.clamp(1, 12) - 1) as usize];
-        aurora_i18n::tr!("ui-places-visit-day", day = d.day.to_string(), month = month.to_string()).to_owned()
+        let (_, month, day) = aurora_net::profile::civil_from_days(d);
+        let month = crate::ui::land::months()[(month.clamp(1, 12) - 1) as usize];
+        aurora_i18n::tr!("ui-places-visit-day", day = day.to_string(), month = month.to_string()).to_owned()
     }
 }
 
@@ -492,6 +495,29 @@ mod tests {
     }
 
     #[test]
+    fn landmark_links_share_the_original_asset_and_keep_the_favorite_link_id() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(200)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        link.name = "Stale link name".into();
+        let cat = catalog(&inv, &resolved(), &map(), &[], true);
+        let cafe = cat.landmark(id(1001)).expect("linked favorite");
+        assert_eq!(cafe.name, "Café");
+        assert_eq!(cafe.favorite, Some(id(200)));
+        assert_eq!(cafe.item, Some(id(101)));
+        assert_eq!(cat.landmarks.len(), 4);
+        assert!(!cat.wanted_assets.contains(&id(101)), "never request an inventory UUID as an asset");
+        inv.folders.get_mut(&id(11)).expect("original folder").items.clear();
+        let cat = catalog(&inv, &Landmarks::default(), &map(), &[], true);
+        let cafe = cat.landmark(id(1001)).expect("favorite alone");
+        assert_eq!(cafe.item, Some(id(200)));
+        assert_eq!(cafe.favorite, Some(id(200)));
+        assert!(cat.wanted_assets.contains(&id(1001)));
+        assert!(!cat.wanted_assets.contains(&id(101)));
+    }
+
+    #[test]
     fn a_landmark_and_its_favourite_copy_are_one_place() {
         let cat = catalog(&inventory(), &resolved(), &map(), &[], false);
         let names: Vec<&str> = cat.landmarks.iter().map(|p| p.name.as_str()).collect();
@@ -610,19 +636,30 @@ mod tests {
     fn visit_labels() {
         // 2026-10-19 21:40 SLT (PDT, UTC-7)
         let now = (aurora_net::profile::days_from_civil(2026, 10, 20) * 86_400 + 4 * 3600 + 40 * 60) as f64;
+        const PDT: f64 = -7.0 * 3600.0;
         assert_eq!(
-            visit_label(now, now),
+            visit_label(now, now, PDT),
             aurora_i18n::tr!("ui-places-visit-today", time = "21:40").as_str()
         );
         assert_eq!(
-            visit_label(now - 86_400.0 - 3600.0, now),
+            visit_label(now - 86_400.0 - 3600.0, now, PDT),
             aurora_i18n::tr!("ui-places-visit-yesterday", time = "20:40").as_str()
         );
         let month = crate::ui::land::months()[9];
         assert_eq!(
-            visit_label(now - 3.0 * 86_400.0, now),
+            visit_label(now - 3.0 * 86_400.0, now, PDT),
             aurora_i18n::tr!("ui-places-visit-day", day = "16", month = month).as_str()
         );
         assert_eq!(created_label(0), aurora_i18n::tr!("status-unknown"));
+        // the same moment in UTC: 04:40 on the 20th, the evening before
+        // is yesterday there
+        assert_eq!(
+            visit_label(now, now, 0.0),
+            aurora_i18n::tr!("ui-places-visit-today", time = "04:40").as_str()
+        );
+        assert_eq!(
+            visit_label(now - 6.0 * 3600.0, now, 0.0),
+            aurora_i18n::tr!("ui-places-visit-yesterday", time = "22:40").as_str()
+        );
     }
 }

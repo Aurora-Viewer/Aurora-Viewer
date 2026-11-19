@@ -162,13 +162,14 @@ fn projects_tab_selects_and_manages_complete_projects_through_real_pointer_input
             "ik-library-notecard",
             "ik-project-title",
         ] {
-            assert!(
-                !output
-                    .shapes
-                    .iter()
-                    .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == aurora_i18n::text(key))),
-                "project management {key} leaked into {tab}"
-            );
+            // (the Projects tab may read the same: Japanese has no plural)
+            let drawn = output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == aurora_i18n::text(key)))
+                .count();
+            let tab_label = usize::from(aurora_i18n::text(key) == aurora_i18n::text("ik-edit-tab-projects"));
+            assert_eq!(drawn, tab_label, "project management {key} leaked into {tab}");
         }
     }
     let tab = centre(&output, aurora_i18n::text("ik-edit-tab-projects"));

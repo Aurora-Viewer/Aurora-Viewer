@@ -280,11 +280,16 @@ impl World {
         let payment = self.payments.push(other, sent, amount, message);
         let line = ChatLine {
             time: SystemTime::now(),
-            from: self.social.name_of(&other),
+            // (the payer is always named: money_balance_avatar_notify,
+            // indra/newview/llviewermessage.cpp, has no RLVa name test)
+            from: self.social.name_in(super::names::NameScope::Roster, &other),
             text,
             kind: ChatKind::Payment(payment),
             source: other,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         self.conversation_card(other, line);
         if sent {

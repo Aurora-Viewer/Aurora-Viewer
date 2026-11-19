@@ -22,7 +22,7 @@ AllowSelfImpostor,Boolean,unreviewed,,,Allow own render time to impostor your av
 AllowTapTapHoldRun,Boolean,unreviewed,,,Tapping a direction key twice and holding it down makes avatar run
 AnalyzePerformance,Boolean,unreviewed,,,Request performance analysis for a particular viewer run
 AnimateTextures,Boolean,unreviewed,,,Enable texture animation (debug)
-AnimatedObjectsAllowLeftClick,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/scene/drawn.rs:23,Allow left-click interaction with animated objects. Uncertain how much performance impact this will have.
+AnimatedObjectsAllowLeftClick,Boolean,in-aurora,,rigged_click_animesh,Allow left-click interaction with animated objects. Uncertain how much performance impact this will have.
 AnimatedObjectsMaxLegalOffset,F32,unreviewed,,,Max visual offset between object position and rendered position
 AnimatedObjectsMaxLegalSize,F32,unreviewed,,,Max bounding box size for animated object's rendered position
 AppearanceCameraMovement,Boolean,unreviewed,,field `appearance_camera_movement`,"When entering appearance editing mode, camera zooms in on currently selected portion of avatar"
@@ -210,12 +210,12 @@ CurrentGrid,String,unreviewed,,,Currently Selected Grid
 CurrentMapServerURL,String,unreviewed,,named in Aurora: aurora-viewer/src/grids.rs:385,Current Session World map URL
 CurrentlyUsingBakesOnMesh,Boolean,unreviewed,,,Are we currently on a grid that uses bakes on mesh? Persisted to force rebakes on login to named grids.
 Cursor3D,Boolean,unreviewed,,,Treat Joystick values as absolute positions (not deltas).
-DAEExportConsolidateMaterials,Boolean,unreviewed,,,Combine faces with same texture
-DAEExportSingleUVMap,Boolean,unreviewed,,,set all objects to have the same UV map name
-DAEExportSkipTransparent,Boolean,unreviewed,,,Skip exporting faces with default transparent texture or full transparent
-DAEExportTextureParams,Boolean,unreviewed,,,Apply texture params suchs as repeats to the exported UV map
-DAEExportTextures,Boolean,unreviewed,,,Export textures when exporting Collada
-DAEExportTexturesFormat,S32,unreviewed,,,Image file format to use when exporting Collada
+DAEExportConsolidateMaterials,Boolean,in-aurora,,field `build.export.consolidate`,Combine faces with same texture
+DAEExportSingleUVMap,Boolean,in-aurora,,field `build.export.single_uv_map`,set all objects to have the same UV map name
+DAEExportSkipTransparent,Boolean,in-aurora,,field `build.export.skip_transparent`,Skip exporting faces with default transparent texture or full transparent
+DAEExportTextureParams,Boolean,in-aurora,,field `build.export.texture_params`,Apply texture params suchs as repeats to the exported UV map
+DAEExportTextures,Boolean,in-aurora,,field `build.export.textures`,Export textures when exporting Collada
+DAEExportTexturesFormat,S32,in-aurora,,field `build.export.texture_format` (Tga / Png / J2c),Image file format to use when exporting Collada
 DayCycleName,String,unreviewed,,,Day cycle to use. May be superseded by region settings.
 DebugAnimatedObjects,Boolean,unreviewed,,,Show info related to animated objects
 DebugAvatarAppearanceMessage,Boolean,unreviewed,,,Dump a bunch of XML files when handling appearance messages
@@ -387,10 +387,10 @@ ExodusMouselookTextOffsetY,F32,unreviewed,,,Text Y offset for target information
 ExternalEditor,String,unreviewed,,,"Path to program used to edit LSL scripts and XUI files, e.g.: /usr/bin/gedit --new-window ""%s"""
 ExternalEditorConvertTabsToSpaces,Boolean,unreviewed,,,"If enabled, the script sent to the viewer from an external editor will automatically have all tabs being replaced by the default number of s"
 ExternalEditorTightIntegration,Boolean,unreviewed,,,"When true, Edit in External Editor launches VS Code via the code CLI with a vscode:// URI instead of using the configured external editor."
-ExternalWebsocketForwardDebug,Boolean,unreviewed,,,Forward messages and runtime errors for a script to JSONRPC client.
-ExternalWebsocketSyncEnable,Boolean,unreviewed,,,Enables the Websocket JSONRPC server when doing external script editing.
-ExternalWebsocketSyncLocal,Boolean,unreviewed,,,Should the JSONRPC server listen only for local connections.
-ExternalWebsocketSyncPort,S32,unreviewed,,,Port that the JSONRPC server listens on when editing
+ExternalWebsocketForwardDebug,Boolean,in-aurora,,field `script_editor.websocket_forward_debug`; on by default as the Legacy Viewer,Forward messages and runtime errors for a script to JSONRPC client.
+ExternalWebsocketSyncEnable,Boolean,in-aurora,,field `script_editor.websocket_sync`; off by default (human decision 2026-11-17; the Legacy Viewer has it on),Enables the Websocket JSONRPC server when doing external script editing.
+ExternalWebsocketSyncLocal,Boolean,not-applicable,,the editor sync listens on 127.0.0.1 only (human decision 2026-11-17),Should the JSONRPC server listen only for local connections.
+ExternalWebsocketSyncPort,S32,in-aurora,,field `script_editor.websocket_port`; 9020 by default; 1024..65535,Port that the JSONRPC server listens on when editing
 FMODProfilerEnable,Boolean,unreviewed,,,Enable profiler tool if using FMOD Studio
 FMODResampleMethod,U32,unreviewed,,,"Sets the method used for internal resampler 0(Linear), 1(Cubic), 2(Spline) for FMOD Studio"
 FSAdvancedTooltips,Boolean,check,,hover_tips.form may cover it,Show extended information in hovertips about objects (classic Phoenix style)
@@ -2098,7 +2098,7 @@ StatsReportMaxDuration,F32,unreviewed,,,"Maximum seconds for viewer stats file d
 StatsReportSkipZeroDataSaves,Boolean,unreviewed,,,"In viewer stats data file, skip saving entry if there is no data"
 StatsSessionTrackFrameStats,Boolean,unreviewed,,,Track rendering and network statistics
 StatsSummaryFile,String,unreviewed,,,Filename for stats logging summary
-StopMicCaptureWhenMuted,S32,unreviewed,,,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
+StopMicCaptureWhenMuted,S32,in-aurora,,field `stop_mic_when_muted`,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
 StreamMetadataAnnounceChannel,S32,unreviewed,,field `stream_title_announce`,Chat channel where stream metadata is announced to.
 StreamMetadataAnnounceToChat,Boolean,unreviewed,,field `stream_title_announce`,Announces stream metadata to a defined chat channel.
 SwitchToSharedEnvAfterTeleport,Boolean,unreviewed,,,Switch to Shared Environment after teleport
