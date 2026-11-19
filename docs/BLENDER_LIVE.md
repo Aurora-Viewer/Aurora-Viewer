@@ -788,7 +788,7 @@ modifiers removed, keeping geometry modifiers and shape keys. The source mesh,
 selection, object mode and modifier settings remain intact. Custom joint
 position overrides are not applied to Aurora's skeleton.
 
-## Maya (plug-in 0.1.1)
+## Maya (plug-in 0.2.0)
 
 Aurora LiveMesh also works from Autodesk Maya 2022 and later. It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
@@ -845,9 +845,24 @@ now** sends at once and reloads the texture files.
   and Raw are read. Images are scaled to at most 1024 pixels. A material that
   does not follow these rules is shown in its plain colour, and the list says
   why.
-- **Not in this version:** shape transfer, rig creation, posing helpers, the
-  Import / LOD bundle (the Import button says so) and explicit grouping. Use the Blender plug-in or a
-  normal upload for those.
+- **Import / LOD.** Click **Import** next to a mesh in Aurora's LiveMesh
+  list: the plug-in prepares four levels and Aurora opens its Import window
+  with them, as with Blender. High is the synchronized mesh. Medium, Low and
+  Lowest are set in the Maya window's **Import / LOD** section, for the mesh
+  selected in its list: **Existing or automatic** (default) uses the mesh
+  named in the field, or else the one named after High with the level's
+  suffix (`Body_medium`, `Body_low`, `Body_lowest`; a trailing `_high` of
+  High's name is dropped), and makes a reduced copy when there is none;
+  **Existing mesh** requires one; **Automatic** always reduces. A reduced
+  copy is High at rest put through `polyReduce`, to 50 %, 25 % and 12.5 % of
+  High's triangles by default or to a triangle count; a skinned one takes each
+  vertex's weights from the nearest High vertex. The copies are deleted and
+  leave no undo step; your meshes are not changed. A level's surfaces are
+  matched to High's by shading group, so a lower level can drop a material
+  but not add one. Existing skinned levels must be bound to the same rig as
+  High (same bind matrices).
+- **Not in this version:** shape transfer, rig creation, posing helpers and
+  explicit grouping. Use the Blender plug-in for those.
 
 The plug-in's pure rules (frames, binds, weights, packing, colour tables) have
 tests that run without Maya: `python maya/tests/test_convert.py`.

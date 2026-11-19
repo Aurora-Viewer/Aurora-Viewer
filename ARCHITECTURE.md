@@ -1351,7 +1351,7 @@ wire limits; `blender/tests/` exercises real Blender capture and transport.
 holds its pure rules (Y-up centimetres to SL metres, skin binds, weight ranking,
 corner packing, colour tables; `maya/tests/test_convert.py` runs them without
 Maya), `capture.py` reads meshes and skinClusters through OpenMaya,
-`materials.py` reads shaders and file textures, `session.py` tracks changes
+`materials.py` reads shaders and file textures, `lods.py` prepares the Import / LOD bundle (existing or `polyReduce` levels), `session.py` tracks changes
 with dirty-plug callbacks and a Qt timer, `ui.py` is its window. It ships with
 the Blender plug-in's `client.py` (no Blender import) and a drag-and-drop
 `install.mel`; `blender_live/addon.rs` bundles it for Plugins › Maya.

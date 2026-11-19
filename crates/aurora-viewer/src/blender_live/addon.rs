@@ -68,6 +68,10 @@ const MAYA_FILES: &[(&str, &[u8])] = &[
         "aurora_live_maya/session.py",
         include_bytes!("../../../../maya/aurora_live_maya/session.py"),
     ),
+    (
+        "aurora_live_maya/lods.py",
+        include_bytes!("../../../../maya/aurora_live_maya/lods.py"),
+    ),
     ("aurora_live_maya/ui.py", include_bytes!("../../../../maya/aurora_live_maya/ui.py")),
     (
         "aurora_live_maya/client.py",

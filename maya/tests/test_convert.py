@@ -250,6 +250,63 @@ class Links(unittest.TestCase):
             convert.static_roots({"a": "b", "b": "a"})
 
 
+class Lods(unittest.TestCase):
+    def test_settings_round_trip_with_namespaces_and_defaults(self):
+        settings = {"ID-1": {"medium": dict(convert.lod_default("medium"), object="ns:Body_mid", mode="existing"),
+                             "low": dict(convert.lod_default("low"), budget="triangles", value=1500),
+                             "lowest": convert.lod_default("lowest")}}
+        text = convert.lod_settings_format(settings)
+        self.assertNotIn('"', text)
+        self.assertEqual(convert.lod_settings_parse(text), settings)
+        # Damaged text falls back to the defaults, level by level.
+        parsed = convert.lod_settings_parse("ID-2=bogus,auto||_low|ratio|nan;=x;")
+        self.assertEqual(parsed["ID-2"]["medium"], convert.lod_default("medium"))
+        self.assertEqual(parsed["ID-2"]["low"]["mode"], "auto")
+        self.assertEqual(parsed["ID-2"]["low"]["value"], 25.0)
+        self.assertEqual(convert.lod_default("lowest")["value"], 12.5)
+
+    def test_names_and_targets_follow_the_blender_plugin(self):
+        self.assertEqual(convert.lod_name("Body_HIGH", "_low"), "Body_low")
+        self.assertEqual(convert.lod_name("Body", "_medium"), "Body_medium")
+        self.assertEqual(convert.lod_target(1000, convert.lod_default("medium")), 500)
+        self.assertEqual(convert.lod_target(1000, dict(convert.lod_default("low"), budget="triangles", value=40)), 40)
+        self.assertEqual(convert.lod_target(3, convert.lod_default("lowest")), 1)
+
+    def test_palettes_merge_and_refuse_disagreeing_binds(self):
+        identity = convert.column_major(convert.identity())
+        moved = convert.column_major(convert.translation((0, 0, -1)))
+        vertex = lambda joints: {"position": [0, 0, 0], "normal": [0, 0, 1], "uv": [0, 0], "joints": joints,
+                                 "weights": [1, 0, 0, 0]}
+        high = {"joints": ["mChest", "mPelvis"], "inverse_bind": [identity, moved], "faces": [{"vertices": [vertex([1, 0, 0, 0])]}]}
+        low = {"joints": ["mPelvis"], "inverse_bind": [moved], "faces": [{"vertices": [vertex([0, 0, 0, 0])]}]}
+        convert.merge_palettes([low, high])
+        self.assertEqual(low["joints"], ["mPelvis", "mChest"])
+        self.assertEqual(high["joints"], low["joints"])
+        self.assertEqual(high["faces"][0]["vertices"][0]["joints"][0], 0)  # mPelvis, renumbered
+        self.assertEqual(low["faces"][0]["vertices"][0]["joints"][0], 0)
+        bad = {"joints": ["mPelvis"], "inverse_bind": [identity], "faces": []}
+        with self.assertRaises(ValueError):
+            convert.merge_palettes([bad, high])
+        static = [{"joints": [], "inverse_bind": [], "faces": [{"vertices": [vertex([0, 0, 0, 0])]}]}]
+        convert.merge_palettes(static)
+        self.assertEqual(static[0]["joints"], [])
+
+    def test_lod_surfaces_map_to_high_by_shading_group(self):
+        self.assertEqual(convert.slot_mapping(["skinSG", "nailsSG"], ["nailsSG", "skinSG", "eyesSG"]), [1, 0])
+        self.assertEqual(convert.slot_mapping([None], [None]), [0])
+        with self.assertRaises(ValueError):
+            convert.slot_mapping(["otherSG"], ["skinSG"])
+        with self.assertRaises(ValueError):
+            convert.slot_mapping(["skinSG", "skinSG"], ["skinSG"])
+
+    def test_reduced_vertices_take_the_nearest_high_weights(self):
+        high = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (5, 5, 5)]
+        joints = [(0, 0, 0, 0), (1, 0, 0, 0), (2, 0, 0, 0), (3, 0, 0, 0)]
+        weights = [(1.0, 0, 0, 0)] * 4
+        result, _weights = convert.transfer(high, joints, weights, [0, 1, 2], [(0.9, 0.1, 0), (0.1, 0.8, 0), (-9, 0, 0)])
+        self.assertEqual([j[0] for j in result], [1, 2, 0])
+
+
 class Transport(unittest.TestCase):
     def test_the_maya_client_negotiates_no_blender_controls(self):
         token = b"0123456789abcdef" * 4
@@ -285,6 +342,65 @@ class Transport(unittest.TestCase):
         # The first frame is the snapshot, not a features control.
         self.assertEqual(frames[0].get("revision"), 1)
         self.assertNotIn("type", frames[0])
+
+
+class ImportTransport(unittest.TestCase):
+    def test_the_maya_client_negotiates_import_lods_and_answers_with_a_bundle(self):
+        token = b"0123456789abcdef" * 4
+        client.read_token = lambda port: token
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        received = {}
+
+        def frame(connection):
+            size = struct.unpack("<I", receive(connection, 4))[0]
+            return receive(connection, size)
+
+        def receive(connection, size):
+            data = b""
+            while len(data) < size:
+                chunk = connection.recv(size - len(data))
+                if not chunk:
+                    raise EOFError
+                data += chunk
+            return data
+
+        def viewer():
+            connection, _ = server.accept()
+            with connection:
+                receive(connection, len(client.MAGIC) + len(token))
+                hello = {"protocol": 1, "joints": ["mPelvis"],
+                         "features": ["pbr-materials", "shape-transfer", "shape-apply", "import-lods"]}
+                connection.sendall(json.dumps(hello).encode() + b"\n")
+                received["control"] = json.loads(frame(connection))
+                request = {"id": "5f0c1a0e-0000-4000-8000-000000000001", "source": "5f0c1a0e-0000-4000-8000-000000000002"}
+                connection.sendall(json.dumps({"ok": True, "prepare_import": request}).encode() + b"\n")
+                while True:
+                    body = frame(connection)
+                    if body.startswith(b"LODS"):
+                        received["lods"] = json.loads(body[4:])
+                        connection.sendall(b'{"ok":true}\n')
+                        return
+                    connection.sendall(b'{"ok":true,"revision":1}\n')
+
+        thread = threading.Thread(target=viewer)
+        thread.start()
+        live = client.Client(server.getsockname()[1], capabilities=("import-lods",))
+        request = None
+        for _ in range(200):
+            request = live.take_import()
+            if request:
+                break
+            threading.Event().wait(0.02)
+        self.assertIsNotNone(request)
+        live.import_result(dict(request, error="test"))
+        thread.join(10)
+        live.close()
+        server.close()
+        self.assertEqual(received["control"], {"type": "features", "features": ["import-lods"]})
+        self.assertEqual(received["lods"]["error"], "test")
+        self.assertEqual(received["lods"]["source"], request["source"])
 
 
 if __name__ == "__main__":

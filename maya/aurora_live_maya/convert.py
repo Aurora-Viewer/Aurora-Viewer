@@ -245,6 +245,53 @@ def rank(influences):
     return tuple(joints), tuple(weights)
 
 
+class Nearest:
+    """Nearest of a set of points, distances normalized by `extent` on each
+    axis; ties go to the lower index. A uniform grid keeps it fast."""
+
+    def __init__(self, points, indices, extent):
+        self.points, self.extent = points, extent
+        self.cells = max(1, int(round(len(indices) ** (1.0 / 3.0))))
+        self.size = 1.0 / self.cells
+        self.grid = {}
+        for index in indices:
+            p = self.normalized(points[index])
+            self.grid.setdefault(self.cell(p), []).append((p, index))
+
+    def normalized(self, point):
+        return tuple(point[axis] / self.extent[axis] for axis in range(3))
+
+    def cell(self, p):
+        return tuple(int(math.floor(value / self.size)) for value in p)
+
+    def find(self, point):
+        p = self.normalized(point)
+        cell = self.cell(p)
+        best, best_distance, ring = None, math.inf, 0
+        while best is None or (ring - 1) * self.size <= math.sqrt(best_distance):
+            for dx in range(-ring, ring + 1):
+                for dy in range(-ring, ring + 1):
+                    for dz in range(-ring, ring + 1):
+                        if max(abs(dx), abs(dy), abs(dz)) != ring:
+                            continue
+                        for q, candidate in self.grid.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ()):
+                            distance = sum((a - b) ** 2 for a, b in zip(p, q))
+                            if distance < best_distance or (distance == best_distance and candidate < best):
+                                best, best_distance = candidate, distance
+            ring += 1
+            if best is None and ring > self.cells * 4 + 64:
+                # Far outside the grid: compare with every point.
+                return min((index for cell_points in self.grid.values() for _q, index in cell_points),
+                           key=lambda index: (sum((a - b) ** 2 for a, b in zip(p, self.normalized(self.points[index]))), index))
+        return best
+
+
+def extent_of(points, indices):
+    low = [min(points[index][axis] for index in indices) for axis in range(3)]
+    high = [max(points[index][axis] for index in indices) for axis in range(3)]
+    return [max(high[axis] - low[axis], 1e-6) for axis in range(3)]
+
+
 def complete(joints, weights, positions, referenced):
     """Give each referenced vertex without weights those of the nearest weighted
     one, distances normalized by the mesh's extent on each axis: mesh import's
@@ -257,37 +304,22 @@ def complete(joints, weights, positions, referenced):
         for index in missing:
             joints[index], weights[index] = (0, 0, 0, 0), (1.0, 0.0, 0.0, 0.0)
         return
-    low = [min(positions[index][axis] for index in referenced) for axis in range(3)]
-    high = [max(positions[index][axis] for index in referenced) for axis in range(3)]
-    extent = [max(high[axis] - low[axis], 1e-6) for axis in range(3)]
-
-    def normalized(index):
-        return tuple(positions[index][axis] / extent[axis] for axis in range(3))
-
-    cells = max(1, int(round(len(weighted) ** (1.0 / 3.0))))
-    size = 1.0 / cells
-    grid = {}
-    for index in weighted:
-        p = normalized(index)
-        grid.setdefault(tuple(int(math.floor(value / size)) for value in p), []).append((p, index))
+    nearest = Nearest(positions, weighted, extent_of(positions, referenced))
     for index in missing:
-        p = normalized(index)
-        cell = tuple(int(math.floor(value / size)) for value in p)
-        best, best_distance, ring = None, math.inf, 0
-        while best is None or (ring - 1) * size <= math.sqrt(best_distance):
-            for dx in range(-ring, ring + 1):
-                for dy in range(-ring, ring + 1):
-                    for dz in range(-ring, ring + 1):
-                        if max(abs(dx), abs(dy), abs(dz)) != ring:
-                            continue
-                        for q, candidate in grid.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ()):
-                            distance = sum((a - b) ** 2 for a, b in zip(p, q))
-                            if distance < best_distance or (distance == best_distance and candidate < best):
-                                best, best_distance = candidate, distance
-            ring += 1
-            if ring > cells + 2 and best is not None:
-                break
+        best = nearest.find(positions[index])
         joints[index], weights[index] = joints[best], weights[best]
+
+
+def transfer(source_positions, source_joints, source_weights, source_referenced, positions):
+    """Weights of each point from the nearest source vertex: how an automatic
+    LOD, reduced from High at rest, keeps High's skin."""
+    nearest = Nearest(source_positions, source_referenced, extent_of(source_positions, source_referenced))
+    joints, weights = [], []
+    for point in positions:
+        best = nearest.find(point)
+        joints.append(source_joints[best])
+        weights.append(source_weights[best])
+    return joints, weights
 
 
 # ---------------------------------------------------------------- surfaces
@@ -493,3 +525,103 @@ def default_material(color=(0.45, 0.22, 0.85, 1.0), metallic=0.0, roughness=0.6,
     return list(color), {"metallic": float(metallic), "roughness": float(roughness), "emissive": [0.0, 0.0, 0.0],
                          "double_sided": bool(double_sided), "alpha_mode": "OPAQUE", "textures": [None] * 4,
                          "transforms": [[0.0, 0.0, 1.0, 1.0, 0.0] for _ in range(4)]}
+
+
+# --------------------------------------------------------------------- LODs
+
+LOD_LEVELS = (("medium", 50.0), ("low", 25.0), ("lowest", 12.5))
+LOD_MODES = ("fallback", "existing", "auto")
+LOD_BUDGETS = ("ratio", "triangles")
+
+
+def lod_default(level):
+    ratio = dict(LOD_LEVELS)[level]
+    return {"mode": "fallback", "object": "", "suffix": "_" + level, "budget": "ratio", "value": ratio}
+
+
+def lod_settings_parse(text):
+    """Per source id, per level: the LOD settings saved in the scene.
+
+    The text is `id=level,level,level;id=...`, each level being
+    `mode|object|suffix|budget|value`: a short Maya node name (namespace
+    included) holds none of these separators, so the scene file needs no
+    quoting.
+    """
+    result = {}
+    for item in (text or "").split(";"):
+        identity, _, levels = item.partition("=")
+        if not identity or not levels:
+            continue
+        values = {}
+        for (level, _ratio), spec in zip(LOD_LEVELS, levels.split(",")):
+            fields = spec.split("|")
+            value = lod_default(level)
+            if len(fields) == 5 and fields[0] in LOD_MODES and fields[3] in LOD_BUDGETS:
+                try:
+                    number = float(fields[4])
+                except ValueError:
+                    number = value["value"]
+                value.update(mode=fields[0], object=fields[1], suffix=fields[2], budget=fields[3],
+                             value=number if math.isfinite(number) and number > 0 else value["value"])
+            values[level] = value
+        result[identity] = values
+    return result
+
+
+def lod_settings_format(settings):
+    items = []
+    for identity, levels in settings.items():
+        specs = []
+        for level, _ratio in LOD_LEVELS:
+            spec = levels.get(level) or lod_default(level)
+            specs.append("|".join((spec["mode"], spec["object"], spec["suffix"], spec["budget"], "{:g}".format(spec["value"]))))
+        items.append(identity + "=" + ",".join(specs))
+    return ";".join(items)
+
+
+def lod_name(high_name, suffix):
+    """The name a LOD mesh is looked up by: High's name without a trailing
+    _high, .high or -high, then the level's suffix (Blender plug-in rule)."""
+    import re
+    return re.sub(r"[._-]high$", "", high_name, flags=re.IGNORECASE) + suffix
+
+
+def lod_target(high_triangles, spec):
+    if spec["budget"] == "triangles":
+        return max(1, int(spec["value"]))
+    return max(1, int(round(high_triangles * min(100.0, spec["value"]) / 100.0)))
+
+
+def merge_palettes(meshes):
+    """One joint palette for every LOD, as one upload needs: the Blender
+    plug-in's rule. Plain wire meshes (vertex dicts) are remapped in place; a
+    joint whose inverse bind differs between levels is refused."""
+    names, binds = [], {}
+    for mesh in meshes:
+        for name, inverse in zip(mesh["joints"], mesh["inverse_bind"]):
+            if name in binds and max(abs(a - b) for a, b in zip(inverse, binds[name])) > 0.0001:
+                raise ValueError("LOD bind matrices disagree with High")
+            if name not in binds:
+                names.append(name)
+                binds[name] = inverse
+    if len(names) > MAX_JOINTS:
+        raise ValueError("Import LODs exceed 110 avatar joints")
+    for mesh in meshes:
+        remap = [names.index(name) for name in mesh["joints"]]
+        for face in mesh["faces"]:
+            for vertex in face["vertices"]:
+                vertex["joints"] = [remap[index] for index in vertex["joints"]] if remap else [0] * 4
+        mesh["joints"], mesh["inverse_bind"] = list(names), [binds[name] for name in names]
+
+
+def slot_mapping(level_groups, high_groups):
+    """Each LOD surface's High surface, by shading group: a Maya shading
+    group is one material slot."""
+    mapping = []
+    for group in level_groups:
+        if group not in high_groups:
+            raise ValueError("LOD materials must match High's shading groups")
+        mapping.append(high_groups.index(group))
+    if len(set(mapping)) != len(mapping):
+        raise ValueError("Duplicate material slots in a LOD are ambiguous")
+    return mapping

@@ -17,7 +17,7 @@ from maya import cmds
 from . import convert, materials
 
 
-def _dag(name):
+def dag(name):
     selection = om.MSelectionList()
     selection.add(name)
     return selection.getDagPath(0)
@@ -172,80 +172,116 @@ def _mesh_arrays(fn, uv_set):
     return list(counts), list(vertices), list(normal_ids), fv_uv, uvs, triangles, polygons
 
 
-def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False, base=None):
-    """One source as a wire mesh (without source_id or link). `base` takes
-    Maya world to the SL frame (base_frame of the scene's up axis and unit)."""
-    base = base if base is not None else convert.base_frame(up_axis(), convert.CM)
-    shape = shape_of(transform)
-    if shape is None:
-        raise ValueError("No mesh shape")
-    shape_path = _dag(shape)
-    shape_fn = om.MFnMesh(shape_path)
-    skin = skin_of(shape)
-    if skin:
-        fn, bind_shape, bind_pre, per_vertex = _skin(shape_path, skin, supported)
-        if fn.numPolygons != shape_fn.numPolygons:
-            raise ValueError("The skin's input mesh and the shape differ; delete non-deformer history")
-        heads = {name: convert.point(base, head) for name, head in _rig_heads(skin).items()}
-        frame = convert.multiply(convert.facing(heads), base)
-        transform_matrix = convert.multiply(frame, bind_shape)
-    else:
-        fn, per_vertex, bind_pre = shape_fn, None, {}
-        world = convert.from_maya(_values(shape_path.inclusiveMatrix()))
-        # Rotation and scale stay; the world position is the preview's own.
-        frame = base
-        transform_matrix = convert.multiply(frame, convert.linear(world))
-    points = fn.getPoints(om.MSpace.kObject)
-    if len(points) == 0:
-        raise ValueError("No vertices")
-    positions = [convert.point(transform_matrix, (p.x, p.y, p.z)) for p in points]
-    normal_transform = convert.normal_matrix(transform_matrix)
-    normals = []
-    for n in fn.getNormals(om.MSpace.kObject):
-        x, y, z = convert.direction(normal_transform, (n.x, n.y, n.z))
-        length = max((x * x + y * y + z * z) ** 0.5, 1e-20)
-        normals.append((x / length, y / length, z / length))
-    uv_set = shape_fn.currentUVSetName()
-    try:
-        counts, fv_vertex, fv_normal, fv_uv, uvs, triangles, polygons = _mesh_arrays(fn, uv_set)
-    except RuntimeError:
-        counts, fv_vertex, fv_normal, fv_uv, uvs, triangles, polygons = _mesh_arrays(fn, "")
-    if len(fv_vertex) > convert.MAX_CORNERS:
-        raise ValueError("more than 600,000 mesh corners")
-    if not triangles:
-        raise ValueError("no triangle surfaces")
-    instance = shape_path.instanceNumber()
-    groups, assignment = shape_fn.getConnectedShaders(instance)
-    groups = [om.MFnDependencyNode(group).name() for group in groups]
-    slots = [assignment[polygon] if polygon < len(assignment) else -1 for polygon in polygons]
-    referenced = sorted({fv_vertex[corner] for triangle in triangles for corner in triangle})
-    joints = weights = None
-    names = []
-    if per_vertex is not None:
-        names = sorted({name for influences in per_vertex.values() for name, _weight in influences})
-        if not names or len(names) > convert.MAX_JOINTS:
-            raise ValueError("expected 1 to 110 weighted avatar joints")
-        palette = {name: index for index, name in enumerate(names)}
-        joints = [(0, 0, 0, 0)] * len(positions)
-        weights = [(0.0, 0.0, 0.0, 0.0)] * len(positions)
-        for vertex, influences in per_vertex.items():
-            if vertex < len(positions):
-                joints[vertex], weights[vertex] = convert.rank((palette[name], weight) for name, weight in influences)
-        convert.complete(joints, weights, positions, referenced)
-    flip = convert.determinant3(transform_matrix) < 0
-    packed = convert.surfaces(positions, normals, uvs, fv_vertex, fv_normal, fv_uv, triangles, slots, flip, joints, weights)
-    if not packed or len(packed) > convert.MAX_SURFACES:
-        raise ValueError("expected 1 to 32 nonempty material surfaces")
+class Source:
+    """What a capture of one synchronized mesh needs from Maya: its geometry
+    at rest, the matrix to the SL frame and, when skinned, its skin."""
+
+    def __init__(self, transform, supported, base):
+        self.transform = transform
+        self.name = transform.rsplit("|", 1)[-1]
+        self.shape = shape_of(transform)
+        if self.shape is None:
+            raise ValueError("No mesh shape")
+        self.shape_path = dag(self.shape)
+        self.shape_fn = om.MFnMesh(self.shape_path)
+        self.skin = skin_of(self.shape)
+        if self.skin:
+            self.fn, bind_shape, self.bind_pre, self.per_vertex = _skin(self.shape_path, self.skin, supported)
+            if self.fn.numPolygons != self.shape_fn.numPolygons:
+                raise ValueError("The skin's input mesh and the shape differ; delete non-deformer history")
+            heads = {name: convert.point(base, head) for name, head in _rig_heads(self.skin).items()}
+            self.frame = convert.multiply(convert.facing(heads), base)
+            self.matrix = convert.multiply(self.frame, bind_shape)
+        else:
+            self.fn, self.per_vertex, self.bind_pre = self.shape_fn, None, {}
+            world = convert.from_maya(_values(self.shape_path.inclusiveMatrix()))
+            # Rotation and scale stay; the world position is the preview's own.
+            self.frame = base
+            self.matrix = convert.multiply(base, convert.linear(world))
+
+
+class Geometry:
+    """Positions, normals, UVs, triangles and shading groups of a mesh,
+    already in the SL frame."""
+
+    def __init__(self, fn, shape_fn, shape_path, matrix):
+        points = fn.getPoints(om.MSpace.kObject)
+        if len(points) == 0:
+            raise ValueError("No vertices")
+        self.positions = [convert.point(matrix, (p.x, p.y, p.z)) for p in points]
+        normal_transform = convert.normal_matrix(matrix)
+        self.normals = []
+        for n in fn.getNormals(om.MSpace.kObject):
+            x, y, z = convert.direction(normal_transform, (n.x, n.y, n.z))
+            length = max((x * x + y * y + z * z) ** 0.5, 1e-20)
+            self.normals.append((x / length, y / length, z / length))
+        uv_set = shape_fn.currentUVSetName()
+        try:
+            arrays = _mesh_arrays(fn, uv_set)
+        except RuntimeError:
+            arrays = _mesh_arrays(fn, "")
+        _counts, self.fv_vertex, self.fv_normal, self.fv_uv, self.uvs, self.triangles, polygons = arrays
+        if len(self.fv_vertex) > convert.MAX_CORNERS:
+            raise ValueError("more than 600,000 mesh corners")
+        if not self.triangles:
+            raise ValueError("no triangle surfaces")
+        groups, assignment = shape_fn.getConnectedShaders(shape_path.instanceNumber())
+        self.groups = [om.MFnDependencyNode(group).name() for group in groups]
+        self.slots = [assignment[polygon] if polygon < len(assignment) else -1 for polygon in polygons]
+        self.referenced = sorted({self.fv_vertex[corner] for triangle in self.triangles for corner in triangle})
+        self.flip = convert.determinant3(matrix) < 0
+
+    def pack(self, joints=None, weights=None):
+        packed = convert.surfaces(self.positions, self.normals, self.uvs, self.fv_vertex, self.fv_normal, self.fv_uv,
+                                  self.triangles, self.slots, self.flip, joints, weights)
+        if not packed or len(packed) > convert.MAX_SURFACES:
+            raise ValueError("expected 1 to 32 nonempty material surfaces")
+        return packed
+
+
+def skin_weights(per_vertex, geometry):
+    """The SL joint palette and each vertex's strongest four, completed."""
+    names = sorted({name for influences in per_vertex.values() for name, _weight in influences})
+    if not names or len(names) > convert.MAX_JOINTS:
+        raise ValueError("expected 1 to 110 weighted avatar joints")
+    palette = {name: index for index, name in enumerate(names)}
+    count = len(geometry.positions)
+    joints = [(0, 0, 0, 0)] * count
+    weights = [(0.0, 0.0, 0.0, 0.0)] * count
+    for vertex, influences in per_vertex.items():
+        if vertex < count:
+            joints[vertex], weights[vertex] = convert.rank((palette[name], weight) for name, weight in influences)
+    convert.complete(joints, weights, geometry.positions, geometry.referenced)
+    return names, joints, weights
+
+
+def faces(packed, geometry, shape, images, warnings):
+    """Wire surfaces in slot order, and the shading group of each."""
     double_sided = bool(cmds.getAttr(shape + ".doubleSided"))
-    faces = []
+    result, groups = [], []
     for slot in sorted(packed):
-        group = groups[slot] if 0 <= slot < len(groups) else None
-        color, material = materials.capture(group, images, warnings, double_sided, bool(uvs))
-        records, indices = packed[slot]
-        faces.append({"color": color, "material": material, "_buffers": (records, indices)})
-    inverse_bind = convert.inverse_binds(names, bind_pre, frame, axes_mode, rest_axes) if names else []
-    name = transform.rsplit("|", 1)[-1]
-    return {"name": name, "joints": names, "inverse_bind": inverse_bind, "faces": faces}, convert.corner_count(packed)
+        group = geometry.groups[slot] if 0 <= slot < len(geometry.groups) else None
+        color, material = materials.capture(group, images, warnings, double_sided, bool(geometry.uvs))
+        result.append({"color": color, "material": material, "_buffers": packed[slot]})
+        groups.append(group)
+    return result, groups
+
+
+def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False, base=None, groups=None):
+    """One source as a wire mesh (without source_id or link). `base` takes
+    Maya world to the SL frame (base_frame of the scene's up axis and unit).
+    `groups`, a list, receives the shading group of each surface."""
+    base = base if base is not None else convert.base_frame(up_axis(), convert.CM)
+    source = Source(transform, supported, base)
+    geometry = Geometry(source.fn, source.shape_fn, source.shape_path, source.matrix)
+    names, joints, weights = skin_weights(source.per_vertex, geometry) if source.skin else ([], None, None)
+    packed = geometry.pack(joints, weights)
+    surfaces, surface_groups = faces(packed, geometry, source.shape, images, warnings)
+    if groups is not None:
+        groups.extend(surface_groups)
+    inverse_bind = convert.inverse_binds(names, source.bind_pre, source.frame, axes_mode, rest_axes) if names else []
+    return ({"name": source.name, "joints": names, "inverse_bind": inverse_bind, "faces": surfaces},
+            convert.corner_count(packed))
 
 
 def link_offset(child, root, base):

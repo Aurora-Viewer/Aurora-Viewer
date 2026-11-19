@@ -2,7 +2,10 @@
 
 from maya import cmds
 
-from . import session
+from . import convert, session
+
+LOD_MODES = {"Existing or automatic": "fallback", "Existing mesh": "existing", "Automatic": "auto"}
+LOD_BUDGETS = {"Percentage": "ratio", "Triangles": "triangles"}
 
 
 def capture_up():
@@ -18,7 +21,7 @@ class Window:
         if cmds.window(WINDOW, exists=True):
             cmds.deleteUI(WINDOW)
         from . import VERSION
-        cmds.window(WINDOW, title="Aurora LiveMesh " + VERSION, widthHeight=(380, 460))
+        cmds.window(WINDOW, title="Aurora LiveMesh " + VERSION, widthHeight=(430, 640))
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6, columnAttach=("both", 8))
         cmds.text(label="Start the preview in Aurora's LiveMesh window, then connect.", align="left", wordWrap=True)
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnWidth3=(40, 80, 200))
@@ -30,7 +33,8 @@ class Window:
         cmds.separator(style="none", height=4)
         cmds.text(label="Synchronized meshes", align="left", font="boldLabelFont")
         self.list = cmds.textScrollList(allowMultiSelection=True, height=170,
-                                        doubleClickCommand=lambda *_: self.select_in_scene())
+                                        doubleClickCommand=lambda *_: self.select_in_scene(),
+                                        selectCommand=lambda *_: self.load_lods())
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3)
         cmds.button(label="Add selected", command=lambda *_: self.add())
         cmds.button(label="Remove", command=lambda *_: self.remove())
@@ -62,12 +66,34 @@ class Window:
         cmds.optionMenu(self.units, edit=True, select=list(UNIT_LABELS.values()).index(self.live.units()) + 1)
         cmds.setParent("..")
         self.unit_text = cmds.text(label="", align="left")
+        self.lod_frame = cmds.frameLayout(label="Import / LOD", collapsable=True, collapse=True, marginWidth=4)
+        self.lod_name = cmds.text(label="Select one mesh in the list.", align="left")
+        self.lod_rows = {}
+        for level, _ratio in convert.LOD_LEVELS:
+            cmds.rowLayout(numberOfColumns=5, adjustableColumn=3, columnWidth5=(52, 130, 80, 84, 60))
+            cmds.text(label=level.title())
+            mode = cmds.optionMenu(changeCommand=lambda *_: self.save_lods())
+            for label in LOD_MODES:
+                cmds.menuItem(label=label)
+            name = cmds.textField(placeholderText="by name", changeCommand=lambda *_: self.save_lods(),
+                                  annotation="A mesh for this level; empty: the High mesh's name with the suffix "
+                                             "(_medium, _low, _lowest)")
+            budget = cmds.optionMenu(changeCommand=lambda *_: self.save_lods())
+            for label in LOD_BUDGETS:
+                cmds.menuItem(label=label)
+            value = cmds.floatField(minValue=0.1, maxValue=200000, precision=1, changeCommand=lambda *_: self.save_lods())
+            cmds.setParent("..")
+            self.lod_rows[level] = (mode, name, budget, value)
+        cmds.text(label="Click Import in Aurora's LiveMesh list. Your meshes stay unchanged.", align="left",
+                  wordWrap=True)
+        cmds.setParent("..")
         cmds.text(label="Only you see this preview. Nothing is uploaded.", align="left", wordWrap=True)
         cmds.showWindow(WINDOW)
         self.live.listeners.append(self.refresh)
         cmds.scriptJob(uiDeleted=(WINDOW, self.closed))
         self._rows = None
         self.refresh()
+        self.load_lods()
 
     def toggle(self):
         if self.live.client is None:
@@ -89,6 +115,40 @@ class Window:
         indices = cmds.textScrollList(self.list, query=True, selectIndexedItem=True) or []
         rows = self.live.rows()
         return [rows[index - 1][0] for index in indices if 0 < index <= len(rows)]
+
+    def _lod_identity(self):
+        selected = self._selected()
+        return selected[0] if len(selected) == 1 else None
+
+    def load_lods(self):
+        identity = self._lod_identity()
+        enabled = identity is not None
+        node = self.live.node(identity) if enabled else None
+        cmds.text(self.lod_name, edit=True,
+                  label=(node.rsplit("|", 1)[-1] + " (High)") if node else "Select one mesh in the list.")
+        settings = self.live.lod_settings(identity) if enabled else {}
+        for level, (mode, name, budget, value) in self.lod_rows.items():
+            spec = settings.get(level) or convert.lod_default(level)
+            cmds.optionMenu(mode, edit=True, enable=enabled, select=list(LOD_MODES.values()).index(spec["mode"]) + 1)
+            cmds.textField(name, edit=True, enable=enabled and spec["mode"] != "auto", text=spec["object"])
+            cmds.optionMenu(budget, edit=True, enable=enabled and spec["mode"] != "existing",
+                            select=list(LOD_BUDGETS.values()).index(spec["budget"]) + 1)
+            cmds.floatField(value, edit=True, enable=enabled and spec["mode"] != "existing", value=spec["value"])
+
+    def save_lods(self):
+        identity = self._lod_identity()
+        if identity is None:
+            return
+        levels = {}
+        for level, (mode, name, budget, value) in self.lod_rows.items():
+            spec = convert.lod_default(level)
+            spec.update(mode=LOD_MODES[cmds.optionMenu(mode, query=True, value=True)],
+                        object=cmds.textField(name, query=True, text=True).strip().rsplit("|", 1)[-1],
+                        budget=LOD_BUDGETS[cmds.optionMenu(budget, query=True, value=True)],
+                        value=max(0.1, cmds.floatField(value, query=True, value=True)))
+            levels[level] = spec
+        self.live.set_lod_settings(identity, levels)
+        self.load_lods()
 
     def remove(self):
         self.live.remove(self._selected())
