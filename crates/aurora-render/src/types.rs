@@ -332,8 +332,25 @@ pub struct DrawRecord {
     /// x: the face's identity for the order-independent transparency
     /// ([`oit_tie`]: the object's full id and the face's index hashed, the
     /// same on every launch; the stochastic masks are seeded by it and the
-    /// triangle, oit_stochastic.rs). y, z, w: spare.
+    /// triangle, oit_stochastic.rs). y, z: the LOD crossfade
+    /// ([`lod_fade`]). w: spare.
     pub identity: [u32; 4],
+}
+
+/// The LOD crossfade of a face (`DrawRecord::identity`, object.wgsl
+/// `lod_fade_clip`): y the effects-clock ms it started at (`AnimClock`), z
+/// its mode | its length in ms << 8. Both levels of an object are drawn
+/// for that long, each over the complement of the other's dither.
+pub mod lod_fade {
+    /// The new level, over more of its pixels as the fade goes.
+    pub const IN: u32 = 1;
+    /// The old level, over the pixels the new one leaves.
+    pub const OUT: u32 = 2;
+
+    /// `identity[2]` of a fade of `mode` lasting `ms`.
+    pub fn code(mode: u32, ms: u32) -> u32 {
+        mode | ms.min(0x00ff_ffff) << 8
+    }
 }
 
 /// The identity of a face for the order-independent transparency
@@ -630,7 +647,9 @@ pub enum RiggedBlendDepth {
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
-    /// Select clipped depth/shadow variants only while an avatar is entering.
+    /// Select clipped depth/shadow variants (a fragment shader that may
+    /// discard) only while an avatar is entering a portal or an object
+    /// crossfades between two detail levels (the viewer's scene/lod_fade.rs).
     pub portal_clipping: bool,
     /// Invisible water exclusion surfaces, in the CPU culling fallback.
     pub water_exclusion: Vec<DrawCmd>,
@@ -2462,6 +2481,19 @@ mod tests {
         assert!(destination.portal_clipping);
         destination.clear();
         assert!(!destination.portal_clipping);
+    }
+
+    /// A record is drawn without a fade unless the scene gives it one, and
+    /// the shader reads the modes and the length where they are written.
+    #[test]
+    fn the_lod_fade_code_matches_the_shader() {
+        assert_eq!(DrawRecord::default().identity[2] & 0xff, 0);
+        let shader = include_str!("shaders/object.wgsl");
+        assert!(shader.contains(&format!("const LOD_FADE_IN: u32 = {}u;", lod_fade::IN)));
+        assert!(shader.contains(&format!("const LOD_FADE_OUT: u32 = {}u;", lod_fade::OUT)));
+        assert_eq!(lod_fade::code(lod_fade::OUT, 300), 2 | 300 << 8);
+        // a length that does not fit is held at the longest one
+        assert_eq!(lod_fade::code(lod_fade::IN, u32::MAX) >> 8, 0x00ff_ffff);
     }
 
     /// The order of the blended faces and its precision reach the frame

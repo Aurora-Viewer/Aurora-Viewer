@@ -5490,6 +5490,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
+| `AURORA_DEMO_LOD_FLIP=<seconds>` | The LOD factor alternates between its setting and a quarter of it every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
 | `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
@@ -5613,6 +5614,14 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_CROWD=52,100`, `AURORA_DEMO_HAIR=3` and `AURORA_SYNC_CHECK=1`,
   the `impostor pictures` line must count no stale picture, centre or anchor
   (`AURORA_IMPOSTOR_POSES`).
+- **`AURORA_DEMO_LOD_FLIP=<seconds>`** (2 if not a number): the LOD
+  factor alternates between its setting and a quarter of it every
+  `seconds`, so that the plaza's prims, sculpts, meshes and trees keep
+  changing detail level where they stand. With the crossfade on (the default),
+  each change is a crossfade: look at the change of a sphere's or a cylinder's
+  outline under each anti-aliasing (`AURORA_AA`): a smooth fade under TAA
+  and FSR, a short still stipple under the others, never a hole nor both
+  levels drawn over each other once it is over.
 - **Crowded avatar impostor capacity (#1579)**: Use `AURORA_DEMO_CROWD=120`, `AURORA_DEMO_ANIMESH=1` and
   `AURORA_DEMO_IMPOSTOR_FLIP=3`. Keep Fully rendered avatars at 16. Turn the
   camera through the crowd and back: visible avatars must retain a picture, or a
@@ -12479,6 +12488,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
 | `AURORA_WINDOW_HOLD=0` | No frames while a mouse button is held on the window frame or the system menu is open, as before (Windows) |
 | `AURORA_CPU_CULL=1` | Draw lists built on the CPU |
+| `AURORA_LOD_FADE=<ms>` | Length of the crossfade between detail levels, over Preferences' switch (0: none) |
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
@@ -13567,6 +13577,18 @@ What the inventory must show with these scenarios:
   fallback when the GPU does not have `MULTI_DRAW_INDIRECT_COUNT`) instead
   of sorting them on the GPU, to compare; `cull=cpu|gpu` in the
   `perf summary` line.
+- **`AURORA_LOD_FADE=<ms>`** (300 if not a number; at most 2000; 0 turns
+  it off): the length of the crossfade between detail levels, whatever
+  Preferences › Graphics "Fade between levels of detail" says (on, 300 ms,
+  by default). An object that changes detail level is drawn with both levels
+  for that long, the new one over a growing share of a dither pattern and the old
+  one over the rest (scene/lod_fade.rs). The pattern moves every frame under
+  TAA and FSR, which blend it into a crossfade, and stays still under the
+  other anti-aliasings. Opaque and alpha-masked faces of world objects only;
+  rigged, worn-and-anchored and HUD objects swap at once, and so does
+  everything with `AURORA_CPU_CULL=1`. While a fade runs, the depth prepass
+  and the shadows use their pipelines with a fragment shader, as for a
+  portal cut. See `AURORA_DEMO_LOD_FLIP`.
 - **`AURORA_WINDOW_HOLD=0`** (Windows): by default, the viewer keeps
   drawing while Windows holds its window: a mouse button pressed on the
   title bar, a border or the close / maximize / minimize button, a move or

@@ -8703,6 +8703,12 @@ impl Backend {
         if self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
             main.tex_lod[0] = crate::fsr::mip_bias(world_size.0, post_size.0);
         }
+        // the LOD crossfade's dither moves every frame under a temporal
+        // anti-aliasing, which blends it into a crossfade (object.wgsl
+        // `lod_fade_clip`); without one it stays still
+        if self.taa.is_some() {
+            main.tex_lod[1] = (self.frame_index % 64) as f32;
+        }
         {
             // after the scene moved as a whole, the last frame's camera is
             // in the old coordinates: the frame counts as still

@@ -5,6 +5,35 @@ override ALPHA_TO_COVERAGE: bool = true;
 // Only left-button pipelines enable the world Blend transparency rule.
 override WORLD_LEFT_PICK: bool = false;
 
+// LOD crossfade (the viewer's scene/lod_fade.rs, `DrawRecord::identity`
+// y the effects-clock ms the fade started at, z the mode in its low byte
+// and the length in ms above it). An object that changes detail level is
+// drawn with both levels for that long: the new one shows a screen-space
+// dither pattern growing over the pixels, the old one its exact complement,
+// so every pixel shows one of them. A temporal anti-aliasing (TAA, FSR)
+// moves the pattern every frame (`offset`, frame.tex_lod.y) and resolves it
+// into a crossfade; the others keep it still, which reads as a short stipple.
+const LOD_FADE_IN: u32 = 1u;
+const LOD_FADE_OUT: u32 = 2u;
+
+fn lod_fade_clip(rec: DrawRecord, pixel: vec2<f32>, clock: u32, offset: f32) {
+    let mode = rec.identity.z & 0xffu;
+    if (mode == 0u) { return; }
+    let length = max(f32(rec.identity.z >> 8u), 1.0);
+    let t = clamp(f32(bitcast<i32>(clock - rec.identity.y)) / length, 0.0, 1.0);
+    // interleaved gradient noise (Jimenez, "Next Generation Post Processing
+    // in Call of Duty: Advanced Warfare", 2014), shifted per frame
+    let p = floor(pixel) + offset * 5.588238;
+    let n = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+    // the new level covers the pixels under t, the old one the others
+    if ((mode == LOD_FADE_IN) == (n >= t)) { discard; }
+}
+
+// The fade of a face of the main view and its depth passes.
+fn lod_fade_main(rec: DrawRecord, pixel: vec2<f32>) {
+    lod_fade_clip(rec, pixel, frame.anim_clock.x, frame.tex_lod.y);
+}
+
 // Evaluated after skinning/attachment placement, in every surface/depth pass.
 // Outside the actual ellipse, even geometry beyond the plane stays visible.
 fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
@@ -696,6 +725,7 @@ fn vs_depth(in: VsIn) -> DepthOut {
 @fragment
 fn fs_depth_portal(in: DepthOut) {
     portal_clip(records[in.record], in.world_pos);
+    lod_fade_main(records[in.record], in.clip.xy);
 }
 
 // Depth prepass for alpha-masked faces: alpha test only.
@@ -703,6 +733,7 @@ fn fs_depth_portal(in: DepthOut) {
 fn fs_depth_mask(in: VsOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    lod_fade_main(rec, in.clip.xy);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < rec.params.w) {
         discard;
@@ -792,6 +823,7 @@ fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @l
 fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    lod_fade_main(rec, in.clip.xy);
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
@@ -800,6 +832,7 @@ fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) 
 fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    lod_fade_main(rec, in.clip.xy);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < rec.params.w) {
         discard;
@@ -991,6 +1024,7 @@ fn eval_material(in: VsOut, front: bool) -> Material {
 
 fn eval_material_base(in: VsOut, front: bool) -> Material {
     portal_clip(records[in.record], in.world_pos);
+    lod_fade_main(records[in.record], in.clip.xy);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     var m: Material;
@@ -3033,6 +3067,8 @@ fn glow_amount(in: VsOut, front: bool) -> f32 {
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    // each level's glow over its own pixels, as its colour
+    lod_fade_main(rec, in.clip.xy);
     water_clip(in.world_pos);
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
@@ -3523,6 +3559,8 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    // (a still pattern in the shadow map's texels: its filtering softens it)
+    lod_fade_clip(rec, in.clip.xy, shadow_params.anim_clock.x, 0.0);
     // the rain's shelter map, seen from straight above (+Y up on the map,
     // as on the ground: a face turned up keeps its winding, `front`): it
     // holds what is seen from above, so a face turned down that the scene

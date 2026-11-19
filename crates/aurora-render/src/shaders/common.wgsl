@@ -130,7 +130,7 @@ struct Frame {
     lightning: vec4<f32>,       // the lightning's glow: xy the way to it, z its height (sine), w how bright
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
-    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
+    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise. y: the LOD crossfade's dither phase (object.wgsl lod_fade_clip), 0 without a temporal anti-aliasing
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
 };
@@ -165,7 +165,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
-    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z the LOD crossfade (object.wgsl lod_fade_clip); w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;

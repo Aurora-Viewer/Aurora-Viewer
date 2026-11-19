@@ -522,6 +522,13 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
+        // Aurora's own: the Legacy Viewer swaps the levels at once
+        // (scene/lod_fade.rs)
+        cx.keywords("LOD crossfade dither pop").toggle(
+            tr!("ui-options-lod-crossfade"),
+            tr!("ui-options-lod-crossfade-hint"),
+            &field!(lod_crossfade),
+        );
         cx.row(
             tr!("common-particles"),
             tr!("ui-options-maximum-particles-0-disabled"),

@@ -8091,6 +8091,25 @@ pub fn impostor_flip(limit: usize) -> usize {
     }
 }
 
+/// AURORA_DEMO_LOD_FLIP=<seconds>: the LOD factor alternates between its
+/// setting and a quarter of it every `seconds` (2 if not a number), so that
+/// the objects keep changing detail level where they stand: with
+/// `AURORA_LOD_FADE` set, each change is a crossfade (scene/lod_fade.rs).
+pub fn lod_flip(factor: f32) -> f32 {
+    static START: std::sync::OnceLock<Option<(std::time::Instant, f32)>> = std::sync::OnceLock::new();
+    let start = START.get_or_init(|| {
+        let v = std::env::var("AURORA_DEMO_LOD_FLIP").ok()?;
+        Some((
+            std::time::Instant::now(),
+            v.trim().parse().ok().filter(|&s: &f32| s > 0.0).unwrap_or(2.0),
+        ))
+    });
+    match start {
+        Some((at, every)) if (at.elapsed().as_secs_f32() / every) as u64 % 2 == 1 => factor * 0.25,
+        _ => factor,
+    }
+}
+
 /// A crowd prim's faces: with `material_arrivals`, a legacy material too.
 fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
     let t = te(color, shiny, false, 0.0);

@@ -15617,6 +15617,8 @@ debug-settings-type-color = 色
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = 樹木
 ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。
+ui-options-lod-crossfade = 詳細度の切り替えをフェード
+ui-options-lod-crossfade-hint = 詳細度が変わるオブジェクトを、急に切り替えずにフェードで切り替えます（デフォルトはオン）。TAAまたはFSRで最も滑らかになります。
 
 # Preferences › Build (the Legacy Viewer's Build preferences)
 ui-options-about-build = 作成ツールで作ったプリムの初期状態です。

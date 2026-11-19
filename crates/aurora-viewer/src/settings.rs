@@ -793,6 +793,11 @@ pub struct Settings {
     /// "Trees", 0 to 1 (the Legacy slider starts at 0.125); the levels set
     /// 0 (Potato), 0.5 or 1 (Deluxe), as its featuretable.
     pub tree_lod_factor: f32,
+    /// An object that changes detail level fades from one level to the
+    /// other instead of popping (scene/lod_fade.rs). An Aurora addition,
+    /// on by default: the Legacy Viewer swaps the levels at once; which
+    /// level shows, and when, is the same.
+    pub lod_crossfade: bool,
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).
     pub texture_budget_auto: bool,
     pub texture_budget_mb: u32,
@@ -2433,6 +2438,7 @@ impl Default for Settings {
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
+            lod_crossfade: true,
             texture_budget_auto: true,
             texture_budget_mb: 1536,
             max_texture_resolution: MAX_TEXTURE_RESOLUTION,
