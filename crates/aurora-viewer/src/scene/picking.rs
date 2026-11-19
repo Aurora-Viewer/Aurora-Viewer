@@ -867,8 +867,9 @@ impl Scene {
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
             // (what is not drawn is not picked: a hidden rendering type, as
-            // LLPipeline::lineSegmentIntersectInWorld skips its partitions)
-            .filter(|(idx, gpu)| !gpu.hidden && self.first_person_object_visible(*idx, gpu))
+            // LLPipeline::lineSegmentIntersectInWorld skips its partitions,
+            // or what the photo leaves out)
+            .filter(|(idx, gpu)| !gpu.hidden && !gpu.unseen && self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {

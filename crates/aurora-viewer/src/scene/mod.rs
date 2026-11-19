@@ -454,11 +454,18 @@ pub struct ObjGpu {
     pub built_faces: usize,
     pub is_avatar: bool,
     pub parcel_hidden: bool,
-    /// Left out by the photo's isolation (`snapshot::isolate`) or by a
-    /// hidden rendering type (`render_types`): kept, only flagged for the
-    /// GPU lists (`object_flags::HIDDEN`) and left out of the CPU ones and
-    /// of the picking, so that it comes back at once.
+    /// Left out by a hidden rendering type (`render_types`), the avatar
+    /// studio or, for an avatar and what it wears, the photo's isolation
+    /// (`snapshot::isolate::View::Gone`): kept, only flagged for the GPU
+    /// lists (`object_flags::HIDDEN`) and left out of the CPU ones and of
+    /// the picking, so that it comes back at once.
     pub hidden: bool,
+    /// A linkset the photo's isolation leaves out of the picture only
+    /// (`snapshot::isolate::View::Unseen`, `object_flags::UNSEEN`): out of
+    /// the main view and of the picking, still casting its shadow and in
+    /// the reflections and probes, so that the subject keeps the scene's
+    /// light (#2316).
+    pub unseen: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -558,6 +565,7 @@ impl ObjGpu {
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.hidden, object_flags::HIDDEN),
+            (self.unseen, object_flags::UNSEEN),
             (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
@@ -668,7 +676,9 @@ fn object_visibility(
     if d - sr > ctx.draw_distance && !g.is_avatar {
         return None;
     }
-    let in_view = ctx.view.sphere_visible(sc, sr);
+    // (left out of the photo's picture only: out of the view, the rest
+    // as the entire scene, #2316)
+    let in_view = !g.unseen && ctx.view.sphere_visible(sc, sr);
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
     let probes = ctx.reflections;
@@ -2891,8 +2901,17 @@ impl Scene {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
-        // (a HUD is no rendering type: it stays)
-        let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
+        // (hidden, unseen); a HUD is no rendering type: it stays
+        let left_out = |idx: usize, hud: bool| {
+            if !hud && types.hides_object(world, idx) {
+                return (true, false);
+            }
+            match isolate::object_view(world, idx) {
+                isolate::View::Drawn => (false, false),
+                isolate::View::Unseen => (false, true),
+                isolate::View::Gone => (true, false),
+            }
+        };
         let studio_roots = if world.avatar_studio {
             isolate::studio_roots(world)
         } else {
@@ -2908,16 +2927,16 @@ impl Scene {
             self.studio_visible = world.avatar_studio;
             self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
-                let hidden = left_out(idx, g.hud);
-                if g.hidden != hidden {
-                    g.hidden = hidden;
+                let out = left_out(idx, g.hud);
+                if (g.hidden, g.unseen) != out {
+                    (g.hidden, g.unseen) = out;
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
         } else if iso.hides() || types.any_object() || world.avatar_studio {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
-                    g.hidden = left_out(idx, g.hud);
+                    (g.hidden, g.unseen) = left_out(idx, g.hud);
                 }
             }
         }
