@@ -655,10 +655,10 @@ pub fn request(
     }
     let meshes = prepared
         .lods
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(i, lods)| {
-            encode::asset(
+            encode::upload_asset(
                 lods,
                 prepared.physics[i].as_ref(),
                 &prepared.hulls[i],

@@ -133,6 +133,11 @@ fn mesh_import_parity_many_instances_and_transfer_settings_survive_fee_encoding(
     let query = aurora_llsd::from_xml(&upload.query).expect("query");
     assert_eq!(query["asset_resources"]["instance_list"].as_array().len(), 300);
     assert_eq!(query["asset_resources"]["mesh_list"].as_array().len(), 1);
+    let resources = aurora_llsd::from_xml(&upload.resources).expect("upload resources");
+    assert_eq!(
+        query["asset_resources"]["mesh_list"], resources["mesh_list"],
+        "the fee and upload use the same compressed bytes"
+    );
     assert!(upload.validate().is_ok());
     let prefs = Preferences::default();
     assert_eq!(prefs.mesh_model_limit, 768);

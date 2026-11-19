@@ -657,7 +657,7 @@ The other components (ported code, native libraries, assets) are in
 | zip 9.5.1 | MIT |
 | zlib-rs 0.6.8 | Zlib |
 | zmij 1.0.23 | MIT |
-| zopfli 0.8.3 | Apache-2.0 |
+| zopfli 0.8.4 | Apache-2.0 |
 | zune-core 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 | zvariant 5.15.0 | MIT |
@@ -3085,7 +3085,7 @@ Used by: windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, w
 
 ### Apache License 2.0
 
-Used by: zopfli 0.8.3
+Used by: zopfli 0.8.4
 
 ````text
                                  Apache License
