@@ -227,6 +227,10 @@ pub struct Renderer {
     rt_rebased: bool,
     /// The last frame gathered the faces to trace.
     rt_gathered: bool,
+    /// The ray tracer the render thread last drew with (`FrameResult::rt`,
+    /// 0 without one), and the one the faces were last gathered for.
+    rt_made: u32,
+    rt_followed: u32,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -369,20 +373,10 @@ impl Renderer {
     /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
     /// for a restart (`VrState::Unavailable`).
     ///
-    /// `ray_tracing`: the settings ask for it (`RenderSettings::ray_tracing`),
-    /// so the device is opened with ray queries where the graphics card has
-    /// them. Off, it is opened as it always was, and the viewer makes the
-    /// renderer again when the setting is turned on
-    /// (`GpuInfo::ray_tracing`, `RayTracingSupport::NotOpened`).
-    pub fn new<W>(
-        window: Arc<W>,
-        width: u32,
-        height: u32,
-        vsync: bool,
-        gpu: &str,
-        xr: bool,
-        ray_tracing: bool,
-    ) -> Result<Renderer, RenderError>
+    /// The device is opened with ray queries where the graphics card has
+    /// them, whatever the settings ask (`GpuInfo::ray_tracing`): ray
+    /// tracing turned on later needs no other device.
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
@@ -562,9 +556,9 @@ impl Renderer {
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
         for (n, &i) in plan.order.iter().enumerate() {
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-            let opened_device = open_device(&adapters[i], ray_tracing, xr_graphics.as_ref());
+            let opened_device = open_device(&adapters[i], xr_graphics.as_ref());
             #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-            let opened_device = open_device(&adapters[i], ray_tracing);
+            let opened_device = open_device(&adapters[i]);
             match opened_device {
                 Ok(o) => {
                     let why = match (n, plan.reason) {
@@ -807,6 +801,8 @@ impl Renderer {
             world_shift: [0.0; 2],
             rt_rebased: false,
             rt_gathered: false,
+            rt_made: 0,
+            rt_followed: 0,
             palettes_uploaded: 0,
             rt_palettes: Vec::new(),
             rt_written: Vec::new(),
@@ -1046,6 +1042,12 @@ impl Renderer {
         self.rt_poses.behind(base, &self.rt_palettes)
     }
 
+    /// Whether the ray tracer drew the last frame that came back: not while
+    /// it is being made, after ray tracing was turned on.
+    pub fn rt_tracing(&self) -> bool {
+        self.rt_made != 0
+    }
+
     /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
     /// shadows (`rt_palettes`).
     fn mirror_palettes(&mut self, mats: &[[[f32; 4]; 4]], a: usize, b: usize) {
@@ -1201,14 +1203,6 @@ impl Renderer {
     /// is drawn any more, the viewer should close.
     pub fn device_lost(&self) -> bool {
         self.lost.get()
-    }
-
-    /// Before this renderer is dropped for a new one on a new window while
-    /// its device works (ray tracing turned on, which needs a device opened
-    /// with ray queries): its window surface is left to the process, as
-    /// after a loss (`Backend`'s `Drop`).
-    pub fn leave_surface(&self) {
-        self.lost.leave_surface();
     }
 
     /// How long the GPU has kept the frame in the render thread's hands,
@@ -1448,6 +1442,7 @@ impl Renderer {
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
         self.last_stats = r.stats;
+        self.rt_made = r.rt;
         self.fresh = true;
         if self.spare.len() < SPARE_PACKETS {
             self.spare.push(r.spent);
@@ -1670,10 +1665,14 @@ impl Renderer {
         let rt_camera = params.camera_pos;
         let rt_far = params.shadow_distance;
         let rt_shifted = std::mem::take(&mut self.rt_rebased) || self.world_shift != [0.0; 2];
-        let rt_on = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing).shadows;
-        if !rt_on {
-            // turned off: nothing is followed for it, and it starts from
-            // nothing when it comes back
+        // Gathered for the ray tracer the render thread has: none while its
+        // worker makes it (renderer.rs `RtBuild`). The levels a frame's
+        // faces ask for are built by the one that draws it, and are not
+        // asked for again while they stand.
+        let rt_on = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing).shadows && self.rt_made != 0;
+        if !rt_on || self.rt_made != self.rt_followed {
+            // turned off, or another ray tracer: nothing is followed for
+            // it, and it starts from nothing
             if std::mem::take(&mut self.rt_gathered) {
                 self.records.unwatch_changes();
                 self.cull.objects.unwatch();
@@ -1681,6 +1680,7 @@ impl Renderer {
             }
             self.rt_written.clear();
         }
+        self.rt_followed = self.rt_made;
         self.rt_gathered = rt_on;
         let index = self.frames;
         let packet = FramePacket {
@@ -2123,7 +2123,6 @@ const MEMORY_BLOCK: u64 = 16 << 20;
 /// ones it has; an error when it lacks a needed one or the device fails.
 fn open_device(
     adapter: &wgpu::Adapter,
-    ray_tracing: bool,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))] xr: Option<&crate::xr_device::Graphics>,
 ) -> Result<OpenedDevice, RenderError> {
     let afeat = adapter.features();
@@ -2154,15 +2153,14 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
-    // ray tracing (rt_shadows.rs), not with VR: its ray queries only when
-    // it is asked for, so that a device that never traces is opened as
-    // before
+    // ray tracing (rt_shadows.rs), not with VR: its ray queries from the
+    // start, so that turning it on needs no other device
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     let vr = xr.is_some();
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     let vr = false;
     let ray_queries = afeat.contains(crate::rt_shadows::FEATURES);
-    if !vr && ray_queries && crate::rt_shadows::wanted_at_open(ray_tracing) {
+    if !vr && ray_queries && crate::rt_shadows::wanted_at_open() {
         features |= crate::rt_shadows::FEATURES;
     }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
@@ -2249,8 +2247,7 @@ fn open_device(
         required_limits: alim.clone(),
         experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
             // SAFETY: wgpu's ray queries are experimental (its API may still
-            // change); asked only when ray tracing is, an experimental
-            // option.
+            // change); only ray tracing, an experimental option, uses them.
             unsafe { wgpu::ExperimentalFeatures::enabled() }
         } else {
             wgpu::ExperimentalFeatures::disabled()

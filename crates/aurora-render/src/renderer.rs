@@ -2074,6 +2074,8 @@ pub(crate) struct Backend {
     /// The ray-traced sun shadows (AURORA_RT_SHADOWS), and whether this
     /// frame traces them.
     rt: Option<crate::rt_shadows::RtShadows>,
+    /// The ray tracer, or what an effect turned on needs, being made.
+    rt_build: Option<RtBuild>,
     rt_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -2240,22 +2242,12 @@ impl Drop for Backend {
     /// properly after a "GPU device lost" then ended with a Rust panic
     /// (#1650). A lost device only closes the viewer, so the surface is left
     /// to the process, which releases it with the driver's objects.
-    ///
-    /// The same for a renderer replaced while its device works
-    /// (`Renderer::leave_surface`): with its surface destroyed, the next
-    /// renderer's first `acquire_next_image` segfaults in NVIDIA's Linux
-    /// driver on Wayland (620.70), where the replacement after a loss, which
-    /// leaves it, draws.
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
             return;
         }
         self.wait_pipeline_workers();
-        if self.lost.surface_left() {
-            log::info!("renderer replaced: the window surface is left to the process");
-            return;
-        }
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -3368,6 +3360,23 @@ struct PipelineBuild {
     ssr: bool,
     started: std::time::Instant,
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
+}
+
+/// What a worker thread made for ray tracing: the ray tracer, or the parts
+/// of it an effect turned on later needs.
+enum RtMade {
+    Tracer(Box<crate::rt_shadows::RtShadows>),
+    Parts(Box<crate::rt_shadows::Parts>),
+}
+
+/// The ray tracer being made on a worker thread
+/// (`Backend::follow_ray_tracing`). Its compute pipelines are the driver's
+/// to compile, like the scene's ([`PipelineBuild`]): made on the render
+/// thread when Preferences turned ray tracing on, they held the picture.
+/// The frames keep the shadow maps and the screen-space effects meanwhile.
+struct RtBuild {
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<RtMade>,
 }
 
 impl Impostors {
@@ -4576,6 +4585,7 @@ impl Backend {
             clouds: None,
             clouds_now: false,
             rt,
+            rt_build: None,
             rt_now: false,
             contact_now: false,
             gtao_normals_now: false,
@@ -7377,26 +7387,86 @@ impl Backend {
 
     /// The ray tracer follows the settings: made when they turn ray
     /// tracing on, dropped with the levels it built when they turn it off
-    /// (its targets go with the others, `make_targets`).
+    /// (its targets go with the others, `make_targets`). It is made on a
+    /// worker thread ([`RtBuild`]), as is what an effect turned on later
+    /// needs: called again at each frame until the worker is done.
     fn follow_ray_tracing(&mut self) {
         let options = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing);
-        match (&mut self.rt, options.shadows) {
-            (Some(rt), true) => rt.set_options(&self.device, &self.queue, &self.tex_layout, options),
-            (None, true) => {
-                let started = std::time::Instant::now();
-                self.rt = Some(crate::rt_shadows::RtShadows::new(
-                    &self.device,
-                    &self.queue,
-                    &self.tex_layout,
-                    options,
-                ));
-                log::info!("ray tracer made in {} ms", started.elapsed().as_millis());
-            }
-            (Some(_), false) => {
-                self.rt = None;
+        if !options.shadows {
+            // (one still being made is dropped as its worker ends)
+            self.rt_build = None;
+            if self.rt.take().is_some() {
                 log::info!("ray tracing off");
             }
-            (None, false) => {}
+            return;
+        }
+        let mut here = false;
+        if let Some(build) = &self.rt_build {
+            match build.done.try_recv() {
+                Ok(made) => {
+                    let spent = build.started.elapsed().as_millis();
+                    self.rt_build = None;
+                    self.take_ray_tracing(made, spent, "on a worker");
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::error!("the ray tracer's worker stopped: made on the render thread");
+                    self.rt_build = None;
+                    here = true;
+                }
+            }
+        }
+        if let Some(rt) = &mut self.rt {
+            rt.set_options(options);
+        }
+        if self.rt_build.is_some() {
+            return;
+        }
+        let make: Box<dyn FnOnce() -> RtMade + Send> = match &self.rt {
+            None => {
+                let (device, queue, textures) = (self.device.clone(), self.queue.clone(), self.tex_layout.clone());
+                Box::new(move || RtMade::Tracer(Box::new(crate::rt_shadows::RtShadows::new(&device, &queue, &textures, options))))
+            }
+            Some(rt) => match rt.parts_maker(&self.device, &self.queue, &self.tex_layout, options) {
+                Some(parts) => Box::new(move || RtMade::Parts(Box::new(parts()))),
+                None => return,
+            },
+        };
+        let started = std::time::Instant::now();
+        if here {
+            let made = make();
+            self.take_ray_tracing(made, started.elapsed().as_millis(), "on the render thread");
+            return;
+        }
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new().name("aurora-ray-tracer".into()).spawn(move || {
+            // (refused when ray tracing was turned off meanwhile: dropped)
+            let _ = tx.send(make());
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+            }
+            // the receiver reports the worker gone: made on this thread
+            Err(e) => log::error!("cannot start the ray tracer's worker: {e}"),
+        }
+        self.rt_build = Some(RtBuild { started, done });
+    }
+
+    /// What was made for ray tracing, in `spent` ms, takes its place.
+    fn take_ray_tracing(&mut self, made: RtMade, spent: u128, how: &str) {
+        match made {
+            RtMade::Tracer(rt) => {
+                log::info!("ray tracer made in {spent} ms {how}");
+                self.rt = Some(*rt);
+            }
+            RtMade::Parts(parts) => {
+                log::info!("ray tracer: the effects turned on made in {spent} ms {how}");
+                if let Some(rt) = &mut self.rt {
+                    rt.take(*parts);
+                }
+            }
         }
     }
 
@@ -7953,6 +8023,7 @@ impl Backend {
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
             films,
+            rt: self.rt.as_ref().map_or(0, |rt| rt.made),
             spent,
         }
     }
@@ -8644,6 +8715,11 @@ impl Backend {
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
             self.apply_frame_settings(settings);
+        }
+        // (at each frame until its worker is done, whatever else the
+        // settings wait for)
+        if self.rt_build.is_some() {
+            self.follow_ray_tracing();
         }
         // the start is over: made, and its settings applied, with nothing
         // refused

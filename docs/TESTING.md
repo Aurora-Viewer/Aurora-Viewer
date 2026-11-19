@@ -4760,6 +4760,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SATIN=1\|room` | Satin PBR metal from a roughness of 0.15 to 0.55 and a frame of thin dark bars (blurred ray-traced reflections); `room`: inside the closed room of `AURORA_DEMO_PROBE_ROOM` |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_RT_WALK=1` | Our avatar, heavy and in a hat, walks: its ray-traced shadow follows it |
+| `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -5029,6 +5030,20 @@ both open states and the selection count. Capture at frame 620.
   hat took the frame's budget and the same run said 239 of them, 5.33 m.
   With `AURORA_PROFILE=1`, the `rt shadows:` line gives the same for every
   skeleton (`… left waiting at most, … m behind at most`).
+- **`AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]`**: the sun's ray-traced
+  shadows turned on at the first frame, as Preferences › Graphics would
+  (leave `AURORA_RT_SHADOWS` unset: the setting is off in the demo), then at
+  the second, more than 240 frames later, the local lights' shadows, the
+  indirect light and the reflections. The picture must go on through both:
+  the shadow maps and the screen-space effects stay until the ray tracer,
+  made on a worker thread, takes over. The log says `ray tracer made in …
+  ms on a worker`, `demo rt switch: the sun's shadows traced … frames (…
+  ms) after they were turned on`, and the longest of the 240 frames before
+  the switch and after each step, which must be about the same. To see the
+  driver compile the ray tracer's pipelines as on a first use, add
+  `AURORA_PIPELINE_CACHE=0` and, with NVIDIA's driver on Linux,
+  `__GL_SHADER_DISK_CACHE=0`: 601 ms and 2,122 ms on the worker in one such
+  run, the longest frame 16.9 ms and 22.1 ms at 60 frames a second.
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
@@ -13171,10 +13186,11 @@ What the inventory must show with these scenarios:
   without them: the point lights' shadows, the indirect light (in the
   screen-space one's place, at the Indirect light intensity) and the
   reflections (in the screen-space ones' place, which must be on). The
-  GPU device has ray queries only when ray tracing is on as it opens, by
-  the setting or `AURORA_RT_SHADOWS`: turning the setting on later makes
-  the window and the renderer again, as after a device loss, and
-  `AURORA_RT_SHADOWS=0` keeps that from happening. With
+  GPU device has its ray queries from the start on a card that has them,
+  whatever the setting says: turned on later, the ray tracer is made on a
+  worker thread and the picture goes on (`AURORA_DEMO_RT_SWITCH`).
+  `AURORA_RT_SHADOWS=0` opens the device without them, as on a card that
+  has none: nothing is traced in that launch, whatever the setting. With
   `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
   (the faces posed, the levels built and the trace on the GPU, the faces
   placed, and the render thread's time), `rt lights:`, `rt gi:` and
