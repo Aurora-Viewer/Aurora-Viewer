@@ -553,7 +553,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "photo" | "photo_classic" => "camera-filled",
         "controls" | "camera_controls" => "video-filled",
         "director" => "movie",
-        "second_camera" => "camera-selfie",
+        "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",

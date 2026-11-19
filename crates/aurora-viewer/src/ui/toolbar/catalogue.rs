@@ -86,7 +86,7 @@ pub const COMMANDS: &[Command] = commands![
     // Aurora's own: the Director, a camera track to film with
     "director", "movie", "toolbar-command-director", true;
     // Aurora's own: our avatar seen by a camera of its own
-    "second_camera", "camera-selfie", "second-camera-title", true;
+    "second_camera", "device-cctv-filled", "second-camera-title", true;
     // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
     "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet

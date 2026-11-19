@@ -1523,7 +1523,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(
             ui,
             p,
-            "camera-selfie",
+            "device-cctv-filled",
             aurora_i18n::tr!("second-camera-title"),
             panels.second_camera,
             true,
