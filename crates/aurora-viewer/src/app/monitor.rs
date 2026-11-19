@@ -127,7 +127,8 @@ impl App {
                 aurora_i18n::tr!("toolbar-command-destinations"),
             ),
         ];
-        for (pid, label) in pages {
+        let signup = self.signup_ui.web_process_ids().map(|pid| (pid, aurora_i18n::tr!("signup-title")));
+        for (pid, label) in pages.into_iter().chain(signup) {
             if let Some(pid) = pid {
                 out.push(MediaProcess {
                     pid,

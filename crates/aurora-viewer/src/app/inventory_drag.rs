@@ -860,6 +860,7 @@ impl App {
             egui::DragAndDrop::clear_payload(ctx);
             if allowed {
                 self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, vec![to]));
+                self.inventory_ui.share_in_session = None;
                 self.inventory_ui.release_world_drag_focus(ctx);
             } else {
                 self.world
@@ -1414,6 +1415,7 @@ mod tests {
                 currency_symbol: String::new(),
                 export_supported: false,
                 group_chat_post_links: false,
+                game_control: false,
                 max_link_children: None,
                 open_settings: None,
                 animated_object_max_tris: 0,

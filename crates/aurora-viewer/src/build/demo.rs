@@ -346,7 +346,16 @@ pub fn texture_inventory(world: &mut World) {
 
 /// Optional direct object selection, used for animated-shape captures.
 pub fn target_index(spec: &str, world: &World) -> Option<usize> {
-    let id = spec.split(',').nth(1)?.trim().strip_prefix("object:")?.parse::<u32>().ok()?;
+    let target = spec.split(',').nth(1)?.trim().strip_prefix("object:")?;
+    if target == "mirror" {
+        return world
+            .objects
+            .iter()
+            .filter(|(_, o)| o.extra.reflection_probe.is_some_and(|p| p.flags & 0x04 != 0))
+            .min_by_key(|(_, o)| o.key.local_id)
+            .map(|(idx, _)| idx);
+    }
+    let id = target.parse::<u32>().ok()?;
     world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i))
 }
 

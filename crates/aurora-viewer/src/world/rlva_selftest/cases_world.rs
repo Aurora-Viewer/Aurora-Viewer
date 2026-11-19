@@ -458,21 +458,34 @@ pub(super) fn phase2() -> Vec<Case> {
                 item_id: script_item(c),
             }),
         ),
-        Step::Refused(
-            "renaming in the seat's contents is refused",
-            build(false, |_, c, handle, local_ids| BuildCmd::UpdateTaskInventory {
-                handle,
-                local_id: local_ids[0],
-                item: Box::new(aurora_net::build::TaskItem {
-                    item_id: script_item(c),
-                    parent_id: c.prims.first().map_or(Uuid::nil(), |p| p.id),
-                    owner_id: c.agent,
-                    asset_type: 10,
-                    inv_type: 10,
-                    name: "renamed".to_owned(),
-                    ..Default::default()
-                }),
-            }),
+        // LLTaskInvFVBridge::isItemRenameable (llpanelobjectinventory.cpp)
+        // keeps the names in a locked attachment only: an item of the seat
+        // is renamed. Asked of the rule, never sent.
+        Step::Now(
+            "renaming in the seat's contents stays allowed, as in the Legacy Viewer",
+            holds(
+                |w, c| {
+                    c.prims.first().is_some_and(|p| {
+                        can(
+                            w,
+                            &NetCommand::Build(BuildCmd::UpdateTaskInventory {
+                                handle: p.handle,
+                                local_id: p.local_id,
+                                item: Box::new(aurora_net::build::TaskItem {
+                                    item_id: script_item(c),
+                                    parent_id: p.id,
+                                    owner_id: c.agent,
+                                    asset_type: 10,
+                                    inv_type: 10,
+                                    name: "renamed".to_owned(),
+                                    ..Default::default()
+                                }),
+                            }),
+                        )
+                    })
+                },
+                "refused",
+            ),
         ),
         // handle_selected_script_action (llviewermenu.cpp) only keeps the
         // scripts of a locked attachment: those of the seat can be reset and

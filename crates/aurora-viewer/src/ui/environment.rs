@@ -302,8 +302,9 @@ impl EnvironmentUi {
         }
         ui.add_space(6.0);
         widgets::divider(ui, p);
-        ui.horizontal(|ui| {
-            ui.add_space(label_w + 4.0);
+        // Actions use the whole width, and wrap as the text grows (#3613).
+        // Indenting them by the labels' width clipped Aurora Weather.
+        ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(free, |ui| {
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
                     .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
@@ -327,8 +328,7 @@ impl EnvironmentUi {
             // with its own way back to the region's: it turns "Let regions
             // set the weather" on, still an opt in, by my own hand. One way,
             // as the sky's: greyed once the region's is followed (turned off
-            // again in the Weather window). On the same row: a row of its
-            // own made the Quick preferences too tall at the largest text
+            // again in the Weather window).
             let Some((open, weather)) = weather else {
                 return;
             };
@@ -823,14 +823,15 @@ pub fn settings_list(
             ui.data_mut(|d| d.remove_temp::<String>(query_id));
         }
         let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
-        // Give egui the measured height before it positions the popup, so an
-        // upward list stays on its button as filtering or inventory changes.
+        // Give egui the measured height and the button's width before it
+        // positions the popup. Filtering keeps an upward list anchored and
+        // never feeds a scrollbar's animated width into the next frame.
         if opening && demo.is_none() {
             ui.data_mut(|d| d.remove_temp::<f32>(height_id));
         } else if let Some(wanted) = ui.data(|d| d.get_temp::<f32>(height_id))
             && let Some(mut area) = egui::AreaState::load(ui.ctx(), popup_id)
         {
-            area.size = area.size.map(|s| Vec2::new(s.x, wanted));
+            area.size = area.size.map(|_| Vec2::new(width, wanted));
             let layer = egui::LayerId::new(egui::Order::Foreground, popup_id);
             ui.ctx().memory_mut(|m| m.areas_mut().set_state(layer, area));
         }
@@ -845,6 +846,15 @@ pub fn settings_list(
             // a click in the search field must not close the list
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
+                // The scroll area's divider and search field fill this width.
+                // Derive it from the button, never the previous popup width:
+                // a scrollbar otherwise feeds its extra width into each frame.
+                // ComboBox owns another scroll area around this content.
+                // Reserve its full gutter even while its bar is animating
+                // after a filter change, rather than briefly widening the menu.
+                let gutter = ui.spacing().scroll.allocated_width();
+                ui.set_width((width - egui::Frame::popup(ui.style()).total_margin().sum().x - gutter).max(1.0));
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 // Aurora addition: the Legacy Viewer's lists only jump to
                 // the first name starting with the letters typed
                 // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
@@ -901,7 +911,10 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, None)).clicked() {
+                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, None))
+                            .on_hover_text(&c.name)
+                            .clicked()
+                        {
                             if !on {
                                 picked = Some(c.asset);
                             }
@@ -956,7 +969,7 @@ fn tagged_name(p: &Palette, name: &str, weather: bool, color: Option<egui::Color
 
 /// A list to open on its next frame, with this text in its search field
 /// (demo captures).
-fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
+pub(crate) fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
     egui::Id::unique("env_list_demo_open").with(salt)
 }
 
@@ -1406,6 +1419,57 @@ fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrolling_environment_popup_keeps_its_width_across_frames_and_filtering() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let catalog = SettingsCatalog {
+            sky: (0..60)
+                .map(|n| env_select::SettingsChoice {
+                    item: Uuid::from_u128(n + 1),
+                    asset: Uuid::from_u128(n + 101),
+                    name: format!("A very long environment name for the scrolling sky list {n}"),
+                    weather: n % 2 == 0,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for text_size in [1.0, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, text_size);
+            let salt = "stable_environment_popup";
+            let mut baseline = None::<f32>;
+            for frame in 0..80 {
+                if [0, 30, 40].contains(&frame) {
+                    let query = if frame == 30 { "not found" } else { "" };
+                    ctx.data_mut(|d| d.insert_temp(demo_open_id(&salt), query.to_owned()));
+                }
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 800.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        settings_list(ui, &p, &catalog, SettingsKind::Sky, Shown::Shared, salt, 240.0);
+                    },
+                );
+                output.textures_delta.clear();
+                let popup = ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground)).expect("popup open");
+                let rect = egui::AreaState::load(&ctx, popup.id).expect("popup area").rect();
+                if frame == 10 {
+                    baseline = Some(rect.width());
+                }
+                if frame >= 10 {
+                    assert!(
+                        (rect.width() - baseline.unwrap()).abs() < 2.0,
+                        "text size {text_size}, frame {frame}: {rect:?}, initial {baseline:?}"
+                    );
+                    assert!(rect.width() < 280.0, "the popup stays near its 240 px button: {rect:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn selector_label_column_fits_water_environment() {

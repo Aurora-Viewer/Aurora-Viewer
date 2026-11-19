@@ -278,6 +278,9 @@ pub(super) struct Snapshots {
     /// levelled meanwhile, the next opening takes it back (feedback 585:
     /// leaving the photo mode to change a setting lost the angle).
     pub(super) roll_kept: f32,
+    /// The viewfinder's view while it shows, then when it last closed: the
+    /// next opening takes it back with the tilt (`app::viewfinder`).
+    pub(super) view_kept: Option<crate::snapshot::viewfinder::KeptView>,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -489,6 +492,7 @@ impl Default for Snapshots {
             fov_before: None,
             quality_drawn: None,
             roll_kept: 0.0,
+            view_kept: None,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,

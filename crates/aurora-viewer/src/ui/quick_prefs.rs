@@ -32,8 +32,8 @@ use std::ops::RangeInclusive;
 /// The window's id (Floater.Toggle "quickprefs").
 pub const WINDOW: &str = "quickprefs";
 
-/// The labels' column, for the rows and the environment block alike: wide
-/// enough for the longest label (French "Complexité maximale des avatars").
+/// The labels' column, for the rows and the environment block alike.
+/// Long translations wrap within it as the text size grows.
 const LABEL_W: f32 = 212.0;
 const WIDTH: f32 = 540.0;
 const SLIDER_W: f32 = 180.0;
@@ -324,14 +324,13 @@ impl QuickPrefsUi {
 }
 
 fn label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
-        egui::FontId::proportional(12.5),
-        p.ink,
-    );
+    let galley = ui
+        .painter()
+        .layout(text.to_owned(), egui::FontId::proportional(12.5), p.ink, LABEL_W);
+    let height = galley.size().y;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(LABEL_W, height.max(20.0)), egui::Sense::hover());
+    ui.painter()
+        .galley(rect.left_center() - egui::vec2(0.0, height * 0.5), galley, p.ink);
     response.on_hover_text(tip);
 }
 
@@ -519,41 +518,6 @@ mod tests {
         assert_eq!(NameTags::of(&s), NameTags::On);
     }
 
-    /// The window keeps its size, the environment block's status line, its
-    /// last text, inside it.
-    #[test]
-    fn the_window_keeps_its_size() {
-        let status = aurora_i18n::tr!("ui-environment-skies-waters-day-cycles", value0 = "0", value1 = "0", value2 = "0");
-        crate::ui::widgets::steady_tests::assert_window_steady(
-            WINDOW,
-            &[egui::vec2(WIDTH, 420.0)],
-            &status,
-            || {
-                (
-                    QuickPrefsUi::default(),
-                    Settings::default(),
-                    HoverHeight::default(),
-                    EnvironmentUi::default(),
-                )
-            },
-            |(quick, settings, height, env), ctx, p| {
-                let mut open = true;
-                let mut lighting = false;
-                quick.show(
-                    ctx,
-                    p,
-                    &mut open,
-                    settings,
-                    Hover { height, enabled: true },
-                    env,
-                    LocalView::SHARED,
-                    false,
-                    &mut lighting,
-                );
-            },
-        );
-    }
-
     #[test]
     fn name_tag_modes_leave_the_own_tag_switch_alone() {
         // RenderNameShowSelf is its own setting: the quick preferences set
@@ -569,5 +533,102 @@ mod tests {
                 assert_eq!(NameTags::of(&s), mode, "own tag {own}");
             }
         }
+    }
+
+    fn show_test_window(
+        (quick, settings, height, env): &mut (QuickPrefsUi, Settings, HoverHeight, EnvironmentUi),
+        ctx: &egui::Context,
+        p: &Palette,
+    ) {
+        quick.show(
+            ctx,
+            p,
+            &mut true,
+            settings,
+            Hover { height, enabled: true },
+            env,
+            LocalView::SHARED,
+            false,
+            &mut false,
+        );
+    }
+
+    #[test]
+    fn the_window_keeps_its_size_and_large_labels_stay_clear_of_sliders() {
+        crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+            WINDOW,
+            &[Vec2::new(WIDTH, 420.0)],
+            &[(1.0, 1.0), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 1.5), (1.0, 2.0)],
+            || {
+                (
+                    QuickPrefsUi::default(),
+                    Settings::default(),
+                    HoverHeight::default(),
+                    EnvironmentUi::default(),
+                )
+            },
+            show_test_window,
+            |frames, state, case, window, texts| {
+                for key in [
+                    "ui-options-avatar-physics-detail",
+                    "ui-options-maximum-bandwidth",
+                    "ui-options-maximum-avatar-complexity",
+                ] {
+                    let text = crate::ui::widgets::elide_tests::painted(texts, aurora_i18n::text(key));
+                    assert!(!text.cut && window.contains_rect(text.rect), "{case}: {key} remains readable");
+                    let layer = frames.ctx.layer_id_at(text.rect.center()).expect("label in the window");
+                    frames.ctx.viewport(|v| {
+                        for control in v
+                            .this_pass
+                            .widgets
+                            .get_layer(layer)
+                            .filter(|w| w.sense.senses_drag() && !w.rect.expand(0.5).contains_rect(text.rect))
+                        {
+                            assert!(
+                                control.rect.intersect(text.rect).area() <= 0.0,
+                                "{case}: {key} at {:?} overlaps slider {:?}",
+                                text.rect,
+                                control.rect
+                            );
+                        }
+                    });
+                }
+                // Wrapped labels can make the body taller than the screen.
+                // Exercise the floater's scrolling to reach its last actions.
+                let p = crate::theme::Theme::default().palette();
+                let mut draw = |ui: &mut egui::Ui| show_test_window(state, ui.ctx(), &p);
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(egui::pos2(window.left() + 14.0, window.center().y)),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -1200.0),
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Unknown,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+                let mut bottom_texts = Vec::new();
+                for _ in 0..30 {
+                    bottom_texts = frames.run(Vec::new(), &mut draw);
+                }
+                let status = aurora_i18n::tr!("ui-environment-skies-waters-day-cycles", value0 = "0", value1 = "0", value2 = "0");
+                for label in [
+                    aurora_i18n::tr!("common-personal-lighting"),
+                    aurora_i18n::tr!("ui-weather-aurora"),
+                    &status,
+                ] {
+                    let text = crate::ui::widgets::elide_tests::painted(&bottom_texts, label);
+                    assert!(
+                        !text.cut && window.contains_rect(text.rect),
+                        "{case}: {label} at {:?} in {window:?}",
+                        text.rect
+                    );
+                }
+                assert_eq!(frames.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW))), Some(window));
+            },
+        );
     }
 }

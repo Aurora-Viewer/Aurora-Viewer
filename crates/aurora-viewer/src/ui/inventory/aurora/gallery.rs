@@ -288,11 +288,7 @@ pub(super) fn combination(
 fn prepare(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, root: Uuid) {
     st.view.prepare(inv, prefs.sort_for(st.tab));
     st.plain.prepare(&st.view, inv, root, false, prefs.show_library);
-    if inv
-        .folders
-        .get(&root)
-        .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
-    {
+    if inv.shown_needs_fetch(root, std::time::Instant::now()) {
         inv.request(root);
     }
 }
@@ -367,10 +363,11 @@ fn pane(
         }
         if count == 0 {
             if own {
-                let text = if inv.folders.get(&root).is_some_and(|f| f.state == FetchState::Fetched) {
-                    aurora_i18n::tr!("inventory-folder-empty")
-                } else {
-                    aurora_i18n::tr!("ui-inventory-loading-folder")
+                let text = match inv.folders.get(&root).map(|f| f.state) {
+                    Some(FetchState::Fetched) => aurora_i18n::tr!("inventory-folder-empty"),
+                    // asked again after `SHOWN_RETRY`, not loading meanwhile
+                    Some(FetchState::Failed) => aurora_i18n::tr!("ui-inventory-folder-not-loaded"),
+                    _ => aurora_i18n::tr!("ui-inventory-loading-folder"),
                 };
                 ui.painter().text(
                     Pos2::new(ui.max_rect().center().x, origin.y + 40.0),
