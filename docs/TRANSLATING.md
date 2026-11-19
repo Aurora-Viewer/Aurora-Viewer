@@ -1,7 +1,9 @@
 # Translating the viewer
 
 Each language has a Fluent catalogue in `crates/aurora-i18n/locales/`.
-English is in `en.ftl`, French in `fr.ftl` and Japanese in `ja.ftl`. The
+English is in `en.ftl`, French in `fr.ftl` and Japanese in `ja.ftl`, which
+are complete at every PR; the community catalogues (`de`, `pt-BR`, `ru`,
+`zh-Hans`, `zh-Hant`) catch up at each release (below). The
 files are embedded at build time; adding `de.ftl`, for example, adds a
 language to the Preferences without changing the Rust code. The file name
 must be a language identifier, such as `de` or `pt-BR`, and `language-name`
@@ -25,21 +27,39 @@ entry uses its native name and the exact catalogue code, such as `English
 
 Regional variants prefer the exact catalogue and then try less specific
 codes. `zh-CN` and `zh-SG` can use `zh-Hans`, while `zh-TW`, `zh-HK` and
-`zh-MO` can use `zh-Hant`. A missing locale or message uses English. The
-language and its visibility to scripts are sent to the
-simulator through `UpdateAgentLanguage`, after login, a region change or a
-change to the preferences, following the Legacy Viewer's `LLAgentLanguage::update`.
+`zh-MO` can use `zh-Hant`. When the language has no catalogue of its own,
+another region of it comes before English (`pt-PT` reads `pt-BR`); the two
+Chinese scripts are never swapped this way. A missing locale or message uses
+English.
+
+The language and its visibility to scripts are sent to the simulator through
+`UpdateAgentLanguage`, after login, a region change or a change to the
+preferences, following the Legacy Viewer's `LLAgentLanguage::update`. The
+grid gets the Legacy Viewer's code, the first part of the catalogue's
+(`aurora_i18n::grid_language`: `zh-Hans` and `zh-Hant` send `zh`, `pt-BR`
+sends `pt`), since scripts compare `llGetAgentLanguage` with those codes; the
+currency and land XML-RPC calls, the viewer statistics, the abuse categories
+and the People API use the same code.
 
 A new text uses an explicit key and its English, French and Japanese versions
-in the same PR, at the same place as in `en.ftl`. Community catalogues can
-catch up on a separate release schedule. New untranslated keys use the
-current English message until the community catalogue gains a translation.
-The checks require valid Fluent, exact variables on translated messages,
-and no stale keys in bundled catalogues. Only English, French and Japanese
-require complete parity on each feature PR. Put each catalogue's native name
-on a single `language-name = …` line so the menu can display it before the
-catalogue is loaded. The same `.ftl` files can be copied out of the source
-tree and imported through the language file picker.
+in the same PR, at the same place as in `en.ftl`. The other catalogues (the
+community catalogues) catch up at each release (below): until then a new key
+uses the current English message. The checks require valid Fluent, exact
+variables on translated messages, and no stale keys in bundled catalogues.
+Only English, French and Japanese require complete parity on each feature
+PR. So:
+
+- a key removed from `en.ftl` is removed from every catalogue in the same
+  PR; a key renamed is renamed in every catalogue, its translation kept;
+- an English message whose **meaning** changes takes a new key (the old one
+  removed everywhere): the community catalogues then show English until
+  their translator catches up, never a translation that says something else.
+  A rewording that keeps the meaning keeps its key.
+
+Put each catalogue's native name on a single `language-name = …` line so the
+menu can display it before the catalogue is loaded. The same `.ftl` files can
+be copied out of the source tree and imported through the language file
+picker.
 
 For a release, save the previous and current English catalogues and run
 the delta report for each language:
