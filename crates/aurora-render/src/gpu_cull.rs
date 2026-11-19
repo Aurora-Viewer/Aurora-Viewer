@@ -66,13 +66,18 @@ pub mod object_flags {
     pub const POSED: u32 = 32;
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
-    /// Left out of the photo by its isolation (the viewer's
-    /// `snapshot::isolate`) or by a hidden rendering type
-    /// (`scene::render_types`): not drawn, casting no shadow, in no
+    /// Left out by a hidden rendering type (`scene::render_types`), the
+    /// avatar studio, or an avatar the photo's isolation leaves out (the
+    /// viewer's `snapshot::isolate`): not drawn, casting no shadow, in no
     /// reflection.
     pub const HIDDEN: u32 = 128;
     /// Physical (moves on its own): not in the rain's shelter map.
     pub const PHYSICAL: u32 = 256;
+    /// A linkset the photo's isolation leaves out of the picture only
+    /// (`snapshot::isolate::View::Unseen`): not in the main view, but still
+    /// casting its shadow and in the reflections and probe captures, so
+    /// that the subject keeps the scene's light (#2316).
+    pub const UNSEEN: u32 = 512;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -535,7 +540,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let viewed = sphere_in(&frame.planes, c, r)
+    let viewed = o.flags & object_flags::UNSEEN == 0
+        && sphere_in(&frame.planes, c, r)
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
     let shadow_reach = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
     let reflect_reach = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
@@ -1649,7 +1655,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 51] = [
+        let pairs: [(&str, u32); 52] = [
             ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
@@ -1695,6 +1701,7 @@ mod tests {
             ("OBJ_POSED", object_flags::POSED),
             ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("OBJ_PHYSICAL", object_flags::PHYSICAL),
+            ("OBJ_UNSEEN", object_flags::UNSEEN),
             ("F_SPOT_SHELTER", frame_flags::SPOT_SHELTER),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),

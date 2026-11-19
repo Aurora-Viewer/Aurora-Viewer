@@ -11706,8 +11706,7 @@ impl Backend {
                     &self.queue,
                     &mut encoder,
                     &crate::fsr::FrameInputs {
-                        view_proj: fu.proj * fu.view,
-                        prev_view_proj: self.prev_view_proj.unwrap_or(unjittered_vp),
+                        motion_reproj: main.motion_reproj,
                         proj: f.proj,
                         jitter: self.taa_jitter,
                         reset: taa.reset || self.prev_view_proj.is_none(),
