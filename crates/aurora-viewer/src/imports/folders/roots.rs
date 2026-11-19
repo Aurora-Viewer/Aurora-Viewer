@@ -36,13 +36,16 @@ impl SourceRoots {
         match layout {
             Layout::Mirror => path.extend(entry.source_folders.iter().skip(1).map(|part| folder_name(part))),
             Layout::Flat => {}
-            Layout::Type => path.push(folder_name(match entry.source.as_ref().map(Source::kind) {
-                Some(Kind::Texture | Kind::Snapshot) => aurora_i18n::tr!("import-folders-textures"),
-                Some(Kind::Sound) => aurora_i18n::tr!("import-folders-sounds"),
-                Some(Kind::Animation) => aurora_i18n::tr!("import-folders-animations"),
-                Some(Kind::Material) => aurora_i18n::tr!("import-folders-materials"),
-                Some(Kind::Mesh) => aurora_i18n::tr!("import-folders-meshes"),
-                None => aurora_i18n::tr!("import-folders-other"),
+            Layout::Type => path.push(folder_name(match entry.source.as_ref() {
+                Some(Source::Script(_)) => aurora_i18n::tr!("import-folders-scripts"),
+                source => match source.and_then(Source::kind) {
+                    Some(Kind::Texture | Kind::Snapshot) => aurora_i18n::tr!("import-folders-textures"),
+                    Some(Kind::Sound) => aurora_i18n::tr!("import-folders-sounds"),
+                    Some(Kind::Animation) => aurora_i18n::tr!("import-folders-animations"),
+                    Some(Kind::Material) => aurora_i18n::tr!("import-folders-materials"),
+                    Some(Kind::Mesh) => aurora_i18n::tr!("import-folders-meshes"),
+                    None => aurora_i18n::tr!("import-folders-other"),
+                },
             })),
         }
         path

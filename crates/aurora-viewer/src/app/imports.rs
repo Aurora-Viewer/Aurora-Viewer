@@ -7,7 +7,70 @@ use aurora_net::inventory::upload::{Prices, Receipt};
 
 const SOUND_PREVIEW: u64 = u64::MAX - 10;
 
+/// What the app does after a script's answer.
+enum ScriptEffect {
+    /// Read the new item back from the server.
+    Fetch(uuid::Uuid),
+    /// Move the empty item of a script that was not saved to the Trash.
+    Trash(aurora_net::inventory::operations::Mutation),
+}
+
+/// The importer's script answer applied to the world. It is given the world and
+/// the importer only, never the inventory window: a saved script must not clear
+/// the user's search, filters and selection (no other upload does, and the
+/// row's "Show in inventory" button opens the item).
+fn script_answer(
+    imports: &mut crate::imports::Imports,
+    world: &mut crate::world::World,
+    protected: &std::collections::HashSet<uuid::Uuid>,
+    request: uuid::Uuid,
+    item: uuid::Uuid,
+    result: Result<aurora_net::inventory::InvItem, String>,
+) -> Option<ScriptEffect> {
+    match imports.script_saved(request, item, result)? {
+        crate::imports::script::Answer::Saved(item) => {
+            let item = *item;
+            let id = item.id;
+            world.inventory.add_items(vec![item]);
+            Some(ScriptEffect::Fetch(id))
+        }
+        crate::imports::script::Answer::Failed { orphan } => {
+            super::script_recovery::orphan_to_trash(&world.inventory, protected, orphan?).map(ScriptEffect::Trash)
+        }
+    }
+}
+
 impl App {
+    /// The answer to a script's creation (`CreateScriptItem`): the new item
+    /// goes into the inventory, and the receipt in the importer. A script
+    /// that did not compile is in the inventory all the same.
+    ///
+    /// The inventory view is left alone (no other upload moves it): the row's
+    /// "Show in inventory" button opens the item. A script whose text was not
+    /// saved leaves an empty item, which goes to the Trash as recovery does.
+    pub(super) fn import_script_saved(
+        &mut self,
+        request: uuid::Uuid,
+        item: uuid::Uuid,
+        result: Result<aurora_net::inventory::InvItem, String>,
+    ) {
+        match script_answer(
+            &mut self.imports,
+            &mut self.world,
+            &self.settings.inventory.protected,
+            request,
+            item,
+            result,
+        ) {
+            Some(ScriptEffect::Fetch(id)) if !self.demo => self.send(NetCommand::FetchItems {
+                items: vec![id],
+                owner: self.world.agent_id,
+            }),
+            Some(ScriptEffect::Trash(change)) => self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change)),
+            Some(ScriptEffect::Fetch(_)) | None => {}
+        }
+    }
+
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.demo && !self.imports.demo_started {
             // keep a scenario's own balance (AURORA_DEMO_ACTIONS sets one)
@@ -91,7 +154,15 @@ impl App {
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
         self.save_import_animation_models();
-        for command in commands {
+        for mut command in commands {
+            // A script gets the Scripts creation defaults, like any new script item.
+            if let NetCommand::CreateScriptItem { permissions, .. } = &mut command {
+                *permissions = self
+                    .settings
+                    .inventory
+                    .creation_permissions
+                    .for_item(aurora_net::inventory::operations::NewItem::Script);
+            }
             self.send(command);
         }
         if self.demo && self.frame_count == 500 && matches!(self.imports.demo_mode.as_str(), "sound-confirm" | "material-confirm") {
@@ -120,7 +191,7 @@ impl App {
                 .quote_mesh(id, ctx, &self.scene.jobs, &self.world, &self.settings.inventory, rights);
         }
         if self.demo
-            && matches!(self.imports.demo_mode.as_str(), "bulk-upload" | "folders-upload")
+            && matches!(self.imports.demo_mode.as_str(), "bulk-upload" | "folders-upload" | "script-upload")
             && !self.imports.demo_upload_started
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
@@ -1216,5 +1287,112 @@ impl App {
             *balance -= receipt.cost;
         }
         self.on_app_event(NetEvent::AssetUploaded { request, result });
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+    use aurora_net::inventory::{InvFolder, InvItem};
+    use uuid::Uuid;
+
+    fn setup() -> (crate::imports::Imports, crate::world::World, Uuid) {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (root, scripts, trash) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        world.inventory.root = root;
+        world.inventory.created_folders(vec![
+            InvFolder {
+                id: root,
+                name: "Inventory".into(),
+                type_default: 8,
+                ..Default::default()
+            },
+            InvFolder {
+                id: scripts,
+                parent: root,
+                name: "Scripts".into(),
+                type_default: 10,
+                ..Default::default()
+            },
+            InvFolder {
+                id: trash,
+                parent: root,
+                name: "Trash".into(),
+                type_default: 14,
+                ..Default::default()
+            },
+        ]);
+        let mut imports = crate::imports::Imports::default();
+        let entry = crate::imports::Entry::new(
+            "Door.lsl".into(),
+            Ok(Source::Script(crate::imports::script::Draft::new("default{}".into()))),
+            Default::default(),
+        );
+        imports.entries.push(entry);
+        (imports, world, scripts)
+    }
+
+    /// Starts the batch and returns the request of the script being created.
+    fn start(imports: &mut crate::imports::Imports, world: &mut crate::world::World, scripts: Uuid) -> Uuid {
+        imports.entries[0].folder = scripts;
+        imports.start(world, &Default::default(), &Default::default(), &Prices::default());
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let commands = imports.poll(&ctx, &jobs, world, &Default::default());
+        commands
+            .into_iter()
+            .find_map(|command| match command {
+                NetCommand::CreateScriptItem { request, .. } => Some(request),
+                _ => None,
+            })
+            .expect("a script creation")
+    }
+
+    #[test]
+    fn a_saved_script_joins_the_inventory_and_is_read_back() {
+        let (mut imports, mut world, scripts) = setup();
+        let request = start(&mut imports, &mut world, scripts);
+        let item = InvItem {
+            id: Uuid::from_u128(9),
+            parent: scripts,
+            name: "Door".into(),
+            asset_type: 10,
+            ..Default::default()
+        };
+        let effect = script_answer(&mut imports, &mut world, &Default::default(), request, item.id, Ok(item));
+        assert!(matches!(effect, Some(ScriptEffect::Fetch(id)) if id == Uuid::from_u128(9)));
+        assert!(world.inventory.items.contains_key(&Uuid::from_u128(9)));
+        // the function owns no inventory window: nothing here can clear its search or selection
+    }
+
+    #[test]
+    fn a_script_the_grid_created_but_could_not_fill_is_trashed_only_when_it_exists() {
+        for (known, nil, trashed) in [(true, false, true), (false, false, false), (true, true, false)] {
+            let (mut imports, mut world, scripts) = setup();
+            let request = start(&mut imports, &mut world, scripts);
+            let id = if nil { Uuid::nil() } else { Uuid::from_u128(9) };
+            if known {
+                world.inventory.add_items(vec![InvItem {
+                    id: Uuid::from_u128(9),
+                    parent: scripts,
+                    name: "Door".into(),
+                    asset_type: 10,
+                    inv_type: 10,
+                    owner: world.agent_id,
+                    base_mask: 0x7fff_ffff,
+                    owner_mask: 0x7fff_ffff,
+                    ..Default::default()
+                }]);
+            }
+            let effect = script_answer(
+                &mut imports,
+                &mut world,
+                &Default::default(),
+                request,
+                id,
+                Err("Saving failed.".into()),
+            );
+            assert_eq!(matches!(effect, Some(ScriptEffect::Trash(_))), trashed, "known {known}, nil {nil}");
+        }
     }
 }

@@ -1753,6 +1753,7 @@ script-saving = 保存してコンパイルしています…
 script-saved = スクリプトを保存してコンパイルしました。
 script-saved-not-compiled = スクリプトを保存しました。このグリッドでは、スクリプトはオブジェクトに入れたときにコンパイルされます。
 script-compile-failed = ソースは保存されましたが、コンパイルに失敗しました。下のエラーを修正してください。
+script-compile-failed-no-details = グリッドからスクリプトのコンパイルに失敗したと報告されましたが、メッセージはありませんでした。
 script-save-hint = スクリプトを保存してコンパイル（Ctrl＋S）。
 script-running = 実行中
 script-target-mono = Mono上のＬＳＬ
@@ -15339,6 +15340,16 @@ import-folders-animations = Animations
 import-folders-materials = Materials
 import-folders-meshes = Meshes
 import-folders-other = Other
+import-script-unreadable = スクリプトファイルを読み込めませんでした。
+import-script-not-utf8 = スクリプトファイルがＵＴＦ－８のテキストではありません。
+import-script-empty = スクリプトファイルが空です。
+import-scripts-saved = { $count }件のスクリプトを保存しました。
+import-script-compile-errors = スクリプト「{ $name }」は保存されましたが、コンパイルできませんでした。
+import-script-failed = スクリプト「{ $name }」を保存できませんでした：{ $reason }
+import-script-source = スクリプトのソース
+import-script-info = { $lines }行 · { $size }
+import-script-truncated = 最初の{ $lines }行を表示しています。
+import-folders-scripts = スクリプト
 
 # Unified import window
 import-window-title = アップロード

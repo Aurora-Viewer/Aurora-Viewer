@@ -167,6 +167,7 @@ pub(super) fn show(
                             });
                             let kind = Imports::type_choice(entry);
                             let icon = match kind {
+                                _ if matches!(entry.source, Some(Source::Script(_))) => "file-code-filled",
                                 Choice::Texture => "photo-filled",
                                 Choice::Sound => "file-music-filled",
                                 Choice::Animation => "run",

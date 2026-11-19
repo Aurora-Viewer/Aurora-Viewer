@@ -16,6 +16,7 @@ pub mod mesh;
 pub mod permissions;
 pub mod persistence;
 pub mod preview;
+pub mod script;
 pub mod sound;
 mod stage;
 #[cfg(test)]
@@ -52,16 +53,18 @@ impl Choice {
         if entry.local {
             return false;
         }
-        match entry.source.as_ref().map(Source::kind) {
-            Some(kind) => {
+        match entry.source.as_ref() {
+            // A script has no type window of its own: only the unified queue lists it.
+            Some(Source::Script(_)) => self == Choice::Bulk,
+            Some(source) => {
                 self == Choice::Bulk
                     || matches!(
-                        (self, kind),
-                        (Choice::Texture, Kind::Texture)
-                            | (Choice::Sound, Kind::Sound)
-                            | (Choice::Animation, Kind::Animation)
-                            | (Choice::Material, Kind::Material)
-                            | (Choice::Mesh, Kind::Mesh)
+                        (self, source.kind()),
+                        (Choice::Texture, Some(Kind::Texture))
+                            | (Choice::Sound, Some(Kind::Sound))
+                            | (Choice::Animation, Some(Kind::Animation))
+                            | (Choice::Material, Some(Kind::Material))
+                            | (Choice::Mesh, Some(Kind::Mesh))
                     )
             }
             None => self == Self::Bulk || entry.load_choice == Some(self),
@@ -255,6 +258,8 @@ pub enum Source {
         images: Box<[Option<LocalImage>; 4]>,
     },
     Mesh(Box<mesh::Draft>),
+    /// An LSL script file: an inventory script, free, never a NewFileAgentInventory upload.
+    Script(script::Draft),
 }
 #[derive(Clone, Copy)]
 pub struct BvhInfo {
@@ -286,6 +291,7 @@ impl Source {
                         .sum::<usize>()
             }
             Self::Material { images, .. } => images.iter().flatten().map(|i| i.pixels.data.len()).sum(),
+            Self::Script(draft) => draft.bytes(),
             Self::Mesh(draft) => {
                 draft.scene.models.iter().map(model).sum::<usize>()
                     + draft.images.values().map(|i| i.pixels.data.len()).sum::<usize>()
@@ -299,13 +305,16 @@ impl Source {
             }
         }
     }
-    pub fn kind(&self) -> Kind {
+    /// The upload type of an asset that goes through NewFileAgentInventory;
+    /// None for a script, which has no upload and no price.
+    pub fn kind(&self) -> Option<Kind> {
         match self {
-            Self::Texture(_) => Kind::Texture,
-            Self::Sound(_) => Kind::Sound,
-            Self::Animation { .. } => Kind::Animation,
-            Self::Material { .. } => Kind::Material,
-            Self::Mesh(_) => Kind::Mesh,
+            Self::Texture(_) => Some(Kind::Texture),
+            Self::Sound(_) => Some(Kind::Sound),
+            Self::Animation { .. } => Some(Kind::Animation),
+            Self::Material { .. } => Some(Kind::Material),
+            Self::Mesh(_) => Some(Kind::Mesh),
+            Self::Script(_) => None,
         }
     }
     pub fn dimensions(&self, options: import_texture::Options) -> (u32, u32) {
@@ -496,7 +505,8 @@ pub enum Playback {
 struct Step {
     key: Uuid,
     entry: Option<Uuid>,
-    kind: Kind,
+    /// None: a script.
+    kind: Option<Kind>,
     folder: Uuid,
     name: String,
     description: String,
@@ -557,6 +567,9 @@ pub struct Imports {
     pub load_preferences: Preferences,
     cost_overrides: HashMap<(Kind, bool), i32>,
     pub spent: i32,
+    /// What became of each script of the last batch.
+    pub receipts: Vec<script::Receipt>,
+    script: script::Pending,
     pub discarded_quotes: Vec<Uuid>,
     pub local_targets: HashMap<Uuid, local::Target>,
     pub local_appearance_targets: HashMap<(Uuid, Option<u8>), crate::world::objects::LocalAppearance>,
@@ -617,6 +630,8 @@ impl Default for Imports {
             load_preferences: Default::default(),
             cost_overrides: HashMap::new(),
             spent: 0,
+            receipts: Vec::new(),
+            script: Default::default(),
             discarded_quotes: Vec::new(),
             local_targets: HashMap::new(),
             local_appearance_targets: HashMap::new(),
@@ -685,7 +700,7 @@ impl Imports {
 
     pub fn demo_mesh_request(&self) -> Option<Request> {
         let step = &self.current.as_ref()?.1;
-        (step.kind == Kind::Mesh).then(|| Request {
+        (step.kind == Some(Kind::Mesh)).then(|| Request {
             kind: Kind::Mesh,
             folder: step.folder,
             name: step.name.clone(),
@@ -717,12 +732,13 @@ impl Imports {
     }
 
     pub fn type_choice(entry: &Entry) -> Choice {
-        match entry.source.as_ref().map(Source::kind) {
+        match entry.source.as_ref().and_then(Source::kind) {
             Some(Kind::Texture | Kind::Snapshot) => Choice::Texture,
             Some(Kind::Sound) => Choice::Sound,
             Some(Kind::Animation) => Choice::Animation,
             Some(Kind::Material) => Choice::Material,
             Some(Kind::Mesh) => Choice::Mesh,
+            // no type filter for a script, nor for a row that failed to load
             None => Choice::Bulk,
         }
     }
@@ -774,6 +790,14 @@ impl Imports {
         }
         actions::system(&world.inventory, kind.asset_type()).unwrap_or(world.inventory.root)
     }
+    /// The folder a new row of `source` goes to: the one chosen for its upload
+    /// type, or for a script the Scripts folder (a script has no upload type).
+    fn source_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, source: &Source) -> Uuid {
+        match source.kind() {
+            Some(kind) => Self::default_folder(world, prefs, kind),
+            None => crate::world::inventory::actions::system(&world.inventory, script::FOLDER_TYPE).unwrap_or(world.inventory.root),
+        }
+    }
     /// The demo server's upload prices. `texture-free` plays an account whose
     /// benefits make every upload free (L$0).
     pub fn demo_prices(&self) -> Prices {
@@ -801,6 +825,10 @@ impl Imports {
             .filter(|e| self.choice.accepts(e) && e.selected && matches!(e.status, Status::Ready))
         {
             let source = entry.source.as_ref()?;
+            // A script is free and is not an upload: it adds nothing to the quote.
+            if matches!(source, Source::Script(_)) {
+                continue;
+            }
             let options = self.options(entry);
             let count = if let Source::Sound(sound) = source {
                 if !entry.sound.options.importable(sound, self.sound_limit) {
@@ -812,7 +840,7 @@ impl Imports {
             };
             total = total.checked_add(count.checked_mul(match source {
                 Source::Mesh(draft) => draft.quote.as_ref()?.cost,
-                _ => self.price(prices, source.kind(), source.dimensions(options))?,
+                _ => self.price(prices, source.kind()?, source.dimensions(options))?,
             })?)?;
             if let Source::Material { images: textures, .. } = source {
                 for image in textures.iter().flatten().filter(|i| i.asset.is_none()) {
@@ -903,7 +931,7 @@ impl Imports {
                         self.queue.push_back(Step {
                             key,
                             entry: None,
-                            kind: Kind::Texture,
+                            kind: Some(Kind::Texture),
                             folder: if self.folders.active() || !permission_prefs.use_default_folders {
                                 entry.folder
                             } else {
@@ -925,6 +953,24 @@ impl Imports {
                         });
                     }
                 }
+            }
+            if matches!(source, Source::Script(_)) {
+                // One at a time, like every step; the network layer matches each
+                // item to its own request, whatever the names.
+                self.queue.push_back(Step {
+                    key: entry.id,
+                    entry: Some(entry.id),
+                    kind: None,
+                    folder: entry.folder,
+                    name: entry.name.clone(),
+                    description: entry.description.clone(),
+                    source: source.clone(),
+                    options,
+                    sound_options: Default::default(),
+                    cost: 0,
+                    permissions: Default::default(),
+                });
+                continue;
             }
             let count = if let Source::Sound(sound) = source {
                 entry.sound.options.pieces(sound).unwrap_or(1)
@@ -956,9 +1002,12 @@ impl Imports {
                     sound_options,
                     cost: match source {
                         Source::Mesh(draft) => draft.quote.as_ref().map(|q| q.cost).unwrap_or(0),
-                        _ => self.price(prices, source.kind(), source.dimensions(options)).unwrap_or(0),
+                        _ => source
+                            .kind()
+                            .and_then(|kind| self.price(prices, kind, source.dimensions(options)))
+                            .unwrap_or(0),
                     },
-                    permissions: permission_prefs.permissions_for(source.kind()),
+                    permissions: source.kind().map(|kind| permission_prefs.permissions_for(kind)).unwrap_or_default(),
                 });
             }
         }
@@ -973,6 +1022,7 @@ impl Imports {
         }
         self.confirm = false;
         self.spent = 0;
+        self.receipts.clear();
         self.message.clear();
     }
     pub fn cancel_remaining(&mut self) {
@@ -1030,15 +1080,79 @@ impl Imports {
                 Some(item)
             }
             Err(error) => {
-                if let Error::PriceChanged(Some(cost)) = error {
+                if let (Error::PriceChanged(Some(cost)), Some(kind)) = (&error, step.kind) {
                     let dimensions = step.source.dimensions(step.options);
                     self.cost_overrides
-                        .insert((step.kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), cost);
+                        .insert((kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), *cost);
                 }
                 // A price change stops the batch: the user confirms the new price.
                 let price_changed = matches!(error, Error::PriceChanged(_));
                 self.step_failed(&step, ui::error(error), price_changed);
                 None
+            }
+        }
+    }
+    /// Whether `request` is the script being created.
+    pub fn owns_script(&self, request: Uuid) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|(id, step)| *id == request && matches!(step.source, Source::Script(_)))
+    }
+    /// The compile errors of the script being created (`ScriptCompileErrors`).
+    pub fn script_compile_errors(&mut self, request: Uuid, errors: Vec<String>) {
+        if self.current.as_ref().is_some_and(|(id, _)| *id == request) {
+            self.script.errors(request, errors);
+        }
+    }
+    /// The answer to a script's creation (`InventoryContentSaved`): its item,
+    /// or why it was not saved, with the id of the empty item the grid made
+    /// for it (`item`, nil when none). None for any request but the current
+    /// one. A script that did not compile stays, with its errors in the
+    /// receipt, as in the Legacy editor. A failure only fails this script:
+    /// scripts are free, so the rest of the batch goes on.
+    pub fn script_saved(
+        &mut self,
+        request: Uuid,
+        item: Uuid,
+        result: Result<aurora_net::inventory::InvItem, String>,
+    ) -> Option<script::Answer> {
+        if self
+            .current
+            .as_ref()
+            .is_none_or(|(id, step)| *id != request || !matches!(step.source, Source::Script(_)))
+        {
+            return None;
+        }
+        let (_, step) = self.current.take()?;
+        let errors = self.script.take(request);
+        let entry = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id));
+        match result {
+            Ok(item) => {
+                if let Some(entry) = entry {
+                    entry.status = Status::Done(item.id);
+                }
+                self.receipts.push(script::Receipt {
+                    name: step.name,
+                    outcome: if errors.is_empty() {
+                        script::Outcome::Saved
+                    } else {
+                        script::Outcome::CompileErrors(errors)
+                    },
+                });
+                Some(script::Answer::Saved(Box::new(item)))
+            }
+            Err(reason) => {
+                log::warn!("import: script {} was not saved: {reason}", step.name);
+                if let Some(entry) = entry {
+                    entry.status = Status::Error(reason.clone());
+                }
+                self.receipts.push(script::Receipt {
+                    name: step.name,
+                    outcome: script::Outcome::Failed(reason),
+                });
+                Some(script::Answer::Failed {
+                    orphan: (!item.is_nil()).then_some(item),
+                })
             }
         }
     }
@@ -1066,8 +1180,8 @@ impl Imports {
     /// material or free map that fails only fails the materials that need it;
     /// a paid step, or one that `stops_batch`, stops the batch.
     fn step_failed(&mut self, step: &Step, reason: String, stops_batch: bool) {
-        let material_map = step.kind == Kind::Texture && step.entry.is_none();
-        let continues = !stops_batch && step.cost == 0 && (step.kind == Kind::Material || material_map);
+        let material_map = step.kind == Some(Kind::Texture) && step.entry.is_none();
+        let continues = !stops_batch && step.cost == 0 && (step.kind == Some(Kind::Material) || material_map);
         if material_map || continues {
             self.fail_material_batch_step(step, reason.clone());
         }
@@ -1081,13 +1195,15 @@ impl Imports {
         match result {
             Ok(data) => {
                 let (request, step) = self.current.as_ref()?;
+                // a script is never encoded: it goes up as text, through `script_saved`
+                let kind = step.kind?;
                 if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
                     entry.status = Status::Uploading;
                 }
                 Some(aurora_net::NetCommand::UploadAsset {
                     request: *request,
                     upload: Request {
-                        kind: step.kind,
+                        kind,
                         folder: step.folder,
                         name: step.name.clone(),
                         description: step.description.clone(),
@@ -1108,7 +1224,7 @@ impl Imports {
     fn fail_material_batch_step(&mut self, step: &Step, reason: String) {
         let failed: HashSet<Uuid> = if let Some(entry) = step.entry {
             HashSet::from([entry])
-        } else if step.kind == Kind::Texture {
+        } else if step.kind == Some(Kind::Texture) {
             self.entries
                 .iter()
                 .filter_map(|entry| {
@@ -1186,7 +1302,7 @@ impl Imports {
                         }
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
-                                Self::default_folder(world, prefs, source.kind())
+                                Self::source_folder(world, prefs, source)
                             } else {
                                 batch_folder
                             };
@@ -1476,6 +1592,23 @@ impl Imports {
         if self.current.is_none()
             && let Some(mut step) = self.queue.pop_front()
         {
+            if let Source::Script(draft) = &step.source {
+                let request = Uuid::new_v4();
+                commands.push(aurora_net::NetCommand::CreateScriptItem {
+                    request,
+                    parent: step.folder,
+                    name: step.name.clone(),
+                    description: step.description.clone(),
+                    source: draft.text.to_string(),
+                    // the Scripts defaults, resolved where commands are sent
+                    permissions: None,
+                });
+                if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
+                    entry.status = Status::Uploading;
+                }
+                self.current = Some((request, step));
+                return commands;
+            }
             if let Source::Mesh(draft) = &step.source {
                 if let Some(quote) = &draft.quote {
                     let request = Uuid::new_v4();

@@ -261,6 +261,22 @@ Sources: `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
   This extends the Legacy Viewer's one-model local application. Assemblies
   support up to 45 face slots; rigged files and larger assemblies keep the
   individual-model path. Uploads continue to use the original file's objects.
+- Scripts (Aurora extension: the Legacy Viewer has no bulk script upload;
+  it is built from its `.lsl` file filter, `LLFilePicker::FFLOAD_SCRIPT`, the
+  script editor's file loading, `LLScriptEdCore::onBtnLoadFromFile`, and
+  `LLScriptAssetUpload`): `.lsl` files (any case) are listed by the mixed
+  "Add files" picker and by folder scans, and only by the unified uploader (a
+  script has no type window nor quick-bar button). Each becomes a script item
+  named after the file, in the Scripts folder or the chosen destination, with
+  the Scripts creation defaults for its next owner; its text goes up through
+  `UpdateScriptAgent`, compiled for Mono and not running. A byte order mark is
+  dropped and line ends become `\n`; a file that is not UTF-8, is blank or
+  exceeds the grid's 1 MB source limit is refused with its reason. A script
+  costs L$0 and is not a NewFileAgentInventory upload, so it adds nothing to
+  the quote and a script-only batch starts without a confirmation. Scripts are
+  created one at a time, each matched to its item by the creation callback. A
+  script the grid cannot compile is kept, as in the Legacy editor, and its
+  errors are listed in the footer; a script that cannot be saved fails alone.
 - Environments: EEP settings and old Windlight presets, multiple imports.
 - Legacy Viewer linkset backups: rebuilding of the prims and of the contents,
   reuse/upload of the assets, temporary texture options, offset.

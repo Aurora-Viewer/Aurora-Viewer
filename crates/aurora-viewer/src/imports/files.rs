@@ -220,6 +220,10 @@ pub(super) fn load(
     prefs: &Preferences,
     local: bool,
 ) -> Result<Vec<Entry>, AssetError> {
+    if script::is_script(path) {
+        // Read before `read`: a script has the grid's source limit, not the 256 MiB of media.
+        return load_script(path, choice, options);
+    }
     let data = read(path)?;
     let extension = path
         .extension()
@@ -483,6 +487,36 @@ pub(super) fn load(
     Ok(vec![entry])
 }
 
+/// A `.lsl` file: a script row, or a row that says why the file is refused.
+/// Only the unified queue takes scripts (see `Choice::accepts`).
+fn load_script(path: &Path, choice: Choice, options: import_texture::Options) -> Result<Vec<Entry>, AssetError> {
+    if choice != Choice::Bulk {
+        return Err(AssetError::Unsupported("file type for this import window".into()));
+    }
+    let mut entry = match script::read(path) {
+        Ok(draft) => Entry::new(path.to_owned(), Ok(Source::Script(draft)), options),
+        Err(problem) => Entry::new(path.to_owned(), Err(problem.message().to_owned()), options),
+    };
+    entry.name = script::item_name(path);
+    Ok(vec![entry])
+}
+
+/// The extensions of the file dialog of `choice`. Only the unified uploader's
+/// mixed picker lists `.lsl` (LLFilePicker::FFLOAD_SCRIPT's filter).
+fn picker_extensions(choice: Choice) -> &'static [&'static str] {
+    match choice {
+        Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
+        Choice::Sound => &["wav"],
+        Choice::Animation => &["bvh", "anim"],
+        Choice::Material => &["gltf", "glb"],
+        Choice::Mesh => &["dae", "gltf", "glb"],
+        Choice::Bulk => &[
+            "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "bvh", "anim", "dae", "gltf", "glb", "lsl",
+        ],
+        Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
+    }
+}
+
 /// Paid mixed-file imports use the type choices captured when Add files opens.
 /// Explicit type windows and local previews retain their dedicated loaders.
 fn load_selected(
@@ -591,6 +625,7 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
         }
         Source::Material { value, .. } => value.encode_asset(),
         Source::Mesh(_) => Err(AssetError::invalid("mesh upload requires a fee quote")),
+        Source::Script(_) => Err(AssetError::invalid("a script goes up as text, not as an encoded asset")),
     };
     result.map_err(|e| e.to_string())
 }
@@ -719,7 +754,7 @@ impl Imports {
         } else if entry.local {
             Choice::Local
         } else {
-            match entry.source.as_ref().map(Source::kind) {
+            match entry.source.as_ref().and_then(Source::kind) {
                 Some(Kind::Mesh) => Choice::Mesh,
                 _ => self.choice,
             }
@@ -844,17 +879,7 @@ impl Imports {
                     .into_iter()
                     .collect(),
                 Selection::Files => {
-                    let filter: &[&str] = match choice {
-                        Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
-                        Choice::Sound => &["wav"],
-                        Choice::Animation => &["bvh", "anim"],
-                        Choice::Material => &["gltf", "glb"],
-                        Choice::Mesh => &["dae", "gltf", "glb"],
-                        Choice::Bulk => &[
-                            "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "bvh", "anim", "dae", "gltf", "glb",
-                        ],
-                        Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
-                    };
+                    let filter = picker_extensions(choice);
                     rfd::FileDialog::new()
                         .set_title(aurora_i18n::tr!("import-title"))
                         .add_filter(choice.label(), filter)
@@ -935,6 +960,106 @@ mod tests {
     }
 
     #[test]
+    fn only_the_mixed_picker_lists_lsl_files() {
+        for choice in [
+            Choice::Texture,
+            Choice::Sound,
+            Choice::Animation,
+            Choice::Material,
+            Choice::Mesh,
+            Choice::Local,
+        ] {
+            assert!(!picker_extensions(choice).contains(&"lsl"), "{choice:?}");
+        }
+        assert!(picker_extensions(Choice::Bulk).contains(&"lsl"));
+        // every extension the mixed picker offers is one the loader takes
+        let prefs = Preferences::default();
+        for extension in picker_extensions(Choice::Bulk) {
+            let path = std::path::PathBuf::from(format!("missing.{extension}"));
+            // a missing file fails to open (or, for a script, is a row that says so), never "unsupported"
+            if let Err(error) = load(&path, Choice::Bulk, prefs.texture(), 30, &prefs, false) {
+                assert!(!matches!(error, AssetError::Unsupported(_)), "{extension}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn lsl_files_load_as_scripts_in_the_unified_picker_and_folders_only() {
+        let root = std::env::temp_dir().join(format!("aurora-script-files-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("Pack")).unwrap();
+        std::fs::write(root.join("Door.lsl"), "default\r\n{\r\n}\r\n").unwrap();
+        std::fs::write(root.join("Pack").join("Lamp.LSL"), b"\xEF\xBB\xBFdefault\n{\n}\n").unwrap();
+        std::fs::write(root.join("Pack").join("notes.txt"), "not a script").unwrap();
+        std::fs::write(root.join("empty.lsl"), "").unwrap();
+        let prefs = Preferences::default();
+
+        let loaded = load_selected(&root.join("Door.lsl"), Choice::Bulk, prefs.texture(), 30, &prefs, false, [true; 5]).unwrap();
+        assert_eq!(loaded.len(), 1);
+        let Some(Source::Script(draft)) = &loaded[0].source else {
+            panic!("a script")
+        };
+        assert_eq!(
+            &*draft.text,
+            "default
+{
+}
+"
+        );
+        assert_eq!(loaded[0].name, "Door");
+        assert!(loaded[0].selected && !loaded[0].local && matches!(loaded[0].status, Status::Ready));
+        assert_eq!(
+            loaded[0].source.as_ref().and_then(Source::kind),
+            None,
+            "not a NewFileAgentInventory upload"
+        );
+        // the extension is matched in any case
+        let upper = load(
+            &root.join("Pack").join("Lamp.LSL"),
+            Choice::Bulk,
+            prefs.texture(),
+            30,
+            &prefs,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(upper[0].source, Some(Source::Script(_))));
+
+        // no type window and no local preview takes a script
+        for choice in [
+            Choice::Texture,
+            Choice::Sound,
+            Choice::Animation,
+            Choice::Material,
+            Choice::Mesh,
+            Choice::Local,
+        ] {
+            assert!(load(&root.join("Door.lsl"), choice, prefs.texture(), 30, &prefs, choice == Choice::Local).is_err());
+        }
+
+        // an unusable file is a row that says why, with the file's own name kept
+        let empty = load(&root.join("empty.lsl"), Choice::Bulk, prefs.texture(), 30, &prefs, false).unwrap();
+        assert!(empty[0].source.is_none());
+        assert!(matches!(&empty[0].status, Status::Error(reason) if reason == aurora_i18n::tr!("import-script-empty")));
+        assert!(!empty[0].selected);
+
+        // a folder scan picks up the scripts, in their folders, and nothing else
+        let rows = load_folder(&root, &prefs, prefs.texture(), 30, 0, 0);
+        let mut scripts: Vec<_> = rows
+            .iter()
+            .filter(|entry| matches!(entry.source, Some(Source::Script(_))))
+            .map(|entry| (entry.name.clone(), entry.source_folders.len()))
+            .collect();
+        scripts.sort();
+        assert_eq!(scripts, vec![("Door".to_owned(), 1), ("Lamp".to_owned(), 2)]);
+        assert!(rows.iter().all(|entry| !entry.path.ends_with("notes.txt")));
+        assert!(
+            rows.iter()
+                .any(|entry| entry.path.ends_with("empty.lsl") && matches!(entry.status, Status::Error(_)))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn batch_loads_collada_and_detects_glb_meshes_without_changing_material_extraction() {
         let root = std::env::temp_dir().join(format!("aurora-batch-{}", Uuid::new_v4()));
         super::super::demo::fixtures(&root).expect("fixtures");
@@ -949,7 +1074,7 @@ mod tests {
         ] {
             let entries = load(&path, Choice::Bulk, prefs.texture(), 30, &prefs, false).expect("batch file");
             assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].source.as_ref().expect("source").kind(), kind);
+            assert_eq!(entries[0].source.as_ref().expect("source").kind(), Some(kind));
             assert!(Choice::Bulk.accepts(&entries[0]));
         }
         let entries = load(&model, Choice::Material, prefs.texture(), 30, &prefs, false).expect("extract material");

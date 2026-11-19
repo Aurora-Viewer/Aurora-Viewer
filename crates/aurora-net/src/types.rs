@@ -1352,6 +1352,12 @@ pub enum NetEvent {
         target: crate::scripts::ScriptTarget,
         result: Result<crate::scripts::ScriptSaved, String>,
     },
+    /// The text of a `CreateScriptItem` was saved but did not compile; sent
+    /// just before its `InventoryContentSaved`, with at least one line.
+    ScriptCompileErrors {
+        request: Uuid,
+        errors: Vec<String>,
+    },
     BridgeReply {
         request: Uuid,
         result: Result<crate::bridge::Ack, String>,
@@ -2480,17 +2486,22 @@ pub enum NetCommand {
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
     },
-    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// A new script item holding `source` (LLScriptRecoverQueue::recoverNext /
     /// onCreateScript): CreateInventoryItem, then its text through
-    /// UpdateScriptAgent, compiled for Mono. Answered by
-    /// `InventoryContentSaved`, with the new item's id when it was created
-    /// but its text could not be saved.
+    /// UpdateScriptAgent, compiled for Mono and not running. The item is
+    /// matched by the creation callback, so any number of these may be in
+    /// flight and share a name. Answered by `InventoryContentSaved`, with the
+    /// new item's id when it was created but its text could not be saved;
+    /// a script that did not compile is saved all the same and first
+    /// reported by `ScriptCompileErrors`. `permissions` None: the recovery
+    /// rule (move and transfer for the next owner).
     CreateScriptItem {
         request: Uuid,
         parent: Uuid,
         name: String,
         description: String,
         source: String,
+        permissions: Option<crate::inventory::upload::Permissions>,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through

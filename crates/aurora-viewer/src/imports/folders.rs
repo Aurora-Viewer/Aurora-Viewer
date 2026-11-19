@@ -164,7 +164,7 @@ impl Imports {
                 entry.preview_generation += 1;
             }
             if !enabled && let Some(source) = &entry.source {
-                let folder = Self::default_folder(world, inventory, source.kind());
+                let folder = Self::source_folder(world, inventory, source);
                 if entry.folder != folder {
                     entry.folder = folder;
                     if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -399,7 +399,7 @@ pub(super) fn discover(root: &Path, limit: usize) -> Result<Vec<(PathBuf, Vec<St
             } else if meta.is_file()
                 && child.path().extension().is_some_and(|e| {
                     [
-                        "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "bvh", "anim", "dae", "gltf", "glb",
+                        "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "bvh", "anim", "dae", "gltf", "glb", "lsl",
                     ]
                     .iter()
                     .any(|ext| e.eq_ignore_ascii_case(ext))

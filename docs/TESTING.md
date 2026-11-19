@@ -6617,7 +6617,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows; `script` / `script-upload` queue `.lsl` scripts |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel\|deleted` | Applied-local-appearance warning, highlight toggle, confirmed removal and object deletion |
@@ -7019,6 +7019,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   **`type-windows`** loads a mixed queue and places texture and sound windows
   side by side (1600×1000). Check independent selections, titles, tab switches,
   close/reopen, type-filtered Add files, and confirmation while another window is open.
+- **`AURORA_DEMO_IMPORTS=script|script-upload`** loads three `.lsl` files (one
+  saved with a byte order mark and Windows line ends, one whose `llSay` lacks
+  its semicolon) and a texture into the unified uploader. `script` stops there:
+  the first script is selected, with its name, size, line count and a read-only
+  monospace view of its source below the destination; the total counts the
+  texture only. `script-upload` uploads the queue by itself: the scripts are
+  created one at a time in the Scripts folder, and the footer lists the
+  receipt (scripts saved, then the one that did not compile with the demo
+  grid's `(line, column) : ERROR` line). Demo only: the demo grid's compiler
+  knows that one mistake.
 - **`AURORA_DEMO_IMPORTS=unified`** loads a mixed queue with a mesh first,
   followed by a texture, sound, BVH animation and material. The first row is
   selected automatically. Click each queue row: the right inspector follows
