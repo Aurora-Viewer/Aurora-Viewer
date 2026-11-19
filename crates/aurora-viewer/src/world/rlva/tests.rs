@@ -4188,6 +4188,42 @@ fn rlva_a_right_click_selects_what_cannot_be_edited_for_its_menu_only() {
     // a build-tool click on it changes nothing of the selection either
     tool.click_select(&mut world, &s, Some(other), false);
     assert_eq!(tool.selection, [key]);
+    // The menu closes on the entry clicked and releases its selection: the
+    // entry takes it again for its action, where a build-tool click would
+    // select nothing and leave Take and Delete without an object.
+    let derez = |tool: &BuildTool, destination: u8| {
+        tool.out.iter().any(|c| {
+            matches!(
+                c,
+                NetCommand::Build(aurora_net::build::BuildCmd::DeRez { local_ids, destination: d, .. })
+                    if *d == destination && *local_ids == [key.local_id]
+            )
+        })
+    };
+    for (copy, destination) in [
+        (false, aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY),
+        (true, aurora_net::build::derez::ACQUIRE_TO_AGENT_INVENTORY),
+    ] {
+        tool.release_menu_selection(&world);
+        assert!(tool.selection.is_empty());
+        tool.out.clear();
+        assert!(tool.select_for_action(&mut world, &s, other));
+        assert_eq!(tool.selection, [key]);
+        tool.take(&mut world, copy);
+        assert!(derez(&tool, destination), "copy {copy}: {:?}", tool.out);
+        assert!(
+            tool.out.iter().all(|c| world.rlva_allows_command(c, Uuid::nil())),
+            "what is sent is allowed"
+        );
+    }
+    tool.release_menu_selection(&world);
+    tool.out.clear();
+    assert!(tool.select_for_action(&mut world, &s, other));
+    tool.delete(&mut world);
+    assert!(derez(&tool, aurora_net::build::derez::TRASH), "{:?}", tool.out);
+    assert!(tool.out.iter().all(|c| world.rlva_allows_command(c, Uuid::nil())));
+    tool.release_menu_selection(&world);
+    assert!(tool.select_for_menu_near(&mut world, &s, other, false, false));
     command(&mut world.rlva, A, "@interact=n");
     assert!(!menu_selectable(&world, other, true) && !rlva_keeps_menu_selection(&world, other));
 }

@@ -1571,6 +1571,19 @@ impl BuildTool {
         !self.selection.is_empty()
     }
 
+    /// The object an entry of the right-click menu acts on (Take, Delete,
+    /// Return…), selected for the time of the action. The Legacy Viewer
+    /// still holds the menu's temporary selection when the entry runs; here
+    /// the menu released it as it closed, so it is taken again the same
+    /// way, and not as a click of the build tools, which selects nothing of
+    /// what RLVa keeps from edits (`click_select`). The entry was enabled
+    /// on its own test, @fartouch included (rlvCanDeleteOrReturn for Take,
+    /// Delete and Return), and what is sent is tested again
+    /// (`World::rlva_allows_command`).
+    pub fn select_for_action(&mut self, world: &mut World, s: &BuildSettings, idx: usize) -> bool {
+        self.select_for_menu_near(world, s, idx, false, true)
+    }
+
     /// The right-click menu closed: drop its selection unless the build
     /// tools took it over (LLSelectMgr::deselectUnused).
     pub fn release_menu_selection(&mut self, world: &World) {

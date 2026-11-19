@@ -382,8 +382,9 @@ impl App {
     /// Object.Return: the roots of the selection, asked first.
     pub(super) fn ask_return(&mut self, id: Uuid) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
-        self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
-        self.ask_return_selection();
+        if self.build.select_for_action(&mut self.world, &self.settings.build, idx) {
+            self.ask_return_selection();
+        }
     }
 
     /// "Return" of the Area Search menu: every selected row together.
@@ -426,10 +427,12 @@ impl App {
 
     /// The selection an action of the closed menu made: it goes, unless the
     /// build tools hold it (as after Take, Unlink).
-    fn release_action_selection(&mut self) {
+    pub(super) fn release_action_selection(&mut self) {
         if !self.build.open {
             self.build.deselect_all(&self.world);
         }
+        // (the selection of `BuildTool::select_for_action` was the menu's)
+        self.build.menu_selection = false;
         self.flush_build();
     }
 
@@ -446,7 +449,9 @@ impl App {
     /// may modify (queue_actions), asked first, then the queue.
     pub(super) fn ask_scripts(&mut self, id: Uuid, kind: QueueKind) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
-        self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if !self.build.select_for_action(&mut self.world, &self.settings.build, idx) {
+            return;
+        }
         self.flush_build();
         let prims: Vec<(Uuid, u32, String)> = self
             .build
@@ -618,8 +623,9 @@ impl App {
 
     /// Tools.Link on the selection the right click kept.
     pub(super) fn menu_link(&mut self, id: Uuid) {
-        if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-            self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if let Some(idx) = self.world.objects.index_of_uuid(&id)
+            && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+        {
             self.build.link(&mut self.world);
             self.flush_build();
         }
@@ -627,13 +633,11 @@ impl App {
 
     /// Object.TakeSeparate / TakeSeparateCopy: each root its own item.
     pub(super) fn take_separate(&mut self, id: Uuid, copy: bool) {
-        if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-            self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if let Some(idx) = self.world.objects.index_of_uuid(&id)
+            && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+        {
             self.build.take_separate(&mut self.world, copy);
-            if !self.build.open {
-                self.build.deselect_all(&self.world);
-            }
-            self.flush_build();
+            self.release_action_selection();
         }
     }
 

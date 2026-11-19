@@ -847,13 +847,11 @@ impl App {
             CtxAction::ReloadAvatar(id) => self.reload_avatar(id),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.take(&mut self.world, copy);
-                    if !self.build.open {
-                        self.build.deselect_all(&self.world);
-                    }
-                    self.flush_build();
+                    self.release_action_selection();
                 }
             }
             CtxAction::Delete(id) => {
@@ -875,8 +873,9 @@ impl App {
                 }
             }
             CtxAction::DeleteConfirmed(id) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.delete(&mut self.world);
                     self.flush_build();
                 }
@@ -895,13 +894,11 @@ impl App {
                 }
             }
             CtxAction::Unlink(id) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                if let Some(idx) = self.world.objects.index_of_uuid(&id)
+                    && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+                {
                     self.build.unlink(&mut self.world);
-                    if !self.build.open {
-                        self.build.deselect_all(&self.world);
-                    }
-                    self.flush_build();
+                    self.release_action_selection();
                 }
             }
             CtxAction::SaveToObjectContents => {
