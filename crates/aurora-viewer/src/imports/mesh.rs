@@ -38,8 +38,8 @@ pub enum LodProfile {
     #[default]
     Linden,
     /// Aurora's own: each level a quarter of the one above, all by the
-    /// automatic method, which keeps the seams, and the collision hull from
-    /// the Lowest LOD (`hull_source`) to keep the physics cost down.
+    /// automatic method, which keeps the seams. Both profiles use an
+    /// adaptive hull from Lowest when no collision model was chosen.
     Aurora,
 }
 impl LodProfile {
@@ -455,6 +455,12 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
         return Err(AssetError::invalid("mesh scale or linkset size"));
     }
     let total = draft.scene.models.iter().map(Model::triangles).sum::<usize>().max(1);
+    let mut hull_scales = vec![Vec::new(); draft.scene.models.len()];
+    for instance in &draft.scene.instances {
+        if let Some(scales) = hull_scales.get_mut(instance.model) {
+            scales.push(instance.transform.to_scale_rotation_translation().0.abs());
+        }
+    }
     let mut prepared = Prepared {
         lods: Vec::new(),
         physics: Vec::new(),
@@ -527,7 +533,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 // (indra/newview/llmeshrepository.cpp) also supplies a base
                 // hull for split models whose instance collision is None.
                 let hulls = process::Physics {
-                    base: Some(process::base_hull(hull_source(None, &lods, high, draft.lod_profile))?),
+                    base: Some(process::adaptive_base_hull(
+                        hull_source(None, &lods, high),
+                        &hull_scales[index],
+                        &draft.cancel,
+                    )?),
                     hulls: Vec::new(),
                 };
                 return Ok((lods, None, hulls));
@@ -581,7 +591,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?
             } else {
                 process::Physics {
-                    base: Some(process::base_hull(hull_source(physics.as_ref(), &lods, high, draft.lod_profile))?),
+                    base: Some(if physics.is_none() {
+                        process::adaptive_base_hull(hull_source(None, &lods, high), &hull_scales[index], &draft.cancel)?
+                    } else {
+                        process::base_hull(hull_source(physics.as_ref(), &lods, high))?
+                    }),
                     hulls: Vec::new(),
                 }
             };
@@ -615,19 +629,13 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     Ok(prepared)
 }
 
-/// The model the base hull is made from: the collision model, else the low
-/// LOD, else the medium, else the high, as LLMeshUploadThread::generateHulls
-/// (indra/newview/llmeshrepository.cpp) picks it. The high LOD alone gives a
-/// flat hull for a part whose collision file has volume (#4213). A model
-/// reduced to no triangle is passed over: no hull is made from it.
-///
-/// With Aurora's LOD defaults the Lowest LOD comes before the Low one, a
-/// difference from the Legacy Viewer (which never takes Lowest): Aurora's
-/// LODs keep more of the model, and a hull from the smallest one keeps the
-/// physics cost down.
-fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model, profile: LodProfile) -> &'a Model {
-    let lowest = (profile == LodProfile::Aurora).then_some(&lods[0]).and_then(Option::as_ref);
-    [physics, lowest, lods[1].as_ref(), lods[2].as_ref()]
+/// Custom collision comes first, as LLMeshUploadThread::generateHulls
+/// (indra/newview/llmeshrepository.cpp) requires for volumetric physics files
+/// on flat visual parts (#4213). The human-requested adaptive default starts
+/// at Lowest in both profiles, then falls back through Low, Medium and High.
+/// This deliberately differs from the Legacy Viewer's Low-first default.
+fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
+    [physics, lods[0].as_ref(), lods[1].as_ref(), lods[2].as_ref()]
         .into_iter()
         .flatten()
         .find(|model| model.triangles() > 0)

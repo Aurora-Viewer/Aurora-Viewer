@@ -6,6 +6,9 @@ use super::*;
 use parry3d::{math::Vector, transformation::try_convex_hull};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+mod adaptive;
+pub use adaptive::base_hull as adaptive_base_hull;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Auto,

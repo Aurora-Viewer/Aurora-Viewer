@@ -7368,6 +7368,13 @@ The default convex hull and the four default LOD triangle targets are not
 visible in the offline demo (it returns fixed costs). Compare them on a grid
 only: upload the same file in both viewers, Calculate, and check physics cost,
 Land Impact and the LOD triangle counts.
+Automatic collision now starts from the smallest nonempty LOD in both profiles.
+Its adaptive simplification allows up to 0.25% additional distance error relative
+to that LOD's bounded convex hull, with instance scales and upload quantization
+accounted for. Compare Calculate fees with no custom collision source, then
+check the rezzed collision shape, especially its supports and thin parts. The
+bound concerns convex-envelope simplification, not preservation of concavities
+or of detail already removed from the Lowest LOD.
 The convex section exposes Analyze and five VHACD parameters. Adjust Vertices
 per hull before analysis to control the hull budget. There is no separate
 Simplify action or target-percentage field. Statistics, preview and encoded

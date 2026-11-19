@@ -200,9 +200,7 @@ fn mesh_import_parity_dae_palettes_over_110_declared_joints_remain_uploadable() 
 }
 
 #[test]
-fn mesh_base_hull_comes_from_the_collision_model_then_the_low_lod_like_the_legacy_viewer() {
-    // LLMeshUploadThread::generateHulls: physics, else low, else medium, else
-    // high. #4213's flat walkways had collision models with volume.
+fn mesh_base_hull_keeps_custom_collision_first_then_uses_the_smallest_nonempty_lod() {
     let draft = draft();
     let high = &draft.scene.models[0];
     let named = |name: &str| Model {
@@ -216,24 +214,23 @@ fn mesh_base_hull_comes_from_the_collision_model_then_the_low_lod_like_the_legac
         Some(named("medium")),
         Some(named("high")),
     ];
-    assert_eq!(hull_source(Some(&physics), &lods, high, LodProfile::Linden).name, "physics");
-    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, "low");
-    // Aurora's LOD defaults take the smallest LOD first, after a collision model.
-    assert_eq!(hull_source(Some(&physics), &lods, high, LodProfile::Aurora).name, "physics");
-    assert_eq!(hull_source(None, &lods, high, LodProfile::Aurora).name, "lowest");
+    assert_eq!(hull_source(Some(&physics), &lods, high).name, "physics");
+    assert_eq!(hull_source(None, &lods, high).name, "lowest");
+    lods[0] = None;
+    assert_eq!(hull_source(None, &lods, high).name, "low");
     lods[1] = None;
-    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, "medium");
+    assert_eq!(hull_source(None, &lods, high).name, "medium");
     let mut empty = named("empty collision");
     for face in &mut empty.faces {
         face.indices.clear();
     }
     assert_eq!(
-        hull_source(Some(&empty), &lods, high, LodProfile::Linden).name,
+        hull_source(Some(&empty), &lods, high).name,
         "medium",
         "a model with no triangle is passed over"
     );
     lods[2] = None;
-    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, high.name);
+    assert_eq!(hull_source(None, &lods, high).name, high.name);
 }
 
 #[test]
@@ -285,18 +282,29 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
 }
 
 #[test]
-fn mesh_default_hull_is_made_from_the_low_lod_when_no_collision_is_chosen() {
-    // #3433: the hull from the High LOD made the physics cost 2.6 times the
-    // Legacy Viewer's. A Low LOD file with one corner moved tells them apart.
-    let mut draft = crate::imports::tests::mesh_fixture();
-    let mut low = draft.scene.as_ref().clone();
-    low.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
-    draft.lods[1].source = LodSource::File;
-    draft.lods[1].file = Some(Arc::new(low));
-    let prepared = prepare(&draft).expect("prepare");
-    let from_low = process::base_hull(prepared.lods[0][1].as_ref().expect("low")).expect("low hull");
-    let from_high = process::base_hull(&draft.scene.models[0]).expect("high hull");
-    assert_ne!(from_low.vertices, from_high.vertices, "the fixture tells Low from High");
-    assert_eq!(prepared.hulls[0].base.as_ref().expect("base hull").vertices, from_low.vertices);
-    assert!(prepared.physics[0].is_none(), "no collision model was chosen");
+fn mesh_adaptive_default_uses_lowest_in_both_profiles_but_preserves_explicit_collision() {
+    for profile in [LodProfile::Linden, LodProfile::Aurora] {
+        let mut draft = crate::imports::tests::mesh_fixture();
+        draft.set_lod_profile(profile);
+        let mut lowest = draft.scene.as_ref().clone();
+        lowest.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
+        draft.lods[0].source = LodSource::File;
+        draft.lods[0].file = Some(Arc::new(lowest));
+        let prepared = prepare(&draft).expect("prepare");
+        let hull = prepared.hulls[0].base.as_ref().expect("base hull");
+        assert!(hull.vertices.contains(&[4.0; 3]), "the Lowest file defines the default collision");
+        assert!(prepared.physics[0].is_none(), "no collision model was chosen");
+        draft.options.physics_source = 4;
+        let prepared = prepare(&draft).expect("explicit bounding box");
+        assert!(prepared.physics[0].is_some());
+        assert!(
+            prepared.hulls[0]
+                .base
+                .as_ref()
+                .expect("custom hull")
+                .vertices
+                .iter()
+                .all(|p| p.iter().all(|v| v.abs() <= 0.5))
+        );
+    }
 }

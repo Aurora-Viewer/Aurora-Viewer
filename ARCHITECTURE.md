@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+`aurora-assets/src/import_mesh/process/adaptive.rs` simplifies default collision
+hulls by adding their worst-approximated point until the extra distance error
+is within 0.25% of the hull diagonal. Support-plane extremes remain, instance
+scales tighten the bound, and 16-bit upload quantization has its own allowance.
+`imports::mesh` uses Lowest first in both LOD profiles for automatic collision;
+explicit collision sources and convex decomposition retain their existing path.
+
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.

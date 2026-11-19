@@ -405,6 +405,9 @@ fn a_flat_part_gets_a_base_hull_of_at_least_four_points_that_is_not_flat() {
         }],
     };
     let hull = process::base_hull(&quad).expect("hull of a flat part");
+    let adaptive =
+        process::adaptive_base_hull(&quad, &[Vec3::ONE], &std::sync::atomic::AtomicBool::new(false)).expect("adaptive flat hull");
+    assert_eq!(adaptive.vertices, hull.vertices, "thin-box fallback remains intact");
     assert!(hull.vertices.len() >= 4, "the server refuses fewer: {}", hull.vertices.len());
     let (low, high) = hull
         .vertices
