@@ -410,7 +410,6 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.broadcasts[-1][0], OTHER)
 
-
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
         await sim.start()
