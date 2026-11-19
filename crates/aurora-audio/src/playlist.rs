@@ -81,7 +81,11 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Pl
             return Err(PlaylistError::Playlist("radio playlist contains a loop"));
         }
         visited.push(next.clone());
+        // a playlist served under a failed certificate chose the stream:
+        // its issue follows the stream (`tls.rs`)
+        let certificate = response.certificate;
         response = http::open_with_origin(next.as_str(), stop, Some(&origin))?;
+        response.certificate = response.certificate.or(certificate);
     }
     if document(&response).is_none() {
         Ok(response)

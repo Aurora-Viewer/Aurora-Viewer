@@ -557,6 +557,7 @@ dependencies = [
  "symphonia",
  "thiserror 2.0.21",
  "url",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

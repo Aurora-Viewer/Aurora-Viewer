@@ -15766,6 +15766,14 @@ music-error-format = Format audio invalide ou non pris en charge
 music-error-interrupted = Flux audio interrompu
 music-error-notice = Musique de la parcelle : { $status }
 music-error-worker = Impossible de démarrer le lecteur audio
+music-certificate-expired-on = Le certificat de sécurité de cette radio a expiré le { $date } à { $time }
+music-certificate-expired = Le certificat de sécurité de cette radio a expiré
+music-certificate-not-yet-valid = Le certificat de sécurité de cette radio n’est pas encore valide (ou l’horloge de cet ordinateur est fausse)
+music-certificate-untrusted = Le certificat de sécurité de cette radio est auto-signé ou non reconnu
+music-certificate-wrong-name = Le certificat de sécurité de cette radio appartient à un autre serveur
+music-certificate-revoked = Le certificat de sécurité de cette radio a été révoqué
+music-certificate-other = Le certificat de sécurité de cette radio n’est pas valide
+music-certificate-warning = { $reason }. La radio joue, mais sa connexion n’est pas sécurisée.
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Impossible de lier les objets
 build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
