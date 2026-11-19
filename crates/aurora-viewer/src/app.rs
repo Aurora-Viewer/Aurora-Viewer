@@ -22365,6 +22365,9 @@ impl ApplicationHandler for App {
             // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
+                if crate::demo::group::profile_wide() {
+                    ui::widgets::size_floater(&self.egui_ctx, "group_profile", egui::Vec2::new(900.0, 640.0));
+                }
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
                 }

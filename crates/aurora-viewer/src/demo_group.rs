@@ -65,6 +65,11 @@ pub fn profile_classic() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "classic"))
 }
 
+/// A wide profile for comparing the notice's two-column layout.
+pub fn profile_wide() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "wide"))
+}
+
 pub fn identity_section() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("identity"))
 }
