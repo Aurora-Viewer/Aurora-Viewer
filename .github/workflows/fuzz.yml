@@ -27,7 +27,8 @@ permissions:
 
 jobs:
   seeds:
-    # The targets build and read their seeds (on stable, like fuzz-local).
+    # The targets build and read their seeds (on the version of
+    # rust-toolchain.toml, like fuzz-local).
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
@@ -36,6 +37,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
       # fuzz/ resolves from the viewer's Cargo.lock: the shipped versions of
       # every shared crate, kept current by Dependabot (a lock of its own
       # fell behind at each update of the crates fuzz/ uses by path)
@@ -54,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [j2k, mesh, anim, llsd, material, packet, object, prim, volume, sculpt, terrain, sound, misc]
+        target: [j2k, mesh, anim, llsd, material, packet, object, prim, volume, sculpt, terrain, sound, misc, editor]
     env:
       SECONDS_PER_TARGET: ${{ inputs.seconds || '600' }}
     steps:
@@ -63,8 +66,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
-      - name: Rust nightly and cargo-fuzz
+      # The version of rust-toolchain.toml builds cargo-fuzz and writes the
+      # seeds; nightly runs the targets (libFuzzer needs it).
+      - name: Rust stable, nightly and cargo-fuzz
         run: |
+          rustup toolchain install --profile minimal --no-self-update
           rustup toolchain install nightly --profile minimal --no-self-update
           cargo install cargo-fuzz --locked
       # fuzz/ resolves from the viewer's Cargo.lock: the shipped versions of

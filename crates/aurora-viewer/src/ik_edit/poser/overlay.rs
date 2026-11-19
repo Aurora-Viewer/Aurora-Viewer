@@ -236,7 +236,8 @@ impl Editor {
         }
         // Paint the selected joint last so it wins over coincident markers.
         let chosen = self.selected;
-        let shift = ctx.input(|i| i.modifiers.shift);
+        // Shift or Ctrl adds the joint to the selection, as on its row
+        let add = ctx.input(|i| together::adds_to_selection(i.modifiers));
         for joint in (0..rig.len()).filter(|b| chosen != Some(*b)).chain(chosen) {
             let name = &rig.canonical_names[joint];
             if !self.bone_visible(name) {
@@ -285,7 +286,7 @@ impl Editor {
             self.poser.pointer_owned |= response.contains_pointer();
             self.poser.marker_hover |= response.contains_pointer();
             if response.clicked() {
-                self.click_pose_bone(joint, rig, frame, shift);
+                self.click_pose_bone(joint, rig, frame, add);
             } else if response.drag_started() {
                 self.grab_pose_bone(joint, rig, frame);
             }
@@ -295,7 +296,7 @@ impl Editor {
                 let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
                 if self.drag.is_none() || self.drag.is_some_and(|d| matches!(d, Drag::Rotate { .. }) != rotate) {
                     let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer);
-                    self.start_drag(proj, frame, origin, rotate);
+                    self.start_drag(proj, frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
                 }
                 self.drag_to(proj, frame, rig, pointer);
             }
@@ -336,7 +337,7 @@ impl Editor {
             painter.line_segment([segment.a.0, segment.b.0], Stroke::new(3.0, p.violet_light));
         }
         if response.clicked() {
-            self.click_pose_bone(bone, rig, frame, ctx.input(|i| i.modifiers.shift));
+            self.click_pose_bone(bone, rig, frame, ctx.input(|i| together::adds_to_selection(i.modifiers)));
         }
         response.on_hover_text(&rig.canonical_names[bone]);
     }

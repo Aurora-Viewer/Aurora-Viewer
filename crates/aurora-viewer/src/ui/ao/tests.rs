@@ -10,6 +10,7 @@ struct Fixture {
     state: AoUi,
     movement: super::super::movement::MovementUi,
     movement_prefs: crate::movement::Preferences,
+    water_volumes: crate::movement::water_volume::Settings,
     keys: crate::keybinds::KeyBindings,
     quick: Option<quick::Quick>,
     manager_open: bool,
@@ -37,6 +38,7 @@ impl Fixture {
             state: AoUi::default(),
             movement: Default::default(),
             movement_prefs: Default::default(),
+            water_volumes: Default::default(),
             keys: Default::default(),
             quick: None,
             manager_open: true,
@@ -83,6 +85,7 @@ impl Fixture {
                 &mut self.manager_open,
                 &mut self.movement,
                 &mut self.movement_prefs,
+                &mut self.water_volumes,
                 &self.keys,
                 "",
             ));
@@ -296,9 +299,131 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
             "AO at scale {zoom}: removal icons stay in the window"
         );
         let first = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
-        f.click_at(icons[1].center());
-        assert_eq!(f.state.remove, Some(first), "the first animation's removal button is accessible");
+        let out = f.click_at(icons[1].center());
+        assert!(
+            matches!(&out[..], [Action::Edit(change, None)]
+                if matches!(&change.operations[..], [Operation::Delete { id, folder: false }] if *id == first)),
+            "the first animation's removal button is accessible"
+        );
     }
+}
+
+/// The removal buttons of the AO window, top to bottom: the set's, then one
+/// per row of the list.
+fn trash_icons(f: &mut Fixture) -> Vec<egui::Rect> {
+    fn collect(shape: &egui::Shape, texture: egui::TextureId, icons: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id == texture => icons.push(mesh.calc_bounds()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texture, icons)),
+            _ => {}
+        }
+    }
+    let texture = super::super::icons::global("trash-filled").expect("remove icon").id();
+    let mut icons = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        collect(&shape.shape, texture, &mut icons);
+    }
+    icons
+}
+
+/// #3675: the trash button of an animation asked first, and the reporter never
+/// saw the question. An animation is a link: it goes at once, like
+/// FloaterAO::onClickTrash.
+#[test]
+fn an_animation_is_removed_at_once_and_the_next_one_too() {
+    let mut f = Fixture::new();
+    let steps: Vec<Uuid> = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+        .steps
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    let icons = trash_icons(&mut f);
+    assert_eq!(icons.len(), 1 + steps.len(), "the set's button, then one per animation");
+    for (icon, step) in icons[1..].iter().zip(&steps) {
+        let out = f.click_at(icon.center());
+        let [Action::Edit(change, None)] = out.as_slice() else {
+            panic!("one inventory edit per click")
+        };
+        assert!(matches!(&change.operations[..], [Operation::Delete { id, folder: false }] if id == step));
+        assert_eq!(f.state.remove, None, "no question for a single animation");
+        assert!(f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao_remove"))).is_none());
+    }
+}
+
+/// #3675: a set and a group are folders, they still ask. The question opens
+/// above the AO window each time, and unfolded when it was left minimized.
+#[test]
+fn removing_a_set_or_a_group_asks_on_top_of_the_ao_window() {
+    let mut f = Fixture::new();
+    // the AO window over the place where the question opens
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(200.0, 100.0), egui::vec2(560.0, 760.0));
+    f.settle();
+    let question = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("ao_remove"));
+    for round in 0..2 {
+        let icons = trash_icons(&mut f);
+        assert!(f.click_at(icons[0].center()).is_empty(), "nothing is sent before the answer");
+        assert_eq!(f.state.remove, Some(f.account.selected));
+        f.draw(Vec::new());
+        let rect = f.ctx.memory(|m| m.area_rect(question.id)).expect("the question is drawn");
+        let window = f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown");
+        assert!(window.contains(rect.center()), "the question opens over the AO window");
+        assert_eq!(
+            f.ctx.layer_id_at(rect.center()),
+            Some(question),
+            "round {round}: the question is on top"
+        );
+        assert!(f.click(aurora_i18n::tr!("common-cancel")).is_empty());
+        assert_eq!(f.state.remove, None);
+        // a click in the AO window raises it above the closed question,
+        // which was left folded to its title bar
+        f.click_at(window.left_top() + egui::vec2(120.0, 12.0));
+        f.ctx
+            .data_mut(|d| d.insert_persisted(egui::Id::unique(("ao_remove", "minimized")), true));
+    }
+    assert!(super::super::widgets::floater_minimized(&f.ctx, "ao_remove"));
+    let icons = trash_icons(&mut f);
+    f.click_at(icons[0].center());
+    assert!(
+        !super::super::widgets::floater_minimized(&f.ctx, "ao_remove"),
+        "the question opens unfolded"
+    );
+    f.click(aurora_i18n::tr!("common-cancel"));
+
+    // a group of animations is a folder too
+    let chosen = std::collections::HashSet::from([steps_of(&f)[0]]);
+    let (change, _) = inventory::editor::combine(
+        &f.inv,
+        f.catalog.selected(f.account.selected).expect("set"),
+        State::Standing,
+        "Together",
+        false,
+        &chosen,
+    )
+    .expect("group");
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change).expect("server ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    f.settle();
+    let steps = steps_of(&f);
+    let group = steps
+        .iter()
+        .position(|id| f.inv.folders.contains_key(id))
+        .expect("the group is a folder");
+    let icons = trash_icons(&mut f);
+    assert_eq!(icons.len(), 1 + steps.len());
+    assert!(f.click_at(icons[1 + group].center()).is_empty(), "a group asks first");
+    assert_eq!(f.state.remove, Some(steps[group]));
+    f.draw(Vec::new());
+    let rect = f.ctx.memory(|m| m.area_rect(question.id)).expect("the question is drawn");
+    assert_eq!(f.ctx.layer_id_at(rect.center()), Some(question));
+}
+
+fn steps_of(f: &Fixture) -> Vec<Uuid> {
+    f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+        .steps
+        .iter()
+        .map(|s| s.id)
+        .collect()
 }
 
 #[test]
@@ -320,6 +445,7 @@ fn ao_manager_keeps_its_size_across_frames() {
                 &mut f.manager_open,
                 &mut f.movement,
                 &mut f.movement_prefs,
+                &mut f.water_volumes,
                 &f.keys,
                 "",
             );
@@ -1135,4 +1261,70 @@ fn quick_panel_dismisses_on_escape_and_outside_click_without_changing_preference
     }
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.movement_prefs, before);
+}
+
+/// A selection dragged from the inventory onto the AO's list
+/// (FloaterAO::handleDragAndDrop, ACCEPT_YES_MULTI): one edit links every
+/// animation; a selection holding a folder is refused and says why.
+#[test]
+fn a_selection_dragged_from_the_inventory_adds_every_animation_at_once() {
+    let mut f = Fixture::new();
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let walks: Vec<Uuid> = set.states[&State::Walking]
+        .steps
+        .iter()
+        .flat_map(|s| &s.members)
+        .map(|a| a.original)
+        .chain(
+            set.states[&State::Running]
+                .steps
+                .iter()
+                .flat_map(|s| &s.members)
+                .map(|a| a.original),
+        )
+        .take(2)
+        .collect();
+    assert_eq!(walks.len(), 2, "the demo set walks and runs");
+    fn locate(shape: &egui::Shape, name: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == name => Some(t.pos + egui::vec2(5.0, 5.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| locate(s, name)),
+            _ => None,
+        }
+    }
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let release = |f: &mut Fixture, ids: Vec<Uuid>| {
+        let shapes = f.draw(Vec::new()).1;
+        let over = shapes.iter().find_map(|s| locate(&s.shape, "Aurora Stand A")).expect("list");
+        let away = egui::pos2(4.0, 4.0);
+        f.draw(vec![egui::Event::PointerMoved(away), press(away, true)]);
+        crate::ui::inventory::drag::demo_carry(&f.ctx, ids);
+        f.draw(Vec::new());
+        assert!(
+            f.draw(vec![egui::Event::PointerMoved(over)]).0.is_empty(),
+            "nothing before the release"
+        );
+        let out = f.draw(vec![press(over, false)]).0;
+        assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "the drop takes the cargo");
+        out
+    };
+
+    let out = release(&mut f, walks.clone());
+    let [Action::Edit(change, None)] = out.as_slice() else {
+        panic!("one inventory edit for the whole selection: {}", out.len())
+    };
+    assert!(
+        matches!(change.operations.last(), Some(Operation::Links { links, .. }) if links.len() == 2),
+        "{:?}",
+        change.operations
+    );
+
+    let out = release(&mut f, vec![walks[0], set.id]);
+    assert!(out.is_empty(), "a folder in the selection refuses the batch");
+    assert_eq!(f.state.message, aurora_i18n::tr!("ao-not-animation"));
 }

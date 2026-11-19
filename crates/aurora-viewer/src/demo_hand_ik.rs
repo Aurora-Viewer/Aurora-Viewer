@@ -142,6 +142,7 @@ pub fn reply(command: &NetCommand) -> Vec<NetEvent> {
                     owner_id: subject,
                     source_type: ChatSourceType::Object,
                     chat_type: ChatType::Other(9),
+                    region: Some(crate::demo::HANDLE),
                     position: Vec3::ZERO,
                     message: format!(
                         "{PREFIX}{}",

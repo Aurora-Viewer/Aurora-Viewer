@@ -285,13 +285,16 @@ pub fn parse_items_response(v: &Llsd) -> Vec<InvItem> {
 /// does not exist; a 200-with-error answer
 /// (LLInventoryModel::FetchItemHttpHandler::onCompleted) proves nothing.
 pub fn item_reads(v: &Llsd, asked: &[Uuid]) -> ais::ItemReads {
-    if !v.is_map() || v.has("error") {
+    if !v["items"].is_array() || v.has("error") {
         return ais::ItemReads {
             failed: asked.to_vec(),
             ..Default::default()
         };
     }
     let answered: std::collections::HashSet<_> = v["items"].as_array().iter().map(|it| it["item_id"].as_uuid()).collect();
+    // An unidentifiable row could be the item whose absence we are about
+    // to report. Keep readable siblings and retry unresolved IDs.
+    let identified = !answered.contains(&Uuid::nil());
     let items = parse_items_response(v);
     let read: std::collections::HashSet<_> = items.iter().map(|it| it.id).collect();
     let mut reads = ais::ItemReads {
@@ -299,7 +302,7 @@ pub fn item_reads(v: &Llsd, asked: &[Uuid]) -> ais::ItemReads {
         ..Default::default()
     };
     for id in asked {
-        if !answered.contains(id) {
+        if identified && !answered.contains(id) {
             reads.missing.push(*id);
         } else if !read.contains(id) {
             reads.failed.push(*id);
@@ -383,13 +386,23 @@ mod tests {
         let found = llsd_map! {
             "item_id" => Uuid::from_u128(4), "parent_id" => Uuid::from_u128(1), "name" => "Shirt", "type" => 5, "inv_type" => 18,
         };
-        let reply = llsd_map! { "agent_id" => Uuid::from_u128(2), "items" => Llsd::Array(vec![found]) };
+        let reply = llsd_map! { "agent_id" => Uuid::from_u128(2), "items" => Llsd::Array(vec![found.clone()]) };
         let reads = item_reads(&reply, &asked);
         assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [asked[0]]);
         assert_eq!(reads.missing, [asked[1]], "absent from a valid answer: deleted");
         assert!(reads.failed.is_empty());
+        let partial = llsd_map! { "items" => Llsd::Array(vec![found, Llsd::Undef]) };
+        let reads = item_reads(&partial, &asked);
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [asked[0]]);
+        assert_eq!(reads.failed, [asked[1]]);
+        assert!(reads.missing.is_empty());
         // 200-with-error and malformed answers prove nothing
-        for bad in [llsd_map! { "error" => llsd_map! { "message" => "busy" } }, Llsd::Undef] {
+        for bad in [
+            llsd_map! { "error" => llsd_map! { "message" => "busy" } },
+            llsd_map! {},
+            llsd_map! { "items" => "unavailable" },
+            Llsd::Undef,
+        ] {
             let reads = item_reads(&bad, &asked);
             assert_eq!(reads.failed, asked);
             assert!(reads.items.is_empty() && reads.missing.is_empty());

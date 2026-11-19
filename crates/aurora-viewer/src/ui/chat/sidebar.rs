@@ -13,6 +13,7 @@ use super::{ChatUi, ConvAction, close_tip, presence};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::appearance::ICONS;
+use crate::world::names::NameScope;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -77,11 +78,14 @@ pub(super) fn section(world: &World, id: &Uuid) -> Section {
 }
 
 /// The sections from top to bottom: the sets shown apart (highest
-/// priority first), the private messages, the groups, the conferences.
+/// priority first), the private messages, the groups, the conferences; the
+/// kinds in the order of Preferences › Chat when the tabs are ordered by
+/// kind (`conversation_options::section_kinds`).
 fn sections(world: &World) -> impl Iterator<Item = Section> {
+    let kinds = super::conversation_options::section_kinds(&super::conversation_options::current());
     (0..world.contact_sets.chat_sections().len())
         .map(Section::Set)
-        .chain([Kind::Private, Kind::Group, Kind::Conference].map(Section::Kind))
+        .chain(kinds.map(Section::Kind))
 }
 
 /// The insignia of a group conversation's group: our membership's, else
@@ -99,7 +103,7 @@ pub(crate) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
 /// A group's picture over the square `rect`: its insignia cropped square on
 /// the theme's radius, else the `users-group` glyph (of side `glyph`) on a
 /// raised square, as People › Groups draws it.
-pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
+pub(crate) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
     match insignia {
         Some(t) => crate::ui::widgets::square_picture(ui, rect, t),
         None => {
@@ -246,6 +250,10 @@ struct Entry<'a> {
     /// The conversation is in its own window (`popout.rs`): a mark where
     /// the unread count goes.
     popped: bool,
+    /// How far from its place in the list it is drawn: it slides there
+    /// while another is dragged, and glides in once dropped
+    /// (`reorder::State::slide`). Its place keeps the clicks.
+    offset: egui::Vec2,
 }
 
 struct Picked {
@@ -367,6 +375,7 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Contacts));
                 two.note(picked.resp.rect);
@@ -392,6 +401,7 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 two.note(picked.resp.rect);
@@ -455,7 +465,7 @@ pub(super) fn show(
                     let e = Entry {
                         icon,
                         name_color: if kind == Kind::Private {
-                            world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
+                            world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color)
                         } else {
                             None
                         },
@@ -469,9 +479,18 @@ pub(super) fn show(
                         in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
                         flash,
                         popped: false,
+                        offset: egui::Vec2::ZERO,
                     };
-                    st.reorder.space_before(ui, id);
-                    let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
+                    let e = Entry {
+                        offset: st.reorder.slide(ui, id),
+                        ..e
+                    };
+                    let eid = entry_id(Pinned::Conversation(id));
+                    let picked = st.reorder.draw(ui, p, id, e.offset, Some(p.bar), |ui| {
+                        let picked = entry(ui, p, &e, rail, eid);
+                        let place = picked.resp.rect;
+                        (picked, place)
+                    });
                     two.note(picked.resp.rect);
                     if reveal == Some(id) {
                         picked.resp.scroll_to_me(None);
@@ -480,7 +499,6 @@ pub(super) fn show(
                     super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
                     super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     st.reorder.row(world, id, &picked.resp);
-                    st.reorder.space_after(ui, id);
                     if st.reorder.dragging(Some(id)) {
                         ghost(ui.ctx(), p, st, e, rail, Pinned::Conversation(id));
                     }
@@ -503,7 +521,7 @@ pub(super) fn show(
                     .friends
                     .iter()
                     .filter(|f| !world.social.has_session(&f.id))
-                    .map(|f| (f.id, world.social.name_of(&f.id)))
+                    .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id)))
                     .filter(|(_, n)| n.to_lowercase().contains(&filter))
                     .collect();
                 friends.sort_by_key(|(_, n)| crate::natural_order::key(n));
@@ -513,7 +531,7 @@ pub(super) fn show(
                         st.wanted_pics.insert(id);
                         let e = Entry {
                             icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
-                            name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
+                            name_color: world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),
@@ -524,6 +542,7 @@ pub(super) fn show(
                             in_call: false,
                             flash: 0.0,
                             popped: false,
+                            offset: egui::Vec2::ZERO,
                         };
                         let picked = entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id)));
                         two.note(picked.resp.rect);
@@ -546,6 +565,7 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
                 let picked = entry(ui, p, &e, rail, egui::Id::unique("conversation_find"));
                 two.note(picked.resp.rect);
@@ -664,8 +684,9 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
         return t;
     }
     let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
-    match world.chat.iter().rev().find(|l| !l.kind.is_notice()) {
-        Some(l) => format!("{near} · {}", preview(world, l, true)),
+    // (never a blocked resident's line)
+    match world.chat.iter().rev().find(|l| !l.kind.is_notice() && !l.blocked) {
+        Some(l) => format!("{near} · {}", preview(world, NameScope::World, l, true)),
         None => near,
     }
 }
@@ -673,11 +694,11 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
 /// The last message of a conversation in a few words: "Name: text", ours
 /// "You: text", an emote as it reads; its links by their labels, as in the
 /// conversation (#947), the entry eliding the result.
-fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String {
+fn preview(world: &World, scope: NameScope, line: &crate::world::ChatLine, named: bool) -> String {
     let own = world.own_name();
     let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = super::resolved_text(world, &text);
+    let text = super::resolved_text_in(world, line.wording(scope), &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
@@ -720,7 +741,9 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
         .iter()
         .find(|s| s.other == id)
         .and_then(|s| s.lines.iter().rev().find(|l| !l.kind.is_card()));
-    let last = last.map(|l| preview(world, l, kind != Kind::Private)).unwrap_or_default();
+    let last = last
+        .map(|l| preview(world, NameScope::Roster, l, kind != Kind::Private))
+        .unwrap_or_default();
     if kind == Kind::Private && matches!(status, presence::Status::Away | presence::Status::Busy | presence::Status::Offline) {
         let label = status.label();
         return (
@@ -771,10 +794,20 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
 }
 
 pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
-    if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
-        return world.social.display_name_of(id);
+    let names = &world.social.avatar_names;
+    if kind == Kind::Private
+        && let Some(name) = names.get_in(NameScope::Roster, id)
+    {
+        // FSIMTabNameFormat (Preferences › Chat), the display name by default
+        let format = super::conversation_options::current().tab_names;
+        return super::conversation_options::tab_name(name, &names.options, format);
     }
     world.session_title(id)
+}
+
+/// The name on a conversation's tab or window: `entry_name` for its kind.
+pub(super) fn tab_title(world: &World, id: &Uuid) -> String {
+    entry_name(world, id, kind(world, id))
 }
 
 /// The head of a section (a conversation is started from the button beside
@@ -857,6 +890,7 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
         close: None,
         flash: 0.0,
         popped: g.out,
+        offset: egui::Vec2::ZERO,
         ..e
     };
     crate::ui::widgets::drag_ghost(ctx, p, "conversation_drag_ghost", g.pos, |ui| {
@@ -873,7 +907,7 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
     let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
+    let (place, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
@@ -881,9 +915,11 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     } else {
         egui::Sense::click()
     };
-    let resp = ui.interact(rect, id, sense);
+    let resp = ui.interact(place, id, sense);
     crate::ui::widgets::reveal_search_selection(ui, &resp, e.current);
-    let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
+    let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(place));
+    // drawn where its slide puts it; its place keeps the pointer
+    let rect = place.translate(e.offset);
     let radius = ui.visuals().window_corner_radius;
     // the entry's face, opaque: the status dot is cut in it, and a
     // translucent cut let the picture and the crescent's disc through (#744)

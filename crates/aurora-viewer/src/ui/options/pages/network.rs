@@ -1,7 +1,8 @@
 //! Preferences › Network and cache: the bandwidth, the download
 //! connections and the neighbouring regions, the disk cache (its size, its
 //! folder: the Legacy Viewer's Network & Files › CacheLocation, applied at
-//! the next start), the logs and the Dev Toolbox.
+//! the next start), the web browser, the proxies (`proxy.rs`), the logs and
+//! the Dev Toolbox.
 
 use super::super::cx::{Cx, Nothing, field, fields};
 use super::super::{Folder, FolderChoice, SLIDER_W, format_bytes, path_label};
@@ -185,7 +186,16 @@ pub fn page(cx: &mut Cx) {
                 .changed()
             },
         );
+        // Network & Files › Enable Javascript (panel_preferences_setup.xml,
+        // BrowserJavascriptEnabled); the help says what the Legacy Viewer's
+        // DisableJavascriptBreaksSearch warns of
+        cx.toggle(
+            tr!("ui-options-browser-javascript"),
+            tr!("ui-options-browser-javascript-help"),
+            &field!(media.javascript),
+        );
     });
+    super::proxy::group(cx);
     cx.group(tr!("ui-options-logs-and-tools"), |cx| {
         cx.row(
             tr!("ui-options-session-log"),

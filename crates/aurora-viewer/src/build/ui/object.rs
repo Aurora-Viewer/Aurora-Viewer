@@ -899,9 +899,20 @@ fn shape_pair(
         return edit;
     }
     ui.horizontal(|ui| {
-        let label_width = (ui.available_width() - 182.0).max(70.0);
+        // Prefer the field strip next to the label (Heeks: no empty middle).
+        // Grow with text size when there is room; never wider than the floater
+        // so Appearance › Text size does not force the window to grow.
+        let scale = super::common::font_scale(ui);
+        let available = ui.available_width();
+        let label_min = 48.0;
+        let fields = (182.0 * scale).min((available - label_min).max(90.0));
+        let fit = (fields / 182.0).max(0.5);
+        let spin_w = 49.0 * fit;
+        let axis_w = 30.0 * fit;
+        let label_width = (available - fields).max(label_min);
+        let row_h = 26.0 * scale;
         ui.allocate_ui_with_layout(
-            Vec2::new(label_width, 26.0),
+            Vec2::new(label_width, row_h),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(label_width);
@@ -910,10 +921,10 @@ fn shape_pair(
             },
         );
         for ((value, axis), range) in values.into_iter().zip(axes).zip(ranges) {
-            ui.allocate_ui_with_layout(Vec2::new(30.0, 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(axis_w, row_h), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(axis).size(super::common::SMALL).color(p.muted));
             });
-            edit = edit.or(spin(ui, value, increment, range, decimals, 49.0, false));
+            edit = edit.or(spin(ui, value, increment, range, decimals, spin_w, false));
         }
     });
     edit
@@ -932,8 +943,11 @@ fn shape_scalar(
         super::common::label(ui, p, title);
         return spin(ui, value, increment, range, decimals, ui.available_width().max(50.0), false);
     }
-    let width = (ui.available_width() - 63.0).max(70.0);
-    row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, 58.0, false))
+    let scale = super::common::font_scale(ui);
+    let available = ui.available_width();
+    let spin_w = (58.0 * scale).min((available - 48.0).max(50.0));
+    let width = (available - spin_w - 5.0).max(48.0);
+    row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, spin_w, false))
 }
 
 fn shape_column(
@@ -991,7 +1005,9 @@ fn shape_column(
                 1,
             ));
             let mut hollow_shape = |ui: &mut egui::Ui| {
-                if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
+                let scale = if legacy { 1.0 } else { super::common::font_scale(ui) };
+                let combo_w = (120.0 * scale).min(ui.available_width().max(80.0));
+                if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), combo_w, u.hollow > 0.0) {
                     u.hole = h;
                     e = e.or(Edit {
                         changed: true,
@@ -1004,7 +1020,10 @@ fn shape_column(
                 super::common::label(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"));
                 hollow_shape(ui);
             } else {
-                let width = (ui.available_width() - 125.0).max(70.0);
+                let scale = super::common::font_scale(ui);
+                let available = ui.available_width();
+                let combo_w = (120.0 * scale).min((available - 48.0).max(80.0));
+                let width = (available - combo_w - 5.0).max(48.0);
                 row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, hollow_shape);
             }
             // LLPanelObject::getState exposes all transforms for parametric prims,

@@ -22,6 +22,8 @@ struct Simulator {
     first_upload: Option<Instant>,
     unready_edits: usize,
     script_rez_groups: Vec<(String, Uuid)>,
+    /// What the factory sent to change the worn object's look, in order.
+    looks: Vec<BuildCmd>,
 }
 impl Simulator {
     fn new() -> Self {
@@ -54,6 +56,7 @@ impl Simulator {
             first_upload: None,
             unready_edits: 0,
             script_rez_groups: Vec::new(),
+            looks: Vec::new(),
         }
     }
     fn event(&mut self, mut event: NetEvent) {
@@ -136,6 +139,12 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::Build(
+                            look @ (BuildCmd::Transform { .. } | BuildCmd::SetShape { .. } | BuildCmd::SetTextures { .. }),
+                        ) = &command
+                        {
+                            self.looks.push(look.clone());
+                        }
                         if let NetCommand::Build(BuildCmd::RezScript { group_id, item, .. }) = &command {
                             assert_eq!(*group_id, self.world.groups.active);
                             self.script_rez_groups.push((item.name.clone(), *group_id));
@@ -745,8 +754,7 @@ fn compilation_does_not_detach_the_script_before_its_first_valid_hello() {
         object_id: sim.bridge.object,
         item_id: sim.bridge.script,
         running: false,
-        mono: Some(true),
-        luau: aurora_net::scripts::Luau::Off,
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(reply.clone());
     sim.event(reply);
@@ -1022,8 +1030,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
-        luau: aurora_net::scripts::Luau::Off,
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped.clone());
     assert_eq!(sim.bridge.reinstalls.len(), 1);
@@ -1038,8 +1045,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
-        luau: aurora_net::scripts::Luau::Off,
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped);
     assert_eq!(sim.bridge.phase, Phase::Ready);
@@ -2441,4 +2447,155 @@ fn a_bridge_turned_off_at_login_is_never_made() {
     }
     assert_eq!((sim.copies, sim.uploads, sim.attaches), (0, 0, 0));
     assert!(sim.world.inventory.items.values().all(|i| i.name != NAME));
+}
+
+/// The worn bridge of the simulator, as the world knows it.
+fn worn_bridge(sim: &Simulator) -> Option<usize> {
+    sim.world.worn_attachment(&sim.bridge.item)
+}
+
+#[test]
+fn a_new_bridge_takes_its_look_as_soon_as_the_library_container_is_worn() {
+    let mut sim = Simulator::new();
+    for _ in 0..80 {
+        sim.step();
+        if !sim.looks.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(sim.uploads, 0, "the look must not wait for a script to be saved");
+    let worn = worn_bridge(&sim)
+        .and_then(|i| sim.world.objects.get(i))
+        .expect("worn container")
+        .key;
+    let [
+        BuildCmd::Transform { handle, updates },
+        BuildCmd::SetShape {
+            handle: shape_handle,
+            local_ids,
+            shape,
+        },
+        BuildCmd::SetTextures {
+            handle: te_handle,
+            local_id,
+            media_url,
+            texture_entry,
+        },
+    ] = sim.looks.as_slice()
+    else {
+        panic!("expected a size, a shape and a texture entry: {:?}", sim.looks);
+    };
+    assert_eq!([*handle, *shape_handle, *te_handle], [worn.region; 3]);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(
+        (updates[0].local_id, updates[0].scale),
+        (worn.local_id, Some(glam::Vec3::splat(0.01)))
+    );
+    assert!(updates[0].position.is_none() && updates[0].rotation.is_none() && updates[0].linked);
+    assert_eq!(local_ids, &[worn.local_id]);
+    let volume = shape.to_params();
+    assert_eq!(
+        (volume.profile.curve_type, volume.path.curve_type),
+        (
+            aurora_prim::params::LL_PCODE_PROFILE_SQUARE,
+            aurora_prim::params::LL_PCODE_PATH_LINE
+        )
+    );
+    assert_eq!((volume.profile.hollow, volume.path.scale, volume.sculpt), (0.0, [1.0, 1.0], None));
+    assert_eq!(*local_id, worn.local_id);
+    assert!(media_url.is_empty());
+    // bridge.lsl sets the same faces: plywood, white, alpha 0.
+    let look = aurora_prim::te::parse_texture_entry(texture_entry).expect("texture entry");
+    for face in 0..6 {
+        let face = look.face(face);
+        assert_eq!(face.texture, aurora_prim::te::DEFAULT_TEXTURE);
+        assert_eq!(face.color, [1.0, 1.0, 1.0, 0.0]);
+    }
+    sim.ready();
+    assert_eq!(
+        sim.looks.len(),
+        3,
+        "the bridge worn again after its save keeps the look it was saved with"
+    );
+}
+
+#[test]
+fn a_bridge_being_set_up_is_concealed_until_it_is_ready() {
+    let mut sim = Simulator::new();
+    assert!(sim.world.concealed_attachment.is_nil());
+    for _ in 0..80 {
+        sim.step();
+        if worn_bridge(&sim).is_some() {
+            break;
+        }
+    }
+    let root = worn_bridge(&sim).expect("worn container");
+    assert!(!sim.bridge.item.is_nil());
+    assert_eq!(
+        sim.world.concealed_attachment, sim.bridge.item,
+        "set before the container arrives: it is never drawn"
+    );
+    assert!(sim.world.concealed(root));
+    // A prim linked to the container, another worn object and the avatar.
+    let region = sim.world.main_region.expect("region");
+    let container = sim.world.objects.get(root).expect("container").key.local_id;
+    let request = |item_id| AttachRequest {
+        item_id,
+        owner_id: sim.world.agent_id,
+        point: 2,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: "Other".into(),
+        desc: String::new(),
+    };
+    let mut child = crate::demo::outfit_attachment(&request(Uuid::from_u128(0xC41D)));
+    child.parent_id = container;
+    child.state = 0;
+    child.name_values.clear();
+    let mut other = crate::demo::outfit_attachment(&request(Uuid::from_u128(0x07E2)));
+    // (out of the range `outfit_attachment` draws the container's id from)
+    (child.local_id, other.local_id) = (7_000_001, 7_000_002);
+    let ids = [child.full_id, other.full_id, sim.world.agent_id];
+    sim.world.apply(NetEvent::ObjectUpdates {
+        handle: region,
+        objects: vec![child, other],
+    });
+    let [child, other, me] = ids.map(|id| sim.world.objects.index_of_uuid(&id).expect("object"));
+    assert!(sim.world.concealed(child));
+    assert!(!sim.world.concealed(other));
+    assert!(!sim.world.concealed(me));
+
+    sim.ready();
+    assert!(sim.world.concealed_attachment.is_nil(), "a ready bridge is an ordinary worn object");
+    assert!(!sim.world.concealed(worn_bridge(&sim).expect("worn bridge")));
+    // A relocation, a repair or a reinstall works on it again.
+    sim.bridge.retry(sim.now);
+    sim.step();
+    assert_eq!(sim.world.concealed_attachment, sim.bridge.item);
+    sim.bridge.set_enabled(false, sim.now);
+    sim.step();
+    assert!(
+        sim.world.concealed_attachment.is_nil(),
+        "a bridge turned off is no longer worked on"
+    );
+}
+
+#[test]
+fn a_failed_bridge_shows_again() {
+    let mut sim = Simulator::new();
+    sim.demo.startup_stalled = true;
+    sim.starting();
+    assert_eq!(sim.world.concealed_attachment, sim.bridge.item);
+    for _ in 0..400 {
+        sim.step();
+        if sim.bridge.phase == Phase::Failed {
+            break;
+        }
+    }
+    assert_eq!(sim.bridge.phase, Phase::Failed);
+    assert!(worn_bridge(&sim).is_some());
+    assert!(sim.world.concealed_attachment.is_nil());
 }

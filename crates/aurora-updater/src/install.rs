@@ -1,5 +1,10 @@
-//! A helper outside the installation performs the directory swap. The old
-//! directory remains recoverable until the new process acknowledges a frame.
+//! A helper outside the installation swaps the package's own entries: the
+//! old ones stay recoverable until the new process acknowledges a frame, and
+//! whatever else the folder holds is never moved. Windows keeps the running
+//! executable mapped, so the helper is a copy run from the transaction
+//! folder; Linux and the other Unix systems would not need it for that, but
+//! the swap is the same on every system, and the helper also waits for the
+//! old viewer to close.
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -10,8 +15,31 @@ use std::{
     time::{Duration, Instant},
 };
 
-const EXE: &str = "aurora-viewer.exe";
+/// The viewer's executable, as the package names it.
+pub(crate) const EXE: &str = if cfg!(windows) { "aurora-viewer.exe" } else { "aurora-viewer" };
+/// The helper is a copy of the viewer, run from the transaction folder
+/// ([`Workspace::handoff`]).
+const HELPER: &str = if cfg!(windows) { "helper.exe" } else { "helper" };
 const ACK_ENV: &str = "AURORA_UPDATE_ACK";
+/// Set on the previous viewer restored after a failed update: the
+/// transaction folder, whose `failure.txt` says why ([`failed_update`]).
+/// Older helpers set it to `1`.
+pub const ROLLBACK_ENV: &str = "AURORA_UPDATE_ROLLBACK";
+/// Why the update failed, written by the helper before the rollback.
+const FAILURE: &str = "failure.txt";
+/// Written by the helper just before it starts the new viewer: a failure
+/// without it happened while installing, before any start.
+const LAUNCHING: &str = "launching";
+
+/// A failed update, told by its helper to the viewer it restored.
+pub struct FailedUpdate {
+    /// The helper's own words (`failure.txt`).
+    pub reason: String,
+    /// The new viewer was being started: it failed to start or to show a
+    /// frame. Otherwise the installation itself failed and the previous
+    /// one was never stopped from starting.
+    pub launched: bool,
+}
 /// Written by the new viewer once its startup splash is on screen: the
 /// helper's own update window can then go without a gap.
 const SPLASH_SHOWN: &str = "splash-shown";
@@ -34,7 +62,8 @@ pub enum HelperStage {
     /// The new viewer shows its own splash or window: this one goes.
     Handed,
 }
-const ALLOWED: &[&str] = &[
+/// The entries of a package folder, the only ones an update moves there.
+const PACKAGE: &[&str] = &[
     EXE,
     "assets",
     "LICENSE",
@@ -42,7 +71,36 @@ const ALLOWED: &[&str] = &[
     "README.md",
     "version.txt",
     "aurora-install.json",
+    // the Linux package's desktop entry and icon (`package.ps1`), named after
+    // the viewer's app_id (cli.rs DESKTOP_ID)
+    #[cfg(target_os = "linux")]
+    "aurora-viewer.desktop",
+    #[cfg(target_os = "linux")]
+    "aurora-viewer.svg",
 ];
+const MANIFEST: &str = "aurora-install.json";
+
+/// What an update replaces in the folder of the running viewer. Anything
+/// else there (a shortcut, notes, a whole Desktop) stays where it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    /// The folder of the release archive: the viewer, its `assets`, its
+    /// notices and the manifest only the archive has, so a repository's own
+    /// `assets` or `LICENSE` beside a copied viewer are never taken for it.
+    Package,
+    /// The viewer alone, copied out of its folder (it runs on its own): the
+    /// update replaces that file only.
+    Executable,
+}
+
+impl Layout {
+    fn entries(self) -> &'static [&'static str] {
+        match self {
+            Self::Package => PACKAGE,
+            Self::Executable => &[EXE],
+        }
+    }
+}
 
 pub struct Workspace {
     pub root: PathBuf,
@@ -81,28 +139,100 @@ pub(crate) fn plain_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_install(install: &Path) -> Result<()> {
+/// The installation sits directly at the root of a drive (`E:\Aurora
+/// Viewer`, `/aurora`): its parent has no parent, which `validate_install`
+/// refuses, so the update's folder, backup and lock are never written at a
+/// drive's root.
+pub fn at_drive_root(install: &Path) -> bool {
+    install.parent().is_some_and(|p| p.parent().is_none())
+}
+
+fn validate_install(install: &Path) -> Result<Layout> {
     ensure!(
         install.is_absolute() && install.parent().is_some_and(|p| p.parent().is_some()),
-        "unsafe installation root"
+        "unsafe installation root: a drive root or a folder directly at a drive root"
     );
     plain_dir(install)?;
-    // Never rename a repository, build tree, or a directory with user files.
-    for entry in fs::read_dir(install)? {
+    let exe = fs::symlink_metadata(install.join(EXE)).context("no viewer in this folder")?;
+    ensure!(exe.is_file(), "the viewer is a link or not a file");
+    let layout = if install.join(MANIFEST).is_file() && install.join("assets").is_dir() && install.join("LICENSE").is_file() {
+        Layout::Package
+    } else {
+        Layout::Executable
+    };
+    // the archive kept the executable bit and the swap keeps it: a copy of
+    // this file is the helper, and the new viewer is started from it
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(
+            fs::metadata(install.join(EXE))?.permissions().mode() & 0o111 != 0,
+            "viewer is not executable"
+        );
+    }
+    // Only these entries are ever moved; a link among them, or a junction
+    // nested in the assets, must never be followed by the cleanup.
+    for name in layout.entries() {
+        let path = install.join(name);
+        if fs::symlink_metadata(&path).is_ok() {
+            plain_entry(&path)?;
+        }
+    }
+    Ok(layout)
+}
+
+/// The folder an update was extracted into: exactly a package, nothing else.
+fn validate_package(root: &Path) -> Result<()> {
+    plain_dir(root)?;
+    for entry in fs::read_dir(root)? {
         let entry = entry?;
         ensure!(
-            ALLOWED.iter().any(|n| entry.file_name().eq_ignore_ascii_case(n)),
-            "installation contains non-package files"
+            PACKAGE.iter().any(|n| entry.file_name().eq_ignore_ascii_case(n)),
+            "the update holds a file foreign to the package"
         );
-        ensure!(!entry.file_type()?.is_symlink(), "package entry is a link");
+        plain_entry(&entry.path())?;
     }
     ensure!(
-        install.join(EXE).is_file() && install.join("assets").is_dir() && install.join("LICENSE").is_file(),
-        "viewer is not installed as a portable package"
+        root.join(EXE).is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
+        "incomplete viewer package"
     );
-    // A directory junction nested in the assets must never be followed by cleanup.
-    validate_tree(&install.join("assets"))?;
     Ok(())
+}
+
+/// A file, or a folder whose whole tree holds no link.
+fn plain_entry(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(!metadata.file_type().is_symlink(), "package entry is a link");
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(metadata.file_attributes() & 0x400 == 0, "package entry is a reparse point");
+    }
+    if metadata.is_dir() {
+        validate_tree(path)?;
+    }
+    Ok(())
+}
+
+/// Moves those of `names` that `from` holds into `to`, all or none: after a
+/// failure the ones already moved go back. Returns the names moved.
+fn move_entries(names: &[&'static str], from: &Path, to: &Path) -> Result<Vec<&'static str>> {
+    fs::create_dir_all(to)?;
+    let mut moved = Vec::new();
+    for &name in names {
+        if fs::symlink_metadata(from.join(name)).is_err() {
+            continue;
+        }
+        if let Err(error) = fs::rename(from.join(name), to.join(name)) {
+            let error = anyhow::Error::from(error).context(format!("cannot move {name}"));
+            for &back in moved.iter().rev() {
+                fs::rename(to.join(back), from.join(back)).with_context(|| format!("{error:#}; and {back} could not be put back"))?;
+            }
+            return Err(error);
+        }
+        moved.push(name);
+    }
+    Ok(moved)
 }
 
 pub(crate) fn validate_tree(path: &Path) -> Result<()> {
@@ -123,14 +253,90 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The refusal a sandbox gives by itself, before the layout and write checks:
+/// its folder is a read-only package, so `Protected` must win over the
+/// `Unsupported` answer ("extract it into a dedicated folder") that a folder
+/// without the release layout would otherwise get. `None` outside a sandbox.
+#[cfg(target_os = "linux")]
+pub fn sandboxed() -> Option<crate::Failure> {
+    let sandbox = sandbox()?;
+    log::warn!("update: the viewer runs in a {sandbox} sandbox, which owns its folder");
+    Some(crate::Failure::Protected)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sandboxed() -> Option<crate::Failure> {
+    None
+}
+
+/// Why this installation cannot replace itself in place, when it cannot: the
+/// viewer runs in a sandbox whose folder belongs to a package mounted
+/// read-only (Flatpak, Snap, AppImage), or the folder above the installation
+/// is not writable by this account (a system package installed by root).
+/// `None` when it can. Linux only: Windows has no sandbox of that kind, and
+/// its own errors already say that the folder cannot be written.
+#[cfg(target_os = "linux")]
+pub fn self_update_problem(install: &Path) -> Option<crate::Failure> {
+    if let Some(problem) = sandboxed() {
+        return Some(problem);
+    }
+    let parent = install.parent()?;
+    // what `Workspace::new` writes a moment later: the staging folder, the
+    // lock and the backup all go beside the installation
+    let probe = parent.join(format!(".aurora-write-probe-{}", uuid::Uuid::new_v4()));
+    match fs::create_dir(&probe) {
+        Ok(()) => {
+            let _ = fs::remove_dir(&probe);
+            None
+        }
+        Err(error) => {
+            log::warn!("update: nothing can be written next to the installation ({error})");
+            Some(
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+                ) {
+                    crate::Failure::Protected
+                } else {
+                    crate::Failure::Filesystem
+                },
+            )
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn self_update_problem(_: &Path) -> Option<crate::Failure> {
+    None
+}
+
+/// The sandbox the viewer runs in, when it runs in one: its folder is part of
+/// a package the sandbox mounts read-only, so the package manager or the
+/// bundle replaces the viewer, never an update of ours.
+#[cfg(target_os = "linux")]
+fn sandbox() -> Option<&'static str> {
+    if std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").exists() {
+        return Some("Flatpak");
+    }
+    if std::env::var_os("SNAP").is_some() {
+        return Some("Snap");
+    }
+    if std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some() {
+        return Some("AppImage");
+    }
+    None
+}
+
 impl Workspace {
-    pub fn supported_install(install: &Path) -> bool {
-        validate_install(install).is_ok()
+    /// Whether the viewer may update itself in place, and why not.
+    pub fn check_install(install: &Path) -> Result<()> {
+        validate_install(install).map(|_| ())
     }
     pub fn new(install: &Path) -> Result<Self> {
         validate_install(install)?;
         let install = install.canonicalize()?;
         let lock = lock(&install)?;
+        sweep_finished(&install);
         let token = uuid::Uuid::new_v4().to_string();
         let root = install
             .parent()
@@ -150,7 +356,7 @@ impl Workspace {
     pub fn handoff(mut self, version: &str, maintenance: crate::Maintenance) -> Result<()> {
         let exe = std::env::current_exe()?.canonicalize()?;
         ensure!(exe == self.install.join(EXE), "updater is not running from its installation");
-        fs::copy(&exe, self.root.join("helper.exe"))?;
+        fs::copy(&exe, self.root.join(HELPER))?;
         let args: Vec<String> = std::env::args_os()
             .skip(1)
             .map(|a| a.into_string().map_err(|_| anyhow::anyhow!("non-Unicode restart argument")))
@@ -167,7 +373,7 @@ impl Workspace {
         file.write_all(&serde_json::to_vec(&plan)?)?;
         file.sync_all()?;
         drop(file);
-        let mut command = Command::new(self.root.join("helper.exe"));
+        let mut command = Command::new(self.root.join(HELPER));
         command.arg("--aurora-update-helper").arg(&self.root).current_dir(&self.root);
         hidden(&mut command);
         let mut child = command.spawn().context("cannot start update helper")?;
@@ -247,6 +453,86 @@ fn cleanup_work(work: &Path, install: &Path, token: &str) -> Result<()> {
     Ok(())
 }
 
+/// A finished transaction: failed (`failure.txt`) or committed. Its folder
+/// holds a whole copy of the viewer, the failed one included, and nothing
+/// resumes it. One whose `backup` is still there is never removed: the
+/// restoration failed and that backup is the previous installation.
+fn finished(work: &Path) -> bool {
+    (work.join(FAILURE).exists() || work.join("committed").exists()) && !work.join("backup").exists()
+}
+
+/// The folders earlier updates left beside the installation, removed under
+/// the installation lock the caller holds.
+fn sweep_finished(install: &Path) {
+    let Some(Ok(entries)) = install.parent().map(fs::read_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(token) = name.to_str().and_then(|n| n.strip_prefix(".aurora-update-")) else {
+            continue;
+        };
+        let work = entry.path();
+        if uuid::Uuid::parse_str(token).is_ok()
+            && finished(&work)
+            && let Err(e) = cleanup_work(&work, install, token)
+        {
+            log::warn!("update: an earlier update's folder is left ({e:#})");
+        }
+    }
+}
+
+/// Why the update that restored this viewer failed, when it did; its
+/// transaction folder is then removed in the background, once the helper
+/// that restored the viewer has exited. A helper of an older version only
+/// says that it failed (`None`).
+pub fn failed_update() -> Option<FailedUpdate> {
+    let work = PathBuf::from(std::env::var_os(ROLLBACK_ENV)?);
+    let result = (|| -> Result<(FailedUpdate, Plan)> {
+        let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
+        validate_work(&work, &plan)?;
+        ensure!(
+            std::env::current_exe()?.canonicalize()? == plan.install.join(EXE),
+            "rollback notice for another installation"
+        );
+        let reason = fs::read_to_string(work.join(FAILURE))?;
+        let failed = FailedUpdate {
+            reason: reason.trim().chars().take(400).collect(),
+            launched: work.join(LAUNCHING).exists(),
+        };
+        Ok((failed, plan))
+    })();
+    match result {
+        Ok((failed, plan)) => {
+            let when = if failed.launched { "at its start" } else { "while installing" };
+            log::warn!(
+                "update: the previous version was restored, the new one failed {when}: {}",
+                failed.reason
+            );
+            std::thread::spawn(move || {
+                for _ in 0..120 {
+                    if !finished(&work) {
+                        return;
+                    }
+                    if let Ok(_lock) = lock(&plan.install)
+                        && cleanup_work(&work, &plan.install, &plan.token).is_ok()
+                    {
+                        return;
+                    }
+                    // the helper's own executable is in it until it exits
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                log::warn!("update: the failed update's folder is left for the next update");
+            });
+            Some(failed)
+        }
+        Err(e) => {
+            log::warn!("update: the previous version was restored, reason unknown ({e:#})");
+            None
+        }
+    }
+}
+
 fn hidden(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -270,7 +556,7 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
     let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
     validate_work(&work, &plan)?;
     ensure!(
-        std::env::current_exe()?.canonicalize()? == work.join("helper.exe"),
+        std::env::current_exe()?.canonicalize()? == work.join(HELPER),
         "helper outside transaction"
     );
     let parent = Parent::open(plan.parent)?;
@@ -285,7 +571,7 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
         stage(HelperStage::Installing);
         let _lock = lock(&plan.install)?;
         validate_install(&plan.install)?;
-        validate_install(&work.join("prepared"))?;
+        validate_package(&work.join("prepared"))?;
         apply(&plan.install, &work, || {
             if plan.maintenance.clear_cache {
                 stage(HelperStage::ClearingCache);
@@ -293,8 +579,15 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
             let mut data = crate::user_data::Backup::prepare(&plan.install, &plan.token, plan.maintenance)?;
             stage(HelperStage::Launching);
             let mut command = Command::new(plan.install.join(EXE));
-            command.args(&plan.args).env(ACK_ENV, &work).current_dir(&plan.install);
+            // a viewer restored by an earlier failure passes its notice on:
+            // the new one would open with "the update did not complete"
+            command
+                .args(&plan.args)
+                .env(ACK_ENV, &work)
+                .env_remove(ROLLBACK_ENV)
+                .current_dir(&plan.install);
             hidden(&mut command);
+            fs::write(work.join(LAUNCHING), b"")?;
             let mut child = command.spawn()?;
             let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
                 stage(HelperStage::Handed)
@@ -314,14 +607,14 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
     // the new viewer shows, or the old one comes back with its notice
     stage(HelperStage::Handed);
     if let Err(error) = result {
-        fs::write(work.join("failure.txt"), format!("{error:#}"))?;
+        fs::write(work.join(FAILURE), format!("{error:#}"))?;
         // `apply` restored the directory; launch the old viewer with a visible
         // localized rollback notice. Backups are retained if restoration failed.
         if plan.install.join(EXE).is_file() && !work.join("backup").exists() {
             let mut command = Command::new(plan.install.join(EXE));
             command
                 .args(&plan.args)
-                .env("AURORA_UPDATE_ROLLBACK", "1")
+                .env(ROLLBACK_ENV, &work)
                 .env_remove(ACK_ENV)
                 .current_dir(&plan.install);
             hidden(&mut command);
@@ -353,14 +646,21 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
             maintenance: Default::default(),
         },
     )?;
-    validate_install(install)?;
-    validate_install(&work.join("prepared"))?;
+    let entries = validate_install(install)?.entries();
+    let prepared = work.join("prepared");
+    validate_package(&prepared)?;
     let backup = work.join("backup");
     ensure!(!backup.exists(), "backup already exists");
-    fs::rename(install, &backup).context("cannot move old viewer; close other instances")?;
-    if let Err(error) = fs::rename(work.join("prepared"), install) {
-        fs::rename(&backup, install).context("cannot restore old viewer")?;
-        return Err(error.into());
+    // `backup` left behind means the previous viewer is in it: only an
+    // empty one goes (`remove_dir`), once everything is back in place
+    if let Err(error) = move_entries(entries, install, &backup) {
+        let _ = fs::remove_dir(&backup);
+        return Err(error.context("cannot move old viewer; close other instances"));
+    }
+    if let Err(error) = move_entries(entries, &prepared, install) {
+        move_entries(entries, &backup, install).context("cannot restore old viewer")?;
+        let _ = fs::remove_dir(&backup);
+        return Err(error);
     }
     match launch() {
         Ok(()) => {
@@ -375,8 +675,11 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
             Ok(())
         }
         Err(error) => {
-            fs::rename(install, work.join("failed")).context("cannot move failed update")?;
-            fs::rename(&backup, install).context("cannot restore backup")?;
+            move_entries(entries, install, &work.join("failed")).context("cannot move failed update")?;
+            move_entries(entries, &backup, install).context("cannot restore backup")?;
+            if let Err(e) = fs::remove_dir(&backup) {
+                log::warn!("update: the emptied backup folder is left ({e})");
+            }
             Err(error)
         }
     }
@@ -487,14 +790,192 @@ impl Drop for Parent {
         }
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+struct Parent(u32, u64);
+#[cfg(target_os = "linux")]
+impl Parent {
+    /// Opened while the viewer that started the helper is still running (it
+    /// waits for `helper-ready`), so the start time read here names it.
+    fn open(id: u32) -> Result<Self> {
+        let started = process_state(id).context("cannot wait for parent process")?.started;
+        Ok(Self(id, started))
+    }
+    /// The parent exited when its `/proc` entry is gone, or when it is a
+    /// zombie the system has not reaped yet. A later process given the same
+    /// PID has another start time: the wait does not take it for the parent.
+    fn wait(&self) -> Result<()> {
+        let start = Instant::now();
+        while let Some(state) = process_state(self.0) {
+            if state.dead || state.started != self.1 {
+                return Ok(());
+            }
+            ensure!(start.elapsed() < Duration::from_secs(120), "parent viewer did not exit");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    }
+}
+
+/// What `/proc/<pid>/stat` says of a process, for [`Parent`].
+#[cfg(target_os = "linux")]
+struct ProcessState {
+    dead: bool,
+    started: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn process_state(pid: u32) -> Option<ProcessState> {
+    parse_stat(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// `pid (comm) state ppid … starttime …` (proc_pid_stat(5)): the name may
+/// hold spaces and parentheses, so the fields are counted after its last
+/// `)`. `state` is field 3, `starttime` field 22. The same rule names a
+/// process in `crash::native` (aurora-viewer), which cannot be reached here.
+#[cfg(target_os = "linux")]
+fn parse_stat(text: &str) -> Option<ProcessState> {
+    let mut fields = text.get(text.rfind(')')? + 1..)?.split_ascii_whitespace();
+    let state = fields.next()?;
+    let started = fields.nth(18)?.parse().ok()?;
+    Some(ProcessState {
+        dead: matches!(state, "Z" | "X" | "x"),
+        started,
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 struct Parent;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl Parent {
     fn open(_: u32) -> Result<Self> {
-        anyhow::bail!("automatic installation is Windows-only")
+        anyhow::bail!("automatic installation is not supported on this system")
     }
     fn wait(&self) -> Result<()> {
-        anyhow::bail!("automatic installation is Windows-only")
+        anyhow::bail!("automatic installation is not supported on this system")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_directly_at_a_drive_root_is_told_apart() {
+        assert!(at_drive_root(Path::new("/Aurora Viewer")));
+        assert!(!at_drive_root(Path::new("/games/Aurora Viewer")));
+        assert!(!at_drive_root(Path::new("/")));
+        #[cfg(windows)]
+        {
+            assert!(at_drive_root(Path::new(r"E:\Aurora Viewer")));
+            assert!(!at_drive_root(Path::new(r"E:\Games\Aurora Viewer")));
+        }
+    }
+
+    #[test]
+    fn only_finished_updates_without_a_backup_are_swept() {
+        let root = std::env::temp_dir().join(format!("aurora-sweep-test-{}", uuid::Uuid::new_v4()));
+        let install = root.join("Aurora Viewer");
+        fs::create_dir_all(&install).expect("install");
+        let work = |marker: &[&str]| {
+            let dir = root.join(format!(".aurora-update-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(dir.join("failed")).expect("work");
+            fs::write(dir.join("failed").join(EXE), b"new").expect("copy");
+            for name in marker {
+                if *name == "backup" {
+                    fs::create_dir(dir.join(name)).expect("backup");
+                } else {
+                    fs::write(dir.join(name), b"x").expect("marker");
+                }
+            }
+            dir
+        };
+        let failed = work(&[FAILURE]);
+        let committed = work(&["committed"]);
+        let unrestored = work(&[FAILURE, "backup"]);
+        let running = work(&["plan.json"]);
+        let canonical = install.canonicalize().expect("canonical");
+        sweep_finished(&canonical);
+        assert!(!failed.exists() && !committed.exists());
+        assert!(unrestored.join("backup").exists(), "the previous installation stays");
+        assert!(running.exists(), "a transaction in progress stays");
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_folder_at_a_drive_root_is_refused_with_that_reason() {
+        let error = validate_install(Path::new("/Aurora Viewer")).expect_err("refused");
+        assert!(error.to_string().contains("drive root"), "{error:#}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_this_account_cannot_write_beside_is_refused_as_protected() {
+        use std::os::unix::fs::PermissionsExt;
+        // inside a package's sandbox the refusal comes first, before any probe
+        if sandbox().is_some() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("aurora-updater-protected-{}", uuid::Uuid::new_v4()));
+        let parent = root.join("parent");
+        fs::create_dir_all(&parent).expect("test directory");
+        let install = parent.join("install");
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).expect("read-only");
+        let writable = fs::write(parent.join("probe"), b"x").is_ok();
+        let problem = self_update_problem(&install);
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).expect("writable again");
+        if writable {
+            // running as root: the permission bits refuse nothing
+            let _ = fs::remove_file(parent.join("probe"));
+            fs::remove_dir_all(&root).expect("cleanup");
+            return;
+        }
+        assert!(matches!(problem, Some(crate::Failure::Protected)), "{problem:?}");
+        assert!(self_update_problem(&install).is_none());
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_start_time_is_read_after_the_last_parenthesis_of_the_name() {
+        let tail = "S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20 21";
+        let state = parse_stat(&format!("4242 (aurora-viewer) {tail}")).expect("stat");
+        assert!(!state.dead);
+        assert_eq!(state.started, 987654);
+        // a process may name itself with spaces and parentheses
+        assert_eq!(parse_stat(&format!("4242 (a) b (c) {tail}")).map(|s| s.started), Some(987654));
+        assert!(parse_stat(&format!("4242 (x) Z{}", &tail[1..])).is_some_and(|s| s.dead));
+        assert!(parse_stat("4242 (aurora-viewer) S 1 2").is_none());
+        assert!(parse_stat("").is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_helper_leaves_as_soon_as_its_parent_is_gone() {
+        let mut child = Command::new("sleep").arg("30").spawn().expect("child");
+        let parent = Parent::open(child.id()).expect("parent");
+        assert!(
+            process_state(child.id()).is_some_and(|state| !state.dead),
+            "the parent is still running"
+        );
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+        let start = Instant::now();
+        parent.wait().expect("wait");
+        assert!(start.elapsed() < Duration::from_secs(5), "the end was seen at once");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_parent_that_exited_but_was_not_reaped_yet_is_gone_too() {
+        let mut child = Command::new("true").spawn().expect("child");
+        let parent = Parent::open(child.id()).expect("parent");
+        let start = Instant::now();
+        // the test is the child's parent: it stays a zombie until reaped here
+        while process_state(child.id()).is_some_and(|state| !state.dead) {
+            assert!(start.elapsed() < Duration::from_secs(10), "the child never exited");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        parent.wait().expect("wait");
+        child.wait().expect("reap");
     }
 }

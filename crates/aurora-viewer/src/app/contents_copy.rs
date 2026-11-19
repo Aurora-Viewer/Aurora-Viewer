@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::ui::object_actions::{CopyConfirm, CopyRequest};
-use crate::world::appearance::WearMode;
+use crate::world::appearance::{FT_CLOTHING, WearMode};
 use crate::world::inventory::actions as rules;
 use crate::world::notifications::{Data, Kind};
 use std::collections::{HashMap, HashSet};
@@ -17,8 +17,6 @@ use uuid::Uuid;
 #[path = "contents_copy_tests.rs"]
 mod tests;
 
-/// The Clothing system folder: a copy to wear goes under it.
-const FT_CLOTHING: i32 = 5;
 /// The items reach the inventory one by one after the moves; past this, the
 /// outfit is left as it is.
 const WEAR_TIMEOUT: Duration = Duration::from_secs(60);

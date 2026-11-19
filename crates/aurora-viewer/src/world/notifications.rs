@@ -6,7 +6,7 @@
 use super::notification_history::{self as history, Entry, Follow, Look, Outcome};
 pub use super::notification_history::{NameLink, NameTarget};
 use aurora_net::NetCommand;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 use uuid::Uuid;
 
@@ -374,6 +374,49 @@ pub struct Notification {
 }
 
 impl Kind {
+    /// The names a notice of this kind shows under RLVa's `@shownames`.
+    /// `NameScope::Roster`, which hides none: an instant message, a call, a
+    /// teleport offer or request, a friendship or calling card offer, a
+    /// group's notice or invitation, a friend going on or off line. The
+    /// Legacy Viewer tests `@shownames` for none of them
+    /// (process_improved_im, indra/newview/llimprocessing.cpp;
+    /// LLFloaterIMNearbyChatHandler leaves the ONLINE_STATUS notices alone).
+    /// An inventory offer is not one: its giver is hidden while around
+    /// (inventory_offer_handler).
+    pub fn names(self) -> super::names::NameScope {
+        match self {
+            Kind::Teleport | Kind::Friendship | Kind::Group | Kind::Presence | Kind::Message | Kind::Call => {
+                super::names::NameScope::Roster
+            }
+            _ => super::names::NameScope::World,
+        }
+    }
+
+    /// A script's prompt: its dialog or text box, its permission question,
+    /// its link prompt. The Legacy Viewer has no RLVa test on what they
+    /// show (process_script_dialog, process_script_question and
+    /// process_load_url, indra/newview/llviewermessage.cpp): the message,
+    /// the object's name and its owner's name stay as the simulator sent
+    /// them under `@shownames` and `@showloc`. A click on the owner's name
+    /// still follows `names`: the Legacy Viewer writes it as plain text.
+    pub fn as_received(self) -> bool {
+        matches!(self, Kind::Script | Kind::Permissions | Kind::Url)
+    }
+
+    /// The body of a notice of this kind under `@shownames` and `@showloc`
+    /// (`names::TextScope`): shown as written when a resident typed it (the
+    /// card of a message) or a script sent it (`as_received`, where a
+    /// `/mention` names its resident too), rewritten for the other kinds.
+    pub fn text(self) -> super::names::TextScope {
+        if self.as_received() {
+            super::names::TextScope::as_received(self.names())
+        } else if self == Kind::Message {
+            super::names::TextScope::verbatim(self.names())
+        } else {
+            self.names().into()
+        }
+    }
+
     pub fn look(self) -> Look {
         match self {
             Kind::Info | Kind::Presence => Look::Info,
@@ -438,6 +481,8 @@ impl Notification {
             name_links: self.name_links.clone(),
             outcome,
             follow,
+            // (`Notifications::take_departures` knows)
+            named: false,
         }
     }
 
@@ -493,6 +538,7 @@ impl Notification {
             | Data::RegionRestart
             | Data::RegionMessage { .. }
             | Data::CallingCard { .. }
+            | Data::Permissions { .. }
             | Data::Delivery { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
             // closing the notice's toast declines its attachment
@@ -578,6 +624,15 @@ pub struct Notifications {
     outcomes: HashMap<u64, Outcome>,
     /// The listed notifications last time `take_departures` looked.
     seen: Vec<(u64, Entry)>,
+    /// The notices that name their resident whatever RLVa's `@shownames`
+    /// hides afterwards (`name_resident`).
+    named: HashSet<u64>,
+    /// The notices whose text RLVa's `@shownames` and `@showloc` have
+    /// settled (`settle`): rewritten, or left as it was, when the notice
+    /// came, and shown as it is since. The Legacy Viewer writes the text of
+    /// a notification once, and nothing rewrites a notification already
+    /// shown when a restriction comes or goes.
+    settled: HashSet<u64>,
 }
 
 const MAX: usize = 100;
@@ -586,6 +641,8 @@ impl Notifications {
     /// Refresh an active notification's presentation, including the entry
     /// snapshot used if it departs before the next history tick.
     pub fn update_body(&mut self, id: u64, body: String) {
+        // a new text, to settle again
+        self.settled.remove(&id);
         if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
             n.body.clone_from(&body);
         }
@@ -596,6 +653,84 @@ impl Notifications {
     /// The id of the last notification pushed (0 before the first).
     pub fn last_id(&self) -> u64 {
         self.next
+    }
+
+    /// The notice `id` names its resident from now on, whoever stands
+    /// around and whatever RLVa's `@shownames` hides later. The Legacy
+    /// Viewer decides once, when the notice is made, and writes the link of
+    /// the name in its text: the resident's own (`about`, `inspect`,
+    /// `completename`), which LLUrlEntryAgent (indra/llui/llurlentry.cpp)
+    /// labels with no RLVa test, or `rlvanonym`, their stand-in for good
+    /// (inventory_offer_handler, indra/newview/llimprocessing.cpp). A notice
+    /// left out follows its kind (`Kind::names`).
+    pub fn name_resident(&mut self, id: u64) {
+        let list = &self.list;
+        self.named.retain(|named| list.iter().any(|n| n.id == *named));
+        if list.iter().any(|n| n.id == id) {
+            self.named.insert(id);
+        }
+    }
+
+    /// `name_resident` was told of the notice `id`.
+    pub fn names_resident(&self, id: u64) -> bool {
+        self.named.contains(&id)
+    }
+
+    /// The names the notice `n` shows under `@shownames`: those of its kind
+    /// (`Kind::names`), or everyone's once `name_resident` named its
+    /// resident.
+    pub fn names_of(&self, n: &Notification) -> super::names::NameScope {
+        if self.names_resident(n.id) {
+            super::names::NameScope::Roster
+        } else {
+            n.kind.names()
+        }
+    }
+
+    /// How the text of the notice `n` is shown under `@shownames` and
+    /// `@showloc`: as its kind is (`Kind::text`), or naming everyone once
+    /// `name_resident` named its resident.
+    ///
+    /// Once settled (`settle`), the text is shown as it is: what was to be
+    /// hidden when the notice came is rewritten in it already.
+    pub fn text_of(&self, n: &Notification) -> super::names::TextScope {
+        let text = if self.names_resident(n.id) {
+            super::names::NameScope::Roster.into()
+        } else {
+            n.kind.text()
+        };
+        if self.settled.contains(&n.id) {
+            super::names::TextScope::as_received(text.names)
+        } else {
+            text
+        }
+    }
+
+    /// The listed notices that came since the last call: their text is
+    /// settled now (`World::refresh_rlva_privacy` rewrites what RLVa hides
+    /// at this moment) and never again.
+    pub fn settle(&mut self) -> Vec<u64> {
+        let list = &self.list;
+        if self.settled.len() > list.len() {
+            self.settled.retain(|id| list.iter().any(|n| n.id == *id));
+        }
+        let fresh: Vec<u64> = list.iter().map(|n| n.id).filter(|id| !self.settled.contains(id)).collect();
+        self.settled.extend(&fresh);
+        fresh
+    }
+
+    /// Every listed notice with the scope of its text (`text_of`), to
+    /// rewrite it in place (`World::refresh_rlva_privacy`).
+    pub fn with_text_scopes(&mut self) -> impl Iterator<Item = (super::names::TextScope, &mut Notification)> {
+        let named = &self.named;
+        self.list.iter_mut().map(move |n| {
+            let text = if named.contains(&n.id) {
+                super::names::NameScope::Roster.into()
+            } else {
+                n.kind.text()
+            };
+            (text, n)
+        })
     }
 
     pub fn push(&mut self, kind: Kind, title: impl Into<String>, body: impl Into<String>, data: Data) -> u64 {
@@ -821,6 +956,9 @@ impl Notifications {
             n.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(e.time);
             n.name_links = e.name_links.clone();
         }
+        if e.named {
+            self.name_resident(id);
+        }
         id
     }
 
@@ -860,6 +998,7 @@ impl Notifications {
             .filter(|n| !script_prompt(&n.data))
             .map(|n| {
                 let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
+                e.named = self.named.contains(&n.id);
                 if let Data::Inventory { object, .. } = n.data
                     && !object.is_nil()
                 {
@@ -1091,7 +1230,7 @@ pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
         Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
         Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
         Response::Dismiss => match &n.data {
-            Data::Dialog { .. } | Data::TextBox { .. } => Outcome::Ignored,
+            Data::Dialog { .. } | Data::TextBox { .. } | Data::Permissions { .. } => Outcome::Ignored,
             Data::Inventory { object, .. } if !object.is_nil() => Outcome::Kept,
             Data::GroupNotice { attachment: Some(a), .. } if a.saved => Outcome::Kept,
             _ if n.close_declines() => Outcome::Declined,
@@ -1327,6 +1466,30 @@ mod tests {
         );
     }
 
+    /// A notice told to name its resident shows everyone's names, the
+    /// others those of their kind; a notice gone is forgotten.
+    #[test]
+    fn a_notice_names_its_resident_once_told_to() {
+        use crate::world::names::NameScope;
+        let mut n = Notifications::default();
+        let offer = n.push(Kind::Inventory, "Jane Doe gives you a note", "", Data::None);
+        let other = n.push(Kind::Inventory, "Jane Doe gives you a box", "", Data::None);
+        assert_eq!(n.names_of(&n.list[0]), NameScope::World);
+        n.name_resident(offer);
+        assert!(n.names_resident(offer) && !n.names_resident(other));
+        assert_eq!(n.names_of(&n.list[0]), NameScope::Roster);
+        assert_eq!(n.names_of(&n.list[1]), NameScope::World);
+        let scopes: Vec<_> = n.with_text_scopes().map(|(text, n)| (n.id, text.names)).collect();
+        assert_eq!(scopes, [(offer, NameScope::Roster), (other, NameScope::World)]);
+        // a notice that is not listed is never named, and the next one told
+        // forgets those that left
+        n.name_resident(99);
+        assert!(!n.names_resident(99));
+        n.list.retain(|n| n.id != offer);
+        n.name_resident(other);
+        assert!(!n.names_resident(offer) && n.names_resident(other));
+    }
+
     #[test]
     fn offline_offers_are_answered_by_capability() {
         let mut n = Notifications {
@@ -1497,6 +1660,10 @@ mod tests {
                 caution: None,
             },
         );
+        let question = n.list.iter().find(|question| question.id == id).expect("permission question");
+        assert!(!question.close_declines());
+        assert_eq!(outcome_of(question, &Response::Dismiss), Outcome::Ignored);
+        assert_eq!(outcome_of(question, &Response::Decline), Outcome::Declined);
         let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), Uuid::nil());
         assert!(matches!(
             &cmds[..],
