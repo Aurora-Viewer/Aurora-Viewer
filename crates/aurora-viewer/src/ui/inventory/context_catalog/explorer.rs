@@ -143,7 +143,7 @@ pub(super) fn build(
         ),
     ] {
         c.add(key, &view, icon, label, true, Command::Explorer(ExplorerCommand::View(mode)));
-        check(c, key, prefs.explorer.view == mode);
+        check(c, key, prefs.view_in(st.browse) == mode);
     }
     let sort = c.group(
         "explorer-sort",
@@ -212,7 +212,7 @@ pub(super) fn build(
 
 pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     match command {
-        ExplorerCommand::View(view) => prefs.explorer.view = view,
+        ExplorerCommand::View(view) => prefs.set_view_in(st.browse, view),
         ExplorerCommand::ByDate(by_date) => prefs.sort.set_by_date(by_date),
         ExplorerCommand::FoldersByName => prefs.sort.folders_by_name = !prefs.sort.folders_by_name,
         ExplorerCommand::SystemFirst => prefs.sort.system_first = !prefs.sort.system_first,

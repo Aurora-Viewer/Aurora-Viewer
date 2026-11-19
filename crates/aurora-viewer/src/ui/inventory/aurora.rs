@@ -147,6 +147,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-explorer-filter"
             | "aurora-explorer-preview"
             | "aurora-compact"
+            | "aurora-groups"
             | "aurora-tiles"
             | "aurora-received-filing"
             | "aurora-received-unread"
@@ -316,7 +317,7 @@ pub(super) fn contents(
 /// Windows Explorer's Ctrl+Shift+1…6, in its order: the gallery's large,
 /// medium (the Legacy Viewer's 128) and small pictures, the Compact view,
 /// the Details (the list), the Tiles.
-pub(super) fn set_view(prefs: &mut view::ExplorerPreferences, key: u8) {
+pub(super) fn set_view(prefs: &mut InventoryPreferences, folder: Uuid, key: u8) {
     use view::ExplorerView;
     let (view, side) = match key {
         1 => (ExplorerView::Gallery, Some(192)),
@@ -326,9 +327,9 @@ pub(super) fn set_view(prefs: &mut view::ExplorerPreferences, key: u8) {
         5 => (ExplorerView::List, None),
         _ => (ExplorerView::Tiles, None),
     };
-    prefs.view = view;
+    prefs.set_view_in(folder, view);
     if let Some(side) = side {
-        prefs.tile_size = side;
+        prefs.explorer.tile_size = side;
     }
 }
 
@@ -557,7 +558,7 @@ fn explorer_list(
     frame.rights = prefs.rights;
     frame.columns = prefs.explorer;
     if let Some(key) = st.view_key.take() {
-        set_view(&mut prefs.explorer, key);
+        set_view(prefs, st.browse, key);
     }
     // Alt+P: the details pane, shown if hidden, previews the selection
     if std::mem::take(&mut st.toggle_preview) {
@@ -572,7 +573,11 @@ fn explorer_list(
     }
     // A search or a filter lists its results, from every folder, as rows:
     // the tiles show one folder.
-    let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
+    let shown = if explore {
+        prefs.view_in(st.browse)
+    } else {
+        view::ExplorerView::List
+    };
     // the combination view titles its list under its tiles
     if shown == view::ExplorerView::List {
         rows::header(ui, p, frame, list_id, prefs, st.tab, &mut st.column_fit);
@@ -607,6 +612,13 @@ fn explorer_list(
         std::mem::swap(&mut st.plain, &mut st.flat);
         st.plain.set_tiles(gallery::tiles(shown));
         st.plain.set_filter(st.folder_filter.as_deref().unwrap_or_default());
+        // the Details list's groups (the tiles keep their own order)
+        let group = if shown == view::ExplorerView::List {
+            prefs.explorer.group_by
+        } else {
+            groups::GroupBy::None
+        };
+        st.plain.set_group(group, st.view.context_fingerprint());
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
@@ -976,6 +988,50 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103)))
         );
+    }
+
+    #[test]
+    fn group_by_type_lists_named_groups_that_close_on_a_click() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let all = h.st.flat.order.len();
+        h.prefs.explorer.group_by = groups::GroupBy::Kind;
+        h.frames(3);
+        let names: Vec<String> = h.st.flat.groups.iter().map(|(name, _)| name.clone()).collect();
+        assert_eq!(
+            names[0],
+            aurora_i18n::tr!("inventory-group-folders"),
+            "the folders' group first: {names:?}"
+        );
+        assert!(names.len() > 3, "{names:?}");
+        assert_eq!(
+            h.st.flat.groups.iter().map(|(_, n)| n).sum::<usize>(),
+            all,
+            "every entry in one group"
+        );
+        assert_eq!(h.st.flat.order.len(), all);
+        // a click on a header closes its group, another opens it (the
+        // second group's, in sight)
+        let (group, in_group) = h.st.flat.groups[1].clone();
+        let header = |h: &Harness| {
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("inventory_group", group.clone()))))
+                .expect("the group's header")
+        };
+        let first = h.st.flat.order[h.st.flat.groups[0].1];
+        h.click(header(&h).left_center() + egui::vec2(60.0, 0.0), Default::default());
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all - in_group, "closed");
+        assert!(!h.st.flat.order.contains(&first), "its first entry is no longer listed");
+        h.click(header(&h).left_center() + egui::vec2(60.0, 0.0), Default::default());
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all, "open again");
+        assert!(h.actions.is_empty());
+        // the tiles keep their own order: no groups there
+        h.prefs.explorer.view = view::ExplorerView::Tiles;
+        h.frames(3);
+        assert!(h.st.flat.groups.is_empty());
     }
 
     /// Aurora's window `width` wide in a headless context.

@@ -71,6 +71,12 @@ pub enum Kind {
     Item,
     /// "Empty" or "Loading folder" under an open folder without children.
     Empty,
+    /// The header of a group of the explorer's list (`groups.rs`), the
+    /// `index`th of `PlainTree::groups`; its `id` is the folder listed.
+    Group {
+        index: usize,
+        open: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +128,13 @@ pub struct PlainTree {
     filter: Vec<String>,
     /// The entries the filter left out of the folder listed.
     pub filtered_out: usize,
+    /// What the explorer's folder is grouped by, and what changes its groups
+    /// (the creators' names known).
+    group: (super::groups::GroupBy, u64),
+    /// The groups listed: their names and how many entries each holds.
+    pub groups: Vec<(String, usize)>,
+    /// The groups closed, by name.
+    closed_groups: HashSet<String>,
 }
 
 impl PlainTree {
@@ -133,6 +146,24 @@ impl PlainTree {
             self.filter = words;
             self.revision = self.revision.wrapping_add(1);
         }
+    }
+
+    /// Groups the folder's entries (`groups.rs`), `context` being what
+    /// changes their groups.
+    pub fn set_group(&mut self, by: super::groups::GroupBy, context: u64) {
+        let context = if by == super::groups::GroupBy::Creator { context } else { 0 };
+        if self.group != (by, context) {
+            self.group = (by, context);
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    /// Opens or closes the group `name`.
+    pub fn toggle_group(&mut self, name: &str) {
+        if !self.closed_groups.remove(name) {
+            self.closed_groups.insert(name.to_owned());
+        }
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Whether the folder filter keeps `id`.
@@ -207,6 +238,7 @@ impl PlainTree {
         self.width = 0.0;
         self.tiles = 0;
         self.filtered_out = 0;
+        self.groups.clear();
         if show_root {
             self.folder(view, inv, show_library, root, 0, 0, NONE);
         } else {
@@ -296,6 +328,10 @@ impl PlainTree {
 
     #[allow(clippy::too_many_arguments)]
     fn children(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, depth: usize, level: usize, parent: usize) {
+        if level == 0 && self.group.0 != super::groups::GroupBy::None {
+            self.grouped(view, inv, show_library, folder);
+            return;
+        }
         let mut any = false;
         for child in view.children_iter(folder, show_library, inv.lib_root) {
             // the filter keeps the folder's own entries (the explorer lists
@@ -329,9 +365,63 @@ impl PlainTree {
         }
     }
 
+    /// The explorer's folder in its groups: a header row each, then its
+    /// entries while it is open.
+    fn grouped(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid) {
+        let mut kept = Vec::new();
+        for child in view.children_iter(folder, show_library, inv.lib_root) {
+            if !self.kept(inv, child) {
+                self.filtered_out += 1;
+            } else if inv.folders.contains_key(&child) || inv.items.contains_key(&child) {
+                kept.push(child);
+            }
+        }
+        if kept.is_empty() {
+            self.rows.push(Row {
+                id: folder,
+                level: 0,
+                kind: Kind::Empty,
+                parent: NONE,
+                end: self.rows.len(),
+            });
+            return;
+        }
+        for (group, members) in super::groups::split(inv, view, &kept, self.group.0, super::view::now()) {
+            let index = self.groups.len();
+            let open = !self.closed_groups.contains(&group.label);
+            self.groups.push((group.label, members.len()));
+            self.rows.push(Row {
+                id: folder,
+                level: 0,
+                kind: Kind::Group { index, open },
+                parent: NONE,
+                end: self.rows.len(),
+            });
+            if !open {
+                continue;
+            }
+            for id in members {
+                self.rows.push(Row {
+                    id,
+                    level: 0,
+                    kind: if inv.folders.contains_key(&id) {
+                        Kind::Folder { open: false }
+                    } else {
+                        Kind::Item
+                    },
+                    parent: NONE,
+                    end: self.rows.len(),
+                });
+                self.order.push(id);
+            }
+        }
+    }
+
     /// The row of a folder or an item (not of a placeholder).
     pub fn position(&self, id: Uuid) -> Option<usize> {
-        self.rows.iter().position(|row| row.id == id && row.kind != Kind::Empty)
+        self.rows
+            .iter()
+            .position(|row| row.id == id && matches!(row.kind, Kind::Folder { .. } | Kind::Item))
     }
 
     /// The open folders whose guide crosses `range`: the ancestors of its
@@ -534,6 +624,13 @@ fn rows(
                     }
                 }
                 Kind::Item => item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions),
+                Kind::Group { index, open } => {
+                    if let Some((name, count)) = st.plain.groups.get(index).cloned()
+                        && super::aurora::rows::group_header(ui, p, &name, count, open)
+                    {
+                        st.plain.toggle_group(&name);
+                    }
+                }
                 Kind::Empty => {
                     let text = match inv.folders.get(&row.id).map(|f| f.state) {
                         _ if st.plain.filtered_out > 0 => aurora_i18n::tr!("inventory-filter-nothing"),

@@ -797,6 +797,34 @@ pub(in super::super) fn folder(
     }
 }
 
+/// A group's header in the explorer's list (`groups.rs`): its caret, its
+/// name and how many entries it holds, a line to the row's end. True when
+/// it is clicked (it opens or closes).
+pub fn group_header(ui: &mut egui::Ui, p: &Palette, name: &str, count: usize, open: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ui.min_size().y.max(24.0)), Sense::click());
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_group", name.to_owned())), rect));
+    let ink = if response.hovered() { p.ink } else { p.muted };
+    let caret = Pos2::new(rect.left() + PAD + CARET / 2.0, rect.center().y);
+    widgets::paint_glyph(ui.painter(), widgets::disclosure_caret(open), caret, CARET, ink);
+    let label = sheet::semibold(ui, name, SMALL, ink);
+    let galley = ui.painter().layout_job(label);
+    let left = caret.x + CARET / 2.0 + 6.0;
+    let mut right = left + galley.size().x;
+    widgets::paint_row_text(ui.painter(), galley, left, rect.center().y, ink);
+    let count = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::integer(count as i64), egui::FontId::proportional(SMALL), p.muted_dim);
+    widgets::paint_row_text(ui.painter(), count.clone(), right + 8.0, rect.center().y, p.muted_dim);
+    right += 8.0 + count.size().x + 10.0;
+    if right < rect.right() - PAD {
+        ui.painter()
+            .hline(right..=rect.right() - PAD, rect.center().y, widgets::divider_stroke(p));
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 /// The titles of the details' columns above a list whose scroll area is
 /// `list`. A click sorts by a column, a second reverses it (Windows
 /// Explorer, Dolphin; Aurora difference: the Legacy Viewer sorts by name or

@@ -43,6 +43,7 @@ pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
 mod folder_colors;
+pub(crate) mod groups;
 pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
 pub use hover::demo_events as hover_demo_events;
@@ -2696,7 +2697,8 @@ pub fn show(
     // as the column shows them, a stand-in where `@shownames` hides one
     // (resident_scopes), and the worn items.
     let sorts_by = |column| (0..=4).any(|tab| prefs.sort_for(tab).column == Some(column));
-    if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator)) {
+    let by_creator = prefs.explorer.group_by == groups::GroupBy::Creator;
+    if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator) || by_creator) {
         if st.creator_keys_generation != Some(world.inventory.generation) {
             let keys: HashSet<(Uuid, Uuid)> = world
                 .inventory
@@ -2727,7 +2729,7 @@ pub fn show(
         }
         facts.creator_names = std::sync::Arc::new(names);
     }
-    if sorts_by(view::SortColumn::Creator) || sorts_by(view::SortColumn::Worn) {
+    if sorts_by(view::SortColumn::Creator) || sorts_by(view::SortColumn::Worn) || by_creator {
         let worn = facts.worn.iter().chain(&facts.active_gestures).copied().collect();
         let context = view::SortContext::new(facts.creator_names.clone(), worn);
         for state in std::iter::once(&mut *st).chain(dual.as_deref_mut()) {

@@ -58,7 +58,8 @@ fn details_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferenc
 /// The explorer's views, the Legacy Viewer's "List view", "Gallery view"
 /// and "Combination view" of its single folder mode
 /// (menu_inventory_view_default.xml), and the tiles' sizes.
-fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) {
+fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, folder: Uuid) {
+    use super::super::groups::GroupBy;
     use super::super::view::ExplorerView;
     let views = [
         (ExplorerView::List, "list-filled", aurora_i18n::tr!("inventory-view-list")),
@@ -79,7 +80,7 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
         ),
         (ExplorerView::Tiles, "layout-cards-filled", aurora_i18n::tr!("inventory-view-tiles")),
     ];
-    let current = prefs.explorer.view;
+    let current = prefs.view_in(folder);
     let icon = views
         .iter()
         .find(|(view, ..)| *view == current)
@@ -88,7 +89,29 @@ fn view_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences)
     menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         for (view, icon, label) in views {
             if menu::check(ui, p, icon, label, current == view, true) {
-                prefs.explorer.view = view;
+                prefs.set_view_in(folder, view);
+            }
+        }
+        // Dolphin's "Remember display style for each folder"
+        menu::toggle(
+            ui,
+            p,
+            "folder-filled",
+            aurora_i18n::tr!("inventory-view-per-folder"),
+            &mut prefs.view_per_folder,
+        );
+        menu::separator(ui, p);
+        // the Details list's groups (Explorer's Group by)
+        menu::section(ui, p, aurora_i18n::tr!("inventory-group-by"));
+        let details = current == ExplorerView::List;
+        for (by, label) in [
+            (GroupBy::None, aurora_i18n::tr!("inventory-group-none")),
+            (GroupBy::Kind, aurora_i18n::tr!("common-type")),
+            (GroupBy::Date, aurora_i18n::tr!("inventory-column-modified")),
+            (GroupBy::Creator, aurora_i18n::tr!("inventory-column-creator")),
+        ] {
+            if menu::check_keys(ui, p, "", label, details && prefs.explorer.group_by == by, details, "") {
+                prefs.explorer.group_by = by;
             }
         }
         menu::separator(ui, p);
@@ -539,7 +562,7 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
@@ -567,7 +590,7 @@ pub(super) fn explorer_row(
             }
             details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
-            view_button(ui, p, prefs);
+            view_button(ui, p, prefs, st.browse);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);

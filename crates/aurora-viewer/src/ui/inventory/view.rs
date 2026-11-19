@@ -473,6 +473,13 @@ pub struct InventoryPreferences {
     /// The folders pinned to the explorer's column (Quick access), in their
     /// order. Aurora's.
     pub pinned: Vec<Uuid>,
+    /// Each folder keeps the explorer's view it was last shown in (Dolphin's
+    /// "Remember display style for each folder"); off, one view for all.
+    /// Aurora's; off by default.
+    pub view_per_folder: bool,
+    /// The views of the folders, with `view_per_folder` (at most
+    /// `FOLDER_VIEWS`); the others take `explorer.view`.
+    pub folder_views: std::collections::BTreeMap<Uuid, ExplorerView>,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -526,6 +533,8 @@ impl Default for InventoryPreferences {
             folder_colors_enabled: true,
             folder_colors: Default::default(),
             pinned: Vec::new(),
+            view_per_folder: false,
+            folder_views: Default::default(),
         }
     }
 }
@@ -545,6 +554,8 @@ pub struct ExplorerPreferences {
     /// The height of the tiles above the rows in the combination view; 0
     /// shares the room between them.
     pub gallery_height: u16,
+    /// The Details list's groups (`groups.rs`); none by default.
+    pub group_by: super::groups::GroupBy,
 }
 
 impl Default for ExplorerPreferences {
@@ -555,6 +566,7 @@ impl Default for ExplorerPreferences {
             view: ExplorerView::List,
             tile_size: 0,
             gallery_height: 0,
+            group_by: super::groups::GroupBy::None,
         }
     }
 }
@@ -575,6 +587,7 @@ struct SavedExplorer {
     view: ExplorerView,
     tile_size: u16,
     gallery_height: u16,
+    group_by: super::groups::GroupBy,
 }
 
 impl Default for SavedExplorer {
@@ -592,6 +605,7 @@ impl Default for SavedExplorer {
             view: now.view,
             tile_size: now.tile_size,
             gallery_height: now.gallery_height,
+            group_by: now.group_by,
         }
     }
 }
@@ -617,6 +631,7 @@ impl From<SavedExplorer> for ExplorerPreferences {
             view: saved.view,
             tile_size: saved.tile_size,
             gallery_height: saved.gallery_height,
+            group_by: saved.group_by,
         }
     }
 }
@@ -790,7 +805,36 @@ pub enum ExplorerView {
     Tiles,
 }
 
+/// The folders whose view is kept, at most: the oldest entries go first
+/// (by id, a cheap stand-in; the map stays small).
+pub const FOLDER_VIEWS: usize = 500;
+
 impl InventoryPreferences {
+    /// The explorer's view in `folder`.
+    pub fn view_in(&self, folder: Uuid) -> ExplorerView {
+        if self.view_per_folder {
+            self.folder_views.get(&folder).copied().unwrap_or(self.explorer.view)
+        } else {
+            self.explorer.view
+        }
+    }
+
+    /// Shows `folder` in `view`: that folder only with `view_per_folder`,
+    /// every folder otherwise.
+    pub fn set_view_in(&mut self, folder: Uuid, view: ExplorerView) {
+        if !self.view_per_folder {
+            self.explorer.view = view;
+            return;
+        }
+        self.folder_views.insert(folder, view);
+        while self.folder_views.len() > FOLDER_VIEWS {
+            let Some(first) = self.folder_views.keys().next().copied().filter(|id| *id != folder) else {
+                break;
+            };
+            self.folder_views.remove(&first);
+        }
+    }
+
     pub(super) fn filters_for(&self, tab: usize) -> &Filters {
         if tab == 0 {
             &self.filter_defaults
@@ -945,6 +989,20 @@ pub struct ViewCache {
 }
 
 impl ViewCache {
+    /// The name the creator column gives the creator of `it`, if known.
+    pub fn creator_name(&self, inv: &Inventory, it: &aurora_net::inventory::InvItem) -> Option<String> {
+        self.context
+            .creators
+            .get(&super::aurora::rows::creator_key(inv, it))
+            .cloned()
+            .flatten()
+    }
+
+    /// Changes when the creators' names or the worn items change.
+    pub fn context_fingerprint(&self) -> u64 {
+        self.context.fingerprint
+    }
+
     /// The creators' names and the worn items the sorts by them read.
     pub fn set_context(&mut self, context: SortContext) {
         self.context = context;
@@ -2262,6 +2320,38 @@ mod tests {
         inv.remove(&[id(10)]);
         cache.prepare(&inv, prefs.sort);
         assert!(!cache.children(id(2), &prefs, inv.lib_root).contains(&id(10)));
+    }
+
+    #[test]
+    fn each_folder_keeps_its_view_only_when_asked() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut prefs = InventoryPreferences::default();
+        prefs.set_view_in(a, ExplorerView::Tiles);
+        assert_eq!(
+            (prefs.view_in(a), prefs.view_in(b)),
+            (ExplorerView::Tiles, ExplorerView::Tiles),
+            "one view for all"
+        );
+        assert!(prefs.folder_views.is_empty());
+        prefs.view_per_folder = true;
+        prefs.set_view_in(a, ExplorerView::Compact);
+        assert_eq!(prefs.view_in(a), ExplorerView::Compact);
+        assert_eq!(prefs.view_in(b), ExplorerView::Tiles, "the others keep the common view");
+        prefs.view_per_folder = false;
+        assert_eq!(
+            prefs.view_in(a),
+            ExplorerView::Tiles,
+            "off: the common view again, the folders' kept"
+        );
+        prefs.view_per_folder = true;
+        for n in 0..(FOLDER_VIEWS as u128 + 20) {
+            prefs.set_view_in(Uuid::from_u128(1000 + n), ExplorerView::Gallery);
+        }
+        assert_eq!(prefs.folder_views.len(), FOLDER_VIEWS, "bounded");
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let back: InventoryPreferences = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.folder_views, prefs.folder_views);
+        assert!(back.view_per_folder);
     }
 
     #[test]
