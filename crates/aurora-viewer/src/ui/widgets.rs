@@ -2225,8 +2225,10 @@ pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
         .unwrap_or_else(|| egui::FontId::proportional(default_size))
 }
 
-/// How much of its colour the label of a disabled tab keeps.
-const DISABLED_TAB_LABEL: f32 = 0.5;
+/// How far the label of a disabled tab fades from `muted_dim` toward the
+/// panel. An opaque blend, not a lower alpha: a translucent label showed
+/// near white in the viewer's text pass.
+const DISABLED_TAB_LABEL: f32 = 0.55;
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
@@ -2288,7 +2290,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 underline(ui, p, &resp, sel, true);
             }
             let col = if !*enabled {
-                p.muted_dim.gamma_multiply(DISABLED_TAB_LABEL)
+                p.muted_dim.lerp_to_gamma(p.panel, DISABLED_TAB_LABEL)
             } else if sel {
                 p.ink
             } else {
@@ -2301,7 +2303,15 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 font.clone(),
             );
             let left = rect.center().x - galley.size().x / 2.0;
-            paint_row_text(ui.painter(), galley, left, rect.center().y, col);
+            if *enabled {
+                paint_row_text(ui.painter(), galley, left, rect.center().y, col);
+            } else {
+                // The theme's `override_text_color` gives a galley its own
+                // colour, which a fallback colour does not replace: the
+                // faded label is imposed on the shape.
+                let pos = row_text_origin(ui.painter(), &galley, left, rect.center().y);
+                ui.painter().galley_with_override_text_color(pos, galley, col);
+            }
             let resp = resp.on_hover_text(*label);
             if resp.clicked() && !sel {
                 *selected = i;
@@ -3933,23 +3943,32 @@ mod tabs_disabled_tests {
     use super::*;
     use crate::ui::widgets::elide_tests::Frames;
 
+    /// The colour a label is painted in: an override on the shape, else the
+    /// colour its galley carries (the theme's `override_text_color`), else
+    /// the fallback of the painter call.
     fn label_color(shapes: &[egui::Shape], label: &str) -> Color32 {
         shapes
             .iter()
             .find_map(|s| match s {
-                egui::Shape::Text(t) if t.galley.text() == label => Some(t.fallback_color),
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.override_text_color.unwrap_or_else(|| {
+                    let own = t.galley.job.sections[0].format.color;
+                    if own == Color32::PLACEHOLDER { t.fallback_color } else { own }
+                })),
                 _ => None,
             })
             .expect("the label is drawn")
     }
 
-    /// A disabled tab reads as disabled: its label is fainter than the
-    /// muted label of an enabled tab that is not chosen, and it is no
-    /// brighter than the palette's own dim colour.
+    /// A disabled tab reads as disabled once the theme is applied, as in the
+    /// viewer (its global `override_text_color` once made every label the
+    /// same): its label is opaque, darker than the palette's dim colour and
+    /// than an enabled tab's.
     #[test]
-    fn a_disabled_tab_label_is_fainter_than_an_enabled_one() {
-        let p = crate::theme::Theme::default().palette();
+    fn a_disabled_tab_label_is_darker_than_an_enabled_one() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
         let mut frames = Frames::new();
+        theme.apply(&frames.ctx, 1.0);
         let mut selected = 2usize;
         let mut shapes = Vec::new();
         for _ in 0..2 {
@@ -3957,10 +3976,14 @@ mod tabs_disabled_tests {
                 tabs(ui, &p, &mut selected, &[("Aaaa", true), ("Bbbb", false), ("Cccc", true)]);
             });
         }
+        let light = |c: Color32| u32::from(c.r()) + u32::from(c.g()) + u32::from(c.b());
         let enabled = label_color(&shapes, "Aaaa");
         let disabled = label_color(&shapes, "Bbbb");
-        assert_eq!(enabled, p.muted, "an enabled tab that is not chosen");
-        assert!(disabled.a() < p.muted_dim.a(), "the disabled label fades: {disabled:?}");
-        assert_eq!(label_color(&shapes, "Cccc"), p.ink, "the chosen tab");
+        assert_eq!(disabled.a(), 255, "an opaque label: {disabled:?}");
+        assert!(light(disabled) < light(p.muted_dim), "the disabled label fades: {disabled:?}");
+        assert!(
+            light(disabled) < light(enabled),
+            "darker than an enabled tab: {disabled:?} / {enabled:?}"
+        );
     }
 }
