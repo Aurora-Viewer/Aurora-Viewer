@@ -1649,18 +1649,20 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             // legacy_light mixes the local lights' share toward the
             // emissive mask and the environment as the rest
-            let local_spec = legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
-            own = m.emissive + shade_pbr_local * (1.0 - clamp(m.unlit, 0.0, 1.0)) * (1.0 - clamp(m.legacy_env, 0.0, 1.0)) + local_spec;
             // its highlights in the sunlight (sunlit_linear) and its
-            // environment at the probes' radiance
+            // environment at the probes' radiance (legacy_light first: both
+            // add to legacy_glare, whose sum depends on the order)
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / 3.0, 1.0)
-                + local_spec + m.emissive;
+                               frame.sun_color.rgb / 3.0, 1.0);
+            let local_spec = legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
+            col += local_spec + m.emissive;
+            own = m.emissive + shade_pbr_local * (1.0 - clamp(m.unlit, 0.0, 1.0)) * (1.0 - clamp(m.legacy_env, 0.0, 1.0)) + local_spec;
         }
         col += caustic_light;
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
+        own *= 0.65;
     }
     if(water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
         col = water_scene_lit(col, own, in.world_pos);

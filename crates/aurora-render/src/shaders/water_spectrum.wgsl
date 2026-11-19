@@ -24,7 +24,7 @@ fn water_swell(p: vec2<f32>, time: f32, quality: u32) -> WaterSwell {
 // Ripples on a 16 m tile (integer wave vectors: the caustics map tiles
 // without a seam). A few waves alone interfere into a lattice, which the sun
 // glint and the caustics show as a grid: sixteen, spread over the
-// directions (most within 100 degrees of the wind, some across it) and
+// directions (from -74 to +116 degrees of the region's east) and
 // over wavelengths from 2.2 m to 0.45 m, largest first, so that each
 // quality keeps the waves that matter most (water_micro_count).
 const WATER_MICRO_MODES=array<vec2<f32>,16>(vec2<f32>(2.0,-7.0),vec2<f32>(3.0,7.0),vec2<f32>(10.0,1.0),vec2<f32>(5.0,-8.0),

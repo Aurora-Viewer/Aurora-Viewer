@@ -1258,9 +1258,12 @@ fn water_scene_light(world_pos:vec3<f32>) -> vec3<f32> {
 // way. `own` is the share of `col` that shines from where it is, the local
 // lights and the emissive: a lamp on a seabed 50 m down lights it in its
 // own colour. What the camera's line of sight crosses is the fog's
-// (apply_fog), for both.
+// (apply_fog), for both. `own` is an estimate on some paths (a legacy
+// material's environment mixes it away): never more than `col`, so a pixel
+// the depth does not dim keeps `col` exactly.
 fn water_scene_lit(col:vec3<f32>,own:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
-    return max(col-own,vec3<f32>(0.0))*water_scene_light(world_pos)+own;
+    let kept=clamp(own,vec3<f32>(0.0),max(col,vec3<f32>(0.0)));
+    return (col-kept)*water_scene_light(world_pos)+kept;
 }
 
 fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
