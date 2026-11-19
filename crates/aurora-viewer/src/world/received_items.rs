@@ -554,7 +554,7 @@ impl World {
             })
             .collect();
         // the badge finds them in no particular order
-        named.sort_by_cached_key(|(_, name)| name.to_lowercase());
+        named.sort_by_cached_key(|(_, name)| crate::natural_order::key(name));
         let inbox = actions::system(inv, 50).unwrap_or(inv.root);
         self.notifications.push_deliveries(&named, inbox)
     }

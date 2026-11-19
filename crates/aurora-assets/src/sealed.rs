@@ -14,15 +14,23 @@
 //! ([`Reader`]: the transcoded texture cache reads the coarse levels at the
 //! end of a file).
 //!
-//! A file without the magic is read as it is: the demo's sources and the
-//! files written by hand in tests. Only writing seals.
+//! The store reads only its own format: [`Key::open`] and [`Reader::new`]
+//! give an error for a file without the magic, a cache miss like a damaged
+//! one. The `_or_plain` readers take such a file as it is, for the callers
+//! whose sources are plain files (the demo's, the files tests write by
+//! hand).
 //!
 //! `ring` does the AES (hardware AES and carry-less multiply): about 13 GB/s
 //! on one core, some 12 µs for a texture of the cache.
+//!
+//! The store's file names derive from the installation key too
+//! ([`Names`]): an HMAC-SHA256 of the asset id, under a key of its own
+//! (HKDF of the installation key), so that a name says nothing of the asset
+//! without the key.
 
 use ring::aead::{self, Aad, LessSafeKey, Nonce};
-use ring::hkdf;
 use ring::rand::{SecureRandom, SystemRandom};
+use ring::{hkdf, hmac};
 use std::io::{self, Read, Seek, SeekFrom};
 
 pub const MAGIC: &[u8; 4] = b"AUSL";
@@ -33,6 +41,10 @@ pub const HEADER: usize = 4 + SALT + 8;
 pub const CHUNK: usize = 64 << 10;
 const TAG: usize = 16;
 const INFO: &[u8] = b"aurora cache file v1";
+const NAMES_SALT: &[u8] = b"aurora cache names";
+const NAMES_INFO: &[u8] = b"aurora cache names v1";
+/// Hex digits of a store file name (128 bits of the HMAC).
+pub const NAME_LEN: usize = 32;
 
 /// The installation key. Its bytes never reach a log (no `Debug` of them).
 #[derive(Clone, PartialEq, Eq)]
@@ -98,6 +110,14 @@ impl Key {
         Ok(LessSafeKey::new(aead::UnboundKey::from(okm)))
     }
 
+    /// The key of the store's file names.
+    pub fn names(&self) -> Names {
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, NAMES_SALT).extract(&self.0);
+        // (HKDF refuses only an output longer than 255 hashes: this one is one)
+        let okm = prk.expand(&[NAMES_INFO], hmac::HMAC_SHA256).expect("one SHA-256 output");
+        Names(hmac::Key::from(okm))
+    }
+
     /// The sealed file of `plain`.
     pub fn seal(&self, plain: &[u8]) -> io::Result<Vec<u8>> {
         let mut header = [0u8; HEADER];
@@ -124,13 +144,25 @@ impl Key {
         Ok(out)
     }
 
-    /// The plain bytes of a file read whole: decrypted in place when it is
-    /// sealed, as it is otherwise. An error for a damaged file, or one
-    /// sealed under another key (the store was reset): a cache miss.
-    pub fn open(&self, mut file: Vec<u8>) -> io::Result<Vec<u8>> {
+    /// The plain bytes of a sealed file read whole, decrypted in place. An
+    /// error for a file not in this format, a damaged one, or one sealed
+    /// under another key (the store was reset): a cache miss.
+    pub fn open(&self, file: Vec<u8>) -> io::Result<Vec<u8>> {
+        if !is_sealed(&file) {
+            return Err(invalid("not in the store format"));
+        }
+        self.open_sealed(file)
+    }
+
+    /// Like [`Key::open`], but a file without the magic is read as it is.
+    pub fn open_or_plain(&self, file: Vec<u8>) -> io::Result<Vec<u8>> {
         if !is_sealed(&file) {
             return Ok(file);
         }
+        self.open_sealed(file)
+    }
+
+    fn open_sealed(&self, mut file: Vec<u8>) -> io::Result<Vec<u8>> {
         let mut header = [0u8; HEADER];
         header.copy_from_slice(&file[..HEADER]);
         let len = plain_len(&header);
@@ -153,8 +185,30 @@ impl Key {
     }
 }
 
-/// Random access to the plain bytes of a cache file, sealed or not: only
-/// the chunks read are decrypted.
+/// The file names of the store ([`Key::names`]).
+pub struct Names(hmac::Key);
+
+impl std::fmt::Debug for Names {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Names(..)")
+    }
+}
+
+impl Names {
+    /// The stem of the file of `id`: [`NAME_LEN`] lowercase hex digits.
+    pub fn name(&self, id: &uuid::Uuid) -> String {
+        let tag = hmac::sign(&self.0, id.as_bytes());
+        let mut out = String::with_capacity(NAME_LEN);
+        for b in &tag.as_ref()[..NAME_LEN / 2] {
+            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
+            out.push(char::from_digit(u32::from(b & 15), 16).unwrap_or('0'));
+        }
+        out
+    }
+}
+
+/// Random access to the plain bytes of a cache file: only the chunks read
+/// are decrypted.
 pub struct Reader<R> {
     inner: R,
     sealed: Option<Sealed>,
@@ -171,7 +225,18 @@ struct Sealed {
 }
 
 impl<R: Read + Seek> Reader<R> {
-    pub fn new(mut inner: R, key: &Key) -> io::Result<Self> {
+    /// A reader of a sealed file; an error for a file not in this format
+    /// (as [`Key::open`]).
+    pub fn new(inner: R, key: &Key) -> io::Result<Self> {
+        Self::with(inner, key, false)
+    }
+
+    /// Like [`Reader::new`], but a file without the magic is read as it is.
+    pub fn new_or_plain(inner: R, key: &Key) -> io::Result<Self> {
+        Self::with(inner, key, true)
+    }
+
+    fn with(mut inner: R, key: &Key, plain: bool) -> io::Result<Self> {
         let total = inner.seek(SeekFrom::End(0))?;
         inner.seek(SeekFrom::Start(0))?;
         let mut sealed = None;
@@ -194,6 +259,9 @@ impl<R: Read + Seek> Reader<R> {
             } else {
                 inner.seek(SeekFrom::Start(0))?;
             }
+        }
+        if sealed.is_none() && !plain {
+            return Err(invalid("not in the store format"));
         }
         Ok(Reader {
             inner,
@@ -308,16 +376,46 @@ mod tests {
     }
 
     #[test]
-    fn plain_files_read_as_they_are() {
+    fn the_store_reads_only_its_own_format() {
+        let key = Key::random().expect("random");
+        // short, long, and long with a magic of another format
+        for file in [bytes(10), bytes(200), [b"AUSX".as_slice(), &bytes(200)].concat()] {
+            assert!(key.open(file.clone()).is_err(), "{} bytes", file.len());
+            assert!(Reader::new(Cursor::new(file.clone()), &key).is_err(), "{} bytes", file.len());
+        }
+        // a sealed file still reads through both
+        let sealed = key.seal(&bytes(200)).expect("seal");
+        assert_eq!(key.open(sealed.clone()).expect("open"), bytes(200));
+        assert_eq!(Reader::new(Cursor::new(sealed), &key).expect("reader").len(), 200);
+    }
+
+    #[test]
+    fn plain_files_read_as_they_are_when_asked() {
         let key = Key::random().expect("random");
         let plain = bytes(200);
-        assert_eq!(key.open(plain.clone()).expect("plain"), plain);
-        let mut r = Reader::new(Cursor::new(plain.clone()), &key).expect("reader");
+        assert_eq!(key.open_or_plain(plain.clone()).expect("plain"), plain);
+        let sealed = key.seal(&plain).expect("seal");
+        assert_eq!(key.open_or_plain(sealed).expect("sealed"), plain);
+        let mut r = Reader::new_or_plain(Cursor::new(plain.clone()), &key).expect("reader");
         assert_eq!(r.len(), 200);
         r.seek(SeekFrom::Start(150)).expect("seek");
         let mut tail = Vec::new();
         r.read_to_end(&mut tail).expect("read");
         assert_eq!(tail, plain[150..]);
+    }
+
+    #[test]
+    fn names_are_stable_per_key_and_say_nothing_of_the_id() {
+        let key = Key::random().expect("random");
+        let names = key.names();
+        let id = uuid::Uuid::from_u128(0x1234_5678_9abc_def0_0fed_cba9_8765_4321);
+        let name = names.name(&id);
+        assert_eq!(name.len(), NAME_LEN);
+        assert!(name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        assert_eq!(key.names().name(&id), name, "same key, same name");
+        assert_ne!(Key::random().expect("random").names().name(&id), name, "another key");
+        assert_ne!(names.name(&uuid::Uuid::from_u128(1)), name, "another id");
+        assert!(!name.contains(&id.simple().to_string()[..8]));
     }
 
     #[test]

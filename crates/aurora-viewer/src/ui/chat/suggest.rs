@@ -183,11 +183,14 @@ fn expand_labels(text: &str, labels: &[(String, Uuid)]) -> String {
 
 /// A resident's names, None while they are not known.
 pub fn person(world: &World, id: Uuid) -> Option<Person> {
-    if id.is_nil() || id == world.agent_id || !world.rlva_can_name(id) {
+    if id.is_nil() || id == world.agent_id {
         return None;
     }
+    // by their name: a conversation names its people under RLVa's
+    // `@shownames` (LLChatEntry keeps its mention picker), and the nearby
+    // chat lists no one then (`nearby`)
     let names = &world.social.avatar_names;
-    if let Some(n) = names.get(&id) {
+    if let Some(n) = names.get_in(crate::world::names::NameScope::Roster, &id) {
         return Some(Person {
             id,
             display: n.display(&names.options),
@@ -204,7 +207,18 @@ pub fn person(world: &World, id: Uuid) -> Option<Person> {
 }
 
 /// The residents around, nearest first, for the nearby chat (`set_nearby`).
+///
+/// No one under RLVa's `@shownames`, an `@shownames:<uuid>` exception
+/// included: the nearby chat's fields switch their mention picker off
+/// (`setShowChatMentionPicker(canShowName(SNC_DEFAULT))`,
+/// indra/newview/fsfloaternearbychat.cpp and fsnearbychatcontrol.cpp), and
+/// the name prediction completes nothing
+/// (FSNearbyChat::handleChatBarKeystroke, indra/newview/fsnearbychathub.cpp,
+/// leaves `rest_of_match` empty under the behaviour).
 pub fn nearby(world: &World) -> Vec<(Person, f32)> {
+    if world.rlva.has("shownames") {
+        return Vec::new();
+    }
     crate::ui::people::nearby(world)
         .into_iter()
         .filter(|(_, _, _, d)| *d <= NEAR_ME_RANGE)
@@ -220,7 +234,7 @@ pub fn members(world: &World, session: Uuid) -> Vec<Person> {
         None if world.is_group_session(&session) => Vec::new(),
         None => person(world, session).into_iter().collect(),
     };
-    out.sort_by_cached_key(|p| p.display.to_lowercase());
+    out.sort_by_cached_key(|p| crate::natural_order::key(&p.display));
     out
 }
 

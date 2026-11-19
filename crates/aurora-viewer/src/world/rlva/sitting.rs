@@ -59,7 +59,7 @@ impl World {
 
     /// getsitid reports the seat's root linkset, whereas notifications name
     /// the actual parent prim. Both remain independent of location privacy.
-    pub(super) fn rlva_sit_id(&self) -> Uuid {
+    pub(crate) fn rlva_sit_id(&self) -> Uuid {
         if !self.agent.seated {
             return Uuid::nil();
         }
@@ -232,6 +232,58 @@ mod tests {
         assert_eq!(notices(&mut w), ["/unsat ground illegally"]);
     }
 
+    /// #2738: a sit asked by hand while @standtp is held records where the
+    /// avatar stood, like a forced one (handle_object_sit, llviewermenu.cpp;
+    /// RlvForceHandler<RLV_BHVR_SIT>, rlvhandler.cpp), and standing up brings
+    /// it back there. A lock that comes once seated has nothing to return
+    /// to, and a ground sit records nothing, as in the Legacy Viewer.
+    #[test]
+    fn rlva_standtp_returns_from_a_sit_asked_by_hand_or_by_a_script() {
+        use crate::world::rlva::Boundary;
+        let now = std::time::Instant::now();
+        let sit = |w: &mut World, actor: Uuid| {
+            let mut sit = NetCommand::RequestSit {
+                handle: w.main_region.unwrap(),
+                target: ROOT,
+                offset: glam::Vec3::ZERO,
+            };
+            assert_eq!(w.rlva_send_boundary(&mut sit, actor), Boundary::Send);
+            w.rlva_note_sent(&mut sit, actor, now);
+        };
+        for actor in [Uuid::nil(), A] {
+            let mut w = world();
+            restrict(&mut w, A, "standtp=n");
+            let origin = (w.main_region.unwrap(), w.agent.position);
+            sit(&mut w, actor);
+            assert_eq!(w.rlva.stand_origin, Some(origin), "{actor}");
+            w.rlva_update_stand();
+            assert!(w.rlva.stand_return.is_none(), "the sit is not answered yet");
+            seated(&mut w, true);
+            // the seat carries the avatar away
+            w.agent.position += glam::Vec3::X * 20.0;
+            w.rlva_update_stand();
+            assert!(w.rlva.stand_return.is_none());
+            seated(&mut w, false);
+            w.rlva_update_stand();
+            assert_eq!(w.rlva.stand_return, Some(origin), "{actor}: back where the sit was asked");
+            assert!(w.rlva.stand_origin.is_none());
+        }
+        // seated first, locked after: no place was recorded
+        let mut w = world();
+        sit(&mut w, Uuid::nil());
+        seated(&mut w, true);
+        restrict(&mut w, A, "standtp=n");
+        w.rlva_update_stand();
+        seated(&mut w, false);
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_origin.is_none() && w.rlva.stand_return.is_none());
+        // a ground sit records nothing either
+        let mut ground = NetCommand::OneShotControl(control::SIT_ON_GROUND);
+        assert_eq!(w.rlva_send_boundary(&mut ground, Uuid::nil()), Boundary::Send);
+        w.rlva_note_sent(&mut ground, Uuid::nil(), now);
+        assert!(w.rlva.stand_origin.is_none());
+    }
+
     #[test]
     fn rlva_delayed_ground_sit_rechecks_new_locks_and_yields_to_stand_returns_and_disable() {
         let mut w = world();
@@ -258,6 +310,33 @@ mod tests {
         seated(&mut w, false);
         assert!(w.rlva_sitting_tick().is_empty());
         assert!(w.rlva.sitting.pending_ground.is_none());
+    }
+
+    #[test]
+    fn rlva_sit_distance_uses_world_axis_offsets_on_rotated_linked_seats() {
+        use glam::{Quat, Vec3};
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&ROOT).unwrap();
+        let child = w.objects.index_of_uuid(&CHILD).unwrap();
+        let now = std::time::Instant::now();
+        w.objects.get_mut(root).unwrap().position = Vec3::new(128.0, 128.0, 30.0);
+        w.objects.get_mut(root).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        w.objects.get_mut(child).unwrap().position = Vec3::new(0.0, -3.0, 0.0);
+        let (position, _, _) = crate::scene::Scene::object_transform_unshifted(&w, child, now).unwrap();
+        w.agent.position = position + Vec3::X * 2.0;
+        for restriction in ["sittp=n", "fartouch=n"] {
+            restrict(&mut w, A, restriction);
+            for (offset, allowed) in [(Vec3::X, true), (-Vec3::X, false), (Vec3::X * 0.5, false), (Vec3::ZERO, false)] {
+                let request = NetCommand::RequestSit {
+                    handle: w.main_region.unwrap(),
+                    target: CHILD,
+                    offset,
+                };
+                assert_eq!(w.rlva_allows_command(&request, Uuid::nil()), allowed, "{restriction}: {offset:?}");
+                assert!(w.rlva_allows_command(&request, A), "forced sit retains its distance exception");
+            }
+            restrict(&mut w, A, "clear");
+        }
     }
 
     #[test]

@@ -245,7 +245,12 @@ impl App {
         let mut state = crate::world::portals::State::default();
         let now = Instant::now();
         state.sync(&world, None, unix_time());
-        state.create(portal, world.agent.position, now, unix_time());
+        // the peer stands on our plaza: the same land test as ours
+        world.parcel = self.world.parcel.clone();
+        let build = world.build_right_at(world.main_region.unwrap_or(256), Vec3::from(portal.center), None);
+        if let Err(refusal) = state.create(portal, build, world.agent.position, now, unix_time()) {
+            log::warn!("portal peer demo: {refusal:?}");
+        }
         if let Some(group) = state.take_group_refresh() {
             world.group_data.request_members(group);
             for command in world.group_data.take_commands() {

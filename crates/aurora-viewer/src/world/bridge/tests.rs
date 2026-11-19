@@ -15,8 +15,15 @@ struct Simulator {
     attaches: usize,
     detaches: usize,
     hello_versions: [Option<&'static str>; 3],
+    /// The worn scripts are from before 1.41: they listen on the old fixed
+    /// hello channel only, until the next upload.
+    old_channel: bool,
+    old_channel_hellos: usize,
+    first_upload: Option<Instant>,
     unready_edits: usize,
     script_rez_groups: Vec<(String, Uuid)>,
+    /// What the factory sent to change the worn object's look, in order.
+    looks: Vec<BuildCmd>,
 }
 impl Simulator {
     fn new() -> Self {
@@ -44,8 +51,12 @@ impl Simulator {
             attaches: 0,
             detaches: 0,
             hello_versions: [None; 3],
+            old_channel: false,
+            old_channel_hellos: 0,
+            first_upload: None,
             unready_edits: 0,
             script_rez_groups: Vec::new(),
+            looks: Vec::new(),
         }
     }
     fn event(&mut self, mut event: NetEvent) {
@@ -128,6 +139,12 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::Build(
+                            look @ (BuildCmd::Transform { .. } | BuildCmd::SetShape { .. } | BuildCmd::SetTextures { .. }),
+                        ) = &command
+                        {
+                            self.looks.push(look.clone());
+                        }
                         if let NetCommand::Build(BuildCmd::RezScript { group_id, item, .. }) = &command {
                             assert_eq!(*group_id, self.world.groups.active);
                             self.script_rez_groups.push((item.name.clone(), *group_id));
@@ -135,16 +152,29 @@ impl Simulator {
                         if let NetCommand::DetachAttachments(items) = &command {
                             self.detaches += usize::from(items.contains(&self.bridge.item));
                         }
-                        if let NetCommand::ScriptDialogReply {
-                            channel: ik::CONTROL,
-                            label,
-                            ..
-                        } = &command
+                        if let NetCommand::ScriptDialogReply { label, .. } = &command
+                            && label.starts_with("auroraIKRelay|")
                             && label.ends_with("|discover")
                         {
                             self.ik_discoveries += 1;
                         }
+                        let mut command = command.clone();
+                        if let NetCommand::ScriptDialogReply { channel, label, .. } = &mut command
+                            && label.starts_with("auroraHello|")
+                        {
+                            if *channel == LEGACY_DISCOVERY_CHANNEL {
+                                self.old_channel_hellos += 1;
+                                if self.old_channel {
+                                    // Old scripts hear it; the demo answers on the current channel.
+                                    *channel = private_channel(self.bridge.object);
+                                }
+                            } else if self.old_channel {
+                                continue;
+                            }
+                        }
                         if let NetCommand::SaveScript { target, .. } = &command {
+                            self.old_channel = false;
+                            self.first_upload.get_or_insert(self.now);
                             if target.item == self.bridge.query_script {
                                 self.query_uploads += 1;
                                 self.hello_versions[1] = None;
@@ -221,18 +251,27 @@ fn failed_http_command_preserves_its_reason_and_recovers_without_detaching_or_di
 fn discovery_simulator_rejects_negative_chatfromviewer_and_misaddressed_dialog_replies() {
     let mut sim = Simulator::new();
     sim.ready();
+    let channel = private_channel(sim.bridge.object);
     let request = |object_id, label| NetCommand::ScriptDialogReply {
         sender: None,
         object_id,
-        channel: DISCOVERY_CHANNEL,
+        channel,
         index: 0,
         label,
     };
     for command in [
         NetCommand::Chat {
             message: format!("auroraHello|{}", sim.bridge.object),
-            channel: DISCOVERY_CHANNEL,
+            channel,
             chat_type: ChatType::Whisper,
+        },
+        // A current bridge no longer listens on the old fixed channel.
+        NetCommand::ScriptDialogReply {
+            sender: None,
+            object_id: sim.world.agent_id,
+            channel: LEGACY_DISCOVERY_CHANNEL,
+            index: 0,
+            label: format!("auroraHello|{}", sim.bridge.object),
         },
         request(Uuid::new_v4(), format!("auroraHello|{}", sim.bridge.object)),
         request(sim.world.agent_id, format!("auroraHello|{}", Uuid::new_v4())),
@@ -278,7 +317,7 @@ fn quiet_bridge_discovery_is_addressed_throttled_and_requires_the_current_worn_r
     assert_eq!(commands.len(), 1);
     assert!(
         matches!(&commands[0], NetCommand::ScriptDialogReply { sender: None, object_id, channel, index, label }
-        if *object_id == sim.world.agent_id && *channel == DISCOVERY_CHANNEL && *channel < 0 && *index == 0
+        if *object_id == sim.world.agent_id && *channel == private_channel(sim.bridge.object) && *channel < 0 && *index == 0
         && *label == format!("auroraHello|{}", sim.bridge.object))
     );
     for _ in 0..19 {
@@ -368,6 +407,80 @@ fn an_old_version_in_any_bridge_service_is_updated_then_saved_once() {
 }
 
 #[test]
+fn the_private_channel_matches_the_scripts_and_never_a_fixed_one() {
+    // The scripts read the first seven hex digits of the key's text form.
+    let key = Uuid::parse_str("1234567f-ffff-4fff-8fff-ffffffffffff").unwrap();
+    assert_eq!(private_channel(key), -0x1000_0000 - 0x123_4567);
+    assert_eq!(private_channel(Uuid::nil()), -0x1000_0000);
+    // The same key and channel as the LSL scripts' test (scripts/test-bridge-lsl.py).
+    let root = Uuid::parse_str("1a2b3c4d-0000-0000-0000-000000000002").unwrap();
+    assert_eq!(private_channel(root), -295_875_524);
+    assert_eq!(private_channel(Uuid::max()), -0x1fff_ffff);
+    for _ in 0..1000 {
+        let channel = private_channel(Uuid::new_v4());
+        assert!((-0x1fff_ffff..=-0x1000_0000).contains(&channel));
+        // Clear of the fixed hello, IK control/relay, pose and portal channels.
+        assert!(![LEGACY_DISCOVERY_CHANNEL, -184735220, -184735221, -190018106, -190018107, -190018108].contains(&channel));
+    }
+    let a = Uuid::parse_str("00000001-0000-4000-8000-000000000000").unwrap();
+    let b = Uuid::parse_str("00000010-0000-4000-8000-000000000000").unwrap();
+    assert_ne!(private_channel(a), private_channel(b), "a new worn root gets a new channel");
+}
+
+#[test]
+fn a_current_bridge_is_never_asked_on_the_old_fixed_channel() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.bridge = Bridge::default();
+    sim.world.hand_contacts.relay = None;
+    sim.ready();
+    for _ in 0..200 {
+        sim.step();
+    }
+    assert_eq!(sim.old_channel_hellos, 0);
+}
+
+#[test]
+fn a_bridge_worn_from_before_the_session_channel_is_asked_on_the_old_one_and_updated() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let uploads = (sim.uploads, sim.query_uploads, sim.ik_uploads);
+    // Next login: the worn scripts are still 1.40 and only hear the old channel.
+    sim.hello_versions = [Some("1.40"); 3];
+    sim.old_channel = true;
+    sim.first_upload = None;
+    sim.bridge = Bridge::default();
+    sim.world.hand_contacts.relay = None;
+    let login = sim.now;
+    for _ in 0..400 {
+        sim.step();
+        if sim.bridge.locked() {
+            break;
+        }
+    }
+    assert!(sim.bridge.locked(), "the old bridge must be updated, then work");
+    assert_eq!(
+        (sim.uploads, sim.query_uploads, sim.ik_uploads),
+        (uploads.0 + 1, uploads.1 + 1, uploads.2 + 1)
+    );
+    assert!(sim.old_channel_hellos >= 1);
+    let updated = sim.first_upload.expect("update").duration_since(login);
+    assert!(
+        updated >= LEGACY_DISCOVERY_AFTER && updated < Duration::from_secs(30),
+        "updated after {updated:?}, well before the old script detaches itself at 60 s"
+    );
+    // The updated bridge answers on its own channel from now on.
+    let hellos = sim.old_channel_hellos;
+    sim.bridge = Bridge::default();
+    sim.world.hand_contacts.relay = None;
+    sim.ready();
+    for _ in 0..200 {
+        sim.step();
+    }
+    assert_eq!(sim.old_channel_hellos, hellos);
+}
+
+#[test]
 fn failed_compilation_does_not_request_a_save_of_unchanged_scripts() {
     let mut sim = Simulator::new();
     sim.bridge.object = Uuid::new_v4();
@@ -383,6 +496,7 @@ fn failed_compilation_does_not_request_a_save_of_unchanged_scripts() {
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::nil(),
             compiled: false,
+            checked: true,
             errors: vec!["Synthetic compilation error".into()],
         }),
     });
@@ -432,15 +546,7 @@ fn ready_bridge_retries_discovery_until_the_delayed_ik_script_answers() {
     let commands = std::mem::take(&mut sim.bridge.commands);
     let probe = commands
         .iter()
-        .find(|command| {
-            matches!(
-                command,
-                NetCommand::ScriptDialogReply {
-                    channel: DISCOVERY_CHANNEL,
-                    ..
-                }
-            )
-        })
+        .find(|command| matches!(command, NetCommand::ScriptDialogReply { label, .. } if label.starts_with("auroraHello|")))
         .expect("a ready controller still discovers a late IK relay");
     let replies = sim
         .demo
@@ -458,13 +564,10 @@ fn ready_bridge_retries_discovery_until_the_delayed_ik_script_answers() {
     sim.now += DISCOVERY_INTERVAL;
     sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
     assert!(
-        !sim.bridge.commands.iter().any(|command| matches!(
-            command,
-            NetCommand::ScriptDialogReply {
-                channel: DISCOVERY_CHANNEL,
-                ..
-            }
-        )),
+        !sim.bridge
+            .commands
+            .iter()
+            .any(|command| matches!(command, NetCommand::ScriptDialogReply { label, .. } if label.starts_with("auroraHello|"))),
         "discovery stops once all three services are present"
     );
 }
@@ -651,7 +754,7 @@ fn compilation_does_not_detach_the_script_before_its_first_valid_hello() {
         object_id: sim.bridge.object,
         item_id: sim.bridge.script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(reply.clone());
     sim.event(reply);
@@ -714,7 +817,7 @@ fn failed_read_queries_rediscover_quietly_without_resetting_physics_or_pending_m
         "read failures share the five-second discovery throttle"
     );
     let command = sim.bridge.commands.pop().expect("quiet probe");
-    assert!(matches!(&command, NetCommand::ScriptDialogReply { channel, .. } if *channel == DISCOVERY_CHANNEL));
+    assert!(matches!(&command, NetCommand::ScriptDialogReply { channel, .. } if *channel == private_channel(sim.bridge.object)));
     for event in sim
         .demo
         .reply(&sim.bridge, &sim.world, &command, false, false, false)
@@ -927,7 +1030,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped.clone());
     assert_eq!(sim.bridge.reinstalls.len(), 1);
@@ -942,7 +1045,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped);
     assert_eq!(sim.bridge.phase, Phase::Ready);
@@ -1183,6 +1286,7 @@ fn an_early_hello_survives_the_upload_reply_and_boot_status_requires_the_exact_w
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::new_v4(),
             compiled: true,
+            checked: true,
             errors: Vec::new(),
         }),
     });
@@ -2343,4 +2447,155 @@ fn a_bridge_turned_off_at_login_is_never_made() {
     }
     assert_eq!((sim.copies, sim.uploads, sim.attaches), (0, 0, 0));
     assert!(sim.world.inventory.items.values().all(|i| i.name != NAME));
+}
+
+/// The worn bridge of the simulator, as the world knows it.
+fn worn_bridge(sim: &Simulator) -> Option<usize> {
+    sim.world.worn_attachment(&sim.bridge.item)
+}
+
+#[test]
+fn a_new_bridge_takes_its_look_as_soon_as_the_library_container_is_worn() {
+    let mut sim = Simulator::new();
+    for _ in 0..80 {
+        sim.step();
+        if !sim.looks.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(sim.uploads, 0, "the look must not wait for a script to be saved");
+    let worn = worn_bridge(&sim)
+        .and_then(|i| sim.world.objects.get(i))
+        .expect("worn container")
+        .key;
+    let [
+        BuildCmd::Transform { handle, updates },
+        BuildCmd::SetShape {
+            handle: shape_handle,
+            local_ids,
+            shape,
+        },
+        BuildCmd::SetTextures {
+            handle: te_handle,
+            local_id,
+            media_url,
+            texture_entry,
+        },
+    ] = sim.looks.as_slice()
+    else {
+        panic!("expected a size, a shape and a texture entry: {:?}", sim.looks);
+    };
+    assert_eq!([*handle, *shape_handle, *te_handle], [worn.region; 3]);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(
+        (updates[0].local_id, updates[0].scale),
+        (worn.local_id, Some(glam::Vec3::splat(0.01)))
+    );
+    assert!(updates[0].position.is_none() && updates[0].rotation.is_none() && updates[0].linked);
+    assert_eq!(local_ids, &[worn.local_id]);
+    let volume = shape.to_params();
+    assert_eq!(
+        (volume.profile.curve_type, volume.path.curve_type),
+        (
+            aurora_prim::params::LL_PCODE_PROFILE_SQUARE,
+            aurora_prim::params::LL_PCODE_PATH_LINE
+        )
+    );
+    assert_eq!((volume.profile.hollow, volume.path.scale, volume.sculpt), (0.0, [1.0, 1.0], None));
+    assert_eq!(*local_id, worn.local_id);
+    assert!(media_url.is_empty());
+    // bridge.lsl sets the same faces: plywood, white, alpha 0.
+    let look = aurora_prim::te::parse_texture_entry(texture_entry).expect("texture entry");
+    for face in 0..6 {
+        let face = look.face(face);
+        assert_eq!(face.texture, aurora_prim::te::DEFAULT_TEXTURE);
+        assert_eq!(face.color, [1.0, 1.0, 1.0, 0.0]);
+    }
+    sim.ready();
+    assert_eq!(
+        sim.looks.len(),
+        3,
+        "the bridge worn again after its save keeps the look it was saved with"
+    );
+}
+
+#[test]
+fn a_bridge_being_set_up_is_concealed_until_it_is_ready() {
+    let mut sim = Simulator::new();
+    assert!(sim.world.concealed_attachment.is_nil());
+    for _ in 0..80 {
+        sim.step();
+        if worn_bridge(&sim).is_some() {
+            break;
+        }
+    }
+    let root = worn_bridge(&sim).expect("worn container");
+    assert!(!sim.bridge.item.is_nil());
+    assert_eq!(
+        sim.world.concealed_attachment, sim.bridge.item,
+        "set before the container arrives: it is never drawn"
+    );
+    assert!(sim.world.concealed(root));
+    // A prim linked to the container, another worn object and the avatar.
+    let region = sim.world.main_region.expect("region");
+    let container = sim.world.objects.get(root).expect("container").key.local_id;
+    let request = |item_id| AttachRequest {
+        item_id,
+        owner_id: sim.world.agent_id,
+        point: 2,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: "Other".into(),
+        desc: String::new(),
+    };
+    let mut child = crate::demo::outfit_attachment(&request(Uuid::from_u128(0xC41D)));
+    child.parent_id = container;
+    child.state = 0;
+    child.name_values.clear();
+    let mut other = crate::demo::outfit_attachment(&request(Uuid::from_u128(0x07E2)));
+    // (out of the range `outfit_attachment` draws the container's id from)
+    (child.local_id, other.local_id) = (7_000_001, 7_000_002);
+    let ids = [child.full_id, other.full_id, sim.world.agent_id];
+    sim.world.apply(NetEvent::ObjectUpdates {
+        handle: region,
+        objects: vec![child, other],
+    });
+    let [child, other, me] = ids.map(|id| sim.world.objects.index_of_uuid(&id).expect("object"));
+    assert!(sim.world.concealed(child));
+    assert!(!sim.world.concealed(other));
+    assert!(!sim.world.concealed(me));
+
+    sim.ready();
+    assert!(sim.world.concealed_attachment.is_nil(), "a ready bridge is an ordinary worn object");
+    assert!(!sim.world.concealed(worn_bridge(&sim).expect("worn bridge")));
+    // A relocation, a repair or a reinstall works on it again.
+    sim.bridge.retry(sim.now);
+    sim.step();
+    assert_eq!(sim.world.concealed_attachment, sim.bridge.item);
+    sim.bridge.set_enabled(false, sim.now);
+    sim.step();
+    assert!(
+        sim.world.concealed_attachment.is_nil(),
+        "a bridge turned off is no longer worked on"
+    );
+}
+
+#[test]
+fn a_failed_bridge_shows_again() {
+    let mut sim = Simulator::new();
+    sim.demo.startup_stalled = true;
+    sim.starting();
+    assert_eq!(sim.world.concealed_attachment, sim.bridge.item);
+    for _ in 0..400 {
+        sim.step();
+        if sim.bridge.phase == Phase::Failed {
+            break;
+        }
+    }
+    assert_eq!(sim.bridge.phase, Phase::Failed);
+    assert!(worn_bridge(&sim).is_some());
+    assert!(sim.world.concealed_attachment.is_nil());
 }

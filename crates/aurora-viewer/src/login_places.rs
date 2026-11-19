@@ -136,7 +136,9 @@ impl Cache {
             });
         };
         if wait {
-            job();
+            // the viewer is closing: a save thread (saves.rs), after the
+            // account list's changes, and the exit waits for it
+            crate::saves::change(crate::login_accounts::catalogue_path(), job);
         } else {
             rayon::spawn(job);
         }

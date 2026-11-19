@@ -17,10 +17,23 @@ import lummao
 
 SOURCE = Path(__file__).resolve().parents[1] / "crates/aurora-viewer/src/world/bridge"
 OWNER = lummao.Key("00000000-0000-0000-0000-000000000001")
-ROOT = lummao.Key("00000000-0000-0000-0000-000000000002")
+# Hex letters in the first digits exercise the channel derivation.
+ROOT = lummao.Key("1a2b3c4d-0000-0000-0000-000000000002")
 OTHER = lummao.Key("00000000-0000-0000-0000-000000000003")
 NULL = lummao.Key("00000000-0000-0000-0000-000000000000")
-DISCOVERY = -184735219
+SEAT = lummao.Key("00000000-0000-0000-0000-000000000004")
+
+
+def private_channel(key):
+    """world/bridge.rs private_channel: the first seven hex digits of the key."""
+    return -0x10000000 - int(str(key)[:7], 16)
+
+
+DISCOVERY = private_channel(ROOT)
+LEGACY_DISCOVERY = -184735219
+LEGACY_CONTROL = -190018106
+IK_CHANNEL = -190018107
+OBJECT_ROOT = 18
 REGION = 256
 REGION_START = 1024
 TELEPORT = 512
@@ -42,6 +55,7 @@ class Simulator:
         self.messages = []
         self.responses = []
         self.broadcasts = []
+        self.regionwide = []
         self.detaches = 0
         self.timer = 0.0
         self.serial = 100
@@ -69,14 +83,15 @@ class Simulator:
             "llListenRemove": lambda handle: self.listeners.pop(handle, None),
             "llOwnerSay": self.messages.append,
             "llHTTPResponse": lambda *args: self.responses.append(args),
-            "llRegionSay": lambda *args: self.broadcasts.append(args),
+            "llRegionSay": self.region_say,
             "llRegionSayTo": lambda *args: self.broadcasts.append(args),
             "llGetPos": lambda: lummao.Vector((128.0, 128.0, 25.0)),
             "llGetVel": lambda: lummao.Vector((0.0, 0.0, 0.0)),
             "llGetAgentInfo": lambda *args: 0,
             "llGetAgentSize": lambda *args: lummao.Vector((0.0, 0.0, 0.0)),
             "llGetOwnerKey": lambda *args: OTHER,
-            "llGetObjectDetails": lambda *args: [31],
+            "llGetObjectDetails": self.object_details,
+            "llGetAgentList": lambda *args: [OWNER, OTHER],
             "llGetFreeMemory": lambda: 32768,
             "llGetMinMemory": lambda: 32768,
             "llSetTimerEvent": self.set_timer,
@@ -84,6 +99,12 @@ class Simulator:
             "llResetScript": self.reset_request,
             "llSetLinkPrimitiveParamsFast": lambda link, rules: self.prim_updates.append((link, rules)),
             "llMoveToTarget": lambda target, tau: self.targets.append((target, tau)),
+            # Region water and terrain far below the pool tests' avatar (25 m).
+            "llWater": lambda offset: 20.0,
+            "llGround": lambda offset: 10.0,
+            "llCastRay": lambda *args: [0],
+            "llGetCameraRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
+            "llGetRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
         }
         for name in (
             "llReleaseURL", "llTakeControls", "llReleaseControls",
@@ -96,7 +117,18 @@ class Simulator:
 
     def key(self):
         self.serial += 1
-        return lummao.Key(f"00000000-0000-0000-0000-{self.serial:012d}")
+        return lummao.Key(f"{self.serial:08d}-0000-0000-0000-{self.serial:012d}")
+
+    def region_say(self, *args):
+        self.regionwide.append(args)
+        self.broadcasts.append(args)
+
+    @staticmethod
+    def object_details(target, details):
+        # OTHER sits on SEAT; the wearer stands. Attachment points otherwise.
+        if details == [OBJECT_ROOT]:
+            return [SEAT if target == OTHER else target]
+        return [31]
 
     def request_url(self):
         request = self.key()
@@ -206,11 +238,12 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 await sim.grant()
                 await sim.probe(owner=OTHER)
                 await sim.probe(channel=DISCOVERY - 1)
+                await sim.probe(channel=LEGACY_DISCOVERY)
                 await sim.probe(message=f"auroraHello|{OTHER}")
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.40|", sim.messages[0])
+                self.assertIn("1.42|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
@@ -368,7 +401,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         await sim.start()
         await sim.grant()
         await sim.probe()
-        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0")
+        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0||")
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.script.gEnabled, 1)
         self.assertEqual(sim.script.gLocked, 1)
@@ -392,10 +425,55 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         sim = Simulator("ik.lsl")
         await sim.start()
         await sim.probe()
-        await sim.event("listen", -190018106, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        self.assertEqual(len(sim.broadcasts), 1)
-        await sim.event("listen", -190018107, "", OTHER, "auroraIKAvailable|test")
+        control = private_channel(sim.script.session)
+        self.assertNotEqual(control, DISCOVERY)
+        await sim.event("listen", LEGACY_CONTROL, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
+        self.assertEqual(sim.broadcasts, [], "commands on the old fixed channel are ignored")
+        await sim.event("listen", control, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
+        # Only the seat in use and the wearer's own attachments are asked.
+        discover = f"auroraIKDiscover|{sim.script.session}"
+        self.assertEqual(sim.regionwide, [])
+        self.assertEqual(sorted(sim.broadcasts), sorted([(SEAT, IK_CHANNEL, discover), (OWNER, IK_CHANNEL, discover)]))
+        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
         self.assertTrue(sim.messages[-1].startswith("<auroraIKRelay>"))
+        # A crossing draws a new session, and with it a new command channel.
+        await sim.event("changed", REGION)
+        self.assertNotEqual(private_channel(sim.script.session), control)
+
+    async def test_prim_water_fields_replace_the_region_water_for_one_command(self):
+        # 1.42 (#2008): fields 10 and 11 carry a prim volume's surface and
+        # floor; empty fields mean the region's water again.
+        sim = Simulator("bridge.lsl")
+        await sim.start()
+        await sim.grant()
+        await sim.probe()
+        token = sim.script.gToken
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|1|0|1|0|0|0|0|0|1002.40|1000.00")
+        self.assertEqual(sim.responses[-1][1], 200)
+        water = sim.script.gWater
+        self.assertAlmostEqual(water[0], 1002.4, places=3)
+        self.assertAlmostEqual(water[1], 1000.0, places=3)
+        self.assertEqual(water[2], 1.0)
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|2|0|1|0|0|0|0|0||")
+        self.assertEqual(sim.responses[-1][1], 200)
+        self.assertEqual(tuple(sim.script.gWater), (0.0, 0.0, 0.0))
+        # The surface motor floats at the pool's top, not toward the region
+        # water 5 m below (the grid report): 25.4 - 0.45 flotation depth.
+        sim.targets.clear()
+        sim.now = 1.0  # past the motor's 0.09 s tick
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|3|0|1|3|5.00|1.70|0.00|0|25.40|23.00")
+        self.assertEqual(sim.responses[-1][1], 200)
+        self.assertTrue(sim.targets)
+        self.assertAlmostEqual(sim.targets[-1][0][2], 24.95, places=3)
+        # the same command over region water still heads down to it
+        sim.targets.clear()
+        sim.now = 2.0
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|4|0|1|3|5.00|1.70|0.00|0||")
+        self.assertTrue(sim.targets)
+        self.assertLess(sim.targets[-1][0][2], 24.0)
+        # a 1.41 viewer's ten fields are refused rather than misread
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|5|0|1|0|0|0|0|0")
+        self.assertEqual(sim.responses[-1][1], 403)
 
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
@@ -405,8 +483,8 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sim.messages, [])
         sim = Simulator("ik.lsl")
         await sim.start()
-        await sim.event("listen", -190018106, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        await sim.event("listen", -190018107, "", OTHER, "auroraIKAvailable|test")
+        await sim.event("listen", private_channel(sim.script.session), "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
+        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
         self.assertEqual(sim.messages, [])
         self.assertEqual(sim.broadcasts, [])
 

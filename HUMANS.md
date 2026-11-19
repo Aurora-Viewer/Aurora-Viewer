@@ -61,6 +61,24 @@ If the agent has not finished everything, it tells you before. If a session
 is interrupted, the agent of the next session first takes up the PRs without
 a review or that left the queue.
 
+## Credits and licences
+
+Aurora is built on other people's work: the Second Life viewer, the Legacy
+Viewer and the residents and projects whose code they hold, shader authors,
+hundreds of Rust crates. We credit all of them, precisely, every time:
+
+- **Ported code**: the authors named in the original file's copyright are
+  listed in [NOTICE.md](NOTICE.md), "Authors of the ported code", with the
+  Aurora files that follow their work. Code under another licence (MIT,
+  BSD…) keeps its full notice there.
+- **Rust crates**: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) lists
+  each one with its licence and the notices to keep. Whoever changes
+  `Cargo.lock` runs `./scripts/third-party-licenses.ps1` (it needs
+  `cargo install cargo-about --locked --features cli` once) and commits the
+  file.
+- Both are shown in the viewer, Help › About (Licences and Libraries tabs),
+  and tests fail when they fall behind the code. When in doubt, credit.
+
 ## GitHub in practice
 
 - **`main` is protected**, for everyone, admins included: nobody pushes to it
@@ -72,6 +90,31 @@ a review or that left the queue.
     the latest `main`: what lands on `main` is exactly what was tested.
   A PR that only touches documentation or images passes in a minute (no
   build). A red cross = the agent fixes it.
+- **PR description check**: every PR's description must follow the
+  template (`.github/pull_request_template.md`): the issue line, and text
+  under What it is for, Legacy Viewer origin, What changes and Tests. When
+  one is missing, the PR description workflow posts a comment listing what
+  is missing (the PR panel shows `■ CHANGES ASKED`) and adds the
+  `needs-description` label; both go away as soon as the author edits the
+  description. An **outside contributor's** PR still incomplete 3 days
+  later is closed by the workflow's daily sweep (the author can reopen it
+  once it is complete); the team's PRs are never closed. So nobody reads a
+  PR before its author has said what it does and how it was tested.
+- **Review slots**: an outside contributor has at most **10 PRs in review**
+  at a time. The Review slots workflow gives the others the
+  `waiting-for-slot` label and a comment explaining why (they stay open as
+  they are; the PR panel hides them, like `on-hold`); when one of their PRs
+  in review is merged or closed, the oldest waiting one comes back to review
+  on its own, with a comment. To have a waiting PR reviewed first (its
+  author may ask in a comment), remove its label by hand: it takes a slot
+  and the author's newest other PR in review waits instead. PRs a
+  maintainer has started reviewing, or in the merge queue, keep their slot;
+  the team's PRs never wait. To see the
+  plan without changing anything: Actions › Review slots › Run workflow
+  (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
+- **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
+  and run" (look first that it does not change `.github/`). Review it only
+  once that CI is green and the description is complete.
 - **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
   `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
   files it in the release notes, and an **area** (`render`, `avatar`,
@@ -228,6 +271,10 @@ see the news item in the viewer **before** merging, launch it with
    - they install sccache with winget (for your account), the compiler cache
      shared by the repository and the agents' tasks (see
      [Building and launching by hand](#building-and-launching-by-hand));
+   - they install ripgrep (`rg`), `fd`, `jq` and `ast-grep` with winget (for
+     your account): the search tools the agents are told to use
+     ([AGENTS.md](AGENTS.md), section 5, "Tools"). They are optional: one
+     that does not install is reported and nothing else stops;
    - they log you in to GitHub (`gh auth login`, in the browser) if needed,
      and set your git identity in the repository: your GitHub user name and
      your "noreply" address (your e-mail stays private).
@@ -265,7 +312,9 @@ and the menus adapt when the console is resized. Creating a release splits
 the number, the minimum version, the cache and the settings into four
 screens, with the chosen version and a summary before confirmation. The
 minimum version makes the update required for the versions below it: they
-cannot log in before updating.
+can still log in for a grace period, then not before updating. A new
+minimum asks for that period: 12 hours usually, 24, 72 or 6 hours, or none
+for a release that cannot wait.
 
 When it opens, the tool checks the environment: tools, repository behind
 GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub
@@ -329,6 +378,29 @@ Each choice also exists without the menu, for a script:
 `reset`, `shortcut`, `claude`); `-DryRun` shows what `releases`, `reset` and
 `claude` would do without doing it.
 
+**Commands Claude Code refuses your agents.** The repository carries a
+Claude Code hook (`.claude/settings.json`, which runs
+`.claude/hooks/shell-rules.sh`). Claude Code reads it by itself in every
+session opened in the repository or in a task folder, once your `main` is up
+to date (Repair / update): there is nothing to install or to switch on.
+Before each shell command of an agent, it refuses the few that AGENTS.md
+forbids and names the command to use instead:
+
+| Refused | Why |
+|---|---|
+| A recursive `grep`, `findstr` or `Get-ChildItem \| Select-String`, once `rg` is installed | `rg` skips the build folders, the others read them (GB) |
+| `cargo test -p <crate>` | one crate alone builds its dependencies a second time; `cargo test --workspace <filter>` |
+| `cargo +<toolchain>` (except `cargo +nightly fuzz`, on Linux) | another toolchain recompiles everything |
+| `RUSTC_WRAPPER=…`, `--config build.rustc-wrapper…` | they go around the build gate and the shared compiler cache |
+
+It only sees the commands of the agents, never what you type in a terminal,
+and takes about 0.05 s per command. It runs in Git Bash, which comes with
+Git for Windows. A missing tool turns its rule off: nothing is refused for
+`grep` on a PC without `rg`. A hook that cannot run (an older bash, a
+missing file) lets every command through. The other agents (Codex…) only
+have the rule written in AGENTS.md. `./scripts/test-agent-hook.ps1` (a step of
+`check.ps1`) tests it on a table of commands.
+
 ## The up-to-date viewer of `main`, in `--release`
 
 The **Release viewer** choice of the tools, or a double-click on
@@ -346,6 +418,9 @@ built.
   as with PowerShell 7.
 - `build-release.bat 42` builds PR no. 42 (to test its performance before
   merging it).
+- The OpenXR loader is built in, like in the published zip, when CMake is
+  installed (`winget install Kitware.CMake`); without CMake the script says so,
+  and VR then needs an `openxr_loader.dll` on the PC.
 - Close the viewer of that folder before rebuilding (the script says so).
 
 ## Building and launching by hand
@@ -363,23 +438,37 @@ cargo run -p aurora-viewer
 - Checking everything like CI: `./scripts/check.ps1`.
 - The agents build in their own folder `..\work\<task>\target`: their open
   viewers do not block yours.
+- **Rust version.** `rust-toolchain.toml` names the version everyone builds
+  with, the CI included: nothing to install or update by hand, rustup
+  downloads it at the first build. Dependabot opens a pull request when a
+  new stable release is out; once it is merged and you pull, the next build
+  downloads that version and recompiles everything once.
 - **Compiler cache.** With sccache installed (Repair / update), the
   repository and every task share the dependencies they already built, kept
   in `.sccache\` in the project folder (10 GB at most; set
   `AURORA_BUILD_CACHE_SIZE`, for example `20G`, then run `check.ps1` or
   `new-task.ps1` again). Cargo finds it through `.cargo\config.toml` in the
-  project folder, which the scripts write while sccache is installed and
-  delete once it is uninstalled. To stop using it, uninstall sccache
-  (`winget uninstall Mozilla.sccache`), then run `check.ps1` once (until then
-  Cargo stops with "could not execute process"). The first build of a new
+  project folder, which the scripts write (with the build gate, below). To
+  stop using it, uninstall sccache (`winget uninstall Mozilla.sccache`),
+  then run `check.ps1` once (the builds go on without the cache in the
+  meantime). The first build of a new
   task takes about a third less processor time (seven crates in ten come from
   the cache; the others depend on a build script that writes into the
   task's own folder), and a task rebuilt after its `target\` was freed about
   half.
-- **One heavy build at a time.** `check.ps1` waits before clippy and the
-  tests while two other heavy builds already run on the PC ("Waiting for a
-  build slot…"): eight agents compiling at once each take every core and
-  all finish later. `AURORA_BUILD_SLOTS` changes the number (2 by default).
+- **Two heavy builds at a time.** One compile of the viewer crate takes 8 to
+  17 GB of memory: eight agents compiling at once ask for several times the
+  PC's memory, and all of them crawl in the page file. Two limits, each of
+  `AURORA_BUILD_SLOTS` slots (2 by default; set it to 1 if the PC still
+  swaps, before opening the agents' sessions, which read it at their start):
+  - the **build gate**: Cargo runs every compiler through
+    `aurora-build-gate` (`.cargo\` in the project folder, built by the
+    scripts), and a compile of the viewer crate waits there for a free slot,
+    whatever the command: `cargo test` or `cargo run` typed by an agent as
+    much as `check.ps1`. It waits without a message; the waiting builds are
+    the `aurora-build-gate-*` processes that have no `rustc` under them;
+  - `check.ps1` also waits before clippy and the tests while two others
+    already run ("Waiting for a build slot…").
 
 ### Disk space
 
@@ -412,9 +501,10 @@ default), download automatically or required updates only. The automatic
 download waits for your agreement to install and restart.
 
 The viewer verifies the ZIP, keeps the former folder until the first frame is
-displayed and restores it if the start fails. Use a dedicated folder, with
-write access; folders that contain code or personal files require a manual
-installation. Settings and cache stay in the usual folders. Development and
+displayed and restores it if the start fails. It replaces only its own
+files: anything else you keep in its folder stays, and a viewer copied alone
+(onto the Desktop, for example) has only its executable replaced. The folder
+needs write access. Settings and cache stay in the usual folders. Development and
 demo builds do not check the releases. See [docs/UPDATES.md](docs/UPDATES.md)
 for the format of the packages and their policy.
 
@@ -437,6 +527,13 @@ as `aurora.previous.log`. Demo sessions have their own logs
 
 ## Security
 
+- **No data of our own in shared places.** Second Life's shared experience
+  policy forbids a viewer to store its own data where the grid keeps it or
+  where other residents receive it (asset and object names, descriptions,
+  EEP settings, hidden bits in numbers, chat channels…) so that only that
+  viewer makes something of it; the region weather of Aurora Weather did,
+  and was removed. The agents follow the rule (AGENTS.md, section 2) and
+  stop to ask you when a feature would need it.
 - The agents never connect to the grid and never handle your credentials.
   The remembered password is stored by Windows (Credential Manager), as a
   hash only.

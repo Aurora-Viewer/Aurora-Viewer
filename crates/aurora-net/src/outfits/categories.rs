@@ -50,7 +50,10 @@ impl Update {
                 folder.favorite = *favorite;
                 folder.favorite_known = true;
             }
-            Self::Thumbnail(id) => folder.thumbnail = *id,
+            Self::Thumbnail(id) => {
+                folder.thumbnail = *id;
+                folder.thumbnail_known = true;
+            }
             Self::Trash(parent) => folder.parent = *parent,
         }
     }
@@ -154,7 +157,9 @@ where
         0
     };
     for attempt in 0..=retries {
-        let mut contents = if matches!(change.update, Update::Favorite(_)) {
+        // a legacy listing carries neither favorites nor thumbnails: reading
+        // one back could never confirm them
+        let mut contents = if matches!(change.update, Update::Favorite(_) | Update::Thumbnail(_)) {
             crate::inventory::ais::fetch_folders(http, cap, owner, &parents)
                 .await
                 .map_err(|_| read_error())?
@@ -193,7 +198,7 @@ mod tests {
         for (key, value) in update.body().as_ref().and_then(Llsd::as_map).into_iter().flatten() {
             category.insert(key.clone(), value.clone());
         }
-        if matches!(update, Update::Favorite(_)) {
+        if matches!(update, Update::Favorite(_) | Update::Thumbnail(_)) {
             let mut categories = Llsd::new_map();
             categories.insert(folder.to_string(), category);
             return llsd_map! { "category_id" => parent, "version" => 3,
@@ -223,7 +228,7 @@ mod tests {
         ] {
             let (url, task) = server(vec![(200, Llsd::new_map()), (200, reply(folder, parent, parent, &update))]).await;
             let result = mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &format!("{url}/fetch"),
                 Uuid::nil(),
@@ -241,7 +246,7 @@ mod tests {
             let requests = task.await.expect("server");
             assert_eq!(requests[0].0, format!("PATCH /category/{folder} HTTP/1.1"));
             assert_eq!(Some(requests[0].1.clone()), update.body());
-            if matches!(update, Update::Favorite(_)) {
+            if matches!(update, Update::Favorite(_) | Update::Thumbnail(_)) {
                 assert!(requests[1].0.starts_with(&format!("GET /category/{parent}/children?depth=0 ")));
             } else {
                 assert!(requests[1].0.starts_with("POST /fetch "));
@@ -268,7 +273,7 @@ mod tests {
         let (url, task) = server(vec![(200, stale), (200, reply(folder, trash, parent, &update))]).await;
         let moves = std::sync::Mutex::new(Vec::new());
         let result = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -304,7 +309,7 @@ mod tests {
     async fn refused_trash_move_stops_before_any_request() {
         let (url, task) = server(Vec::new()).await;
         let error = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -332,7 +337,7 @@ mod tests {
         ])
         .await;
         let result = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -353,7 +358,7 @@ mod tests {
     async fn refused_category_update_stops_before_refresh_and_hides_private_data() {
         let (url, task) = server(vec![(403, llsd_map! { "error" => "private server information" })]).await;
         let error = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),

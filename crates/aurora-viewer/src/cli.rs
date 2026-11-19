@@ -18,6 +18,7 @@ pub struct Cli {
     /// `--vr`: enter VR once the world shows (the restart that the VR
     /// button offers when the headset came after startup passes it).
     pub vr: bool,
+    pub vr_mode: crate::camera::VrView,
     /// `--grid <name>` or `--loginuri <uri>` (CmdLineGridChoice,
     /// CmdLineLoginURI): the grid the login screen starts on.
     pub grid: Option<Grid>,
@@ -29,6 +30,9 @@ pub struct Cli {
     /// `--login <first> <last> <password>` (UserLoginInfoCmdLine), taken
     /// once by the login screen (`take_login`) and not kept after.
     login: Mutex<Option<Login>>,
+    /// `--uninstall`: remove what the viewer registered on this computer,
+    /// print what it did and exit, without a window (`uninstall.rs`).
+    pub uninstall: bool,
     help: bool,
     version: bool,
 }
@@ -98,6 +102,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.help = true;
         } else if a == "-V" || a == "--version" {
             cli.version = true;
+        } else if a == "--uninstall" {
+            cli.uninstall = true;
         } else if let Some(value) = a.strip_prefix("--language=") {
             cli.language = Some(value.to_owned());
         } else if a == "--language" {
@@ -110,6 +116,12 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = args.next();
         } else if a == "--vr" {
             cli.vr = true;
+        } else if let Some(mode) = a.strip_prefix("--vr-mode=") {
+            cli.vr_mode = match mode {
+                "avatar" => crate::camera::VrView::Avatar,
+                "flycam" => crate::camera::VrView::Flycam,
+                _ => crate::camera::VrView::FirstPerson,
+            };
         } else if let Some(v) = a.strip_prefix("--fps-limit=") {
             cli.fps_limit = parse_fps_limit(v);
         } else if a == "--fps-limit" {
@@ -265,6 +277,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn uninstall_is_a_flag_and_a_link_cannot_carry_it() {
+        assert!(parse(["--uninstall"].into_iter().map(String::from)).uninstall);
+        assert!(parse(["--language", "fr", "--uninstall"].into_iter().map(String::from)).uninstall);
+        // nothing after the link is read: a web page cannot slip it in
+        let cli = parse(["-url", "secondlife://Region/1/2/3", "--uninstall"].into_iter().map(String::from));
+        assert!(!cli.uninstall);
+        assert!(!parse(std::iter::empty()).uninstall);
+    }
+
+    #[test]
     fn language_forms_and_help_preserve_the_process_override() {
         for arguments in [
             vec!["--language", "en"],
@@ -282,25 +304,24 @@ mod tests {
 
     #[test]
     fn title_ends_with_the_build_profile() {
+        // the catalogue's own words: a language may join the name, the
+        // version and the title another way than " - " (Japanese does), and
+        // translate "Debug"
+        let named = |version: &str, title: &str| aurora_i18n::tr!("cli-aurora-viewer-2", version = version, t = title);
+        let plain = |version: &str| aurora_i18n::tr!("cli-aurora-viewer", version = version);
         assert_eq!(
             title_with(Some("Test ombres"), "debug", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - Test ombres (Dev)").as_str()
+            format!("{} (Dev)", named("0.2.0", "Test ombres"))
         );
-        assert_eq!(
-            title_with(None, "release", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Release)").as_str()
-        );
+        assert_eq!(title_with(None, "release", "0.2.0"), format!("{} (Release)", plain("0.2.0")));
         assert_eq!(
             title_with(None, "debugging", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Debug)").as_str()
+            format!("{} ({})", plain("0.2.0"), aurora_i18n::tr!("common-debug"))
         );
-        assert_eq!(
-            title_with(Some("X"), "unknown", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - X").as_str()
-        );
+        assert_eq!(title_with(Some("X"), "unknown", "0.2.0"), named("0.2.0", "X"));
         assert_eq!(
             title_with(None, "debug", "0.2.0+7.gabcdef123"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0+7.gabcdef123 (Dev)").as_str()
+            format!("{} (Dev)", plain("0.2.0+7.gabcdef123"))
         );
     }
 

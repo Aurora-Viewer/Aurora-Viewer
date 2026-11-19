@@ -3,7 +3,8 @@
 //! creator, your rights and the next owner's, the main actions) and the
 //! details pane of the wide width, which also sets the next owner's rights
 //! as the properties do (LLSidepanelItemInfo, LLFloaterProperties). The
-//! main action is the one a double-click does (wear, open, teleport…).
+//! main action is the one a double-click does (wear, open, teleport, play a
+//! sound in world…); a sound also offers its local audition beside it.
 
 use super::super::permissions::{Permissions, Rights};
 use super::super::*;
@@ -56,7 +57,7 @@ impl Main {
             Self::TakeOff => ("hanger-2-filled", aurora_i18n::tr!("inventory-take-off")),
             Self::Open => ("folder-open-filled", aurora_i18n::tr!("common-open")),
             Self::Teleport => ("map-pin-filled", aurora_i18n::tr!("common-teleport")),
-            Self::Play => ("player-play-filled", aurora_i18n::tr!("common-play")),
+            Self::Play => ("world-filled", aurora_i18n::tr!("common-play-in-world")),
             Self::Activate(true) => ("player-play-filled", aurora_i18n::tr!("gesture-activate")),
             Self::Activate(false) => ("player-stop-filled", aurora_i18n::tr!("gesture-deactivate")),
             Self::Profile => ("user-filled", aurora_i18n::tr!("inventory-profile")),
@@ -75,13 +76,15 @@ impl Main {
         let original = rules::original(inv, id);
         match self {
             Self::Wear | Self::TakeOff => context::double_click(inv, id, st, prefs, facts, actions),
+            // LLSoundBridge::performAction("sound_play") and the double-click
+            // (LLSoundBridgeAction): the sound plays in world for everyone.
             Self::Play => {
                 if let Some(asset) = original
                     .and_then(|id| inv.items.get(&id))
                     .map(|it| it.asset_id)
                     .filter(|a| !a.is_nil())
                 {
-                    actions.push(InvAction::Sound(asset));
+                    actions.push(InvAction::TriggerSound(asset));
                 }
             }
             Self::Activate(on) => {
@@ -91,6 +94,24 @@ impl Main {
             }
             Self::Open | Self::Teleport | Self::Profile => context::open(inv, id, st, actions),
         }
+    }
+}
+
+/// The local audition beside the world playback of the main action
+/// (LLPreviewSound::auditionSound, indra/newview/llpreviewsound.cpp).
+fn sound_local_button(ui: &mut egui::Ui, p: &Palette, asset: Uuid, ready: bool, actions: &mut Vec<InvAction>) {
+    if widgets::action_button_if(
+        ui,
+        p,
+        "player-play-filled",
+        aurora_i18n::tr!("common-play-locally"),
+        widgets::ActionKind::Flat,
+        Vec2::new(0.0, BUTTON),
+        ready && !asset.is_nil(),
+    )
+    .clicked()
+    {
+        actions.push(InvAction::Sound(asset));
     }
 }
 
@@ -129,7 +150,8 @@ fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, facts: &Facts) -> b
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
     st.share_items = ids;
-    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+    // LLAvatarActions::shareWithAvatars: allow_multiple true
+    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
 }
 
 /// The ids the actions act on: the selection, or the row shown.
@@ -190,25 +212,34 @@ fn more(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, id: Uuid) {
     }
 }
 
-/// The name of a resident, or "You".
-fn resident(facts: &Facts, id: Uuid) -> String {
+/// A resident and the field that shows them (`resident_scopes`).
+type Resident = (Uuid, crate::world::names::NameScope);
+
+/// The name of a resident, or "You": the stand-in where RLVa's `@shownames`
+/// hides them in that field.
+fn resident_name(facts: &Facts, resident: Resident) -> String {
+    let (id, _) = resident;
     if id == facts.agent && !id.is_nil() {
         aurora_i18n::tr!("inventory-owner-you").to_owned()
     } else if id.is_nil() {
         aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple").to_owned()
     } else {
         facts
-            .names
-            .get(&id)
+            .hidden_names
+            .get(&resident)
+            .or_else(|| facts.names.get(&id))
             .cloned()
             .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned())
     }
 }
 
 /// A resident as a link to their profile.
-fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, id: Uuid, size: f32, actions: &mut Vec<InvAction>) {
-    let name = resident(facts, id);
-    if id.is_nil() {
+fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, resident: Resident, size: f32, actions: &mut Vec<InvAction>) {
+    let name = resident_name(facts, resident);
+    let (id, _) = resident;
+    // no resident, or one RLVa's `@shownames` hides: the stand-in opens no
+    // profile (LLSidepanelItemInfo::onClickCreator / onClickOwner)
+    if id.is_nil() || facts.hidden_names.contains_key(&resident) {
         ui.label(egui::RichText::new(name).size(size).color(p.muted));
         return;
     }
@@ -341,7 +372,7 @@ pub(super) fn strip(
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(egui::RichText::new(rows::kind_name(inv, id)).size(12.0).color(p.muted));
         ui.label(egui::RichText::new("·").size(12.0).color(p.muted_dim));
-        resident_link(ui, p, facts, original.creator, 12.0, actions);
+        resident_link(ui, p, facts, crate::ui::inventory::resident_scopes(original)[1], 12.0, actions);
     });
     if let Some(permissions) = Permissions::inventory(inv, id) {
         body.horizontal(|ui| {
@@ -373,6 +404,9 @@ pub(super) fn strip(
                 main.run(inv, id, st, prefs, facts, actions);
             }
         }
+        if original.asset_type == 1 {
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
+        }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
                 ui,
@@ -390,10 +424,15 @@ pub(super) fn strip(
             ui,
             p,
             "info-circle-filled",
-            aurora_i18n::tr!("common-properties"),
+            if original.asset_type == 1 {
+                ""
+            } else {
+                aurora_i18n::tr!("common-properties")
+            },
             widgets::ActionKind::Flat,
             Vec2::new(0.0, BUTTON),
         )
+        .on_hover_text(aurora_i18n::tr!("common-properties"))
         .clicked()
         {
             st.property_edit = None;
@@ -438,6 +477,7 @@ fn next_editable(inv: &Inventory, it: &aurora_net::inventory::InvItem, bit: u32,
     rules::mutable(inv, it.id)
         && !matches!(it.asset_type, 2 | 24 | 25)
         && st.pending.is_none()
+        && rules::next_owner_editable(it)
         && it.base_mask & bit != 0
         && !(bit == rules::COPY && it.asset_type == 56)
         && (bit != rules::TRANSFER || it.next_owner_mask & rules::COPY != 0)
@@ -580,17 +620,24 @@ pub(super) fn pane(
     let Some(it) = inv.items.get(&id) else { return };
     let original = rules::original(inv, id).and_then(|id| inv.items.get(&id)).unwrap_or(it);
     // The actions.
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
             let enabled = st.pending.is_none()
                 && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy)
                 && !(main == Main::Teleport && facts.landmark_blocked);
-            let width = (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0);
+            let width = if main == Main::Play {
+                0.0
+            } else {
+                (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0)
+            };
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(width, 28.0), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }
+        }
+        if original.asset_type == 1 {
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
         }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
@@ -623,11 +670,12 @@ pub(super) fn pane(
     });
     widgets::divider(ui, p);
     // The facts.
+    let [owner, creator] = crate::ui::inventory::resident_scopes(original);
     fact(ui, p, aurora_i18n::tr!("inventory-details-creator"), |ui| {
-        resident_link(ui, p, facts, original.creator, 12.5, actions);
+        resident_link(ui, p, facts, creator, 12.5, actions);
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-owner"), |ui| {
-        let owner = resident(facts, original.owner);
+        let owner = resident_name(facts, owner);
         ui.label(egui::RichText::new(owner).size(12.5).color(p.ink));
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-acquired"), |ui| {
@@ -682,6 +730,78 @@ mod tests {
     }
 
     #[test]
+    fn sound_details_offer_distinct_local_and_world_buttons_in_both_layouts() {
+        for wide in [false, true] {
+            let ctx = egui::Context::default();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let sound = Uuid::from_u128(8105);
+            let asset = inv.items[&sound].asset_id;
+            let mut st = InventoryUi {
+                selected: Some(sound),
+                selection: [sound].into(),
+                ..Default::default()
+            };
+            let mut frame = |events| {
+                let mut actions = vec![];
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(if wide { 300.0 } else { 440.0 }, 600.0))),
+                        focused: true,
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let p = crate::theme::Theme::default().palette();
+                        let draw = if wide { pane } else { strip };
+                        draw(
+                            ui,
+                            &p,
+                            &Icons::default(),
+                            &inv,
+                            &mut st,
+                            &mut InventoryPreferences::default(),
+                            &Facts::default(),
+                            &Default::default(),
+                            &mut actions,
+                        );
+                    },
+                );
+                (headless_output(output), actions)
+            };
+            for _ in 0..5 {
+                frame(vec![]);
+            }
+            for (label, local) in [
+                (aurora_i18n::tr!("common-play-locally"), true),
+                (aurora_i18n::tr!("common-play-in-world"), false),
+            ] {
+                let (output, _) = frame(vec![]);
+                let pos = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                        _ => None,
+                    })
+                    .expect("sound playback label");
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                frame(vec![egui::Event::PointerMoved(pos), button(true)]);
+                let (_, actions) = frame(vec![button(false)]);
+                assert!(
+                    matches!(&actions[..], [InvAction::Sound(id)] if local && *id == asset)
+                        || matches!(&actions[..], [InvAction::TriggerSound(id)] if !local && *id == asset)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_main_action_is_the_double_click_of_the_type() {
         let mut inv = Inventory::default();
         for t in [1, 2, 3, 5, 6, 7, 13, 21] {
@@ -715,5 +835,28 @@ mod tests {
         // settings always copy
         let settings = item(56);
         assert_ne!(next_mask(&settings, rules::COPY, false) & rules::COPY, 0);
+    }
+
+    #[test]
+    fn the_next_owner_switches_need_transfer_and_skip_cards_and_landmarks() {
+        let mut inv = Inventory::default();
+        let st = InventoryUi::default();
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut object = item(6);
+        object.owner_mask = full;
+        let mut no_transfer = item(7);
+        no_transfer.owner_mask = rules::COPY | rules::MODIFY;
+        let mut landmark = item(3);
+        landmark.owner_mask = full;
+        landmark.inv_type = 3;
+        for it in [&object, &no_transfer, &landmark] {
+            inv.items.insert(it.id, it.clone());
+        }
+        assert!(next_editable(&inv, &object, rules::MODIFY, &st));
+        assert!(
+            !next_editable(&inv, &no_transfer, rules::MODIFY, &st),
+            "the owner cannot transfer it"
+        );
+        assert!(!next_editable(&inv, &landmark, rules::MODIFY, &st));
     }
 }

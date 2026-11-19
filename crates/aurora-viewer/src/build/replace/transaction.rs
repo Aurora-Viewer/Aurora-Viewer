@@ -22,12 +22,11 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// before existing children, so submit the tail chunk first, root first
 /// in every message, and confirm it before submitting the preceding chunk.
 pub(super) fn link_batches(expected: &[Uuid]) -> Vec<Vec<Uuid>> {
-    let Some(root) = expected.first() else { return Vec::new() };
-    expected[1..]
-        .chunks(254)
-        .rev()
-        .map(|chunk| std::iter::once(*root).chain(chunk.iter().copied()).collect())
-        .collect()
+    if expected.len() < 2 {
+        return Vec::new();
+    }
+    // One acknowledged replacement step must remain one wire packet.
+    aurora_net::build::link_batches(expected).into_iter().rev().collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1065,7 +1064,9 @@ impl Job {
                         };
                         self.inventory_request = None;
                         match result {
-                            Ok(reply) => world.inventory.apply(reply.contents),
+                            Ok(reply) => {
+                                world.inventory.apply(reply.contents);
+                            }
                             Err(_) => self.message = aurora_i18n::tr!("replace-backup-kept").into(),
                         }
                     }

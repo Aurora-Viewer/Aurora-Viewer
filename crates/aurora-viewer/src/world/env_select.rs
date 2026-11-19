@@ -122,7 +122,11 @@ impl SettingsCatalog {
     }
 
     pub fn name_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&str> {
-        self.list(kind).iter().find(|c| c.asset == asset).map(|c| c.name.as_str())
+        self.choice_of(kind, asset).map(|c| c.name.as_str())
+    }
+
+    pub fn choice_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&SettingsChoice> {
+        self.list(kind).iter().find(|c| c.asset == asset)
     }
 
     pub fn choices(&self, kinds: &[SettingsKind], rank: impl Fn(Uuid) -> usize) -> Vec<(SettingsKind, &SettingsChoice)> {

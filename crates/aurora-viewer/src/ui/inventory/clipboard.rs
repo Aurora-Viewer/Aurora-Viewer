@@ -4,13 +4,144 @@
 
 use super::*;
 
+/// LLFolderViewItem::isFadeItem / draw (indra/llui/llfolderviewitem.cpp):
+/// a cut folder fades its descendants too, without disabling their controls.
+#[derive(Default)]
+pub(super) struct CutRows {
+    ids: Vec<Uuid>,
+    roots: HashSet<Uuid>,
+}
+
+pub(super) fn prepare(st: &mut InventoryUi) {
+    if st.cut && st.cut_rows.ids != st.clipboard {
+        st.cut_rows.ids.clone_from(&st.clipboard);
+        st.cut_rows.roots = st.clipboard.iter().copied().collect();
+    }
+}
+
+pub(super) fn opacity(inv: &Inventory, st: &InventoryUi, id: Uuid) -> f32 {
+    // Only visible rows walk their ancestors. Never expand or scan a cut
+    // folder's entire contents on the frame thread.
+    if st.cut && rules::ancestors(inv, id).any(|id| st.cut_rows.roots.contains(&id)) {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+impl InventoryUi {
+    /// Cancel the shared cut in every inventory window. Copy remains reusable.
+    pub fn cancel_cut(&mut self) {
+        if self.cut {
+            self.clipboard.clear();
+            self.cut = false;
+            self.consume_clipboard = false;
+        }
+        for window in &mut self.windows {
+            window.state.cancel_cut();
+        }
+    }
+
+    /// Called before fields consume input, even while Inventory is closed.
+    pub fn clipboard_input(&mut self, events: &[egui::Event]) {
+        for event in events {
+            match event {
+                egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    ..
+                } => self.cancel_cut(),
+                egui::Event::Paste(text) => self.clipboard_changed(Some(text)),
+                _ => {}
+            }
+        }
+    }
+
+    /// The Windows counter also catches asynchronous image copies and other
+    /// applications changing the clipboard without taking keyboard focus.
+    pub fn native_clipboard_changed(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            // SAFETY: this reads the calling desktop's change counter, with
+            // no pointers, ownership transfer or clipboard lock required.
+            let sequence = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+            sequence != 0 && self.clipboard_sequence.replace(sequence) != Some(sequence)
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
+    /// Check only on native changes or focus return; never poll clipboard text.
+    pub fn clipboard_changed(&mut self, text: Option<&str>) {
+        if self.cut && !holds_marker(self, text.unwrap_or_default()) {
+            self.cancel_cut();
+        }
+    }
+
+    /// A copy from any other viewer field replaces the cut's native marker.
+    pub fn clipboard_output(&mut self, commands: &[egui::OutputCommand]) {
+        for command in commands.iter().rev() {
+            match command {
+                egui::OutputCommand::CopyText(text) => {
+                    self.clipboard_changed(Some(text));
+                    break;
+                }
+                egui::OutputCommand::CopyImage(_) => {
+                    self.cancel_cut();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
     egui::Id::unique(("inventory_clipboard_focus", st.ui_id))
 }
 
 pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ui.ctx().cumulative_frame_nr());
-    ui.memory_mut(|m| {
+    request_focus_ctx(ui.ctx(), st);
+}
+
+/// Hands the keyboard back to the list when a modal or a preview over it
+/// closes. egui keeps the closed window as the top layer for one more pass,
+/// so this request is dropped and blocks [`list_focus`]'s restore; the restore
+/// window is moved two passes on (a preview's own text field keeps the focus
+/// for one more) so the list takes it once nothing is above it.
+pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    request_focus_ctx(ctx, st);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 2);
+    // run those passes now, not at the next input
+    ctx.request_repaint();
+}
+
+fn pending_focus_id() -> egui::Id {
+    egui::Id::unique("inventory_pending_focus")
+}
+
+/// The originating list and the frame from which it may take focus.
+type PendingFocus = (egui::Id, u64);
+
+/// Hands the keyboard back to `focus` (a list's [`focus_id`]) once the window
+/// above it is gone. A document lives in a window state of its own, so the
+/// request waits in the context for the list that opened it to take it.
+pub(crate) fn return_focus_to(ctx: &egui::Context, focus: egui::Id) {
+    let at = ctx.cumulative_frame_nr() + 2;
+    ctx.data_mut(|d| d.insert_temp(pending_focus_id(), Some((focus, at))));
+    ctx.request_repaint();
+}
+
+/// The document `st` closed: ask the list that opened it for the keyboard.
+pub(super) fn return_document_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    if let Some(owner) = st.document_owner.take() {
+        return_focus_to(ctx, owner);
+    }
+}
+
+fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(
             focus_id(st),
@@ -44,6 +175,31 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     if leaving {
         st.list_focus_frame = None;
     }
+    // A document opened from this list closed: take the keyboard back once
+    // the window above is gone and no other widget holds it. The window can
+    // outlive the close by a pass or two, so the request stays a few passes.
+    let now = ui.ctx().cumulative_frame_nr();
+    let focused = ui.memory(|m| m.focused());
+    if let Some((focus, at)) = ui.ctx().data(|d| d.get_temp::<Option<PendingFocus>>(pending_focus_id())).flatten() {
+        if focus == focus_id(st) {
+            if leaving || now > at + 2 {
+                ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+            } else if now >= at
+                && ui.is_enabled()
+                && st.dialog.is_none()
+                && !egui::Popup::is_any_open(ui.ctx())
+                && focused.is_none()
+                && ui.memory(|m| m.allows_interaction(ui.layer_id()))
+            {
+                ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+                request_focus(ui, st);
+            } else {
+                ui.ctx().request_repaint();
+            }
+        } else if now > at + 2 {
+            ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+        }
+    }
     // A discarded sizing pass can omit the list and trigger egui's focus
     // dead-man switch. Restore only its immediately preceding focus request,
     // with no other focused widget, click outside, Tab, Escape or modal.
@@ -65,7 +221,7 @@ pub(super) fn copy_allowed(inv: &Inventory, ids: &[Uuid]) -> bool {
                 || inv
                     .items
                     .get(id)
-                    .is_some_and(|it| it.owner_mask & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
+                    .is_some_and(|it| rules::held(inv, it) & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
         })
 }
 
@@ -78,6 +234,7 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     }
     st.clipboard = ids;
     st.cut = cut;
+    st.consume_clipboard = false;
 }
 
 /// Ctrl+C / Ctrl+X: `ids` go on the clipboard when they may be copied, or
@@ -233,12 +390,16 @@ pub(super) fn shortcuts(
     if !list_has_focus(ui, st) {
         return;
     }
-    if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        super::delete::shortcut(ui, inv, st, prefs, facts);
+    if !actions
+        .iter()
+        .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)))
+    {
+        super::delete::shortcut(ui, inv, st, prefs, facts, actions);
     }
-    if st.dialog.is_some() {
+    if st.dialog.is_some() || st.rename.is_some() {
         return;
     }
+    super::keyboard::open_shortcut(ui, inv, st, prefs, facts, actions);
     // egui-winit consumes the physical C/X/V presses and emits these native
     // clipboard events instead. Testing key_pressed(C) would miss real input.
     let mut events = Vec::new();
@@ -253,7 +414,11 @@ pub(super) fn shortcuts(
         });
     });
     for event in events {
-        if st.pending.is_some() || actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
+        if st.pending.is_some()
+            || actions
+                .iter()
+                .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)))
+        {
             continue;
         }
         match event {
@@ -287,20 +452,69 @@ fn demo_mode() -> Option<&'static str> {
     MODE.get_or_init(|| {
         std::env::var("AURORA_DEMO_INVENTORY").ok().filter(|mode| {
             mode.starts_with("clipboard")
+                || mode.starts_with("aurora-clipboard")
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
+                || mode.starts_with("enter")
+                || mode.contains("rename-focus")
+                || mode.contains("rename-window")
         })
     })
     .as_deref()
+    .map(|mode| mode.strip_prefix("aurora-").unwrap_or(mode))
 }
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
     if demo_mode().is_some() || super::delete::demo_enabled() || crate::demo::texture_library::inventory_drag_enabled() {
-        response
-            .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
+        // The row's center can hit an inline action in the explorer. Delete
+        // fixtures select on the label side, like the native-input tests.
+        let point = if super::delete::demo_enabled() {
+            response.rect.left_center() + egui::vec2(response.rect.width().min(60.0) * 0.5, 0.0)
+        } else {
+            response.rect.center()
+        };
+        // Whether the row was drawn this frame with its whole height inside
+        // the list's clip, within a pixel: a row scrolled to the bottom ends
+        // on the clip's edge. A wide row runs past the clip sideways.
+        let shown = (
+            response.ctx.cumulative_frame_nr(),
+            response.interact_rect.height() + 1.0 >= response.rect.height(),
+        );
+        response.ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point);
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, item)), shown);
+            if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+                data.insert_temp(egui::Id::unique(("inventory_demo_click_row", st.ui_id, item)), response.rect);
+            }
+        });
     }
+}
+
+pub(super) fn demo_viewport<R>(ctx: &egui::Context, st: &InventoryUi, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+    if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+        let viewport = (out.id, out.inner_rect, out.state.unclamped_offset());
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)), viewport));
+    }
+}
+
+/// The demo must target the actual scroll area: list() clears scroll_restore
+/// before drawing, since that field belongs to tab/update restoration.
+pub(super) fn position_click_demo(
+    ctx: &egui::Context,
+    st: &mut InventoryUi,
+    row: egui::Rect,
+    viewport: (egui::Id, egui::Rect, egui::Vec2),
+    top: bool,
+) -> f32 {
+    let (area, clip, mut offset) = viewport;
+    let edge = if top { clip.top() } else { clip.bottom() };
+    offset.y = (offset.y + row.top() - edge + row.height() / 2.0).max(0.0);
+    st.scroll_hold = None;
+    super::super::widgets::scroll_offset::set(ctx, area, offset);
+    st.selected = None;
+    st.selection.clear();
+    offset.y
 }
 
 pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uuid) {
@@ -325,6 +539,107 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if matches!(mode, "rename-focus" | "rename-window") {
+        if frame == 640 {
+            super::super::widgets::place_floater(ctx, "inventory", egui::pos2(20.0, 56.0), egui::vec2(560.0, 750.0));
+            for window in &st.windows {
+                super::super::widgets::place_floater(
+                    ctx,
+                    &format!("inventory_{}", window.id),
+                    egui::pos2(620.0, 56.0),
+                    egui::vec2(560.0, 750.0),
+                );
+            }
+        }
+        let target = if mode == "rename-window" {
+            st.windows.first().map(|w| &*w.state).unwrap_or(st)
+        } else {
+            st
+        };
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", target.ui_id, Uuid::from_u128(8100)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let key = match frame {
+            670 => Some(egui::Key::F2),
+            685 => Some(egui::Key::End),
+            710 => Some(egui::Key::Enter),
+            735 => Some(egui::Key::ArrowDown),
+            _ => None,
+        };
+        if let Some(key) = key {
+            return vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        if frame == 690 && target.rename.is_some() {
+            // Keep the existing localized name: newly typed inventory text is ASCII.
+            return vec![egui::Event::Text(" 2".into())];
+        }
+        if matches!(frame, 680 | 720 | 750) {
+            log::info!(
+                "demo inventory rename: frame={frame}, pane={}, renaming={}, list_focus={}, selected={:?}",
+                target.ui_id,
+                target.rename.is_some(),
+                ctx.memory(|m| m.has_focus(focus_id(target))),
+                target.selected
+            );
+        }
+        return Vec::new();
+    }
+    if mode.starts_with("enter") {
+        // Select and reveal the demo object, keep the list's keyboard, then
+        // Enter puts it on and a second Enter takes it off once it is worn
+        // (LLObjectBridge::openItem, as a double-click does).
+        let item = Uuid::from_u128(8100);
+        if (640..680).contains(&frame) {
+            st.selected = Some(item);
+            st.selection = HashSet::from([item]);
+            st.reveal = Some(item);
+            ctx.memory_mut(|memory| memory.request_focus(focus_id(st)));
+        }
+        if matches!(frame, 680 | 720) {
+            return vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        return Vec::new();
+    }
+    if mode.starts_with("keyboard-click-") {
+        // Prepare a half-visible row at either edge, then leave the actual
+        // click to the human. The long demo folder gives both edges room.
+        if frame == 620 {
+            let geometry = ctx.data(|data| {
+                let row = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_row", st.ui_id, Uuid::from_u128(11000))))?;
+                let viewport =
+                    data.get_temp::<(egui::Id, egui::Rect, egui::Vec2)>(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)))?;
+                Some((row, viewport))
+            });
+            if let Some((row, viewport)) = geometry {
+                let offset = position_click_demo(ctx, st, row, viewport, mode.ends_with("top"));
+                log::info!("demo inventory click edge: mode={mode}, target=11000, offset={offset}");
+            }
+        }
+        return Vec::new();
+    }
     if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
         if matches!(frame, 650 | 651)
             && let Some(pos) =
@@ -359,6 +674,30 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             };
             return vec![egui::Event::Key {
                 key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        // Down from the object, past the bottom of the list: it scrolls so
+        // the selected row is drawn whole, at any font scale.
+        if mode.ends_with("keyboard-down") {
+            if frame == 720 {
+                let shown = st.selected.and_then(|id| {
+                    ctx.data(|data| data.get_temp::<(u64, bool)>(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, id))))
+                });
+                log::info!(
+                    "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
+                    st.selected,
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                );
+            }
+            if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {
+                return Vec::new();
+            }
+            return vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
@@ -465,8 +804,8 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     } else {
         st.ui_id
     };
-    let cut = matches!(mode, "clipboard-cut" | "clipboard-cut-folder");
-    let folder = matches!(mode, "clipboard-folder" | "clipboard-cut-folder");
+    let cut = mode.starts_with("clipboard-cut");
+    let folder = mode == "clipboard-folder" || mode.starts_with("clipboard-cut-folder");
     if folder && frame == 785 {
         st.expand_all = Some(true);
         st.reveal = st.selected;
@@ -534,7 +873,17 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     if frame == 680 {
         return vec![if cut { egui::Event::Cut } else { egui::Event::Copy }];
     }
-    if (frame == 730 || frame == 760 && mode == "clipboard-copy")
+    if frame == 730 && mode.ends_with("-cancel") {
+        return vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+    }
+    if !mode.ends_with("-hold")
+        && (frame == 730 || frame == 760 && mode == "clipboard-copy")
         && let Some(id) = st.clipboard.first()
     {
         return vec![egui::Event::Paste(id.to_string())];
@@ -555,6 +904,7 @@ mod tests {
         ctx: egui::Context,
         world: World,
         st: InventoryUi,
+        dual: InventoryUi,
         prefs: InventoryPreferences,
         output: egui::FullOutput,
         time: f64,
@@ -600,6 +950,7 @@ mod tests {
                     expand_all: Some(true),
                     ..Default::default()
                 },
+                dual: InventoryUi::dual_pane(),
                 prefs: InventoryPreferences::default(),
                 output: Default::default(),
                 time: 0.0,
@@ -624,6 +975,7 @@ mod tests {
             }) {
                 events.insert(0, Event::ModifiersChanged(modifiers));
             }
+            self.st.clipboard_input(&events);
             self.time += 0.3;
             let mut actions = Vec::new();
             self.output = headless_output(self.ctx.run_ui(
@@ -640,6 +992,7 @@ mod tests {
                         &Icons::default(),
                         &mut self.world,
                         &mut self.st,
+                        self.prefs.dual_panel.then_some(&mut self.dual),
                         &mut self.prefs,
                         &mut true,
                         false,
@@ -651,6 +1004,7 @@ mod tests {
                     );
                 },
             ));
+            self.st.clipboard_output(&self.output.platform_output.commands);
             actions
         }
 
@@ -751,6 +1105,33 @@ mod tests {
                 .expect("trash button")
         }
 
+        fn row_face(&self, item: Uuid) -> Option<egui::Color32> {
+            let row = self
+                .ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", self.st.ui_id, item))))
+                .expect("drawn row");
+            fn face(shape: &Shape, row: egui::Rect) -> Option<egui::Color32> {
+                match shape {
+                    Shape::Rect(rect)
+                        if rect.rect.contains(row.center())
+                            && rect.rect.height() <= row.height() + 4.0
+                            && rect.rect.width() >= row.width() * 0.8
+                            && rect.fill.a() > 0 =>
+                    {
+                        Some(rect.fill)
+                    }
+                    Shape::Vec(shapes) => shapes.iter().rev().find_map(|shape| face(shape, row)),
+                    _ => None,
+                }
+            }
+            self.output
+                .shapes
+                .iter()
+                .rev()
+                .filter(|shape| shape.clip_rect.contains(row.center()))
+                .find_map(|shape| face(&shape.shape, row))
+        }
+
         fn add_trash(&mut self) -> Uuid {
             let trash = id(8020);
             let mut folder = self.world.inventory.folders[&id(8001)].clone();
@@ -785,6 +1166,133 @@ mod tests {
             repeat: true,
             modifiers: if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE },
         }
+    }
+
+    fn enter_key() -> Event {
+        Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn rename_key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn inventory_rename_returns_navigation_to_the_list_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for finish in [egui::Key::Enter, egui::Key::Escape] {
+                let mut h = Harness::new();
+                h.classic = classic;
+                super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+                h.st.show_original(&h.world.inventory, id(8100));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                h.select(id(8100), false);
+                h.frame(vec![rename_key(egui::Key::F2)]);
+                assert_eq!(h.st.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+                h.frame(vec![Event::Text("Renamed demo object".into())]);
+                let actions = h.frame(vec![rename_key(finish)]);
+                assert!(h.st.rename.is_none(), "{classic}, {width}, {finish:?}");
+                assert_eq!(
+                    actions.iter().filter(|a| matches!(a, InvAction::Edit(_))).count(),
+                    usize::from(finish == egui::Key::Enter)
+                );
+                h.frame(Vec::new());
+                assert!(
+                    h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                    "the list keeps focus after {finish:?}"
+                );
+                h.frame(vec![arrow(true, false)]);
+                assert_ne!(
+                    h.st.selected,
+                    Some(id(8100)),
+                    "arrows navigate after {finish:?}, {classic}, {width}"
+                );
+                assert!(
+                    !h.ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)),
+                    "the world must not receive the arrow"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_f2_and_rename_completion_stay_in_the_focused_folder_window() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.select(id(8100), false);
+            h.st.open_folder_window(id(8000));
+            let window = format!("inventory_{}", h.st.windows[0].id);
+            super::super::super::widgets::place_floater(&h.ctx, &window, egui::pos2(20.0, 50.0), egui::vec2(600.0, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.click(h.row_in(id(8100), &window), Default::default());
+            h.frame(vec![rename_key(egui::Key::F2)]);
+            assert!(h.st.rename.is_none(), "the first window must not steal F2");
+            assert_eq!(h.st.windows[0].state.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+            h.frame(vec![enter_key()]);
+            h.frame(Vec::new());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st.windows[0].state))));
+            h.frame(vec![arrow(true, false)]);
+            assert_ne!(h.st.windows[0].state.selected, Some(id(8100)));
+            assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    #[test]
+    fn inventory_f2_uses_the_focused_dual_pane() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            h.frame(vec![rename_key(egui::Key::F2)]);
+            assert!(h.st.rename.is_none());
+            assert_eq!(h.dual.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+            h.frame(vec![enter_key()]);
+            h.frame(Vec::new());
+            h.frame(vec![arrow(true, false)]);
+            assert_ne!(h.dual.selected, Some(id(8100)));
+            assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    #[test]
+    fn enter_on_the_selected_inventory_object_opens_it_like_a_double_click() {
+        use crate::world::appearance::Action as Wear;
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        let actions = h.frame(vec![enter_key()]);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == id(8100)),
+            "Enter puts the object on, got {} actions",
+            actions.len()
+        );
     }
 
     #[test]
@@ -1026,9 +1534,10 @@ mod tests {
             assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![received_item]));
             h.frame(Vec::new());
             let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
-            let [InvAction::Edit(change)] = &actions[..] else {
+            let [InvAction::Delete(deletion)] = &actions[..] else {
                 panic!("confirmed Received deletion must submit one mutation (classic={classic}, button={button})")
             };
+            let change = &deletion.change;
             assert!(change.move_only());
             assert_eq!(change.operations.len(), 1);
             rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete received item");
@@ -1053,9 +1562,10 @@ mod tests {
         assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
         h.frame(Vec::new());
         let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
-        let [InvAction::Edit(change)] = &actions[..] else {
+        let [InvAction::Delete(deletion)] = &actions[..] else {
             panic!("confirmed deletion must submit one mutation")
         };
+        let change = &deletion.change;
         assert!(change.move_only());
         assert_eq!(change.operations.len(), 2, "a selected descendant moves with its folder once");
         rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete");
@@ -1065,6 +1575,146 @@ mod tests {
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
     }
 
+    fn key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn closing_the_delete_confirmation_gives_the_list_its_keyboard_back() {
+        // Enter, Escape and Cancel all hand the keyboard back to the list, as
+        // the Legacy alert restores the focus it saved; a click on the dimmed
+        // world behind the modal answers nothing.
+        for close in ["enter", "escape", "cancel"] {
+            let mut h = Harness::new();
+            h.add_trash();
+            h.frame(Vec::new());
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: Delete opens the confirmation");
+            h.frame(Vec::new());
+            assert!(h.click(Pos2::new(4.0, 4.0), Default::default()).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: a click outside the modal keeps it open");
+            h.frame(Vec::new());
+            let mut actions = match close {
+                "enter" => h.frame(vec![key(egui::Key::Enter)]),
+                "escape" => h.frame(vec![key(egui::Key::Escape)]),
+                _ => h.click(h.text(aurora_i18n::tr!("common-cancel")).center(), Default::default()),
+            };
+            // modal_keys clicks the default button on the pass after Enter
+            actions.extend(h.frame(Vec::new()));
+            assert_eq!(actions.len(), usize::from(close == "enter"), "{close}");
+            assert!(h.st.dialog.is_none(), "{close}: the confirmation closed");
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert!(
+                h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                "{close}: the list has the keyboard again"
+            );
+            if close != "enter" {
+                // released first, or egui reports the second press as a repeat
+                let release = Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![release, delete_key(Default::default())]);
+                assert!(h.st.dialog.is_some(), "{close}: Delete reaches the list without a click");
+            }
+        }
+    }
+
+    fn close_inventory_note(h: &mut Harness, item: Uuid, owner: egui::Id) {
+        for _ in 0..3 {
+            h.frame(Vec::new());
+        }
+        let document =
+            h.st.windows
+                .iter()
+                .find(|w| w.state.preview == Some(item))
+                .expect("the document window");
+        assert_eq!(document.state.document_owner, Some(owner));
+        let window = super::super::document::preview_window_id(document.state.ui_id, item, 7);
+        crate::ui::widgets::close_floater(&h.ctx, &window);
+        for _ in 0..6 {
+            h.frame(Vec::new());
+        }
+        assert!(
+            h.st.windows.iter().all(|w| w.state.preview != Some(item)),
+            "the document window closed"
+        );
+    }
+
+    fn open_and_close_selected_note(h: &mut Harness, window: &str, owner: egui::Id) {
+        let item = id(8103);
+        h.click(h.row_in(item, window), Default::default());
+        let actions = h.frame(vec![enter_key()]);
+        assert!(
+            matches!(actions.as_slice(), [InvAction::Preview(selected, Some(origin))] if *selected == item && *origin == owner),
+            "Enter should open the notecard from {window}"
+        );
+        h.st.open_document(&h.ctx, item, 7, Some(owner));
+        close_inventory_note(h, item, owner);
+        assert!(
+            h.ctx.memory(|m| m.has_focus(owner)),
+            "the list that opened the document has the keyboard"
+        );
+        h.frame(vec![key(egui::Key::ArrowDown)]);
+    }
+
+    #[test]
+    fn closing_a_notecard_gives_the_list_its_keyboard_back() {
+        let mut h = Harness::new();
+        let owner = focus_id(&h.st);
+        open_and_close_selected_note(&mut h, "inventory", owner);
+        assert!(
+            h.st.selected.is_some_and(|item| item != id(8103)),
+            "Down moves the main list selection"
+        );
+    }
+
+    #[test]
+    fn a_document_window_returns_the_keyboard_to_the_list_that_opened_it() {
+        let mut h = Harness::new();
+        h.st.open_folder_window(id(8000));
+        let window = format!("inventory_{}", h.st.windows[0].id);
+        super::super::super::widgets::place_floater(&h.ctx, &window, egui::pos2(20.0, 50.0), egui::vec2(600.0, 800.0));
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        let owner = focus_id(&h.st.windows[0].state);
+        assert_ne!(owner, focus_id(&h.st));
+        let main_selection = h.st.selected;
+        open_and_close_selected_note(&mut h, &window, owner);
+        assert!(
+            h.st.windows[0].state.selected.is_some_and(|item| item != id(8103)),
+            "Down moves the folder selection"
+        );
+        assert_eq!(h.st.selected, main_selection, "Down leaves the main list alone");
+    }
+
+    #[test]
+    fn closing_a_notecard_preserves_an_active_inventory_search() {
+        let mut h = Harness::new();
+        h.st.focus_search = true;
+        h.frame(Vec::new());
+        let search = h.ctx.memory(|m| m.focused()).expect("the inventory search has focus");
+        let owner = focus_id(&h.st);
+        assert_ne!(search, owner);
+        let item = id(8103);
+        h.st.open_document(&h.ctx, item, 7, Some(owner));
+        close_inventory_note(&mut h, item, owner);
+        h.frame(vec![Event::Text("needle".into())]);
+        assert_eq!(h.st.search, "needle", "closing the note preserves the active search field");
+    }
+
     #[test]
     fn trash_button_is_right_of_loaded_count_and_opens_same_confirmation() {
         let mut h = Harness::new();
@@ -1072,7 +1722,7 @@ mod tests {
         let button = h.trash_button(h.st.ui_id);
         let count = h.text(&aurora_i18n::tr!(
             "ui-inventory-objects-loaded",
-            value0 = format!("{}", h.world.inventory.item_count())
+            value0 = aurora_i18n::integer(h.world.inventory.total_count() as i64)
         ));
         assert!(button.left() > count.right());
         assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
@@ -1086,6 +1736,58 @@ mod tests {
         );
         assert!(h.st.dialog.is_none());
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn inventory_count_hover_shows_live_items_and_folders_in_both_layouts() {
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, texts)),
+                _ => {}
+            }
+        }
+        for (classic, width) in [(true, 680.0), (false, 680.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::size_floater(&h.ctx, "inventory", egui::vec2(width, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.world.inventory.item_count(), 14);
+            assert_eq!(h.world.inventory.folders.len(), 5);
+            for folders in [5, 4] {
+                if folders == 4 {
+                    h.world.inventory.remove(&[id(8001)]);
+                }
+                h.frame(Vec::new());
+                let total = aurora_i18n::integer(14 + folders);
+                let label = if classic {
+                    aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = total)
+                } else {
+                    aurora::item_count(&h.world.inventory, aurora::Layout::of_window(&h.ctx, "inventory"))
+                };
+                let position = h.text(&label).center();
+                h.frame(vec![Event::PointerMoved(position)]);
+                for _ in 0..8 {
+                    h.frame(Vec::new());
+                }
+                let details = aurora_i18n::tr!(
+                    "inventory-count-tooltip",
+                    items = aurora_i18n::integer(14),
+                    folders = aurora_i18n::integer(folders)
+                );
+                let tooltip = if classic { format!("{label}\n{details}") } else { details };
+                let mut texts = Vec::new();
+                for shape in &h.output.shapes {
+                    collect(&shape.shape, &mut texts);
+                }
+                assert!(
+                    texts.contains(&tooltip),
+                    "classic={classic}, width={width}, folders={folders}, expected={tooltip:?}, painted={texts:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1158,8 +1860,169 @@ mod tests {
         h.frame(Vec::new());
         let actions = h.click(h.text(aurora_i18n::tr!("ui-inventory-dialogs-purge")).center(), Default::default());
         assert!(
-            matches!(&actions[..], [InvAction::Edit(change)] if change.removed == vec![id(8100)] && matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Delete { id: item, folder: false }] if *item == id(8100)))
+            matches!(&actions[..], [InvAction::Delete(deletion)] if deletion.change.removed == vec![id(8100)] && matches!(&deletion.change.operations[..], [aurora_net::inventory::operations::Operation::Delete { id: item, folder: false }] if *item == id(8100)))
         );
+    }
+
+    fn escape() -> Event {
+        Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    impl Harness {
+        fn row_alpha(&self, item: Uuid) -> u8 {
+            let label = if self.world.inventory.folders.contains_key(&item) {
+                folder_name(&self.world.inventory, item)
+            } else {
+                rules::name(&self.world.inventory, item)
+            };
+            fn find(shape: &Shape, label: &str) -> Option<u8> {
+                match shape {
+                    Shape::Text(text) if text.galley.text().starts_with(label) => {
+                        let alpha = text.override_text_color.map(|color| color.a()).unwrap_or_else(|| {
+                            text.galley
+                                .rows
+                                .iter()
+                                .flat_map(|row| &row.visuals.mesh.vertices)
+                                .map(|vertex| {
+                                    if vertex.color == egui::Color32::PLACEHOLDER {
+                                        text.fallback_color.a()
+                                    } else {
+                                        vertex.color.a()
+                                    }
+                                })
+                                .max()
+                                .unwrap_or_default()
+                        });
+                        Some((f32::from(alpha) * text.opacity_factor).round() as u8)
+                    }
+                    Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, label)),
+                    _ => None,
+                }
+            }
+            self.output
+                .shapes
+                .iter()
+                .find_map(|shape| find(&shape.shape, &label))
+                .expect("painted row")
+        }
+    }
+
+    #[test]
+    fn cut_feedback_fades_rows_until_cancelled_in_every_inventory_layout() {
+        for (classic, width) in [(true, 680.0), (false, 460.0), (false, 740.0), (false, 1100.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(400.0, 40.0), egui::vec2(width, 950.0));
+            // Switching from the tree to the explorer must reveal the source
+            // folder before sending its row a native shortcut.
+            h.st.show_original(&h.world.inventory, id(8109));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8109), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(Vec::new());
+            assert!((127..=128).contains(&h.row_alpha(id(8109))), "{classic}, {width}");
+            assert_eq!(h.row_alpha(id(8100)), 255);
+            // Changing the destination selection must not cancel the source.
+            h.select(id(8001), false);
+            assert!((127..=128).contains(&h.row_alpha(id(8109))));
+            h.frame(vec![Event::Copy]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8109)), 255, "a new inventory copy replaces the cut");
+            h.select(id(8109), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(vec![escape()]);
+            assert!(!h.st.cut);
+            assert!(h.st.clipboard.is_empty());
+            assert_eq!(h.row_alpha(id(8109)), 255);
+            h.select(id(8109), false);
+            h.frame(vec![Event::Copy]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8109)), 255, "copy never fades rows");
+            let copied = h.st.clipboard.clone();
+            h.frame(vec![escape()]);
+            assert_eq!(h.st.clipboard, copied, "Escape preserves an ordinary copy");
+        }
+    }
+
+    #[test]
+    fn cut_folder_feedback_reaches_descendants_and_survives_refused_paste() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(400.0, 40.0), egui::vec2(460.0, 950.0));
+            let mut child = h.world.inventory.items[&id(8104)].clone();
+            child.id = id(8200);
+            child.parent = id(8001);
+            child.name = "Cut folder child".into();
+            h.world.inventory.add_items(vec![child]);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8001), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(Vec::new());
+            assert!((127..=128).contains(&h.row_alpha(id(8001))));
+            assert!((127..=128).contains(&h.row_alpha(id(8200))));
+            assert_eq!(h.row_alpha(id(8104)), 255);
+            // A folder cannot be pasted into itself: keep the pending cut.
+            assert!(h.paste().is_empty());
+            h.frame(Vec::new());
+            assert!(h.st.cut);
+            assert!((127..=128).contains(&h.row_alpha(id(8200))));
+            h.st.clipboard_output(&[egui::OutputCommand::CopyText("a different field".into())]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8200)), 255);
+        }
+    }
+
+    #[test]
+    fn cut_feedback_tracks_native_clipboard_replacement_and_shared_windows() {
+        let mut h = Harness::new();
+        h.st.open_folder_window(id(8000));
+        let window = h.st.windows[0].id;
+        super::super::super::widgets::place_floater(
+            &h.ctx,
+            &format!("inventory_{window}"),
+            egui::pos2(20.0, 50.0),
+            egui::vec2(600.0, 800.0),
+        );
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        h.frame(Vec::new());
+        assert!(h.st.windows[0].state.cut);
+        let marker = h.st.clipboard[0].to_string();
+        h.st.clipboard_changed(Some(&marker));
+        assert!(h.st.cut, "returning to the viewer keeps its own marker");
+        h.st.clipboard_changed(None);
+        h.frame(Vec::new());
+        assert!(!h.st.cut);
+        assert!(!h.st.windows[0].state.cut);
+        assert_eq!(h.row_alpha(id(8109)), 255);
+        h.st.windows.clear();
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        assert!(h.frame(vec![Event::Paste("outside text".into())]).is_empty());
+        assert!(!h.st.cut);
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        h.select(id(8001), false);
+        assert!(matches!(&h.paste()[..], [InvAction::Edit(change)] if change.move_only()));
+        assert!(h.st.consume_clipboard);
+        // The successful mutation path consumes the cut in all windows.
+        h.st.cancel_cut();
+        h.frame(Vec::new());
+        assert_eq!(h.row_alpha(id(8109)), 255);
     }
 
     #[test]
@@ -1413,5 +2276,146 @@ mod tests {
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if change.copies.len() == 1 && change.copies[0].parent == id(8001)));
         h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
+    }
+
+    /// Real Delete / Enter input, selection paint, scrolling and another Delete
+    /// in all four layouts, including the explorer's temporarily swapped tree.
+    #[test]
+    fn deletion_result_preserves_or_advances_the_visible_selection_in_every_layout() {
+        let mut failures = Vec::new();
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for confirm in [true, false] {
+                for filtered in [false, true] {
+                    for outcome in ["success", "failure", "queued", "changed selection"] {
+                        let case = format!("classic={classic}, width={width}, confirm={confirm}, filtered={filtered}, {outcome}");
+                        // Report every layout in a single regression run.
+                        let result = std::panic::catch_unwind(|| {
+                            let mut h = Harness::new();
+                            h.classic = classic;
+                            h.ctx.global_style_mut(|style| style.animation_time = 0.0);
+                            h.add_trash();
+                            h.prefs.confirm_delete = confirm;
+                            super::super::super::widgets::place_floater(
+                                &h.ctx,
+                                "inventory",
+                                egui::pos2(10.0, 40.0),
+                                egui::vec2(width, 950.0),
+                            );
+                            h.st.show_original(&h.world.inventory, id(8100));
+                            if filtered {
+                                // Content names keep this search independent of the UI language.
+                                let source = h.world.inventory.items[&id(8100)].clone();
+                                h.world.inventory.add_items(
+                                    (0..3)
+                                        .map(|n| aurora_net::inventory::InvItem {
+                                            id: id(21_000 + n),
+                                            name: format!("Delete regression {n}"),
+                                            ..source.clone()
+                                        })
+                                        .collect(),
+                                );
+                                h.st.search = "Delete regression".into();
+                                h.st.expand_all = Some(true);
+                                h.st.reveal = None;
+                                h.st.reveal_path.clear();
+                            }
+                            for _ in 0..4 {
+                                h.frame(Vec::new());
+                            }
+                            let order = keyboard::shown_order(&h.st);
+                            assert_eq!(
+                                h.st.shown_order,
+                                if filtered {
+                                    keyboard::ShownOrder::Results
+                                } else if h.st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) {
+                                    keyboard::ShownOrder::Flat
+                                } else {
+                                    keyboard::ShownOrder::Plain
+                                }
+                            );
+                            let index = order
+                                .iter()
+                                .position(|row| h.world.inventory.items.contains_key(row))
+                                .unwrap_or_else(|| panic!("no item row: {case}; order={order:?}"));
+                            let (target, expected, other) = (order[index], order[index + 1], order[index + 2]);
+                            h.select(target, false);
+                            h.frame(Vec::new());
+                            let selected_face = h.row_face(target).expect("selected row has a painted highlight");
+                            assert_ne!(h.row_face(expected), Some(selected_face), "the successor starts unselected");
+                            let mut actions = h.frame(vec![delete_key(Default::default())]);
+                            if confirm {
+                                assert!(actions.is_empty() && h.st.dialog.is_some());
+                                h.frame(Vec::new());
+                                actions = h.frame(vec![key(egui::Key::Enter)]);
+                                actions.extend(h.frame(Vec::new()));
+                            } else {
+                                assert!(h.st.dialog.is_none(), "disabled confirmation submits directly");
+                            }
+                            let [InvAction::Delete(deletion)] = &actions[..] else {
+                                panic!("confirmed deletion must submit one mutation ({classic}, {width})")
+                            };
+                            assert_eq!(h.st.selection, HashSet::from([target]), "submission must not speculate");
+                            let request = id(90_000);
+                            h.st.begin_mutation(request, &deletion.change);
+                            h.st.begin_delete(request, deletion.selection.clone());
+                            if outcome == "changed selection" {
+                                // Let the progress footer settle before locating
+                                // the row the human can now click.
+                                h.frame(Vec::new());
+                                h.frame(Vec::new());
+                                h.select(other, false);
+                                assert_eq!(h.st.selected, Some(other), "the new click must reach its intended row");
+                            }
+                            let success = outcome != "failure";
+                            h.st.finish_delete(request, success, outcome == "queued");
+                            h.st.finish_mutation(success);
+                            if outcome == "queued" {
+                                h.frame(Vec::new());
+                                assert_eq!(h.st.selected, Some(target), "queued is not an observed move");
+                            }
+                            if success {
+                                rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, deletion.change.clone()).expect("delete");
+                            }
+                            for _ in 0..3 {
+                                h.frame(Vec::new());
+                            }
+                            let expected = match outcome {
+                                "failure" => target,
+                                "changed selection" => other,
+                                _ => expected,
+                            };
+                            assert_eq!(h.st.selection, HashSet::from([expected]), "{case}");
+                            assert_eq!((h.st.selected, h.st.anchor), (Some(expected), Some(expected)), "{case}");
+                            h.row(expected); // text, row and clipping must all be inside this list's viewport
+                            assert_eq!(
+                                h.row_face(expected),
+                                Some(selected_face),
+                                "the surviving row is visibly highlighted: {case}"
+                            );
+                            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))), "list focus: {case}");
+                            let mut release = delete_key(Default::default());
+                            if let Event::Key { pressed, .. } = &mut release {
+                                *pressed = false;
+                            }
+                            h.frame(vec![release]);
+                            let actions = h.frame(vec![delete_key(Default::default())]);
+                            if confirm {
+                                assert!(
+                                    actions.is_empty()
+                                        && matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![expected]),
+                                    "second Delete: {case}"
+                                );
+                            } else {
+                                assert!(matches!(&actions[..], [InvAction::Delete(_)]), "second Delete: {case}");
+                            }
+                        });
+                        if result.is_err() {
+                            failures.push(case);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "failed inventory layouts: {failures:#?}");
     }
 }

@@ -9,7 +9,8 @@
 //! * nothing is fetched before the rules allow it (`decide`): by default
 //!   only links to the trusted sites of `link_trust.rs` load by themselves;
 //!   the others wait for a click, as loading a picture tells its site our
-//!   address;
+//!   address; so do, whatever the settings, the links an object sends and
+//!   the links to a region or a script's HTTP-in address (`waits_for_click`);
 //! * a link that hides or fakes its destination never gets a preview;
 //! * no cookie and no referrer are sent; when the trust of the site is what
 //!   allowed the load, redirects must stay on trusted sites;
@@ -27,7 +28,7 @@
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod services;
 pub use services::{Service, blurred_until_clicked};
@@ -149,6 +150,7 @@ impl Settings {
                 .subtitles
                 .then(|| language_code(&self.subtitle_language).unwrap_or_else(|| language.clone())),
             language,
+            clock: false,
         }
     }
 }
@@ -162,6 +164,9 @@ pub struct PlayerOptions {
     pub subtitles: Option<String>,
     /// The language of the player's interface.
     pub language: String,
+    /// The page tells the viewer where the video is while it plays
+    /// (`video_time`): for what follows the music (`crate::oiia`).
+    pub clock: bool,
 }
 
 impl Default for PlayerOptions {
@@ -170,6 +175,7 @@ impl Default for PlayerOptions {
             volume: 100,
             subtitles: None,
             language: "en".to_owned(),
+            clock: false,
         }
     }
 }
@@ -373,8 +379,9 @@ impl Video {
         match player_server() {
             Some(port) => {
                 let cc = options.subtitles.as_ref().map(|l| format!("&cc={l}")).unwrap_or_default();
+                let clock = if options.clock { "&clock=1" } else { "" };
                 format!(
-                    "http://127.0.0.1:{port}/youtube/{}?start={}&vol={}&hl={}{cc}",
+                    "http://127.0.0.1:{port}/youtube/{}?start={}&vol={}&hl={}{cc}{clock}",
                     self.id, self.start, options.volume, options.language
                 )
             }
@@ -392,6 +399,9 @@ impl Video {
 fn player_page(id: &str, start: u32, options: &PlayerOptions, port: u16) -> String {
     let player = Video { id: id.to_owned(), start }.player(options);
     let volume = options.volume.min(100);
+    // The page also tells where the video is (`/time`), a few times a
+    // second: only for the player that asked for it.
+    let clock = u8::from(options.clock);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
@@ -401,11 +411,14 @@ fn player_page(id: &str, start: u32, options: &PlayerOptions, port: u16) -> Stri
          allow=\"autoplay; encrypted-media; picture-in-picture; fullscreen\" allowfullscreen \
          referrerpolicy=\"strict-origin-when-cross-origin\"></iframe>\
          <script>(function(){{var f=document.querySelector('iframe'),o='https://www.youtube-nocookie.com',\
-         v={volume},since=0;\
+         v={volume},since=0,clock={clock},state=-1;\
          function post(m){{f.contentWindow.postMessage(JSON.stringify(m),o);}}\
          f.addEventListener('load',function(){{post({{event:'listening',id:1,channel:'widget'}});}});\
          window.addEventListener('message',function(e){{if(e.origin!==o)return;var d;\
          try{{d=JSON.parse(e.data);}}catch(x){{return;}}\
+         if(clock&&d.info&&typeof d.info==='object'){{\
+         if(typeof d.info.playerState==='number')state=d.info.playerState;\
+         if(typeof d.info.currentTime==='number')new Image().src='/time?t='+d.info.currentTime.toFixed(3)+'&s='+state;}}\
          if(d.event==='onReady'){{post({{event:'command',func:'setVolume',args:[v]}});since=Date.now()+1500;return;}}\
          if(!since||Date.now()<since||d.event!=='infoDelivery'||!d.info||typeof d.info.volume!=='number')return;\
          var n=Math.round(d.info.volume);if(n!==v){{v=n;new Image().src='/volume?v='+n;}}}});}})();</script>\
@@ -429,8 +442,42 @@ fn player_answer(request: &str, port: u16) -> Option<String> {
         volume: param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100).min(100),
         subtitles: param("cc").and_then(language_code),
         language: param("hl").and_then(language_code).unwrap_or_else(|| "en".to_owned()),
+        clock: param("clock") == Some("1"),
     };
     Some(player_page(&id, start, &options, port))
+}
+
+/// Where a player's page says its video is (`GET /time?t=<seconds>&s=<state>`,
+/// the state YouTube's: 1 playing, 2 paused, 3 buffering, 0 ended).
+fn time_answer(request: &str) -> Option<(f64, i32)> {
+    let query = request.strip_prefix("GET /time?")?.split(' ').next()?;
+    let (seconds, state) = query.strip_prefix("t=")?.split_once("&s=")?;
+    let seconds = seconds.parse::<f64>().ok().filter(|t| (0.0..86_400.0).contains(t))?;
+    Some((seconds, state.parse::<i32>().ok().filter(|s| (-1..=5).contains(s))?))
+}
+
+/// Where the video of the player with a clock is: seconds into it, its
+/// state, and when that was said.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoTime {
+    pub seconds: f64,
+    /// YouTube's player state: 1 while it plays.
+    pub state: i32,
+    pub at: Instant,
+}
+
+static REPORTED_TIME: std::sync::Mutex<Option<VideoTime>> = std::sync::Mutex::new(None);
+
+/// The last thing a player with a clock (`PlayerOptions::clock`) said.
+pub fn video_time() -> Option<VideoTime> {
+    *REPORTED_TIME.lock().ok()?
+}
+
+/// Forgets it: another video is about to start.
+pub fn forget_video_time() {
+    if let Ok(mut slot) = REPORTED_TIME.lock() {
+        *slot = None;
+    }
 }
 
 /// A level the player's page reports (`GET /volume?v=<0-100>`).
@@ -468,6 +515,17 @@ fn player_server() -> Option<u16> {
                 let line = request.lines().next().unwrap_or("");
                 if let Some(volume) = volume_answer(line) {
                     REPORTED_VOLUME.store(i32::from(volume), std::sync::atomic::Ordering::Relaxed);
+                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                if let Some((seconds, state)) = time_answer(line) {
+                    if let Ok(mut slot) = REPORTED_TIME.lock() {
+                        *slot = Some(VideoTime {
+                            seconds,
+                            state,
+                            at: Instant::now(),
+                        });
+                    }
                     let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                     continue;
                 }
@@ -597,9 +655,50 @@ pub fn configure_sites(user: &[String], extra: &[&str]) {
     services::set_sites(sites);
 }
 
+/// Who wrote the message a link is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sender {
+    /// A resident (an IM, a group's or the nearby chat's line).
+    Resident,
+    /// An object or a script (its chat, its owner-say, its IMs) or the
+    /// viewer's notices: its previews always wait for a click.
+    Object,
+}
+
+/// Hosts of regions and of their scripts' HTTP-in addresses: a simulator
+/// (`simhost-….agni.secondlife.io`, `sim….aditi.lindenlab.com`) and the
+/// relay CasperTech keeps to such addresses (`casperdns.com`). A request to
+/// one reaches the region's script, which sees where it came from.
+const REGION_DOMAINS: &[&str] = &[
+    "agni.secondlife.io",
+    "aditi.secondlife.io",
+    "agni.lindenlab.com",
+    "aditi.lindenlab.com",
+    "casperdns.com",
+];
+
+/// The link leads to a region rather than to a site: a host of
+/// `REGION_DOMAINS` or a `simhost` one, a port other than the scheme's
+/// (scripts' HTTP-in listen on 12043 and 12046), or a capability path
+/// (`/cap/<id>`). Its preview never loads by itself, whatever the trust of
+/// its domain. Read on the URL alone, when a line's previews are decided.
+pub fn waits_for_click(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(|h| h.trim_end_matches('.').to_ascii_lowercase()) else {
+        return false;
+    };
+    parsed.port().is_some()
+        || parsed.path().to_ascii_lowercase().contains("/cap/")
+        || host.split('.').any(|label| label.starts_with("simhost"))
+        || REGION_DOMAINS.iter().any(|domain| in_domain(&host, domain))
+}
+
 /// The preview a link of a message gets in a conversation: none, or what it
-/// shows and whether it loads by itself.
-pub fn decide(s: &Settings, place: Place, url: &str) -> Option<(Target, Start)> {
+/// shows and whether it loads by itself. Links of objects and links to
+/// regions (`waits_for_click`) wait for a click whatever the settings.
+pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Target, Start)> {
     let on = match place {
         Place::Im => s.ims,
         Place::Group => s.groups,
@@ -619,7 +718,9 @@ pub fn decide(s: &Settings, place: Place, url: &str) -> Option<(Target, Start)> 
         Trust::Unknown if s.load == Load::All => Start::Load,
         _ => Start::Ask,
     };
-    Some((target, start))
+    // only a preview about to load by itself is looked at further
+    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url);
+    Some((target, if by_itself { Start::Load } else { Start::Ask }))
 }
 
 /// A picture decoded for its card.
@@ -681,37 +782,58 @@ pub enum Failure {
 /// network: a redirect there stops, and names resolve to public addresses
 /// only (`PublicOnly`). A link written with such an address gets no preview
 /// in the first place (`link_trust`).
+///
+/// Behind a proxy of the viewer the proxy resolves the names, so the public
+/// address check cannot run on the resolved addresses: the link's own check
+/// (`link_trust::leads_to_local_network`) and the redirects' still run, and
+/// a public name the proxy's network resolves to one of its own machines is
+/// the remaining risk (stricter than the Legacy Viewer, which has no check).
 pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
-    builder(trusted_only)
-        .build()
+    aurora_proxy::http_client(|b| configure(trusted_only, b))
         .map_err(|e| log::warn!("link previews: no HTTP client: {e}"))
         .ok()
 }
 
-fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
+fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
-        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || crate::link_trust::leads_to_local_network(to) {
+        // a redirect never leads a preview to a region (`waits_for_click`):
+        // only a link the user clicked may name one
+        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || waits_for_click(to) || crate::link_trust::leads_to_local_network(to)
+        {
             attempt.stop()
         } else {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION"), " (link preview)"))
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .dns_resolver(PublicOnly)
+    public_only(
+        builder
+            .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy),
+    )
+}
+
+/// The `PublicOnly` resolver, when the names are resolved here: behind a
+/// proxy of the viewer it would only resolve the proxy's own name (and refuse
+/// a proxy on this computer or the local network).
+pub(crate) fn public_only(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if aurora_proxy::rule().proxies_http() {
+        builder
+    } else {
+        builder.dns_resolver(PublicOnly)
+    }
 }
 
 /// The name resolver of the previews: the system's, keeping only the
 /// public addresses (`link_trust::is_public_ip`). The connection uses the
 /// very addresses kept here, so a name that resolves to the local network,
-/// now or on a second lookup, is never reached.
-struct PublicOnly;
+/// now or on a second lookup, is never reached. The Destination Guide's
+/// pictures use it too (`destination_guide.rs`).
+pub(crate) struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
@@ -722,6 +844,7 @@ impl reqwest::dns::Resolve for PublicOnly {
 async fn public_addresses(host: String) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let lookup = host.clone();
     let found = tokio::task::spawn_blocking(move || {
+        // proxy-guard: only without a proxy of the viewer (`public_only`)
         std::net::ToSocketAddrs::to_socket_addrs(&(lookup.as_str(), 0)).map(|addrs| addrs.collect::<Vec<_>>())
     })
     .await??;
@@ -898,6 +1021,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
     match crate::link_trust::classify(&source) {
         Trust::Dangerous(_) => return Err(Failure::Unavailable),
         Trust::Unknown if trusted_only => return Err(Failure::Unavailable),
+        _ if waits_for_click(&source) => return Err(Failure::Unavailable),
         _ => {}
     }
     let picture = fetch_picture(client, &source).await?;
@@ -1263,12 +1387,18 @@ mod tests {
         assert_eq!(target("https://videos.example.net/clip.gifv"), None);
         // a trusted clip loads by itself, or waits for a click as set
         let s = Settings::default();
-        assert_eq!(decide(&s, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Load)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, gyazo),
+            Some((clip(gyazo).unwrap(), Start::Load))
+        );
         let never = Settings {
             load: Load::Never,
             ..Settings::default()
         };
-        assert_eq!(decide(&never, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Ask)));
+        assert_eq!(
+            decide(&never, Place::Im, Sender::Resident, gyazo),
+            Some((clip(gyazo).unwrap(), Start::Ask))
+        );
     }
 
     /// A Gyazo video capture leads to its file and its thumbnail, a 640
@@ -1319,7 +1449,11 @@ mod tests {
             ("https://twitter.com/AuroraDemo/status/1850000000000000001", Service::X),
         ] {
             assert_eq!(target(url), Some(Target::Page(service)), "{url}");
-            assert_eq!(decide(&s, Place::Im, url), Some((Target::Page(service), Start::Load)), "{url}");
+            assert_eq!(
+                decide(&s, Place::Im, Sender::Resident, url),
+                Some((Target::Page(service), Start::Load)),
+                "{url}"
+            );
         }
         for url in [
             "https://i.redd.it/demo01picture.jpeg",
@@ -1327,14 +1461,18 @@ mod tests {
             "https://live.staticflickr.com/65535/1_2_c.jpg",
             "https://image.prntscr.com/image/Dm0Aur0raExample.png",
         ] {
-            assert_eq!(decide(&s, Place::Im, url), Some((Target::Picture, Start::Load)), "{url}");
+            assert_eq!(
+                decide(&s, Place::Im, Sender::Resident, url),
+                Some((Target::Picture, Start::Load)),
+                "{url}"
+            );
         }
         // a hidden site hides its pages too
         let hidden = Settings {
             hidden_sites: vec!["prnt.sc".into()],
             ..s
         };
-        assert_eq!(decide(&hidden, Place::Im, "https://prnt.sc/demo42"), None);
+        assert_eq!(decide(&hidden, Place::Im, Sender::Resident, "https://prnt.sc/demo42"), None);
     }
 
     /// A page or a feed is read up to its head only, and the pause a rate
@@ -1449,31 +1587,90 @@ mod tests {
         let s = Settings::default();
         let trusted = "https://i.imgur.com/a.png";
         let unknown = "https://pics.example.net/a.png";
-        assert_eq!(decide(&s, Place::Im, trusted), Some((Target::Picture, Start::Load)));
-        assert_eq!(decide(&s, Place::Im, unknown), Some((Target::Picture, Start::Ask)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Load))
+        );
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, unknown),
+            Some((Target::Picture, Start::Ask))
+        );
         // the nearby chat is off by default, groups on
-        assert_eq!(decide(&s, Place::Nearby, trusted), None);
-        assert_eq!(decide(&s, Place::Group, trusted), Some((Target::Picture, Start::Load)));
+        assert_eq!(decide(&s, Place::Nearby, Sender::Resident, trusted), None);
+        assert_eq!(
+            decide(&s, Place::Group, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Load))
+        );
         // a link that hides its destination never gets one
-        assert_eq!(decide(&s, Place::Im, "https://bit.ly/a.png"), None);
-        assert_eq!(decide(&s, Place::Im, "http://192.168.1.2/a.png"), None);
+        assert_eq!(decide(&s, Place::Im, Sender::Resident, "https://bit.ly/a.png"), None);
+        assert_eq!(decide(&s, Place::Im, Sender::Resident, "http://192.168.1.2/a.png"), None);
         let never = Settings {
             load: Load::Never,
             ..s.clone()
         };
-        assert_eq!(decide(&never, Place::Im, trusted), Some((Target::Picture, Start::Ask)));
+        assert_eq!(
+            decide(&never, Place::Im, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Ask))
+        );
         let all = Settings {
             load: Load::All,
             ..s.clone()
         };
-        assert_eq!(decide(&all, Place::Im, unknown), Some((Target::Picture, Start::Load)));
+        assert_eq!(
+            decide(&all, Place::Im, Sender::Resident, unknown),
+            Some((Target::Picture, Start::Load))
+        );
         // a hidden site, its subdomains included, not a look-alike
         let hidden = Settings {
             hidden_sites: vec!["imgur.com".into()],
             ..s
         };
-        assert_eq!(decide(&hidden, Place::Im, trusted), None);
-        assert!(decide(&hidden, Place::Im, "https://notimgur.com/a.png").is_some());
+        assert_eq!(decide(&hidden, Place::Im, Sender::Resident, trusted), None);
+        assert!(decide(&hidden, Place::Im, Sender::Resident, "https://notimgur.com/a.png").is_some());
+    }
+
+    /// The links of objects and the links to regions (a simulator, a
+    /// script's HTTP-in address, another port, a capability path) wait for
+    /// a click, whatever the trust of their domain and the settings.
+    #[test]
+    fn link_previews_wait_for_a_click_on_region_hosts_and_object_links() {
+        let all = Settings {
+            load: Load::All,
+            ..Settings::default()
+        };
+        let trusted = "https://i.imgur.com/a.png";
+        for place in [Place::Im, Place::Group] {
+            assert_eq!(decide(&all, place, Sender::Object, trusted), Some((Target::Picture, Start::Ask)));
+            assert_eq!(decide(&all, place, Sender::Resident, trusted), Some((Target::Picture, Start::Load)));
+        }
+        for url in [
+            "https://simhost-0a1b2c3d4e5f6a7b8.agni.secondlife.io:12043/cap/00000000-0000-0000-0000-000000000000/a.png",
+            "http://simhost-0a1b2c3d4e5f6a7b8.agni.secondlife.io/a.png",
+            "https://simhost-0a1b2c3d4e5f6a7b8.aditi.secondlife.io/a.png",
+            "https://sim1234.agni.lindenlab.com/a.png",
+            "https://sim1234.aditi.lindenlab.com/a.png",
+            "https://demo.casperdns.com/a.png",
+            "https://i.imgur.com:8443/a.png",
+            "https://pics.example.net:12046/a.png",
+            "https://secondlife.com/CAP/demo/a.png",
+        ] {
+            assert!(waits_for_click(url), "{url}");
+            for s in [Settings::default(), all.clone()] {
+                assert_eq!(
+                    decide(&s, Place::Im, Sender::Resident, url),
+                    Some((Target::Picture, Start::Ask)),
+                    "{url}"
+                );
+            }
+        }
+        for url in [
+            trusted,
+            "https://secondlife.com/a.png",
+            "https://i.imgur.com:443/a.png",
+            "https://pics.example.net/capture/a.png",
+        ] {
+            assert!(!waits_for_click(url), "{url}");
+        }
     }
 
     /// A picture site's page gets a card (#1063), which waits for a click
@@ -1487,9 +1684,15 @@ mod tests {
         );
         let page = "https://cloud.example.org/s/DemoShare7xKq2";
         let s = Settings::default();
-        assert_eq!(decide(&s, Place::Im, page), Some((Target::Page(Service::Site), Start::Ask)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, page),
+            Some((Target::Page(Service::Site), Start::Ask))
+        );
         let all = Settings { load: Load::All, ..s };
-        assert_eq!(decide(&all, Place::Im, page), Some((Target::Page(Service::Site), Start::Load)));
+        assert_eq!(
+            decide(&all, Place::Im, Sender::Resident, page),
+            Some((Target::Page(Service::Site), Start::Load))
+        );
         assert_eq!(target("https://other.example.net/s/DemoShare7xKq2"), None);
     }
 
@@ -1517,7 +1720,8 @@ mod tests {
             PlayerOptions {
                 volume: 100,
                 subtitles: None,
-                language: "fr".into()
+                language: "fr".into(),
+                clock: false,
             }
         );
         s.video_volume = 0.304;
@@ -1776,7 +1980,11 @@ mod tests {
         let plain = test_client();
         assert!(rt.block_on(fetch_picture(&plain, &format!("{base}/a.png"))).is_ok());
         // the previews' clients stop at it
-        let guarded = builder(false).no_proxy().pool_max_idle_per_host(0).build().unwrap();
+        let guarded = configure(false, reqwest::Client::builder())
+            .no_proxy()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap();
         assert_eq!(
             rt.block_on(fetch_picture(&guarded, &format!("{base}/a.png"))).err(),
             Some(Failure::Unavailable)

@@ -89,7 +89,7 @@ impl App {
                     prefs.fly_assist = false;
                     prefs.swimming = false;
                 }
-                "passage-blocked" | "passage-reached" | "passage-pending" => {
+                "passage-blocked" | "passage-reached" | "passage-pending" | "passage-refused" => {
                     prefs.running = false;
                     prefs.fly_assist = false;
                     prefs.swimming = false;
@@ -103,7 +103,9 @@ impl App {
                 }
                 _ => {}
             }
-            if mode.starts_with("passage-") {
+            if mode == "passage-refused" {
+                self.passage_refused_demo();
+            } else if mode.starts_with("passage-") {
                 // Synthetic outcome only: the offline demo has no Havok.
                 // Exercise the same feedback formatter used for LSL status.
                 self.movement_runtime.passage_feedback.start(123, now);
@@ -182,6 +184,7 @@ impl App {
                 }
             }
         }
+        self.prim_water_demo();
         let water_demo = if self.demo {
             let float_height = self.settings.movements.get(&self.world.agent_id).map_or(0.0, |p| p.float_height);
             crate::ao::water_demo::trajectory(&mut self.world, self.frame_count, now, float_height)
@@ -241,7 +244,22 @@ impl App {
         let height = self.movement_height();
         let position = self.world.agent.position;
         let direction = crate::movement::horizontal_heading(self.camera.forward(), self.world.agent.forward());
-        let water = self.world.main().and_then(|r| r.info.as_ref()).map(|i| i.water_height);
+        // A prim water volume replaces the region water while we are in it.
+        let requests = self
+            .water_volumes
+            .update(&self.settings.water_volumes, prefs.swimming, &self.world, &self.scene, now);
+        for request in requests {
+            self.send(request);
+        }
+        let region_water = self.world.main().and_then(|r| r.info.as_ref()).map(|i| i.water_height);
+        // a volume under the region's water (a box on a pier, the sea above
+        // its top) is the sea's
+        let volume = self
+            .water_volumes
+            .water(&self.world, &self.scene, position, height, now)
+            .filter(|v| region_water.is_none_or(|r| v.surface > r));
+        let water = volume.map(|v| v.surface).or(region_water);
+        self.movement_water = water;
         let near_water = water.is_some_and(|w| (w - position.z).abs() < height * 0.5 + 0.9);
         if prefs.swimming
             && near_water
@@ -275,7 +293,7 @@ impl App {
             height,
             water,
             water_contact: self.scene.avatar_water_contact(&self.world),
-            ground: self.world.ground_height(position),
+            ground: volume.map(|v| v.floor).or_else(|| self.world.ground_height(position)),
             flying: self.world.agent.flying,
             can_fly,
             seated: self.world.agent.is_sitting(),
@@ -384,6 +402,7 @@ impl App {
             self.movement_runtime.cancel_water_gesture();
         }
         let was_water_walking = self.movement_runtime.water_walk.active();
+        self.vr_walk_override.apply_frame(&mut frame);
         let step = self.movement_runtime.update(&prefs, &frame, &input, now);
         let set = self.ao_catalog.selected(selected);
         let mut loaded = |state| {
@@ -456,7 +475,14 @@ impl App {
             self.scene.water_impact(impact);
         }
         self.scene.movement_preview = None;
-        self.bridge_runtime.motion = self.movement_runtime.water_jump.observer(height).unwrap_or(step.motion);
+        let mut motion = self.movement_runtime.water_jump.observer(height).unwrap_or(step.motion);
+        // The script's water motors read llWater/llGround: inside a prim
+        // volume they use its surface and floor instead (region z, like
+        // the agent's: regions are side by side).
+        if motion.mode != 0 {
+            motion.water = volume.map(|v| [v.surface, v.floor]);
+        }
+        self.bridge_runtime.motion = motion;
         if cannonball {
             self.world.agent.flying = false;
         } else if let Some(flying) = step.flying {
@@ -482,7 +508,8 @@ impl App {
             .water_float
             .at_surface(&frame, self.movement_runtime.state, pose, transitioning);
         let time = self.start.elapsed().as_secs_f32();
-        let target = water.filter(|_| floating).map_or(0.0, |level| {
+        // Region waves only: a prim volume's surface stays flat.
+        let target = water.filter(|_| floating && volume.is_none()).map_or(0.0, |level| {
             let ground = self
                 .scene
                 .lists
@@ -543,7 +570,12 @@ impl App {
         let destination = self
             .scene
             .movement_exit(&self.world, self.world.agent.position, direction, self.movement_height());
-        if let Some(position) = destination
+        if let Some((position, wall)) = destination
+            && let Err(refusal) = self.passage_rights(wall, position)
+        {
+            self.movement_ui.message = refusal.message();
+            self.open_movement();
+        } else if let Some((position, _)) = destination
             && self.bridge_runtime.available()
             && let Some(motion) = self.movement_runtime.start_passage(position - self.world.agent.position, now)
         {
@@ -607,6 +639,7 @@ impl App {
             &mut open,
             &mut self.movement_ui,
             &mut prefs,
+            &mut self.settings.water_volumes,
             &self.settings.keybinds,
             status,
         ));

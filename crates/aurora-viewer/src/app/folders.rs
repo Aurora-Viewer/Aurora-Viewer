@@ -2,7 +2,9 @@
 //! Viewer's Set / Reset buttons of Network & Files, onClickSetCache and
 //! onClickLogPath in llfloaterpreference.cpp). The folder dialog runs off
 //! the frame; the cache folder applies at the next start
-//! (cache_location.rs), the transcripts move at once with their files.
+//! (cache_location.rs), the transcripts move at once with their files. The
+//! interface language file is picked the same way and is read at the next
+//! start too (language_file.rs).
 use super::*;
 use crate::ui::options::{Folder, FolderChoice};
 use std::path::PathBuf;
@@ -34,9 +36,32 @@ impl App {
                 }
                 let (tx, rx) = std::sync::mpsc::channel();
                 self.folders.pick = Some((folder, rx));
-                let title = aurora_i18n::tr!("ui-options-change-folder");
+                let title = match folder {
+                    Folder::LegacyLogs => aurora_i18n::tr!("ui-options-chat-logs-import-choose"),
+                    Folder::LanguageFile => aurora_i18n::tr!("language-file-choose"),
+                    _ => aurora_i18n::tr!("ui-options-change-folder"),
+                };
+                let file = (folder == Folder::LanguageFile).then(|| {
+                    let current = std::path::Path::new(self.settings.custom_language_file.trim());
+                    (
+                        aurora_i18n::tr!("language-file-filter"),
+                        current.parent().map(std::path::Path::to_path_buf),
+                    )
+                });
                 let _ = std::thread::Builder::new().name("aurora-folder-dialog".into()).spawn(move || {
-                    let _ = tx.send(rfd::FileDialog::new().set_title(title).pick_folder());
+                    let dialog = rfd::FileDialog::new().set_title(title);
+                    let picked = match file {
+                        Some((filter, folder)) => {
+                            let dialog = dialog.add_filter(filter, &["ftl"]);
+                            match folder.filter(|folder| folder.is_dir()) {
+                                Some(folder) => dialog.set_directory(folder),
+                                None => dialog,
+                            }
+                            .pick_file()
+                        }
+                        None => dialog.pick_folder(),
+                    };
+                    let _ = tx.send(picked);
                 });
             }
             FolderChoice::Default => self.set_folder(folder, String::new()),
@@ -69,8 +94,20 @@ impl App {
                     self.folders.settings_changed = true;
                 }
             }
+            Folder::LegacyLogs => self.chat_import_chosen(PathBuf::from(location)),
+            Folder::LanguageFile => {
+                if self.settings.custom_language_file != location {
+                    self.settings.custom_language_file = location;
+                    self.folders.settings_changed = true;
+                }
+            }
             Folder::ChatLogs => {
                 if self.settings.chat_log_location == location {
+                    return;
+                }
+                // the files could not move now: keep the folder they are in
+                if self.world.chat_log.busy() {
+                    self.options_ui.chat_log_status = aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned();
                     return;
                 }
                 self.options_ui.chat_log_status.clear();

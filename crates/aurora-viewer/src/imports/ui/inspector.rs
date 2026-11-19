@@ -198,7 +198,7 @@ pub(super) fn show(
                                                         imports.sound_limit,
                                                         actions,
                                                     ),
-                                                    Source::Animation { animation, bvh, .. } => {
+                                                    Source::Animation { animation, bvh, bytes } => {
                                                         let old_base = entry.player.base;
                                                         let settings_width =
                                                             (ui.available_width() - 230.0 - ui.spacing().item_spacing.x).max(330.0);
@@ -324,8 +324,29 @@ pub(super) fn show(
                                                                         let current = Arc::make_mut(animation);
                                                                         header.joints = std::mem::take(&mut current.joints);
                                                                         if current.base_priority != header.base_priority {
-                                                                            for joint in &mut header.joints {
-                                                                                joint.priority = header.base_priority;
+                                                                            if bvh.is_some() {
+                                                                                for joint in &mut header.joints {
+                                                                                    joint.priority = header.base_priority;
+                                                                                }
+                                                                            } else {
+                                                                                // A native file's joints keep their own
+                                                                                // priorities and move with the base one,
+                                                                                // as the upload does.
+                                                                                match aurora_assets::native_joint_priorities(
+                                                                                    bytes.as_slice(),
+                                                                                    header.base_priority,
+                                                                                ) {
+                                                                                    Ok(priorities) => {
+                                                                                        for (joint, priority) in
+                                                                                            header.joints.iter_mut().zip(priorities)
+                                                                                        {
+                                                                                            joint.priority = priority;
+                                                                                        }
+                                                                                    }
+                                                                                    Err(error) => log::warn!(
+                                                                                        "animation import: joint priorities: {error}"
+                                                                                    ),
+                                                                                }
                                                                             }
                                                                         }
                                                                         *current = header;

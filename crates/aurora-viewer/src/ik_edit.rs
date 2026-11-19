@@ -22,7 +22,7 @@ mod animations;
 mod authoring;
 mod bindings;
 mod clip;
-mod gizmo;
+pub(crate) mod gizmo;
 mod graph;
 mod links;
 mod object_data;
@@ -51,6 +51,9 @@ pub struct Editor {
     /// The poser's window shows over the photo viewfinder, whose controls
     /// sit above the windows: it goes up with them (#1389).
     pub over_viewfinder: bool,
+    /// The last world press went to a worn HUD (the app's press path): the
+    /// poser's click beside the joints leaves the selection as it is.
+    pub press_on_hud: bool,
     pub picking: bool,
     pub target: Option<Uuid>,
     pub target_name: String,
@@ -82,6 +85,7 @@ pub struct Editor {
     orient: bool,
     filter: String,
     drag: Option<Drag>,
+    manipulator_hovered: bool,
     refresh: bool,
     tool: Tool,
     space: Space,
@@ -92,6 +96,9 @@ pub struct Editor {
     control: Control,
     pole: Option<Vec3>,
     pole_orbit: Option<poles::Orbit>,
+    /// The session base the edits and contacts were last carried to
+    /// (`follow_edit_base`).
+    edit_base: Option<std::sync::Arc<ik::EditBase>>,
 }
 
 #[derive(Clone, Copy)]
@@ -106,6 +113,7 @@ enum Drag {
         rotation: Quat,
         right: Vec3,
         up: Vec3,
+        fine: bool,
     },
 }
 
@@ -126,11 +134,8 @@ impl Frame {
         if hud {
             return None;
         }
-        let model = world
-            .avatar_models
-            .get(&subject)
-            .copied()
-            .unwrap_or_else(|| Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis));
+        let stored = world.avatar_models.get(&subject).copied();
+        let mut model = stored.unwrap_or_else(|| Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis));
         let poses = world.avatar_poses.get(&subject)?;
         let rig = &world.avatar_lib.rig;
         if poses.len() < rig.len() {
@@ -141,6 +146,21 @@ impl Frame {
             .zip(&rig.default_world_inv)
             .map(|(p, inverse)| model * *p * inverse.inverse())
             .collect();
+        // couple mode: Person B's body is drawn where the editor moved it
+        // (`World::couple_shift`); the move rides on the model, as below,
+        // so their recorded keys stay free of it
+        if let Some(shift) = world.couple_shift(subject, model) {
+            model = shift * model;
+        }
+        // Avatar Studio's Hover Height lifts the stored pose for display
+        // only. Carry the lift on the model instead: the joints stay where
+        // the avatar shows, and everything read back in model space (bone
+        // positions, IK targets, recorded pelvis keys) is free of it.
+        if subject == world.agent_id
+            && let Some(lift) = stored.and_then(|model| crate::scene::avatar_studio::display_lift(model, world.avatar_studio_lift))
+        {
+            model *= Mat4::from_translation(lift);
+        }
         Some(Self { model, joints, at })
     }
 }
@@ -152,6 +172,13 @@ pub fn offsets(joint: Mat4, contact: Vec3, target_p: Vec3, target_q: Quat) -> Op
     let p = target_q.inverse() * (joint.transform_point3(contact) - target_p);
     let q = (target_q.inverse() * q).normalize();
     (p.is_finite() && q.is_finite()).then_some((p, q))
+}
+
+/// Whether a click with these modifiers adds its joint to the selection
+/// (or takes it out): Shift, or Ctrl (Cmd on macOS), the same on a handle,
+/// a bone, a picker dot and a row, in the pose and animation editors.
+pub(crate) fn adds_to_selection(modifiers: egui::Modifiers) -> bool {
+    modifiers.shift || modifiers.ctrl || modifiers.command
 }
 
 fn ray(proj: &Projector, at: Pos2) -> Option<(Vec3, Vec3)> {
@@ -171,17 +198,98 @@ fn ray(proj: &Projector, at: Pos2) -> Option<(Vec3, Vec3)> {
 }
 
 impl Editor {
+    /// Open the existing native clip editor in the Avatar Studio context.
+    /// The clip editor owns its document and preview lifecycle; Studio only
+    /// supplies the entry point and keeps its inspection camera active.
+    pub fn open_animation_editor_from_studio(&mut self, world: &World) {
+        self.open_from_avatar_studio(world);
+    }
+
+    pub fn close_animation_editor_from_studio(&mut self) {
+        self.close_from_avatar_studio();
+    }
+
+    pub fn reset_animation_from_avatar_studio(&mut self, world: &World) {
+        self.reset_animation_from_studio(world);
+    }
+
+    pub fn demo_animation_editor_from_studio(&mut self, world: &World) {
+        self.wave_demo_from_avatar_studio(world);
+    }
+
+    pub fn demo_jump_animation_editor_from_studio(&mut self, world: &World) {
+        let Some(frame) = Frame::new(world) else { return };
+        self.jump_demo_from_avatar_studio(world, &frame);
+    }
+
+    pub fn animation_editor_active(&self) -> bool {
+        self.clip.active
+    }
+
+    pub fn studio_animation_timeline_open(&self) -> bool {
+        self.clip.timeline_open
+    }
+
+    pub fn show_studio_animation_timeline(&mut self) {
+        self.clip.timeline_open = true;
+    }
+
+    pub fn animation_editor_return_pending(&self) -> bool {
+        self.clip.return_after_upload
+    }
+
+    pub fn studio_animation_timeline(&mut self, ctx: &egui::Context, palette: &Palette, world: &World) {
+        self.studio_timeline_overlay(ctx, palette, world);
+    }
+
     fn active_tool(&self, modifiers: egui::Modifiers) -> Tool {
-        if modifiers.ctrl {
+        // a handle being dragged keeps its tool: Shift pressed during the
+        // drag only makes it finer (`gizmo::FINE`)
+        if let Some(tool) = self.gizmo.dragging_tool() {
+            tool
+        } else if modifiers.ctrl {
             Tool::Rotate
-        } else if modifiers.shift {
+        } else if modifiers.shift && !self.clip.active {
             Tool::Move
         } else {
+            // the animation editor keeps the Move or Rotate chosen (R) with
+            // Shift held, so that Shift grabs a ring or an arrow finely
             self.tool
         }
     }
     fn gizmo_visible(&self, modifiers: egui::Modifiers) -> bool {
-        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift
+        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift || self.clip.active
+    }
+
+    /// The drag scale of the shared move and rotate handles. The Poser's
+    /// Posing sensitivity is the Poser's setting: in the IK editor, on the
+    /// virtual bones and in the animation editor a handle follows the
+    /// pointer one to one, whatever was saved there.
+    fn gizmo_sensitivity(&self) -> f32 {
+        if self.poser.active {
+            self.poser.sensitivity
+        } else {
+            gizmo::DEFAULT_SENSITIVITY
+        }
+    }
+
+    /// Whether a free rotation drag is ten times finer. Shift does that in
+    /// the Poser, which says so on its trackball, and in the animation
+    /// editor, whose Shift keeps the chosen tool. Elsewhere Shift only
+    /// enables dragging a point (`point_drag_enabled`), so that Ctrl+Shift
+    /// keeps the rotation rate it always had.
+    fn fine_drag(&self, modifiers: egui::Modifiers) -> bool {
+        (self.poser.active || self.clip.active) && modifiers.shift
+    }
+
+    fn bone_overlays_visible(&self) -> bool {
+        !(self.clip.active && self.clip.is_playing())
+    }
+
+    /// Whether a click or a grab on `joint`'s handle starts its limb's pole:
+    /// the joint must be the selected one, in IK, with no pole yet.
+    fn takes_limb_pole(&self, joint: usize) -> bool {
+        self.selected == Some(joint) && self.mode == Mode::Ik && self.pole.is_none()
     }
 
     fn point_drag_enabled(&self, modifiers: egui::Modifiers) -> bool {
@@ -218,7 +326,7 @@ impl Editor {
         )
     }
 
-    fn start_drag(&mut self, proj: &Projector, frame: &Frame, pointer: Pos2, rotate: bool) {
+    fn start_drag(&mut self, proj: &Projector, frame: &Frame, pointer: Pos2, rotate: bool, fine: bool) {
         self.drag = if rotate {
             // Unproject an entire near-plane span: a one-pixel difference
             // loses precision at region coordinates far from the origin.
@@ -239,6 +347,7 @@ impl Editor {
                 },
                 right,
                 up,
+                fine,
             })
         } else {
             let center = egui::pos2(proj.width / proj.ppp * 0.5, proj.height / proj.ppp * 0.5);
@@ -268,10 +377,12 @@ impl Editor {
                 rotation,
                 right,
                 up,
+                fine,
             }) => {
                 let delta = pointer - origin;
+                let rate = if fine { 0.001 } else { 0.01 };
                 let rotation =
-                    (Quat::from_axis_angle(right, delta.y * 0.01) * Quat::from_axis_angle(up, delta.x * 0.01) * rotation).normalize();
+                    (Quat::from_axis_angle(right, delta.y * rate) * Quat::from_axis_angle(up, delta.x * rate) * rotation).normalize();
                 if self.control == Control::Pole {
                     self.rotate_pole(rotation);
                 } else {
@@ -674,6 +785,18 @@ impl Editor {
     }
 
     fn select(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.clip.active && !self.poser.active {
+            // every way of picking a joint in the animation editor (handle,
+            // bone, picker, Tracks row, timeline, joint list, pole, binding,
+            // link…) keeps the joints picked together right: a joint of the
+            // selection leads the others, any other joint is selected alone
+            self.clip_retarget_followers(bone);
+        }
+        self.select_joint(bone, rig, frame);
+    }
+    /// Select `bone` and leave the animation editor's joints picked together
+    /// as they are: for the paths that already set them.
+    fn select_joint(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
         if self.poser.active {
             self.select_pose_bone(bone, rig, frame);
             return;
@@ -697,7 +820,10 @@ impl Editor {
             self.graph.target = binding.target.clone();
         }
         self.control = Control::Bone;
-        self.tool = Tool::Move;
+        // the animation editor keeps the Move or Rotate chosen from joint to joint
+        if !self.clip.active {
+            self.tool = Tool::Move;
+        }
         self.pole_orbit = None;
         self.pole = None;
         self.drag = None;
@@ -861,7 +987,14 @@ impl Editor {
         let point_hit = ctx
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| self.point_owns_pointer(ctx, rig, p));
-        let (owns, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit);
+        // the poser's Ctrl picks another part or avatar: the handles let the
+        // pointer through (a drag already begun keeps them)
+        let picking_parts = self.poser_ctrl_picks(modifiers) && !self.gizmo.dragging();
+        self.gizmo.shift_fine = self.poser.active || self.clip.active;
+        let (owns, change) = self
+            .gizmo
+            .show(ctx, palette, geometry, pose, !point_hit && !picking_parts, self.gizmo_sensitivity());
+        let owns = owns && !picking_parts;
         if let Some((pose, tool)) = change {
             if self.limb_controls
                 && self.mode == Mode::Ik
@@ -884,6 +1017,7 @@ impl Editor {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, proj: &Projector) {
+        self.manipulator_hovered = false;
         if !self.open {
             return;
         }
@@ -921,8 +1055,10 @@ impl Editor {
         };
         let rig = &world.avatar_lib.rig;
         if self.clip.active {
+            self.clip.finish_auto_key_on_release(ctx.input(|i| i.pointer.primary_down()));
             self.capture_clip(world, &frame);
         } else {
+            self.follow_edit_base(world);
             self.update_bindings(world, &frame);
             self.update_graph(world, &frame);
         }
@@ -951,231 +1087,261 @@ impl Editor {
         self.sync_clip_selection(&frame);
         self.sync_authored_selection(&frame);
         self.sync_prim_draft();
-        // World overlays stay in Background, like the build gizmos. Middle
-        // joint areas can rise above a floater after being clicked.
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")));
-        let segments = self.skeleton_segments(world, proj, &frame);
-        self.draw_segments(&painter, palette, &segments);
-        if let Some(bone) = self.selected
-            && self.visibility.visible(&rig.canonical_names[bone])
-            && let Some((point, _)) = proj.project(frame.joints[bone].transform_point3(self.contact))
-        {
-            painter.circle_stroke(point, 7.0, Stroke::new(2.0, palette.teal));
-        }
-        let graph_owns = !self.clip.active && self.graph_overlay(ctx, palette, world, proj, &frame);
-        // A selected virtual bone owns the shared manipulator. Do not let the
-        // real-bone renderer cancel its in-progress modifier drag afterwards.
-        let gizmo_owns = if self.graph.selected.is_some() {
-            graph_owns
+        if !self.bone_overlays_visible() {
+            // A clean playback preview needs no bone picking, handles, or gizmo
+            // work. Preserve the selection and restore overlays when paused.
+            self.drag = None;
+            self.pole_orbit = None;
+            self.gizmo.cancel();
+            self.poser.cancel_scale_gizmo();
         } else {
-            self.show_gizmo(ctx, palette, proj, &frame, rig) || graph_owns
-        };
-        let selected_pole = self.control == Control::Pole;
-        if !selected_pole {
-            self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
-        }
-        let limb_list = if self.limb_controls {
-            limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
-        } else {
-            Vec::new()
-        };
-        if (!self.picking || self.links.bone_pick)
-            && (!self.prims.object_handles || self.links.bone_pick)
-            && !ctx.input(|i| i.modifiers.alt)
-        {
-            let chosen = self.selected;
-            let handles = names
-                .iter()
-                .filter(|n| chosen != Some(n.0) && !limb_list.iter().any(|l| l.end == n.0))
-                .chain(
-                    names
-                        .iter()
-                        .filter(|n| chosen != Some(n.0) && limb_list.iter().any(|l| l.end == n.0)),
-                )
-                .chain(names.iter().filter(|n| chosen == Some(n.0)));
-            for &(joint, name) in handles {
-                if !self.visibility.visible(name) {
-                    continue;
-                }
-                let selected = self.selected == Some(joint);
-                let limb = limb_list.iter().find(|l| l.end == joint);
-                let point = if self.links.bone_pick {
-                    frame.joints[joint].w_axis.truncate()
-                } else if selected {
-                    frame.joints[joint].transform_point3(self.contact)
-                } else if limb.is_some() {
-                    let contact = self.goals.iter().find(|g| g.bone == joint).map_or(Vec3::ZERO, |g| g.contact);
-                    frame.joints[joint].transform_point3(contact)
-                } else {
-                    frame.joints[joint].w_axis.truncate()
-                };
-                let Some((anchor, _)) = proj.project(point) else {
-                    continue;
-                };
-                let at = anchor;
-                let half = if limb.is_some() { 12.0 } else { 6.0 };
-                let response = egui::Area::new(egui::Id::unique(("ik-joint", joint)))
-                    .fixed_pos(at - egui::vec2(half, half))
-                    .order(egui::Order::Background)
-                    .movable(false)
-                    .interactable(!gizmo_owns && !self.clip.waiting_source())
-                    .show(ctx, |ui| {
-                        let sense = if self.links.bone_pick {
-                            Sense::click()
-                        } else if gizmo_owns || self.clip.waiting_source() {
-                            Sense::hover()
-                        } else {
-                            Sense::click_and_drag()
-                        };
-                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(half * 2.0), sense);
-                        if let Some(limb) = limb {
-                            ui.painter().circle_stroke(rect.center(), 10.0, Stroke::new(3.0, palette.teal));
-                            ui.painter().text(
-                                rect.center() + egui::vec2(11.0, -10.0),
-                                egui::Align2::LEFT_BOTTOM,
-                                aurora_i18n::text(limb.label),
-                                egui::FontId::proportional(12.0),
-                                palette.teal,
-                            );
-                        }
-                        ui.painter().circle_filled(
-                            rect.center(),
-                            if selected { 4.5 } else { 2.5 },
-                            if selected { palette.teal } else { palette.ink },
-                        );
-                        response
-                    })
-                    .inner;
-                if self.links.bone_pick && response.clicked() {
-                    self.picked_bone(
-                        world,
-                        &frame,
-                        crate::world::rig_graph::Target::Bone {
-                            avatar: Uuid::nil(),
-                            bone: name.to_owned(),
-                        },
-                    );
-                    response.on_hover_text(name);
-                    continue;
-                }
-                if response.clicked() || response.drag_started() {
-                    self.select(joint, rig, &frame);
-                    if self.mode == Mode::Ik
-                        && self.pole.is_none()
-                        && let Some(limb) = limb
-                    {
-                        self.pole = Some(limb.pole(&frame));
-                    }
-                }
-                if self.point_drag_enabled(ctx.input(|i| i.modifiers))
-                    && response.dragged()
-                    && let Some(pointer) = response.interact_pointer_pos()
-                {
-                    let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
-                    let changed_mode = self.drag.is_some_and(|drag| matches!(drag, Drag::Rotate { .. }) != rotate);
-                    if self.drag.is_none() || changed_mode {
-                        let origin = if response.drag_started() {
-                            ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer)
-                        } else {
-                            pointer
-                        };
-                        self.start_drag(proj, &frame, origin, rotate);
-                    }
-                    self.drag_to(proj, &frame, rig, pointer);
-                }
-                if response.drag_stopped() {
-                    self.drag = None;
-                }
-                response.on_hover_text(name);
+            // World overlays stay in Background, like the build gizmos. Middle
+            // joint areas can rise above a floater after being clicked.
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")));
+            let segments = self.skeleton_segments(world, proj, &frame);
+            self.draw_segments(&painter, palette, &segments);
+            if let Some(bone) = self.selected
+                && self.visibility.visible(&rig.canonical_names[bone])
+                && let Some((point, _)) = proj.project(frame.joints[bone].transform_point3(self.contact))
+            {
+                painter.circle_stroke(point, 7.0, Stroke::new(2.0, palette.teal));
             }
+            let graph_owns = !self.clip.active && self.graph_overlay(ctx, palette, world, proj, &frame);
+            // A selected virtual bone owns the shared manipulator. Do not let the
+            // real-bone renderer cancel its in-progress modifier drag afterwards.
+            let gizmo_owns = if self.graph.selected.is_some() {
+                graph_owns
+            } else {
+                self.show_gizmo(ctx, palette, proj, &frame, rig) || graph_owns
+            };
+            self.manipulator_hovered = gizmo_owns;
+            let selected_pole = self.control == Control::Pole;
+            if !selected_pole {
+                self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
+            }
+            // couple mode: the other person's joints, a click edits them
+            self.couple_waiting_handles(ctx, palette, world, proj, gizmo_owns || self.clip.waiting_source());
+            let limb_list = if self.limb_controls {
+                limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
+            } else {
+                Vec::new()
+            };
+            if (!self.picking || self.links.bone_pick)
+                && (!self.prims.object_handles || self.links.bone_pick)
+                && !ctx.input(|i| i.modifiers.alt)
+            {
+                let chosen = self.selected;
+                let handles = names
+                    .iter()
+                    .filter(|n| chosen != Some(n.0) && !limb_list.iter().any(|l| l.end == n.0))
+                    .chain(
+                        names
+                            .iter()
+                            .filter(|n| chosen != Some(n.0) && limb_list.iter().any(|l| l.end == n.0)),
+                    )
+                    .chain(names.iter().filter(|n| chosen == Some(n.0)));
+                for &(joint, name) in handles {
+                    if !self.visibility.visible(name) {
+                        continue;
+                    }
+                    let selected = self.selected == Some(joint);
+                    let follower = self.clip_follows(joint);
+                    let limb = limb_list.iter().find(|l| l.end == joint);
+                    let point = if self.links.bone_pick {
+                        frame.joints[joint].w_axis.truncate()
+                    } else if selected {
+                        frame.joints[joint].transform_point3(self.contact)
+                    } else if limb.is_some() {
+                        let contact = self.goals.iter().find(|g| g.bone == joint).map_or(Vec3::ZERO, |g| g.contact);
+                        frame.joints[joint].transform_point3(contact)
+                    } else {
+                        frame.joints[joint].w_axis.truncate()
+                    };
+                    let Some((anchor, _)) = proj.project(point) else {
+                        continue;
+                    };
+                    let at = anchor;
+                    let half = if limb.is_some() { 12.0 } else { 6.0 };
+                    let response = egui::Area::new(egui::Id::unique(("ik-joint", joint)))
+                        .fixed_pos(at - egui::vec2(half, half))
+                        .order(egui::Order::Background)
+                        .movable(false)
+                        .interactable(!gizmo_owns && !self.clip.waiting_source())
+                        .show(ctx, |ui| {
+                            let sense = if self.links.bone_pick {
+                                Sense::click()
+                            } else if gizmo_owns || self.clip.waiting_source() {
+                                Sense::hover()
+                            } else {
+                                Sense::click_and_drag()
+                            };
+                            let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(half * 2.0), sense);
+                            if let Some(limb) = limb {
+                                ui.painter().circle_stroke(rect.center(), 10.0, Stroke::new(3.0, palette.teal));
+                                ui.painter().text(
+                                    rect.center() + egui::vec2(11.0, -10.0),
+                                    egui::Align2::LEFT_BOTTOM,
+                                    aurora_i18n::text(limb.label),
+                                    egui::FontId::proportional(12.0),
+                                    palette.teal,
+                                );
+                            }
+                            if follower {
+                                // a joint that follows the selected one: a thinner ring
+                                ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.5, palette.teal));
+                            }
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                if selected || follower { 4.5 } else { 2.5 },
+                                if selected || follower { palette.teal } else { palette.ink },
+                            );
+                            response
+                        })
+                        .inner;
+                    // a press on a joint's handle is the editor's: Avatar Studio
+                    // would otherwise also turn its camera with the drag
+                    self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
+                    if self.links.bone_pick && response.clicked() {
+                        self.picked_bone(
+                            world,
+                            &frame,
+                            crate::world::rig_graph::Target::Bone {
+                                avatar: Uuid::nil(),
+                                bone: name.to_owned(),
+                            },
+                        );
+                        response.on_hover_text(name);
+                        continue;
+                    }
+                    if response.clicked() || response.drag_started() {
+                        if !self.clip.active {
+                            self.select(joint, rig, &frame);
+                        } else if response.clicked() {
+                            self.clip_click_bone(joint, rig, &frame, ctx.input(|i| adds_to_selection(i.modifiers)));
+                        } else {
+                            self.clip_grab_bone(joint, rig, &frame);
+                        }
+                        // only for the joint that leads: one added to the
+                        // selection (Shift or Ctrl + click) must not give the
+                        // selected joint its own limb's pole
+                        if self.takes_limb_pole(joint)
+                            && let Some(limb) = limb
+                        {
+                            self.pole = Some(limb.pole(&frame));
+                        }
+                    }
+                    if self.point_drag_enabled(ctx.input(|i| i.modifiers))
+                        && response.dragged()
+                        && let Some(pointer) = response.interact_pointer_pos()
+                    {
+                        let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
+                        let changed_mode = self.drag.is_some_and(|drag| matches!(drag, Drag::Rotate { .. }) != rotate);
+                        if self.drag.is_none() || changed_mode {
+                            let origin = if response.drag_started() {
+                                ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer)
+                            } else {
+                                pointer
+                            };
+                            self.start_drag(proj, &frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
+                        }
+                        self.drag_to(proj, &frame, rig, pointer);
+                    }
+                    if response.drag_stopped() {
+                        self.drag = None;
+                    }
+                    response.on_hover_text(name);
+                }
+            }
+            if selected_pole {
+                self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
+            }
+            self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
+            // a point dragged keeps the pointer to its release, wherever it goes
+            self.manipulator_hovered |= self.drag.is_some();
         }
-        if selected_pole {
-            self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
+        if self.clip.active {
+            // the animation editor has its own, narrower window and pages
+            self.clip_window_ui(ctx, palette, world, &frame);
+        } else {
+            self.ik_window_ui(ctx, palette, world, &frame);
         }
-        self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
+        if !self.open {
+            self.leave_clip();
+            // Closed with its own button: the editor is no longer Avatar
+            // Studio's. Resumed later from IK Edit it needs its timeline and
+            // its way back, which Studio would have drawn.
+            self.clip.forget_avatar_studio();
+            self.cancel_link_pick();
+            self.drag = None;
+            self.gizmo.cancel();
+        }
+    }
+
+    /// The IK contacts window. Creating or resuming an animation in its
+    /// Animations page hands over to the animation editor's window.
+    fn ik_window_ui(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, frame: &Frame) {
         let mut open = self.open;
         let mut floater = Floater::new(
             "ik-edit",
-            if self.clip.active {
-                aurora_i18n::tr!("anim-edit-title")
-            } else {
-                aurora_i18n::tr!("ik-edit-title")
-            },
+            aurora_i18n::tr!("ik-edit-title"),
             egui::pos2(24.0, 85.0),
             egui::vec2(530.0, 785.0),
         );
         floater.min_size.x = 530.0;
         floater.show(ctx, palette, &mut open, |ui| {
-            if self.clip.active && ui.button(aurora_i18n::tr!("anim-edit-return")).clicked() {
-                self.leave_clip();
-            }
-            if !self.clip.active {
-                self.library_title_ui(ui);
-            }
+            self.library_title_ui(ui);
             self.project_tabs_ui(ui, palette);
             self.link_pick_status_ui(ui, palette, world);
-            let footer = if self.clip.active {
-                150.0
-            } else if self.links.footer_height > 0.0 {
+            let footer = if self.links.footer_height > 0.0 {
                 self.links.footer_height + ui.spacing().item_spacing.y
             } else {
                 190.0
             };
             let mut body = egui::ScrollArea::vertical()
                 .id_salt(("ik-editor-body", self.tab))
-                .auto_shrink([false, self.clip.active])
+                .auto_shrink([false, false])
                 .max_height((ui.available_height() - footer).max(60.0));
             if self.links.reveal_offsets {
                 body = body.vertical_scroll_offset(110.0);
             }
-            body.show(ui, |ui| {
-                if self.clip.waiting_source() {
-                    ui.label(aurora_i18n::tr!("anim-edit-building"));
-                    return;
+            body.show(ui, |ui| match self.tab {
+                5 => self.library_browser_ui(ui, palette, world),
+                3 => self.visibility_ui(ui, palette, world, frame),
+                2 => {
+                    self.clip_entry_ui(ui, palette, world, frame);
+                    if !self.clip.active {
+                        self.ensure_profiles(world, frame);
+                        let mut profile = self.graph.profile.unwrap_or(0);
+                        ui.horizontal(|ui| {
+                            ui.strong(aurora_i18n::tr!("ik-profile-title"));
+                            let width = ui.available_width().max(80.0);
+                            self.profile_selector_ui(ui, &mut profile, "ik-animation-profile", width);
+                        });
+                        if self.graph.profile != Some(profile) {
+                            self.switch_profile(profile, world, frame);
+                        }
+                        self.animations.show(ui, palette, &world.inventory);
+                    }
                 }
-                match self.tab {
-                    5 => self.library_browser_ui(ui, palette, world),
-                    3 => self.visibility_ui(ui, palette, world, &frame),
-                    2 => {
-                        if !self.clip.active {
-                            self.clip_entry_ui(ui, palette, world, &frame);
-                        }
-                        if self.clip.active {
-                            self.clip_ui(ui, palette, world, &frame);
-                        } else {
-                            self.ensure_profiles(world, &frame);
-                            let mut profile = self.graph.profile.unwrap_or(0);
-                            ui.horizontal(|ui| {
-                                ui.strong(aurora_i18n::tr!("ik-profile-title"));
-                                let width = ui.available_width().max(80.0);
-                                self.profile_selector_ui(ui, &mut profile, "ik-animation-profile", width);
-                            });
-                            if self.graph.profile != Some(profile) {
-                                self.switch_profile(profile, world, &frame);
-                            }
-                            self.animations.show(ui, palette, &world.inventory);
-                        }
+                0 => {
+                    if !self.picking {
+                        self.manipulation_ui(ui);
+                        self.pose_ui(ui, palette, world, frame);
                     }
-                    0 => {
-                        if !self.picking {
-                            self.manipulation_ui(ui, palette);
-                            self.pose_ui(ui, palette, world, &frame);
-                        }
-                    }
-                    4 => {
-                        if !self.picking {
-                            self.nodes_ui(ui, palette, world, &frame);
-                        }
-                    }
-                    _ => self.links_ui(ui, palette, world, &frame),
                 }
+                4 => {
+                    if !self.picking {
+                        self.nodes_ui(ui, palette, world, frame);
+                    }
+                }
+                _ => self.links_ui(ui, palette, world, frame),
             });
-            if self.clip.active {
-                self.clip_export_ui(ui, palette);
-            } else {
+            // The animation editor takes over from the next frame once
+            // creation started above.
+            if !self.clip.active {
                 // Measure once per frame so wrapping, diagnostics and font/window
                 // changes reserve their real height without replaying actions.
-                let footer = ui.scope(|ui| self.footer_ui(ui, palette, world, &frame));
+                let footer = ui.scope(|ui| self.footer_ui(ui, palette, world, frame));
                 if (self.links.footer_height - footer.response.rect.height()).abs() > 0.5 {
                     self.links.footer_height = footer.response.rect.height();
                     ctx.request_repaint();
@@ -1183,12 +1349,11 @@ impl Editor {
             }
         });
         self.open = open;
-        if !self.open {
-            self.leave_clip();
-            self.cancel_link_pick();
-            self.drag = None;
-            self.gizmo.cancel();
-        }
+    }
+
+    /// The window the editor shows: the animation editor has its own.
+    pub fn window_id(&self) -> &'static str {
+        if self.clip.active { clip::WINDOW } else { "ik-edit" }
     }
 }
 

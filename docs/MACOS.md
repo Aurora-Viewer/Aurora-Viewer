@@ -9,7 +9,22 @@ nothing else to install. macOS support is new: tell us what does not work
 
 - A Mac with Apple Silicon (M1, M2, M3, M4 or later). Intel Macs are not
   supported.
-- macOS 12 Monterey or later.
+- macOS 13 Ventura or later. The renderer draws every texture through
+  Metal 3, which Apple ships from macOS 13 on: on macOS 12 Monterey the
+  viewer cannot start, even on Apple Silicon. Every Apple Silicon Mac can
+  be updated to a newer macOS, free of charge.
+
+## Graphics defaults
+
+On a Retina Mac the world is drawn at the display's logical resolution
+(50% on a 2× display, 67% on 1.5×) and upscaled, while the interface and
+HUDs stay sharp and saved photos keep their full resolution. This follows
+the Legacy Viewer's `RenderHiDPI 0` default and is the setting that gains
+the most frame rate on a Mac. Preferences › Graphics › Smoothness has the
+**Match the display** switch; turn it off to choose the percentage. A new
+Mac profile also starts from the Legacy Viewer's Mac Mid-High values (no
+shadows or ambient occlusion, FXAA, manual reflection probes), shown as
+"Mid-High (recommended for this Mac)" under the quality levels.
 
 ## 1. Download and install
 
@@ -53,12 +68,12 @@ Aurora Viewer declares itself as a game to macOS, so macOS turns on its
 Game Mode automatically when the viewer is in native full screen on Apple
 Silicon with macOS 14 Sonoma or later. To enter full screen, move the
 pointer over the green button in the title bar and choose **Enter Full
-Screen**; maximizing the window (double-clicking the title bar, or the
-**Zoom** command) does not enter full screen. The Game Mode notice and the
-game controller icon in the menu bar confirm that it is on; the icon's menu
-also turns it off for the game. Game Mode gives the viewer priority over
-background work and lowers the latency of Bluetooth controllers and
-headphones.
+Screen**, or press Control+Command+F; maximizing the window (double-clicking
+the title bar, or the **Zoom** command) does not enter full screen. The Game
+Mode notice and the game controller icon in the menu bar confirm that it is
+on; the icon's menu also turns it off for the game. Game Mode gives the
+viewer priority over background work and lowers the latency of Bluetooth
+controllers and headphones.
 
 Game Mode belongs to the installed application: running a bare
 `aurora-viewer` executable from a terminal has no application bundle, so
@@ -75,13 +90,24 @@ and Command does not change the camera wheel.
 A few shortcuts are labeled with the Control key (⌃), the same list as the
 Legacy Viewer: Nearby Chat (⌃H), Conversations (⌃T), the World Map (⌃M),
 Highlight Transparent (⌃⌥T), Snapshot to Disk (⌃`). Command runs those too,
-except Nearby Chat. Command+H hides the application, as it does in the
-Legacy Viewer, and Control+H opens Nearby Chat (or brings it forward, or
-closes it when it is already in front). The others are labeled with
-Command (⌘), then Option (⌥) and Shift (⇧).
+except Nearby Chat and the World Map: macOS keeps Command+M for minimizing,
+so the World Map stays Control+M. Command+H hides the application, as it
+does in the Legacy Viewer, and Control+H opens Nearby Chat (or brings it
+forward, or closes it when it is already in front). The others are labeled
+with Command (⌘), then Option (⌥) and Shift (⇧).
+
+The native **Window** menu holds the standard macOS actions: **Minimize**
+(Command+M) minimizes the viewer to the Dock, and **Enter Full Screen**
+(Control+Command+F) enters or leaves native full screen, the same as the
+green button, as in the Legacy Viewer.
+
 Text fields accept both keys for copy, paste, undo and the rest.
 Select All is Command+A (or Control+A). Command+Shift+A still opens People,
 as in the Legacy Viewer, even while a field is focused.
+In the Conversations window, **Control+Tab** and **Control+Shift+Tab** go to
+the next and previous conversation. Option+Left/Right moves by word in its
+field, while Option+Up/Down still cycles conversations and Command+Left/Right
+stays the start or end of the line.
 **Command+Q** asks before quitting, like the close button of the window.
 macOS takes Command+Q and Command+H before the viewer sees them. The Quit
 item is answered here; Command+H stays Hide.
@@ -89,9 +115,11 @@ item is answered here; Command+H stays Hide.
 ## Web pages and video
 
 Web pages and video in the world need the media plugins, which are not part
-of the application: the first time they are needed, the viewer downloads
-Aurora's media plugins pack (about 335 MB) into the `media-plugins` folder of
-its settings (table below), once. A Legacy Viewer installed on the Mac can
+of the application: the first time they are needed, the viewer asks before
+it downloads Aurora's media plugins pack (about 335 MB) into the
+`media-plugins` folder of its settings (table below), once. "Not now" leaves
+a Download button in Preferences › Sound and voice › Media and where the page
+would show. A Legacy Viewer installed on the Mac can
 lend its plugins instead: in **Preferences › Media**, type the path of its
 application (its `.app` in `/Applications`) as the plugins folder.
 
@@ -136,12 +164,18 @@ run `pwsh ./scripts/package-macos.ps1 -Exe target/release/aurora-viewer -Out "Au
 (PowerShell 7: `brew install powershell`). The same PowerShell runs the local
 checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 
+To work on the code with an AI agent, also install the search tools the
+agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools";
+optional, the Aurora tools install them on Windows):
+`brew install ripgrep fd jq ast-grep`.
+
 ## Signing (for the maintainers)
 
 The macOS job of the release workflow signs the application with the
 project's Developer ID, then has Apple notarize it, when the repository has
 these Actions secrets; without them it is signed ad hoc and opens as in
-step 2:
+step 2. The dry run of a pull request that changes the release files is
+always signed ad hoc.
 
 | Secret | Value |
 |---|---|

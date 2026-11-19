@@ -58,6 +58,26 @@ impl Machine {
 
 const MIB: u64 = 1024 * 1024;
 
+/// The system as the login names it (`aurora_net::login::Platform`): the
+/// Windows build, the macOS product version or the Linux kernel release.
+/// Read once, at the first login (one registry value, sysctl or uname).
+pub fn login_platform() -> aurora_net::login::Platform {
+    use aurora_net::login::Platform;
+    use sysinfo::System;
+    static PLATFORM: OnceLock<Platform> = OnceLock::new();
+    PLATFORM
+        .get_or_init(|| {
+            if cfg!(windows) {
+                Platform::windows(&System::kernel_version().unwrap_or_default(), cfg!(target_arch = "x86_64"))
+            } else if cfg!(target_os = "macos") {
+                Platform::macos(&System::os_version().unwrap_or_default())
+            } else {
+                Platform::linux(&System::kernel_version().unwrap_or_default())
+            }
+        })
+        .clone()
+}
+
 /// A `Machine` a thread is reading; empty until it is read.
 #[derive(Clone, Debug, Default)]
 pub struct Reading(Arc<OnceLock<Machine>>);
