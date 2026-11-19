@@ -33,7 +33,9 @@ fn compressed(value: &Llsd) -> Result<Vec<u8>, AssetError> {
     if bytes.len() > i32::MAX as usize {
         return Err(AssetError::TooLarge("mesh section"));
     }
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    // zip_llsd (indra/llcommon/llsdserialize.cpp) uses Z_BEST_COMPRESSION:
+    // compressed LOD sizes contribute to the server's download weight.
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
     encoder.write_all(&bytes).map_err(|e| AssetError::invalid(e.to_string()))?;
     encoder.finish().map_err(|e| AssetError::invalid(e.to_string()))
 }
