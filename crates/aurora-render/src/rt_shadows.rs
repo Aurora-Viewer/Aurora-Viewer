@@ -1819,6 +1819,10 @@ struct Mover<'a> {
 /// traced reflections SSR's composite reads.
 pub(crate) struct Targets {
     size: (u32, u32),
+    /// Which targets these are: a pass's history is the one it wrote to
+    /// them, and new ones of the same size hold none (a photo's tiles are
+    /// made one after the other, at one size).
+    serial: u64,
     pub result: wgpu::TextureView,
     pub reflect: Option<wgpu::TextureView>,
     pub gi: Option<GiTargets>,
@@ -1905,7 +1909,8 @@ struct Lights {
     changes: crate::rt_light_changes::LightChanges,
     timer: Option<Timer>,
     last: usize,
-    history_for: Option<(u32, u32)>,
+    /// The targets the history was written to (`Targets::serial`).
+    history_for: Option<u64>,
     prev_clip_from_world: glam::Mat4,
     prev_camera: glam::Vec3,
     frame: u32,
@@ -2001,6 +2006,9 @@ struct GiU {
     changed: [[f32; 4]; crate::rt_light_changes::MAX_CHANGES],
     changes: [f32; 4],
     lamps: [f32; 4],
+    scene_clip_from_world: [[f32; 4]; 4],
+    scene_world_from_clip: [[f32; 4]; 4],
+    scene: [f32; 4],
 }
 
 /// The traced indirect light's passes (shaders/rt_gi.wgsl).
@@ -2016,11 +2024,15 @@ struct Gi {
     timer: Option<Timer>,
     /// The history written last frame (`GiTargets::color` and `guide`).
     last: usize,
-    /// The size the history was written at, None before the first frame.
-    history_for: Option<(u32, u32)>,
+    /// The targets the history was written to (`Targets::serial`), None
+    /// before the first frame.
+    history_for: Option<u64>,
     prev_clip_from_world: glam::Mat4,
     prev_camera: glam::Vec3,
     frame: u32,
+    /// The view's last lit frame, kept through a photo and until the
+    /// view's next frame (`hold_screen`).
+    screen: Option<HeldScreen>,
     /// When the last frame was traced, and the frames' length smoothed
     /// (`gi_history_frames`).
     traced_at: Option<std::time::Instant>,
@@ -2178,6 +2190,11 @@ pub(crate) struct RtShadows {
     lamps_count: u32,
     /// Whether one of them moved since the last frame.
     lamps_moved: bool,
+    /// The sun's pass's constants as `write` left them, for a photo's later
+    /// rounds (`retrace`).
+    sun: ParamsU,
+    /// A photo's lamps as its first round listed them, for the others.
+    lamps_still: Vec<TracedLightU>,
     pub stats: RtStats,
     timer: Option<Timer>,
     poser: Poser,
@@ -2445,6 +2462,8 @@ impl RtShadows {
             }),
             lamps_count: 0,
             lamps_moved: false,
+            sun: ParamsU::zeroed(),
+            lamps_still: Vec::new(),
             stats: RtStats::default(),
             timer: Timer::new(device, queue, 4),
             poser: Poser::new(device, &scene_layout),
@@ -2974,8 +2993,10 @@ impl Targets {
                 tinted: options.lights,
             }
         });
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Some(Targets {
             size,
+            serial: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             result,
             reflect,
             gi,
@@ -2984,12 +3005,91 @@ impl Targets {
     }
 }
 
+/// The rounds of a photo's traced passes ([`Round::Still`]). A photo is one
+/// frame: it has no frame before it to average, where the view's light is
+/// the mean of the lamps' 12 frames and of the indirect light's half second
+/// (32 frames at 60 a second). Its passes run this many times over its
+/// view instead, each on the history the round before left, so a photo
+/// holds the light the view shows and not one frame's rays.
+pub(crate) const STILL_ROUNDS: u32 = 32;
+
+/// Which run of a frame's traced passes this is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Round {
+    /// The view's frame: one run, on last frame's history.
+    Live,
+    /// A photo's (a tile's, a 360° face's): the first has no history,
+    /// whatever the passes kept, and each of the others has the one before
+    /// it, of the same view (0 to [`STILL_ROUNDS`] - 1).
+    Still(u32),
+}
+
+impl Round {
+    /// The run that does what a frame does once: the scene's levels, the
+    /// frame's lights, the timers.
+    pub(crate) fn first(self) -> bool {
+        !matches!(self, Round::Still(n) if n > 0)
+    }
+
+    /// Whether the pass has a history to read: the view's when the pass
+    /// wrote it to these targets (`kept`), a photo's from its second round.
+    fn history(self, kept: bool) -> bool {
+        match self {
+            Round::Live => kept,
+            Round::Still(n) => n > 0,
+        }
+    }
+
+    /// Nothing moves between two rounds of a photo: the prepass's motion,
+    /// which is since the view's last frame, is not read.
+    fn still(self) -> bool {
+        matches!(self, Round::Still(_))
+    }
+}
+
+/// The GPU time a photo of a frame's pixels is planned by (ms): the
+/// frame's (`frame_ms`) and the `more` rounds its traced passes run that
+/// the frame did not, each of `traced_ms`.
+pub(crate) fn still_gpu_ms(frame_ms: f32, traced_ms: f32, more: u32) -> f32 {
+    frame_ms + more as f32 * traced_ms
+}
+
+/// Writes a pass's constants. The queue's writes all land before the
+/// frame's commands, so a later round of a photo, which changes them
+/// between two runs of one encoder, goes through a copy the encoder orders.
+fn put(device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, buffer: &wgpu::Buffer, bytes: &[u8], round: Round) {
+    if round.first() {
+        queue.write_buffer(buffer, 0, bytes);
+        return;
+    }
+    let staged = wgpu::util::DeviceExt::create_buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("rt still round"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        },
+    );
+    encoder.copy_buffer_to_buffer(&staged, 0, buffer, 0, bytes.len() as u64);
+}
+
+/// The view's last lit frame, kept through a photo for the hits of its
+/// indirect light and of the view's next frame (`RtShadows::hold_screen`).
+struct HeldScreen {
+    view: wgpu::TextureView,
+    /// The depth it was drawn with: what it shows of a hit is told by it,
+    /// the same in every tile of a photo.
+    depth: wgpu::TextureView,
+    clip_from_world: glam::Mat4,
+    size: (u32, u32),
+}
+
 impl RtShadows {
     /// The constants of this frame's pass: the projection the depth prepass
     /// was drawn with, the eye, the light (w: whether it is up), and whether
     /// the contact mask is read.
     pub(crate) fn write(
-        &self,
+        &mut self,
         queue: &wgpu::Queue,
         t: &Targets,
         clip_from_world: glam::Mat4,
@@ -3015,6 +3115,27 @@ impl RtShadows {
             },
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
+        self.sun = u;
+    }
+
+    /// A later round of a photo: the sun's mask traced again, its ray to
+    /// another point of the disc (the frame number the lights' pass counts).
+    pub(crate) fn retrace(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &Targets,
+        depth: &wgpu::TextureView,
+        contact: &wgpu::TextureView,
+        scene: &crate::packet::SceneGpu,
+        round: Round,
+    ) {
+        if let Some(l) = &self.lights {
+            self.sun.soft[1] = (l.frame % (1 << 20)) as f32;
+        }
+        put(device, queue, encoder, &self.buffer, bytemuck::bytes_of(&self.sun), round);
+        self.trace(device, encoder, t, depth, contact, scene, round);
     }
 
     /// Poses the posed faces, builds what is missing of the bottom levels
@@ -3481,7 +3602,7 @@ impl RtShadows {
             skeletons,
             skeletons_built,
         };
-        self.trace(device, encoder, t, depth, contact, scene);
+        self.trace(device, encoder, t, depth, contact, scene, Round::Live);
         part(4);
         let us = started.elapsed().as_micros() as u64;
         self.cpu.frames += 1;
@@ -3512,6 +3633,7 @@ impl RtShadows {
         depth: &wgpu::TextureView,
         contact: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
+        round: Round,
     ) {
         // after the build: the posed records' buffer may have grown
         let scene_group = self.scene_group(device, scene);
@@ -3553,11 +3675,15 @@ impl RtShadows {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt shadows"),
-                timestamp_writes: self.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
-                    query_set: &timer.queries,
-                    beginning_of_pass_write_index: Some(2),
-                    end_of_pass_write_index: Some(3),
-                }),
+                timestamp_writes: self
+                    .timer
+                    .as_ref()
+                    .filter(|_| round.first())
+                    .map(|timer| wgpu::ComputePassTimestampWrites {
+                        query_set: &timer.queries,
+                        beginning_of_pass_write_index: Some(2),
+                        end_of_pass_write_index: Some(3),
+                    }),
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -3565,7 +3691,7 @@ impl RtShadows {
             pass.set_bind_group(2, &scene.textures, &[]);
             pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
         }
-        if let Some(timer) = &mut self.timer {
+        if let Some(timer) = self.timer.as_mut().filter(|_| round.first()) {
             timer.resolve(encoder);
         }
     }
@@ -3753,29 +3879,22 @@ impl Denoise {
         }
     }
 
-    /// Filters `history` (rgb its mean, a its frames) of `size` beside its
-    /// `guide`, through `ping`: the image of the two that holds the result.
-    /// With `first`, the first à-trous pass is written there in place of
-    /// `ping`, for the caller to keep as the next frame's history: rounded
-    /// by a chance that changes with the frame number beside it
-    /// (rt_denoise.wgsl `dithered`).
-    /// A pair's `tint` is its history, its two images and whether it is
-    /// kept (one pixel each otherwise, bound and left alone): the second
-    /// image returned holds its result.
+    /// The passes' constants for images of `size`, written before the
+    /// denoiser's compute pass begins (`encode`). `first` is the frame
+    /// number of an instance that keeps its first à-trous pass as the next
+    /// frame's history: what is kept is rounded by a chance that changes
+    /// with it (rt_denoise.wgsl `dithered`), at each round of a photo too.
     #[allow(clippy::too_many_arguments)]
-    fn encode<'a>(
+    fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pass: &mut wgpu::ComputePass<'_>,
+        encoder: &mut wgpu::CommandEncoder,
         size: (u32, u32),
-        history: &'a wgpu::TextureView,
-        guide: &wgpu::TextureView,
-        ping: &'a [wgpu::TextureView; 2],
-        first: Option<(&'a wgpu::TextureView, u32)>,
-        tint: Option<(&'a wgpu::TextureView, &'a [wgpu::TextureView; 2], bool)>,
-    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
-        let tinted = tint.is_some_and(|(_, _, kept)| kept);
+        tinted: bool,
+        first: Option<u32>,
+        round: Round,
+    ) {
         if self.params_for != Some((size.0, size.1, tinted)) {
             for (k, buffer) in self.params.iter().enumerate() {
                 let step = if k == 0 { 0.0 } else { (1u32 << (k - 1)) as f32 };
@@ -3786,7 +3905,7 @@ impl Denoise {
                     size: [size.0 as f32, size.1 as f32, step, self.floor],
                     mode: [flag(tinted), 0.0, flag(held), flag(tint_held)],
                 };
-                queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+                put(device, queue, encoder, buffer, bytemuck::bytes_of(&u), round);
             }
             let count = size.0.div_ceil(8) as u64 * size.1.div_ceil(8) as u64;
             self.tiles = Some(device.create_buffer(&wgpu::BufferDescriptor {
@@ -3797,13 +3916,34 @@ impl Denoise {
             }));
             self.params_for = Some((size.0, size.1, tinted));
         }
-        if let (Some((_, frame)), Some(buffer)) = (first, self.params.get(1)) {
+        if let (Some(frame), Some(buffer)) = (first, self.params.get(1)) {
             let u = DenoiseU {
                 size: [size.0 as f32, size.1 as f32, 1.0, self.floor],
                 mode: [if tinted { 1.0 } else { 0.0 }, 1.0 + (frame % (1 << 20)) as f32, 0.0, 0.0],
             };
-            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+            put(device, queue, encoder, buffer, bytemuck::bytes_of(&u), round);
         }
+    }
+
+    /// Filters `history` (rgb its mean, a its frames) of `size` beside its
+    /// `guide`, through `ping`: the image of the two that holds the result.
+    /// With `first`, the first à-trous pass is written there in place of
+    /// `ping`, for the caller to keep as the next frame's history
+    /// (`prepare` was given its frame number).
+    /// A pair's `tint` is its history, its two images and whether it is
+    /// kept (one pixel each otherwise, bound and left alone): the second
+    /// image returned holds its result.
+    fn encode<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::ComputePass<'_>,
+        size: (u32, u32),
+        history: &'a wgpu::TextureView,
+        guide: &wgpu::TextureView,
+        ping: &'a [wgpu::TextureView; 2],
+        first: Option<&'a wgpu::TextureView>,
+        tint: Option<(&'a wgpu::TextureView, &'a [wgpu::TextureView; 2], bool)>,
+    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let mut input_tint = tint.map(|(history, _, _)| history);
         let Some(tiles) = &self.tiles else {
             return (history, input_tint);
@@ -3811,7 +3951,7 @@ impl Denoise {
         let groups = (size.0.div_ceil(8), size.1.div_ceil(8));
         let mut input = history;
         for (k, params) in self.params.iter().enumerate() {
-            let output = first.filter(|_| k == 1).map_or(&ping[k % 2], |(kept, _)| kept);
+            let output = first.filter(|_| k == 1).unwrap_or(&ping[k % 2]);
             let mut entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -3882,6 +4022,7 @@ impl Gi {
                 storage_texture_entry(16, GI_HIT_FORMAT),
                 storage_texture_entry(17, GI_FORMAT),
                 storage_entry(20, true),
+                texture_entry(21, wgpu::TextureSampleType::Depth),
             ],
         });
         let reuse_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3957,6 +4098,7 @@ impl Gi {
             prev_clip_from_world: glam::Mat4::IDENTITY,
             prev_camera: glam::Vec3::ZERO,
             frame: 0,
+            screen: None,
             traced_at: None,
             frame_seconds: 1.0 / 60.0,
             changes: crate::rt_light_changes::LightChanges::default(),
@@ -4151,25 +4293,40 @@ impl RtShadows {
         motion: Option<&wgpu::TextureView>,
         black: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
+        round: Round,
     ) {
         let scene_group = self.scene_group(device, scene);
         // the frame's lights, for the hits the reflections and the indirect
-        // light shade too
-        let lamps = match self.lights.as_mut() {
-            Some(l) => traced_lights(point_lights, &mut l.places),
-            None => traced_lights(point_lights, &mut HashMap::new()),
+        // light shade too (a photo's later rounds have the first's)
+        let lamps = match (round.first(), self.lights.as_mut()) {
+            (false, Some(l)) if l.points => self.lamps_still.clone(),
+            (false, _) => Vec::new(),
+            (true, Some(l)) => traced_lights(point_lights, &mut l.places),
+            (true, None) => traced_lights(point_lights, &mut HashMap::new()),
         };
-        if !lamps.is_empty() {
-            queue.write_buffer(&self.lamps, 0, bytemuck::cast_slice(&lamps));
+        if round.first() {
+            if !lamps.is_empty() {
+                queue.write_buffer(&self.lamps, 0, bytemuck::cast_slice(&lamps));
+            }
+            self.lamps_count = lamps.len() as u32;
+            self.lamps_moved = lamps.iter().any(|l| l.source[2] > 0.0);
+            if round.still() {
+                self.lamps_still = lamps.clone();
+            }
+        } else if std::mem::take(&mut self.lamps_moved) {
+            // a lamp that moved since the view's last frame stands still
+            // between two rounds: the history near it is no longer let go
+            for lamp in &mut self.lamps_still {
+                lamp.source[2] = 0.0;
+            }
+            put(device, queue, encoder, &self.lamps, bytemuck::cast_slice(&self.lamps_still), round);
         }
-        self.lamps_count = lamps.len() as u32;
-        self.lamps_moved = lamps.iter().any(|l| l.source[2] > 0.0);
         let (Some(l), Some(tlas), Some(lt)) = (self.lights.as_mut(), self.tlas.as_ref(), t.lights.as_ref()) else {
             return;
         };
         let mesh_normals = motion.is_some();
         let motion = motion.unwrap_or(black);
-        if let Some(timer) = &mut l.timer
+        if let Some(timer) = l.timer.as_mut().filter(|_| round.first())
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
@@ -4186,7 +4343,13 @@ impl RtShadows {
         let same_lights = listed == l.listed;
         l.listed = listed;
         let (read, write) = (l.last, 1 - l.last);
-        let valid = l.history_for == Some(t.size);
+        let valid = round.history(l.history_for == Some(t.serial));
+        // (2: the motion beside the prepass's normals is not read, rt_history.wgsl)
+        let normals = match (mesh_normals, round.still()) {
+            (false, _) => 0.0,
+            (true, false) => 1.0,
+            (true, true) => 2.0,
+        };
         let tinted = l.points && lt.tinted;
         let traced = &point_lights[..point_lights.len().min(if l.points { MAX_TRACED_LIGHTS } else { 0 })];
         let changed = l
@@ -4196,7 +4359,7 @@ impl RtShadows {
         let u = LightsU {
             world_from_clip: clip_from_world.inverse().to_cols_array_2d(),
             prev_clip_from_world: l.prev_clip_from_world.to_cols_array_2d(),
-            camera: camera.extend(if mesh_normals { 1.0 } else { 0.0 }).to_array(),
+            camera: camera.extend(normals).to_array(),
             prev_camera: l.prev_camera.extend(if tinted { 1.0 } else { 0.0 }).to_array(),
             screen: [w, h, 1.0 / w, 1.0 / h],
             mode: [
@@ -4221,7 +4384,8 @@ impl RtShadows {
             rows: light.light_sets.rows,
             slices: light.light_sets.slices,
         };
-        queue.write_buffer(&l.buffer, 0, bytemuck::bytes_of(&u));
+        put(device, queue, encoder, &l.buffer, bytemuck::bytes_of(&u), round);
+        let timer = l.timer.as_ref().filter(|_| round.first());
         let uniform = wgpu::BindGroupEntry {
             binding: 0,
             resource: l.buffer.as_entire_binding(),
@@ -4277,7 +4441,7 @@ impl RtShadows {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt lights trace"),
-                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(0),
                     end_of_pass_write_index: None,
@@ -4295,7 +4459,7 @@ impl RtShadows {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt lights reuse"),
-                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(1),
                     end_of_pass_write_index: None,
@@ -4305,10 +4469,11 @@ impl RtShadows {
             pass.set_bind_group(0, &reuse_group, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+        l.denoise.prepare(device, queue, encoder, t.size, tinted, None, round);
         let (denoised, denoised_tint) = {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt lights denoise"),
-                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(2),
                     end_of_pass_write_index: None,
@@ -4316,7 +4481,6 @@ impl RtShadows {
             });
             l.denoise.encode(
                 device,
-                queue,
                 &mut pass,
                 t.size,
                 &lt.share[write],
@@ -4340,7 +4504,7 @@ impl RtShadows {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt lights filter"),
-                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(3),
                     end_of_pass_write_index: Some(4),
@@ -4350,11 +4514,11 @@ impl RtShadows {
             pass.set_bind_group(0, &filter_group, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
-        if let Some(timer) = &mut l.timer {
+        if let Some(timer) = l.timer.as_mut().filter(|_| round.first()) {
             timer.resolve(encoder);
         }
         l.last = write;
-        l.history_for = Some(t.size);
+        l.history_for = Some(t.serial);
         l.prev_clip_from_world = clip_from_world;
         l.prev_camera = camera;
         l.frame = l.frame.wrapping_add(1);
@@ -4362,6 +4526,41 @@ impl RtShadows {
 }
 
 impl RtShadows {
+    /// Before a photo's targets are made: keeps `scene_copy`, the view's
+    /// last lit frame and its `depth` (of `t`'s size), for the hits of the photo's indirect
+    /// light, with the view it was drawn with. The first call of a photo
+    /// counts (its tiles and faces follow one another with no frame of the
+    /// view between them); nothing is kept unless the indirect light was
+    /// traced into `t` last frame, which is when that view is known.
+    pub(crate) fn hold_screen(&mut self, t: &Targets, scene_copy: &wgpu::TextureView, depth: &wgpu::TextureView) {
+        if let Some(g) = self.gi.as_mut()
+            && g.screen.is_none()
+            && g.history_for == Some(t.serial)
+        {
+            g.screen = Some(HeldScreen {
+                view: scene_copy.clone(),
+                depth: depth.clone(),
+                clip_from_world: g.prev_clip_from_world,
+                size: t.size,
+            });
+        }
+    }
+
+    /// The rounds of a photo's traced passes into `t`: one when none of
+    /// them averages over frames (the sun's hard shadow alone).
+    pub(crate) fn still_rounds(&self, t: &Targets) -> u32 {
+        if t.lights.is_some() || t.gi.is_some() { STILL_ROUNDS } else { 1 }
+    }
+
+    /// A frame of the view that traces no indirect light: the screen kept
+    /// for a photo is let go (one that traces it reads it first, when it
+    /// starts afresh, and lets it go: `encode_gi`).
+    pub(crate) fn release_screen(&mut self) {
+        if let Some(g) = self.gi.as_mut() {
+            g.screen = None;
+        }
+    }
+
     /// Whether the traced indirect light is on: the shading reads it this
     /// frame when the frame traces.
     pub(crate) fn lights_indirectly(&self) -> bool {
@@ -4388,13 +4587,14 @@ impl RtShadows {
         motion: &wgpu::TextureView,
         scene_copy: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
+        round: Round,
     ) {
         let scene_group = self.scene_group(device, scene);
         let lamps_shadowed = self.traces_lights();
         let (Some(g), Some(tlas), Some(gt)) = (self.gi.as_mut(), self.tlas.as_ref(), t.gi.as_ref()) else {
             return;
         };
-        if let Some(timer) = &mut g.timer
+        if let Some(timer) = g.timer.as_mut().filter(|_| round.first())
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
@@ -4407,14 +4607,30 @@ impl RtShadows {
             );
         }
         let (read, write) = (g.last, 1 - g.last);
-        let valid = g.history_for == Some(t.size);
+        let valid = round.history(g.history_for == Some(t.serial));
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
-        let now = std::time::Instant::now();
-        if let Some(before) = g.traced_at.replace(now) {
-            // a pause (a window left aside) is not a frame's length
-            let seconds = now.duration_since(before).as_secs_f32().min(0.1);
-            g.frame_seconds += (seconds - g.frame_seconds) * 0.05;
+        if round.still() {
+            // (a photo's rounds are no frames of the view: the next one's
+            // length is counted from itself)
+            g.traced_at = None;
+        } else {
+            let now = std::time::Instant::now();
+            if let Some(before) = g.traced_at.replace(now) {
+                // a pause (a window left aside) is not a frame's length
+                let seconds = now.duration_since(before).as_secs_f32().min(0.1);
+                g.frame_seconds += (seconds - g.frame_seconds) * 0.05;
+            }
         }
+        // The image a hit the view sees is read from, and the view it was
+        // drawn with: `scene_copy`, last frame's. A frame with no history
+        // has new targets, whose image holds nothing yet: a photo, and the
+        // view's first frame after one, read the view's last frame, kept
+        // for them (`hold_screen`), or shade every hit where it is.
+        let (screen, screen_depth, screen_clip, screen_size) = match (&g.screen, round.still() || !valid) {
+            (Some(s), true) => (&s.view, Some(&s.depth), s.clip_from_world, Some(s.size)),
+            (None, true) => (scene_copy, None, g.prev_clip_from_world, None),
+            (_, false) => (scene_copy, None, g.prev_clip_from_world, Some(t.size)),
+        };
         let history_frames = gi_history_frames(g.frame_seconds);
         let changed = g.changes.update(
             point_lights,
@@ -4428,7 +4644,8 @@ impl RtShadows {
             clip_from_world: light.clip_from_world.to_cols_array_2d(),
             world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
             prev_clip_from_world: g.prev_clip_from_world.to_cols_array_2d(),
-            camera: light.camera.extend(1.0).to_array(),
+            // (2: the prepass's motion is not read, rt_history.wgsl)
+            camera: light.camera.extend(if round.still() { 2.0 } else { 1.0 }).to_array(),
             prev_camera: g.prev_camera.extend(1.0).to_array(),
             lit: light.lit(),
             screen: [w, h, 1.0 / w, 1.0 / h],
@@ -4447,8 +4664,15 @@ impl RtShadows {
                 if self.lamps_moved { 1.0 } else { 0.0 },
                 0.0,
             ],
+            scene_clip_from_world: screen_clip.to_cols_array_2d(),
+            scene_world_from_clip: screen_clip.inverse().to_cols_array_2d(),
+            scene: match screen_size {
+                Some((w, h)) => [w as f32, h as f32, 1.0, if screen_depth.is_some() { 1.0 } else { 0.0 }],
+                None => [1.0, 1.0, 0.0, 0.0],
+            },
         };
-        queue.write_buffer(&g.buffer, 0, bytemuck::bytes_of(&u));
+        put(device, queue, encoder, &g.buffer, bytemuck::bytes_of(&u), round);
+        let timer = g.timer.as_ref().filter(|_| round.first());
         let levels = [
             wgpu::BindGroupEntry {
                 binding: 4,
@@ -4472,7 +4696,8 @@ impl RtShadows {
                 view(3, &gt.guide[read]),
                 levels[0].clone(),
                 levels[1].clone(),
-                view(8, scene_copy),
+                view(8, screen),
+                view(21, screen_depth.unwrap_or(depth)),
                 view(12, motion),
                 view(14, &gt.pick_hit[read]),
                 view(15, &gt.pick_light[read]),
@@ -4514,7 +4739,7 @@ impl RtShadows {
             // denoiser's is the two
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt gi trace"),
-                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(0),
                     end_of_pass_write_index: None,
@@ -4530,10 +4755,11 @@ impl RtShadows {
             pass.set_bind_group(0, &reuse_group, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+        g.denoise.prepare(device, queue, encoder, gt.half, false, Some(g.frame), round);
         let denoised = {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt gi denoise"),
-                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(1),
                     end_of_pass_write_index: None,
@@ -4542,13 +4768,12 @@ impl RtShadows {
             g.denoise
                 .encode(
                     device,
-                    queue,
                     &mut pass,
                     gt.half,
                     &gt.color[write],
                     &gt.guide[write],
                     &gt.ping,
-                    Some((&gt.fed, g.frame)),
+                    Some(&gt.fed),
                     None,
                 )
                 .0
@@ -4570,7 +4795,7 @@ impl RtShadows {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt gi filter"),
-                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                timestamp_writes: timer.map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(2),
                     end_of_pass_write_index: Some(3),
@@ -4580,11 +4805,14 @@ impl RtShadows {
             pass.set_bind_group(0, &filter_group, &[]);
             pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
         }
-        if let Some(timer) = &mut g.timer {
+        if let Some(timer) = g.timer.as_mut().filter(|_| round.first()) {
             timer.resolve(encoder);
         }
+        if round == Round::Live {
+            g.screen = None;
+        }
         g.last = write;
-        g.history_for = Some(t.size);
+        g.history_for = Some(t.serial);
         g.prev_clip_from_world = light.clip_from_world;
         g.prev_camera = light.camera;
         g.frame = g.frame.wrapping_add(1);
@@ -4761,6 +4989,30 @@ fn row_major(m: &[[f32; 4]; 4]) -> [f32; 12] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A photo's first round reads no history, whatever the passes kept,
+    /// and each of the others reads the round before; the view's frame
+    /// reads what it kept. The first round alone does a frame's own work.
+    #[test]
+    fn a_photos_rounds_start_afresh_then_follow_one_another() {
+        assert!(!Round::Still(0).history(true));
+        assert!(Round::Still(1).history(false));
+        assert!(Round::Still(STILL_ROUNDS - 1).history(false));
+        assert!(Round::Live.history(true));
+        assert!(!Round::Live.history(false));
+        assert!(Round::Live.first() && Round::Still(0).first());
+        assert!(!Round::Still(1).first());
+        assert!(Round::Still(0).still() && Round::Still(1).still() && !Round::Live.still());
+    }
+
+    /// A photo is planned by the rounds the view's frame did not run.
+    #[test]
+    fn a_photo_is_planned_with_its_rounds() {
+        // a frame that traces nothing over frames, or a photo's own
+        assert_eq!(still_gpu_ms(4.0, 1.5, 0), 4.0);
+        // the view's frame: 4 ms, 1.5 ms of them traced
+        assert_eq!(still_gpu_ms(4.0, 1.5, STILL_ROUNDS - 1), 4.0 + 31.0 * 1.5);
+    }
 
     /// The indirect light's history lasts as long at every frame rate,
     /// between its bounds.

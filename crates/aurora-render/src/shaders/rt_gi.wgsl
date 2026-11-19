@@ -82,6 +82,13 @@ struct Params {
     // x: the point lights (`lights`), y: 1 when their shadows are traced,
     // z: 1 when one of them moved since the last frame.
     lamps: vec4<f32>,
+    // The view `scene_tex` was drawn with, and xy: its size, z: 1 when
+    // there is one, w: 1 when `scene_depth_tex` is its depth. Last frame's
+    // and the screen's, but for a frame with no history: the view's last
+    // frame kept for a photo, with its depth, or none.
+    scene_clip_from_world: mat4x4<f32>,
+    scene_world_from_clip: mat4x4<f32>,
+    scene: vec4<f32>,
 };
 
 // Frames the history averages at most on a surface that moved on its own,
@@ -132,6 +139,9 @@ const WEIGHT_MAX: f32 = 1.0e4;
 // cs_gi
 // last frame's lit scene (the scene copy, not yet made this frame)
 @group(0) @binding(8) var scene_tex: texture_2d<f32>;
+// the depth `scene_tex` was drawn with, when it is kept beside it
+// (`params.scene.w`); this frame's otherwise, unread
+@group(0) @binding(21) var scene_depth_tex: texture_depth_2d;
 // last frame's picks (`Pick`): xyz the hit, w its rays and normal
 // (`pack_tail`); rgb the hit's light, a the pick's weight
 @group(0) @binding(14) var prev_hit: texture_2d<f32>;
@@ -231,6 +241,23 @@ fn cosine_dir(n: vec3<f32>, u: vec2<f32>) -> vec3<f32> {
     return normalize(t * (r * cos(phi)) + bt * (r * sin(phi)) + n * sqrt(max(1.0 - u.x, 0.0)));
 }
 
+// Where `p` is in `scene_tex`, the lit scene of a frame before this one
+// (its pixels), or negative where that frame did not show it.
+fn scene_pixel(p: vec3<f32>) -> vec2<f32> {
+    if (params.scene.z < 0.5) {
+        return vec2<f32>(-1.0);
+    }
+    let clip = params.scene_clip_from_world * vec4<f32>(p, 1.0);
+    if (clip.w <= 0.0) {
+        return vec2<f32>(-1.0);
+    }
+    let ndc = clip.xy / clip.w;
+    if (any(abs(ndc) >= vec2<f32>(1.0))) {
+        return vec2<f32>(-1.0);
+    }
+    return (ndc * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5)) * params.scene.xy;
+}
+
 // What the view shows of a hit: last frame's lit colour there, and the
 // normal of what it shows.
 struct Seen {
@@ -246,6 +273,30 @@ struct Seen {
 // of the pass's time when every hit asked for it.
 fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
     var out = Seen(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0), false);
+    if (params.scene.w > 0.5) {
+        // A photo: what the view kept for it shows of `p`, by that view's
+        // own depth and not this frame's. A tile of a photo sees its part
+        // alone, and a hit lit one way in a tile and another in the next
+        // drew the tiles' edges on the walls. (The caller reads the hit's
+        // own normal: this depth is not `normal_at`'s.)
+        let at = scene_pixel(p);
+        if (at.x < 0.0) {
+            return out;
+        }
+        let px = vec2<i32>(at);
+        let d = textureLoad(scene_depth_tex, px, 0);
+        if (d <= 0.0) {
+            return out;
+        }
+        let ndc = (vec2<f32>(px) + vec2<f32>(0.5)) / params.scene.xy * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
+        let shown = params.scene_world_from_clip * vec4<f32>(ndc, d, 1.0);
+        if (distance(shown.xyz / shown.w, p) > 0.05 + 0.01 * distance(p, params.camera.xyz)) {
+            return out;
+        }
+        out.light = textureLoad(scene_tex, px, 0).rgb;
+        out.seen = true;
+        return out;
+    }
     let clip = params.clip_from_world * vec4<f32>(p, 1.0);
     if (clip.w <= 0.0) {
         return out;
@@ -263,7 +314,7 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
     if (distance(there, p) > 0.05 + 0.01 * distance(p, params.camera.xyz)) {
         return out;
     }
-    let before = prev_pixel(p);
+    let before = scene_pixel(p);
     if (before.x < 0.0) {
         return out;
     }
@@ -498,13 +549,17 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         var one = vec3<f32>(0.0);
         var facing = vec3<f32>(0.0);
         let before = seen_before(hit, dir);
-        if (before.seen) {
+        if (before.seen && params.scene.w < 0.5) {
             one = before.light;
             facing = before.normal;
         } else {
             let s = surface_at(record, primitive, bary, dir);
-            let lamps = Lamps(u32(params.lamps.x), params.lamps.y > 0.5, chance(id.xy, frame, 40u + ray).x);
-            one = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed, lamps);
+            if (before.seen) {
+                one = before.light;
+            } else {
+                let lamps = Lamps(u32(params.lamps.x), params.lamps.y > 0.5, chance(id.xy, frame, 40u + ray).x);
+                one = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed, lamps);
+            }
             facing = s.normal;
         }
         let light = capped(one);

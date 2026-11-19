@@ -1998,6 +1998,10 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// The GPU time a photo of `gpu_pixels` is planned by: `gpu_ms`, and
+    /// the rounds a photo's traced passes run that the view's frame does
+    /// not (the ray-traced lamps' shadows and indirect light).
+    pub gpu_photo_ms: Option<f32>,
     /// Video memory the render targets that follow the image's size take
     /// for each of its pixels, with the MSAA samples, the effects and the
     /// TAA history of the current settings: measured with wgpu's counters
