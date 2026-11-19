@@ -1107,6 +1107,8 @@ mod tests {
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
         let mut draft = crate::imports::tests::mesh_fixture();
+        // Automatic generation: the Legacy chain keeps a box whole.
+        draft.set_lod_profile(mesh::LodProfile::Aurora);
         // A closed surface can reduce as the error rises; an isolated quad cannot.
         let model = &mut Arc::make_mut(&mut draft.scene).models[0];
         model.center = glam::Vec3::ZERO;
@@ -1319,7 +1321,7 @@ mod tests {
         for _ in 0..3 {
             output = Some(frame(Vec::new(), &mut entry).0);
         }
-        let source = text_position(output.as_ref().expect("frame"), aurora_i18n::tr!("import-lod-auto"), false);
+        let source = text_position(output.as_ref().expect("frame"), aurora_i18n::tr!("import-lod-legacy"), false);
         for pressed in [true, false] {
             output = Some(frame(events(source, pressed), &mut entry).0);
         }
@@ -1344,7 +1346,7 @@ mod tests {
         );
         let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
         assert!(
-            draft.lods[2].source == mesh::LodSource::Auto,
+            draft.lods[2].source == mesh::LodSource::Legacy,
             "cancelled file picker keeps the working source"
         );
         assert_eq!(
