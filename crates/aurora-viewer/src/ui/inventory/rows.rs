@@ -115,9 +115,36 @@ pub struct PlainTree {
     pub listed_open: Vec<Uuid>,
     /// The widest row measured since the last rebuild (horizontal range).
     pub width: f32,
+    /// The words the explorer's folder filter keeps (Ctrl+I, lowercase):
+    /// only its own entries, not a whole tree's.
+    filter: Vec<String>,
+    /// The entries the filter left out of the folder listed.
+    pub filtered_out: usize,
 }
 
 impl PlainTree {
+    /// Lists only the folder's entries whose names hold every word of
+    /// `text` (Dolphin's filter bar, any case); empty lists them all.
+    pub fn set_filter(&mut self, text: &str) {
+        let words: Vec<String> = text.to_lowercase().split_whitespace().map(str::to_owned).collect();
+        if words != self.filter {
+            self.filter = words;
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    /// Whether the folder filter keeps `id`.
+    fn kept(&self, inv: &Inventory, id: Uuid) -> bool {
+        if self.filter.is_empty() {
+            return true;
+        }
+        let name = match inv.items.get(&id) {
+            Some(it) => it.name.to_lowercase(),
+            None => folder_name(inv, id).to_lowercase(),
+        };
+        self.filter.iter().all(|word| name.contains(word.as_str()))
+    }
+
     pub fn is_open(&self, id: Uuid) -> bool {
         self.open.contains(&id)
     }
@@ -177,6 +204,7 @@ impl PlainTree {
         self.listed_open.clear();
         self.width = 0.0;
         self.tiles = 0;
+        self.filtered_out = 0;
         if show_root {
             self.folder(view, inv, show_library, root, 0, 0, NONE);
         } else {
@@ -202,6 +230,11 @@ impl PlainTree {
     fn tiled(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, tiles: Tiles) {
         let mut entries: Vec<(Uuid, bool, bool)> = view
             .children_iter(folder, show_library, inv.lib_root)
+            .filter(|id| {
+                let kept = self.kept(inv, *id);
+                self.filtered_out += usize::from(!kept);
+                kept
+            })
             .filter_map(|id| {
                 let is_folder = inv.folders.contains_key(&id);
                 (is_folder || inv.items.contains_key(&id)).then(|| (id, is_folder, thumbnail::tile_picture(inv, id).is_some()))
@@ -262,6 +295,12 @@ impl PlainTree {
     fn children(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, depth: usize, level: usize, parent: usize) {
         let mut any = false;
         for child in view.children_iter(folder, show_library, inv.lib_root) {
+            // the filter keeps the folder's own entries (the explorer lists
+            // them at the first level), not its subfolders' in a tree
+            if level == 0 && !self.kept(inv, child) {
+                self.filtered_out += 1;
+                continue;
+            }
             any = true;
             if inv.folders.contains_key(&child) {
                 self.folder(view, inv, show_library, child, depth, level, parent);
@@ -494,6 +533,7 @@ fn rows(
                 Kind::Item => item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions),
                 Kind::Empty => {
                     let text = match inv.folders.get(&row.id).map(|f| f.state) {
+                        _ if st.plain.filtered_out > 0 => aurora_i18n::tr!("inventory-filter-nothing"),
                         Some(FetchState::Fetched) => aurora_i18n::tr!("status-empty"),
                         // asked again after `SHOWN_RETRY`, not loading meanwhile
                         Some(FetchState::Failed) => aurora_i18n::tr!("ui-inventory-folder-not-loaded"),

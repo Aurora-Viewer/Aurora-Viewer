@@ -48,6 +48,8 @@ pub(crate) enum Command {
     Purge,
     /// F3, beside the search field's Ctrl+F.
     Search,
+    /// Dolphin's Ctrl+I: the bar that filters the folder shown.
+    Filter,
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -78,6 +80,7 @@ impl Command {
             Command::ContextMenu => Action::InvContextMenu,
             Command::Purge => Action::InvPurge,
             Command::Search => Action::InvSearch,
+            Command::Filter => Action::InvFilter,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
     }
@@ -98,7 +101,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 14] = [
+pub(crate) const REBINDABLE: [Command; 15] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -106,6 +109,7 @@ pub(crate) const REBINDABLE: [Command; 14] = [
     Command::Refresh,
     Command::EditPath,
     Command::Search,
+    Command::Filter,
     Command::SelectAll,
     Command::InvertSelection,
     Command::ToggleSelection,

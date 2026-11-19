@@ -579,6 +579,7 @@ pub enum Action {
     InvRefresh,
     InvEditPath,
     InvSearch,
+    InvFilter,
     InvSelectAll,
     InvInvertSelection,
     InvToggleSelection,
@@ -602,6 +603,7 @@ pub fn is_inventory(a: Action) -> bool {
             | Action::InvRefresh
             | Action::InvEditPath
             | Action::InvSearch
+            | Action::InvFilter
             | Action::InvSelectAll
             | Action::InvInvertSelection
             | Action::InvToggleSelection
@@ -878,6 +880,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::InvRefresh, aurora_i18n::tr!("ui-inventory-context-reload-folder")),
                     (Action::InvEditPath, aurora_i18n::tr!("inventory-path-edit")),
                     (Action::InvSearch, aurora_i18n::tr!("keybinds-inventory-search")),
+                    (Action::InvFilter, aurora_i18n::tr!("keybinds-inventory-filter")),
                     (Action::InvSelectAll, aurora_i18n::tr!("common-select-all")),
                     (Action::InvInvertSelection, aurora_i18n::tr!("inventory-invert-selection")),
                     (Action::InvToggleSelection, aurora_i18n::tr!("keybinds-inventory-toggle")),
@@ -1049,6 +1052,18 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
         ),
         // F3 is Mission Control on most Macs
         (Action::InvSearch, [if mac { None } else { k(K::F3) }, None]),
+        // Dolphin's filter bar; Cmd+I is Finder's Get Info on a Mac
+        (
+            Action::InvFilter,
+            [
+                if mac {
+                    kalt(K::KeyF, true, false)
+                } else {
+                    kmod(K::KeyI, true, false)
+                },
+                None,
+            ],
+        ),
         (Action::InvSelectAll, [kmod(K::KeyA, true, false), None]),
         (Action::InvInvertSelection, [kmod(K::KeyA, true, true), None]),
         // Cmd+Space is Spotlight: no default there

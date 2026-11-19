@@ -13,6 +13,7 @@
 mod breadcrumb;
 mod columns;
 mod details;
+pub(super) mod filter;
 mod gallery;
 mod history;
 pub(super) mod marquee;
@@ -143,6 +144,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-columns"
             | "aurora-columns-hidden"
             | "aurora-columns-all"
+            | "aurora-explorer-filter"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -534,6 +536,10 @@ fn explorer_list(
     frame.columns = prefs.explorer;
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let explore = !filtered && !root.is_nil();
+    // the folder filter's bar, for the folder shown (a search has its own)
+    if explore {
+        filter::bar(ui, p, st);
+    }
     // A search or a filter lists its results, from every folder, as rows:
     // the tiles show one folder.
     let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
@@ -570,6 +576,7 @@ fn explorer_list(
         let browse = st.browse;
         std::mem::swap(&mut st.plain, &mut st.flat);
         st.plain.set_tiles(gallery::tiles(shown));
+        st.plain.set_filter(st.folder_filter.as_deref().unwrap_or_default());
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
@@ -961,6 +968,73 @@ mod tests {
         h.run(vec![button(to, false)]);
         h.frames(2);
         carried
+    }
+
+    #[test]
+    fn ctrl_i_filters_the_folder_shown_until_esc() {
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let all = h.st.flat.order.len();
+        assert!(all > 3, "the right-click tests' folder");
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        // as a keyboard sends them: Ctrl (Cmd on a Mac) is also "command"
+        let filter = if cfg!(target_os = "macos") {
+            let cmd_option = egui::Modifiers {
+                alt: true,
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            };
+            key(egui::Key::F, cmd_option)
+        } else {
+            key(egui::Key::I, egui::Modifiers::CTRL | egui::Modifiers::COMMAND)
+        };
+        h.run(vec![filter]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter.as_deref(), Some(""), "the bar opens empty");
+        assert!(
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique("inventory_folder_filter")))
+                .is_some()
+        );
+        h.run(vec![egui::Event::Text("demo OBJ".into())]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter.as_deref(), Some("demo OBJ"), "the field has the keyboard");
+        let names: Vec<String> =
+            h.st.flat
+                .order
+                .iter()
+                .map(|id| {
+                    h.inv
+                        .items
+                        .get(id)
+                        .map_or_else(|| folder_name(&h.inv, *id), |it| it.name.clone())
+                        .to_lowercase()
+                })
+                .collect();
+        assert!(!names.is_empty() && names.len() < all, "{names:?}");
+        assert!(
+            names.iter().all(|n| n.contains("demo") && n.contains("obj")),
+            "every word, any case: {names:?}"
+        );
+        // a folder with nothing that matches says so; the filter stays open
+        h.run(vec![egui::Event::Text("zzz".into())]);
+        h.frames(3);
+        assert!(h.st.flat.order.is_empty() && h.st.flat.filtered_out == all);
+        h.run(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+        h.frames(3);
+        assert_eq!(h.st.folder_filter, None, "Esc closes the bar");
+        assert_eq!(h.st.flat.order.len(), all, "and lists everything again");
+        assert!(h.actions.is_empty());
     }
 
     #[test]

@@ -564,6 +564,10 @@ pub struct InventoryUi {
     pub preferences_dirty: bool,
     was_open: bool,
     focus_search: bool,
+    /// The explorer's folder filter (Ctrl+I, `aurora::filter`): what it
+    /// keeps, `None` while its bar is closed.
+    folder_filter: Option<String>,
+    focus_folder_filter: bool,
     bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
@@ -948,6 +952,11 @@ impl InventoryUi {
 
     /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
     /// filters on, their list open.
+    /// The demo's folder filter (`AURORA_DEMO_INVENTORY=aurora-explorer-filter`).
+    pub fn demo_folder_filter(&mut self, text: &str) {
+        self.folder_filter = Some(text.to_owned());
+    }
+
     pub fn demo_type_filters(&mut self, types: u32) {
         self.filters = view::Filters {
             types,

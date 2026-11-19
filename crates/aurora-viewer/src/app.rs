@@ -23443,6 +23443,7 @@ impl ApplicationHandler for App {
                         | "aurora-columns"
                         | "aurora-columns-hidden"
                         | "aurora-columns-all"
+                        | "aurora-explorer-filter"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
                         | "aurora-system-folders"
@@ -23599,6 +23600,10 @@ impl ApplicationHandler for App {
                             crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
                             self.inventory_ui.demo_browse_root(&self.world.inventory);
                             self.panels.camera_controls = false;
+                        }
+                        // the Ctrl+I bar open on the right-click tests' folder
+                        if view == "aurora-explorer-filter" {
+                            self.inventory_ui.demo_folder_filter("demo o");
                         }
                         if view == "aurora-filtered" {
                             // the type filters' symbols in the list and on
