@@ -152,7 +152,9 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
                 ..
             } => {
                 let plain = !modifiers.alt && !modifiers.command && !modifiers.ctrl;
-                let ctrl = (modifiers.command || modifiers.ctrl) && !modifiers.alt && !modifiers.shift;
+                // the Control key itself: on a Mac, Cmd+↑ is Finder's Up
+                // (`keybinds::inventory_accepts`)
+                let ctrl = modifiers.ctrl && !modifiers.alt && !modifiers.shift;
                 let step = match key {
                     egui::Key::Home if plain => Some(Move::First),
                     egui::Key::End if plain => Some(Move::Last),

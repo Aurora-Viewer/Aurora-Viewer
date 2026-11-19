@@ -7897,7 +7897,7 @@ impl App {
             }
             // the inventory lists' keys: one the list could never see, or
             // keeps fixed, is refused the same way (`inventory_accepts`)
-            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(&b) {
+            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(action, &b) {
                 self.world.notifications.push(
                     crate::world::notifications::Kind::Info,
                     aurora_i18n::tr!("common-inventory").to_owned(),

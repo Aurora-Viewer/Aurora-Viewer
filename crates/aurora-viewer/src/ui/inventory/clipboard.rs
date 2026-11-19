@@ -491,7 +491,16 @@ pub(super) fn shortcuts(
         match event {
             // Windows: egui-winit turns Shift+Delete into a Cut (its old
             // Windows meaning); the list's Shift+Delete purges instead
-            egui::Event::Cut if cfg!(target_os = "windows") && ui.input(|i| i.modifiers.shift && !i.modifiers.command) => {
+            egui::Event::Cut
+                if cfg!(target_os = "windows")
+                    && ui.input(|i| i.modifiers.shift && !i.modifiers.command)
+                    && super::shortcuts::get(ui.ctx()).keeps(
+                        &crate::keybinds::Input::key(winit::keyboard::KeyCode::Delete),
+                        false,
+                        true,
+                        false,
+                    ) =>
+            {
                 super::keyboard::purge(inv, st, prefs, facts, actions);
             }
             egui::Event::Copy | egui::Event::Cut => {

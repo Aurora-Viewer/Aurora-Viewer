@@ -614,26 +614,79 @@ pub fn is_inventory(a: Action) -> bool {
 
 /// Whether an inventory list's shortcut (`is_inventory`) may take this
 /// binding. The list reads its own key events and mouse buttons: refused
-/// are what it could never see (a key egui has no name for, a mouse button
-/// other than the middle, back and forward ones) and the keys that stay
-/// fixed in the list: the arrows, Home, End and the page keys alone (with
-/// Shift too), Enter, Delete, F2, Esc and Tab alone, and Ctrl+C / X / V.
-pub fn inventory_accepts(b: &Binding) -> bool {
+/// are what it could never see or would see twice:
+/// - a key egui has no name for;
+/// - a mouse button, but the middle, back and forward ones for the
+///   explorer's moves (Back, Forward, Up, the top), the only ones read on
+///   the mouse (`shortcuts::mouse`);
+/// - a printable key without Ctrl or Alt: the list types it to find a
+///   name (type-ahead, `select_keys`);
+/// - the keys the list keeps fixed: the arrows, Home, End and the page keys
+///   alone (with Shift too), Ctrl+↑ / ↓ (the keyboard's place), Enter,
+///   Delete, F2, Esc and Tab alone (Shift+Tab goes back through the
+///   fields), Ctrl+C / X / V, and Backspace alone on a Mac (it deletes
+///   there);
+/// - on Windows, what egui reads as a clipboard command instead of a key
+///   (Shift+Delete, Shift+Insert, Ctrl+Insert), but Shift+Delete for Purge,
+///   which the list reads back from it (`clipboard::shortcuts`).
+pub fn inventory_accepts(action: Action, b: &Binding) -> bool {
+    inventory_accepts_on(action, b, cfg!(target_os = "macos"), cfg!(target_os = "windows"))
+}
+
+fn inventory_accepts_on(action: Action, b: &Binding, mac: bool, windows: bool) -> bool {
     match &b.input {
-        Input::Mouse(button) => matches!(button.as_str(), "Middle" | "Back" | "Forward"),
+        Input::Mouse(button) => {
+            matches!(button.as_str(), "Middle" | "Back" | "Forward")
+                && matches!(action, Action::InvBack | Action::InvForward | Action::InvUp | Action::InvRoot)
+        }
         Input::Key(name) => {
             let Some(key) = egui::Key::from_name(name) else {
                 return false;
             };
-            let bare = !b.ctrl && !b.alt;
             use egui::Key as E;
+            let bare = !b.ctrl && !b.alt;
+            let typed = {
+                let n = key.name();
+                n.chars().count() == 1
+                    || matches!(
+                        key,
+                        E::Space
+                            | E::Minus
+                            | E::Equals
+                            | E::OpenBracket
+                            | E::CloseBracket
+                            | E::Backslash
+                            | E::Semicolon
+                            | E::Quote
+                            | E::Comma
+                            | E::Period
+                            | E::Slash
+                            | E::Backtick
+                            | E::Plus
+                            | E::Colon
+                            | E::Pipe
+                            | E::Questionmark
+                            | E::Exclamationmark
+                    )
+            };
             let fixed = match key {
-                E::ArrowUp | E::ArrowDown | E::ArrowLeft | E::ArrowRight | E::Home | E::End | E::PageUp | E::PageDown => bare,
-                E::Enter | E::Delete | E::F2 | E::Escape | E::Tab => bare && !b.shift,
+                // Ctrl+↑ / ↓ move the keyboard's place; on a Mac that is the
+                // Control key, and Cmd+↑ (stored as Ctrl) stays Finder's Up
+                E::ArrowUp | E::ArrowDown => bare || (!mac && b.ctrl && !b.alt && !b.shift),
+                E::ArrowLeft | E::ArrowRight | E::Home | E::End | E::PageUp | E::PageDown => bare,
+                E::Enter | E::Delete | E::F2 | E::Escape => bare && !b.shift,
+                E::Tab => bare,
                 E::C | E::X | E::V => b.ctrl && !b.alt && !b.shift,
+                E::Backspace => mac && bare && !b.shift,
                 _ => false,
             };
-            !fixed
+            let clipboard = windows
+                && match key {
+                    E::Delete => b.shift && !b.ctrl && !b.alt && action != Action::InvPurge,
+                    E::Insert => (b.shift || b.ctrl) && !b.alt,
+                    _ => false,
+                };
+            !fixed && !clipboard && !(bare && typed)
         }
     }
 }
@@ -977,20 +1030,63 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
                 [kalt(K::ArrowUp, false, false), k(K::Backspace)]
             },
         ),
-        (Action::InvRoot, [kalt(K::Home, false, false), None]),
+        // Finder: Cmd+Shift+H for the home folder (Macs mostly lack Home)
+        (
+            Action::InvRoot,
+            [
+                if mac {
+                    kmod(K::KeyH, true, true)
+                } else {
+                    kalt(K::Home, false, false)
+                },
+                None,
+            ],
+        ),
         (Action::InvRefresh, [k(K::F5), None]),
         (
             Action::InvEditPath,
             [kmod(K::KeyL, true, false), if mac { None } else { kalt(K::KeyD, false, false) }],
         ),
-        (Action::InvSearch, [k(K::F3), None]),
+        // F3 is Mission Control on most Macs
+        (Action::InvSearch, [if mac { None } else { k(K::F3) }, None]),
         (Action::InvSelectAll, [kmod(K::KeyA, true, false), None]),
         (Action::InvInvertSelection, [kmod(K::KeyA, true, true), None]),
-        (Action::InvToggleSelection, [kmod(K::Space, true, false), None]),
+        // Cmd+Space is Spotlight: no default there
+        (
+            Action::InvToggleSelection,
+            [if mac { None } else { kmod(K::Space, true, false) }, None],
+        ),
         (Action::InvNewFolder, [kmod(K::KeyN, true, true), None]),
-        (Action::InvProperties, [kalt(K::Enter, false, false), None]),
+        // Finder's Get Info
+        (
+            Action::InvProperties,
+            [
+                if mac {
+                    kmod(K::KeyI, true, false)
+                } else {
+                    kalt(K::Enter, false, false)
+                },
+                None,
+            ],
+        ),
         (Action::InvContextMenu, [kmod(K::F10, false, true), None]),
-        (Action::InvPurge, [kmod(K::Delete, false, true), None]),
+        // Finder's Delete Immediately (Cmd+Option+Backspace)
+        (
+            Action::InvPurge,
+            [
+                if mac {
+                    Some(Binding {
+                        input: Input::key(K::Backspace),
+                        ctrl: true,
+                        shift: false,
+                        alt: true,
+                    })
+                } else {
+                    kmod(K::Delete, false, true)
+                },
+                None,
+            ],
+        ),
     ]
 }
 
@@ -2780,16 +2876,55 @@ mod tests {
         let mut kb = kb;
         kb.set(Action::InvRefresh, 0, Some(a.clone()));
         assert!(kb.rivals(Action::InvRefresh, &a).contains(&Action::InvInvertSelection));
-        // keys the list keeps fixed are refused, its others accepted
-        let plain = |code| Binding::captured(Input::key(code), Mods::default());
-        assert!(!inventory_accepts(&plain(KeyCode::Enter)));
-        assert!(!inventory_accepts(&plain(KeyCode::ArrowDown)));
-        assert!(inventory_accepts(&plain(KeyCode::F6)));
-        assert!(inventory_accepts(&Binding::captured(Input::Mouse("Back".into()), Mods::default())));
-        assert!(!inventory_accepts(&Binding::captured(
-            Input::Mouse("Other8".into()),
-            Mods::default()
-        )));
+        // keys the list keeps fixed, or types, are refused, its others accepted
+        let with = |code, ctrl: bool, shift: bool, alt: bool| Binding::captured(Input::key(code), Mods { ctrl, shift, alt });
+        let plain = |code| with(code, false, false, false);
+        let ok = |a: Action, b: &Binding| inventory_accepts_on(a, b, false, false);
+        let refresh = Action::InvRefresh;
+        assert!(!ok(refresh, &plain(KeyCode::Enter)));
+        assert!(!ok(refresh, &plain(KeyCode::ArrowDown)));
+        assert!(
+            !ok(refresh, &with(KeyCode::ArrowDown, true, false, false)),
+            "Ctrl+Down moves the keyboard's place"
+        );
+        assert!(
+            !ok(refresh, &with(KeyCode::Tab, false, true, false)),
+            "Shift+Tab goes back through the fields"
+        );
+        assert!(!ok(refresh, &plain(KeyCode::KeyR)), "a letter alone is type-ahead");
+        assert!(!ok(refresh, &with(KeyCode::KeyR, false, true, false)));
+        assert!(!ok(refresh, &plain(KeyCode::Space)));
+        assert!(ok(refresh, &with(KeyCode::KeyR, true, false, false)));
+        assert!(ok(refresh, &plain(KeyCode::F6)));
+        // Backspace deletes on a Mac
+        assert!(ok(Action::InvUp, &plain(KeyCode::Backspace)));
+        assert!(!inventory_accepts_on(Action::InvUp, &plain(KeyCode::Backspace), true, false));
+        // egui's clipboard chords on Windows, Shift+Delete for Purge only
+        let shift_delete = with(KeyCode::Delete, false, true, false);
+        assert!(inventory_accepts_on(Action::InvPurge, &shift_delete, false, true));
+        assert!(!inventory_accepts_on(refresh, &shift_delete, false, true));
+        assert!(!inventory_accepts_on(
+            refresh,
+            &with(KeyCode::Insert, true, false, false),
+            false,
+            true
+        ));
+        // mouse buttons for the explorer's moves only
+        let back = Binding::captured(Input::Mouse("Back".into()), Mods::default());
+        assert!(ok(Action::InvBack, &back));
+        assert!(!ok(Action::InvSelectAll, &back));
+        assert!(!ok(
+            Action::InvBack,
+            &Binding::captured(Input::Mouse("Other8".into()), Mods::default())
+        ));
+        // every default is one the list takes
+        for mac in [false, true] {
+            for (a, bindings) in inventory_defaults(mac) {
+                for b in bindings.iter().flatten() {
+                    assert!(inventory_accepts_on(a, b, mac, !mac), "{a:?} {b:?} mac={mac}");
+                }
+            }
+        }
     }
 
     #[test]

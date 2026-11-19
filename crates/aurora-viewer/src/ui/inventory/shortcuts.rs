@@ -217,13 +217,16 @@ pub(crate) fn take(ui: &egui::Ui, wanted: impl Fn(Command) -> bool) -> Vec<Comma
                 key,
                 physical_key,
                 pressed: true,
+                repeat,
                 modifiers,
-                ..
             } = event
             else {
                 return true;
             };
             match keys.command(*key, *physical_key, *modifiers).filter(|c| wanted(*c)) {
+                // a held key acts once, as Explorer's (Back held does not
+                // run through the whole history); its repeats are spent
+                Some(_) if *repeat => false,
                 Some(found) => {
                     taken.push(found);
                     false
@@ -313,10 +316,16 @@ mod tests {
         assert_eq!(hit(Key::A, CTRL.plus(Modifiers::SHIFT)), Some(Command::InvertSelection));
         assert_eq!(hit(Key::N, CTRL.plus(Modifiers::SHIFT)), Some(Command::NewFolder));
         assert_eq!(hit(Key::N, CTRL), None);
-        assert_eq!(hit(Key::Space, CTRL), Some(Command::ToggleSelection));
-        assert_eq!(hit(Key::Delete, Modifiers::SHIFT), Some(Command::Purge));
-        assert_eq!(hit(Key::Enter, Modifiers::ALT), Some(Command::Properties));
         assert_eq!(hit(Key::F10, Modifiers::SHIFT), Some(Command::ContextMenu));
+        if cfg!(target_os = "macos") {
+            // Finder's keys
+            assert_eq!(hit(Key::I, CTRL), Some(Command::Properties));
+            assert_eq!(hit(Key::Space, CTRL), None, "Spotlight's");
+        } else {
+            assert_eq!(hit(Key::Space, CTRL), Some(Command::ToggleSelection));
+            assert_eq!(hit(Key::Delete, Modifiers::SHIFT), Some(Command::Purge));
+            assert_eq!(hit(Key::Enter, Modifiers::ALT), Some(Command::Properties));
+        }
         // the list's fixed keys are no command here
         assert_eq!(hit(Key::Delete, Modifiers::NONE), None);
         assert_eq!(hit(Key::Enter, Modifiers::NONE), None);
@@ -343,8 +352,10 @@ mod tests {
         // People, the sunset, the Texture Library, OOC chat elsewhere
         assert!(keys.keeps(&key(KeyCode::KeyA), true, true, false));
         assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false));
-        assert!(keys.keeps(&key(KeyCode::Space), true, false, false));
-        assert!(keys.keeps(&key(KeyCode::Enter), false, false, true));
+        if !cfg!(target_os = "macos") {
+            assert!(keys.keeps(&key(KeyCode::Space), true, false, false));
+            assert!(keys.keeps(&key(KeyCode::Enter), false, false, true));
+        }
         // the viewer's own stay with it
         assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false));
         assert!(!keys.keeps(&key(KeyCode::KeyI), true, true, false));
@@ -357,7 +368,10 @@ mod tests {
     #[test]
     fn every_command_has_a_default_key() {
         let keys = defaults();
-        for command in REBINDABLE {
+        // a Mac leaves Toggle selection (Spotlight's Cmd+Space) and Search
+        // (Mission Control's F3) unbound
+        let mac_free = |c: Command| cfg!(target_os = "macos") && matches!(c, Command::ToggleSelection | Command::Search);
+        for command in REBINDABLE.into_iter().filter(|c| !mac_free(*c)) {
             assert!(keys.label(command).is_some(), "{command:?}");
         }
         assert!(REBINDABLE.iter().all(|c| c.action().is_some_and(crate::keybinds::is_inventory)));
