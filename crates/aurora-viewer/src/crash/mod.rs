@@ -523,10 +523,9 @@ pub fn take_gpu_trouble() -> bool {
     std::fs::remove_file(root().join(GPU_TROUBLE)).is_ok()
 }
 
-/// A viewer stopped by Windows ending the session (shutdown, restart, sign
-/// out) did not crash: nothing to report.
 /// How long the watcher of a viewer an update started waits for the
 /// update's helper to say it rolled the update back.
+#[cfg(windows)]
 const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A viewer an update's helper ended itself, when no first frame came within
@@ -535,7 +534,9 @@ const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs
 /// the helper's own end (`TerminateProcess` leaves exit code 1), with no
 /// crash or panic of the viewer's own, and `ended` (the helper's rollback
 /// note, `aurora_updater::install::ended_by_update`). The "ended from
-/// outside, window never shown, 90 s" reports were these.
+/// outside, window never shown, 90 s" reports were these. Windows only, as
+/// the helper is; the tests run it everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> bool {
     exit_code == 1
         && !["failed", "native.txt", "panic.txt", "oom.txt"]
@@ -544,6 +545,8 @@ fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> 
         && ended()
 }
 
+/// A viewer stopped by Windows ending the session (shutdown, restart, sign
+/// out) did not crash: nothing to report.
 fn should_report(dir: &Path, exit_code: u32) -> bool {
     !dir.join("system-ending").exists() && (exit_code != 0 || dir.join("failed").exists() || !dir.join("normal").exists())
 }
