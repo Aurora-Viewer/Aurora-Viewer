@@ -347,13 +347,25 @@ impl Snapshot {
     }
 }
 
-impl Snapshot {
+/// A shareable layout and the native types used to replay Auto-sort. The
+/// restore reader still uses the original layout fields.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SharedLayout {
+    #[serde(flatten)]
+    pub layout: Snapshot,
+    /// In the same order as `layout.items`. The second value is the
+    /// wearable type (the low byte of the native flags), when applicable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub item_kinds: Vec<(i32, Option<u8>)>,
+}
+
+impl SharedLayout {
     /// The layout to share (`Save my inventory layout to share`): no
     /// account, every folder and item numbered in place of its inventory
     /// id, and nothing of the Trash, Lost and Found, Calling Cards (other
     /// residents' names) or Landmarks (places the user goes); calling cards
     /// and landmarks elsewhere are left out too.
-    pub fn take_to_share(inv: &Inventory, at: i64) -> Self {
+    pub fn take(inv: &Inventory, at: i64) -> Self {
         // (the Trash, Lost and Found, Calling Cards, Landmarks, the Photo
         // Album and Favorites: places and residents)
         const LEFT_OUT: [i32; 6] = [14, 16, 2, 3, 15, 23];
@@ -395,18 +407,27 @@ impl Snapshot {
             })
             .collect();
         items.sort_by_key(|it| it.id);
-        let items = items.iter().map(|it| (number(it.id), number(it.parent), it.name.clone())).collect();
+        let (items, item_kinds) = items
+            .into_iter()
+            .map(|it| {
+                let wearable = matches!(it.asset_type, 5 | 13).then_some(it.flags as u8);
+                ((number(it.id), number(it.parent), it.name.clone()), (it.asset_type, wearable))
+            })
+            .unzip();
         let unread = kept
             .iter()
             .filter(|f| f.state != super::super::FetchState::Fetched)
             .map(|f| number(f.info.id))
             .collect();
         Self {
-            at,
-            account: Uuid::nil(),
-            folders,
-            items,
-            unread,
+            layout: Snapshot {
+                at,
+                account: Uuid::nil(),
+                folders,
+                items,
+                unread,
+            },
+            item_kinds,
         }
     }
 }
@@ -639,7 +660,7 @@ pub fn share_path(desktop: Option<PathBuf>, documents: Option<PathBuf>, here: Pa
 
 /// Write a layout to share as plain JSON (anyone can open it), through a
 /// temporary file.
-pub fn save_shared(path: &Path, snapshot: &Snapshot) -> std::io::Result<()> {
+pub fn save_shared(path: &Path, snapshot: &SharedLayout) -> std::io::Result<()> {
     // (the viewer's own safe writer: it waits for a file an antivirus or an
     // indexer holds, never loses the save)
     let bytes = serde_json::to_vec(snapshot).map_err(std::io::Error::other)?;

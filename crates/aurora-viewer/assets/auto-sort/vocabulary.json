@@ -253,6 +253,7 @@
     {
       "category": "shoes",
       "words": [
+        "stompers",
         "platforms",
         "shoes",
         "shoe",
@@ -458,6 +459,8 @@
     {
       "category": "jewelry",
       "words": [
+        "nose chain",
+        "nose chains",
         "enamel pin",
         "pin badge",
         "brooch",
@@ -503,6 +506,8 @@
     {
       "category": "accessories",
       "words": [
+        "butterfly antennae",
+        "moth antennae",
         "vine cuff",
         "vine cuffs",
         "purity seal",
@@ -771,6 +776,21 @@
     {
       "category": "decor",
       "words": [
+        "waterfall parts",
+        "waterfall kit",
+        "waterfall base piece",
+        "mesh waterfall",
+        "vending machine",
+        "chicken coop",
+        "carriage house",
+        "treasure chest",
+        "witching well",
+        "birdcage",
+        "birdcages",
+        "nacho dispenser",
+        "breakfast board",
+        "mop and bucket",
+        "mop bucket",
         "mesh snowman",
         "mesh snowmen",
         "snowman display",
@@ -1218,6 +1238,8 @@
     {
       "category": "textures",
       "words": [
+        "normalmap",
+        "terraintexture",
         "normal map",
         "normal maps",
         "specular map",
@@ -1290,6 +1312,8 @@
     {
       "category": "animated-objects",
       "words": [
+        "flying butterflies",
+        "flying moths",
         "animesh",
         "animated mesh object",
         "animated mesh objects",

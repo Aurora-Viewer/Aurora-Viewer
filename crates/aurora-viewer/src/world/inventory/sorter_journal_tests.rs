@@ -643,6 +643,9 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
             (902, 30, "Kira Boots", 6),
             (903, 30, "Snapshot : Some Region (12, 34, 56)", 0),
             (904, 30, "360 Snapshot : Some Region (12, 34, 56)", 0),
+            (905, 30, "Opaque wearable", 5),
+            (906, 30, "Opaque material", 57),
+            (907, 30, "Private landmark", 3),
         ]
         .into_iter()
         .map(|(n, parent, name, kind)| InvItem {
@@ -650,14 +653,30 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
             parent: id(parent),
             name: name.into(),
             asset_type: kind,
+            asset_id: id(n + 10_000),
+            creator: id(n + 20_000),
+            owner: id(n + 30_000),
+            flags: 0xfeed_be06,
+            desc: "Private description".into(),
             ..Default::default()
         })
         .collect(),
     );
-    let shared = Snapshot::take_to_share(&inv, 1);
+    let export = SharedLayout::take(&inv, 1);
+    let json = serde_json::to_value(&export).expect("write shared layout");
+    assert_eq!(json["item_kinds"], serde_json::json!([[6, null], [5, 6], [57, null]]));
+    let text = json.to_string();
+    for n in [902, 905, 906] {
+        for secret in [id(n), id(n + 10_000), id(n + 20_000), id(n + 30_000)] {
+            assert!(!text.contains(&secret.to_string()));
+        }
+    }
+    assert!(!text.contains("Private description"));
+    assert!(!text.contains(&0xfeed_be06u32.to_string()));
+    let shared = export.layout;
     assert!(shared.account.is_nil());
     let names: Vec<&str> = shared.items.iter().map(|(_, _, n)| n.as_str()).collect();
-    assert_eq!(names, ["Kira Boots"]);
+    assert_eq!(names, ["Kira Boots", "Opaque wearable", "Opaque material"]);
     assert!(!shared.folders.iter().any(|(_, _, n, _)| n == "Trash" || n == "Calling Cards"));
     let real: HashSet<Uuid> = [1, 30, 902].into_iter().map(id).collect();
     // (the numbers start at 1, the ids here at 1001)
@@ -669,14 +688,14 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
     // a folder never read is marked unknown, never written as empty
     assert!(shared.unread.is_empty());
     inv.folders.get_mut(&id(30)).expect("folder").state = FetchState::Failed;
-    let shared = Snapshot::take_to_share(&inv, 1);
+    let shared = SharedLayout::take(&inv, 1).layout;
     assert_eq!(shared.unread.len(), 1);
 }
 
 #[test]
 fn an_old_shared_layout_restores_survivors_with_unique_names_in_existing_folders() {
     let mut inv = fixture();
-    let layout = Snapshot::take_to_share(&inv, 42);
+    let layout = SharedLayout::take(&inv, 42).layout;
     sort(&mut inv);
     inv.items.remove(&id(101));
     add_item(&mut inv, 103, 12, "Brass floor lamp");
@@ -700,7 +719,7 @@ fn a_shared_layout_does_not_guess_between_equal_folder_paths() {
     let mut inv = fixture();
     add_folder(&mut inv, 80, 12, "Storage / archive", -1);
     add_item(&mut inv, 200, 80, "Old box");
-    let layout = Snapshot::take_to_share(&inv, 42);
+    let layout = SharedLayout::take(&inv, 42).layout;
     add_folder(&mut inv, 81, 12, "Storage / archive", -1);
     let (matched, _) = match_shared_layout(&inv, &layout, id(AGENT));
     assert!(matched.items.iter().all(|(matched, _, _)| *matched != id(200)));
@@ -713,10 +732,16 @@ fn the_layout_file_reader_accepts_private_gzip_and_shared_json() {
     let private = dir.join("inventory.json.gz");
     let shared = dir.join("inventory.json");
     let exact = Snapshot::take(&inv, 42, id(AGENT));
-    let anonymized = Snapshot::take_to_share(&inv, 42);
+    let anonymized = SharedLayout::take(&inv, 42);
     save(&private, &exact).expect("save backup");
     save_shared(&shared, &anonymized).expect("save shared layout");
     assert_eq!(load_layout_file(&private).expect("read backup"), exact);
-    assert_eq!(load_layout_file(&shared).expect("read shared layout"), anonymized);
+    assert_eq!(load_layout_file(&shared).expect("read shared layout"), anonymized.layout);
+    let replay: SharedLayout = serde_json::from_slice(&std::fs::read(&shared).expect("read file")).expect("read replay");
+    assert_eq!(replay, anonymized);
+    let legacy = serde_json::to_vec(&anonymized.layout).expect("old shared format");
+    let replay: SharedLayout = serde_json::from_slice(&legacy).expect("read old shared format");
+    assert!(replay.item_kinds.is_empty());
+    assert_eq!(replay.layout, anonymized.layout);
     std::fs::remove_dir_all(dir).expect("clean test files");
 }

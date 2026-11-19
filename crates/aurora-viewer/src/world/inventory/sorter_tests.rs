@@ -4878,7 +4878,7 @@ fn opaque_asset_packs_use_consistent_native_types_and_keep_their_contents() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Meadow 1024 [boxed]");
     add_typed(&mut inv, 201, 70, "Meadow 1024 8-2", NEW, 0);
-    add_typed(&mut inv, 202, 70, "Meadow 1024 1-3", NEW, 0);
+    add_typed(&mut inv, 202, 70, "Meadow 1024 1-3", NEW, 19);
     add_typed(&mut inv, 203, 70, "Read me", NEW, 7);
     add_typed(&mut inv, 204, 70, "Update checker", NEW, 10);
     let prefs = Preferences::default();
@@ -4902,7 +4902,7 @@ fn opaque_script_deliveries_use_native_payload_and_keep_the_guide() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Kestrel [boxed]");
     add_typed(&mut inv, 201, 70, "Core", NEW, 10);
-    add_typed(&mut inv, 202, 70, "Controller", NEW, 10);
+    add_typed(&mut inv, 202, 70, "Controller", NEW, 11);
     add_typed(&mut inv, 203, 70, "Read me", NEW, 7);
     add_typed(&mut inv, 204, 70, "Support", NEW, 3);
     let prefs = Preferences::default();

@@ -595,11 +595,12 @@ impl Category {
     /// type from the item's flags (LLWearableType::EType in the low byte).
     fn of_asset(asset_type: i32, flags: u32) -> Option<Category> {
         Some(match asset_type {
-            0 => Category::Textures,
+            // Legacy image formats share the texture destination (LLAssetType).
+            0 | 12 | 18 | 19 => Category::Textures,
             1 => Category::Sounds,
             3 => Category::Landmarks,
             7 => Category::Notecards,
-            10 => Category::Scripts,
+            4 | 10 | 11 => Category::Scripts,
             20 => Category::Animations,
             21 => Category::Gestures,
             56 => Category::Environment,
@@ -844,6 +845,12 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
             Some(longer.map_or(*first, |(c, _)| c))
         })
         .or_else(|| Category::of_asset(asset_type, flags));
+    // A maintenance HUD has its own function even when it names the product.
+    let maintenance_hud = matches!(asset_type, -1 | 6)
+        && ["hud update", "update hud", "hud updater", "redelivery hud"]
+            .iter()
+            .any(|term| has(&words, term));
+    let category = if maintenance_hud { Some(Category::Huds) } else { category };
     // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`,
     // `Kitchen Decor . Glasses 8`: a name that says decor is decor, never
     // worn glasses; hair decor is the hair's)
@@ -962,11 +969,25 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         let held_prop = ["holdable", "held prop", "handheld prop", "hand held prop"]
             .iter()
             .any(|term| has(&words, term));
+        let sided_hold = asset_type == 6
+            && [
+                "hold left",
+                "hold right",
+                "left hold",
+                "right hold",
+                "hold l",
+                "hold r",
+                "l hold",
+                "r hold",
+                "personal hold",
+            ]
+            .iter()
+            .any(|term| has(&words, term));
         let food = ["tumbler", "popsicle", "lollipop", "cotton candy", "ice cream"]
             .iter()
             .any(|term| has(&words, term));
         let held_food = food && ["hold", "held", "bento", "mouth", "tongue"].iter().any(|term| has(&words, term));
-        (held_prop || held_food).then_some(Category::Accessories)
+        (held_prop || sided_hold || held_food).then_some(Category::Accessories)
     });
     Classified {
         body,
@@ -3977,8 +3998,8 @@ impl Kind {
             13 => Kind::BodyParts,
             7 => Kind::Notecards,
             3 => Kind::Landmarks,
-            0 => Kind::Textures,
-            10 => Kind::Scripts,
+            0 | 12 | 18 | 19 => Kind::Textures,
+            4 | 10 | 11 => Kind::Scripts,
             1 => Kind::Sounds,
             20 => Kind::Animations,
             21 => Kind::Gestures,
@@ -4525,15 +4546,16 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
             if !matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) {
                 match it.asset_type {
-                    0 | 1 | 56 | 57 => {
-                        mixed_bulk |= bulk_type.is_some_and(|kind| kind != it.asset_type);
-                        bulk_type = Some(it.asset_type);
+                    0 | 1 | 12 | 18 | 19 | 56 | 57 => {
+                        let category = Category::of_asset(it.asset_type, it.flags);
+                        mixed_bulk |= bulk_type.is_some() && bulk_type != category;
+                        bulk_type = category;
                         bulk_count += 1;
                     }
                     // These can accompany a product or be the pack itself.
                     3 => landmarks += 1,
                     7 => notecards += 1,
-                    10 => scripts += 1,
+                    4 | 10 | 11 => scripts += 1,
                     24 | 25 => {}
                     _ => mixed_bulk = true,
                 }
@@ -4563,12 +4585,12 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         let kind = match (bulk_count, scripts, notecards, landmarks) {
             (2.., _, _, _) => bulk_type,
             // A script kit can also ship installation notes or landmarks.
-            (0, 2.., _, _) => Some(10),
-            (0, 0, 2.., 0) => Some(7),
-            (0, 0, 0, 2..) => Some(3),
+            (0, 2.., _, _) => Some(Category::Scripts),
+            (0, 0, 2.., 0) => Some(Category::Notecards),
+            (0, 0, 0, 2..) => Some(Category::Landmarks),
             _ => None,
         };
-        if let Some(category) = kind.and_then(|kind| Category::of_asset(kind, 0)) {
+        if let Some(category) = kind {
             let mut path = vec![category_folder(category)];
             path.extend(shop.map(str::to_owned));
             return Some(Dest::Path(path));
@@ -4649,7 +4671,7 @@ fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category, family:
             continue;
         };
         for item in folder.items.iter().filter_map(|id| inv.items.get(id)) {
-            if matches!(item.asset_type, 0 | 3 | 7 | 10 | 24 | 25) {
+            if matches!(item.asset_type, 0 | 3 | 4 | 7 | 10 | 11 | 12 | 18 | 19 | 24 | 25) {
                 continue;
             }
             let classified = classify(&item.name, item.asset_type, item.flags);

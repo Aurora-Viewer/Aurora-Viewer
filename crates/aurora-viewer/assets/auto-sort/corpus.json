@@ -2,6 +2,91 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Nightwater Stompers-SINGLE-HUD_UPDATE",
+   "type": 6,
+   "expect": "{huds}"
+  },
+  {
+   "name": "Welkin Stompers [boxed]",
+   "type": -1,
+   "expect": "{shoes}"
+  },
+  {
+   "name": "Granite Waterfall Base Piece",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Granite Waterfall Sounds",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Old Cedar Chicken Coop",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies [boxed]",
+   "type": -1,
+   "expect": "{animated-objects}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies - Product Ad",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Sparkly Flying Butterflies Halo Headpiece",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Basil Springs Normalmap",
+   "type": 6,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel / Right Hold",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel / Right Hold",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Amethyst Picnic Parcel",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Silver Nose Chain",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Silver Moth Antennae",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Apple Pie Mop and Bucket",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Basil Springs",
+   "type": 19,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Copper Spark",
+   "type": 11,
+   "expect": "{scripts}"
+  },
+  {
    "name": "Vine Cuffs",
    "type": -1,
    "expect": "{accessories}"

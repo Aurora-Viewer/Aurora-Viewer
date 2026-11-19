@@ -4406,8 +4406,8 @@ fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvActio
             );
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let snapshot = sorter::journal::Snapshot::take_to_share(&copy, at);
-                let unread = snapshot.unread.len();
+                let snapshot = sorter::journal::SharedLayout::take(&copy, at);
+                let unread = snapshot.layout.unread.len();
                 let result = sorter::journal::save_shared(&path, &snapshot)
                     .map(|()| (path, unread))
                     .map_err(|e| e.to_string());
