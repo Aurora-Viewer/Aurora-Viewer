@@ -67,6 +67,10 @@ const SHORT_HISTORY: f32 = 4.0;
 // (its sigma_n).
 const SIGMA_LUMA: f32 = 4.0;
 const NORMAL_POWER: f32 = 64.0;
+// The weight of its surface's pixels around under which a pixel of the
+// indirect light is alone (`cs_atrous`: the eight around weigh 3 together,
+// `variance_at`: 48), and takes the others' at its depth for what it lacks.
+const ALONE: f32 = 1.0;
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -132,15 +136,34 @@ fn depth_slope(p: vec2<i32>, d: f32) -> f32 {
     return slope;
 }
 
-// The edge stop between the pixel (normal `n`, distance `d`, slope `slope`)
-// and one `pixels` away with guide `g`.
-fn geometry_weight(n: vec3<f32>, d: f32, slope: f32, g: vec4<f32>, pixels: f32) -> f32 {
+// The edge stops between the pixel (normal `n`, distance `d`, slope `slope`)
+// and one `pixels` away with guide `g`: x the normals', y the distance's.
+fn geometry_stops(n: vec3<f32>, d: f32, slope: f32, g: vec4<f32>, pixels: f32) -> vec2<f32> {
     if (g.z <= 0.0) {
-        return 0.0;
+        return vec2<f32>(0.0);
     }
     let w_n = pow(max(dot(n, unpack_normal(g.xy)), 0.0), NORMAL_POWER);
     let w_z = exp(-abs(g.z - d) / (slope * pixels + 0.002 * d + 1e-3));
-    return w_n * w_z;
+    return vec2<f32>(w_n, w_z);
+}
+
+fn geometry_weight(n: vec3<f32>, d: f32, slope: f32, g: vec4<f32>, pixels: f32) -> f32 {
+    let stops = geometry_stops(n, d, slope, g, pixels);
+    return stops.x * stops.y;
+}
+
+// How much a pixel lacks pixels of its own surface around, 0 to 1, from the
+// weight `friends` of those it has. On the rounded edge of a mesh drawn
+// smooth, on a thin part and on an outline seen edge-on, a pixel faces as
+// none of its neighbours does: the normals' stop left it nothing to be
+// filtered with, and it showed its own rays as they came. One pick lit too
+// much (rt_gi.wgsl's reuse makes a few at each frame, which a flat surface
+// averages away) stayed there a bright dot for as long as its history, and
+// the edges sparkled, most of all with the view moving. Such a pixel takes
+// the pixels at its depth whatever they face, by as much as it lacks its
+// own: the light on an edge is between the lights of the faces it joins.
+fn alone(friends: f32) -> f32 {
+    return clamp(1.0 - friends / ALONE, 0.0, 1.0);
 }
 
 fn tiles_wide() -> u32 {
@@ -162,9 +185,10 @@ fn variance_at(p: vec2<i32>) -> f32 {
         // same surface, 7×7
         let n = unpack_normal(g.xy);
         let slope = depth_slope(p, g.z);
-        var m1 = 0.0;
-        var m2 = 0.0;
-        var w_sum = 0.0;
+        // x: of its surface, y: of the others at its depth (`alone`)
+        var m1 = vec2<f32>(0.0);
+        var m2 = vec2<f32>(0.0);
+        var w_sum = vec2<f32>(0.0);
         for (var y = -3; y <= 3; y++) {
             for (var x = -3; x <= 3; x++) {
                 let q = p + vec2<i32>(x, y);
@@ -172,19 +196,23 @@ fn variance_at(p: vec2<i32>) -> f32 {
                     continue;
                 }
                 let gq = textureLoad(guide, q, 0);
-                let w = geometry_weight(n, g.z, slope, gq, length(vec2<f32>(f32(x), f32(y))));
-                if (w <= 0.0) {
+                let stops = geometry_stops(n, g.z, slope, gq, length(vec2<f32>(f32(x), f32(y))));
+                if (stops.y <= 0.0) {
                     continue;
                 }
+                let w = vec2<f32>(stops.x, 1.0 - stops.x) * stops.y;
                 m1 += luma(textureLoad(input, q, 0).rgb) * w;
                 m2 += gq.w * w;
                 w_sum += w;
             }
         }
-        if (w_sum > 0.0) {
-            m1 /= w_sum;
-            m2 /= w_sum;
-            variance = max(m2 - m1 * m1, 0.0) * SHORT_HISTORY / max(c.a, 1.0);
+        // (the pixel itself weighs 1)
+        let mix_in = vec2<f32>(1.0, alone(w_sum.x - 1.0));
+        let weight = dot(w_sum, mix_in);
+        if (weight > 0.0) {
+            let mean1 = dot(m1, mix_in) / weight;
+            let mean2 = dot(m2, mix_in) / weight;
+            variance = max(mean2 - mean1 * mean1, 0.0) * SHORT_HISTORY / max(c.a, 1.0);
         }
     }
     textureStore(output, p, vec4<f32>(c.rgb, variance));
@@ -268,9 +296,13 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
     let slope = depth_slope(p, g.z);
     let l = luma(c.rgb);
 
+    // of its surface, and of the others at its depth (`alone`); the
+    // variances' sums: own by own, own by other, other by other
     var sum = vec3<f32>(0.0);
-    var variance = 0.0;
-    var w_sum = 0.0;
+    var sum_other = vec3<f32>(0.0);
+    var w_sum = vec2<f32>(0.0);
+    var variance = vec3<f32>(0.0);
+    var friends = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let q = p + vec2<i32>(x, y) * step;
@@ -281,22 +313,29 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
             let gq = textureLoad(guide, q, 0);
             let pixels = length(vec2<f32>(f32(x), f32(y))) * f32(step);
             let k = select(0.5, 1.0, x == 0) * select(0.5, 1.0, y == 0);
-            let w = k * geometry_weight(n, g.z, slope, gq, pixels)
-                * exp(-abs(luma(cq.rgb) - l) / sigma);
-            sum += cq.rgb * w;
-            variance += cq.a * w * w;
+            let stops = geometry_stops(n, g.z, slope, gq, pixels);
+            let w = k * stops.y * exp(-abs(luma(cq.rgb) - l) / sigma) * vec2<f32>(stops.x, 1.0 - stops.x);
+            sum += cq.rgb * w.x;
+            sum_other += cq.rgb * w.y;
+            variance += cq.a * vec3<f32>(w.x * w.x, w.x * w.y, w.y * w.y);
             w_sum += w;
+            if (x != 0 || y != 0) {
+                friends += k * stops.x * stops.y;
+            }
         }
     }
-    if (w_sum <= 1e-6) {
+    let lack = alone(friends);
+    let weight = w_sum.x + lack * w_sum.y;
+    if (weight <= 1e-6) {
         textureStore(output, p, c);
         return;
     }
-    var value = sum / w_sum;
+    var value = (sum + sum_other * lack) / weight;
     if (params.mode.y > 0.5) {
         value = dithered(value, vec2<u32>(id.xy), u32(params.mode.y));
     }
-    textureStore(output, p, vec4<f32>(value, variance / (w_sum * w_sum)));
+    let spread = variance.x + 2.0 * lack * variance.y + lack * lack * variance.z;
+    textureStore(output, p, vec4<f32>(value, spread / (weight * weight)));
 }
 
 // The share's variance (x) and the sun's (y) at pixel `p`, written with
