@@ -248,9 +248,10 @@ impl App {
                 .and_then(|idx| self.world.objects.get(idx))
                 .map(|o| o.key.local_id);
             log::info!(
-                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}",
+                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}, keep_orbit={}",
                 self.interactions.held.is_some(),
-                self.mouse_mode == MouseMode::Steer
+                self.mouse_mode == MouseMode::Steer,
+                self.mouse_mode == MouseMode::AvatarKeepOrbit,
             );
             if mode.starts_with("photo-") {
                 let hud_touched = self
@@ -352,7 +353,7 @@ impl App {
                         cof_version: 0,
                         appearance_version: 0,
                         hover_height: 0.0,
-                        attachments: 0,
+                        attachments: Vec::new(),
                     });
                 appearance.texture_entry = appearance.texture_entry.or_else(|| o.te.clone());
                 if let Some(te) = &mut appearance.texture_entry {

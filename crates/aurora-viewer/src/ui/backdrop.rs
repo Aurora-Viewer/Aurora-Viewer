@@ -38,8 +38,9 @@ impl Backdrop {
         self.rx = Some(rx);
     }
 
-    /// A new capture (RGBA8, opaque): reduce, blur, keep and save it.
-    /// `wait`: do it now (the viewer is closing), else in a thread.
+    /// A new capture (RGBA8, opaque): reduce, blur, keep and save it, in a
+    /// thread. `wait`: the viewer is closing, on a save thread (saves.rs),
+    /// which the exit waits for.
     pub fn set_capture(&mut self, w: u32, h: u32, rgba: std::sync::Arc<Vec<u8>>, wait: bool) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let job = move || {
@@ -63,7 +64,7 @@ impl Backdrop {
             let _ = tx.send(egui::ColorImage::from_rgba_unmultiplied([sw as usize, sh as usize], &small));
         };
         if wait {
-            job();
+            crate::saves::replace(path(), job);
         } else {
             std::thread::spawn(job);
         }

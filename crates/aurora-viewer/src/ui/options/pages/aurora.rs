@@ -6,8 +6,9 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
-use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
+use crate::world::beams::Style as BeamStyle;
 use crate::world::lookat::{Aim, Style};
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Vec2};
@@ -24,11 +25,14 @@ pub enum Look {
 /// the avatar plates' own settings and the filing of received items are
 /// left as they are, and so is a gaze on the point under the cursor: the
 /// Aurora look does not choose to show others what the cursor is over.
+/// Nor does it turn on the Instant movement, still experimental: only its
+/// own row does; the Legacy look turns it off.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
+    s.beams.style = if aurora { BeamStyle::Aurora } else { BeamStyle::Legacy };
     if !aurora {
         s.lookat.aim = Aim::Direction;
     }
@@ -50,8 +54,14 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
+    s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
+    s.destinations_style = if aurora {
+        DestinationsStyle::Aurora
+    } else {
+        DestinationsStyle::Legacy
+    };
     s.classic_pay_window = !aurora;
     s.legacy_money_tracker = !aurora;
     s.classic_controls = !aurora;
@@ -59,7 +69,9 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_chat_lines = !aurora;
     s.classic_rez_effect = !aurora;
     s.classic_hover_tips = !aurora;
-    s.predict_own_motion = aurora;
+    if !aurora {
+        s.predict_own_motion = false;
+    }
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
     s.colored_sky_ambient = aurora;
@@ -67,7 +79,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
 /// green, turquoise, indigo, violet and rose, taken from the palette.
-fn aurora_color(p: &Palette, t: f32) -> Color32 {
+pub(crate) fn aurora_color(p: &Palette, t: f32) -> Color32 {
     let stops = [p.success, p.teal, p.indigo_light, p.violet_light, p.rose];
     let x = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
     let i = (x.floor() as usize).min(stops.len() - 2);
@@ -97,6 +109,36 @@ fn aurora_strip(p: &Palette, r: Rect) -> Shape {
     Shape::mesh(m)
 }
 
+/// `text` in the aurora gradient, one letter after the other: the mark of
+/// what is Aurora's own (this page's entry, the Aurora Weather titles).
+pub(crate) fn aurora_text(p: &Palette, text: &str, font: FontId) -> egui::text::LayoutJob {
+    let count = text.chars().count().max(2) as f32 - 1.0;
+    let mut job = egui::text::LayoutJob::default();
+    for (i, ch) in text.chars().enumerate() {
+        let color = aurora_color(p, i as f32 / count);
+        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    job
+}
+
+/// `text` with only the word "Aurora" in the aurora gradient, the rest in
+/// `ink`: an Aurora feature's title outside Preferences (Aurora Weather),
+/// whatever the word order of the language.
+pub(crate) fn aurora_word(p: &Palette, text: &str, font: FontId, ink: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut rest = text;
+    while let Some(at) = rest.find("Aurora") {
+        job.append(&rest[..at], 0.0, egui::TextFormat::simple(font.clone(), ink));
+        for (i, ch) in "Aurora".chars().enumerate() {
+            let color = aurora_color(p, i as f32 / 5.0);
+            job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+        rest = &rest[at + "Aurora".len()..];
+    }
+    job.append(rest, 0.0, egui::TextFormat::simple(font, ink));
+    job
+}
+
 /// The entry of the page in the sidebar: the neighbours' entry, with the
 /// aurora gradient in its edge mark and its name.
 pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, selected: bool) -> egui::Response {
@@ -124,13 +166,7 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
     }
     // the name in the gradient, one letter after the other
     let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
-    let count = label.chars().count().max(2) as f32 - 1.0;
-    let mut job = egui::text::LayoutJob::default();
-    for (i, ch) in label.chars().enumerate() {
-        let color = aurora_color(p, i as f32 / count);
-        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
-    }
-    let galley = ui.painter().layout_job(job);
+    let galley = ui.painter().layout_job(aurora_text(p, label, font));
     ui.painter()
         .galley(rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0), galley, p.ink);
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
@@ -189,6 +225,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-places-aurora"),
                 tr!("ui-options-aurora-places-classic"),
                 &field!(classic_places),
+            );
+            cx.wide().choice(
+                tr!("ui-options-aurora-destinations"),
+                tr!("ui-options-aurora-destinations-help"),
+                &field!(destinations_style),
+                &[
+                    (DestinationsStyle::Aurora, tr!("ui-options-aurora-destinations-aurora"), true),
+                    (DestinationsStyle::Legacy, tr!("ui-options-aurora-destinations-classic"), false),
+                ],
             );
             look(
                 cx,
@@ -274,6 +319,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
             look(
                 cx,
+                tr!("ui-options-aurora-outfit-gallery"),
+                tr!("ui-options-aurora-outfit-gallery-help"),
+                tr!("ui-options-aurora-outfit-gallery-aurora"),
+                tr!("ui-options-aurora-outfit-gallery-classic"),
+                &field!(classic_outfit_gallery),
+            );
+            look(
+                cx,
                 tr!("ui-options-aurora-build"),
                 tr!("ui-options-aurora-build-help"),
                 aurora,
@@ -324,6 +377,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         (Style::Legacy, tr!("ui-options-aurora-crosshair"), false),
                     ],
                 );
+                cx.wide().choice(
+                    tr!("ui-options-aurora-beams"),
+                    tr!("ui-options-aurora-beams-help"),
+                    &field!(beams.style),
+                    &[
+                        (BeamStyle::Aurora, tr!("ui-options-aurora-beams-thread"), true),
+                        (BeamStyle::Legacy, tr!("ui-options-aurora-beams-particles"), false),
+                    ],
+                );
                 look(
                     cx,
                     tr!("ui-options-aurora-rez-effect"),
@@ -346,6 +408,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colored-sky-ambient-help"),
                     &field!(colored_sky_ambient),
                     &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
+                // the Legacy Viewer's flat layer until tried on modest GPUs;
+                // the two buttons leave it alone
+                let help = warned(tr!("ui-options-aurora-clouds-help"), tr!("ui-options-aurora-clouds-experimental"));
+                cx.wide().experimental().choice(
+                    tr!("ui-options-aurora-clouds"),
+                    &help,
+                    &field!(volumetric_clouds),
+                    &[
+                        (true, tr!("ui-options-aurora-clouds-volumetric"), true),
+                        (false, tr!("ui-options-aurora-clouds-flat"), false),
+                    ],
                 );
             });
             cx.group(tr!("common-interface"), |cx| {
@@ -480,6 +554,19 @@ mod tests {
     }
 
     #[test]
+    fn the_two_buttons_leave_the_volumetric_clouds_as_set() {
+        let mut s = Settings::default();
+        assert!(!s.volumetric_clouds, "the Legacy Viewer's layer by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(!s.volumetric_clouds, "never switched on by the Aurora button");
+        s.volumetric_clouds = true;
+        set_all(&mut s, Look::Legacy);
+        assert!(s.volumetric_clouds, "nor off by the Legacy one");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.volumetric_clouds);
+    }
+
+    #[test]
     fn the_aurora_button_keeps_the_gaze_choice() {
         let mut s = Settings::default();
         set_all(&mut s, Look::Aurora);
@@ -512,8 +599,10 @@ mod tests {
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
+        assert_eq!(s.destinations_style, DestinationsStyle::Legacy, "the guide's web page");
         assert!(s.classic_pay_window);
         assert!(s.legacy_money_tracker, "the Legacy Viewer's Time / Name / Amount list");
         assert!(s.classic_controls, "the Legacy Viewer's two control windows");
@@ -551,6 +640,16 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert_eq!(s.destinations_style, DestinationsStyle::Aurora);
+        assert_eq!(
+            fresh.destinations_style,
+            DestinationsStyle::Aurora,
+            "Aurora's Destinations is the default"
+        );
+        assert!(
+            !s.classic_outfit_gallery && !fresh.classic_outfit_gallery,
+            "the showcase is the default"
+        );
         assert!(!s.build.legacy_window && !fresh.build.legacy_window);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.legacy_money_tracker && !fresh.legacy_money_tracker);
@@ -559,8 +658,11 @@ mod tests {
         assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
         assert!(!s.classic_rez_effect && !fresh.classic_rez_effect, "the rez effect is the default");
         assert!(!s.classic_hover_tips && !fresh.classic_hover_tips, "Aurora's tips are the default");
-        assert!(s.predict_own_motion, "Aurora's movement");
+        assert!(!s.predict_own_motion, "the experimental movement is never a bulk choice");
         assert!(!fresh.predict_own_motion, "the Legacy movement until tried on the grid");
+        s.predict_own_motion = true;
+        set_all(&mut s, Look::Aurora);
+        assert!(s.predict_own_motion, "a movement chosen on its own row stays");
         assert!(s.synchronize_animations, "the Aurora bulk choice enables receipt clocks");
         assert!(s.water_effects.enabled, "the explicit Aurora bulk choice enables water effects");
         assert!(!fresh.water_effects.enabled, "enhanced water is disabled by default");

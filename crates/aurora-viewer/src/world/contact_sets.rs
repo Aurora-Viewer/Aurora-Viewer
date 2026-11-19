@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 pub mod appearance;
 pub mod importing;
-pub use appearance::{Appearance, PlateSize, Visuals};
+pub mod notices;
+pub use appearance::{Appearance, Marker, MarkerScope, MarkerShape, PlateSize, Visuals};
+pub use notices::{ResponseMode, SetResponse};
 #[cfg(test)]
 mod appearance_tests;
 
@@ -30,8 +32,8 @@ pub const DN_REMOVED: &str = "--- ---";
 
 /// Alpha of a non-friend's color (COLOR_DAMPENING).
 const COLOR_DAMPENING: f32 = 0.8;
-/// LLColor4::grey.
-const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+/// LLColor4::grey, the default colour of a new account's sets.
+pub(crate) const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContactSet {
@@ -47,9 +49,8 @@ pub struct ContactSet {
     /// The members' private conversations have a section of their own in
     /// Conversations (#1104, an Aurora addition).
     pub separate_chats: bool,
-    /// Per-set automatic responses: kept as read so that the file round-trips
-    /// (not used by Aurora yet).
-    autoresponse: BTreeMap<String, Llsd>,
+    /// Its own automatic responses, by `ResponseMode` (notices.rs).
+    responses: [SetResponse; 3],
 }
 
 impl ContactSet {
@@ -63,17 +64,23 @@ impl ContactSet {
             priority: 0,
             visuals: Visuals::default(),
             separate_chats: false,
-            autoresponse: BTreeMap::new(),
+            responses: Default::default(),
         }
     }
 }
 
 /// Which avatars a set selection lists (FSPanelContactSets::generateAvatarList).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ContactSets {
     sets: BTreeMap<String, ContactSet>,
     pub stack_icons: bool,
+    /// The online notices of the sets with "Show notifications" as a toast
+    /// and in nearby chat (notices.rs; per account, in the sets' file).
+    pub notices_toast: bool,
+    pub notices_chat: bool,
     appearances: std::collections::HashMap<Uuid, std::sync::Arc<Appearance>>,
+    /// Some resident has a marker (`has_markers`), kept with `appearances`.
+    markers: bool,
     /// The sets with `separate_chats`, highest priority first, and the one
     /// of them each member's conversation goes to (an index in it).
     chat_sections: Vec<String>,
@@ -86,6 +93,27 @@ pub struct ContactSets {
     path: Option<PathBuf>,
     /// Bumped on every change (lists and names refresh).
     pub generation: u64,
+}
+
+impl Default for ContactSets {
+    fn default() -> ContactSets {
+        ContactSets {
+            sets: BTreeMap::new(),
+            stack_icons: false,
+            // FSContactSetsNotificationToast off, ...NearbyChat on
+            notices_toast: false,
+            notices_chat: true,
+            appearances: Default::default(),
+            markers: false,
+            chat_sections: Vec::new(),
+            chat_section_of: Default::default(),
+            default_color: [0.0; 4],
+            extra: BTreeSet::new(),
+            pseudonyms: BTreeMap::new(),
+            path: None,
+            generation: 0,
+        }
+    }
 }
 
 fn color_from(v: &Llsd, default: [f32; 4]) -> [f32; 4] {
@@ -106,16 +134,6 @@ fn color_llsd(c: [f32; 4]) -> Llsd {
     a
 }
 
-/// Keys of a set's automatic responses in the file.
-const AUTORESPONSE_KEYS: [&str; 6] = [
-    "autoresponse_busy_enabled",
-    "autoresponse_busy",
-    "autoresponse_mode_enabled",
-    "autoresponse_mode",
-    "autoresponse_nonfriends_enabled",
-    "autoresponse_nonfriends",
-];
-
 impl ContactSets {
     pub fn is_internal(name: &str) -> bool {
         name.is_empty() || [EXTRA_AVS, PSEUDONYM, NO_SETS, ALL_SETS, GLOBAL_SETTINGS].contains(&name)
@@ -133,6 +151,7 @@ impl ContactSets {
             default_color: GREY,
             ..Default::default()
         };
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
         match std::fs::read(&path) {
             Ok(bytes) => match aurora_llsd::from_xml(&bytes) {
                 Ok(v) => cs.import(&v),
@@ -156,6 +175,12 @@ impl ContactSets {
                 GLOBAL_SETTINGS => {
                     self.default_color = color_from(&value["defaultColor"], GREY);
                     self.stack_icons = value["aurora_stack_icons"].as_bool();
+                    if value.has(notices::NOTICES_TOAST) {
+                        self.notices_toast = value[notices::NOTICES_TOAST].as_bool();
+                    }
+                    if value.has(notices::NOTICES_CHAT) {
+                        self.notices_chat = value[notices::NOTICES_CHAT].as_bool();
+                    }
                 }
                 EXTRA_AVS => {
                     if let Some(m) = value.as_map() {
@@ -179,11 +204,7 @@ impl ContactSets {
                     set.separate_chats = value["aurora_separate_chats"].as_bool();
                     set.notify = value["notify"].as_bool();
                     set.sort_by_online = !value.has("sort_by_online_status") || value["sort_by_online_status"].as_bool();
-                    for k in AUTORESPONSE_KEYS {
-                        if value.has(k) {
-                            set.autoresponse.insert(k.to_owned(), value[k].clone());
-                        }
-                    }
+                    set.read_responses(value);
                     if let Some(m) = value["friends"].as_map() {
                         set.friends.extend(m.keys().filter_map(|k| Uuid::parse_str(k).ok()));
                     }
@@ -201,6 +222,8 @@ impl ContactSets {
         let mut global = Llsd::new_map();
         global.insert("defaultColor", color_llsd(self.default_color));
         global.insert("aurora_stack_icons", self.stack_icons);
+        global.insert(notices::NOTICES_TOAST, self.notices_toast);
+        global.insert(notices::NOTICES_CHAT, self.notices_chat);
         out.insert(GLOBAL_SETTINGS, global);
         let mut extra = Llsd::new_map();
         for id in &self.extra {
@@ -220,9 +243,7 @@ impl ContactSets {
             s.insert("aurora_separate_chats", set.separate_chats);
             s.insert("notify", set.notify);
             s.insert("sort_by_online_status", set.sort_by_online);
-            for (k, v) in &set.autoresponse {
-                s.insert(k.clone(), v.clone());
-            }
+            set.write_responses(&mut s);
             let mut friends = Llsd::new_map();
             for id in &set.friends {
                 friends.insert(id.to_string(), "");
@@ -238,15 +259,22 @@ impl ContactSets {
         self.generation += 1;
         self.rebuild_appearances();
         self.rebuild_chat_sections();
-        let Some(path) = &self.path else {
+        self.queue_save();
+    }
+
+    /// The sets as they are now, written whole by a save thread (saves.rs),
+    /// after the saves of the file asked before (an import's included): the
+    /// frame does not wait for the disk.
+    fn queue_save(&self) {
+        let Some(path) = self.path.clone() else {
             return;
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&self.export())) {
-            log::warn!("contact sets not saved ({e}): {}", path.display());
-        }
+        let xml = aurora_llsd::to_xml(&self.export());
+        crate::saves::replace(path.clone(), move || {
+            if let Err(e) = importing::write_file(&path, &xml) {
+                log::warn!("contact sets not saved ({e}): {}", path.display());
+            }
+        });
     }
 
     /// getAllContactSets (sorted by name, like the std::map).

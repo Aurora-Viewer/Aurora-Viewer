@@ -31,6 +31,8 @@ pub struct LooksUi {
     /// The photo window's settings scroll to the filters once
     /// (AURORA_DEMO_PHOTO_LOOK).
     pub reveal: bool,
+    /// The photo window is in its 360° format (`Options::pano`).
+    pano: bool,
 }
 
 /// What the editor shows besides the looks.
@@ -41,6 +43,10 @@ pub struct Options<'a> {
     pub compare: bool,
     /// The user's tables, by file name.
     pub luts: &'a [String],
+    /// The photo window is in its 360° format: only the colour looks (the
+    /// ones a face can take alone) are drawn; the others stay in the stack,
+    /// greyed.
+    pub pano: bool,
 }
 
 fn keep_keys(resp: &egui::Response) {
@@ -59,6 +65,7 @@ impl LooksUi {
     /// The whole editor.
     pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, opts: Options, out: &mut Vec<Action>) {
         self.selected = self.selected.min(s.looks.len().saturating_sub(1));
+        self.pano = opts.pano;
         self.stack(ui, p, s);
         if !s.looks.is_empty() {
             let mut mode = usize::from(self.mode == Mode::Add);
@@ -83,9 +90,7 @@ impl LooksUi {
         }
         // in a row: the field centres itself in the height it is given
         ui.horizontal(|ui| {
-            let search =
-                widgets::clearable_search_box(ui, p, &mut self.query, aurora_i18n::tr!("photo-looks-search"), ui.available_width());
-            keep_keys(&search);
+            widgets::clearable_search_box(ui, p, &mut self.query, aurora_i18n::tr!("photo-looks-search"), ui.available_width());
         });
         egui::ScrollArea::vertical()
             .id_salt("looks_list")
@@ -144,7 +149,14 @@ impl LooksUi {
                 let from = looks::tab_of(&layer.id).label();
                 let text = format!("{name}  ·  {} %", layer.strength);
                 let tip = format!("{from} · {}", aurora_i18n::tr!("photo-looks-choose-tip"));
-                let row = chip(ui, p, &text, None, i == self.selected, true).on_hover_text(tip);
+                // (not in a 360° picture: kept in the stack, greyed)
+                let drawn = !self.pano || looks::is_pointwise(&layer.id);
+                let tip = if drawn {
+                    tip
+                } else {
+                    format!("{tip}\n{}", aurora_i18n::tr!("photo-looks-not-in-360"))
+                };
+                let row = chip(ui, p, &text, None, i == self.selected && drawn, drawn).on_hover_text(tip);
                 keep_keys(&row);
                 if row.clicked() {
                     self.selected = i;
@@ -211,10 +223,14 @@ impl LooksUi {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
             for e in entries {
                 let used = s.looks.iter().any(|l| l.id == e.id);
-                let mut resp = chip(ui, p, &e.name, None, used, true);
+                let drawn = !self.pano || looks::is_pointwise(&e.id);
+                let mut resp = chip(ui, p, &e.name, None, used, drawn);
                 keep_keys(&resp);
                 if let Some(tip) = e.tip {
                     resp = resp.on_hover_text(tip);
+                }
+                if !drawn {
+                    resp = resp.on_hover_text(aurora_i18n::tr!("photo-looks-not-in-360"));
                 }
                 if resp.hovered() {
                     self.hover = Some(Some(e.id.clone()));
@@ -233,8 +249,20 @@ impl LooksUi {
         self.mode = Mode::Replace;
     }
 
-    /// The user's tables: a row each with its bin, then the import.
+    /// The creators' tables under their name, then the user's: a row each
+    /// with its bin, then the import.
     fn luts(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, luts: &[String], out: &mut Vec<Action>) {
+        for (creator, entries) in looks::pack_list() {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("photo-lut-pack", creator = creator).to_uppercase())
+                    .size(10.5)
+                    .color(p.muted),
+            )
+            .on_hover_text(aurora_i18n::tr!("photo-lut-pack-tip", creator = creator));
+            self.chips(ui, p, &entries, s);
+        }
+        heading(ui, p, aurora_i18n::tr!("photo-lut-mine"));
         let entries = looks::lut_list(luts);
         if entries.is_empty() {
             ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("photo-lut-empty")).color(p.muted)).wrap());
@@ -307,7 +335,7 @@ impl LooksUi {
             ui.add(egui::Slider::new(&mut layer.strength, 0..=100).suffix(" %"))
         });
         let Some(aurora) = id.strip_prefix(looks::AURORA) else {
-            let note = if id.starts_with(looks::LUT) {
+            let note = if id.starts_with(looks::LUT) || id.starts_with(looks::PACK) {
                 aurora_i18n::tr!("photo-looks-lut-note")
             } else {
                 aurora_i18n::tr!("photo-looks-legacy-note")

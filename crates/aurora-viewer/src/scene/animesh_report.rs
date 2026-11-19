@@ -164,6 +164,42 @@ pub fn position_at(keys: &[(f32, Vec3)], time: f32) -> Option<Vec3> {
 }
 
 impl super::Scene {
+    /// The rig joints the rigged meshes of `subject` use: an avatar's worn
+    /// attachments (its animated ones included), or an animated object's
+    /// own prims. The poser offers the wings and the tail only when a mesh
+    /// is weighted to them. A mesh whose skin has not loaded yet adds none.
+    pub fn rigged_joints(&self, world: &crate::world::World, subject: Uuid) -> std::collections::HashSet<usize> {
+        let rig = &self.avatar_lib.rig;
+        let Some(index) = world.objects.index_of_uuid(&subject) else {
+            return Default::default();
+        };
+        let Some(object) = world.objects.get(index) else {
+            return Default::default();
+        };
+        let prims: Vec<usize> = if object.is_avatar() {
+            world
+                .objects
+                .children_of(&object.key)
+                .iter()
+                .flat_map(|root| linkset(world, *root))
+                .collect()
+        } else {
+            super::animesh::members(&world.objects, index)
+        };
+        let mut joints = std::collections::HashSet::new();
+        for i in prims {
+            let Some(o) = world.objects.get(i) else { continue };
+            let volume = o.visual_volume();
+            let Some(sculpt) = volume.sculpt.filter(|_| volume.is_mesh()) else {
+                continue;
+            };
+            if let Some(skin) = self.meshes.meta(&sculpt.texture).and_then(|m| m.skin) {
+                joints.extend(skin.joint_names.iter().filter_map(|n| rig.names.get(n).copied()));
+            }
+        }
+        joints
+    }
+
     /// What J9 says of the animated objects and rigged attachments avatar
     /// `avatar` wears.
     pub fn worn_animesh_report(&self, world: &crate::world::World, avatar: Uuid, now: std::time::Instant) -> Report {

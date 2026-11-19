@@ -2,7 +2,8 @@
 //! shows as tabs: the Legacy Viewer's photo filters (LLImageFiltersManager,
 //! the Filter list of LLFloaterSnapshot, indra/newview, originally LGPL
 //! 2.1), Aurora's own looks in sections, and the user's 3D look-up tables
-//! (.cube files, `luts`). All are drawn on the GPU by `aurora_render::looks`
+//! (.cube files, `luts`), with the creators' tables built into the viewer
+//! above them (`lut_packs`). All are drawn on the GPU by `aurora_render::looks`
 //! on the live view of the photo mode and on the photo, at a strength, with
 //! a before / after line on the live view.
 //!
@@ -11,9 +12,10 @@
 //! place. Aurora's looks have settings (`knobs`), kept per look.
 //!
 //! A look is saved by its id: the Legacy Viewer's file name (`Sepia`),
-//! `aurora:<id>` or `lut:<file name>`.
+//! `aurora:<id>`, `lut:<file name>` or `pack:<pack>/<table>`.
 
 use super::knobs;
+use super::lut_packs;
 use super::luts::LutLibrary;
 use aurora_render::looks::{AuroraSection, LookLayer, LookOp, Lut, PhotoLook, aurora_look, aurora_looks, legacy_look, legacy_looks};
 use serde::{Deserialize, Serialize};
@@ -97,6 +99,7 @@ pub fn choose(stack: &mut Vec<Layer>, id: &str, mode: Mode, selected: usize) -> 
 
 pub const AURORA: &str = "aurora:";
 pub const LUT: &str = "lut:";
+pub const PACK: &str = "pack:";
 
 /// The tabs of the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -123,7 +126,7 @@ impl Tab {
 pub fn tab_of(id: &str) -> Tab {
     if id.starts_with(AURORA) {
         Tab::Aurora
-    } else if id.starts_with(LUT) {
+    } else if id.starts_with(LUT) || id.starts_with(PACK) {
         Tab::Luts
     } else {
         Tab::Legacy
@@ -227,6 +230,8 @@ pub fn name(id: &str) -> Option<Cow<'static, str>> {
         aurora_text(aurora).map(|(name, _)| Cow::Borrowed(name))
     } else if let Some(lut) = id.strip_prefix(LUT) {
         Some(Cow::Owned(lut_display(lut).to_owned()))
+    } else if let Some(packed) = id.strip_prefix(PACK) {
+        lut_packs::find(packed).map(|(_, t)| Cow::Borrowed(t.name.as_str()))
     } else {
         legacy_name(id).map(Cow::Borrowed)
     }
@@ -315,15 +320,48 @@ pub fn lut_list(names: &[String]) -> Vec<Entry> {
         .collect()
 }
 
+/// The creators' packs: each one's creator and tables.
+pub fn pack_list() -> Vec<(&'static str, Vec<Entry>)> {
+    lut_packs::packs()
+        .iter()
+        .map(|pack| {
+            let entries = pack
+                .tables
+                .iter()
+                .map(|t| Entry {
+                    id: lut_packs::look_id(pack, t),
+                    name: Cow::Borrowed(t.name.as_str()),
+                    tip: None,
+                })
+                .collect();
+            (pack.creator, entries)
+        })
+        .collect()
+}
+
 /// The entries of every tab whose name or description holds `query`.
 pub fn search(query: &str, lut_names: &[String]) -> Vec<Entry> {
     let query = fold(query.trim());
     legacy_list()
         .into_iter()
         .chain(aurora_list().into_iter().flat_map(|(_, entries)| entries))
+        .chain(pack_list().into_iter().flat_map(|(_, entries)| entries))
         .chain(lut_list(lut_names))
         .filter(|e| fold(&e.name).contains(&query) || e.tip.is_some_and(|t| fold(t).contains(&query)))
         .collect()
+}
+
+/// Whether a look can be applied to the faces of a 360° snapshot one by one
+/// (`LookOp::is_pointwise`): its operations depend on a pixel's colour alone.
+/// A table of the user's is a colour operation. An unknown look is not.
+pub fn is_pointwise(id: &str) -> bool {
+    if id.starts_with(LUT) {
+        return true;
+    }
+    if let Some(aurora) = id.strip_prefix(AURORA) {
+        return aurora_look(aurora).is_some_and(|look| look.ops.iter().all(LookOp::is_pointwise));
+    }
+    legacy_look(id).is_some_and(|ops| ops.iter().all(LookOp::is_pointwise))
 }
 
 /// What a look draws: its operations, and its table.
@@ -352,6 +390,12 @@ pub fn resolve(id: &str, settings: &Settings, luts: &mut LutLibrary) -> Option<R
         return Some(Resolved {
             ops: Arc::from([LookOp::Lut]),
             lut: Some(lut),
+        });
+    }
+    if let Some(packed) = id.strip_prefix(PACK) {
+        return Some(Resolved {
+            ops: Arc::from([LookOp::Lut]),
+            lut: Some(lut_packs::table(packed)?),
         });
     }
     Some(Resolved {
@@ -409,6 +453,22 @@ pub fn frame_look(layers: &[(Resolved, u8)], place: Placement, compare: Option<f
 mod tests {
     use super::*;
 
+    /// The photo window's 360° format keeps the colour looks and greys the
+    /// others (the classification itself is tested for every look in
+    /// aurora-render's looks tests).
+    #[test]
+    fn colour_looks_are_kept_for_a_360_snapshot_and_the_others_are_not() {
+        assert!(is_pointwise("Sepia") && is_pointwise("BlackAndWhite") && is_pointwise("Intense"));
+        assert!(is_pointwise(&format!("{AURORA}keep-red")));
+        assert!(is_pointwise(&format!("{LUT}warm.cube")), "a table is a colour operation");
+        assert!(!is_pointwise("Spotlight") && !is_pointwise("Sharpen") && !is_pointwise("Posterize"));
+        assert!(!is_pointwise(&format!("{AURORA}fine-grain")) && !is_pointwise(&format!("{AURORA}fisheye")));
+        assert!(!is_pointwise("No such look"));
+        let all = legacy_list().into_iter().chain(aurora_list().into_iter().flat_map(|(_, e)| e));
+        let kept = all.filter(|e| is_pointwise(&e.id)).count();
+        assert!(kept > 5 && kept < 66, "{kept} of the 66 looks are colour looks");
+    }
+
     #[test]
     fn every_look_has_a_name() {
         // a missing message gives its key back (the French catalogue has
@@ -430,6 +490,9 @@ mod tests {
         assert_eq!(tab_of("aurora:vhs"), Tab::Aurora);
         assert_eq!(tab_of("lut:Warm.cube"), Tab::Luts);
         assert_eq!(name("lut:Warm.cube").as_deref(), Some("Warm"));
+        assert_eq!(tab_of("pack:czar-fenris/Noir"), Tab::Luts);
+        assert_eq!(name("pack:czar-fenris/Noir").as_deref(), Some("Noir"));
+        assert_eq!(name("pack:czar-fenris/Nothing"), None);
         assert_eq!(label(Some("Nothing")), aurora_i18n::tr!("photo-look-none"));
     }
 
@@ -438,8 +501,25 @@ mod tests {
         assert!(fold("Éclaircir") < fold("Fuite"));
         assert!(fold("Négatif") > fold("Matrix"));
         let found = search("SEPIA", &["Sépia doux.cube".to_owned()]);
-        assert!(found.iter().any(|e| e.id == "Sepia"), "{found:?}");
         assert!(found.iter().any(|e| e.id == "lut:Sépia doux.cube"), "{found:?}");
+        // a Legacy filter is found by its name in the interface's language
+        // (Sepia, Sépia, セピア)
+        let found = search(&aurora_i18n::tr!("photo-look-sepia").to_uppercase(), &[]);
+        assert!(found.iter().any(|e| e.id == "Sepia"), "{found:?}");
+        // the creators' tables are found too
+        let found = search("winter", &[]);
+        assert!(found.iter().any(|e| e.id == "pack:czar-fenris/Winter Fog"), "{found:?}");
+    }
+
+    #[test]
+    fn a_pack_table_draws_as_a_lut() {
+        let mut luts = LutLibrary::new(std::env::temp_dir().join("aurora-no-luts"));
+        let look = resolve("pack:czar-fenris/Film look", &Settings::new(), &mut luts).expect("resolves");
+        assert_eq!(look.lut.map(|l| l.size), Some(33));
+        assert!(resolve("pack:czar-fenris/Nothing", &Settings::new(), &mut luts).is_none());
+        let (creator, entries) = &pack_list()[0];
+        assert_eq!(*creator, "Czar Fenris");
+        assert!(entries.iter().all(|e| name(&e.id).as_deref() == Some(e.name.as_ref())));
     }
 
     #[test]
