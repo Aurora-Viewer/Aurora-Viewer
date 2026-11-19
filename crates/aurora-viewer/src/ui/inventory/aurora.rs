@@ -1034,6 +1034,35 @@ mod tests {
         assert!(h.st.flat.groups.is_empty());
     }
 
+    #[test]
+    fn a_typed_path_to_twin_folders_shows_their_parent_filtered_to_them() {
+        let mut h = Harness::new(WIDE_SIZE);
+        let (here, sub) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        let twin = Uuid::from_u128(8999);
+        h.inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: twin,
+            parent: here,
+            name: folder_name(&h.inv, sub),
+            ..Default::default()
+        }]);
+        h.frames(2);
+        let text = breadcrumb::path_text(&h.inv, h.inv.root, sub);
+        h.st.path_edit = Some(PathEdit::new(text));
+        h.frames(2);
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(3);
+        assert_eq!(h.st.browse, here, "their parent, not the first of them");
+        assert_eq!(h.st.folder_filter.as_deref(), Some(folder_name(&h.inv, sub).as_str()));
+        assert!(h.st.flat.order.contains(&sub) && h.st.flat.order.contains(&twin), "both listed");
+        assert!(h.st.path_edit.is_none());
+    }
+
     /// Aurora's window `width` wide in a headless context.
     struct Harness {
         ctx: egui::Context,
