@@ -104,14 +104,13 @@ impl Default for Config {
         }
     }
 }
-/// What the poser window asks of the app, which owns the consent state and
-/// the Preferences: the subject menu lists the nearby avatars with their
+/// What the poser window asks of the app, which owns the consent state
+/// and the bridge: the subject menu lists the nearby avatars with their
 /// consent action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Ask(Uuid),
     Cancel(Uuid),
-    OpenPrivacy,
     /// The bridge's Repair, offered when its query service is silent or failed.
     RepairBridge,
 }

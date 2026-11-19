@@ -4130,7 +4130,7 @@ That ignored test creates and removes its own isolated profile.
   you wear but not your HUDs, stands 1 m in front of you facing you as Person
   B, with no name tag, and goes when couple mode ends. The scripted modes turn
   the view to the side once B is there. Capture from frame 1400.
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -4146,9 +4146,10 @@ That ignored test creates and removes its own isolated profile.
   body-part scenarios display only the selected tab's joints and shafts.
   Open at frame 420, edit at 450, capture 620. Animesh selects an
   owned synthetic control skeleton. Consent fixtures request at 450, answer
-  or expire at 480, and optionally withdraw at 560. Incoming-request and
-  reminder modes show the target UI; accept/withdraw modes select the peer
-  and edit its head at 510. `close` asks to close the window at 700, the
+  or expire at 480, and optionally withdraw at 560 (the resident's Stop); the
+  question itself is our bridge's dialog on the resident's screen, which
+  only the grid shows. Accept/withdraw modes select the peer and edit its
+  head at 510. `close` asks to close the window at 700, the
   head edited: capture 760 for the confirmation (Minimize, Close anyway,
   Don't ask again). `square-head` sets our Head Shape slider to 100 at frame
   300, which mirrors the forehead joints' scale on one axis (#1249): capture
@@ -4161,9 +4162,9 @@ That ignored test creates and removes its own isolated profile.
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
   silent, failed, taken off), plus Repair for `silent` and `failed`. With
-  `AURORA_DEMO_SNAPSHOT=viewfinder`, `consent-request` and `consent-reminder`
-  show the question and the reminder over the full-frame photo mode, above
-  the poser window. `consent-reply` asks nothing by itself: whoever the user
+  `AURORA_DEMO_SNAPSHOT=viewfinder`, `consent-withdraw` shows the ended
+  notice over the full-frame photo mode, above the poser window.
+  `consent-reply` asks nothing by itself: whoever the user
   asks from the subject menu accepts two seconds later (with
   `AURORA_DEMO_SNAPSHOT=viewfinder`, an Ask made in the photo mode).
   The scenarios above show the full window; `compact*` show the compact one

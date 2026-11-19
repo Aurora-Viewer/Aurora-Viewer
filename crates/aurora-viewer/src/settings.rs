@@ -1300,7 +1300,6 @@ pub struct Settings {
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
     pub rlva: crate::world::rlva::preferences::Preferences,
-    pub pose_requests: crate::world::poser_consent::Preferences,
     pub poser: crate::ik_edit::poser::Config,
     /// The pose stand's lock and last pose (FSPoseStandLock,
     /// FSPoseStandLastSelectedPose).
@@ -2628,7 +2627,6 @@ impl Default for Settings {
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
-            pose_requests: Default::default(),
             poser: Default::default(),
             pose_stand: Default::default(),
             autoresponse: Default::default(),
