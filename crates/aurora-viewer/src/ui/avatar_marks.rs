@@ -37,12 +37,12 @@ fn label(name: MarkColor) -> &'static str {
     }
 }
 
-/// The mini-map marks the avatars it shows: not one a parcel hides. A name
-/// hidden by RLVa changes nothing (LLNetMap::handleRightMouseDown,
-/// indra/newview/llnetmap.cpp: "MarkAvatar" is shown for any agent under
-/// the pointer and is not among the entries `@shownames` greys).
+/// A minimap dot may be marked if it represents a visible avatar or a
+/// coarse-only resident, but not one hidden by local parcel isolation.
+/// Under RLVa `@shownames`, disable minimap marker edits: an anonymized
+/// resident should not silently acquire a newly selected marker color.
 fn can_edit(world: &World, ids: &[Uuid], source: AvatarList) -> bool {
-    source != AvatarList::MiniMap || ids.iter().all(|id| super::minimap::can_mark(world, id))
+    source != AvatarList::MiniMap || (!world.rlva.has("shownames") && ids.iter().all(|id| super::minimap::can_mark(world, id)))
 }
 
 /// "Markers ▸": the five colours, "Custom color…", "Clear marker" for
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn mini_map_marks_stay_on_hidden_names_and_close_on_a_hidden_parcel() {
+    fn mini_map_marks_disable_under_shownames_and_close_on_a_hidden_parcel() {
         use crate::ui::widgets::elide_tests::{Frames, painted};
         use std::time::Instant;
 
@@ -244,8 +244,8 @@ mod tests {
         w.avatar_marks.set(&[luna], blue);
         let source = AvatarList::MiniMap;
         assert!(can_edit(&w, &[luna], source));
-        assert!(!can_edit(&w, &[distant], source));
-        assert!(!can_edit(&w, &[luna, distant], source));
+        assert!(can_edit(&w, &[distant], source));
+        assert!(can_edit(&w, &[luna, distant], source));
 
         let p = crate::theme::Theme::default().palette();
         let mut frames = Frames::new();
@@ -261,19 +261,23 @@ mod tests {
         assert!(texts.iter().any(|t| t.source == custom));
         assert!(texts.iter().any(|t| t.source == clear));
 
-        // `@shownames`: the menu and the open window stay, as the Legacy
-        // Viewer's "Mark..." does
+        // `@shownames` disables the minimap Markers submenu and closes an
+        // open custom-color picker without changing an existing marker.
         w.rlva_configure(true);
         w.rlva_console_input("@shownames=n");
+        assert!(w.rlva.has("shownames"));
         assert!(!w.rlva_can_name(luna));
-        assert!(can_edit(&w, &[luna], source));
-        let texts = frames.hover(row, |ui| draw_menu(ui, &w));
-        assert!(texts.iter().any(|t| t.source == custom));
-        assert!(texts.iter().any(|t| t.source == clear));
+        assert!(!can_edit(&w, &[luna], source));
+        assert!(!can_edit(&w, &[distant], source));
         frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
-        assert!(picker.is_some());
-        assert_eq!(picker.as_ref().unwrap().rgb(), blue);
+        assert!(picker.is_none());
+        assert_eq!(w.avatar_marks.get(&luna), Some(blue));
         w.rlva_console_input("@shownames=y");
+        assert!(!w.rlva.has("shownames"));
+        assert!(can_edit(&w, &[luna], source));
+
+        // The picker is available again after the restriction is released.
+        let mut picker = Some(CustomMark::new(&w, vec![luna], None, source));
 
         // The west resident is still loaded and named when only our eastern
         // parcel becomes visible. The open picker must not keep its colour.

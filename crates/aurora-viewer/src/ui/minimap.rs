@@ -268,8 +268,8 @@ fn formatted_avatar_name(
     }
 }
 
-/// A coarse position alone is not evidence that the resident is visible.
-/// A name kept from an earlier encounter cannot establish that either.
+/// Visibility of the 3D avatar is needed for map marker actions, not for
+/// naming a dot reported by the simulator's coarse avatar locations.
 fn visible_avatar<'w>(world: &'w World, id: &Uuid) -> Option<&'w crate::world::objects::Object> {
     let index = world.objects.index_of_uuid(id)?;
     let object = world.objects.get(index)?;
@@ -287,19 +287,43 @@ fn names_allowed(world: &World, id: &Uuid) -> bool {
     world.rlva_can_name(*id) && world.social.avatar_names.shows(crate::world::names::NameScope::World, id)
 }
 
-/// The mini-map's "Markers" menu of a dot: for an avatar that is visible
-/// (not one a parcel hides), their name hidden by RLVa or not.
+/// Shared RLVa gate for View Profile and More on minimap dots.
+fn can_show_resident_actions(world: &World, ids: &[Uuid]) -> bool {
+    !ids.is_empty() && !world.rlva.has("shownames") && ids.iter().all(|id| names_allowed(world, id))
+}
+
+/// The mini-map's "Markers" menu of a dot: a coarse-only avatar is still
+/// a resident on the map. Aurora's local parcel isolation can still hide
+/// the actions of an avatar object that is loaded but intentionally hidden.
 /// LLNetMap::handleRightMouseDown (indra/newview/llnetmap.cpp) shows
 /// "MarkAvatar" for any agent under the pointer and leaves it out of the
 /// entries `@shownames` greys.
 pub(super) fn can_mark(world: &World, id: &Uuid) -> bool {
     visible_avatar(world, id).is_some()
+        || (world.objects.index_of_uuid(id).is_none() && world.coarse.values().any(|dots| dots.iter().any(|(other, _)| other == id)))
+}
+
+/// A simulator-reported coarse dot keeps the resident's relation and mark
+/// colour even when their 3D avatar is not loaded. RLVa and Aurora's own
+/// parcel isolation still prevent identity-based colouring.
+fn map_dot_color(world: &World, id: &Uuid, object: Option<&crate::world::objects::Object>) -> Color32 {
+    if !names_allowed(world, id) || (object.is_none() && world.objects.index_of_uuid(id).is_some()) {
+        return super::colors::c(super::colors::get().map_other);
+    }
+    let name = object
+        .and_then(|object| fallback_name(world, object))
+        .or_else(|| world.social.names.get(id).filter(|name| !name.is_empty()).cloned())
+        .unwrap_or_default();
+    super::colors::map_color(world, id, &name)
 }
 
 fn avatar_name(world: &World, id: &Uuid, format: MiniAvatarNameFormat) -> String {
-    let Some(object) = visible_avatar(world, id) else {
+    let object = visible_avatar(world, id);
+    // Parcel privacy can prevent the simulator from sending an avatar object.
+    // A current coarse location still identifies a resident on the minimap.
+    if object.is_none() && !world.coarse.values().any(|list| list.iter().any(|(resident, _)| resident == id)) {
         return "…".into();
-    };
+    }
     let names = &world.social.avatar_names;
     if !names_allowed(world, id) {
         return names.anonymous(id).display_name.clone();
@@ -307,7 +331,8 @@ fn avatar_name(world: &World, id: &Uuid, format: MiniAvatarNameFormat) -> String
     names
         .get(id)
         .map(|name| formatted_avatar_name(name, &names.options, format))
-        .or_else(|| fallback_name(world, object))
+        .or_else(|| object.and_then(|object| fallback_name(world, object)))
+        .or_else(|| world.social.names.get(id).filter(|name| !name.is_empty()).cloned())
         .unwrap_or_else(|| "…".into())
 }
 
@@ -470,6 +495,63 @@ mod name_format_tests {
     }
 
     #[test]
+    fn coarse_only_friend_keeps_dot_color_and_resident_actions() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let id = Uuid::from_u128(63);
+        world.social.friends.push(crate::world::social::Friend {
+            id,
+            online: true,
+            rights_given: 0,
+            rights_has: 0,
+        });
+        world.coarse.insert(1, vec![(id, Vec3::new(20.0, 30.0, 40.0))]);
+        assert!(visible_avatar(&world, &id).is_none());
+        assert!(can_mark(&world, &id));
+        assert_eq!(map_dot_color(&world, &id, None), crate::ui::colors::map_color(&world, &id, ""));
+        assert_ne!(
+            map_dot_color(&world, &id, None),
+            crate::ui::colors::c(crate::ui::colors::get().map_other)
+        );
+
+        // RLVa still anonymizes the dot and disables identity actions.
+        world.rlva_configure(true);
+        world.rlva_console_input("@shownames=n");
+        assert!(world.rlva.has("shownames"));
+        assert!(!names_allowed(&world, &id));
+        assert_eq!(
+            map_dot_color(&world, &id, None),
+            crate::ui::colors::c(crate::ui::colors::get().map_other)
+        );
+
+        // A name saved in the cache is not a resident currently on the map.
+        world.coarse.clear();
+        assert!(!can_mark(&world, &id));
+    }
+
+    #[test]
+    fn minimap_profile_actions_respect_rlva_on_coarse_only_dots() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let id = Uuid::from_u128(64);
+        world.coarse.insert(1, vec![(id, Vec3::new(10.0, 20.0, 30.0))]);
+
+        assert!(can_mark(&world, &id));
+        assert!(can_show_resident_actions(&world, &[id]));
+        assert!(!can_show_resident_actions(&world, &[]));
+
+        world.rlva_configure(true);
+        world.rlva_console_input("@shownames=n");
+        assert!(world.rlva.has("shownames"));
+        assert!(can_mark(&world, &id), "RLVa name privacy does not disable marking");
+        assert!(!can_show_resident_actions(&world, &[id]), "View Profile must stay disabled");
+
+        world.rlva_console_input("@shownames=y");
+        assert!(!world.rlva.has("shownames"));
+        assert!(can_show_resident_actions(&world, &[id]));
+    }
+
+    #[test]
     fn minimap_names_honor_rlva_privacy_in_all_formats() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = Uuid::from_u128(1);
@@ -550,16 +632,32 @@ mod name_format_tests {
             );
         }
 
-        // The simulator no longer draws this resident. Neither an earlier
-        // display name nor a UUIDNameReply may identify their coarse dot.
+        // Private parcels can leave a resident's coarse map dot without a 3D
+        // avatar object. RLVa must still anonymize its tooltip.
         world.objects.remove_idx(known_index);
         world.social.names.insert(known, "John Smith".into());
         world.coarse.insert(1, vec![(known, Vec3::new(1.0, 2.0, 3.0))]);
         for format in FORMATS {
-            assert_eq!(avatar_name(&world, &known, format), "…");
+            assert_eq!(
+                avatar_name(&world, &known, format),
+                world.social.avatar_names.anonymous(&known).display_name
+            );
         }
         assert!(visible_avatar(&world, &known).is_none());
-        // An unseen resident with no cached name must not start a lookup.
+        // Without RLVa, all four formats work for a coarse-only resident.
+        world.rlva_configure(false);
+        world.social.avatar_names.set_rlva_privacy(false, Default::default());
+        for (format, name) in FORMATS.into_iter().zip(expected) {
+            assert_eq!(avatar_name(&world, &known, format), name);
+        }
+        // Legacy name replies are a fallback while display-name data loads.
+        let legacy_only = Uuid::from_u128(45);
+        world.coarse.entry(1).or_default().push((legacy_only, Vec3::new(2.0, 3.0, 4.0)));
+        world.social.names.insert(legacy_only, "Other Resident".into());
+        for format in FORMATS {
+            assert_eq!(avatar_name(&world, &legacy_only, format), "Other Resident");
+        }
+        // A stale cached name without a current minimap dot must stay hidden.
         let unseen = Uuid::from_u128(44);
         let _ = world.social.avatar_names.take_asks();
         world.social.names.insert(unseen, "Earlier acquaintance".into());
@@ -955,12 +1053,7 @@ impl MiniMap {
                 continue;
             }
             let visible = visible_avatar(world, &id);
-            let col = match visible {
-                Some(object) if names_allowed(world, &id) => {
-                    super::colors::map_color(world, &id, &fallback_name(world, object).unwrap_or_default())
-                }
-                _ => super::colors::c(k.map_other),
-            };
+            let col = map_dot_color(world, &id, visible);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)
@@ -973,7 +1066,7 @@ impl MiniMap {
             if let Some(m) = pointer {
                 let d = sp.distance(m);
                 if d < dot_r * PICK_SCALE {
-                    if visible.is_some() {
+                    if can_mark(world, &id) {
                         under.push(id);
                     }
                     if closest.as_ref().is_none_or(|c| d < c.0) {
@@ -1109,11 +1202,12 @@ impl MiniMap {
                 ui.close();
                 return;
             };
-            // Recheck the picked avatars while their menu is open: visibility can change.
-            avs.retain(|id| visible_avatar(world, id).is_some());
+            // Recheck the picked avatars while their menu is open: a coarse
+            // dot remains actionable even when no 3D avatar was loaded.
+            avs.retain(|id| can_mark(world, id));
             // LLNetMap::handleRightMouseDown greys identity actions for everyone
             // under @shownames, including its exceptions.
-            let can_show_names = !world.rlva.has("shownames") && avs.iter().all(|id| names_allowed(world, id));
+            let can_show_names = can_show_resident_actions(world, &avs);
             if let Some(&first) = avs.first() {
                 if avs.len() == 1 {
                     if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), can_show_names) {
