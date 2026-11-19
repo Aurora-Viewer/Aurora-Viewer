@@ -381,6 +381,40 @@ pub(super) fn image(inv: &Inventory, item: Uuid) -> Uuid {
         .or_else(|| inv.folders.get(&item).map(|f| f.info.thumbnail))
         .unwrap_or_default()
 }
+/// The picture an entry shows in the gallery and its tooltip: its own image,
+/// a link's original's (LLViewerInventoryItem::getThumbnailUUID), or for an
+/// outfit folder without one its only direct texture
+/// (LLInventoryGallery::getOutfitImageID,
+/// indra/newview/llinventorygallery.cpp). A texture is not its own picture
+/// there: the tooltip adds it (`hover`).
+pub(super) fn shown(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    let own = image(inv, id);
+    if !own.is_nil() {
+        return Some(own);
+    }
+    let original = rules::original(inv, id)?;
+    let linked = image(inv, original);
+    if !linked.is_nil() {
+        return Some(linked);
+    }
+    let folder = inv.folders.get(&original)?;
+    if folder.info.type_default != 47 || folder.state != FetchState::Fetched {
+        return None;
+    }
+    // Exactly one direct texture, links included. Never walk or fetch a
+    // folder tree for it: a folder's picture is drawn every frame.
+    let mut textures = folder.items.iter().filter_map(|id| {
+        let item = inv.items.get(&rules::original(inv, *id)?)?;
+        (item.asset_type == 0).then_some(item.asset_id)
+    });
+    let texture = textures.next()?;
+    (!texture.is_nil() && textures.next().is_none()).then_some(texture)
+}
+/// The picture of an entry's tile: none while RLVa forbids previews, as for
+/// its tooltip.
+pub(super) fn tile_picture(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    inv.can_preview(0).then(|| shown(inv, id)).flatten()
+}
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
     match inv.items.get(&item) {
         Some(it) => resolved_item_type_icon(ui, icons, inv, it, p),
@@ -435,11 +469,16 @@ pub(super) fn picture(
         );
     }
 }
+/// A texture item whose asset may become an item image: copy and transfer
+/// for the agent (LLFloaterChangeItemThumbnail::onPasteFromClipboard,
+/// allowCopyBy and allowOperationBy(PERM_TRANSFER),
+/// indra/newview/llfloaterchangeitemthumbnail.cpp), that is the everyone
+/// mask for a Library item (`held`).
 pub(crate) fn usable(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> bool {
     it.asset_type == 0
         && !it.asset_id.is_nil()
         && !rules::in_type(inv, it.id, 14)
-        && (rules::library(inv, it.id) || rules::held(inv, it) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+        && rules::held(inv, it) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
 }
 /// A texture id that may become an item image (pasted, typed or picked):
 /// a built-in or local texture, any id in demo mode, or the asset of a
@@ -555,6 +594,49 @@ fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_item_image_takes_a_texture_the_agent_may_copy_and_transfer() {
+        let me = Uuid::from_u128(0xA1);
+        let other = Uuid::from_u128(0xB2);
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut inv = Inventory {
+            owner: me,
+            ..Default::default()
+        };
+        let texture = |n: u128, owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(n),
+            asset_id: Uuid::from_u128(0x100 + n),
+            asset_type: 0,
+            owner,
+            owner_mask,
+            everyone_mask,
+            group_owned,
+            ..Default::default()
+        };
+        // (what, item, usable)
+        let cases = [
+            ("ours, full permissions", texture(1, me, full, 0, false), true),
+            ("ours, no copy", texture(2, me, full & !rules::COPY, 0, false), false),
+            ("ours, no transfer", texture(3, me, full & !rules::TRANSFER, 0, false), false),
+            ("ours, no modify", texture(4, me, full & !rules::MODIFY, 0, false), true),
+            ("a Library item, copy only", texture(5, other, full, rules::COPY, false), false),
+            (
+                "a Library item, copy and transfer",
+                texture(6, other, full, rules::COPY | rules::TRANSFER, false),
+                true,
+            ),
+            ("group owned", texture(7, me, full, 0, true), false),
+            ("someone else's", texture(8, other, full, 0, false), false),
+        ];
+        for (_, it, _) in &cases {
+            inv.items.insert(it.id, it.clone());
+        }
+        for (what, it, allowed) in cases {
+            assert_eq!(usable(&inv, &it), allowed, "{what}");
+            assert_eq!(image_source_allowed(&inv, &it.asset_id, false, false), allowed, "{what} (by id)");
+        }
+    }
 
     #[test]
     fn clearing_thumbnail_search_reopens_the_chosen_items_path_and_reveals_the_exact_duplicate() {

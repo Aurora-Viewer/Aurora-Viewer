@@ -66,6 +66,23 @@ pub struct Collision {
     /// Unix time from the simulator.
     pub time: u32,
     pub magnitude: f32,
+    /// RLVa's `@shownames` was set when the row was made: it shows the
+    /// resident's stand-in from then on, whoever they are, and a row made
+    /// before keeps its name (mean_name_callback stores
+    /// `hasBehaviour(RLV_BHVR_SHOWNAMES) ? getAnonym : getUserName` once,
+    /// indra/newview/llviewermessage.cpp).
+    pub anonymous: bool,
+}
+
+impl Collision {
+    /// The resident as the row names them.
+    pub fn name(&self, world: &World) -> String {
+        if self.anonymous {
+            world.rlva_anonymous(self.perp).display_name.clone()
+        } else {
+            world.social.name_in(crate::world::names::NameScope::Roster, &self.perp)
+        }
+    }
 }
 
 /// Preferences › Interface › Bumps, pushes & hits (the Legacy Viewer's
@@ -104,9 +121,13 @@ impl Collisions {
     }
 
     /// A resident already listed for this kind gets the new time and
-    /// magnitude. The Legacy Viewer leaves that row where it was; it moves
-    /// to the top here, so the list stays newest first.
-    fn record(&mut self, c: Collision) {
+    /// magnitude, and keeps the name the row had. The Legacy Viewer leaves
+    /// that row where it was; it moves to the top here, so the list stays
+    /// newest first.
+    fn record(&mut self, mut c: Collision) {
+        if let Some(old) = self.list.iter().find(|o| (o.perp, o.kind) == (c.perp, c.kind)) {
+            c.anonymous = old.anonymous;
+        }
         self.list.retain(|o| (o.perp, o.kind) != (c.perp, c.kind));
         self.list.push_front(c);
         self.list.truncate(MAX);
@@ -144,11 +165,16 @@ impl World {
                 continue;
             };
             self.social.avatar_names.want(&c.perp);
+            // FSCollisionMessagesInChat: the `rlvanonym` link while RLVa's
+            // `@shownames` is set, for everyone (process_mean_collision_alert_message)
+            let names_hidden = self.rlva.has("shownames");
             if cfg.in_chat {
-                self.system_notice(
-                    kind.sentence(&format!("secondlife:///app/agent/{}/about", c.perp)),
-                    crate::world::notice_topics::Topic::People,
-                );
+                let who = if names_hidden {
+                    self.rlva_anonymous(c.perp).display_name.clone()
+                } else {
+                    format!("secondlife:///app/agent/{}/about", c.perp)
+                };
+                self.system_notice(kind.sentence(&who), crate::world::notice_topics::Topic::People);
             }
             // ScriptDialogReply from ourselves: chat on a negative channel
             // that reaches the agent's attachments
@@ -166,6 +192,7 @@ impl World {
                 kind,
                 time: c.time,
                 magnitude: c.magnitude,
+                anonymous: names_hidden,
             });
         }
     }

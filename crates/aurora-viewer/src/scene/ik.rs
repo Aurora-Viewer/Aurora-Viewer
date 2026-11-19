@@ -76,16 +76,29 @@ pub struct JointEdit {
     pub weight: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct LocalPose {
     pub rotations: Vec<Quat>,
     pub positions: Vec<Vec3>,
+}
+
+/// What an edit session poses on: the frozen or suppressed live pose with
+/// the editor's animation layers, before its joint edits and contacts.
+/// Positions are in the editor's convention (pelvis offset included, as
+/// `Rig::world_with` with a zero offset reads them back).
+#[derive(Clone, PartialEq)]
+pub struct EditBase {
+    pub pose: LocalPose,
+    /// The shape's rest positions under that pose.
+    pub rest: Vec<Vec3>,
 }
 
 #[derive(Default)]
 pub struct Pose {
     pub targets: Vec<Goal>,
     pub edit: EditRequest,
+    /// The base of the active edit session, rebuilt only when it changes.
+    pub edit_base: Option<std::sync::Arc<EditBase>>,
     held: Vec<activation::Held>,
     frozen: Option<LocalPose>,
     rest_positions: Vec<Vec3>,
@@ -124,6 +137,42 @@ impl Pose {
         self.rest_positions.clear();
         self.rest_positions.extend_from_slice(positions);
     }
+    /// Publish the edit session's base for the editor, which records the
+    /// user's changes from it only. The frozen base rarely changes, so the
+    /// copy is made only when it does.
+    fn keep_edit_base(&mut self, rig: &Rig, base: &LocalPose, pelvis: Vec3) {
+        let parent_scale = rig.parent_scale.get(rig.pelvis).copied().unwrap_or(Vec3::ONE);
+        let offset = if parent_scale.abs().min_element() > 1e-5 {
+            pelvis / parent_scale
+        } else {
+            Vec3::ZERO
+        };
+        let position = |j: usize, p: Vec3| if j == rig.pelvis { p + offset } else { p };
+        let rest = if self.rest_positions.len() == rig.len() {
+            &self.rest_positions
+        } else {
+            &rig.local_pos
+        };
+        let unchanged = self.edit_base.as_ref().is_some_and(|b| {
+            b.rest == *rest
+                && b.pose.rotations == base.rotations
+                && b.pose.positions.len() == base.positions.len()
+                && b.pose
+                    .positions
+                    .iter()
+                    .zip(&base.positions)
+                    .enumerate()
+                    .all(|(j, (a, p))| *a == position(j, *p))
+        });
+        if unchanged {
+            return;
+        }
+        let pose = LocalPose {
+            rotations: base.rotations.clone(),
+            positions: base.positions.iter().enumerate().map(|(j, p)| position(j, *p)).collect(),
+        };
+        self.edit_base = Some(std::sync::Arc::new(EditBase { pose, rest: rest.clone() }));
+    }
     #[allow(clippy::too_many_arguments)] // Same pose inputs as Controller::evaluate.
     pub fn apply(
         &mut self,
@@ -146,6 +195,7 @@ impl Pose {
         self.body_continuity.begin_frame(self.edit.active, elapsed.min(0.1));
         if !self.edit.active {
             self.frozen = None;
+            self.edit_base = None;
             self.rest_positions.clear();
         }
         if self.targets.is_empty() && self.held.is_empty() && !self.edit.active {
@@ -170,8 +220,17 @@ impl Pose {
                 result.positions[rig.pelvis] -= pelvis;
             }
             if !self.edit.animations.is_empty() {
+                // A clip without a pelvis position key stands where a zero
+                // key would (`animations::apply`: the rig's pelvis plus the
+                // key), never on the shaped rest pelvis: a worn mesh's
+                // pelvis override can sit metres up, and the uploaded clip
+                // leaves the pelvis to the avatar's other animations anyway.
+                if self.edit.suppress_live && !animations::keys_position(rig.pelvis, &self.edit.animations) {
+                    result.positions[rig.pelvis] = rig.local_pos[rig.pelvis] - pelvis;
+                }
                 animations::apply(rig, &mut result, pelvis, &self.edit.animations);
             }
+            self.keep_edit_base(rig, &result, pelvis);
             for joint in &self.edit.joints {
                 if joint.bone >= rig.len() || !joint.weight.is_finite() || !(0.0..=1.0).contains(&joint.weight) {
                     continue;

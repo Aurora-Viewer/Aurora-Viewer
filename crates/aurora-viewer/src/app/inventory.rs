@@ -7,7 +7,60 @@ use std::collections::VecDeque;
 use uuid::Uuid;
 
 impl App {
-    /// `AURORA_DEMO_INVENTORY=big,toggle=…,churn=…`: open and close the
+    fn offer_feedback(&mut self, reason: crate::world::inventory::outgoing::Feedback) {
+        let text = reason.text();
+        self.inventory_ui.message.clone_from(&text);
+        self.world.system_notice(text, crate::world::notice_topics::Topic::Items);
+    }
+
+    pub(super) fn poll_inventory_offers(&mut self) {
+        use crate::world::inventory::outgoing::Effect;
+        let session = self.world.login.as_ref().map(|login| login.session_id);
+        for effect in self.world.inventory.poll_offers(session) {
+            match effect {
+                Effect::Sent { recipient, name, folder } => {
+                    let in_session = self.inventory_ui.offers_in_session.contains(&recipient);
+                    self.world.inventory_offer_sent(recipient, &name, folder, in_session);
+                    self.fire_beam(recipient, glam::DVec3::ZERO);
+                }
+                Effect::Feedback(reason) => self.offer_feedback(reason),
+                Effect::Check(cmd) => self.send(*cmd),
+            }
+        }
+    }
+
+    pub(super) fn demo_inventory_offer(&mut self, cmd: &NetCommand) -> bool {
+        use aurora_net::{InventoryOfferStatus, inventory::ais::ItemReads};
+        match cmd {
+            NetCommand::OfferInventory { receipt, .. } => {
+                let mode = std::env::var("AURORA_DEMO_INVENTORY").unwrap_or_default();
+                if mode != "offer-unsent" {
+                    let _ = receipt.try_send(InventoryOfferStatus::Transmitted);
+                    if mode != "offer-uncertain" {
+                        let _ = receipt.try_send(InventoryOfferStatus::Acknowledged);
+                    }
+                }
+            }
+            NetCommand::CheckInventoryOffer { items, reply, .. } => {
+                // The synthetic simulator processed the offer but lost its ACK.
+                let mut reads = ItemReads::default();
+                for id in items {
+                    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "offer-uncertain") && *id == Uuid::from_u128(8109) {
+                        reads.missing.push(*id);
+                    } else if let Some(it) = self.world.inventory.items.get(id) {
+                        reads.items.push(it.clone());
+                    } else {
+                        reads.missing.push(*id);
+                    }
+                }
+                let _ = reply.try_send(reads);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// `AURORA_DEMO_INVENTORY=big,toggle=â€¦,churn=â€¦`: open and close the
     /// window, and change one item now and then, once in the world.
     pub(super) fn demo_big_inventory(&mut self, big: &crate::world::inventory::demo::Big) {
         use std::sync::OnceLock;
@@ -122,7 +175,16 @@ impl App {
         self.inventory_ui.message = aurora_i18n::tr!("task-transfer-requested").into();
     }
 
-    fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+    /// The inventory pane an action came from: the right pane of the
+    /// dual-panel layout, or the main window for everything else.
+    pub(super) fn inventory_pane(&mut self, editor: Uuid) -> &mut crate::ui::inventory::InventoryUi {
+        pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor)
+    }
+
+    pub(super) fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+        if editor == ui::inventory::DUAL_PANE {
+            return Some(&mut self.dual_inventory_ui);
+        }
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
         }
@@ -163,6 +225,7 @@ impl App {
     }
 
     pub(super) fn open_notecard_attachment(&mut self, editor: Uuid, notecard: Uuid, marker: char, copy: bool, object: Uuid) {
+        let texture_preview = self.world.inventory.can_preview(0);
         let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) else {
             return;
         };
@@ -215,11 +278,19 @@ impl App {
             return;
         }
         match item.asset_type {
-            0 => st.attachment_preview = Some(item),
+            // RLVa @viewtexture blocks the "preview_texture" floater from any
+            // source, a notecard's embedded texture included (rlvui.cpp,
+            // RlvUIEnabler::filterFloaterViewXXX)
+            0 => {
+                if texture_preview {
+                    st.attachment_preview = Some(item);
+                }
+            }
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {
-                    self.profile_ui.open(&mut self.world, avatar);
+                    self.profile_ui
+                        .open_in(&mut self.world, crate::world::names::NameScope::Roster, avatar);
                 }
             }
             1 => {
@@ -232,18 +303,23 @@ impl App {
     }
 
     pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
-        self.submit_inventory_edit(change, None);
+        self.submit_inventory_edit(change, None, Uuid::nil());
     }
 
     pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
         self.inventory_ui.consume_clipboard = false;
-        self.submit_inventory_edit(deletion.change, Some(deletion.selection));
+        let editor = deletion.selection.window();
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection), editor);
     }
 
+    /// One inventory change at a time for the whole viewer (the main
+    /// window's `pending` is the lock); the pane in `editor` gets the
+    /// change's messages and the selection of what it creates.
     fn submit_inventory_edit(
         &mut self,
         mut change: aurora_net::inventory::operations::Mutation,
         selection: Option<ui::inventory::DeleteSelection>,
+        editor: Uuid,
     ) {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
@@ -252,11 +328,13 @@ impl App {
         if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| change.refresh.contains(&id))
             && self.appearance_ui.pending.is_some()
         {
-            self.inventory_ui.message = aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
+            self.inventory_pane(editor).message =
+                aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
             return;
         }
         let request = Uuid::new_v4();
         change.defer_folder_contents = true;
+        self.inventory_mutation_editor = Some(editor);
         log::info!(
             "inventory mutation: {} operations, {} item copies",
             change.operations.len(),
@@ -264,59 +342,101 @@ impl App {
         );
         self.inventory_ui.begin_mutation(request, &change);
         if let Some(selection) = selection {
-            self.inventory_ui.begin_delete(request, selection);
+            self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
-        self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
+        let pane = self.inventory_pane(editor);
+        pane.created_selection = change.operations.iter().find_map(|op| {
             if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
                 Some(*id)
             } else {
                 None
             }
         });
-        self.inventory_ui.message.clear();
+        pane.message.clear();
         self.send(NetCommand::EditInventory { request, change });
     }
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool) {
+    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+        // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
             self.inventory_ui.consume_clipboard = cut;
-            self.submit_inventory_change(change);
+            self.submit_inventory_edit(change, None, editor);
         }
     }
 
-    pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
-        if let InvAction::Share { resident, .. } = &action
-            && !self.world.rlva.allows("share", &resident.to_string())
-        {
-            self.world
-                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            return;
+    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
+    /// a preview played stops first, then `asset` plays for everyone or
+    /// locally. An object's contents use it without opening the inventory's
+    /// own animation window.
+    pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
+        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
+            if was_local || self.demo {
+                self.world.preview_animation(playing, false);
+            }
+            if !was_local {
+                self.send(NetCommand::AgentAnimation {
+                    anim: playing,
+                    start: false,
+                });
+            }
         }
+        if start {
+            self.record_library_asset(asset, 20);
+            if local || self.demo {
+                self.world.preview_animation(asset, true);
+            }
+            if !local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: true });
+            }
+            self.inventory_ui.playing = Some((asset, local));
+        }
+    }
+
+    /// The Inventory window's dual-panel button: the toolbar's
+    /// `inventory_dual` does the same (`ui::bars::run_command`).
+    fn toggle_dual_inventory(&mut self) {
+        self.panels.inventory_dual = !self.panels.inventory_dual;
+        ui::inventory::resize_for_dual(&self.egui_ctx, self.panels.inventory_dual);
+    }
+
+    pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
+        self.apply_inventory_action_from(Uuid::nil(), action);
+    }
+
+    /// `editor`: the pane the action came from (`ui::inventory::DUAL_PANE`
+    /// for the right pane of the dual-panel layout, nil for the main one).
+    pub(super) fn apply_inventory_action_from(&mut self, editor: Uuid, action: InvAction) {
         match action {
+            InvAction::Panel { editor, action } => self.apply_inventory_action_from(editor, *action),
+            InvAction::DualPanel => self.toggle_dual_inventory(),
             InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
-                if let Some(command) = ui::inventory::context_notecards::export(&mut self.inventory_ui, &self.world.inventory, name, text) {
+                let inv = &self.world.inventory;
+                let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
+                if let Some(command) = ui::inventory::context_notecards::export(pane, inv, name, text) {
                     self.send(command);
                 }
             }
             InvAction::LoadMenuNotecard(item) => {
-                if let Some(command) = ui::inventory::context_notecards::load(&mut self.inventory_ui, &self.world.inventory, item) {
+                let inv = &self.world.inventory;
+                let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
+                if let Some(command) = ui::inventory::context_notecards::load(pane, inv, item) {
                     self.send(command);
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
-            InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
                     self.submit_inventory_delete(deletion);
                 }
             }
-            InvAction::Drop(change) => self.edit_inventory(change, true),
+            InvAction::Drop(change) => self.edit_inventory(change, true, editor),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
@@ -333,7 +453,11 @@ impl App {
                                 data,
                                 permissions: None,
                             }),
-                            Err(reason) => self.inventory_ui.message = reason,
+                            Err(reason) => {
+                                if let Some(st) = self.document_state(editor) {
+                                    st.message = reason;
+                                }
+                            }
                         }
                     } else {
                         self.send(NetCommand::CreateInventoryItem {
@@ -358,28 +482,10 @@ impl App {
                 self.apply_appearance_action(action);
             }
             InvAction::Animation { asset, local, start } => {
-                if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-                    if was_local || self.demo {
-                        self.world.preview_animation(playing, false);
-                    }
-                    if !was_local {
-                        self.send(NetCommand::AgentAnimation {
-                            anim: playing,
-                            start: false,
-                        });
-                    }
-                }
                 if start {
-                    self.record_library_asset(asset, 20);
                     self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
-                    if local || self.demo {
-                        self.world.preview_animation(asset, true);
-                    }
-                    if !local {
-                        self.send(NetCommand::AgentAnimation { anim: asset, start: true });
-                    }
-                    self.inventory_ui.playing = Some((asset, local));
                 }
+                self.play_preview_animation(asset, local, start);
             }
             InvAction::Sound(asset) => {
                 self.record_library_asset(asset, 1);
@@ -392,7 +498,7 @@ impl App {
             }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
-            InvAction::Preview(id) => {
+            InvAction::Preview(id, owner) => {
                 if self
                     .world
                     .inventory
@@ -426,14 +532,19 @@ impl App {
                         self.record_library_use(id);
                     }
                     if it.asset_type == 10 {
-                        self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
-                        self.open_script(aurora_net::scripts::ScriptTarget {
-                            object: Uuid::nil(),
-                            item: id,
-                        });
+                        let pane = self.inventory_pane(editor);
+                        pane.preview = pane.preview.filter(|preview| *preview != id);
+                        self.open_script_from(
+                            aurora_net::scripts::ScriptTarget {
+                                object: Uuid::nil(),
+                                item: id,
+                            },
+                            owner,
+                        );
                         return;
                     }
-                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
+                    let ctx = self.egui_ctx.clone();
+                    if !self.inventory_pane(editor).open_document(&ctx, id, it.asset_type, owner) {
                         return;
                     }
                     // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
@@ -467,20 +578,13 @@ impl App {
                 let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
                 let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
                 let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
+                    || self.dual_inventory_ui.preview == Some(item) && self.dual_inventory_ui.save_pending
                     || self
                         .inventory_ui
                         .windows
                         .iter()
                         .any(|w| w.state.preview == Some(item) && w.state.save_pending);
-                let st = if self.inventory_ui.ui_id == editor {
-                    Some(&mut self.inventory_ui)
-                } else {
-                    self.inventory_ui
-                        .windows
-                        .iter_mut()
-                        .find(|w| w.id == editor)
-                        .map(|w| w.state.as_mut())
-                };
+                let st = self.document_state(editor);
                 let Some(st) = st.filter(|st| st.preview == Some(item)) else {
                     return;
                 };
@@ -505,7 +609,7 @@ impl App {
                                 .inventory
                                 .items
                                 .get(&item)
-                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
+                                .is_some_and(|it| aurora_net::scripts::is_slua_item(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,
@@ -527,11 +631,13 @@ impl App {
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
             InvAction::ShowMain(item) => {
-                self.inventory_ui.show_original(&self.world.inventory, item);
+                let inv = &self.world.inventory;
+                let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
+                pane.show_original(inv, item);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::FindLinks(item) => {
-                self.inventory_ui.find_links(item);
+                self.inventory_pane(editor).find_links(item);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::MarketplacePaste { to, ids, copy } => self.paste_marketplace_inventory(to, ids, copy),
@@ -563,47 +669,57 @@ impl App {
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
-            InvAction::Share { items, resident } => {
-                if resident == self.world.agent_id || resident.is_nil() {
-                    return;
-                }
-                let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
-                for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &worn) {
-                        Ok(bucket) => {
-                            // LLGiveInventory removes copy-protected originals
-                            // locally after the reliable offer, including folder contents.
-                            let removed: Vec<_> = bucket
-                                .as_chunks::<17>()
-                                .0
-                                .iter()
-                                .filter_map(|tuple| {
-                                    let id = Uuid::from_slice(&tuple[1..]).ok()?;
-                                    self.world
-                                        .inventory
-                                        .items
-                                        .get(&id)
-                                        .filter(|it| rules::held(&self.world.inventory, it) & rules::COPY == 0)
-                                        .map(|_| id)
-                                })
-                                .collect();
-                            let name = rules::name(&self.world.inventory, id);
-                            let folder = self.world.inventory.folders.contains_key(&id);
-                            self.send(NetCommand::SendImDialog {
-                                to: resident,
-                                dialog: 4,
-                                id: Uuid::new_v4(),
-                                message: name.clone(),
-                                bucket,
-                            });
-                            self.world.inventory_offer_sent(resident, &name, folder);
-                            self.world.inventory.remove(&removed);
-                        }
-                        Err(reason) => self.inventory_ui.message = reason,
+            InvAction::Share { items, residents } => {
+                // dropped on the conversation of its one resident, or given
+                // another way (`InventoryUi::share_in_session`)
+                let in_session = self.inventory_ui.share_in_session.take();
+                for resident in &residents {
+                    if in_session == Some(*resident) && residents.len() == 1 {
+                        self.inventory_ui.offers_in_session.insert(*resident);
+                    } else {
+                        self.inventory_ui.offers_in_session.remove(resident);
                     }
                 }
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let roots = rules::roots(&self.world.inventory, &items);
+                let mut blocked = false;
+                for &resident in &residents {
+                    if resident == self.world.agent_id || resident.is_nil() {
+                        continue;
+                    }
+                    if !self.world.rlva.allows("share", &resident.to_string()) {
+                        blocked = true;
+                        continue;
+                    }
+                    for &id in &roots {
+                        match rules::offer_for_residents(&self.world.inventory, id, &worn, residents.len()) {
+                            Ok(bucket) => {
+                                let command =
+                                    self.world
+                                        .inventory
+                                        .begin_offer(self.world.login.as_ref().map(|l| l.session_id), resident, id, bucket);
+                                match command {
+                                    Ok(command) => {
+                                        if matches!(command, NetCommand::CheckInventoryOffer { .. }) {
+                                            self.offer_feedback(crate::world::inventory::outgoing::Feedback::Checking);
+                                        }
+                                        self.send(command);
+                                    }
+                                    Err(reason) => self.offer_feedback(reason),
+                                }
+                            }
+                            Err(reason) => self.inventory_ui.message = reason,
+                        }
+                    }
+                }
+                if blocked {
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                }
             }
-            InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            // asked from a name the inventory shows (`ui::inventory::resident_scopes`:
+            // a hidden owner or creator is no link), or from a calling card
+            InvAction::Profile(id) => self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id),
             InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
             InvAction::CopyLandmarkSlurl(asset) => {
                 self.world
@@ -644,14 +760,17 @@ impl App {
         if self.inventory_ui.pending != Some(request) {
             return;
         }
+        let editor = self.inventory_mutation_editor.unwrap_or_default();
         let thumbnail_upload = self.inventory_images.contains_request(request);
         let result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents.clone());
                 self.world.inventory.created_folders(reply.folders.clone());
-                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
-                    self.inventory_ui.show_original(&self.world.inventory, *id);
+                let inv = &self.world.inventory;
+                let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
+                if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id)) {
+                    pane.show_original(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
                 self.send(NetCommand::FinishInventoryCopies { request, reply });
@@ -660,7 +779,11 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.dual_inventory_ui
+            .finish_bulk_permissions(result.as_ref().err().map(String::as_str));
         self.inventory_ui
+            .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
+        self.dual_inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
@@ -690,20 +813,22 @@ impl App {
                         .outfit
                         .wear_when_known(sync.unknown, self.world.agent_id, std::time::Instant::now());
                 }
-                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id))
-                    && !self.inventory_ui.select_created_listing(&self.world.inventory, *id)
-                {
-                    self.inventory_ui.show_original(&self.world.inventory, *id);
-                    self.inventory_ui.begin_rename(&self.world.inventory, *id);
-                }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.cancel_cut();
                 }
-                self.inventory_ui.message.clear();
+                let inv = &self.world.inventory;
+                let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
+                if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
+                    && !pane.select_created_listing(inv, *id)
+                {
+                    pane.show_original(inv, *id);
+                    pane.begin_rename(inv, *id);
+                }
+                pane.message.clear();
             }
             Err(reason) => {
                 if !thumbnail_upload {
-                    self.inventory_ui.message = reason;
+                    self.inventory_pane(editor).message = reason;
                 }
                 // A multi-operation request can partially succeed. Re-read parents
                 // before another mutation instead of restoring speculative state.
@@ -718,6 +843,8 @@ impl App {
         self.inventory_ui.consume_clipboard = false;
         self.inventory_ui.pending_refresh.clear();
         self.inventory_ui.created_selection = None;
+        self.dual_inventory_ui.created_selection = None;
+        self.inventory_mutation_editor = None;
         for w in &mut self.inventory_ui.windows {
             w.state.message.clone_from(&self.inventory_ui.message);
         }
@@ -739,6 +866,9 @@ impl App {
         if self.inventory_ui.preview == Some(item) {
             self.inventory_ui.load_document(kind, editable, &result);
         }
+        if self.dual_inventory_ui.preview == Some(item) {
+            self.dual_inventory_ui.load_document(kind, editable, &result);
+        }
         for window in &mut self.inventory_ui.windows {
             if window.state.preview == Some(item) {
                 window.state.load_document(kind, editable, &result);
@@ -749,6 +879,7 @@ impl App {
     pub(super) fn inventory_content_saved(&mut self, request: Uuid, item: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
         let error = result.as_ref().err().map(String::as_str);
         self.inventory_ui.finish_content_save(request, error);
+        self.dual_inventory_ui.finish_content_save(request, error);
         for w in &mut self.inventory_ui.windows {
             w.state.finish_content_save(request, error);
         }
@@ -758,6 +889,9 @@ impl App {
             if it.id != item {
                 if self.inventory_ui.preview == Some(item) {
                     self.inventory_ui.preview = Some(it.id);
+                }
+                if self.dual_inventory_ui.preview == Some(item) {
+                    self.dual_inventory_ui.preview = Some(it.id);
                 }
                 for w in &mut self.inventory_ui.windows {
                     if w.state.preview == Some(item) {
@@ -912,6 +1046,10 @@ impl App {
             }
             return;
         }
+        if let crate::world::appearance::Action::Gesture(ids, on) = action {
+            self.gesture_action(crate::ui::gestures::Action::Active(ids, on));
+            return;
+        }
         if let crate::world::appearance::Action::Favorite(id) = action {
             if let Some(it) = self.world.inventory.items.get(&id)
                 && self.appearance_ui.favorite_pending.insert(id)
@@ -1040,5 +1178,35 @@ impl App {
         for action in actions {
             self.apply_inventory_action(action);
         }
+    }
+}
+
+/// `App::inventory_pane` for a caller that also borrows another field.
+fn pane_of<'a>(
+    main: &'a mut crate::ui::inventory::InventoryUi,
+    dual: &'a mut crate::ui::inventory::InventoryUi,
+    editor: Uuid,
+) -> &'a mut crate::ui::inventory::InventoryUi {
+    if editor == ui::inventory::DUAL_PANE { dual } else { main }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::inventory::{DUAL_PANE, InventoryUi};
+
+    /// The main window's actions (nil editor) never reach the right pane,
+    /// even before it was ever drawn; the right pane's reach only it.
+    #[test]
+    fn pane_actions_go_back_to_the_pane_that_sent_them() {
+        let mut main = InventoryUi::default();
+        let mut dual = InventoryUi::dual_pane();
+        assert_ne!(main.ui_id, dual.ui_id, "the panes are told apart from the start");
+        pane_of(&mut main, &mut dual, Uuid::nil()).message = "main".into();
+        pane_of(&mut main, &mut dual, DUAL_PANE).message = "dual".into();
+        assert_eq!((main.message.as_str(), dual.message.as_str()), ("main", "dual"));
+        // an additional window's id is not the right pane's
+        pane_of(&mut main, &mut dual, Uuid::from_u128(7)).message = "window".into();
+        assert_eq!((main.message.as_str(), dual.message.as_str()), ("window", "dual"));
     }
 }

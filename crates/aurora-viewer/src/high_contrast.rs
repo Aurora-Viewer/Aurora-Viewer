@@ -68,6 +68,7 @@ pub fn palette() -> Palette {
         warn: hex("#FFB000"),
         danger_dim: hex("#FF7B7B"),
         indigo_light: hex("#D0BCFF"),
+        axis_z: hex("#D0BCFF"),
         on_accent: hex("#000000"),
         panel_alpha: 255,
         high_contrast: true,

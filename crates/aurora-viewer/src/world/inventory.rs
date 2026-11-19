@@ -13,6 +13,7 @@ pub mod background;
 pub mod demo;
 pub mod items;
 mod lost;
+pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
 mod system;
@@ -49,6 +50,7 @@ pub struct Inventory {
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
     pub items: items::Items,
+    pub(crate) outgoing: outgoing::Outgoing,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
@@ -59,6 +61,12 @@ pub struct Inventory {
     /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
+    /// Folders the server refuses even at depth 0: over its per-folder reply
+    /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
+    /// items cannot be read; search and refresh do not ask again in a loop.
+    pub too_big: HashSet<Uuid>,
+    /// When each folder's last read failed (`shown_needs_fetch`).
+    pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
@@ -81,6 +89,14 @@ pub struct Inventory {
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+
+/// The pause before a folder shown open whose read failed is asked for
+/// again (`Inventory::shown_needs_fetch`).
+pub const SHOWN_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
+// v3 could store a no-copy original as removed even when the offer never
+// reached a simulator. The folder version alone cannot distinguish that cache.
+const CACHE_VERSION: i32 = 4;
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
     v.at(0)[key].as_uuid()
@@ -244,9 +260,27 @@ impl Inventory {
         }
     }
 
-    pub fn apply(&mut self, contents: Vec<FolderContents>) {
+    /// Whether a folder shown open should be asked for now: one never read,
+    /// or one whose last read failed `SHOWN_RETRY` ago or more. The windows
+    /// ask every frame; without the pause, a folder the server is busy with
+    /// (a large link creation still running) or refuses at once was asked
+    /// again and again, and stayed "loading" for good.
+    pub fn shown_needs_fetch(&self, id: Uuid, now: std::time::Instant) -> bool {
+        match self.folders.get(&id).map(|f| f.state) {
+            Some(FetchState::Unknown) => true,
+            Some(FetchState::Failed) => self.failed_at.get(&id).is_none_or(|at| now.duration_since(*at) >= SHOWN_RETRY),
+            _ => false,
+        }
+    }
+
+    /// Apply folder snapshots. A snapshot older than the contents already
+    /// confirmed locally is not applied: the folder is queued again, like
+    /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
+    /// Returns the folders that were stale and queued.
+    pub fn apply(&mut self, contents: Vec<FolderContents>) -> Vec<Uuid> {
         self.generation += 1;
         let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        let mut stale = Vec::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
@@ -256,6 +290,7 @@ impl Inventory {
                 .get(&c.folder_id)
                 .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
             {
+                stale.push(c.folder_id);
                 continue;
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
@@ -302,6 +337,9 @@ impl Inventory {
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
+            // A folder that fits again (the resident split it, or a later read
+            // succeeded) is no longer over the limit.
+            self.too_big.remove(&c.folder_id);
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
@@ -331,6 +369,13 @@ impl Inventory {
             self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
             self.deferred_parents.retain(|id, _| self.items.contains_key(id));
         }
+        for id in &stale {
+            if let Some(folder) = self.folders.get_mut(id) {
+                folder.state = FetchState::Unknown;
+            }
+            self.request(*id);
+        }
+        stale
     }
 
     /// Items fetched by id (FetchInventory2), listed in their folder when
@@ -530,10 +575,15 @@ impl Inventory {
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
+        self.failed_at_time(folders, std::time::Instant::now());
+    }
+
+    fn failed_at_time(&mut self, folders: &[Uuid], now: std::time::Instant) {
         self.generation += 1;
         for id in folders {
             if let Some(f) = self.folders.get_mut(id) {
                 f.state = FetchState::Failed;
+                self.failed_at.insert(*id, now);
             }
         }
     }
@@ -597,7 +647,12 @@ impl Inventory {
         use aurora_llsd::llsd_map;
         let mut folders = Vec::new();
         let mut items = Vec::new();
-        for f in self.folders.values().filter(|f| f.state == FetchState::Fetched) {
+        let excluded = self.outgoing.uncached_folders(&self.items);
+        for f in self
+            .folders
+            .values()
+            .filter(|f| f.state == FetchState::Fetched && !excluded.contains(&f.info.id))
+        {
             folders.push(llsd_map! {
                 "id" => f.info.id,
                 "parent" => f.info.parent,
@@ -634,21 +689,28 @@ impl Inventory {
                 }
             }
         }
-        if folders.is_empty() {
+        if folders.is_empty() && excluded.is_empty() {
             return;
         }
         let doc = llsd_map! {
-            "version" => 3,
+            "version" => CACHE_VERSION,
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("tmp");
-        if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
-        }
+        // The document is the snapshot; its encoding, sealing and writing
+        // go to a save thread (saves.rs): a large inventory on a slow disk
+        // held the frame for over a minute at exit (#3466). The exit waits
+        // for it with a bound, and the next login's read waits for it.
+        let path = path.to_path_buf();
+        crate::saves::replace(path.clone(), move || {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = path.with_extension("tmp");
+            if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        });
     }
 
     /// Restore cached folders whose version still matches the login
@@ -659,8 +721,12 @@ impl Inventory {
     /// to the fetch.
     pub fn apply_cache(&mut self, cache: CachedInventory) -> usize {
         let touched: HashSet<Uuid> = self.items.values().map(|it| it.parent).collect();
+        let excluded = self.outgoing.uncached_folders(&self.items);
         let mut valid = 0;
         for c in cache.folders {
+            if excluded.contains(&c.id) {
+                continue;
+            }
             let Some(cur) = self.folders.get_mut(&c.id) else {
                 continue;
             };
@@ -741,11 +807,18 @@ pub struct CachedInventory {
 /// the file, its LLSD document, the items and their order in each folder,
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
+    read_cache_with_timeout(path, std::time::Duration::from_secs(10))
+}
+
+fn read_cache_with_timeout(path: &std::path::Path, timeout: std::time::Duration) -> Option<CachedInventory> {
+    // A slow logout save may still be replacing a snapshot with different
+    // no-copy originals. The login can fetch these folders from the server.
+    if !crate::saves::wait_for(path, timeout) {
+        return None;
+    }
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
-    // Older files were populated by legacy reads that could discard other
-    // favorites. Reload those folders through AIS once, even at equal versions.
-    if doc["version"].as_i32() != 3 {
+    if doc["version"].as_i32() != CACHE_VERSION {
         return None;
     }
     let mut by_parent: HashMap<Uuid, Vec<InvItem>> = HashMap::new();

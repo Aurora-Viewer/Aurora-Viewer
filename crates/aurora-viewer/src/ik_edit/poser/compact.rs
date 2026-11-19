@@ -1023,6 +1023,10 @@ impl Editor {
             if menu::item(ui, p, "folder-filled", aurora_i18n::text("poser-open-file")) {
                 load = Some(None);
             }
+            if menu::item(ui, p, "file-import", aurora_i18n::text("poser-import-legacy")) {
+                self.poser.storage.job = Some(storage::Job::ImportLegacyFolder(None));
+                ui.close();
+            }
             if let Some(path) = load {
                 // another file loads whole, as the full window's Open file
                 let mode = if path.is_some() { self.poser.load_mode } else { LoadMode::All };
