@@ -6315,6 +6315,16 @@ impl Scene {
     }
 }
 
+/// An avatar's head as a lens sees it, in the world: mHead, the way the
+/// face looks (the head's X axis) and the joints of its two eyes, left
+/// then right (None on a skeleton without them).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Face {
+    pub head: Vec3,
+    pub forward: Vec3,
+    pub eyes: Option<(Vec3, Vec3)>,
+}
+
 impl Scene {
     /// World position of an avatar's head as posed last frame.
     pub fn head_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
@@ -6327,6 +6337,30 @@ impl Scene {
             Some(h) => p + r * (h - world.avatar_lib.pelvis),
             None => p + r * Vec3::new(0.0, 0.0, 0.65),
         })
+    }
+
+    /// An avatar's head as a lens sees it (`Face`), as posed last frame.
+    pub fn face_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Face> {
+        let head = self.head_world(world, id, now)?;
+        let idx = world.objects.index_of_uuid(id)?;
+        let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            let eyes = self
+                .joint_world(world, id, "mEyeLeft", now)
+                .zip(self.joint_world(world, id, "mEyeRight", now));
+            return Some(Face {
+                head,
+                forward: r * Vec3::X,
+                eyes,
+            });
+        }
+        let motion = self.motions.get(id);
+        let eyes = motion.and_then(|c| c.eyes_each()).map(|(left, right)| {
+            let place = |e: Vec3| p + r * (e - world.avatar_lib.pelvis);
+            (place(left), place(right))
+        });
+        let forward = r * motion.and_then(|c| c.head_rot()).unwrap_or(Quat::IDENTITY) * Vec3::X;
+        Some(Face { head, forward, eyes })
     }
 
     /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),

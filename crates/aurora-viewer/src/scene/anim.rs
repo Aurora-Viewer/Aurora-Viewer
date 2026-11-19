@@ -864,12 +864,19 @@ const EYES_FROM_HEAD: Vec3 = Vec3::new(0.098, 0.0, 0.079);
 /// skeleton, and LLHeadRotMotion turns both); without eyes, mHead with
 /// the default offset.
 fn eyes_between(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>, head: Option<(Quat, Vec3)>) -> Option<Vec3> {
+    eye_pair(eyes, alt)
+        .map(|(l, r)| (l + r) * 0.5)
+        .or_else(|| head.map(|(r, p)| p + r * EYES_FROM_HEAD))
+}
+
+/// The pair of eyes `eyes_between` goes by, left then right: the Bento
+/// ones when a mesh head has moved them away from the system eyes.
+fn eye_pair(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
     let mid = |(l, r): (Vec3, Vec3)| (l + r) * 0.5;
-    match (eyes.map(mid), alt.map(mid)) {
-        (Some(e), Some(a)) if a.distance(e) > 0.005 => Some(a),
+    match (eyes, alt) {
+        (Some(e), Some(a)) if mid(a).distance(mid(e)) > 0.005 => Some(a),
         (Some(e), _) => Some(e),
-        (None, Some(a)) => Some(a),
-        (None, None) => head.map(|(r, p)| p + r * EYES_FROM_HEAD),
+        (None, a) => a,
     }
 }
 
@@ -1063,6 +1070,19 @@ impl Controller {
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
+    }
+
+    /// Skeleton-space rotation of the head as posed last frame.
+    pub fn head_rot(&self) -> Option<Quat> {
+        self.posed.head.map(|h| h.0)
+    }
+
+    /// Skeleton-space places of the two eyes as posed last frame, left
+    /// then right (`eye_pair`): the joints the eyeballs turn about.
+    pub fn eyes_each(&self) -> Option<(Vec3, Vec3)> {
+        let p = &self.posed;
+        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
+        eye_pair(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r))
     }
 
     /// Skeleton-space point between the eyes as posed last frame
