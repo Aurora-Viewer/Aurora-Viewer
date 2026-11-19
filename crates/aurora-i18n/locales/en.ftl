@@ -1060,6 +1060,7 @@ import-source-file = File
 import-lod-auto = Automatic generation
 import-lod-combine = Combined generation
 import-lod-fast = Fast generation
+import-lod-legacy = Legacy generation
 import-lod-reliable = Reliable generation
 import-lod-above = LOD above
 import-mesh-info = { $models } { $models ->

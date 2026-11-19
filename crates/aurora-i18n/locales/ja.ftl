@@ -1039,6 +1039,7 @@ import-source-file = ファイル
 import-lod-auto = 自動生成
 import-lod-combine = 組み合わせ生成
 import-lod-fast = 高速生成
+import-lod-legacy = Legacy 生成
 import-lod-reliable = 確実な生成
 import-lod-above = 上位のＬｏＤ
 import-mesh-info = { $models }{ $models ->

@@ -7364,6 +7364,18 @@ a local dense/thin mesh. Visual LODs, materials and source files must stay intac
 review the approximated collisions, particularly openings, before quoting.
 The `mesh_physics` regression filter covers the fee guard, worker result,
 pointer actions and collision-only conversion.
+The offline demo shows LOD geometry and triangle counts, but returns fixed
+costs. Compare actual physics cost and Land Impact with a grid quote.
+The LOD tab has no Linden/Aurora selector: new imports use Legacy generation
+with targets of High divided by 3, 9 and 27. Individual LOD sources and files
+remain editable. Zopfli compression and adaptive default collision are shared
+by all imports. Automatic collision starts from the smallest nonempty LOD.
+Its adaptive simplification allows up to 0.25% additional distance error relative
+to that LOD's bounded convex hull, with instance scales and upload quantization
+accounted for. Compare Calculate fees with no custom collision source, then
+check the rezzed collision shape, especially its supports and thin parts. The
+bound concerns convex-envelope simplification, not preservation of concavities
+or of detail already removed from the Lowest LOD.
 The convex section exposes Analyze and five VHACD parameters. Adjust Vertices
 per hull before analysis to control the hull budget. There is no separate
 Simplify action or target-percentage field. Statistics, preview and encoded
