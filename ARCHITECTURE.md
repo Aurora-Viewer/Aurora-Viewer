@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`import_gltf::Document` shares material and mesh file acceptance: no aggregate
+byte, material-count or buffer-count cap; each external resource follows
+TinyGLTF's `i32::MAX` byte limit. `imports/files.rs::load_paths` is the ordinary
+worker admission path, with no file, draft-count or decoded-pixel quota.
+Folder loading, staging local previews and restoring them follow the same
+acceptance. Resource-size errors report measured and allowed bytes; filesystem
+reads check external sizes before allocating and again after reading.
+
 `aurora-assets/src/import_mesh/process/adaptive.rs` simplifies default collision
 hulls by adding their worst-approximated point until the extra distance error
 is within 0.25% of the hull diagonal. Support-plane extremes remain, instance
@@ -526,8 +534,8 @@ key (including a previously acknowledged upload).
 `imports/stage.rs` snapshots checked local previews into fresh upload drafts,
 retaining decoded sources and user edits without disk reads or image rescans.
 It preserves local identities/attachments, isolates mesh job controls and fee
-state, resolves local texture UUIDs into upload dependencies, enforces queue/input
-budgets atomically and applies the shared destination policy. The local footer action opens Files on the first new draft; paid transfers
+state, resolves local texture UUIDs into upload dependencies and applies the
+shared destination policy without duplicating shared source pixels. The local footer action opens Files on the first new draft; paid transfers
 still require ordinary fee calculation and confirmation.
 `files/folder.rs` scans supported files on the import worker, retaining the selected
 source directory and its nested paths without following reparse points.
