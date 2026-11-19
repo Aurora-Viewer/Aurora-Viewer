@@ -312,22 +312,18 @@ impl World {
     /// Returns whether the offer was answered without a prompt.
     /// Decides once whether the notice `id` names the resident `from` it is
     /// about (`rlva_names_giver`), and returns it: the notice keeps the name
-    /// from then on, or loses it now for their stand-in
-    /// (inventory_offer_handler, indra/newview/llimprocessing.cpp).
+    /// from then on, or the stand-in it was written with
+    /// (inventory_offer_handler, indra/newview/llimprocessing.cpp). The
+    /// rest of its text stays as it was given: UserGiveItem and
+    /// ObjectGiveItem go through no RlvUtil::filterNames nor filterLocation,
+    /// so the name of the item, and of the object that gives it, keep the
+    /// names and the places they hold.
     pub(super) fn name_giver_notice(&mut self, id: u64, from: Uuid, from_object: bool) -> bool {
         let named = self.rlva_names_giver(from, from_object);
         if named {
             self.notifications.name_resident(id);
-        } else {
-            let filter = self.rlva_text_filter(false);
-            if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == id) {
-                filter.redact_notice(&self.social.avatar_names, &mut n.title, Some(&mut n.body), &mut n.name_links);
-                // the `rlvanonym` link is never one: the stand-in stays
-                // plain text once the restriction is lifted too
-                n.name_links
-                    .retain(|link| link.target != crate::world::notification_history::NameTarget::Avatar(from));
-            }
         }
+        self.notifications.keep_as_written(id);
         named
     }
 
@@ -816,6 +812,51 @@ mod tests {
                 }
                 clean(&w, &root);
             }
+        }
+    }
+
+    /// UserGiveItem and ObjectGiveItem are written once, with the name of
+    /// who gives or their stand-in, and go through no RlvUtil::filterNames
+    /// nor filterLocation (inventory_offer_handler,
+    /// indra/newview/llimprocessing.cpp): under `@shownames` and `@showloc`
+    /// the name of the item, and of the object that gives it, keep the
+    /// names and the places they hold.
+    #[test]
+    fn an_offer_notice_hides_who_gives_and_rewrites_nothing_else() {
+        const ITEM_NAME: &str = "Jane Doe and the map of Secret Parcel";
+        const BOX_NAME: &str = "Jane Doe and the box at Secret Parcel";
+        for task in [false, true] {
+            let root = temp();
+            let mut w = hiding_names(&root);
+            around(&mut w);
+            w.parcel_name = "Secret Parcel".into();
+            w.rlva_console_input("@showloc=n");
+            w.refresh_rlva_privacy();
+            let hidden = w.rlva_filter_text("the map of Secret Parcel").into_owned();
+            assert!(!hidden.contains("Secret Parcel"), "a text loses the place: {hidden}");
+            let dialog = if task { im::TASK_INVENTORY_OFFERED } else { im::INVENTORY_OFFERED };
+            let mut gift = offer(dialog, ITEM_NAME);
+            if task {
+                gift.from_name = BOX_NAME.into();
+            }
+            w.on_im(gift);
+            for frame in 0..2 {
+                let case = format!("task {task}, frame {frame}");
+                let n = &w.notifications.list[0];
+                let text = format!("{} / {}", n.title, n.body);
+                assert!(text.contains(ITEM_NAME), "{case}: {text}");
+                if task {
+                    assert_eq!(n.title, BOX_NAME, "{case}");
+                    assert!(n.body.contains(BOX_NAME), "{case}: {}", n.body);
+                }
+                // who gives is their stand-in, in plain text
+                let rest = text.replace(ITEM_NAME, "").replace(BOX_NAME, "");
+                assert!(!rest.contains("Jane"), "{case}: {text}");
+                assert!(n.name_links.is_empty(), "{case}");
+                w.refresh_task_inventory_offers();
+                w.refresh_rlva_privacy();
+            }
+            clean(&w, &root);
         }
     }
 
