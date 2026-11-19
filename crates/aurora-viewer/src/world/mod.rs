@@ -45,6 +45,7 @@ pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
+pub mod friend_snapshot;
 pub mod friends_only;
 pub mod group_ban_all;
 pub mod group_data;
@@ -836,6 +837,10 @@ pub struct World {
     pub profiles: profiles::Profiles,
     /// Notification center (bell).
     pub notifications: notifications::Notifications,
+    /// Per-(account, grid) friend list snapshot for ended-friendship notices.
+    pub friend_snapshot: friend_snapshot::FriendSnapshot,
+    /// Whether the login response carried a `buddy-list` array.
+    pub login_had_buddy_list: bool,
     /// Teleport offers and requests from other residents, and their answers.
     pub teleport_invites: teleport_invites::TeleportInvites,
     /// Residents' inventory offers, as cards in their conversations.
@@ -1249,6 +1254,8 @@ impl World {
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
+            friend_snapshot: friend_snapshot::FriendSnapshot::default(),
+            login_had_buddy_list: false,
             teleport_invites: teleport_invites::TeleportInvites::default(),
             inventory_offers: inventory_offers::InventoryOffers::default(),
             payments: payments::Payments::default(),
@@ -3287,6 +3294,7 @@ impl World {
                 self.agent.position = Vec3::new(128.0, 128.0, 30.0);
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
+                self.login_had_buddy_list = matches!(l.raw["buddy-list"], aurora_llsd::Llsd::Array(_));
                 let account = crate::settings::account_dir(&l.agent_id);
                 self.region_tracker_path = Some(account.join(region_tracker::FILE));
                 self.region_tracker = region_tracker::RegionTracker::load(&account.join(region_tracker::FILE));
@@ -3765,6 +3773,15 @@ impl World {
             NetEvent::FriendshipTerminated(id) => {
                 if self.social.end_friendship(&id) {
                     log::info!("friendship ended by {id}");
+                    let fallback = self
+                        .known_roster_name(&id)
+                        .or_else(|| self.friend_snapshot.saved_name(&id).map(str::to_owned))
+                        .unwrap_or_default();
+                    self.friend_snapshot.on_removed(&id);
+                    if self.notifications.toasts.friendship_ended {
+                        self.friend_snapshot.queue_ended(id, fallback);
+                        self.social.want_name(id);
+                    }
                 }
                 None
             }
@@ -5742,7 +5759,10 @@ impl World {
                 self.push_group_notice(im, &from);
             }
             d::FRIENDSHIP_ACCEPTED => {
+                let hint = (!im.from_name.is_empty()).then(|| im.from_name.clone());
                 self.social.form_friendship(im.from_agent_id);
+                let name = self.social.known_roster_name(&im.from_agent_id).or(hint);
+                self.friend_snapshot.on_added(im.from_agent_id, name);
                 self.status
                     .hide_from_new_friend(&mut self.social, &mut self.groups.out, im.from_agent_id);
                 n.push(
@@ -6251,7 +6271,7 @@ impl World {
             && let Some(notifications::Data::Friend { from, .. }) =
                 self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
         {
-            self.social.form_friendship(from);
+            self.form_friendship(from, None);
             self.status.hide_from_new_friend(&mut self.social, &mut self.groups.out, from);
         }
         let inv = &self.inventory;
@@ -6460,6 +6480,78 @@ impl World {
                 // the name is a link to the resident (social::online_chat_line)
                 self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::Radar);
             }
+        }
+    }
+
+    /// Complete roster name of `id` when already cached (`avatar_names` or `names`).
+    pub fn known_roster_name(&self, id: &Uuid) -> Option<String> {
+        self.social.known_roster_name(id)
+    }
+
+    /// Form a friendship and record it in the per-account friend snapshot.
+    pub fn form_friendship(&mut self, id: Uuid, name_hint: Option<String>) {
+        self.social.form_friendship(id);
+        let name = self.social.known_roster_name(&id).or(name_hint);
+        self.friend_snapshot.on_added(id, name);
+    }
+
+    /// Remove a friend locally (`NetCommand::TerminateFriendship`) and update
+    /// the saved snapshot so the next login does not notify about it.
+    pub fn end_friendship_local(&mut self, id: &Uuid) {
+        self.social.end_friendship(id);
+        self.friend_snapshot.on_removed(id);
+    }
+
+    /// Compare the login `buddy-list` against `previous`, queue offline-ended
+    /// notices when `notify` is enabled, and persist the current list.
+    pub fn reconcile_friend_snapshot(
+        &mut self,
+        path: Option<std::path::PathBuf>,
+        previous: Option<Vec<friend_snapshot::SavedFriend>>,
+        notify: bool,
+    ) {
+        if !self.login_had_buddy_list {
+            return;
+        }
+        let current: Vec<Uuid> = self.social.friends.iter().map(|f| f.id).collect();
+        let social = &self.social;
+        let missing = self
+            .friend_snapshot
+            .reconcile(path, previous, &current, |id| social.known_roster_name(id), notify);
+        for id in missing {
+            self.social.want_name(id);
+        }
+    }
+
+    /// Update stored friend names and persist before logout or exit.
+    pub fn save_friend_snapshot(&mut self) {
+        let social = &self.social;
+        self.friend_snapshot.refresh_and_save(|id| social.known_roster_name(id));
+    }
+
+    /// Emit queued ended-friendship notifications once the world is shown and
+    /// each resident's name has resolved (or timed out to the saved fallback).
+    pub fn flush_friendship_ended_notices(&mut self) {
+        let ready = self.friend_snapshot.take_ready(self.notifications.started, |id| {
+            self.social.avatar_names.get(id).is_some() || self.social.names.contains_key(id)
+        });
+        for (id, fallback) in ready {
+            if self.mutes.is_muted_id(&id) {
+                continue;
+            }
+            let resolved = self.known_roster_name(&id).or_else(|| (!fallback.is_empty()).then_some(fallback));
+            let from = resolved.clone().unwrap_or_else(|| aurora_i18n::tr!("world-mod-someone").to_owned());
+            let nid = self.notifications.push(
+                notifications::Kind::Friendship,
+                aurora_i18n::tr!("world-mod-ended-your-friendship", from = from),
+                String::new(),
+                notifications::Data::None,
+            );
+            if let Some(name) = resolved {
+                self.notifications.link_name(nid, name, notifications::NameTarget::Avatar(id));
+            }
+            let notice = self.notice_of(nid, attention::Open::Notifications);
+            self.ask_attention(attention::Cause::Message, notice);
         }
     }
 

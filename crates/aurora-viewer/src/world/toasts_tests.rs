@@ -472,3 +472,112 @@ fn an_offer_is_told_to_the_system_as_one_and_an_alert_notice_or_answer_as_a_noti
         assert_eq!(causes, [cause], "dialog {dialog}");
     }
 }
+
+#[test]
+fn friendship_ended_notification_follows_preference_live_and_history() {
+    use super::attention;
+    use super::notification_history::{Follow, NameTarget, Outcome};
+    use super::notifications::Response;
+
+    // Off by default in both Settings and ToastPrefs.
+    assert!(!crate::settings::Settings::default().notify_friendship_ended);
+    assert!(!ToastPrefs::default().friendship_ended);
+
+    // Off: live termination removes the friend without notifying.
+    let mut w = world();
+    w.social.form_friendship(JANE);
+    w.apply(aurora_net::NetEvent::FriendshipTerminated(JANE));
+    w.flush_friendship_ended_notices();
+    assert!(!w.social.is_friend(&JANE));
+    assert!(w.notifications.list.is_empty());
+
+    // On: live termination creates a Kind::Friendship card like "accepted your friendship",
+    // asks for attention, links the resident's profile, and moves to history on dismiss.
+    let mut w = world();
+    w.notifications.toasts.friendship_ended = true;
+    w.social.form_friendship(JANE);
+    w.apply(aurora_net::NetEvent::FriendshipTerminated(JANE));
+    w.flush_friendship_ended_notices();
+    assert!(!w.social.is_friend(&JANE));
+    assert_eq!(w.notifications.list.len(), 1);
+    let n = &w.notifications.list[0];
+    assert_eq!(n.kind, Kind::Friendship);
+    assert!(!n.transient);
+    assert!(!n.interactive());
+    assert!(!n.opens());
+    assert_eq!(n.title, "Jane Doe ended your friendship");
+    assert!(n.body.is_empty());
+    assert_eq!(n.name_links.len(), 1);
+    assert_eq!(n.name_links[0].name, "Jane Doe");
+    assert_eq!(n.name_links[0].target, NameTarget::Avatar(JANE));
+    assert!(w.attention.iter().any(|a| a.cause == attention::Cause::Message));
+
+    let nid = n.id;
+    w.record_notification_history();
+    let (cmds, _) = w.respond_notification(nid, Response::Dismiss);
+    assert!(cmds.is_empty());
+    w.record_notification_history();
+    let hist = super::notification_history::search(&w.notification_history, "ended your friendship");
+    assert_eq!(hist.len(), 1);
+    assert_eq!(hist[0].1.outcome, Outcome::Read);
+    assert_eq!(hist[0].1.follow, Follow::Restore);
+    assert_eq!(hist[0].1.name_links[0].target, NameTarget::Avatar(JANE));
+
+    // Local removal and blocked residents do not emit notifications.
+    let mut w = world();
+    w.notifications.toasts.friendship_ended = true;
+    w.social.form_friendship(JANE);
+    w.end_friendship_local(&JANE);
+    w.apply(aurora_net::NetEvent::FriendshipTerminated(JANE));
+    w.social.form_friendship(TOM);
+    let _ = w.block(TOM, "Tom Smith", mutes::MuteType::Agent);
+    w.apply(aurora_net::NetEvent::FriendshipTerminated(TOM));
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty());
+}
+
+#[test]
+fn friendship_ended_offline_waits_for_world_and_name_resolution() {
+    use super::friend_snapshot::SavedFriend;
+
+    let mut w = world();
+    w.notifications.started = false;
+    w.notifications.toasts.friendship_ended = true;
+    w.login_had_buddy_list = true;
+    // Jane is missing from `social.friends` at login, and not cached yet under `TOM_NEW`.
+    let missing_id = Uuid::from_u128(0x99);
+    w.reconcile_friend_snapshot(
+        None,
+        Some(vec![SavedFriend {
+            id: missing_id,
+            name: "Old Name".into(),
+        }]),
+        true,
+    );
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty(), "waits while loading screen is active");
+
+    w.notifications.started = true;
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty(), "waits for fresh name resolution");
+
+    // Once the name arrives, the notice uses the resolved name.
+    w.apply(aurora_net::NetEvent::Names(vec![(missing_id, "Fresh".into(), "Name".into())]));
+    w.flush_friendship_ended_notices();
+    assert_eq!(w.notifications.list.len(), 1);
+    assert_eq!(w.notifications.list[0].title, "Fresh Name ended your friendship");
+
+    // If the login response lacked `buddy-list`, reconciliation does nothing.
+    let mut w = world();
+    w.login_had_buddy_list = false;
+    w.reconcile_friend_snapshot(
+        None,
+        Some(vec![SavedFriend {
+            id: missing_id,
+            name: "Old Name".into(),
+        }]),
+        true,
+    );
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty());
+}

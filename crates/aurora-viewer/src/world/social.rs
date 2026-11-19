@@ -134,6 +134,11 @@ impl Social {
         self.name_in(NameScope::World, id)
     }
 
+    /// `name_of` for a name shown in `scope`, or `None` when not cached yet.
+    pub fn known_roster_name(&self, id: &Uuid) -> Option<String> {
+        (self.avatar_names.get(id).is_some() || self.names.contains_key(id)).then(|| self.name_in(NameScope::Roster, id))
+    }
+
     /// `name_of` for a name shown in `scope`.
     pub fn name_in(&self, scope: NameScope, id: &Uuid) -> String {
         self.avatar_names
