@@ -7407,7 +7407,8 @@ failure. Grid validation and any paid upload are performed by the human.
   opens the menu of the empty space (View, Sort, Select all, Invert
   selection, each with its keys). By hand: Alt+← / → / ↑ and the mouse's
   side buttons, Backspace, a right-click
-  on Back; a chevron's subfolders; Ctrl+L, typing `Cl`, Tab, Enter; a drag
+  on Back; a chevron's subfolders; Ctrl+L (the path starts with `~/`), typing
+  `Cl`, Tab, Enter, then `~/` alone (the top); a drag
   from the empty space or a row's Type / Rights / Date columns (the band, Ctrl
   adds, near the bottom it scrolls; from a name the item is dragged);
   Home / End / Page keys, Ctrl+A, Ctrl+Shift+A, Esc, letters typed; Ctrl+↑ /

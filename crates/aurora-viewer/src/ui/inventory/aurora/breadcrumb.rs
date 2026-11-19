@@ -7,9 +7,10 @@
 //! mode shows the folder's path as plain text (LLPanelMainInventory::
 //! updateNavButtons, `path_text`).
 //!
-//! A path is the folders' names joined by `/`. A name may hold a `/`
-//! itself: the path is read from the top, each level taking the longest
-//! name that fits (`resolve`).
+//! A path is the folders' names joined by `/`, the root written `~` as a
+//! home folder (`~/Clothing/Shirts`; the root's translated name is read
+//! too). A name may hold a `/` itself: the path is read from the top, each
+//! level taking the longest name that fits (`resolve`).
 
 use super::super::shortcuts::{self, Command};
 use super::super::*;
@@ -18,6 +19,10 @@ use egui::{Sense, Vec2};
 
 /// What separates two folders in a typed path.
 pub(crate) const SEPARATOR: char = '/';
+/// The inventory's root in a path, as a home folder on Linux and macOS:
+/// `~/Clothing/Shirts`. It reads the same in every language, where the
+/// root's name is translated ("My inventory", "Mon inventaire").
+pub(crate) const HOME: &str = "~";
 /// The most completions listed under a typed path.
 const COMPLETIONS: usize = 10;
 /// The last levels the bar keeps in sight; the others go under "…".
@@ -79,7 +84,10 @@ pub(crate) fn chain(inv: &Inventory, base: Uuid, folder: Uuid) -> Vec<Uuid> {
 /// The path of `folder` from `base`, `base`'s own name first:
 /// "My Inventory/Clothing/Shirts".
 pub(crate) fn path_text(inv: &Inventory, base: Uuid, folder: Uuid) -> String {
-    let names: Vec<String> = chain(inv, base, folder).into_iter().map(|id| folder_name(inv, id)).collect();
+    let names: Vec<String> = chain(inv, base, folder)
+        .into_iter()
+        .map(|id| if id == inv.root { HOME.to_owned() } else { folder_name(inv, id) })
+        .collect();
     names.join(&SEPARATOR.to_string())
 }
 
@@ -111,6 +119,14 @@ pub(crate) fn resolve(inv: &Inventory, base: Uuid, text: &str) -> Option<Uuid> {
     let text = text.trim();
     let mut rest = text.trim_start_matches(SEPARATOR);
     let mut at = base;
+    // `~` is the root, within a window whose top it is
+    if base == inv.root
+        && let Some(after) = rest
+            .strip_prefix(HOME)
+            .filter(|after| after.is_empty() || after.starts_with(SEPARATOR))
+    {
+        rest = after;
+    }
     // a top's own name may lead the path: the window's top, or the Library
     for top in tops(inv, base) {
         if let Some(after) = strip_name(rest, &folder_name(inv, top)).filter(|after| after.is_empty() || after.starts_with(SEPARATOR)) {
@@ -471,10 +487,9 @@ mod tests {
     #[test]
     fn a_path_names_the_folders_from_the_top() {
         let (inv, root) = tree();
-        // the top shows as the window names it, whatever its stored name
-        let top = folder_name(&inv, root);
-        assert_eq!(path_text(&inv, root, Uuid::from_u128(3)), format!("{top}/Clothing/Shirts"));
-        assert_eq!(path_text(&inv, root, root), top);
+        // the root is ~, in every language
+        assert_eq!(path_text(&inv, root, Uuid::from_u128(3)), "~/Clothing/Shirts");
+        assert_eq!(path_text(&inv, root, root), "~");
         // a folder window's path starts at its folder
         assert_eq!(path_text(&inv, Uuid::from_u128(2), Uuid::from_u128(3)), "Clothing/Shirts");
         assert!(chain(&inv, Uuid::from_u128(5), Uuid::from_u128(3)).is_empty());
@@ -489,6 +504,12 @@ mod tests {
         assert_eq!(resolve(&inv, root, "/Clothing/Shirts"), shirts);
         assert_eq!(resolve(&inv, root, "  "), Some(root));
         assert_eq!(resolve(&inv, root, "My Inventory"), Some(root));
+        // ~ is the root, as a home folder
+        assert_eq!(resolve(&inv, root, "~/Clothing/Shirts"), shirts);
+        assert_eq!(resolve(&inv, root, "~"), Some(root));
+        assert_eq!(resolve(&inv, root, "~/"), Some(root));
+        // a folder window has no ~ above its top
+        assert_eq!(resolve(&inv, Uuid::from_u128(2), "~/Shirts"), None);
         assert_eq!(resolve(&inv, root, "Clothing/Hats"), None);
     }
 
@@ -516,16 +537,12 @@ mod tests {
     #[test]
     fn completions_list_the_matching_subfolders_in_natural_order() {
         let (inv, root) = tree();
-        let top = folder_name(&inv, root);
         let names = |text: &str| completions(&inv, root, text).into_iter().map(|(_, p)| p).collect::<Vec<_>>();
-        assert_eq!(
-            names("Clothing/sh"),
-            vec![format!("{top}/Clothing/Shirts"), format!("{top}/Clothing/Shoes")]
-        );
-        assert_eq!(
-            names(&format!("{top}/Item")),
-            vec![format!("{top}/Item 9"), format!("{top}/Item 10")]
-        );
+        assert_eq!(names("Clothing/sh"), vec!["~/Clothing/Shirts", "~/Clothing/Shoes"]);
+        assert_eq!(names("~/Item"), vec!["~/Item 9", "~/Item 10"]);
+        // the root's translated name still leads to the same folders
+        let top = folder_name(&inv, root);
+        assert_eq!(names(&format!("{top}/Item")), vec!["~/Item 9", "~/Item 10"]);
         assert!(names("Nowhere/x").is_empty());
     }
 }
