@@ -52,7 +52,7 @@ fn pattern(value: &ast::Pattern<&str>, variables: &mut BTreeSet<String>) {
 }
 
 #[test]
-fn every_language_has_english_keys_and_variables() {
+fn bundled_catalogs_use_english_keys_and_variables() {
     let mut catalogs = BTreeMap::new();
     for &(language, source) in SOURCES {
         let resource = fluent_syntax::parser::parse(source).unwrap_or_else(|errors| panic!("{language}: {errors:?}"));
@@ -78,7 +78,26 @@ fn every_language_has_english_keys_and_variables() {
     let english = catalogs.get("en").expect("English fallback");
     assert!(english.contains_key("language-name"));
     for (language, messages) in &catalogs {
-        assert_eq!(messages, english, "{language}: keys or variables differ");
+        assert!(messages.contains_key("language-name"), "{language}: missing language name");
+        if matches!(*language, "en" | "fr" | "ja") {
+            assert_eq!(messages, english, "{language}: keys or variables differ");
+        } else {
+            for (key, variables) in messages {
+                assert_eq!(
+                    Some(variables),
+                    english.get(key),
+                    "{language}/{key}: unknown key or different variables"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn advertised_names_match_fluent_catalogs() {
+    for (code, name) in aurora_i18n::available_languages() {
+        assert_eq!(name, aurora_i18n::text_in(code, "language-name"));
+        assert_ne!(name, code, "{code}: expected a literal native name");
     }
 }
 
@@ -97,6 +116,38 @@ fn saved_choice_system_locale_and_english_fallback() {
     assert_eq!(resolve_language("default", "ja-JP", &languages), "ja");
     assert_eq!(resolve_language("ja", "en-US", &languages), "ja");
     assert!(SOURCES.iter().any(|&(code, _)| code == "ja"), "Japanese catalog is bundled");
+}
+
+#[test]
+fn system_locale_selects_the_correct_chinese_script_and_saved_choice_wins() {
+    let available = ["en", "ja", "ko", "zh-Hans", "zh-Hant"];
+    for locale in ["zh-CN", "zh_SG", "zh", "zh-Hans-CN"] {
+        assert_eq!(resolve_language("default", locale, &available), "zh-Hans", "{locale}");
+    }
+    for locale in ["ZH_tw", "zh-HK", "zh-MO", "zh-Hant-HK"] {
+        assert_eq!(resolve_language("default", locale, &available), "zh-Hant", "{locale}");
+    }
+    assert_eq!(resolve_language("ja-JP", "zh-TW", &available), "ja");
+    assert_eq!(resolve_language("default", "ko-KR", &available), "ko");
+    assert_eq!(resolve_language("default", "zh-TW", &["en", "zh-Hans"]), "en");
+    assert_eq!(resolve_language("default", "zh-TW", &["en", "zh-TW", "zh-Hant"]), "zh-TW");
+}
+
+#[test]
+fn language_menu_prefers_system_then_common_then_code_order() {
+    let mut choices = [
+        ("vi", "Tiếng Việt"),
+        ("en", "English"),
+        ("da", "Dansk"),
+        ("es", "Español"),
+        ("zh-Hant", "繁體中文"),
+    ];
+    aurora_i18n::language_menu_order(&mut choices, "zh-TW");
+    assert_eq!(choices.map(|(code, _)| code), ["zh-Hant", "en", "es", "da", "vi"]);
+    aurora_i18n::language_menu_order(&mut choices, "vi-VN");
+    assert_eq!(choices.map(|(code, _)| code), ["vi", "en", "zh-Hant", "es", "da"]);
+    aurora_i18n::language_menu_order(&mut choices, "ko-KR");
+    assert_eq!(choices.map(|(code, _)| code), ["en", "zh-Hant", "es", "da", "vi"]);
 }
 
 #[test]
