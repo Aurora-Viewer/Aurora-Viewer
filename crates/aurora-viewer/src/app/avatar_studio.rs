@@ -929,6 +929,7 @@ mod tests {
             objects: vec![seats[0].clone()],
         });
         let expected = seats[0].position + seats[0].rotation * expected_center;
+        world.objects.settle_drawables();
         let now = Instant::now() + std::time::Duration::from_secs(2);
         assert!(
             studio_podium_center(&world, anchor, now)
@@ -980,6 +981,7 @@ mod tests {
             });
             // Let report-correction smoothing reach each fixture orientation;
             // entry follows the rendered pose, not an undrawn server update.
+            world.objects.settle_drawables();
             let now = Instant::now() + std::time::Duration::from_secs(2);
             let mut studio = Studio::default();
             studio.enter(studio_facing(&world, now), 1.8);

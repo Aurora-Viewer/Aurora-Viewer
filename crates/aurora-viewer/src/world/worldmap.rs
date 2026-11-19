@@ -1164,7 +1164,7 @@ mod tests {
         let mut avatar = crate::demo::action_avatar(false);
         avatar.full_id = id;
         avatar.position = glam::Vec3::new(12.0, 10.0, 2048.0);
-        w.objects.upsert_at(handle, avatar, Some(Instant::now()));
+        w.objects.upsert_at(handle, avatar, Some(Instant::now()), Instant::now());
         w.apply(aurora_net::NetEvent::CoarseLocations {
             handle,
             positions: vec![(id, glam::Vec3::new(12.0, 10.0, 1020.0))],

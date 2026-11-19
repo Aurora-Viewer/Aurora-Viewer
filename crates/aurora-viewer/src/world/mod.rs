@@ -11,6 +11,7 @@ pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
+pub mod object_motion_trace;
 pub mod shape_tween;
 
 mod arrival_wait;
@@ -1854,8 +1855,15 @@ impl World {
     /// transform edits for their answer (edit_echo.rs). Then the roots
     /// avatars sit on take a step of their damping, those `selected` in the
     /// build tools excepted (ObjectStore::damp_seats).
-    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion], selected: impl Fn(&ObjKey) -> bool) {
+    pub fn advance_motion(
+        &mut self,
+        now: Instant,
+        sims: &[aurora_net::stats::SimulatorMotion],
+        selected: impl Fn(&ObjKey) -> bool,
+        view: impl Fn(usize) -> Option<motion::DampingView>,
+    ) {
         let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
+        object_motion_trace::poll();
         self.motion_tick = now;
         for &handle in self.regions.keys() {
             let rate = sims
@@ -1865,6 +1873,7 @@ impl World {
             self.objects.advance_motion(handle, dt * f64::from(rate));
             self.objects.note_motion_tick(now, handle, rate);
         }
+        self.objects.damp_drawables(dt as f32, &selected, view);
         self.objects.expire_corrections(now);
         self.objects.expire_sent_edits(now);
         self.objects.damp_seats(now, dt as f32, selected);
@@ -3459,7 +3468,7 @@ impl World {
                     }
                     self.on_camera_parent_change(handle, &u);
                     let foot_plane = u.foot_plane;
-                    self.objects.upsert_at(handle, u, self.received);
+                    self.objects.upsert_at(handle, u, self.received, Instant::now());
                     self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
@@ -3484,7 +3493,7 @@ impl World {
                     if let Some(idx) = self.objects.index_of(&key) {
                         let mut mine = false;
                         let mut seated = false;
-                        self.objects.apply_terse_at(idx, &t, self.received);
+                        self.objects.apply_terse_at(idx, &t, self.received, Instant::now());
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
