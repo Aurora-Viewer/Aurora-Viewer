@@ -3755,6 +3755,7 @@ impl Reflect {
                     count: None,
                 },
                 storage_entry(7, true),
+                texture_entry(8, unfiltered),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -4839,6 +4840,8 @@ impl RtShadows {
         light: &TraceLight,
         depth: &wgpu::TextureView,
         gbuf: &wgpu::TextureView,
+        normals: Option<&wgpu::TextureView>,
+        black: &wgpu::TextureView,
         scene_copy: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
     ) {
@@ -4856,7 +4859,7 @@ impl RtShadows {
         let u = ReflectU {
             clip_from_world: light.clip_from_world.to_cols_array_2d(),
             world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
-            camera: light.camera.extend(1.0).to_array(),
+            camera: light.camera.extend(if normals.is_some() { 1.0 } else { 0.0 }).to_array(),
             lit: light.lit(),
             screen: [w, h, 1.0 / w, 1.0 / h],
             mode: [
@@ -4903,6 +4906,10 @@ impl RtShadows {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: self.lamps.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(normals.unwrap_or(black)),
                 },
             ],
         });

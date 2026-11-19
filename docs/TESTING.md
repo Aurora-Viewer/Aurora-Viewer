@@ -4708,6 +4708,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
+| `AURORA_DEMO_GLOSSY_BUMPS=1` | An upright polished PBR panel with a bump normal map, seen along its face (ray-traced reflections) |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
@@ -4943,6 +4944,13 @@ both open states and the selection count. Capture at frame 620.
   (`AURORA_DEMO_CAMERA=drift,620,600,1`), compare its far highlights and
   the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
   second to the next.
+- **`AURORA_DEMO_GLOSSY_BUMPS=1`**: ahead of the start position, an
+  upright 7 × 3 m polished panel (PBR, roughness 0.1) with the bump normal
+  map, seen along its face, in front of the panel with holes. With
+  `AURORA_RT_REFLECTIONS=1`, the far slope of each bump mirrors what
+  stands before the panel (the lilac panel, the lamps), never the holes of
+  the panel behind it: the mirror ray of such a slope is kept on its own
+  side of the face (rt_reflect.wgsl `kept_above`).
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light

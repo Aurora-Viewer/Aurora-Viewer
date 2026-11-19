@@ -20,7 +20,8 @@ struct Params {
     // with, and its inverse.
     clip_from_world: mat4x4<f32>,
     world_from_clip: mat4x4<f32>,
-    // xyz the eye.
+    // xyz the eye, w 1 when `normals_tex` is the prepass's and not a black
+    // stand-in.
     camera: vec4<f32>,
     lit: HitLight,
     // width, height, 1 / width, 1 / height
@@ -40,6 +41,9 @@ struct Params {
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
 @group(0) @binding(6) var out_tex: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(7) var<storage, read> lights: array<Light>;
+// the depth prepass's normals: xy the mesh's smooth normal (rt_view.wgsl
+// `mesh_normal`)
+@group(0) @binding(8) var normals_tex: texture_2d<f32>;
 
 fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
     let e = e_in * 2.0 - vec2<f32>(1.0);
@@ -173,6 +177,38 @@ fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, lod: f32, offset: f32) -
     return Sent(lit + glow, mirror);
 }
 
+// The mirror ray `r` of the pixel, kept on its own side of its surface.
+// The G-buffer's normal has the normal map in it: seen at a slant, the far
+// slope of a bump sends the ray into the face it leaves. It went through
+// the object and showed what stands behind it, in patches the shape of the
+// relief (AURORA_DEMO_GLOSSY_BUMPS: the holed panel behind the polished one).
+// Such a ray is sent on as the face around the bump would send it: mirrored
+// about the surface without its map, the mesh's smooth normal where the
+// prepass drew it, read first since a ray above it is left as it is (every
+// ray of a face with no normal map), and the triangle's from depth where
+// the prepass's is not this face's (rt_history.wgsl `smooth_normal`) or was
+// not drawn.
+fn kept_above(pixel: vec2<i32>, depth: f32, r: vec3<f32>) -> vec3<f32> {
+    var face: vec3<f32>;
+    if (params.camera.w > 0.5) {
+        face = mesh_normal(textureLoad(normals_tex, pixel, 0).xy);
+        if (dot(r, face) >= 0.0) {
+            return r;
+        }
+        let flat = normal_at(pixel, depth);
+        if (dot(face, flat) <= 0.7) {
+            face = flat;
+        }
+    } else {
+        face = normal_at(pixel, depth);
+    }
+    let into = dot(r, face);
+    if (into >= 0.0) {
+        return r;
+    }
+    return r - 2.0 * into * face;
+}
+
 @compute @workgroup_size(8, 8)
 fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel = vec2<i32>(id.xy);
@@ -189,7 +225,7 @@ fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
     let world = unproject(pixel, depth);
     let n = oct_decode(g.xy);
     let v = normalize(params.camera.xyz - world);
-    let r = reflect(-v, n);
+    let r = kept_above(pixel, depth, reflect(-v, n));
     let dist = distance(world, params.camera.xyz);
     // The ray, and what its light is worth to the pixel: all of it at
     // first, then what each hit mirrors of it. A hit the view sees ends it

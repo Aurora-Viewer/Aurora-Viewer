@@ -5526,6 +5526,32 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_GLOSSY_BUMPS=1: an upright polished panel (PBR, roughness
+    // 0.1) with the bump normal map, seen along its face from the start
+    // position: the far slope of each bump turns its mirror ray into the
+    // panel (rt_reflect.wgsl `kept_above`)
+    if std::env::var_os("AURORA_DEMO_GLOSSY_BUMPS").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let mut t = TextureEntry::default();
+        for f in t.faces.iter_mut() {
+            f.texture = BLANK_TEXTURE;
+            f.color = [1.0, 1.0, 1.0, 1.0];
+        }
+        add(prim(
+            id,
+            Vec3::new(136.5, 127.3, floor + 1.5),
+            Quat::IDENTITY,
+            Vec3::new(7.0, 0.1, 3.0),
+            boxp,
+            Arc::new(t),
+            ExtraParams {
+                render_materials: (0..6).map(|f| (f, MAT_PBR_GLOSSY_BUMPS)).collect(),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_PBR_OVERRIDE=1: two slabs with the same PBR material (one
     // tile over the whole face); the second one gets a GLTF material override
     // (4 × 4 repeats on every map, a tint), sent as the simulator's notation
@@ -9698,6 +9724,9 @@ const MAT_PBR_METAL: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0013),
 ];
 
+/// Polished bumpy panel of AURORA_DEMO_GLOSSY_BUMPS.
+const MAT_PBR_GLOSSY_BUMPS: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0017);
+
 /// Polished metal cube of AURORA_DEMO_PBR_METAL, occluded but for a disc.
 const MAT_PBR_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0014);
 
@@ -9727,6 +9756,15 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    list.push((
+        MAT_PBR_GLOSSY_BUMPS,
+        aurora_assets::PbrMaterial {
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.1,
+            ..Default::default()
+        },
+    ));
     list.push((
         MAT_PBR_FACE_MAPPED,
         aurora_assets::PbrMaterial {
