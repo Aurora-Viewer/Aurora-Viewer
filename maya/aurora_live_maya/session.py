@@ -54,6 +54,7 @@ class Session:
         self.revision = 0
         self.last_content = None
         self.message = ""
+        self.notice = ""  # the last shape transfer's outcome; captures keep it
         self.callbacks = []
         self.watched = set()
         self.posed = set()  # skinned shapes: their dirt is a pose
@@ -347,11 +348,11 @@ class Session:
         try:
             unit = capture.scene_unit(self.units(), [self.node(key) for key in self.sources if self.node(key)])
             group = shape.create(payload, capture.up_axis(), unit)
-            self.message = "Shape received: " + group.rsplit("|", 1)[-1]
+            self.notice = "Shape received: " + group.rsplit("|", 1)[-1]
             self.client.shape_result(identity)
         except Exception as error:  # Aurora waits for an answer: always send one.
-            self.message = str(error) or type(error).__name__
-            self.client.shape_result(identity, self.message[:512])
+            self.notice = "Shape not received: " + (str(error) or type(error).__name__)
+            self.client.shape_result(identity, self.notice[:512])
 
     def _issues(self):
         revision, issues = self.client.issues()

@@ -29,12 +29,34 @@ def existing(identity):
 
 
 def _namespace(base):
+    """A namespace for one received shape: a new one, or an empty one an
+    undone transfer left behind."""
     name, index = base, 1
     while cmds.namespace(exists=":" + name):
+        if not cmds.namespaceInfo(name, listNamespace=True):
+            return name
         index += 1
         name = "{}{}".format(base, index)
     cmds.namespace(add=name)
     return name
+
+
+def _object(path):
+    selection = om.MSelectionList()
+    selection.add(path)
+    return selection.getDependNode(0)
+
+
+def _check_joints(joints, targets, to_maya):
+    """Every joint where the shape puts it: a skeleton off its reference
+    body would preview wrong, so a mismatch stops the transfer."""
+    size = max(abs(value) for row in convert.inverse(to_maya)[:3] for value in row[:3])
+    tolerance = 1e-4 / max(size, 1e-9)  # 0.1 mm, in Maya units
+    for name, path in joints.items():
+        matrix = om.MDagPath.getAPathTo(_object(path)).inclusiveMatrix()
+        position = (matrix[12], matrix[13], matrix[14])
+        if max(abs(a - b) for a, b in zip(position, targets[name])) > tolerance:
+            raise ValueError("The new skeleton did not land on the shape ({} is off); nothing was kept".format(name))
 
 
 def _string_attribute(node, name, value):
@@ -86,6 +108,12 @@ def _mesh(part, names, joints, to_maya, parent, namespace):
     vertices = component.create(om.MFn.kMeshVertComponent)
     component.addElements(list(range(len(part["positions"]))))
     fn.setWeights(shape_path, vertices, om.MIntArray(list(range(width))), weights, False)
+    # Skinned at rest, the body must not have moved.
+    placed = om.MFnMesh(shape_path).getPoints(om.MSpace.kWorld)
+    tolerance = 1e-3 * max(1.0, max(abs(c) for p in points for c in (p.x, p.y, p.z)))
+    if len(placed) != len(points) or any(max(abs(a.x - b.x), abs(a.y - b.y), abs(a.z - b.z)) > tolerance
+                                         for a, b in zip(placed, points)):
+        raise ValueError("The reference body moved when skinned ({}); nothing was kept".format(part["name"]))
     return path
 
 
@@ -110,24 +138,26 @@ def create(payload, up_axis, unit):
         _string_attribute(group, ID_ATTRIBUTE, payload["id"])
         _string_attribute(group, "auroraShapeName", payload["name"])
         _string_attribute(group, "auroraShapeParameters", json.dumps(payload["params"], sort_keys=True))
-        joints = {}
+        joints, objects, targets = {}, {}, {}
+        group_object = _object(group)
         for (name, parent), joint in zip(joints_definition, payload["joints"]):
-            # A joint is created under the selected joint; the root goes
-            # under the group afterwards, keeping its world position.
-            if parent:
-                cmds.select(joints[parent], replace=True)
-            else:
-                cmds.select(clear=True)
-            created = cmds.joint(name=namespace + ":" + name, position=convert.point(to_maya, joint["head"]),
-                                 absolute=True)
-            if not parent:
-                created = cmds.parent(created, group)[0]
-            joints[name] = cmds.ls(created, long=True)[0]
+            # Joints stay world-aligned under an unmoved group, so each one's
+            # translation is its head minus its parent's. OpenMaya takes
+            # internal centimetres whatever the preferences show.
+            target = convert.point(to_maya, joint["head"])
+            local = [t - p for t, p in zip(target, targets[parent])] if parent else target
+            fn = oma.MFnIkJoint()
+            created = fn.create(objects[parent] if parent else group_object)
+            fn.setName(namespace + ":" + name)
+            fn.setTranslation(om.MVector(*local), om.MSpace.kTransform)
+            objects[name], targets[name] = created, target
+            joints[name] = om.MDagPath.getAPathTo(created).fullPathName()
             # Canonical metres in SL's frame, independent of Maya units.
             _array_attribute(joints[name], "auroraShapeBind", joint["inverse_bind"])
             _array_attribute(joints[name], "auroraShapeHead", joint["head"])
             if name[0].isupper():
                 cmds.setAttr(joints[name] + ".drawStyle", 2)  # collision volumes: hidden
+        _check_joints(joints, targets, to_maya)
         cmds.select(clear=True)
         bodies = cmds.group(empty=True, parent=group, name=namespace + ":reference_body")
         bodies = cmds.ls(bodies, long=True)[0]
@@ -139,12 +169,16 @@ def create(payload, up_axis, unit):
         cmds.select(group, replace=True)
         return group
     except Exception:
-        if group and cmds.objExists(group):
-            cmds.delete(group)
-        if namespace and cmds.namespace(exists=":" + namespace):
-            cmds.namespace(removeNamespace=":" + namespace, deleteNamespaceContent=True)
-        if selection:
-            cmds.select([node for node in selection if cmds.objExists(node)], replace=True)
+        # Remove what was built; a cleanup failure must not hide the cause.
+        try:
+            if group and cmds.objExists(group):
+                cmds.delete(group)
+            if namespace and cmds.namespace(exists=":" + namespace):
+                cmds.namespace(removeNamespace=":" + namespace, deleteNamespaceContent=True)
+            if selection:
+                cmds.select([node for node in selection if cmds.objExists(node)], replace=True)
+        except Exception:
+            pass
         raise
     finally:
         cmds.undoInfo(closeChunk=True)

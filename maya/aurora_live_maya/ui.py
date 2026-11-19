@@ -194,7 +194,7 @@ class Window:
         text = "" if unit is None else "1 Maya cm = {:g} m, {}-up".format(unit * 100, capture_up())
         if cmds.text(self.unit_text, query=True, label=True) != text:
             cmds.text(self.unit_text, edit=True, label=text)
-        message = self.live.message
+        message = "\n".join(text for text in (self.live.message, self.live.notice) if text)
         if cmds.text(self.message, query=True, label=True) != message:
             cmds.text(self.message, edit=True, label=message)
 
