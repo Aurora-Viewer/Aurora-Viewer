@@ -87,14 +87,17 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
                 crate::ui::group_profile::request_open(ui.ctx(), id);
             }
             // can_activate_group: not the active one already; leaving and
-            // the chat's block need the membership
+            // the chat's block need the membership. Under @setgroup the
+            // active group is neither changed nor left
+            // (FS_RGSTR_CHK_GROUP_NOT_ACTIVE and FS_RGSTR_CHK_CAN_LEAVE_GROUP,
+            // indra/newview/fscommon.cpp).
             let member = world.groups.is_member(&id);
             if menu::item_if(
                 ui,
                 p,
                 "circle-check-filled",
                 aurora_i18n::tr!("ui-chat-menu-activate-group"),
-                member && world.groups.active != id,
+                member && world.groups.active != id && world.rlva_can_change_group(),
             ) {
                 act(CtxAction::ActivateGroup(id));
             }
@@ -107,7 +110,13 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
             ) {
                 actions.push(ConvAction::BlockGroupChat(id));
             }
-            if menu::item_if(ui, p, "logout", aurora_i18n::tr!("ui-contacts-leave-group"), member) {
+            if menu::item_if(
+                ui,
+                p,
+                "logout",
+                aurora_i18n::tr!("ui-contacts-leave-group"),
+                member && world.rlva_can_leave_group(id),
+            ) {
                 act(CtxAction::LeaveGroup(id));
             }
         }

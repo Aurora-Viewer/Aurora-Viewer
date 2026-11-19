@@ -909,19 +909,30 @@ fn status_menu_body(ui: &mut egui::Ui, p: &Palette, status: crate::world::status
     }
 }
 
+/// Me › Appearance is enabled: not while seated with RLVa refusing to stand
+/// (`sit_locked`, the app's `rlva_sit_locked_id`, which reads @unsit for a
+/// seated avatar). It is menu_viewer.xml's "Outfits", the checked entry
+/// that toggles the Appearance window, enabled like "Now wearing…" by
+/// Edit.EnableCustomizeAvatar: LLEditEnableCustomizeAvatar
+/// (indra/newview/llviewermenu.cpp) asks RlvActions::canStand
+/// (indra/newview/rlvactions.cpp). The toolbar button (commands.xml,
+/// Floater.Toggle with no enable function) and Edit Shape
+/// (Edit.EnableEditShape) do not ask it.
+fn customize_avatar_enabled(seated: bool, sit_locked: bool) -> bool {
+    !(seated && sit_locked)
+}
+
 /// Viewer menus: the submenus of the wolf menu button of the navigation bar
 /// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
-        flip_window(
-            ui,
-            p,
-            "shirt-filled",
-            aurora_i18n::tr!("ui-bars-appearance"),
-            "appearance",
-            &mut panels.appearance,
-        );
+        let sit_locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
+        let appearance = aurora_i18n::tr!("ui-bars-appearance");
+        let can_customize = customize_avatar_enabled(st.seated, sit_locked);
+        if menu::check(ui, p, "shirt-filled", appearance, panels.appearance, can_customize) {
+            super::widgets::toggle_floater(ui.ctx(), "appearance", &mut panels.appearance);
+        }
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
         }
@@ -976,11 +987,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::separator(ui, p);
         // enable_sitdown_self / enable_standup_self: greyed when RLVa would
         // refuse the one that applies (@sit standing, @unsit seated)
-        let locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
-        if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground"), st.seated || !locked) {
+        if menu::item_if(
+            ui,
+            p,
+            "armchair",
+            aurora_i18n::tr!("ui-bars-sit-on-ground"),
+            st.seated || !sit_locked,
+        ) {
             *action = BarAction::SitGround;
         }
-        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), !st.seated || !locked) {
+        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), !st.seated || !sit_locked) {
             *action = BarAction::StandUp;
         }
         let fly = if st.flying {
@@ -4002,6 +4018,21 @@ fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, act
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp) through
+    /// RlvActions::canStand: Me › Appearance is greyed only for an avatar
+    /// that is seated and may not stand; the lock of a standing avatar is
+    /// @sit's, which does not count.
+    #[test]
+    fn me_appearance_is_greyed_only_while_seated_and_held_there() {
+        for (seated, sit_locked, enabled) in [(false, false, true), (false, true, true), (true, false, true), (true, true, false)] {
+            assert_eq!(
+                customize_avatar_enabled(seated, sit_locked),
+                enabled,
+                "seated {seated}, locked {sit_locked}"
+            );
+        }
+    }
 
     #[test]
     fn legacy_chat_bar_bounds_paragraphs_and_releases_space_when_cleared() {

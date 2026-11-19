@@ -103,6 +103,7 @@ fn line(time: SystemTime, from: &str, source: Uuid, kind: ChatKind, origin: Orig
         origin,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 

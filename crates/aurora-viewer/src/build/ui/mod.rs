@@ -234,6 +234,10 @@ pub struct FloaterState {
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
     pub reveal_faces: bool,
+    /// The panel is the object profile's, not the build tools': its names
+    /// follow LLSidepanelTaskInfo::refreshAll under RLVa's `@shownames`
+    /// (`general::Names`).
+    pub object_profile: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,

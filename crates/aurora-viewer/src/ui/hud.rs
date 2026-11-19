@@ -641,7 +641,9 @@ pub fn draw(
             let (name, username, custom, legacy) = match names.get(&o.full_id) {
                 Some(n) => {
                     let (main, user) = n.tag_lines(&names.options);
-                    let custom = names.options.use_display_names && !n.is_default;
+                    // (by the name itself, not by the stand-in RLVa shows
+                    // for it: LLVOAvatar::getNameTagColor asks the cache)
+                    let custom = names.options.use_display_names && names.raw(&o.full_id).is_some_and(|n| !n.is_default);
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {
