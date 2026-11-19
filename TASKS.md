@@ -1312,6 +1312,7 @@ What comes before the rest (requested by the human).
     - 🟡 At text size ×2, the Japanese write field of a conversation window of 260 × 200 wraps on two lines and ends below the window (`ui::chat::popout::tests::a_window_of_its_own_keeps_its_size`), and the performance monitor of 1180 × 760 grows (`ui::perf::tests::the_monitor_keeps_its_size_in_every_section`).
     - 🟡 The Preferences search finds a word by its start only (`ui/options/cx.rs` `found`, `found_in`): Japanese writes without spaces, so 区画 does not find 常に表示する区画 or フィルタを適用する区画; only the start of a whole phrase does (`ui::options::tests::parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_controls`).
     - The community-catalog checks also cover Chinese and Korean compound search and the default name of a wearable-favorites folder.
+    - Save as suggests a writable default when the stored outfit name contains characters the new-outfit field cannot accept (#3641). The original outfit name is preserved.
     - ⬜ QA, demo in Japanese (`AURORA_DEMO=1`, `--language ja`), the defects above fixed:
       - ⬜ Appearance › Save as proposes "<outfit> (new)", no "?"; Inventory › New folder creates "New folder", New outfit "New outfit"; rename one of them ([#3641](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3641)). In French they stay "Nouveau dossier", "<outfit> (nouv.)".
       - ⬜ The clock's tooltip shows the date as 11月16日（月）; with the 12-hour clock the time reads 午後2:05; chat day markers and Places dates have one 月; August is 8月.
