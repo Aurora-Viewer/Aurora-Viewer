@@ -13,6 +13,7 @@ fn teleport_history_hides_old_destinations_and_actions_under_showloc() {
         name_links: Vec::new(),
         outcome: Outcome::Declined,
         follow: Follow::Place("secondlife://Test%20Destination/12/34/56".into()),
+        named: false,
     };
     let mut shown = original.clone();
     hide_teleport_history_location(&mut shown, false);

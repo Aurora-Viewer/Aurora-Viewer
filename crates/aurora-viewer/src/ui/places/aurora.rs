@@ -152,8 +152,11 @@ pub struct Env<'a> {
 /// The profile the preview asks for a place.
 fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option<Profile> {
     if let Some(item) = place.item {
-        let asset = inv.items.get(&item).map_or(Uuid::nil(), |it| it.asset_id);
-        return Some(Profile::Landmark { item, asset });
+        let original = crate::world::landmarks::inventory_item(inv, item)?;
+        return Some(Profile::Landmark {
+            item: original.id,
+            asset: original.asset_id,
+        });
     }
     let entry = history.get(place.history?)?;
     Some(Profile::History {
@@ -999,7 +1002,7 @@ impl PlacesUi {
                 global: entry.global,
                 title: entry.title.clone(),
             });
-        } else if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
+        } else if let Some(item) = place.item.and_then(|i| crate::world::landmarks::inventory_item(inv, i)) {
             self.confirm = Some(Confirm::Landmark {
                 asset: item.asset_id,
                 name: item.name.clone(),
@@ -1628,7 +1631,14 @@ impl PlacesUi {
             _ => None,
         });
         let key = self.aurora.selected.unwrap_or(Key::Visit(usize::MAX));
-        let left = ui.max_rect().left() + 68.0;
+        let tp = aurora_i18n::tr!("common-teleport-3");
+        let map = aurora_i18n::tr!("common-map");
+        let tw = widgets::action_button_fit(ui, "location-filled", tp);
+        let mw = widgets::action_button_fit(ui, "map", map);
+        // Keep the LLPanelPlaces actions reachable in Aurora's inline details:
+        // large text can need the thumbnail's indentation as well as another row.
+        let indent = (ui.available_width() - 10.0 - tw.max(mw)).clamp(0.0, 68.0);
+        let left = ui.max_rect().left() + indent;
         let width = (ui.max_rect().right() - 10.0 - left).max(60.0);
         let rect = Rect::from_min_size(Pos2::new(left, ui.cursor().top() + 2.0), Vec2::new(width, 400.0));
         let mut d = ui.new_child(
@@ -1653,10 +1663,8 @@ impl PlacesUi {
                     .color(p.muted),
             );
         }
-        d.horizontal(|ui| {
+        d.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let tp = aurora_i18n::tr!("common-teleport-3");
-            let tw = widgets::action_button_fit(ui, "location-filled", tp);
             if widgets::action_button_if(
                 ui,
                 p,
@@ -1670,30 +1678,24 @@ impl PlacesUi {
             {
                 self.teleport(key, place, &world.inventory, history);
             }
-            let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
-            if ui
-                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
-                    widgets::action_button(
-                        ui,
-                        p,
-                        "map",
-                        aurora_i18n::tr!("common-map"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(mw, 26.0),
-                    )
-                })
-                .inner
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                p,
+                "map",
+                map,
+                widgets::ActionKind::Flat,
+                Vec2::new(mw, 26.0),
+                place.global.is_some() && crate::ui::context::can_show_on_map(world),
+            )
+            .clicked()
                 && let Some(g) = place.global
             {
                 actions.push(PlacesAction::ShowOnMap(g));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
-                    .on_hover_text(aurora_i18n::tr!("ui-places-more"));
-                menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    self.place_menu(ui, p, world, key, place, actions);
-                });
+            let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
+                .on_hover_text(aurora_i18n::tr!("ui-places-more"));
+            menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                self.place_menu(ui, p, world, key, place, actions);
             });
         });
         // the rename asked from the menu, under the actions
@@ -2094,6 +2096,156 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn landmark_link_profile_and_teleport_use_the_original_asset() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(201)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        let place = Place {
+            item: Some(id(201)),
+            favorite: Some(id(201)),
+            ..Default::default()
+        };
+        assert!(matches!(profile_of(&place, &inv, &[]), Some(Profile::Landmark { item, asset }) if item == id(101) && asset == id(1001)));
+        let mut state = PlacesUi::default();
+        state.teleport(Key::Landmark(id(1001)), &place, &inv, &[]);
+        assert!(matches!(state.confirm, Some(Confirm::Landmark { asset, .. }) if asset == id(1001)));
+    }
+
+    #[test]
+    fn narrow_place_actions_stay_visible_and_clickable_with_large_text() {
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        let global = DVec3::new(256_040.0, 256_300.0, 22.0);
+        world.tp_storage.items.push(HistoryItem {
+            title: "Test visit".into(),
+            global,
+            date: 1.0,
+            slurl: String::new(),
+        });
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut names = HashSet::new();
+        let mut wanted_images = HashSet::new();
+        let mut groups = HashSet::new();
+        for width in [236.0, 296.0, 456.0] {
+            for text_size in [1.0, 1.5, 2.0] {
+                for source in [Source::Favorites, Source::All, Source::History] {
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, text_size);
+                    let p = theme.palette();
+                    let key = if source == Source::History {
+                        Key::Visit(0)
+                    } else {
+                        Key::Landmark(id(1000))
+                    };
+                    let place = Place {
+                        item: (source != Source::History).then_some(id(100)),
+                        asset: (source != Source::History).then_some(id(1000)),
+                        history: Some(0),
+                        global: Some(global),
+                        ..Default::default()
+                    };
+                    let mut state = PlacesUi::default();
+                    state.aurora.source = source;
+                    state.aurora.selected = Some(key);
+                    let mut time = 0.0;
+                    let mut frame = |events, state: &mut PlacesUi| {
+                        time += 0.1;
+                        let mut actions = Vec::new();
+                        let mut layer = egui::LayerId::background();
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0))),
+                                time: Some(time),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                layer = ui.layer_id();
+                                let mut c = Ctx {
+                                    p: &p,
+                                    world: &world,
+                                    images: &images,
+                                    emoji: &mut emoji,
+                                    want_names: &mut names,
+                                    wanted_images: &mut wanted_images,
+                                    want_groups: &mut groups,
+                                };
+                                state.narrow_details(ui, &mut c, &place, &mut actions);
+                            },
+                        );
+                        output.textures_delta.clear();
+                        let buttons: Vec<_> = ctx.viewport(|v| {
+                            v.prev_pass
+                                .widgets
+                                .get_layer(layer)
+                                .filter(|w| w.sense.senses_click())
+                                .map(|w| w.rect)
+                                .collect()
+                        });
+                        (actions, buttons, output.shapes)
+                    };
+                    frame(vec![], &mut state);
+                    let (_, buttons, shapes) = frame(vec![], &mut state);
+                    assert_eq!(buttons.len(), 3, "Teleport, Map, More");
+                    let bounds = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0));
+                    for rect in &buttons {
+                        assert!(
+                            bounds.contains_rect(*rect),
+                            "clipped action: {source:?}, width {width}, text {text_size}: {rect:?}"
+                        );
+                    }
+                    for label in [aurora_i18n::tr!("common-teleport-3"), aurora_i18n::tr!("common-map")] {
+                        let text = shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::epaint::Shape::Text(t) if t.galley.text() == label => Some((t.visual_bounding_rect(), s.clip_rect)),
+                                _ => None,
+                            })
+                            .expect("action label drawn");
+                        assert!(
+                            text.1.contains_rect(text.0.shrink(0.5)),
+                            "clipped {label}, width {width}, text {text_size}"
+                        );
+                    }
+                    for i in 0..buttons.len() {
+                        for j in i + 1..buttons.len() {
+                            assert!(!buttons[i].intersects(buttons[j]), "actions overlap");
+                        }
+                    }
+                    frame(pointer(buttons[0].center(), true), &mut state);
+                    frame(pointer(buttons[0].center(), false), &mut state);
+                    assert!(state.confirm.is_some(), "Teleport reachable");
+                    state.confirm = None;
+                    frame(pointer(buttons[1].center(), true), &mut state);
+                    let (actions, ..) = frame(pointer(buttons[1].center(), false), &mut state);
+                    assert!(
+                        actions.iter().any(|a| matches!(a, PlacesAction::ShowOnMap(g) if *g == global)),
+                        "Map reachable"
+                    );
+                    frame(pointer(buttons[2].center(), true), &mut state);
+                    frame(pointer(buttons[2].center(), false), &mut state);
+                    assert!(egui::Popup::is_any_open(&ctx), "More reachable");
+                }
+            }
+        }
     }
 
     #[test]

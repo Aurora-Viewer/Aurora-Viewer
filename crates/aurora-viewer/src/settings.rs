@@ -591,6 +591,12 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The interface uses `custom_language_file` instead of `language`
+    /// (an Aurora addition, language_file.rs).
+    pub custom_language: bool,
+    /// The Fluent catalog file chosen for the interface, "" for none: read
+    /// at startup (language_file.rs). A path of this PC.
+    pub custom_language_file: String,
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
@@ -633,11 +639,16 @@ pub struct Settings {
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
+    /// Game Controls: GameControlData and the controller's action mappings
+    /// (the LL viewer's "GameControl" setting).
+    pub game_control: crate::game_control::Settings,
     /// Pre-split profile awaiting device classification after an upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -660,6 +671,8 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Swimming in prims named as water (#2008), for every account.
+    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -1219,6 +1232,10 @@ pub struct Settings {
     pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
+    /// The Chat Service's history of the private conversations, fetched
+    /// from the region and shown with the transcripts (the LL viewer's
+    /// ChatServiceEnabled, on). Read at login only.
+    pub chat_service_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
     /// Import the Legacy Viewer's transcripts at each login. On by default
@@ -1466,6 +1483,11 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Accessibility › Vision: skip the glass of windows,
+    /// bars, menus and dialogs (`crate::disable_glass`), off by default.
+    /// Surfaces stay opaque, without frosting the world. High contrast
+    /// already does this.
+    pub disable_glass: bool,
     /// Preferences › Appearance › Skin: the accent, background and text
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
@@ -2104,6 +2126,9 @@ impl Default for ColorSettings {
     }
 }
 
+/// Index of the voice channel in the audio settings (`audio_channels`).
+pub const VOICE_CHANNEL: usize = 6;
+
 /// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
 /// Music, Multimedia, Voice.
 pub fn audio_channels() -> [&'static str; 7] {
@@ -2194,6 +2219,11 @@ pub struct AudioSettings {
     /// Microphone button of the bottom bar: false = toggle (click on / click
     /// off), true = hold to talk (Firestorm PushToTalkToggle inverted).
     pub mic_hold: bool,
+    /// Close the microphone while muted, so that a Bluetooth headset leaves
+    /// its hands-free mode (StopMicCaptureWhenMuted, the LL viewer 26.5's
+    /// "Bluetooth only: Better in-world audio", on; off is "Better voice":
+    /// open the whole time voice is on).
+    pub stop_mic_when_muted: bool,
     /// Microphone gain (0..2).
     pub mic_gain: f32,
     /// Collision sounds (EnableCollisionSounds, on).
@@ -2264,6 +2294,7 @@ impl Default for AudioSettings {
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
+            stop_mic_when_muted: true,
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
@@ -2290,6 +2321,22 @@ pub enum VoiceEar {
 }
 
 impl AudioSettings {
+    /// What the enable box of a channel switches. The voice one is the voice
+    /// connection itself, microphone included (EnableVoiceChat of
+    /// panel_preferences_sound.xml and panel_volume_pulldown.xml).
+    pub fn channel_box(&mut self, i: usize) -> &mut bool {
+        if i == VOICE_CHANNEL {
+            &mut self.voice_enabled
+        } else {
+            &mut self.enabled[i]
+        }
+    }
+
+    /// The state of [`AudioSettings::channel_box`].
+    pub fn channel_on(&self, i: usize) -> bool {
+        if i == VOICE_CHANNEL { self.voice_enabled } else { self.enabled[i] }
+    }
+
     pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
         self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
     }
@@ -2314,6 +2361,8 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            custom_language: false,
+            custom_language_file: String::new(),
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
@@ -2331,8 +2380,10 @@ impl Default for Settings {
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
+            game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
@@ -2458,6 +2509,7 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
@@ -2558,6 +2610,7 @@ impl Default for Settings {
             conversation_log: Default::default(),
             reopen_ims: false,
             log_show_history: true,
+            chat_service_history: true,
             log_dated_names: false,
             log_import_at_login: true,
             log_legacy_layout: false,
@@ -2641,6 +2694,7 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
@@ -2833,11 +2887,25 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
         .unwrap_or(false)
 }
 
-/// `language` of a settings file's bytes; "default" for anything else.
-fn language_in(file: Option<&[u8]>) -> String {
-    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+/// `language` of a settings file's bytes ("default" for anything else),
+/// and its language file when its use is chosen.
+fn language_in(file: Option<&[u8]>) -> (String, Option<String>) {
+    let value = file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+    let language = value
+        .as_ref()
         .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
-        .unwrap_or_else(|| "default".into())
+        .unwrap_or_else(|| "default".into());
+    (language, value.as_ref().and_then(language_file_in))
+}
+
+/// The language file of a parsed settings file, when its use is chosen.
+fn language_file_in(value: &serde_json::Value) -> Option<String> {
+    let enabled = value.get("custom_language").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let file = value
+        .get("custom_language_file")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    crate::language_file::chosen(enabled, file).map(str::to_owned)
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -3012,8 +3080,9 @@ impl Settings {
 
     /// The saved language, read the same way for the startup splash
     /// (`splash/`), which loads nothing else; "default" (the system's) when
-    /// the file or the field is missing.
-    pub fn language_at_start() -> String {
+    /// the file or the field is missing. Also the language file, when its
+    /// use is chosen.
+    pub fn language_at_start() -> (String, Option<String>) {
         language_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
@@ -3034,10 +3103,9 @@ impl Settings {
                 saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
-                aurora_i18n::select(
-                    value["language"].as_str().unwrap_or("default"),
-                    crate::cli::get().language.as_deref(),
-                );
+                let file = language_file_in(&value);
+                crate::language_file::start(file.as_deref());
+                crate::language_file::select(value["language"].as_str().unwrap_or("default"), file.is_some());
                 let (s, from_newer) = Self::read_document(value, path)?;
                 newer = from_newer;
                 Some(s)
@@ -3481,6 +3549,15 @@ impl Settings {
             // Preferences › Aurora keeps Instant as a choice
             self.predict_own_motion = false;
         }
+        if !self.audio.enabled[VOICE_CHANNEL] {
+            // this box used to switch a mixer channel of its own, leaving
+            // voice connected and the microphone open: whoever unticked it
+            // wanted voice off. Repaired at every load, not once by version:
+            // no control ticks this channel back on, and an earlier build
+            // sharing the file can still write it
+            self.audio.enabled[VOICE_CHANNEL] = true;
+            self.audio.voice_enabled = false;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3548,6 +3625,7 @@ impl Settings {
         }
         self.snapshot.sanitize();
         self.dof.sanitize();
+        self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
             self.screen_indirect_intensity.clamp(0.0, 4.0)
@@ -4460,16 +4538,36 @@ mod tests {
     /// The splash's early read of the language agrees with the settings.
     #[test]
     fn the_splash_reads_the_saved_language() {
-        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        let language = |file: Option<&[u8]>| super::language_in(file).0;
+        assert_eq!(language(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
         for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
-            assert_eq!(super::language_in(file), "default", "{file:?}");
+            assert_eq!(language(file), "default", "{file:?}");
         }
         let saved = serde_json::to_vec(&super::Settings {
             language: "ja".into(),
             ..Default::default()
         })
         .expect("settings json");
-        assert_eq!(super::language_in(Some(&saved)), "ja");
+        assert_eq!(super::language_in(Some(&saved)), ("ja".into(), None));
+    }
+
+    /// The language file is read at startup only when its use is chosen.
+    #[test]
+    fn the_splash_reads_the_language_file_when_it_is_chosen() {
+        let saved = |on: bool, file: &str| {
+            serde_json::to_vec(&super::Settings {
+                language: "fr".into(),
+                custom_language: on,
+                custom_language_file: file.into(),
+                ..Default::default()
+            })
+            .expect("settings json")
+        };
+        let file = r"C:\translations\de.ftl";
+        assert_eq!(super::language_in(Some(&saved(true, file))), ("fr".into(), Some(file.into())));
+        assert_eq!(super::language_in(Some(&saved(false, file))).1, None, "not chosen");
+        assert_eq!(super::language_in(Some(&saved(true, ""))).1, None, "no file");
+        assert_eq!(super::language_in(Some(br#"{"custom_language":"yes"}"#)).1, None);
     }
 
     /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
@@ -5746,6 +5844,38 @@ mod tests {
         let mut off = Settings::default();
         off.colors.relation_names = false;
         assert!(!off.sanitized().colors.relation_names);
+    }
+
+    #[test]
+    fn a_voice_box_unticked_before_it_meant_voice_turns_voice_off() {
+        // any version: an earlier build sharing the file can write it again
+        for version in [30, SETTINGS_VERSION] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.audio.enabled[VOICE_CHANNEL] = false;
+            let audio = old.sanitized().audio;
+            assert!(!audio.voice_enabled);
+            assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        }
+        // ticked: voice stays as it was
+        assert!(Settings::default().sanitized().audio.voice_enabled);
+        // only the voice box repairs
+        let mut music = Settings::default();
+        music.audio.enabled[4] = false;
+        let audio = music.sanitized().audio;
+        assert!(audio.voice_enabled && !audio.enabled[4]);
+    }
+
+    #[test]
+    fn the_voice_box_of_every_panel_is_the_voice_connection() {
+        let mut audio = AudioSettings::default();
+        *audio.channel_box(VOICE_CHANNEL) = false;
+        assert!(!audio.voice_enabled && !audio.channel_on(VOICE_CHANNEL));
+        assert!(audio.enabled[VOICE_CHANNEL], "the mixer channel keeps playing");
+        *audio.channel_box(1) = false;
+        assert!(!audio.enabled[1] && !audio.channel_on(1));
     }
 
     #[test]
