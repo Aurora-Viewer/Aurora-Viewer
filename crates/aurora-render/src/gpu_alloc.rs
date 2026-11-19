@@ -274,6 +274,44 @@ pub fn first_use_refused() -> bool {
     until.is_some_and(|t| Instant::now() < t)
 }
 
+/// Whether the device refuses even a small buffer mapped at its creation,
+/// as egui-wgpu's `Renderer::new` makes its own through wgpu's
+/// `create_buffer_init`, which panics on one refused (#3867). Asked in
+/// scopes of its own, before the renderer's first allocation. `None`: it
+/// came through. Refused by the video memory: `VideoMemoryFull`; refused for
+/// another reason: `Device`, so that the box gives the driver advice and
+/// not the programs to close. `AURORA_GPU_OOM_UI=1` refuses it as a full
+/// memory (testing).
+pub fn mapped_buffer_refused(device: &wgpu::Device) -> Option<crate::RenderError> {
+    if std::env::var_os("AURORA_GPU_OOM_UI").is_some_and(|v| v == "1") {
+        log::warn!("egui buffers: refused by AURORA_GPU_OOM_UI");
+        return Some(crate::RenderError::VideoMemoryFull);
+    }
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let probe = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("egui buffer probe"),
+        size: 256,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: true,
+    });
+    let invalid = pollster::block_on(invalid.pop());
+    let oom = pollster::block_on(oom.pop());
+    for e in oom.iter().chain(&invalid) {
+        say(e);
+    }
+    if oom.is_some() {
+        log::warn!("egui buffers: the video memory refused a small mapped buffer");
+        return Some(crate::RenderError::VideoMemoryFull);
+    }
+    if let Some(e) = invalid {
+        log::warn!("egui buffers: a small mapped buffer was refused, not for memory");
+        return Some(crate::RenderError::Device(e.to_string()));
+    }
+    probe.unmap();
+    None
+}
+
 /// `AURORA_GPU_OOM_START=<seconds>`: for that long after the renderer is
 /// first made, its placeholder textures come back invalid as if video
 /// memory were full, at start and at each remake of the renderer

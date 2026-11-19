@@ -2535,6 +2535,14 @@ splash-update-installing = アップデートをインストール中…
 splash-update-cache = キャッシュを消去中…
 splash-update-launching = 新しいバージョンを起動中…
 app-aurora-viewer-unable-to-initialize-metal = { "Auroraビューア：Metalを初期化できませんでした：" }{ $e }
+app-graphics-start-memory-full =
+    グラフィックカードにAuroraビューアが使えるビデオメモリが残っていません。ほかのプログラムが使用しています。
+
+    試すべきこと：
+    ・グラフィックカードを使うプログラム（ほかのビューア、ゲーム、動画や３Ｄの編集ソフト）を閉じてから、Auroraビューアをもう一度起動してください。
+    ・グラフィックカードが２つあるノートＰＣでは、Auroraビューアがどちらで動いているか確認してください。
+
+    今回の起動のログ：{ $log }
 app-graphics-start-failed-title = Auroraビューアを起動できません
 app-graphics-start-failed =
     Auroraビューアはウィンドウを描画するためのグラフィックカードを開けませんでした。
