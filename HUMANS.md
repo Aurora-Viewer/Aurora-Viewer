@@ -527,6 +527,13 @@ as `aurora.previous.log`. Demo sessions have their own logs
 
 ## Security
 
+- **No data of our own in shared places.** Second Life's shared experience
+  policy forbids a viewer to store its own data where the grid keeps it or
+  where other residents receive it (asset and object names, descriptions,
+  EEP settings, hidden bits in numbers, chat channels…) so that only that
+  viewer makes something of it; the region weather of Aurora Weather did,
+  and was removed. The agents follow the rule (AGENTS.md, section 2) and
+  stop to ask you when a feature would need it.
 - The agents never connect to the grid and never handle your credentials.
   The remembered password is stored by Windows (Credential Manager), as a
   hash only.

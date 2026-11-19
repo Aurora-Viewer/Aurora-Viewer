@@ -1,9 +1,6 @@
 //! The weather of this viewer: what the Environment window's "Weather"
 //! section sets, kept in the settings. It is drawn for your view only.
 
-pub mod region;
-pub mod sky_mark;
-
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -100,9 +97,6 @@ pub struct WeatherSettings {
     /// How often lightning strikes, 0 (seldom) to 1 (often); 0.5 is the
     /// storm's own pace.
     pub thunder_frequency: f32,
-    /// Let regions set the weather through their environment
-    /// (weather/region.rs).
-    pub region_weather: bool,
     /// How big the snowflakes are, 0 (fine powder) to 1 (big wet flakes);
     /// 0.5 is the middle.
     pub snow_size: f32,
@@ -152,7 +146,6 @@ impl Default for WeatherSettings {
             puddle_distance: PUDDLE_DISTANCE_DEFAULT,
             thunder: false,
             thunder_frequency: 0.5,
-            region_weather: false,
             snow_size: 0.5,
             snow_settles: true,
             snow_distance: SNOW_DISTANCE_DEFAULT,
@@ -171,23 +164,6 @@ impl Default for WeatherSettings {
             touched: false,
         }
     }
-}
-
-/// Who sets the weather drawn now (`App::update_weather_now`): the Weather
-/// window shows it, since its own settings then wait.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WeatherSource {
-    /// The Weather window's settings.
-    #[default]
-    Mine,
-    /// An environment editor's preview of a sky's Aurora Weather.
-    Preview,
-    /// A sky or day with Aurora Weather applied to myself.
-    MySky,
-    /// The region or parcel ("Let regions set the weather").
-    Region,
-    /// The same, where the region sets none: clear and calm.
-    RegionClear,
 }
 
 impl WeatherSettings {
@@ -332,7 +308,7 @@ impl WeatherSettings {
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },
             // the app gives the detail texture's slot (scene/snow_detail.rs)
             snow_detail: 0,
-            // and a region's snow so far (weather/region.rs)
+            // the app gives AURORA_SNOW_LYING's floor (demo captures)
             snow_lying: 0.0,
             memory_reach: self.memory_reach(),
             // the same while it melts as while it fell
@@ -592,7 +568,6 @@ mod tests {
 
     #[test]
     fn snow_settles_off_hides_the_lying_snow_whatever_falls() {
-        use super::region::{RegionDay, SkyWeather};
         for precipitation in [Precipitation::Rain, Precipitation::Snow] {
             let off = WeatherSettings {
                 precipitation,
@@ -604,9 +579,6 @@ mod tests {
             let look = off.rain_look(&Wind::default());
             assert!(!look.snow_settles, "{precipitation:?}");
             assert!(!look.footprints && !look.deep_snow);
-            // a region or a sky setting the weather keeps my switch
-            let applied = RegionDay::fixed(SkyWeather::CLEAR).apply(&off, uuid::Uuid::nil(), 0.0, false);
-            assert!(!applied.rain_look(&Wind::default()).snow_settles);
             let on = WeatherSettings { snow_settles: true, ..off };
             assert!(on.rain_look(&Wind::default()).snow_settles, "{precipitation:?}");
         }

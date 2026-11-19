@@ -814,18 +814,9 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
-    /// The weather in effect this frame: the settings, or what the region's
-    /// environment sets over them when regions may (`update_weather_now`).
+    /// The weather in effect this frame: the settings (`update_weather_now`;
+    /// the demo's snow spin may change it after).
     weather_now: crate::weather::WeatherSettings,
-    /// The region weather read from the environment in effect, keyed by its
-    /// day cycle (held, compared by identity: a pointer alone could come
-    /// back as another region's day), sky track, length and offset (parsed
-    /// again only when one changes).
-    #[allow(clippy::type_complexity)]
-    region_weather: Option<(Arc<aurora_llsd::Llsd>, usize, f64, f64, Option<crate::weather::region::RegionDay>)>,
-    /// How deep a region's snow lies so far (its history played again), and
-    /// when that was worked out (again every ten seconds).
-    snow_lying: (f32, Option<Instant>),
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -2052,8 +2043,6 @@ impl App {
             weather_saved: Default::default(),
             weather_wind: Default::default(),
             weather_now: Default::default(),
-            region_weather: None,
-            snow_lying: (0.0, None),
             thunder: Default::default(),
             thunder_demo_done: false,
             stuck_watch: None,
@@ -5084,7 +5073,7 @@ impl App {
                 self.panels.environment = true;
                 self.panels.personal_lighting = lighting;
             }
-            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind, None),
+            Step::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
             Step::Next(kind) => {
                 let view = self.world.eep.local_view();
                 let shown = match kind {
@@ -5094,7 +5083,7 @@ impl App {
                 };
                 let list = self.env_ui.catalog().list(kind);
                 if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
-                    self.pick_local_settings(asset, kind, None);
+                    self.world.eep.request_local(asset, kind);
                 }
             }
             Step::Shared => {
@@ -6595,26 +6584,6 @@ impl App {
         }
     }
 
-    /// The seed of the region's thunder while the region sets the weather
-    /// (its day's weather seed for this region): None for my own weather,
-    /// a sky applied to myself or an editor's preview, whose strikes are
-    /// this viewer's own.
-    fn region_thunder_seed(&self) -> Option<u64> {
-        if self.env_ui.weather_source != crate::weather::WeatherSource::Region {
-            return None;
-        }
-        let Some((.., Some(day))) = &self.region_weather else {
-            return None;
-        };
-        let region = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(uuid::Uuid::nil(), |i| i.region_id);
-        // apart from the rain's draws from the same seed
-        Some(crate::weather::region::mix(day.schedule.seed_for(region) ^ 0x0074_6875_6E64_6572))
-    }
-
     /// Weather: thunder and lightning in heavy rain (the flash is lit in
     /// the frame, `thunder_light`).
     fn update_thunder(&mut self) {
@@ -6623,13 +6592,6 @@ impl App {
             enabled: self.weather_now.thunder,
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
-            // the region's storm, the same strikes for everyone there
-            shared: self.region_thunder_seed().map(|seed| {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0.0, |d| d.as_secs_f64());
-                (seed, secs)
-            }),
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -6685,95 +6647,13 @@ impl App {
         fp.sky.blue_horizon += white * k * 0.12;
     }
 
-    /// The weather in effect: the Weather settings; or an environment
-    /// editor's preview of a sky's Aurora Weather; or, when regions may set
-    /// it ("Let regions set the weather") and the environment in effect (the
-    /// parcel's, else the region's) carries Aurora Weather on the camera's
-    /// sky track, what its day gives now (weather/region.rs). Every viewer
-    /// with the same environment and clock shows the same weather.
+    /// The weather in effect: the Weather window's settings, drawn for this
+    /// viewer only. Aurora Weather reads nothing from an environment and
+    /// writes nothing in one: the codes once carried in EEP names and in the
+    /// low bits of a sky's numbers were taken out (Second Life's shared
+    /// experience policy; AGENTS.md, "No data of our own in shared places").
     fn update_weather_now(&mut self) {
-        use crate::weather::region::{RegionDay, SkyWeather};
-        let own = &self.settings.weather;
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64());
-        let region = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(uuid::Uuid::nil(), |i| i.region_id);
-        // the editors' preview: this sky's weather, on this viewer only
-        let preview = self
-            .env_editor
-            .weather_preview
-            .filter(|_| self.env_editor.open)
-            .or_else(|| self.day_editor.weather_preview());
-        use crate::weather::WeatherSource;
-        if let Some((weather, falling)) = preview {
-            self.weather_now = RegionDay::fixed(weather).apply(own, region, secs, falling);
-            self.env_ui.weather_source = WeatherSource::Preview;
-            return;
-        }
-        // a sky or day applied to myself with Aurora Weather: mine, whatever
-        // the regions may set
-        // the snow a day's weather has left so far, every ten seconds
-        let due = self.snow_lying.1.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(10));
-        if let Some(day) = self.world.eep.local_weather() {
-            if due {
-                self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
-            }
-            self.weather_now = day.apply(own, region, secs, false);
-            self.env_ui.weather_source = WeatherSource::MySky;
-            return;
-        }
-        let mut now = None;
-        if own.region_weather
-            && self.in_world()
-            && let Ok((day, length, offset)) = self.world.eep.day_settings(true)
-        {
-            let altitudes = self.world.eep.altitudes();
-            // the agent's altitude, as LLEnvironment::calculateSkyTrackForAltitude
-            // takes it (not the camera's); 0-based
-            let z = self.world.agent.position.z;
-            let track = match altitudes.iter().position(|a| z <= *a) {
-                Some(0) => 0,
-                None => 3,
-                Some(i) => i.min(4) - 1,
-            };
-            let fresh = !matches!(&self.region_weather,
-                Some((d, t, l, o, _)) if Arc::ptr_eq(d, &day) && *t == track && *l == length && *o == offset);
-            if fresh {
-                let read = RegionDay::read_named(&day, &self.world.eep.day_names(true), track, length, offset);
-                if read.is_some() {
-                    log::info!("region weather on sky track {}", track + 1);
-                }
-                self.region_weather = Some((day, track, length, offset, read));
-            }
-            if let Some((_, _, _, _, Some(day))) = &self.region_weather {
-                if due {
-                    self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
-                }
-                now = Some(day.apply(own, region, secs, false));
-            }
-        }
-        if now.is_none() {
-            // my own weather: what I have seen fall (the renderer's memory)
-            self.snow_lying = (0.0, None);
-        }
-        self.env_ui.weather_source = if now.is_some() {
-            WeatherSource::Region
-        } else if own.region_weather && self.in_world() {
-            // the region decides, and where it sets none the sky is clear and
-            // calm, as its sky is its own: my settings apply only once I use
-            // my own (they rained on in a region with none, "Restore to region
-            // settings" seeming to do nothing). What lay melts as after any
-            // weather (no snow so far is replayed)
-            now = Some(RegionDay::fixed(SkyWeather::CLEAR).apply(own, region, secs, false));
-            WeatherSource::RegionClear
-        } else {
-            WeatherSource::Mine
-        };
-        self.weather_now = now.unwrap_or_else(|| own.clone());
+        self.weather_now.clone_from(&self.settings.weather);
     }
 
     /// Where the footprints' map is centred: my avatar (zooming the camera
@@ -12900,14 +12780,14 @@ impl App {
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
                 // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
-                // (demo captures of deep snow, which takes minutes to gather);
-                // else a region's snow so far. Neither with "Snow settles"
-                // off: the region's floor laid it again every frame (#3642)
+                // (demo captures of deep snow, which takes minutes to gather).
+                // Not with "Snow settles" off: the floor laid it again every
+                // frame (#3642)
                 snow_lying: if self.weather_now.snow_settles {
                     static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
                     LYING
                         .get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse().ok()))
-                        .unwrap_or(self.snow_lying.0)
+                        .unwrap_or(0.0)
                 } else {
                     0.0
                 },
