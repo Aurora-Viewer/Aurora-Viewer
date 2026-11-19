@@ -915,13 +915,12 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             env.world.rlva_can_offer_teleport(id),
             None,
         ),
-        Act::Pay => (
-            "coin-filled",
-            aurora_i18n::tr!("common-pay"),
-            ActionKind::Flat,
-            context::can_pay_resident(env.world),
-            None,
-        ),
+        // Enabled under @pay too, as in the Legacy style
+        // (`profile::action_buttons`): LLPanelProfileSecondLife::updateButtons
+        // (indra/newview/llpanelprofile.cpp) never tests it, and the pay
+        // window refuses to open with the "blocked" notice
+        // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>, indra/newview/rlvhandler.cpp).
+        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")

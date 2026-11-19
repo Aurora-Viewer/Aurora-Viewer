@@ -157,7 +157,9 @@ impl super::World {
     pub fn locate_avatar(&mut self, id: Uuid, teleport: bool) -> bool {
         let can_map = self.social.can_map_friend(id);
         if can_map && !teleport {
-            let name = self.social.name_of(&id);
+            // LLAvatarActions::showOnMap (indra/newview/llavataractions.cpp)
+            // tracks under the name of the cache, with no RLVa test
+            let name = self.social.name_in(super::names::NameScope::Roster, &id);
             self.map.track_avatar(id, &name);
             self.map.focus_track = true;
         } else if let Some(p) = self.avatar_map_position(id) {
@@ -168,7 +170,9 @@ impl super::World {
                 self.map.friend_teleport = Some(id);
             }
         } else if can_map {
-            let name = self.social.name_of(&id);
+            // LLAvatarActions::showOnMap (indra/newview/llavataractions.cpp)
+            // tracks under the name of the cache, with no RLVa test
+            let name = self.social.name_in(super::names::NameScope::Roster, &id);
             self.map.teleport_to_avatar(id, &name);
         } else {
             return false;

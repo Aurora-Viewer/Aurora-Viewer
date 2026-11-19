@@ -6,6 +6,7 @@
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
@@ -100,7 +101,10 @@ impl AvatarPicker {
                         .social
                         .friends
                         .iter()
-                        .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
+                        // (LLFloaterAvatarPicker has an RLVa test on its
+                        // "near me" tab alone: a list of people known
+                        // besides the world, `NameScope::Roster`)
+                        .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id), String::new()))
                         .collect();
                     v.sort_by_key(|r| crate::natural_order::key(&r.1));
                     v
@@ -120,7 +124,7 @@ impl AvatarPicker {
                     match Uuid::parse_str(self.uuid_text.trim()) {
                         Ok(id) if !id.is_nil() => {
                             world.social.want_name(id);
-                            vec![(id, world.social.name_of(&id), String::new())]
+                            vec![(id, world.social.name_in(NameScope::Roster, &id), String::new())]
                         }
                         _ => Vec::new(),
                     }
