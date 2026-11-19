@@ -1806,7 +1806,7 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
 
 ## Rendering
 
-- ?? Object water surface (human request, 2026-11-19; task `object-water-surface`): use an explicit object-description directive to apply a viewer-local water material to one prim or mesh face. Preserve the original material for restoration when the directive is removed. Validate face selection, movement, rotation and restoration in the offline demo.
+- ?? Object water surface (human request, 2026-11-19; task `object-water-surface`; draft PR #4276): use an explicit object-description directive to apply a viewer-local water material to one prim or mesh face. Preserve the original material for restoration when the directive is removed. Validate face selection, movement, rotation and restoration in the offline demo.
   - First milestone: render waves, reflections and refraction on the selected face using its geometry and object transform. Keep the description binding reusable by a future volume definition. Offline captures confirm that the moved and tilted cube renders water on the top face, keeps the adjacent materials, and restores the top material after the directive is removed.
   - Build editor: Water is available under Aurora Surface Effects in both Texture panel styles. Apply or remove a marker on the prim that owns the selected face. The description editor preserves the creator's text and refuses saves that exceed the field limit. The maintainer confirmed the surface-edit offline demo works on 2026-11-19.
   - ? Later: automatic description discovery and per-face quality and effect controls.
