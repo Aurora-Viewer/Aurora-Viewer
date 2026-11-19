@@ -525,6 +525,25 @@ pub fn take_gpu_trouble() -> bool {
 
 /// A viewer stopped by Windows ending the session (shutdown, restart, sign
 /// out) did not crash: nothing to report.
+/// How long the watcher of a viewer an update started waits for the
+/// update's helper to say it rolled the update back.
+const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A viewer an update's helper ended itself, when no first frame came within
+/// its wait: the helper then restores the previous version, which says that
+/// the update did not complete. That is no crash: nothing is reported. Only
+/// the helper's own end (`TerminateProcess` leaves exit code 1), with no
+/// crash or panic of the viewer's own, and `ended` (the helper's rollback
+/// note, `aurora_updater::install::ended_by_update`). The "ended from
+/// outside, window never shown, 90 s" reports were these.
+fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> bool {
+    exit_code == 1
+        && !["failed", "native.txt", "panic.txt", "oom.txt"]
+            .iter()
+            .any(|name| dir.join(name).exists())
+        && ended()
+}
+
 fn should_report(dir: &Path, exit_code: u32) -> bool {
     !dir.join("system-ending").exists() && (exit_code != 0 || dir.join("failed").exists() || !dir.join("normal").exists())
 }
@@ -984,6 +1003,27 @@ mod tests {
         assert!(should_report(&dir, 0xC0000005));
         std::fs::write(dir.join("failed"), []).unwrap();
         assert!(should_report(&dir, 0));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_an_update_helpers_own_end_is_kept_from_the_reports() {
+        let dir = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        // ended by the helper, which rolled the update back
+        assert!(ended_by_update(&dir, 1, || true));
+        // no rollback said, or another exit code (a crash's exception)
+        assert!(!ended_by_update(&dir, 1, || false));
+        assert!(!ended_by_update(&dir, 0xC0000005, || true));
+        assert!(!ended_by_update(&dir, 0, || true));
+        // the viewer's own crash, panic or out-of-memory, even then
+        for name in ["native.txt", "panic.txt", "oom.txt", "failed"] {
+            std::fs::write(dir.join(name), []).unwrap();
+            assert!(!ended_by_update(&dir, 1, || true), "{name}");
+            std::fs::remove_file(dir.join(name)).unwrap();
+        }
+        // the helper is not even asked when the exit already says no
+        assert!(!ended_by_update(&dir, 3, || panic!("not asked")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
