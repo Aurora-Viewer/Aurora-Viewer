@@ -661,16 +661,26 @@ pub(crate) fn upgrade_blend_order(s: &mut Settings) {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Effects {
     pub bloom: bool,
+    #[serde(default)]
+    pub glare: [bool; 4],
+    #[serde(default = "glare_defaults")]
+    pub glare_strengths: [f32; 4],
     pub bloom_strength: f32,
     pub contact_shadows: bool,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
 }
 
+const fn glare_defaults() -> [f32; 4] {
+    [crate::settings::BLOOM_STRENGTH; 4]
+}
+
 impl Effects {
     /// None of them, at their default strengths.
     pub const OFF: Effects = Effects {
         bloom: false,
+        glare: [false; 4],
+        glare_strengths: glare_defaults(),
         bloom_strength: crate::settings::BLOOM_STRENGTH,
         contact_shadows: false,
         screen_indirect_light: false,
@@ -831,6 +841,14 @@ impl Values {
         let indirect = ao_method == 1 && e.screen_indirect_light;
         let effects = Effects {
             bloom: e.bloom,
+            glare: e.glare,
+            glare_strengths: std::array::from_fn(|i| {
+                if e.glare[i] {
+                    round(e.glare_strengths[i], 0.05)
+                } else {
+                    glare_defaults()[i]
+                }
+            }),
             bloom_strength: if e.bloom {
                 round(e.bloom_strength, 0.05)
             } else {
@@ -901,6 +919,13 @@ impl Values {
             local_light_count: s.local_light_count,
             effects: Effects {
                 bloom: s.bloom,
+                glare_strengths: [
+                    s.anamorphic_bloom_strength,
+                    s.light_streaks_strength,
+                    s.starburst_strength,
+                    s.lens_ghosts_strength,
+                ],
+                glare: [s.anamorphic_bloom, s.light_streaks, s.starburst, s.lens_ghosts],
                 bloom_strength: s.bloom_strength,
                 contact_shadows: s.contact_shadows,
                 screen_indirect_light: s.screen_indirect_light,
@@ -942,6 +967,23 @@ impl Values {
         // (a saved profile edited by hand: no more than the renderer holds)
         s.local_light_count = self.local_light_count.min(ALL_LIGHTS);
         s.bloom = self.effects.bloom;
+        s.anamorphic_bloom = self.effects.glare[0];
+        s.light_streaks = self.effects.glare[1];
+        s.starburst = self.effects.glare[2];
+        s.lens_ghosts = self.effects.glare[3];
+        for (i, strength) in [
+            &mut s.anamorphic_bloom_strength,
+            &mut s.light_streaks_strength,
+            &mut s.starburst_strength,
+            &mut s.lens_ghosts_strength,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if self.effects.glare[i] {
+                *strength = self.effects.glare_strengths[i];
+            }
+        }
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
         s.screen_indirect_light = self.effects.screen_indirect_light;
@@ -1008,6 +1050,22 @@ mod tests {
             assert_eq!(Preset::matching(&s), Some(preset), "{preset:?}");
             assert_eq!(s.shadows, s.shadow_quality > 0);
         }
+    }
+
+    #[test]
+    fn glare_is_custom_and_presets_preserve_dormant_strengths() {
+        let mut settings = Settings::default();
+        Preset::Deluxe.apply(&mut settings);
+        settings.lens_ghosts_strength = 0.85;
+        assert_eq!(Preset::matching(&settings), Some(Preset::Deluxe));
+        settings.lens_ghosts = true;
+        assert_eq!(Preset::matching(&settings), None);
+        let custom = Values::read(&settings);
+        Preset::Deluxe.apply(&mut settings);
+        assert_eq!(settings.glare(), [0.0; 4]);
+        settings.lens_ghosts_strength = 0.5;
+        custom.write(&mut settings);
+        assert_eq!(settings.glare(), [0.0, 0.0, 0.0, 0.85]);
     }
 
     #[test]

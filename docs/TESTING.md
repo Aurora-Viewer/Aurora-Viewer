@@ -4915,6 +4915,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
+| `AURORA_DEMO_GLARE=1` | Two compact HDR emitters for testing Bloom and glare |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
@@ -5117,6 +5118,17 @@ both open states and the selection count. Capture at frame 620.
   number of objects).
 - **`AURORA_DEMO_PLANAR=1`**: the tiles must line up from one slab
   to the next.
+- **`AURORA_DEMO_GLARE=1`** adds warm and cool HDR emitters ahead of the
+  starting camera. In Preferences › Graphics, enable one glare effect at
+  a time beside Bloom and sweep its intensity. For Lens Ghosts, position
+  a light near the edge of the frame, then compare a single-pass photo
+  with a forced tiled photo using `AURORA_DEMO_SNAPSHOT_TILE`. Look for
+  continuous reflections across the tile seams.
+  For repeatable captures, select `off`, `anamorphic`, `streaks`,
+  `starburst`, `ghosts` or `all`. Enabled effects use intensity 0.5 for
+  the demo run. With `AURORA_PROFILE=1`, compare
+  `g_bloom` at the same window size with each of these values.
+
 - **`AURORA_DEMO_PBR_EMISSIVE=1`**: three dark spheres ahead of the start
   position with the same orange emissive (PBR), from the right: opaque,
   alpha-masked and blended. All three glow orange; with `AURORA_HDR=0`
@@ -14274,8 +14286,8 @@ parts, against the scene without weather. `--scenes` picks some,
     footprints memories, the wet ground with the snow lying (deep snow
     included), and the drops or flakes with their splashes and the distant
     layers;
-  - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
-    counted in `g_post`;
+  - `g_bloom`: HDR highlight extraction, bloom levels and glare filters,
+    also counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn

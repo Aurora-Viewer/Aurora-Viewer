@@ -260,6 +260,7 @@ struct PostU {
     _pad: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    glare: [f32; 4],
     /// The key color of a cut-out live view (`FrameParams::cutout_key`),
     /// linear RGB.
     cutout_key: [f32; 4],
@@ -9161,17 +9162,21 @@ impl Backend {
         let glow_skip = *GLOW_SKIP.get_or_init(|| std::env::var("AURORA_GLOW_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
         // Aurora's bloom: its levels kept while on (or alternated), none
         // under a debug view, which replaces the image
-        let bloom = {
+        let (bloom, glare) = {
             static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let secs = START.get_or_init(Instant::now).elapsed().as_secs();
             let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
-            if keep && !debug_view {
-                self.bloom.ensure(&self.device, post_size);
-            } else {
-                self.bloom.release();
-            }
-            if self.bloom.norm() > 0.0 { strength.clamp(0.0, 1.0) } else { 0.0 }
+            let glare = if debug_view { [0.0; 4] } else { f.glare };
+            self.bloom.prepare(
+                &self.device,
+                post_size,
+                keep && !debug_view,
+                glare,
+                f.photo_context,
+                f.photo_tile != Mat4::IDENTITY,
+            );
+            (if debug_view { 0.0 } else { strength.clamp(0.0, 1.0) }, glare)
         };
         // "HDR and Emissive" off: LLPipeline::renderFinalize skips the
         // luminance, the exposure, the tone mapping and the CAS for
@@ -9235,6 +9240,7 @@ impl Backend {
             },
             _pad: 0.0,
             photo_part: photo_part(f.photo_tile),
+            glare,
             cutout_key: f.cutout_key.map_or([0.0; 4], |[r, g, b]| [r, g, b, 1.0]),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
@@ -11866,9 +11872,12 @@ impl Backend {
         // ---- bloom, from the image the post pass reads (after the glow,
         // which it leaves as it is)
         mark(&mut encoder, MARK_BLOOM_BEGIN);
-        if bloom > 0.0 {
-            self.bloom.encode(&mut encoder, post_bg);
-        }
+        self.bloom.encode(
+            &mut encoder,
+            post_bg,
+            bloom > 0.0,
+            f.photo_context == crate::types::PhotoContext::Record && glare[3] > 0.0,
+        );
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
@@ -13402,6 +13411,20 @@ mod tests {
         // the top left quarter (its centre at -0.5, 0.5)
         let tile = Mat4::from_cols(Vec4::X * 2.0, Vec4::Y * 2.0, Vec4::Z, Vec4::new(1.0, -1.0, 0.0, 1.0));
         assert!(near(photo_part(tile), [0.0, 0.0, 0.5, 0.5]), "{:?}", photo_part(tile));
+    }
+
+    #[test]
+    fn lens_ghost_can_read_across_a_photo_tile_boundary() {
+        let left = Mat4::from_cols(Vec4::X * 2.0, Vec4::Y, Vec4::Z, Vec4::new(1.0, 0.0, 0.0, 1.0));
+        let right = Mat4::from_cols(Vec4::X * 2.0, Vec4::Y, Vec4::Z, Vec4::new(-1.0, 0.0, 0.0, 1.0));
+        let ghost_source_x = |tile, uv| {
+            let part = photo_part(tile);
+            0.5 - (part[0] + uv * part[2] - 0.5) / 0.85
+        };
+        assert_eq!(ghost_source_x(left, 1.0), ghost_source_x(right, 0.0));
+        let sample = ghost_source_x(left, 0.5);
+        assert!(sample > 0.5 && sample < 1.0);
+        assert_eq!(sample, ghost_source_x(Mat4::IDENTITY, 0.25));
     }
 
     #[test]

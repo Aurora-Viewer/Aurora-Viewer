@@ -35,6 +35,7 @@ struct PostParams {
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
+    glare: vec4<f32>,
     // the key color of a cut-out live view (FrameParams::cutout_key), linear
     cutout_key: vec4<f32>,
 };
@@ -43,6 +44,10 @@ struct PostParams {
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
 // The bloom levels added up (half resolution, scene units), see bloom.wgsl.
 @group(1) @binding(0) var bloom_tex: texture_2d<f32>;
+@group(1) @binding(1) var anamorphic_tex: texture_2d<f32>;
+@group(1) @binding(2) var streak_tex: texture_2d<f32>;
+@group(1) @binding(3) var starburst_tex: texture_2d<f32>;
+@group(1) @binding(4) var ghost_tex: texture_2d<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -162,6 +167,19 @@ fn bloom_extract(c: vec3<f32>) -> vec3<f32> {
     return lit * (max(soft, b - post.bloom_threshold) / max(b, 1e-5));
 }
 
+// Screen-space lens ghost reflections follow John Chapman's full-image
+// UV reflection approach. Reject samples beyond the source image.
+fn lens_ghost(uv: vec2<f32>, magnification: f32) -> vec3<f32> {
+    let from_center = uv - vec2<f32>(0.5);
+    let source_uv = vec2<f32>(0.5) - from_center / magnification;
+    if (any(source_uv < vec2<f32>(0.0)) || any(source_uv > vec2<f32>(1.0))) {
+        return vec3<f32>(0.0);
+    }
+    let edge = min(source_uv, vec2<f32>(1.0) - source_uv);
+    let fade = smoothstep(0.0, 0.12, min(edge.x, edge.y));
+    return textureSampleLevel(ghost_tex, hdr_sampler, source_uv, 0.0).rgb * fade;
+}
+
 // The scene color with the bloom: the share `bloom` of the light over the
 // threshold leaves the pixel and comes back spread by the levels (brighter
 // by bloom.rs GAIN, folded into bloom_norm): bright spots keep their
@@ -173,6 +191,19 @@ fn scene(uv: vec2<f32>) -> vec3<f32> {
     if (post.bloom > 0.0) {
         let spread = textureSampleLevel(bloom_tex, hdr_sampler, uv, 0.0).rgb * post.bloom_norm;
         lit = c + post.bloom * (spread - bloom_extract(c));
+    }
+    if (post.glare.x > 0.0) {
+        lit += textureSampleLevel(anamorphic_tex, hdr_sampler, uv, 0.0).rgb * (post.glare.x * 2.0);
+    }
+    if (post.glare.y > 0.0) {
+        lit += textureSampleLevel(streak_tex, hdr_sampler, uv, 0.0).rgb * (post.glare.y * 2.0);
+    }
+    if (post.glare.z > 0.0) {
+        lit += textureSampleLevel(starburst_tex, hdr_sampler, uv, 0.0).rgb * (post.glare.z * 2.0);
+    }
+    if (post.glare.w > 0.0) {
+        let photo_uv = post.photo_part.xy + uv * post.photo_part.zw;
+        lit += (lens_ghost(photo_uv, 0.45) * 0.65 + lens_ghost(photo_uv, 0.85) * 0.35) * post.glare.w;
     }
     if (post.cutout > 0.5) {
         // drawn over black: premultiplied by the coverage, tone mapped as

@@ -578,7 +578,7 @@ impl App {
         }
         let textures = &self.scene.textures;
         let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
-        let occlusion = self.photo_ambient_occlusion() > 0;
+        let needs_context = self.photo_ambient_occlusion() > 0 || self.glare_strengths()[3] > 0.0;
         let s = &mut self.snapshots;
         s.capturing = None;
         // a 360° snapshot's face first: the photo's own parts wait for it
@@ -606,7 +606,7 @@ impl App {
                     job.next = 0;
                     job.pixels = Vec::new();
                     job.hold = None;
-                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion);
+                    job.context = ContextPass::plan(job.size, job.tiles.len(), needs_context);
                     return None;
                 }
             }
@@ -643,7 +643,7 @@ impl App {
         }
         let scale = snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent);
         if let ContextPass::Pending((width, height)) = job.context {
-            // the whole photo, for the tiles' occlusion: nothing of it is kept
+            // The renderer keeps the depth and highlights needed by the tiles.
             let spec = SnapshotSpec {
                 width,
                 height,
@@ -737,7 +737,7 @@ impl App {
             job.context = if answer.is_some_and(|(w, h, _)| (w, h) == size) {
                 ContextPass::Drawn
             } else {
-                log::warn!("photo: the whole photo's depth was not drawn, the tiles go without it");
+                log::warn!("photo: the whole-photo context was not drawn, the tiles go without it");
                 ContextPass::None
             };
             return;
@@ -1207,7 +1207,11 @@ impl App {
         // HUDs or the photo's looks, whatever the Photo window has chosen
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
-        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0);
+        let context = ContextPass::plan(
+            size,
+            tiles.len(),
+            self.photo_ambient_occlusion() > 0 || self.glare_strengths()[3] > 0.0,
+        );
         // (the outfit's photo mode keeps the viewfinder's looks: the
         // square shows them)
         let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
@@ -1303,6 +1307,16 @@ impl App {
         looks::frame_look(&layers, place, None, false, self.snapshots.look_focus)
     }
 
+    pub(super) fn glare_strengths(&self) -> [f32; 4] {
+        if self.demo
+            && let Some(glare) = crate::demo::glare_override()
+        {
+            glare
+        } else {
+            self.settings.glare()
+        }
+    }
+
     /// How a photo of `size` is drawn (`snapshot::plan`), with the guard
     /// band its effects need: the bloom and the depth of field (at the blur
     /// this photo gets, its `max_coc` grows with its height) read the image
@@ -1317,6 +1331,7 @@ impl App {
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
         let guard = snapshot::TILE_GUARD
             .max(aurora_render::bloom_tile_reach(bloom))
+            .max(aurora_render::glare_tile_reach(self.glare_strengths()))
             .max(dof)
             .max(contact);
         snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer), guard)

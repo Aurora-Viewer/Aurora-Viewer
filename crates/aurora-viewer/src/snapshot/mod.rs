@@ -857,7 +857,7 @@ impl PausedWait {
 /// past their border read (`aurora_render::PhotoContext`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextPass {
-    /// A photo in one pass, or without ambient occlusion.
+    /// A photo in one pass, or without effects needing whole-photo data.
     None,
     /// To draw, at this size.
     Pending((u32, u32)),
@@ -873,9 +873,9 @@ const CONTEXT_DIVISOR: u32 = 4;
 
 impl ContextPass {
     /// What a photo of `size` drawn in `tiles` passes needs, with the
-    /// ambient occlusion on or not.
-    pub fn plan(size: (u32, u32), tiles: usize, occlusion: bool) -> Self {
-        if tiles > 1 && occlusion {
+    /// need for whole-photo depth or highlights.
+    pub fn plan(size: (u32, u32), tiles: usize, needs_context: bool) -> Self {
+        if tiles > 1 && needs_context {
             ContextPass::Pending((size.0.div_ceil(CONTEXT_DIVISOR).max(16), size.1.div_ceil(CONTEXT_DIVISOR).max(16)))
         } else {
             ContextPass::None

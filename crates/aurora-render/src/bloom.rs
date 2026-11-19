@@ -109,11 +109,24 @@ struct Level {
     bg: wgpu::BindGroup,
 }
 
+// Maximum filter component in half-resolution texels, plus room for
+// prefilter and bilinear reconstruction. WGSL receives these radii below.
+const GLARE_RADII: [u32; 3] = [12, 44, 24];
+
+pub fn glare_tile_reach(strengths: [f32; 4]) -> u32 {
+    GLARE_RADII
+        .into_iter()
+        .zip(strengths)
+        .filter(|&(_, strength)| strength > 0.0)
+        .map(|(radius, _)| 2 * radius + 12)
+        .max()
+        .unwrap_or(0)
+}
+
 struct Targets {
     size: (u32, u32),
     levels: Vec<Level>,
-    /// The post pass's group 1 reading the first level.
-    post_bg: wgpu::BindGroup,
+    pyramid: bool,
 }
 
 pub(crate) struct Bloom {
@@ -124,8 +137,14 @@ pub(crate) struct Bloom {
     prefilter: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
     up: wgpu::RenderPipeline,
-    /// Black, for the post passes while the bloom is off.
+    glare_pipes: [wgpu::RenderPipeline; 5],
+    black: wgpu::TextureView,
     off_bg: wgpu::BindGroup,
+    active_bg: Option<wgpu::BindGroup>,
+    scratch: Option<Level>,
+    glare: [Option<Level>; 4],
+    ghost_context: Option<Level>,
+    use_context: bool,
     targets: Option<Targets>,
 }
 
@@ -148,7 +167,7 @@ impl Bloom {
     pub(crate) fn new(device: &wgpu::Device, main_post_layout: &wgpu::BindGroupLayout) -> Bloom {
         let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom post"),
-            entries: &[tex_entry(0)],
+            entries: &[tex_entry(0), tex_entry(1), tex_entry(2), tex_entry(3), tex_entry(4)],
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom"),
@@ -228,9 +247,21 @@ impl Bloom {
         );
         let down = pipe("bloom down", &module, &layout, "vs_bloom", "fs_bloom_down", false);
         let up = pipe("bloom up", &module, &layout, "vs_bloom", "fs_bloom_up", true);
+        let glare_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("glare"),
+            source: wgpu::ShaderSource::Wgsl(glare_shader().into()),
+        });
+        let glare_pipes = [
+            "fs_anamorphic_x",
+            "fs_anamorphic_y",
+            "fs_streaks",
+            "fs_starburst",
+            "fs_ghost_source",
+        ]
+        .map(|fs| pipe(fs, &glare_module, &layout, "vs_bloom", fs, false));
         // a new texture reads zero: black
         let black = crate::renderer::make_view(device, "bloom off", 1, 1, FORMAT, 1, wgpu::TextureUsages::TEXTURE_BINDING).1;
-        let off_bg = Self::post_group(device, &post_layout, &black);
+        let off_bg = Self::post_group(device, &post_layout, [&black; 5]);
         Bloom {
             post_layout,
             layout,
@@ -238,26 +269,33 @@ impl Bloom {
             prefilter,
             down,
             up,
+            glare_pipes,
+            black,
             off_bg,
+            active_bg: None,
+            scratch: None,
+            glare: [const { None }; 4],
+            ghost_context: None,
+            use_context: false,
             targets: None,
         }
     }
 
-    fn post_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, view: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn post_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, views: [&wgpu::TextureView; 5]) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bloom post"),
             layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
-            }],
+            entries: &std::array::from_fn::<_, 5, _>(|binding| wgpu::BindGroupEntry {
+                binding: binding as u32,
+                resource: wgpu::BindingResource::TextureView(views[binding]),
+            }),
         })
     }
 
     /// What the post pass binds as its group 1: the levels while they
     /// exist, black otherwise.
     pub(crate) fn post_bg(&self) -> &wgpu::BindGroup {
-        self.targets.as_ref().map_or(&self.off_bg, |t| &t.post_bg)
+        self.active_bg.as_ref().unwrap_or(&self.off_bg)
     }
 
     /// 1 / the number of levels added up (0 while off).
@@ -265,49 +303,106 @@ impl Bloom {
         self.targets.as_ref().map_or(0.0, |t| 1.0 / t.levels.len() as f32)
     }
 
-    /// The levels are dropped with the effect.
-    pub(crate) fn release(&mut self) {
-        self.targets = None;
-    }
-
-    /// Levels for an image of `size`, made again when it changes.
-    pub(crate) fn ensure(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        if self.targets.as_ref().is_some_and(|t| t.size == size) {
-            return;
-        }
+    fn level(&self, device: &wgpu::Device, label: &str, (w, h): (u32, u32)) -> Level {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let levels: Vec<Level> = levels(size.0, size.1)
-            .into_iter()
-            .enumerate()
-            .map(|(i, (w, h))| {
-                let view = crate::renderer::make_view(device, &format!("bloom {i}"), w, h, FORMAT, 1, usage).1;
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("bloom"),
-                    layout: &self.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                    ],
-                });
-                Level { view, bg }
-            })
-            .collect();
-        let post_bg = Self::post_group(device, &self.post_layout, &levels[0].view);
-        self.targets = Some(Targets { size, levels, post_bg });
+        let view = crate::renderer::make_view(device, label, w, h, FORMAT, 1, usage).1;
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        Level { view, bg }
     }
 
-    /// The levels from the image the post pass reads (`scene_bg`, its
-    /// group 0), after [`Bloom::ensure`].
-    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, scene_bg: &wgpu::BindGroup) {
+    /// Allocate only the shared highlight level and the requested outputs.
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        size: (u32, u32),
+        pyramid: bool,
+        glare: [f32; 4],
+        context: crate::types::PhotoContext,
+        tiled: bool,
+    ) {
+        use crate::types::PhotoContext;
+        let use_context = tiled && glare[3] > 0.0;
+        let mut changed = self.use_context != use_context;
+        self.use_context = use_context;
+        if context != PhotoContext::Use {
+            changed |= self.ghost_context.take().is_some();
+        }
+        let record = context == PhotoContext::Record && glare[3] > 0.0;
+        let local = [glare[0] > 0.0, glare[1] > 0.0, glare[2] > 0.0, glare[3] > 0.0 && !tiled && !record];
+        let needed = pyramid || local.into_iter().any(|on| on) || record;
+        let resize = !self.targets.as_ref().is_some_and(|t| t.size == size);
+        let half = (size.0.max(1).div_ceil(2), size.1.max(1).div_ceil(2));
+        let quarter = (half.0.div_ceil(2), half.1.div_ceil(2));
+        if needed {
+            if resize || self.targets.as_ref().is_some_and(|t| t.pyramid != pyramid) {
+                let mut sizes = levels(size.0, size.1);
+                if !pyramid {
+                    sizes.truncate(1);
+                }
+                let levels = sizes.into_iter().map(|size| self.level(device, "bloom level", size)).collect();
+                self.targets = Some(Targets { size, levels, pyramid });
+                changed = true;
+            }
+        } else {
+            changed |= self.targets.take().is_some();
+        }
+        for (i, on) in local.into_iter().enumerate() {
+            if on && (resize || self.glare[i].is_none()) {
+                self.glare[i] = Some(self.level(device, "glare output", if i == 0 { half } else { quarter }));
+                changed = true;
+            } else if !on {
+                changed |= self.glare[i].take().is_some();
+            }
+        }
+        if local[0] && (resize || self.scratch.is_none()) {
+            self.scratch = Some(self.level(device, "anamorphic horizontal", half));
+        } else if !local[0] {
+            self.scratch = None;
+        }
+        if record {
+            let (level, refused) = crate::gpu_alloc::scoped(device, || self.level(device, "photo ghost context", quarter));
+            if refused {
+                log::warn!("photo: lens ghost highlight map could not be allocated");
+            } else {
+                self.ghost_context = Some(level);
+            }
+        }
+        if changed {
+            let bloom = self.targets.as_ref().map_or(&self.black, |t| &t.levels[0].view);
+            let mut views = [bloom, &self.black, &self.black, &self.black, &self.black];
+            for (view, level) in views[1..].iter_mut().zip(&self.glare) {
+                if let Some(level) = level {
+                    *view = &level.view;
+                }
+            }
+            if self.use_context {
+                views[4] = self.ghost_context.as_ref().map_or(&self.black, |level| &level.view);
+            }
+            self.active_bg =
+                (views.iter().any(|view| !std::ptr::eq(*view, &self.black))).then(|| Self::post_group(device, &self.post_layout, views));
+        }
+    }
+
+    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, scene_bg: &wgpu::BindGroup, bloom: bool, record: bool) {
         let Some(t) = &self.targets else {
             return;
         };
+        if !bloom && !record && self.glare.iter().all(Option::is_none) {
+            return;
+        }
         let run = |encoder: &mut wgpu::CommandEncoder,
                    target: &wgpu::TextureView,
                    keep: bool,
@@ -338,6 +433,22 @@ impl Bloom {
             pass.draw(0..3, 0..1);
         };
         run(encoder, &t.levels[0].view, false, &self.prefilter, scene_bg);
+        let source = &t.levels[0].bg;
+        if let (Some(scratch), Some(output)) = (&self.scratch, &self.glare[0]) {
+            run(encoder, &scratch.view, false, &self.glare_pipes[0], source);
+            run(encoder, &output.view, false, &self.glare_pipes[1], &scratch.bg);
+        }
+        for (i, level) in self.glare[1..].iter().enumerate() {
+            if let Some(level) = level {
+                run(encoder, &level.view, false, &self.glare_pipes[i + 2], source);
+            }
+        }
+        if record && let Some(level) = &self.ghost_context {
+            run(encoder, &level.view, false, &self.glare_pipes[4], source);
+        }
+        if !bloom {
+            return;
+        }
         for i in 1..t.levels.len() {
             run(encoder, &t.levels[i].view, false, &self.down, &t.levels[i - 1].bg);
         }
@@ -347,9 +458,26 @@ impl Bloom {
     }
 }
 
+pub(crate) fn glare_shader() -> String {
+    let [halo, streaks, star] = GLARE_RADII;
+    format!(
+        "const HALO_RADIUS: f32 = {halo}.0;\nconst STREAK_RADIUS: f32 = {streaks}.0;\nconst STAR_RADIUS: f32 = {star}.0;\n{}\n{}",
+        include_str!("shaders/bloom.wgsl"),
+        include_str!("shaders/glare.wgsl"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glare_padding_covers_only_enabled_local_filters() {
+        assert_eq!(glare_tile_reach([0.0, 0.0, 0.0, 1.0]), 0);
+        assert_eq!(glare_tile_reach([1.0, 0.0, 0.0, 0.0]), 36);
+        assert_eq!(glare_tile_reach([0.0, 0.0, 1.0, 0.0]), 60);
+        assert_eq!(glare_tile_reach([1.0; 4]), 100);
+    }
 
     #[test]
     fn levels_halve_from_half_resolution_down_to_eight_pixels() {

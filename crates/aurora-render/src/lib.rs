@@ -120,7 +120,7 @@ pub use water_effects::{RAIN_GROUND_SIZE, RainGround, WaterEffects, WaterEvent, 
 pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
-pub use bloom::tile_reach as bloom_tile_reach;
+pub use bloom::{glare_tile_reach, tile_reach as bloom_tile_reach};
 pub use clouds::type_of_shadow as clouds_type_of_shadow;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
@@ -1174,6 +1174,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn bloom_shader_is_valid() {
         validate(include_str!("shaders/bloom.wgsl"));
+        validate(&crate::bloom::glare_shader());
     }
 
     #[test]

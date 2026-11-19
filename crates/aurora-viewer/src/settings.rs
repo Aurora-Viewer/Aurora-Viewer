@@ -782,6 +782,14 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    pub anamorphic_bloom: bool,
+    pub anamorphic_bloom_strength: f32,
+    pub light_streaks: bool,
+    pub light_streaks_strength: f32,
+    pub starburst: bool,
+    pub starburst_strength: f32,
+    pub lens_ghosts: bool,
+    pub lens_ghosts_strength: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -2430,6 +2438,14 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            anamorphic_bloom: false,
+            anamorphic_bloom_strength: BLOOM_STRENGTH,
+            light_streaks: false,
+            light_streaks_strength: BLOOM_STRENGTH,
+            starburst: false,
+            starburst_strength: BLOOM_STRENGTH,
+            lens_ghosts: false,
+            lens_ghosts_strength: BLOOM_STRENGTH,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -3020,7 +3036,40 @@ pub(crate) fn window_starts_maximized(saved_maximized: Option<bool>, saved_size:
     !forced && saved_maximized.unwrap_or(!saved_size)
 }
 
+fn glare_strength(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.05, 1.0)
+    } else {
+        BLOOM_STRENGTH
+    }
+}
+
 impl Settings {
+    pub(crate) fn glare(&self) -> [f32; 4] {
+        [
+            if self.anamorphic_bloom {
+                glare_strength(self.anamorphic_bloom_strength)
+            } else {
+                0.0
+            },
+            if self.light_streaks {
+                glare_strength(self.light_streaks_strength)
+            } else {
+                0.0
+            },
+            if self.starburst {
+                glare_strength(self.starburst_strength)
+            } else {
+                0.0
+            },
+            if self.lens_ghosts {
+                glare_strength(self.lens_ghosts_strength)
+            } else {
+                0.0
+            },
+        ]
+    }
+
     /// Rendering exception of an avatar: 0 none, 1 never render fully,
     /// 2 always render fully.
     pub fn render_exception(&self, id: &uuid::Uuid) -> u8 {
@@ -3628,6 +3677,10 @@ impl Settings {
         } else {
             0.4
         };
+        self.anamorphic_bloom_strength = glare_strength(self.anamorphic_bloom_strength);
+        self.light_streaks_strength = glare_strength(self.light_streaks_strength);
+        self.starburst_strength = glare_strength(self.starburst_strength);
+        self.lens_ghosts_strength = glare_strength(self.lens_ghosts_strength);
         self.bloom_strength = if self.bloom_strength.is_finite() {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
@@ -4168,6 +4221,26 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn glare_settings_default_off_and_round_trip() {
+        let old: super::Settings = serde_json::from_str("{}").expect("older settings");
+        assert_eq!(old.glare(), [0.0; 4]);
+        let settings = super::Settings {
+            anamorphic_bloom: true,
+            light_streaks: true,
+            light_streaks_strength: 0.75,
+            starburst: true,
+            starburst_strength: 2.0,
+            lens_ghosts: true,
+            lens_ghosts_strength: f32::NAN,
+            ..old
+        }
+        .sanitized();
+        let json = serde_json::to_string(&settings).expect("glare settings");
+        let loaded: super::Settings = serde_json::from_str(&json).expect("saved glare settings");
+        assert_eq!(loaded.glare(), [0.5, 0.75, 1.0, 0.5]);
+    }
+
     #[test]
     fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;

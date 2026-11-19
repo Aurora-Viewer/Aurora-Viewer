@@ -878,24 +878,74 @@ fn light(cx: &mut Cx) {
             tr!("ui-options-glow-around-glowing-faces-as-in-firestorm"),
             &field!(glow),
         );
-        cx.experimental()
-            .toggle(tr!("ui-options-bloom"), tr!("ui-options-bloom-help"), &field!(bloom));
-        let off = !cx.s.bloom;
-        cx.subs(off, |cx| {
-            cx.row(
-                tr!("ui-options-bloom-strength"),
-                tr!("ui-options-bloom-strength-help"),
-                &field!(bloom_strength),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.bloom_strength, 0.05..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .step_by(0.05)
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
+        bloom_control(
+            cx,
+            tr!("ui-options-bloom"),
+            tr!("ui-options-bloom-help"),
+            tr!("ui-options-bloom-strength"),
+            tr!("ui-options-bloom-strength-help"),
+            &field!(bloom),
+            &field!(bloom_strength),
+        );
+        bloom_control(
+            cx,
+            tr!("ui-options-anamorphic-bloom"),
+            tr!("ui-options-anamorphic-bloom-help"),
+            tr!("ui-options-anamorphic-bloom-strength"),
+            tr!("ui-options-glare-strength-help"),
+            &field!(anamorphic_bloom),
+            &field!(anamorphic_bloom_strength),
+        );
+        bloom_control(
+            cx,
+            tr!("ui-options-light-streaks"),
+            tr!("ui-options-light-streaks-help"),
+            tr!("ui-options-light-streaks-strength"),
+            tr!("ui-options-glare-strength-help"),
+            &field!(light_streaks),
+            &field!(light_streaks_strength),
+        );
+        bloom_control(
+            cx,
+            tr!("ui-options-starburst"),
+            tr!("ui-options-starburst-help"),
+            tr!("ui-options-starburst-strength"),
+            tr!("ui-options-glare-strength-help"),
+            &field!(starburst),
+            &field!(starburst_strength),
+        );
+        bloom_control(
+            cx,
+            tr!("ui-options-lens-ghosts"),
+            tr!("ui-options-lens-ghosts-help"),
+            tr!("ui-options-lens-ghosts-strength"),
+            tr!("ui-options-glare-strength-help"),
+            &field!(lens_ghosts),
+            &field!(lens_ghosts_strength),
+        );
+    });
+}
+
+fn bloom_control(
+    cx: &mut Cx,
+    label: &str,
+    help: &str,
+    strength_label: &str,
+    strength_help: &str,
+    enabled: &super::super::cx::F<bool>,
+    strength: &super::super::cx::F<f32>,
+) {
+    cx.experimental().toggle(label, help, enabled);
+    let off = !*(enabled.get)(cx.s);
+    cx.subs(off, |cx| {
+        cx.row(strength_label, strength_help, strength, |ui, s| {
+            ui.add(
+                egui::Slider::new((strength.get_mut)(s), 0.05..=1.0)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(0.05)
+                    .trailing_fill(true),
+            )
+            .changed()
         });
     });
 }

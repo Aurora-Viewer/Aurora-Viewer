@@ -5616,6 +5616,30 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    if std::env::var_os("AURORA_DEMO_GLARE").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        // Two compact emitters on opposite sides of the default view.
+        for (k, y, z) in [(0, 123.0, 2.4), (1, 130.0, 3.1)] {
+            let mut t = TextureEntry::default();
+            for face in &mut t.faces {
+                face.texture = BLANK_TEXTURE;
+            }
+            add(prim(
+                id,
+                Vec3::new(136.0, y, floor + z),
+                Quat::IDENTITY,
+                Vec3::splat(0.23),
+                sphere,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|face| (face, MAT_GLARE[k])).collect(),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_PBR_EMISSIVE=1: three dark spheres ahead of the start
     // position with the same orange emissive, opaque, alpha-masked and
     // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
@@ -9669,6 +9693,25 @@ const MAT_PBR_EMISSIVE: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
 ];
 
+/// A capture's glare settings, separate from its persisted preferences.
+pub(crate) fn glare_override() -> Option<[f32; 4]> {
+    static OVERRIDE: std::sync::OnceLock<Option<[f32; 4]>> = std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| match std::env::var("AURORA_DEMO_GLARE").ok().as_deref()? {
+        "off" => Some([0.0; 4]),
+        "anamorphic" => Some([0.5, 0.0, 0.0, 0.0]),
+        "streaks" => Some([0.0, 0.5, 0.0, 0.0]),
+        "starburst" => Some([0.0, 0.0, 0.5, 0.0]),
+        "ghosts" => Some([0.0, 0.0, 0.0, 0.5]),
+        "all" => Some([0.5; 4]),
+        _ => None,
+    })
+}
+
+const MAT_GLARE: [Uuid; 2] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_005A),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_005B),
+];
+
 /// The same translucent material, single- and double-sided (#1727).
 const MAT_PBR_SIDED: [Uuid; 2] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0040),
@@ -9742,6 +9785,17 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     ));
+    for (mat, emissive_factor) in MAT_GLARE.into_iter().zip([[12.0, 6.0, 2.0], [2.0, 6.0, 12.0]]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.04, 0.04, 0.04, 1.0],
+                emissive_factor,
+                metallic_factor: 0.0,
+                ..Default::default()
+            },
+        ));
+    }
     for (mat, (alpha_mode, alpha)) in MAT_PBR_EMISSIVE.into_iter().zip([
         (aurora_assets::AlphaMode::Opaque, 1.0),
         (aurora_assets::AlphaMode::Mask, 1.0),

@@ -1698,6 +1698,8 @@ pub struct FrameParams {
     /// Aurora's bloom (bloom.rs): the share of the light over the
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
+    /// Anamorphic halo, horizontal streaks, diagonal starburst, and lens ghosts.
+    pub glare: [f32; 4],
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.

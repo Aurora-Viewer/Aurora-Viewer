@@ -12829,6 +12829,7 @@ impl App {
             tonemap_mix: self.settings.tonemap_mix,
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
+            glare: self.glare_strengths(),
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
