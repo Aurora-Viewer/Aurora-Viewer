@@ -195,12 +195,11 @@ pub(crate) struct Target {
 
 impl Target {
     /// A texture of the renderer's output `format` that the second backend
-    /// draws into. egui is given its sRGB view: the post pass writes
-    /// display-encoded values, which the sRGB view decodes and egui encodes
-    /// again for the window, so the picture keeps the colours of the 3D
-    /// view (a plain view would be encoded twice and look washed out).
+    /// draws into, shown by egui through its plain view, as the previews
+    /// are (preview.rs): the post pass writes display-encoded values, which
+    /// egui puts on the window as they are. An sRGB view would decode them
+    /// once more and darken the picture (a 0.35 grey shown as 0.10).
     pub fn new(device: &wgpu::Device, egui: &mut egui_wgpu::Renderer, format: wgpu::TextureFormat, size: [u32; 2]) -> Target {
-        let srgb = format.add_srgb_suffix();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("second camera"),
             size: wgpu::Extent3d {
@@ -213,12 +212,9 @@ impl Target {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: if srgb == format { &[] } else { std::slice::from_ref(&srgb) },
+            view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(srgb),
-            ..Default::default()
-        });
+        let view = texture.create_view(&Default::default());
         let id = egui.register_native_texture(device, &view, wgpu::FilterMode::Linear);
         Target { texture, id, size }
     }
