@@ -172,8 +172,8 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
-| `AURORA_DEMO_PORTALS=1\|near\|friends\|no-build` | Open the portal creator and a shared-portal preview, or a portal refused on land without building |
-| `AURORA_DEMO_PORTALS=stranger\|stranger-groups\|stranger-hidden` | A non-friend's portal under each "Show portals from" choice |
+| `AURORA_DEMO_PORTALS=1\|near\|no-build\|return` | Open the portal creator with our portal ahead, on us, refused on land without building, or a return behind us |
+| `AURORA_DEMO_PORTALS=walk\|walk-chat` | Walk through our portal with the Forward key, with the scene or nearby chat focused |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
@@ -234,91 +234,63 @@ gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject|offer-card…` adds only the received item.
 
-`AURORA_DEMO_PORTALS=1` opens World > Portals with a fixed aperture four metres
-ahead and its destination, owner and access label. `near` spawns it around our
-avatar: standing inside and moving across it before leaving the 1 m clearance (3.5 m for another resident’s portal)
-must never teleport. `friends` previews a denied friends-only portal from a
-non-friend. `no-build` makes the plaza someone else's land without building:
+`AURORA_DEMO_PORTALS=1` opens World > Portals with our portal four metres
+ahead and its destination label. `near` opens it around our avatar: standing
+inside and moving across it before leaving the 1 m clearance must never
+teleport. `no-build` makes the plaza someone else's land without building:
 no aperture opens and the window says a portal opens only where you can
-build (the same land test as rezzing). Apertures use world depth, so walls
-hide them and their labels.
-`AURORA_DEMO_PORTALS=return|return-private|return-no-build` shows a personal arrival return four metres behind the avatar, with a side view of the aperture with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire. A return is announced only where the traveler may build: `return-no-build` makes the plaza someone else's land without building, and the return still shows and can be crossed by the traveler, but nothing is announced for it to the region.
-Ordinary creation accepts a same-grid place link or region coordinates; one
-portal per creator expires after two minutes. Another Aurora client needs the
-ready 1.37 bridge and scripts enabled to receive regional invitations.
-Human two-client grid checks: public crossing, friends/non-friends, selected
-group members/non-members, appearing on a stationary or moving avatar,
-leaving and returning, crossing from either side, closing/replacing/expiry,
-late arrival discovery, failed/restricted destinations and teleport cancellation.
-Cross a freshly placed portal without first retreating, then use its arrival return twice. Send several travelers through the same source: destination observers must see one aperture with one unchanged expiry, including late discovery. Private destination observers see a redacted label unless authorized; Friends grants come only from the original creator, while each traveler keeps a personal return. Verify no return is created after a failed, canceled or redirected-to-another-region teleport.
+build (the same land test as rezzing). `return` shows the return of a
+journey four metres behind the avatar, with a side view of the aperture.
+Apertures use world depth, so walls hide them and their labels.
+Portals are this viewer's own: nothing is sent to the region or read from
+it, no bridge is needed, and another viewer (Aurora included) sees nothing
+(Second Life's shared experience policy; AGENTS.md, "No data of our own in
+shared places"). Creation accepts a same-grid place link or region
+coordinates; our portal expires after two minutes, and a new one replaces it.
+Grid checks by the human: crossing from either side, closing, replacing and
+expiry, the return after arrival (also within one region), failed, refused or
+cancelled teleports (no return), and a second viewer next to us that sees no
+portal.
 
-`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
-drags an inventory landmark over the world. Hover scenarios retain the cargo;
-the others release it at frame 560. Shift changes at frame 500 in public modes:
-capture around 530 for the access preview and 700 for the created portal or
-the unavailable-landmark notice. Use `AURORA_DEMO_POS=100,100` to avoid plaza
-props. The landmark stays in inventory. Ctrl insertion and other inventory drops
-retain their normal behavior.
+`AURORA_DEMO_PORTALS=drop-landmark|drop-landmark-hover|drop-invalid|drop-focus`
+drags an inventory landmark over the world. Hover scenarios retain the cargo
+and show the "Open a portal here" hint; the others release it at frame 560:
+capture around 700 for the created portal or the unavailable-landmark
+notice. Use `AURORA_DEMO_POS=100,100` to avoid plaza props. The landmark
+stays in inventory. Ctrl insertion and other inventory drops retain their
+normal behavior.
 `drop-focus` keeps the inventory open with keyboard focus during the drag;
 after release it stays open and logs that keyboard focus returned to the scene.
 
-`drop-places|drop-places-hover|drop-favorites|drop-favorites-public|drop-favorites-hover`
+`drop-places|drop-places-hover|drop-favorites|drop-favorites-hover`
 uses the shared Places/Favorites landmark cargo with Places open. Hover modes
-show the floating place icon/name and access hint; released modes create a portal
+show the floating place icon/name and the hint; released modes create a portal
 with its live remaining lifetime above the aperture. Pointer regressions cover
 starting drags in all three Favorites access modes and both Places layouts,
 including wide and filtered lists, without reordering on a world release.
 
-`drop-history|drop-history-public|drop-history-hover` uses an actual arrival
-snapshot without creating or requiring a landmark. Check its portal destination,
-Friends/Shift-public access, and the unchanged left alignment of Landmarks and
-History rows; reorder grips remain in Favorites only. Pointer regressions also
-cover both History layouts, wide/filtered views and a visit near an owned landmark
-whose exact arrival differs from the landmark's saved point.
+`drop-history|drop-history-hover` uses an actual arrival snapshot without
+creating or requiring a landmark. Check its portal destination and the
+unchanged left alignment of Landmarks and History rows; reorder grips remain
+in Favorites only. Pointer regressions also cover both History layouts,
+wide/filtered views and a visit near an owned landmark whose exact arrival
+differs from the landmark's saved point.
 
-`drop-search|drop-search-public|drop-search-hover` opens Search on Places and
-drags a directory parcel without creating a landmark. Check the floating place
-preview, Friends/Shift-public access and portal destination. Pointer regressions
-start actual drags in both Search layouts (Places and Land) and All's Places
-section even before ParcelInfoReply arrives; people and groups remain ordinary
-rows. Resolver tests cover delayed parcel/map replies, immutable arrivals,
-variable regions, invalid coordinates and cancellation guards.
+`drop-search|drop-search-hover` opens Search on Places and drags a directory
+parcel without creating a landmark. Check the floating place preview and the
+portal destination. Pointer regressions start actual drags in both Search
+layouts (Places and Land) and All's Places section even before
+ParcelInfoReply arrives; people and groups remain ordinary rows. Resolver
+tests cover delayed parcel/map replies, immutable arrivals, variable regions,
+invalid coordinates and cancellation guards.
 
-`AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
-exchanges real v2 codec messages between two offline peer states. Everyone sees
-the aperture; denied observers see only the creator and private/access labels.
-Only granted observers receive a destination. Group grants wait for a complete
-server-shaped members response. On the grid, also verify late arrivals, lost
-requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade.
-Both creation announcements and discovery replies must omit private destinations;
-inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
-
-`AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
-holds the actual Forward arrow from frames 600 to 810 after the private peer
-exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
-the scene focused. Use `AURORA_DEMO_POS=100,100` and capture frame 1100
-for the completed arrival (frame 840 can still show the teleport transition).
-The authorized visitor must teleport in both focus modes; the denied visitor
-must walk through without teleporting. Logs record focus, effective controls,
-authorization, position and return journey. A refused crossing can be retried
-after the ordinary 1 m clearance; the initial 3.5 m anti-drop clearance still
-applies when another resident's portal appears nearby.
-`keyboard-departing-allowed` starts the creator's teleport when the access
-request arrives, then changes their region after the grant is sent: the
-visitor must still receive the destination and teleport without chat focus.
-
-`AURORA_DEMO_PORTALS=stranger|stranger-groups|stranger-hidden` puts a public
-portal from a resident who is not our friend four metres ahead, then holds
-the Forward arrow from frame 600 to 810 like the keyboard modes, under the
-"Show portals from" choice it names for the run (never saved): `stranger` is
-Everyone, `stranger-groups` Friends and my groups (the resident's profile
-lists one of our groups), `stranger-hidden` Friends. The first two show the
-aperture and, on the crossing, the "Go through this portal?" question with
-the resident and the destination: Cancel stays, Go teleports, and a second
-crossing of the same portal asks no more. `stranger-hidden` shows nothing
-and walks through without a question or a teleport. Capture around frame
-760 for the question. The earlier modes (`friends`, `private-…`,
-`return…`) run with Everyone, so their non-friend portals stay visible.
+`AURORA_DEMO_PORTALS=walk|walk-chat` opens our portal four metres ahead and
+holds the actual Forward arrow from frames 600 to 810. `walk-chat` keeps
+nearby-chat keyboard focus; `walk` leaves the scene focused. Use
+`AURORA_DEMO_POS=100,100` and capture frame 1100 for the completed arrival
+(frame 840 can still show the teleport transition). The avatar must teleport
+in both focus modes, and a return opens behind it at the arrival. Logs record
+focus, effective controls, position and the return journey.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
@@ -333,9 +305,8 @@ Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 4.2 m rigid attachment: only the part inside the oval may disappear, never
 the parts above or beside it. The rim/corona is decorative and must not
 enlarge that mask. Check body, skinned and rigid worn geometry from both
-camera sides. Ordinary portals now show theme-based Aurora currents, a dark
-indigo/navy core and a violet/teal rim with glow; reduced motion freezes their
-animation, and denied/private observers retain muted colors and hidden details.
+camera sides. Portals show theme-based Aurora currents, a dark indigo/navy
+core and a violet/teal rim with glow; reduced motion freezes their animation.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal
@@ -3442,8 +3413,8 @@ switch to another viewer without manually removing it. No bridge message
 should appear at login or after crossings/teleports; the bridge must detach
 after 60 seconds without Aurora discovery, even during repeated crossings.
 Reconnect with Aurora: the same inventory object must be worn automatically,
-all three services must recover, and Movelock, IK, script/object information,
-posing consent and portals must still work after crossings and teleports.
+all three services must recover, and Movelock, IK, script/object information
+and posing consent must still work after crossings and teleports.
 
 Existing-bridge reuse: reconnect to Aurora while the current bridge is still
 worn. It must verify all three services without compiling scripts or temporarily

@@ -1076,65 +1076,39 @@ applies stop, stop-and-revoke and blacklist. Animation entries of
 `world/derender.rs` (AT_ANIMATION) drop the motion from every avatar's
 signals and ask the simulator to stop it on ours.
 
-`world/portals.rs` owns bounded, immutable two-minute portal invitations and
-per-observer crossing gates. Opening our portal needs the right to build
-where it stands (`world/land.rs::agent_can_build`, allowAgentBuild); an
-unknown parcel refuses and is asked for (`app/land_rights.rs`). A traveler's return
-is announced only where they may build; elsewhere, or while that land is
-unknown, it stays theirs alone: shown and crossable, announced to nobody.
-One kept private only because its land was unknown is announced once that
-land is known and open to them, while it lives; a shared return never
-becomes private again. `aurora-net/src/bridge/portal.rs` validates their
-bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
-region-local relay to the independent query script; late arrivals discover
-existing portals once, with targeted replies and bounded traffic. The bridge
-never teleports anyone. Each recipient checks friendship or their own group
-membership at crossing, then `app/portals.rs` uses the ordinary user location
-teleport boundary, retaining RLVa and simulator destination access checks.
-Near-spawn observers must first leave a 3.5 m clearance; standing inside,
-involuntary motion, position jumps and replayed announcements never trigger.
-After that initial clearance, observer retries use the ordinary 1 m clearance,
-including after a private grant arrived too late for the first crossing.
-Traversal uses the movement controls already filtered by `update_move_input`;
-nearby-chat focus can pass movement arrows and does not independently veto them.
+`world/portals.rs` owns this viewer's own walk-through portals: our portal
+and the returns of our journeys, immutable for their two minutes, each with
+its crossing gate. Nothing is sent to the region or read from it, and no
+bridge is needed: portals were once announced to other Aurora viewers over
+region chat, taken out under Second Life's shared experience policy
+(AGENTS.md, "No data of our own in shared places"). Opening our portal needs
+the right to build where it stands (`world/land.rs::agent_can_build`,
+allowAgentBuild); an unknown parcel refuses and is asked for
+(`app/land_rights.rs`). A return needs no land right: nothing is placed in
+the world. Crossing is a voluntary plane crossing after a 1 m clearance:
+standing inside, involuntary motion, position jumps and the arrival of a
+teleport never trigger. Traversal uses the movement controls already
+filtered by `update_move_input`; nearby-chat focus can pass movement arrows
+and does not independently veto them. `app/portals.rs` then uses the
+ordinary user location teleport boundary, retaining RLVa and simulator
+destination access checks.
 `scene/portals.rs` shares one GPU quad with an analytic Aurora surface,
 depth-tested and sorted with world transparency/glow. Theme violet, indigo,
 teal and navy drive its flowing depth, fine rim and soft corona; the GPU
 animation clock runs it, with a static reduced-motion variant. No texture or
 particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
-World > Portals and depth-occluded destination/creator/access labels. This is
-an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
-and teleportRequest (`indra/newview/llagent.cpp`).
+World > Portals and depth-occluded destination labels with the remaining
+lifetime. This is an Aurora feature; ordinary teleport behavior follows
+LLAgent::teleportViaLocation and teleportRequest (`indra/newview/llagent.cpp`).
 Photo isolation hides portal surfaces and their world labels while preserving
-invitations, clearance guards and the posed body cut; choosing subjects or leaving
-photo mode restores live surfaces without replaying invitations.
-
-Portal wire v2 separates a public `Announcement` from targeted `Details`.
-Restricted announcements contain no destination, landmark asset/title or group
-identity. An observer makes one nonce-bound request with at most one retry;
-the creator checks their own friends or a fresh, complete server member list
-shared through `world/group_data.rs` before sending any details. Unsent grants
-are checked again at the bounded send cadence; unknown/denied requests remain
-silent. Responses cannot use regional broadcast, in both Rust and the bridge.
-Unauthorized labels omit creator names as well as destination/access details.
-Private details remain in session memory, bound to creator, portal and request;
-discovery is redacted and close/expiry/session changes retire pending exchanges.
-Starting a teleport preserves source-region invitations and pending grants until
-the actual region/session change. Traversal is disarmed during the transition;
-the arrival segment cannot trigger a portal. This lets the creator's still-local
-bridge finish authenticating visitors while departure is in progress.
-Locally created portals and personal returns use a 1 m clearance without startup suppression; other observers retain the initial 3.5 m anti-drop guard and 600 ms appearance delay.
-`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
-HTTP-in renewal within the same region preserves invitations and clearance gates.
-The query endpoint is invalidated on region changes or a dead-URL response;
-announcement/close delivery retries the same immutable action at most twice,
-with one- and two-second backoff. Only exhausted failures remove the
-local aperture. Replacement, expiry and region/session changes retire retries.
+the portals, clearance guards and the posed body cut; choosing subjects or
+leaving photo mode restores live surfaces.
+`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete opens the return; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it) and keeps its expiry; within one region, the portal crossed is itself the way back.
 
 `ui/places/drag.rs` shares landmark/history cargo and a floating icon/thumbnail preview
 between all Favorites access modes and both Places layouts. Favorite reordering
 consumes only releases inside its visible list; scene releases reuse the inventory
-portal path. `ui/portals.rs` includes the actual remaining lifetime in world labels.
+portal path.
 History drags snapshot the exact arrival, including visits without a landmark;
 the map resolves their region asynchronously without inventory creation or asset
 requests. Only Favorites rows reserve a reorder grip. Landmarks and History retain
@@ -1146,11 +1120,11 @@ changes; a missing arrival uses one ordinary ParcelInfoRequest on drop, then
 freezes ParcelInfoReply's coordinates before the asynchronous region-map lookup.
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
-opens a Friends portal at the selected support; Shift at release makes it public.
-The shared overlay previews the selected access. Inventory items are never consumed;
+opens our portal at the selected support, with a shared overlay hint.
+Inventory items are never consumed;
 Ctrl insertion retains its existing behavior. Pending drops expire and cancel on
 region/session change, teleport or item replacement. `app/portals/demo.rs` drives
-actual world-drop input and authenticated in-memory peers for offline coverage.
+actual world-drop input and a walk through our portal for offline coverage.
 Successful landmark scene drops release inventory keyboard focus, including its
 short-lived list-focus restoration, while keeping inventory windows open.
 

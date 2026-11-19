@@ -243,7 +243,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.42|", sim.messages[0])
+                self.assertIn("1.43|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
@@ -478,7 +478,6 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
         await sim.start()
-        await sim.event("listen", -184735221, "", OTHER, "portal2|test")
         await sim.event("listen", -184735220, "", OTHER, f"pose1|{OTHER}|request|{OWNER}")
         self.assertEqual(sim.messages, [])
         sim = Simulator("ik.lsl")
@@ -486,6 +485,22 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         await sim.event("listen", private_channel(sim.script.session), "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
         await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
         self.assertEqual(sim.messages, [])
+        self.assertEqual(sim.broadcasts, [])
+
+    async def test_the_query_script_relays_no_portal(self):
+        # 1.43: portals are the viewer's own; nothing listens on or speaks
+        # over the old portal channel.
+        sim = Simulator("query.lsl")
+        await sim.start()
+        await sim.grant()
+        await sim.probe()
+        sim.messages.clear()
+        self.assertNotIn(-184735221, [arguments[0] for arguments in sim.listeners.values()])
+        await sim.event("listen", -184735221, "", OTHER, "portal2|test")
+        self.assertEqual(sim.messages, [])
+        token = sim.script.gToken
+        await sim.event("http_request", OTHER, "POST", f"query|{token}|portal|{NULL},e30=")
+        self.assertEqual(sim.responses[-1][1], 400)
         self.assertEqual(sim.broadcasts, [])
 
     async def test_revoking_pairing_suppresses_the_final_motor_report(self):
