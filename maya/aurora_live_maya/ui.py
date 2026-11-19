@@ -4,6 +4,7 @@ from maya import cmds
 
 from . import convert, session
 
+
 LOD_MODES = {"Existing or automatic": "fallback", "Existing mesh": "existing", "Automatic": "auto"}
 LOD_BUDGETS = {"Percentage": "ratio", "Triangles": "triangles"}
 
@@ -11,8 +12,11 @@ LOD_BUDGETS = {"Percentage": "ratio", "Triangles": "triangles"}
 def capture_up():
     return cmds.upAxis(query=True, axis=True).upper()
 
+
 WINDOW = "auroraLiveMayaWindow"
-UNIT_LABELS = {"Automatic (from the rig)": "auto", "Centimetres (Maya's own)": "cm", "1 unit = 1 metre": "m"}
+# Maya stores every length in centimetres whatever its preferences show; a kit
+# built "one unit per metre" in a centimetre scene has 1 cm per metre.
+UNIT_LABELS = {"Automatic (from the rig)": "auto", "Real size": "cm", "1 Maya centimetre = 1 metre": "m"}
 
 
 class Window:
@@ -59,8 +63,9 @@ class Window:
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2)
         cmds.text(label="Scene units ")
         self.units = cmds.optionMenu(changeCommand=lambda label: self.live.set_units(UNIT_LABELS[label]),
-                                     annotation="How long one Maya unit is. Automatic reads it from the rig's "
-                                                "pelvis height; many Second Life kits use one unit per metre.")
+                                     annotation="How large the scene is. Automatic reads it from the rig's pelvis "
+                                                "height; many Second Life kits are built at one unit per metre in a "
+                                                "centimetre scene.")
         for label in UNIT_LABELS:
             cmds.menuItem(label=label)
         cmds.optionMenu(self.units, edit=True, select=list(UNIT_LABELS.values()).index(self.live.units()) + 1)
@@ -184,7 +189,7 @@ class Window:
                     cmds.textScrollList(self.list, edit=True, selectIndexedItem=index)
             self._rows = rows
         unit = self.live.unit
-        text = "" if unit is None else "1 Maya unit = {:g} m, {}-up".format(unit, capture_up())
+        text = "" if unit is None else "1 Maya cm = {:g} m, {}-up".format(unit * 100, capture_up())
         if cmds.text(self.unit_text, query=True, label=True) != text:
             cmds.text(self.unit_text, edit=True, label=text)
         message = self.live.message

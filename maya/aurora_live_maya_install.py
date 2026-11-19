@@ -26,6 +26,9 @@ def install(folder):
         shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     if scripts not in sys.path:
         sys.path.append(scripts)
+    # Import the installed copy, not the extracted one install.mel put first.
+    while folder in sys.path:
+        sys.path.remove(folder)
     for name in [name for name in sys.modules if name == PACKAGE or name.startswith(PACKAGE + ".")]:
         del sys.modules[name]
     _shelf_button(cmds, mel)

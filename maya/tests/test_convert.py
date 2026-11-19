@@ -219,6 +219,14 @@ class Materials(unittest.TestCase):
         self.assertEqual(convert.channel(bytes([1, 2, 3, 4]), 3), bytes([4, 4, 4, 255]))
         self.assertEqual(convert.opaque(bytes([1, 2, 3, 4])), bytes([1, 2, 3, 255]))
 
+    def test_material_factors_stay_in_the_viewers_ranges(self):
+        color, material = convert.default_material((1.2, -0.1, 0.5, 1.0))
+        material.update(metallic=3.0, roughness=math.nan, emissive=[100.0, -1.0, 2.0])
+        color, material = convert.clamp_material(color, material)
+        self.assertEqual(color, [1.0, 0.0, 0.5, 1.0])
+        self.assertEqual((material["metallic"], material["roughness"]), (1.0, 0.0))
+        self.assertEqual(material["emissive"], [64.0, 0.0, 2.0])
+
     def test_orm_packs_roughness_green_metallic_blue(self):
         rough, metal = bytes([10, 0, 0, 0, 20, 0, 0, 0]), bytes([30, 0, 0, 0, 40, 0, 0, 0])
         self.assertEqual(convert.orm((2, 1), (rough, 0), (metal, 0)), bytes([255, 10, 30, 255, 255, 20, 40, 255]))

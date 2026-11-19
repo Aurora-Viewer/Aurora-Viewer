@@ -4,8 +4,10 @@ Maya works in centimetres with Y up; LiveMesh snapshots are in metres in Second
 Life's Z-up frame (docs/BLENDER_LIVE.md, "Wire protocol v1"). The Y-up turn is
 the one the Legacy Viewer applies to a Y_UP Collada file (LLDAELoader::
 OpenFile, indra/llprimitive/lldaeloader.cpp: a 90 degree rotation about X), so
-a mesh previewed live stands as it would after a Collada upload. The weight and
-facing rules follow the Blender plug-in (blender/aurora_live/exporter.py).
+a mesh previewed live stands as it would after a Collada upload. A rig is also
+turned to face +X (facing()), which an upload would not do: a rig that does not
+face +X previews right and still needs turning before its upload. The weight
+and facing rules follow the Blender plug-in (blender/aurora_live/exporter.py).
 
 Matrices here are lists of four rows, applied to column vectors (M @ v). A Maya
 MMatrix is the transpose (row vectors, translation in its last row).
@@ -517,6 +519,17 @@ class Images:
             self.ids[key] = len(self.images)
             self.images.append({"width": width, "height": height, "rgba": base64.b64encode(rgba).decode("ascii")})
         return self.ids[key]
+
+
+def clamp_material(color, material):
+    """Keep factors in the ranges the viewer accepts (appearance.rs): a
+    Lambert colour of 1.2 or an emission weight of 100 would otherwise make
+    it refuse the whole snapshot."""
+    unit = lambda value: max(0.0, min(1.0, float(value))) if math.isfinite(float(value)) else 0.0
+    material = dict(material)
+    material["metallic"], material["roughness"] = unit(material["metallic"]), unit(material["roughness"])
+    material["emissive"] = [max(0.0, min(64.0, float(v))) if math.isfinite(float(v)) else 0.0 for v in material["emissive"]]
+    return [unit(value) for value in color], material
 
 
 def default_material(color=(0.45, 0.22, 0.85, 1.0), metallic=0.0, roughness=0.6, double_sided=True):

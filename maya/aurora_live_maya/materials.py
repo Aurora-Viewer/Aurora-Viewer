@@ -152,7 +152,8 @@ def _resample(rgba, width, height, new_width, new_height):
     stride = width * 4
     columns = [x * width // new_width * 4 for x in range(new_width)]
     for y in range(new_height):
-        source = rgba[(y * height // new_height) * stride:][:stride]
+        start = (y * height // new_height) * stride
+        source = rgba[start:start + stride]
         rows.append(b"".join(source[x:x + 4] for x in columns))
     return b"".join(rows)
 
@@ -172,8 +173,8 @@ def _qt_image(path):
     alpha = image.hasAlphaChannel()
     image = image.convertToFormat(QImage.Format_RGBA8888)
     width, height = image.width(), image.height()
-    if width * height > 8192 * 8192:
-        raise ValueError("Live source images must be at most 64 megapixels")
+    if width * height > 4096 * 4096:
+        raise ValueError("Live source images must be at most 16 megapixels")
     bits = image.constBits()
     if hasattr(bits, "setsize"):
         bits.setsize(image.sizeInBytes() if hasattr(image, "sizeInBytes") else image.byteCount())
@@ -250,11 +251,11 @@ def capture(group, images, warnings, double_sided=True, has_uvs=True):
     """(linear base colour factor, material) of one shading group."""
     mark = images.mark()
     try:
-        return _capture(group, images, double_sided, has_uvs)
+        return convert.clamp_material(*_capture(group, images, double_sided, has_uvs))
     except ValueError as error:
         images.rollback(mark)
         warnings.append(str(error))
-        return _plain(group, double_sided)
+        return convert.clamp_material(*_plain(group, double_sided))
 
 
 def _shader(group):
@@ -277,8 +278,9 @@ def _plain(group, double_sided):
             color = [factor * value for value in _color(shader, color_name)] + [1.0]
             return convert.default_material(color, double_sided=double_sided)
         if kind in CLASSIC:
-            return convert.default_material(_color(shader, "color", (0.5, 0.5, 0.5)) + [1.0], 0.0, CLASSIC[kind],
-                                            double_sided)
+            diffuse = _scalar(shader, "diffuse", 0.8)
+            return convert.default_material([diffuse * v for v in _color(shader, "color", (0.5, 0.5, 0.5))] + [1.0], 0.0,
+                                            CLASSIC[kind], double_sided)
     except (ValueError, RuntimeError):
         pass
     return convert.default_material(double_sided=double_sided)
@@ -308,7 +310,8 @@ def _capture(group, images, double_sided, has_uvs):
         emissive = _color(shader, emission_color, (0.0, 0.0, 0.0))
         base_color = _color(shader, base)
     elif kind in CLASSIC:
-        factor = 1.0
+        # Maya shades a Lambert-style surface with colour times Diffuse.
+        factor = _scalar(shader, "diffuse", 0.8)
         base_spec, normal_spec = _file(shader, "color"), _normal(shader, "normalCamera")
         opacity_spec = _file(shader, "transparency")
         rough_spec = metal_spec = None
@@ -325,8 +328,13 @@ def _capture(group, images, double_sided, has_uvs):
     if base_spec:
         width, height, rgba, transform, file_node, has_alpha = _texture((base_spec[0], "outColor"), True)
         if opacity_spec:
-            if opacity_spec[0] != file_node or _channel_index(opacity_spec[1]) != 3:
-                raise ValueError("Connect the base colour file's alpha to the opacity")
+            # Opacity takes the file's alpha (outAlpha); a Lambert's
+            # Transparency takes its inverse (outTransparency). The other
+            # wiring would invert the cut-out.
+            wanted = "outTransparency" if kind in CLASSIC else "outAlpha"
+            if opacity_spec[0] != file_node or not opacity_spec[1].startswith(wanted):
+                raise ValueError("Connect the base colour file's {} to the {}".format(
+                    wanted, "Transparency" if kind in CLASSIC else "opacity"))
             material["alpha_mode"] = "BLEND"
         else:
             rgba = convert.opaque(rgba)

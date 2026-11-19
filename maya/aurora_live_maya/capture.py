@@ -30,11 +30,26 @@ def shape_of(transform):
 
 
 def skin_of(shape):
-    """The skinCluster that deforms this shape, or None."""
+    """The skinCluster that deforms this shape itself, or None: the history
+    also reaches the skins of other meshes (a wrap driven by a skinned body,
+    a skinned blend shape target), which must not be taken for this one's."""
+    target = dag(shape).fullPathName()
     for node in cmds.listHistory(shape, pruneDagObjects=True, interestLevel=1) or []:
-        if cmds.nodeType(node) == "skinCluster":
-            return node
+        if cmds.nodeType(node) != "skinCluster":
+            continue
+        for geometry in cmds.skinCluster(node, query=True, geometry=True) or []:
+            paths = cmds.ls(geometry, long=True) or []
+            if paths and (paths[0] == target or target in (cmds.listRelatives(paths[0], shapes=True, fullPath=True) or [])):
+                return node
     return None
+
+
+def world_translation(node):
+    """A node's world position in Maya's internal unit (centimetres), as
+    OpenMaya returns every other value: cmds.xform answers in the unit of
+    the preferences instead."""
+    matrix = dag(node).inclusiveMatrix()
+    return [matrix[12], matrix[13], matrix[14]]
 
 
 def _values(matrix):
@@ -74,23 +89,27 @@ def _skin(shape_path, skin, supported):
         raise ValueError("The skin's input geometry is not a mesh")
     bind_shape = _maya_matrix(_node_plug(skin, "geomMatrix"))
     pre_plug = _node_plug(skin, "bindPreMatrix")
-    names, bind_pre, per_vertex = {}, {}, {}
+    bind_pre, per_vertex = {}, {}
     for path in fn.influenceObjects():
         name = convert.joint_name(path.partialPathName(), _joint_override(path))
         logical = fn.indexForInfluenceObject(path)
         components, weights = fn.getPointsAffectedByInfluence(path)
-        affected = []
-        if components.length():
-            _path, component = components.getComponent(0)
+        affected, offset = [], 0
+        # One weight per listed vertex, item after item; a skin can deform
+        # other shapes too, whose items are skipped.
+        for item in range(components.length()):
+            item_path, component = components.getComponent(item)
             elements = om.MFnSingleIndexedComponent(component).getElements()
-            affected = [(vertex, weight) for vertex, weight in zip(elements, weights) if weight > 0.0]
+            if item_path.fullPathName() == shape_path.fullPathName():
+                affected += [(vertex, weight) for vertex, weight in zip(elements, weights[offset:offset + len(elements)])
+                             if weight > 0.0]
+            offset += len(elements)
         if not affected:
             continue
         if name in bind_pre:
             raise ValueError("Several weighted joints map to the avatar joint " + name)
         if name not in supported:
             raise ValueError("Unsupported weighted joint: " + name)
-        names[path.fullPathName()] = name
         bind_pre[name] = _maya_matrix(pre_plug.elementByLogicalIndex(logical))
         for vertex, weight in affected:
             per_vertex.setdefault(vertex, []).append((name, weight))
@@ -120,7 +139,7 @@ def _rig_heads(skin):
             name = convert.joint_name(joint, cmds.getAttr(joint + ".auroraJoint") if cmds.attributeQuery(
                 "auroraJoint", node=joint, exists=True) else None)
             if name not in heads:
-                heads[name] = cmds.xform(joint, query=True, worldSpace=True, translation=True)
+                heads[name] = world_translation(joint)
     return heads
 
 
@@ -147,14 +166,18 @@ def scene_unit(mode, transforms):
     return convert.CM
 
 
-def _mesh_arrays(fn, uv_set):
+def _mesh_arrays(fn, uv_set, uv_fn=None):
+    """Face-vertex arrays of a mesh. `uv_fn`, the output shape of a skinned
+    mesh, gives the UVs: UV edits made after skinning live there, and the
+    skin moves no UV."""
+    uv_fn = uv_fn or fn
     counts, vertices = fn.getVertices()
     normal_counts, normal_ids = fn.getNormalIds()
     if list(normal_counts) != list(counts):
         raise ValueError("Inconsistent mesh normals")
     fv_uv = []
     if uv_set:
-        uv_counts, uv_ids = fn.getAssignedUVs(uv_set)
+        uv_counts, uv_ids = uv_fn.getAssignedUVs(uv_set)
         position = 0
         for count, uv_count in zip(counts, uv_counts):
             if uv_count == count:
@@ -163,7 +186,7 @@ def _mesh_arrays(fn, uv_set):
             else:
                 fv_uv.extend([-1] * count)
                 position += uv_count
-        u, v = fn.getUVs(uv_set)
+        u, v = uv_fn.getUVs(uv_set)
         uvs = list(zip(u, v))
     else:
         fv_uv, uvs = [-1] * len(vertices), []
@@ -217,11 +240,13 @@ class Geometry:
             self.normals.append((x / length, y / length, z / length))
         uv_set = shape_fn.currentUVSetName()
         try:
-            arrays = _mesh_arrays(fn, uv_set)
+            arrays = _mesh_arrays(fn, uv_set, shape_fn)
         except RuntimeError:
             arrays = _mesh_arrays(fn, "")
         _counts, self.fv_vertex, self.fv_normal, self.fv_uv, self.uvs, self.triangles, polygons = arrays
-        if len(self.fv_vertex) > convert.MAX_CORNERS:
+        # The viewer counts shared corners; this only stops hopeless meshes
+        # early, pack() checks the real count.
+        if len(self.fv_vertex) > 4 * convert.MAX_CORNERS:
             raise ValueError("more than 600,000 mesh corners")
         if not self.triangles:
             raise ValueError("no triangle surfaces")
@@ -236,6 +261,8 @@ class Geometry:
                                   self.triangles, self.slots, self.flip, joints, weights)
         if not packed or len(packed) > convert.MAX_SURFACES:
             raise ValueError("expected 1 to 32 nonempty material surfaces")
+        if convert.corner_count(packed) > convert.MAX_CORNERS:
+            raise ValueError("more than 600,000 mesh corners")
         return packed
 
 
@@ -287,6 +314,5 @@ def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False, bas
 def link_offset(child, root, base):
     """The child origin minus the root origin in the SL frame, metres: the
     origins whose world position each static capture drops."""
-    a = cmds.xform(child, query=True, worldSpace=True, matrix=True)[12:15]
-    b = cmds.xform(root, query=True, worldSpace=True, matrix=True)[12:15]
+    a, b = world_translation(child), world_translation(root)
     return convert.direction(base, [a[axis] - b[axis] for axis in range(3)])

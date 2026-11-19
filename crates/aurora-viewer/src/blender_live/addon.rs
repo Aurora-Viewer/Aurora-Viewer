@@ -243,4 +243,24 @@ mod tests {
         assert_eq!(client.1, include_bytes!("../../../../blender/aurora_live/client.py"));
         assert!(maya_version().split('.').count() == 3, "{}", maya_version());
     }
+
+    #[test]
+    fn blender_live_maya_package_lists_every_plugin_module() {
+        // A module added to the plug-in must reach the viewer's ZIP and
+        // package.py, or the installed plug-in fails to import it.
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../maya/aurora_live_maya");
+        let package = std::fs::read_to_string(folder.join("../package.py")).expect("package.py");
+        for entry in std::fs::read_dir(&folder).expect("plug-in folder") {
+            let name = entry.expect("entry").file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".py") {
+                continue;
+            }
+            let bundled = format!("aurora_live_maya/{name}");
+            assert!(
+                MAYA_FILES.iter().any(|(file, _)| *file == bundled),
+                "{bundled} missing from MAYA_FILES"
+            );
+            assert!(package.contains(&format!("\"{name}\"")), "{name} missing from maya/package.py");
+        }
+    }
 }

@@ -56,6 +56,7 @@ class Session:
         self.message = ""
         self.callbacks = []
         self.watched = set()
+        self.posed = set()  # skinned shapes: their dirt is a pose
         self.timer = None
         self.listeners = []
         self.jobs = []
@@ -177,7 +178,9 @@ class Session:
         self.forced = True
         materials.invalidate()
 
-    def _dirty_plug(self, _node, plug, *_args):
+    def _dirty_plug(self, node, plug, *_args):
+        if node.hasFn(om.MFn.kMesh) and om.MFnDagNode(node).fullPathName() in self.posed:
+            return
         name = plug.partialName(includeNodeName=False, useLongNames=True)
         if om.MFnDependencyNode(plug.node()).typeName == "skinCluster" and name.startswith(POSE_PLUGS):
             return
@@ -191,6 +194,7 @@ class Session:
     def _nodes(self):
         """Every node a source's capture reads."""
         nodes = set()
+        self.posed = set()
         for identity in self.sources:
             transform = self.node(identity)
             if not transform:
@@ -199,14 +203,17 @@ class Session:
             if not shape:
                 continue
             skin = capture.skin_of(shape)
-            nodes.add(transform)
-            nodes.update(cmds.listRelatives(transform, allParents=True, fullPath=True) or [])
             if skin:
-                # The skin's input changes with every edit before it; the shape
-                # itself would also change with each pose.
-                nodes.add(skin)
+                # The skin's input changes with every edit before it; the shape,
+                # its transform and the rig move with each pose, which a
+                # skinned capture ignores. The shape stays watched for its
+                # material assignments only.
+                nodes.update([skin, shape])
+                self.posed.add(shape)
             else:
-                nodes.add(shape)
+                # A static capture keeps the world rotation and scale, and a
+                # linkset the offsets: the transform and every ancestor count.
+                nodes.update([shape, transform] + _ancestors(transform))
             for group in set(cmds.listConnections(shape, type="shadingEngine") or []):
                 nodes.update(materials.history(group))
         return nodes
@@ -234,7 +241,15 @@ class Session:
 
     def _clear_callbacks(self):
         if self.callbacks:
-            om.MMessage.removeCallbacks(self.callbacks)
+            try:
+                om.MMessage.removeCallbacks(self.callbacks)
+            except RuntimeError:
+                # Nodes of a closed scene take their callbacks with them.
+                for callback in self.callbacks:
+                    try:
+                        om.MMessage.removeCallback(callback)
+                    except RuntimeError:
+                        pass
         self.callbacks = []
         self.watched = set()
 
@@ -298,11 +313,14 @@ class Session:
                 self.revision += 1
                 self.client.submit(value)
                 self.last_content = content
-        except (ValueError, RuntimeError) as error:
-            self.message = str(error)
+        except Exception as error:  # Any failure must show, not stop the timer.
+            self.message = str(error) or type(error).__name__
         finally:
             self.last_capture = time.monotonic()
-            self._rewatch()
+            try:
+                self._rewatch()
+            except Exception as error:
+                self.message = str(error) or type(error).__name__
 
     def _import(self, request, supported):
         """Answer Aurora's Import button with the four prepared levels."""

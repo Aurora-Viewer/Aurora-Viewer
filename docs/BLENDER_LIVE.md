@@ -788,9 +788,9 @@ modifiers removed, keeping geometry modifiers and shape keys. The source mesh,
 selection, object mode and modifier settings remain intact. Custom joint
 position overrides are not applied to Aurora's skeleton.
 
-## Maya (plug-in 0.2.0)
+## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later. It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.2.0). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
@@ -821,15 +821,17 @@ now** sends at once and reloads the texture files.
   upload too).
 - **Axes and units.** The plug-in reads Maya's up axis: a Y-up scene is
   turned to Second Life's Z-up frame like a Y-up Collada file at upload, a
-  Z-up scene is not turned. **Scene units** says how long one Maya unit is.
-  **Automatic** reads it from the rig: Second Life's pelvis stands about a
-  metre above the feet, so a rig whose mPelvis is about 1 unit high is built
-  at one unit per metre (as many Second Life kits are, whatever unit Maya's
-  preferences name), and one about 100 units high is in real centimetres.
-  Without a rig, Automatic uses real centimetres. The window shows the scale
-  and up axis in use. A rig is also turned so that its left side (found from
-  `mShoulderLeft` and `mShoulderRight`, or the collar, hip, eye or wrist
-  pairs) is the avatar's left, whichever way it faces in Maya.
+  Z-up scene is not turned. **Scene units** says how large the scene is.
+  Maya keeps every length in centimetres, whatever unit its preferences
+  show: **Real size** takes them as they are, **1 Maya centimetre = 1 metre**
+  fits a kit built at one unit per metre in a centimetre scene, as many
+  Second Life kits are. **Automatic** chooses from the rig: Second Life's
+  pelvis stands about a metre above the feet. Without a rig, Automatic uses
+  real size. The window shows the scale and up axis in use. A rig is also
+  turned so that its left side (found from `mShoulderLeft` and
+  `mShoulderRight`, or the collar, hip, eye or wrist pairs) is the avatar's
+  left, whichever way it faces in Maya; an upload does not turn it, so a rig
+  that does not face +X still needs turning before its upload.
 - **Static meshes** (no skin) keep their rotation and scale; their position in
   the scene is not used: Aurora places them in front of your avatar, as with
   Blender. A static mesh parented under another synchronized static mesh is a
@@ -842,7 +844,7 @@ now** sends at once and reloads the texture files.
   `bump2d` set to **Tangent Space Normals** with depth 1, or an `aiNormalMap`
   at strength 1. For transparency, connect the base colour file's alpha to
   the opacity (Lambert: `outTransparency` to Transparency). Colour spaces sRGB
-  and Raw are read. Images are scaled to at most 1024 pixels. A material that
+  and Raw are read. Source images may be up to 16 megapixels and are scaled to at most 1024 pixels. A material that
   does not follow these rules is shown in its plain colour, and the list says
   why.
 - **Import / LOD.** Click **Import** next to a mesh in Aurora's LiveMesh

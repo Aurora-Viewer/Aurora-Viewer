@@ -11,5 +11,7 @@ global proc auroraLiveMayaInstallAnchor() {}
     $folder = substituteAllString($folder, "\\", "/");
     $folder = substituteAllString($folder, "'", "\\'");
     python("import sys\nif '" + $folder + "' not in sys.path: sys.path.insert(0, '" + $folder + "')");
-    python("import importlib, aurora_live_maya_install\nimportlib.reload(aurora_live_maya_install)\naurora_live_maya_install.install('" + $folder + "')");
+    // The extraction folder only serves this install: leaving it first in
+    // Python's path would let its files shadow modules for the session.
+    python("import importlib, sys, aurora_live_maya_install\nimportlib.reload(aurora_live_maya_install)\ntry:\n    aurora_live_maya_install.install('" + $folder + "')\nfinally:\n    while '" + $folder + "' in sys.path: sys.path.remove('" + $folder + "')");
 }
