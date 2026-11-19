@@ -5,6 +5,9 @@
 //! never degrades the viewer's frame rate.
 
 use super::*;
+
+#[path = "mcp_bridge/contents.rs"]
+mod contents;
 use aurora_mcp::{
     AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, FRAME_BUDGET_MICROS, LinksetDataStore, LsdOperation,
     McpError, McpRequestEnvelope, McpServerHandle, PrimTransformSpec, RawCapturedFrame, RollbackAction, ViewerRequest, ViewerResponse,
@@ -147,6 +150,17 @@ struct PendingScriptCompile {
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
 }
 
+/// A take / take_copy waiting for its new inventory item.
+struct PendingTake {
+    local_id: u32,
+    action: String,
+    name: String,
+    folder: Uuid,
+    before: HashSet<Uuid>,
+    started: Instant,
+    reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+}
+
 /// Pending task inventory fetch for `lsl_inspect_object_scripts`.
 struct PendingScriptInspect {
     local_id: u32,
@@ -215,6 +229,11 @@ pub struct McpBridge {
     pub build_tx_mgr: BuildTransactionManager,
     pending_script_inspects: VecDeque<PendingScriptInspect>,
     pending_script_creations: VecDeque<PendingScriptCreation>,
+    pending_contents: VecDeque<contents::PendingContents>,
+    pending_takes: VecDeque<PendingTake>,
+    /// The last source sent per object (bytes, sha256): reported back
+    /// instead of the source, which may hold keys.
+    script_fingerprints: HashMap<Uuid, (usize, String)>,
     pending_script_reads: HashMap<Uuid, PendingScriptRead>,
     pending_script_compiles: HashMap<Uuid, PendingScriptCompile>,
     pending_notecard_creates: HashMap<Uuid, PendingNotecardCreate>,
@@ -460,7 +479,9 @@ impl App {
                         }
                         if let Some(idx) = self.world.objects.index_of_uuid(&pending.object_uuid) {
                             let wanted_name = pending.script_name.trim();
-                            if saved.compiled && !wanted_name.is_empty() {
+                            // the exact name even when it did not compile: a broken
+                            // script must be found by its name, not as "New Script"
+                            if !wanted_name.is_empty() {
                                 let needs_rename = self
                                     .build
                                     .contents
@@ -494,15 +515,25 @@ impl App {
                         }
                     }
                     let resp = match result {
-                        Ok(saved) => Ok(ViewerResponse::Json(json!({
-                            "compiled": saved.compiled,
-                            "object_local_id": pending.local_id,
-                            "object_uuid": pending.object_uuid.to_string(),
-                            "script_item_id": pending.item_id.to_string(),
-                            "script_name": pending.script_name,
-                            "asset_id": saved.asset.to_string(),
-                            "errors": saved.errors,
-                        }))),
+                        Ok(saved) => {
+                            let (source_bytes, source_sha256) = self
+                                .mcp_bridge
+                                .script_fingerprints
+                                .get(&pending.object_uuid)
+                                .cloned()
+                                .unwrap_or_default();
+                            Ok(ViewerResponse::Json(json!({
+                                "compiled": saved.compiled,
+                                "object_local_id": pending.local_id,
+                                "object_uuid": pending.object_uuid.to_string(),
+                                "script_item_id": pending.item_id.to_string(),
+                                "script_name": pending.script_name,
+                                "asset_id": saved.asset.to_string(),
+                                "source_bytes": source_bytes,
+                                "source_sha256": source_sha256,
+                                "errors": saved.errors,
+                            })))
+                        }
                         Err(err) => Ok(ViewerResponse::Json(json!({
                             "compiled": false,
                             "object_local_id": pending.local_id,
@@ -512,7 +543,23 @@ impl App {
                             "errors": [err],
                         }))),
                     };
-                    let _ = pending.reply_tx.send(resp);
+                    // a saved script: answer once a fresh listing shows it under its name
+                    // (the next tool may look for it by name straight away)
+                    match resp {
+                        Ok(ViewerResponse::Json(json)) if json.get("asset_id").is_some() => {
+                            self.verify_script_listed(
+                                pending.object_uuid,
+                                pending.local_id,
+                                pending.item_id,
+                                pending.script_name.clone(),
+                                json,
+                                pending.reply_tx,
+                            );
+                        }
+                        other => {
+                            let _ = pending.reply_tx.send(other);
+                        }
+                    }
                 }
             }
             NetEvent::InventoryContentSaved { request, result, .. } => {
@@ -706,6 +753,39 @@ impl App {
             }
         }
         self.mcp_bridge.pending_script_inspects = remaining_inspects;
+
+        // 2a. Object contents requests (mcp_bridge/contents.rs)
+        self.poll_mcp_contents();
+
+        // 2a'. Takes waiting for their inventory item
+        let takes = std::mem::take(&mut self.mcp_bridge.pending_takes);
+        for take in takes {
+            let made = self
+                .world
+                .inventory
+                .items
+                .values()
+                .find(|it| it.parent == take.folder && it.name == take.name && !take.before.contains(&it.id))
+                .map(|it| it.id);
+            if let Some(item_id) = made {
+                let _ = take.reply_tx.send(Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "verified": true,
+                    "local_id": take.local_id,
+                    "action": take.action,
+                    "item_id": item_id.to_string(),
+                    "name": take.name,
+                    "folder_id": take.folder.to_string(),
+                }))));
+            } else if now.duration_since(take.started) > Duration::from_secs(15) {
+                let _ = take.reply_tx.send(Err(McpError::Internal(format!(
+                    "timed out: '{}' was sent to inventory but no new item appeared in folder {}",
+                    take.name, take.folder
+                ))));
+            } else {
+                self.mcp_bridge.pending_takes.push_back(take);
+            }
+        }
 
         // 2b. Progress pending async RezScript creations awaiting task inventory
         let mut remaining_creations = VecDeque::new();
@@ -1532,6 +1612,71 @@ impl App {
                 let resp = self.mcp_script_prompt_respond(id, button, text, grant, ignore);
                 let _ = reply_tx.send(resp);
             }
+            ViewerRequest::ObjectContents { object_local_id } => {
+                self.start_mcp_contents(object_local_id, contents::ContentsOp::List, reply_tx);
+            }
+            ViewerRequest::TaskItemPermissions {
+                object_local_id,
+                item_id,
+                name,
+                copy,
+                modify,
+                transfer,
+            } => match contents::ItemRef::from_args(item_id, name) {
+                Ok(item) => self.start_mcp_contents(
+                    object_local_id,
+                    contents::ContentsOp::NextOwner {
+                        item,
+                        copy,
+                        modify,
+                        transfer,
+                    },
+                    reply_tx,
+                ),
+                Err(e) => {
+                    let _ = reply_tx.send(Err(e));
+                }
+            },
+            ViewerRequest::ObjectSetPermissions {
+                object_local_id,
+                copy,
+                modify,
+                transfer,
+            } => self.start_mcp_contents(
+                object_local_id,
+                contents::ContentsOp::ObjectNextOwner { copy, modify, transfer },
+                reply_tx,
+            ),
+            ViewerRequest::TaskItemRemove {
+                object_local_id,
+                item_id,
+                name,
+            } => match contents::ItemRef::from_args(item_id, name) {
+                Ok(item) => self.start_mcp_contents(object_local_id, contents::ContentsOp::Remove { item }, reply_tx),
+                Err(e) => {
+                    let _ = reply_tx.send(Err(e));
+                }
+            },
+            ViewerRequest::TaskItemAdd {
+                object_local_id,
+                inventory_item_id,
+                running,
+                replace,
+            } => self.start_mcp_contents(
+                object_local_id,
+                contents::ContentsOp::Add {
+                    inventory_item: inventory_item_id,
+                    running,
+                    replace,
+                },
+                reply_tx,
+            ),
+            ViewerRequest::TaskNotecardWrite {
+                object_local_id,
+                name,
+                body,
+                replace,
+            } => self.start_mcp_contents(object_local_id, contents::ContentsOp::Notecard { name, body, replace }, reply_tx),
             ViewerRequest::FloaterList => {
                 let floaters = self.collect_floater_list();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
@@ -1682,15 +1827,24 @@ impl App {
                 mono,
                 compile_target,
                 running,
+                if_exists,
+                experience_id,
             } => {
-                self.handle_mcp_lsl_write(
+                // decided on a FRESH listing of the prim's contents: on a stale or
+                // empty cache an existing script looked missing (a second copy)
+                // or another item looked new (overwritten)
+                self.start_mcp_contents(
                     object_local_id,
-                    script_item_id,
-                    script_name,
-                    source_code,
-                    mono,
-                    compile_target,
-                    running,
+                    contents::ContentsOp::Script(Box::new(contents::ScriptWrite {
+                        script_item_id,
+                        script_name,
+                        source_code,
+                        mono,
+                        compile_target,
+                        running,
+                        if_exists,
+                        experience_id,
+                    })),
                     reply_tx,
                 );
             }
@@ -1782,9 +1936,9 @@ impl App {
                 local_id,
                 action,
                 folder_id,
+                folder_name,
             } => {
-                let resp = self.handle_mcp_object_take_or_derez(local_id, &action, folder_id);
-                let _ = reply_tx.send(resp);
+                self.handle_mcp_object_take_or_derez(local_id, &action, folder_id, folder_name, reply_tx);
             }
             ViewerRequest::PrimSetMaterial {
                 local_id,
@@ -2993,13 +3147,12 @@ impl App {
                     .filter(|it| it.asset_type == 10 || it.inv_type == 10)
                     .map(|it| {
                         let mask = crate::world::inventory::actions::task_agent_mask(it, self.world.agent_id);
-                        let (running, compile_target) = self
-                            .build
-                            .contents
-                            .running
-                            .get(&(object_uuid, it.item_id))
-                            .copied()
-                            .unwrap_or((true, Some(aurora_net::scripts::CompileTarget::Mono)));
+                        // the simulator's answer, or null while it has not come:
+                        // defaulting to true reported 76 of 76 running in a prim
+                        // whose conductor stops its payload
+                        let known = self.build.contents.running.get(&(object_uuid, it.item_id)).copied();
+                        let running = known.map(|(r, _)| r);
+                        let compile_target = known.and_then(|(_, t)| t);
                         let compile_target_name = compile_target.map(|t| match t {
                             aurora_net::scripts::CompileTarget::Lsl2 => "lsl2",
                             aurora_net::scripts::CompileTarget::Mono => "mono",
@@ -3109,7 +3262,8 @@ impl App {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn handle_mcp_lsl_write(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_mcp_lsl_write(
         &mut self,
         object_local_id: u32,
         script_item_id: Option<Uuid>,
@@ -3118,8 +3272,20 @@ impl App {
         mono: bool,
         compile_target: Option<String>,
         running: bool,
+        if_exists: Option<String>,
+        experience_id: Option<String>,
         reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
     ) {
+        let fail_if_exists = match if_exists.as_deref().map(str::trim) {
+            None | Some("") | Some("replace") => false,
+            Some("fail") => true,
+            Some(other) => {
+                let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                    "if_exists '{other}': use 'replace' or 'fail'"
+                ))));
+                return;
+            }
+        };
         let compile = match compile_target.as_deref().map(|s| s.trim().to_ascii_lowercase()).as_deref() {
             None | Some("") => {
                 if mono {
@@ -3153,7 +3319,22 @@ impl App {
         } else {
             source_code
         };
-        let experience = if source_code.contains("llRequestExperiencePermissions")
+        let explicit_experience = match experience_id.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some("none") => Some(Uuid::nil()),
+            Some(id) => match Uuid::parse_str(id) {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                        "experience_id '{id}' is not a UUID (or \"none\")"
+                    ))));
+                    return;
+                }
+            },
+        };
+        let experience = if let Some(id) = explicit_experience {
+            id
+        } else if source_code.contains("llRequestExperiencePermissions")
             || source_code.contains("experience_permissions")
             || source_code.contains("llSitOnLink")
             || source_code.contains("llAgentInExperience")
@@ -3193,10 +3374,42 @@ impl App {
         let existing = self.build.contents.objects.get(&object_uuid).and_then(|inv| {
             if let Some(id) = script_item_id {
                 inv.items.iter().find(|it| it.item_id == id).cloned()
+            } else if script_name.is_empty() {
+                None
             } else {
-                inv.items.iter().find(|it| it.name.eq_ignore_ascii_case(&script_name)).cloned()
+                // the exact name: "Skep" and "skep" are two items in a prim
+                inv.items
+                    .iter()
+                    .find(|it| (it.asset_type == 10 || it.inv_type == 10) && it.name == script_name)
+                    .cloned()
             }
         });
+        if fail_if_exists && let Some(item) = existing.as_ref() {
+            let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                "a script named '{}' is already in this prim (item {}): pass if_exists: \"replace\" to replace it",
+                item.name, item.item_id
+            ))));
+            return;
+        }
+        // no name given: an existing script keeps its own; a new one is New Script
+        let script_name = if !script_name.is_empty() {
+            script_name
+        } else if let Some(item) = existing.as_ref() {
+            item.name.clone()
+        } else {
+            "New Script".to_owned()
+        };
+        let source_bytes = source_code.len();
+        let source_sha256 = {
+            use sha2::Digest;
+            sha2::Sha256::digest(source_code.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        };
+        self.mcp_bridge
+            .script_fingerprints
+            .insert(object_uuid, (source_bytes, source_sha256));
 
         let known_script_ids: HashSet<Uuid> = self
             .build
@@ -4037,11 +4250,32 @@ impl App {
         local_id: u32,
         action: &str,
         folder_id: Option<Uuid>,
-    ) -> Result<ViewerResponse, McpError> {
+        folder_name: Option<String>,
+        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+    ) {
+        match self.mcp_take_or_derez(local_id, action, folder_id, folder_name) {
+            // a take: answered once the new inventory item exists
+            Ok(Some(take)) => self.mcp_bridge.pending_takes.push_back(PendingTake { reply_tx, ..take }),
+            Ok(None) => {}
+            Err(e) => {
+                let _ = reply_tx.send(Err(e));
+            }
+        }
+    }
+
+    /// Sends the DeRez. A take or take_copy comes back as a PendingTake to
+    /// wait for its inventory item; delete and return answer at once.
+    fn mcp_take_or_derez(
+        &mut self,
+        local_id: u32,
+        action: &str,
+        folder_id: Option<Uuid>,
+        folder_name: Option<String>,
+    ) -> Result<Option<PendingTake>, McpError> {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
-        let _ = self.resolve_prim_by_local_id(local_id)?;
+        let (_, object_uuid) = self.resolve_prim_by_local_id(local_id)?;
         let act = action.trim().to_ascii_lowercase();
         let destination = match act.as_str() {
             "take" => aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY,
@@ -4054,26 +4288,71 @@ impl App {
                 )));
             }
         };
-        let destination_id = folder_id.unwrap_or_else(|| {
+        let named = match folder_name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            None => None,
+            Some(name) => {
+                let found: Vec<Uuid> = self
+                    .world
+                    .inventory
+                    .folders
+                    .values()
+                    .filter(|f| !f.library && f.info.name == name)
+                    .map(|f| f.info.id)
+                    .collect();
+                match found[..] {
+                    [one] => Some(one),
+                    [] => return Err(McpError::InvalidParams(format!("no inventory folder named '{name}'"))),
+                    _ => {
+                        return Err(McpError::InvalidParams(format!(
+                            "{} inventory folders are named '{name}': give folder_id",
+                            found.len()
+                        )));
+                    }
+                }
+            }
+        };
+        // the agent's own system folder, never the Library's of the same type
+        // (a take once went to a Library folder)
+        let system = |kind: i32| {
+            self.world
+                .inventory
+                .folders
+                .values()
+                .find(|f| !f.library && f.info.type_default == kind)
+                .map(|f| f.info.id)
+                .unwrap_or(self.world.inventory.root)
+        };
+        let destination_id = folder_id.or(named).unwrap_or_else(|| {
             if destination == aurora_net::build::derez::TRASH {
-                self.world
-                    .inventory
-                    .folders
-                    .values()
-                    .find(|f| f.info.type_default == 14)
-                    .map(|f| f.info.id)
-                    .unwrap_or(self.world.inventory.root)
+                system(14)
             } else {
-                self.world
-                    .inventory
-                    .folders
-                    .values()
-                    .find(|f| f.info.type_default == 6)
-                    .map(|f| f.info.id)
-                    .unwrap_or(self.world.inventory.root)
+                system(6)
             }
         });
         let group_id = self.world.group_for_rez(self.settings.build.rez_under_land_group);
+        let is_take = matches!(
+            destination,
+            aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY | aurora_net::build::derez::ACQUIRE_TO_AGENT_INVENTORY
+        );
+        let name = self.build.props.get(&object_uuid).map(|p| p.name.clone()).filter(|n| !n.is_empty());
+        if is_take && name.is_none() {
+            // the new item is recognised by the object's name: fetch it first
+            self.send(NetCommand::RequestObjectProperties {
+                handle,
+                object: object_uuid,
+            });
+            return Err(McpError::InvalidParams(
+                "the object's name is not known yet: call again in a moment".into(),
+            ));
+        }
+        let before: HashSet<Uuid> = self
+            .world
+            .inventory
+            .items
+            .values()
+            .filter(|it| it.parent == destination_id)
+            .map(|it| it.id)
+            .collect();
         self.send(NetCommand::Build(BuildCmd::DeRez {
             handle,
             local_ids: vec![local_id],
@@ -4081,12 +4360,19 @@ impl App {
             destination_id,
             group_id,
         }));
-        Ok(ViewerResponse::Json(json!({
-            "ok": true,
-            "local_id": local_id,
-            "action": act,
-            "destination_folder": destination_id.to_string(),
-        })))
+        if is_take {
+            let (spare, _) = oneshot::channel();
+            return Ok(Some(PendingTake {
+                local_id,
+                action: act,
+                name: name.unwrap_or_default(),
+                folder: destination_id,
+                before,
+                started: Instant::now(),
+                reply_tx: spare,
+            }));
+        }
+        Ok(None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5106,6 +5392,8 @@ impl App {
                 true,
                 None,
                 true,
+                None,
+                None,
                 reply_tx,
             );
             return;
@@ -5191,6 +5479,8 @@ impl App {
             true,
             None,
             true,
+            None,
+            None,
             reply_tx,
         );
     }
