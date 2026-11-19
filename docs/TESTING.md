@@ -4946,6 +4946,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
 | `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky, water and day cycle editors |
 | `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
+| `AURORA_DEMO_WEATHER_WINDOW=rain\|snow\|night` | Aurora Weather window open on a weather of its own |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Aurora Weather window is used |
@@ -5444,6 +5445,19 @@ both open states and the selection count. Capture at frame 620.
   found and the time of day after it; capture after the sky's transition
   (`AURORA_CAPTURE_FRAMES=620`). `j` with `AURORA_DEMO_TOD=2` must bring
   back the region's sky (time of day 0).
+- **`AURORA_DEMO_WEATHER_WINDOW=rain|snow|night`**: the Aurora Weather
+  window opens at the start (`demo_env.rs`, `ui/weather_window.rs`) on a
+  weather it sets as the window does (the weather variables no longer
+  apply): `rain` a thunderstorm with puddles and a west wind (the summary
+  says "Thunderstorm", with the wind, lightning, puddles and northern
+  lights chips), `snow` a snowfall that settles, with footprints (the
+  ground card lists the snow's rows, the thunder card is greyed), `night`
+  a clear sky with green northern lights (their preview shows the curtain
+  a little east of north). Click or drag on the wind's compass: the dot
+  goes where the pointer is, the arrow the other way, and "Wind from"
+  follows in steps of 5°. Capture after frame 300 at `AURORA_TEXT_SIZE=1`
+  and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
+  switch or value.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame

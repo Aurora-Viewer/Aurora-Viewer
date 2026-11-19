@@ -58,6 +58,60 @@ pub fn estate_manager() -> bool {
     editor().is_some_and(|s| s.starts_with("region"))
 }
 
+/// `AURORA_DEMO_WEATHER_WINDOW=rain|snow|night`: the Aurora Weather window
+/// opens at the start on a weather of its own: a thunderstorm with
+/// puddles, a snowfall that settles, or a clear night with the northern
+/// lights.
+pub fn weather_window() -> Option<&'static str> {
+    static S: OnceLock<String> = OnceLock::new();
+    let s = S.get_or_init(|| std::env::var("AURORA_DEMO_WEATHER_WINDOW").unwrap_or_default().trim().to_owned());
+    (!s.is_empty() && s != "0").then_some(s.as_str())
+}
+
+/// The weather `AURORA_DEMO_WEATHER_WINDOW` opens its window on, set as
+/// the window sets it (the variables of the weather no longer apply).
+pub fn weather_scene(mode: &str, w: &mut crate::weather::WeatherSettings) {
+    use crate::weather::{AuroraColours, Precipitation};
+    w.touched = true;
+    w.region_weather = false;
+    match mode {
+        "snow" => {
+            w.precipitation = Precipitation::Snow;
+            w.amount = 0.6;
+            w.wind_min = 0.1;
+            w.wind_max = 0.35;
+            w.wind_follow_region = false;
+            w.wind_from = 315.0;
+            w.snow_settles = true;
+            w.snow_footprints = true;
+            w.aurora = false;
+        }
+        "night" => {
+            w.amount = 0.0;
+            w.wind_min = 0.05;
+            w.wind_max = 0.2;
+            w.aurora = true;
+            w.aurora_intensity = 0.8;
+            w.aurora_heading = 20.0;
+            w.aurora_height = 0.3;
+            w.aurora_colours = AuroraColours::Green;
+        }
+        // "rain", "1" and anything else: a thunderstorm
+        _ => {
+            w.precipitation = Precipitation::Rain;
+            w.amount = 0.85;
+            w.wind_min = 0.25;
+            w.wind_max = 0.65;
+            w.wind_follow_region = false;
+            w.wind_from = 270.0;
+            w.thunder = true;
+            w.puddles = true;
+            w.aurora = true;
+            w.aurora_colours = AuroraColours::Violet;
+        }
+    }
+}
+
 /// The library and the user's Settings folder: for the selector's and the
 /// editors' scenarios, and for About Land's (its environment picker).
 pub fn enabled() -> bool {

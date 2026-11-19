@@ -31,7 +31,7 @@ const LEVEL: f32 = 0.9;
 /// Speed of sound (m/s).
 const SOUND_SPEED: f32 = 343.0;
 /// No thunder below this much rain.
-const MIN_RAIN: f32 = 0.4;
+pub const MIN_RAIN: f32 = 0.4;
 /// Strikes' distances (m).
 const NEAREST: f32 = 300.0;
 const FARTHEST: f32 = 6000.0;
