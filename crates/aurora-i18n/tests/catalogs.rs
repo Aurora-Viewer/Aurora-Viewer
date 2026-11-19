@@ -200,6 +200,16 @@ fn system_locale_selects_the_correct_chinese_script_and_saved_choice_wins() {
 }
 
 #[test]
+fn another_region_of_the_language_comes_before_english() {
+    assert_eq!(resolve_language("default", "pt-PT", &["en", "pt-BR"]), "pt-BR");
+    assert_eq!(resolve_language("default", "pt", &["en", "pt-BR"]), "pt-BR");
+    assert_eq!(resolve_language("default", "pt-PT", &["en", "pt-BR", "pt-PT"]), "pt-PT");
+    assert_eq!(resolve_language("default", "pt-BR", &["en", "pt-BR", "pt-PT"]), "pt-BR");
+    assert_eq!(resolve_language("default", "es-MX", &["en", "es"]), "es");
+    assert_eq!(resolve_language("default", "nb-NO", &["en", "da"]), "en");
+}
+
+#[test]
 fn language_menu_prefers_system_then_common_then_code_order() {
     let mut choices = [
         ("vi", "Tiếng Việt"),

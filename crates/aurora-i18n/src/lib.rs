@@ -243,7 +243,17 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
         }
         candidate = parent;
     }
-    find(candidate).or_else(|| candidate.eq_ignore_ascii_case("zh").then(|| find("zh-Hans")).flatten())
+    let chinese = candidate.eq_ignore_ascii_case("zh");
+    find(candidate)
+        .or_else(|| chinese.then(|| find("zh-Hans")).flatten())
+        // another region of the same language before English (pt-PT reads
+        // pt-BR), as the Legacy Viewer's single `pt` folder serves both;
+        // Chinese scripts are chosen above, never swapped here
+        .or_else(|| {
+            (!chinese)
+                .then(|| available.clone().position(|code| grid_code(code).eq_ignore_ascii_case(candidate)))
+                .flatten()
+        })
 }
 
 /// Pure selection, independent from the machine's locale and saved files.
@@ -315,6 +325,21 @@ fn catalog_for(language: &str) -> &'static Catalog {
 
 pub fn language() -> &'static str {
     current().code
+}
+
+/// The language code sent to the grid (`UpdateAgentLanguage`, the currency
+/// and land XML-RPC calls, the viewer statistics, the abuse categories, the
+/// People API): the Legacy Viewer sends its `Language` setting
+/// (LLUI::getUILanguage, indra/llui/llui.cpp), whose values are its
+/// interface folders, such as `zh` and `pt`. Scripts read it through
+/// `llGetAgentLanguage`.
+pub fn grid_language() -> &'static str {
+    grid_code(language())
+}
+
+/// The primary subtag of a catalogue code: `zh-Hans` → `zh`, `pt-BR` → `pt`.
+pub fn grid_code(code: &str) -> &str {
+    code.split(['-', '_']).next().filter(|base| !base.is_empty()).unwrap_or("en")
 }
 
 pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str)> {
@@ -575,6 +600,24 @@ mod tests {
         assert_eq!(integer_in("en", i64::MIN), "-9,223,372,036,854,775,808");
         assert_eq!(number_text_in("ja", "-1234.50"), "-1234.50");
         assert_eq!(integer_in("ja", 1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn the_grid_gets_the_legacy_viewer_s_language_codes() {
+        for (code, grid) in [
+            ("en", "en"),
+            ("fr", "fr"),
+            ("ja", "ja"),
+            ("de", "de"),
+            ("ru", "ru"),
+            ("zh-Hans", "zh"),
+            ("zh-Hant", "zh"),
+            ("pt-BR", "pt"),
+            ("pt_PT", "pt"),
+            ("", "en"),
+        ] {
+            assert_eq!(grid_code(code), grid, "{code}");
+        }
     }
 
     #[test]

@@ -1726,7 +1726,7 @@ impl App {
         // (an adapter known to drop under many downloads keeps them
         // limited: #1545, net_adapters.rs)
         let net = NetClient::new(crate::net_adapters::startup_mode(settings.download_connections))?;
-        net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
+        net.set_agent_language(aurora_i18n::grid_language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
@@ -13481,7 +13481,7 @@ impl App {
             crate::language_file::select(&self.settings.language, self.settings.custom_language);
             crate::crash::update(&self.skin.theme, &self.settings);
             self.net
-                .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
+                .set_agent_language(aurora_i18n::grid_language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
