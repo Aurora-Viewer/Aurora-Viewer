@@ -25,10 +25,10 @@ struct Catalog {
     plain: HashMap<String, String>,
 }
 
-static CATALOGS: OnceLock<Vec<Catalog>> = OnceLock::new();
+static CATALOGS: OnceLock<Vec<OnceLock<Catalog>>> = OnceLock::new();
 /// The user's own catalog file, installed at most once per process.
 static USER: OnceLock<Catalog> = OnceLock::new();
-/// The selected catalog: an index of `catalogs()`, `USER_INDEX`, or
+/// The selected catalog: an index of `SOURCES`, `USER_INDEX`, or
 /// `usize::MAX` before the first selection.
 static CURRENT: AtomicUsize = AtomicUsize::new(usize::MAX);
 const USER_INDEX: usize = usize::MAX - 1;
@@ -66,22 +66,19 @@ impl<T> Localized<T> {
         // the user's catalog has the slot after the bundled ones: it may
         // share a bundled catalog's code, not its texts
         let index = match CURRENT.load(Ordering::Acquire) {
-            USER_INDEX => catalogs().len(),
+            USER_INDEX => SOURCES.len(),
             index => index,
         };
-        self.0.get_or_init(|| (0..=catalogs().len()).map(|_| OnceLock::new()).collect())[index].get_or_init(build)
+        self.0.get_or_init(|| (0..=SOURCES.len()).map(|_| OnceLock::new()).collect())[index].get_or_init(build)
     }
 }
 
-fn catalogs() -> &'static [Catalog] {
-    CATALOGS.get_or_init(|| {
-        SOURCES
-            .iter()
-            .map(|&(code, source)| {
-                let resource = FluentResource::try_new(source.to_owned()).expect("bundled Fluent syntax is checked by tests");
-                assemble(code, resource, false).0
-            })
-            .collect()
+fn bundled(index: usize) -> &'static Catalog {
+    let catalogs = CATALOGS.get_or_init(|| SOURCES.iter().map(|_| OnceLock::new()).collect());
+    catalogs[index].get_or_init(|| {
+        let (code, source) = SOURCES[index];
+        let resource = FluentResource::try_new(source.to_owned()).expect("bundled Fluent syntax is checked by tests");
+        assemble(code, resource, false).0
     })
 }
 
@@ -213,25 +210,40 @@ pub fn user_catalog_selected() -> bool {
 }
 
 fn english() -> usize {
-    catalogs()
+    SOURCES
         .iter()
-        .position(|catalog| catalog.code == "en")
+        .position(|&(code, _)| code == "en")
         .expect("English fallback catalog is bundled")
 }
 
 fn index(code: &str) -> Option<usize> {
+    language_index(code, SOURCES.iter().map(|&(code, _)| code))
+}
+
+fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clone) -> Option<usize> {
     let normalized = if code.contains('_') {
         std::borrow::Cow::Owned(code.replace('_', "-"))
     } else {
         std::borrow::Cow::Borrowed(code)
     };
-    catalogs()
-        .iter()
-        .position(|catalog| catalog.code.eq_ignore_ascii_case(&normalized))
-        .or_else(|| {
-            let base = normalized.split('-').next()?;
-            catalogs().iter().position(|catalog| catalog.code.eq_ignore_ascii_case(base))
-        })
+    let find = |candidate: &str| available.clone().position(|code| code.eq_ignore_ascii_case(candidate));
+    let mut candidate = normalized.as_ref();
+    while let Some((parent, _)) = candidate.rsplit_once('-') {
+        if let Some(index) = find(candidate) {
+            return Some(index);
+        }
+        if parent.eq_ignore_ascii_case("zh") {
+            let region = candidate.split_once('-')?.1;
+            let script = match region.to_ascii_lowercase().as_str() {
+                "tw" | "hk" | "mo" => "zh-Hant",
+                "cn" | "sg" => "zh-Hans",
+                _ => candidate,
+            };
+            return find(script).or_else(|| find(parent));
+        }
+        candidate = parent;
+    }
+    find(candidate).or_else(|| candidate.eq_ignore_ascii_case("zh").then(|| find("zh-Hans")).flatten())
 }
 
 /// Pure selection, independent from the machine's locale and saved files.
@@ -241,16 +253,7 @@ pub fn resolve_language<'a>(preference: &str, system: &str, available: &'a [&str
     } else {
         preference
     };
-    let normalized = requested.replace('_', "-");
-    available
-        .iter()
-        .find(|code| code.eq_ignore_ascii_case(&normalized))
-        .or_else(|| {
-            let base = normalized.split('-').next().unwrap_or_default();
-            available.iter().find(|code| code.eq_ignore_ascii_case(base))
-        })
-        .copied()
-        .unwrap_or("en")
+    language_index(requested, available.iter().copied()).map_or("en", |index| available[index])
 }
 
 pub fn system_language() -> &'static str {
@@ -290,8 +293,8 @@ fn current() -> &'static Catalog {
     }
     match (selected, USER.get()) {
         (USER_INDEX, Some(user)) => user,
-        (USER_INDEX, None) => &catalogs()[english()],
-        _ => &catalogs()[selected],
+        (USER_INDEX, None) => bundled(english()),
+        _ => bundled(selected),
     }
 }
 
@@ -307,7 +310,7 @@ fn catalog_for(language: &str) -> &'static Catalog {
     {
         return user;
     }
-    &catalogs()[index(language).unwrap_or_else(english)]
+    bundled(index(language).unwrap_or_else(english))
 }
 
 pub fn language() -> &'static str {
@@ -315,10 +318,27 @@ pub fn language() -> &'static str {
 }
 
 pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str)> {
-    catalogs().iter().map(|catalog| {
-        let name = catalog.plain.get("language-name").map_or(catalog.code, String::as_str);
-        (catalog.code, name)
+    SOURCES.iter().map(|&(code, source)| {
+        let name = source
+            .lines()
+            .find_map(|line| line.strip_prefix("language-name = "))
+            .map(str::trim)
+            .unwrap_or(code);
+        (code, name)
     })
+}
+
+/// The system's closest bundled language first, then commonly requested
+/// languages and the remaining entries in language-code order.
+pub fn language_menu_order(items: &mut [(&str, &str)], system: &str) {
+    const COMMON: &[&str] = &[
+        "en", "zh-Hans", "zh-Hant", "es", "pt-BR", "pt", "ja", "fr", "de", "ko", "ru", "hi", "ar",
+    ];
+    let system_code = language_index(system, items.iter().map(|(code, _)| *code)).map(|index| items[index].0);
+    items.sort_unstable_by_key(|&(code, _)| {
+        let rank = COMMON.iter().position(|&item| item == code).unwrap_or(COMMON.len());
+        (Some(code) != system_code, rank, code)
+    });
 }
 
 pub fn text(key: &'static str) -> &'static str {
@@ -385,7 +405,7 @@ fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
     catalog
         .plain
         .get(key)
-        .or_else(|| catalogs()[english()].plain.get(key))
+        .or_else(|| bundled(english()).plain.get(key))
         .map_or(key, String::as_str)
 }
 
@@ -410,7 +430,7 @@ pub fn format_in(language: &str, key: &'static str, args: &FluentArgs<'_>) -> St
 }
 
 fn format_catalog(catalog: &Catalog, key: &'static str, args: &FluentArgs<'_>) -> String {
-    render_with_fallback(catalog, &catalogs()[english()], key, args).unwrap_or_else(|| {
+    render_with_fallback(catalog, bundled(english()), key, args).unwrap_or_else(|| {
         log::warn!("Missing localization message or arguments: {key}");
         key.to_owned()
     })

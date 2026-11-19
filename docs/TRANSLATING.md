@@ -17,17 +17,41 @@ plain text (`{ $count }件`), while a select on anything else keeps its
 variants. Japanese uses the official Second Life terms of the Legacy
 Viewer's `xui/ja` interface (インベントリ, 区画, リージョン, 初期設定…).
 
-The saved choice takes precedence over the OS; "System language" follows the
-OS. Regional variants use the exact catalogue if it exists, then the one of
-the main language. An unavailable language or a missing message uses
-English. The language and its visibility to scripts are sent to the
+"System language" is the default and follows the OS. An explicit saved
+choice takes precedence. Preferences shows the system match first among
+bundled languages, then common choices and the rest by language code. Each
+entry uses its native name and the exact catalogue code, such as `English
+(en)` or `日本語 (ja)`.
+
+Regional variants prefer the exact catalogue and then try less specific
+codes. `zh-CN` and `zh-SG` can use `zh-Hans`, while `zh-TW`, `zh-HK` and
+`zh-MO` can use `zh-Hant`. A missing locale or message uses English. The
+language and its visibility to scripts are sent to the
 simulator through `UpdateAgentLanguage`, after login, a region change or a
 change to the preferences, following the Legacy Viewer's `LLAgentLanguage::update`.
 
-A new text uses an explicit key and its version in every catalogue
-(English, French and Japanese) in the same PR, at the same place as in
-`en.ftl`. A key missing from one catalogue fails the parity test, in
-`scripts/check.ps1` and in the merge queue.
+A new text uses an explicit key and its English, French and Japanese versions
+in the same PR, at the same place as in `en.ftl`. Community catalogues can
+catch up on a separate release schedule. New untranslated keys use the
+current English message until the community catalogue gains a translation.
+The checks require valid Fluent, exact variables on translated messages,
+and no stale keys in bundled catalogues. Only English, French and Japanese
+require complete parity on each feature PR. Put each catalogue's native name
+on a single `language-name = …` line so the menu can display it before the
+catalogue is loaded. The same `.ftl` files can be copied out of the source
+tree and imported through the language file picker.
+
+For a release, save the previous and current English catalogues and run
+the delta report for each language:
+
+```text
+cargo run -q -p aurora-i18n --example catalog_delta -- previous-en.ftl crates/aurora-i18n/locales/en.ftl crates/aurora-i18n/locales/zh-Hans.ftl
+```
+
+Translate missing messages, review changed English against the existing
+translation, and remove obsolete keys. The output contains English source
+for review. Apply the reviewed translations to the original locale file
+and run the catalogue tests before testing it in the viewer.
 
 ```rust
 ui.label(aurora_i18n::tr!("inventory-empty"));
@@ -132,6 +156,16 @@ the texts it holds and the entries Fluent could not read. The file must be
 UTF-8 (Notepad's byte order mark is accepted). To add the language to the
 viewer for everyone, put the file in `crates/aurora-i18n/locales/` as
 described above.
+
+For an in-progress language, keep only translated messages in the file.
+After a viewer update, new messages absent from the file use the English
+text shipped with that build. Invalid Fluent entries are skipped. If a
+translated message cannot be formatted (for example, it still uses a
+variable removed from the call), the viewer tries English with the same
+arguments. If English also has no usable message, the key is displayed.
+When updating a catalogue, review existing translations against changes to
+the English text, since an older entry can still render after its meaning
+changes.
 
 To compare the languages without changing the preferences:
 

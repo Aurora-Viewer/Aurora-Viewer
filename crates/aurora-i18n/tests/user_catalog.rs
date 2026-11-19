@@ -34,7 +34,8 @@ fn a_user_catalog_replaces_the_list_s_language_until_it_is_turned_off() {
                   language-system = Systemsprache\n\
                   number-decimal-separator = ,\n\
                   number-thousands-separator = .\n\
-                  broken = }\n\
+                  common-cancel = }\n\
+                  login-accounts-start-summary = Start: { $wrong_variable }\n\
                   greeting = Hallo { $name }\n";
     let installed = install_user_catalog("de", source).expect("a readable file installs");
     assert_eq!(
@@ -42,7 +43,7 @@ fn a_user_catalog_replaces_the_list_s_language_until_it_is_turned_off() {
         UserCatalog {
             code: "de",
             named: true,
-            messages: 5,
+            messages: 6,
             errors: 1,
         }
     );
@@ -60,6 +61,15 @@ fn a_user_catalog_replaces_the_list_s_language_until_it_is_turned_off() {
     assert_eq!(text("language-system"), "Systemsprache");
     assert_eq!(tr!("greeting", name = "Zoé"), "Hallo Zoé");
     assert_eq!(text("language-choice"), text_in("en", "language-choice"), "missing: English");
+    assert_eq!(text("common-cancel"), "Cancel", "malformed entry: English");
+    assert_eq!(tr!("language-item-count", count = 2), "2 items", "missing formatted entry: English");
+    assert_eq!(
+        tr!("login-accounts-start-summary", location = "Home"),
+        "Start: Home",
+        "unresolvable variable: English with the original arguments"
+    );
+    assert_eq!(text("test-missing-in-both-catalogs"), "test-missing-in-both-catalogs");
+    assert_eq!(tr!("test-missing-in-both-catalogs", count = 2), "test-missing-in-both-catalogs");
     assert_eq!(text_in("de", "language-system"), "Systemsprache");
     assert_eq!(text_in("en", "language-system"), "System language", "English stays the bundled one");
     assert_eq!(aurora_i18n::number(1.5, 1), "1,5");

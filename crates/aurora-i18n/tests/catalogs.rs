@@ -52,7 +52,7 @@ fn pattern(value: &ast::Pattern<&str>, variables: &mut BTreeSet<String>) {
 }
 
 #[test]
-fn every_language_has_english_keys_and_variables() {
+fn bundled_catalogs_use_english_keys_and_variables() {
     let mut catalogs = BTreeMap::new();
     for &(language, source) in SOURCES {
         let resource = fluent_syntax::parser::parse(source).unwrap_or_else(|errors| panic!("{language}: {errors:?}"));
@@ -78,7 +78,92 @@ fn every_language_has_english_keys_and_variables() {
     let english = catalogs.get("en").expect("English fallback");
     assert!(english.contains_key("language-name"));
     for (language, messages) in &catalogs {
-        assert_eq!(messages, english, "{language}: keys or variables differ");
+        assert!(messages.contains_key("language-name"), "{language}: missing language name");
+        if matches!(*language, "en" | "fr" | "ja") {
+            assert_eq!(messages, english, "{language}: keys or variables differ");
+        } else {
+            for (key, variables) in messages {
+                assert_eq!(
+                    Some(variables),
+                    english.get(key),
+                    "{language}/{key}: unknown key or different variables"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn advertised_names_match_fluent_catalogs() {
+    for (code, name) in aurora_i18n::available_languages() {
+        assert_eq!(name, aurora_i18n::text_in(code, "language-name"));
+        assert_ne!(name, code, "{code}: expected a literal native name");
+    }
+}
+
+#[test]
+fn russian_is_available_and_uses_russian_plural_forms() {
+    use fluent_bundle::FluentArgs;
+
+    let languages: Vec<_> = aurora_i18n::available_languages().collect();
+    assert!(languages.iter().any(|&(code, name)| code == "ru" && name == "Русский"));
+    let codes: Vec<_> = languages.iter().map(|&(code, _)| code).collect();
+    assert_eq!(resolve_language("default", "ru-RU", &codes), "ru");
+    assert_eq!(resolve_language("en", "ru-RU", &codes), "en");
+
+    for (count, ending) in [(1, "1 строка)"), (2, "2 строки)"), (5, "5 строк)"), (21, "21 строка)")] {
+        let mut args = FluentArgs::new();
+        args.set("name", "ru.ftl");
+        args.set("count", count);
+        let status = aurora_i18n::format_in("ru", "language-file-in-use", &args);
+        assert!(status.ends_with(ending), "{status}");
+    }
+}
+
+#[test]
+fn german_uses_localized_dates_and_number_separators() {
+    use fluent_bundle::FluentArgs;
+
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
+    assert_eq!(resolve_language("default", "de-DE", &codes), "de");
+    assert_eq!(aurora_i18n::text_in("de", "language-name"), "Deutsch");
+    assert_eq!(aurora_i18n::text_in("de", "number-decimal-separator"), ",");
+    assert_eq!(aurora_i18n::text_in("de", "number-thousands-separator"), ".");
+    assert_eq!(aurora_i18n::text_in("de", "extra-sun"), "So");
+
+    let mut args = FluentArgs::new();
+    args.set("day", "16");
+    args.set("month", "November");
+    args.set("year", "2026");
+    assert_eq!(aurora_i18n::format_in("de", "date-day-month-year", &args), "16. November 2026");
+}
+
+#[test]
+fn brazilian_portuguese_uses_regional_dates_numbers_and_counts() {
+    use fluent_bundle::FluentArgs;
+
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
+    for locale in ["pt-BR", "pt_BR"] {
+        assert_eq!(resolve_language("default", locale, &codes), "pt-BR");
+    }
+    assert_eq!(aurora_i18n::text_in("pt-BR", "language-name"), "Português (Brasil)");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "number-decimal-separator"), ",");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "number-thousands-separator"), ".");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "extra-sun"), "dom");
+
+    let mut date = FluentArgs::new();
+    date.set("day", "16");
+    date.set("month", "novembro");
+    date.set("year", "2026");
+    assert_eq!(
+        aurora_i18n::format_in("pt-BR", "date-day-month-year", &date),
+        "16 de novembro de 2026"
+    );
+
+    for (count, expected) in [(0, "0 itens"), (1, "1 item"), (2, "2 itens")] {
+        let mut args = FluentArgs::new();
+        args.set("count", count);
+        assert_eq!(aurora_i18n::format_in("pt-BR", "language-item-count", &args), expected);
     }
 }
 
@@ -97,6 +182,38 @@ fn saved_choice_system_locale_and_english_fallback() {
     assert_eq!(resolve_language("default", "ja-JP", &languages), "ja");
     assert_eq!(resolve_language("ja", "en-US", &languages), "ja");
     assert!(SOURCES.iter().any(|&(code, _)| code == "ja"), "Japanese catalog is bundled");
+}
+
+#[test]
+fn system_locale_selects_the_correct_chinese_script_and_saved_choice_wins() {
+    let available = ["en", "ja", "ko", "zh-Hans", "zh-Hant"];
+    for locale in ["zh-CN", "zh_SG", "zh", "zh-Hans-CN"] {
+        assert_eq!(resolve_language("default", locale, &available), "zh-Hans", "{locale}");
+    }
+    for locale in ["ZH_tw", "zh-HK", "zh-MO", "zh-Hant-HK"] {
+        assert_eq!(resolve_language("default", locale, &available), "zh-Hant", "{locale}");
+    }
+    assert_eq!(resolve_language("ja-JP", "zh-TW", &available), "ja");
+    assert_eq!(resolve_language("default", "ko-KR", &available), "ko");
+    assert_eq!(resolve_language("default", "zh-TW", &["en", "zh-Hans"]), "en");
+    assert_eq!(resolve_language("default", "zh-TW", &["en", "zh-TW", "zh-Hant"]), "zh-TW");
+}
+
+#[test]
+fn language_menu_prefers_system_then_common_then_code_order() {
+    let mut choices = [
+        ("vi", "Tiếng Việt"),
+        ("en", "English"),
+        ("da", "Dansk"),
+        ("es", "Español"),
+        ("zh-Hant", "繁體中文"),
+    ];
+    aurora_i18n::language_menu_order(&mut choices, "zh-TW");
+    assert_eq!(choices.map(|(code, _)| code), ["zh-Hant", "en", "es", "da", "vi"]);
+    aurora_i18n::language_menu_order(&mut choices, "vi-VN");
+    assert_eq!(choices.map(|(code, _)| code), ["vi", "en", "zh-Hant", "es", "da"]);
+    aurora_i18n::language_menu_order(&mut choices, "ko-KR");
+    assert_eq!(choices.map(|(code, _)| code), ["en", "zh-Hant", "es", "da", "vi"]);
 }
 
 #[test]
