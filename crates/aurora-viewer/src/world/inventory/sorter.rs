@@ -4627,6 +4627,56 @@ fn numbered_product_category(inv: &Inventory, root: &super::Folder) -> Option<Ca
         .flatten()
 }
 
+/// A body add-on kit can ship mesh pieces and a matching set of appearance
+/// layers. Use the distinct mesh components as evidence for the delivery
+/// when every other item in the vote is explicitly part of the same kit.
+fn body_addon_kit(root: &super::Folder, samples: &[(&InvItem, Classified)]) -> bool {
+    if !root.children.is_empty() || !(2..=48).contains(&root.items.len()) {
+        return false;
+    }
+    let title = delivery_title(&root.info.name);
+    let [stem @ .., kind, package] = title.as_slice() else {
+        return false;
+    };
+    if stem.len() < 2 || package != "kit" || kind.len() < 3 {
+        return false;
+    }
+    let singular = kind.strip_suffix('s').unwrap_or(kind);
+    let same_kind = |word: &str| word == kind || word == singular;
+    let mut components = HashSet::new();
+    for (item, found) in samples {
+        let title = words(&item.name);
+        let Some(label) = title.strip_prefix(stem) else {
+            // Some instructions omit the shop name. The product and kind
+            // must still match the kit title.
+            if let [about, product, subject, package] = title.as_slice()
+                && about == "about"
+                && stem.last() == Some(product)
+                && same_kind(subject)
+                && package == "kit"
+            {
+                continue;
+            }
+            return false;
+        };
+        if label.first().is_some_and(|word| same_kind(word))
+            && (found.category == Some(Category::Huds) && has(label, "hud")
+                || matches!(found.category, None | Some(Category::Tattoos | Category::Makeup | Category::Skins))
+                    && ["bom", "overlay", "applier", "alpha"].iter().any(|role| has(label, role)))
+        {
+            continue;
+        }
+        let Some(at) = label.iter().position(|word| same_kind(word)) else {
+            return false;
+        };
+        if at == 0 || item.asset_type != 6 || found.category != Some(Category::BodyAddons) || demos::is_demo(&item.name) {
+            return false;
+        }
+        components.insert(label[..at].join(" "));
+    }
+    components.len() >= 2
+}
+
 /// Where a folder whose name says nothing goes, from what it holds: the
 /// destination most of its objects, clothing, body parts, animations and
 /// gestures read as when at least three in five agree. A pack already
@@ -4720,6 +4770,11 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
             });
             path.insert(path.len() - usize::from(variant), shop.to_owned());
         }
+        return Some(Dest::Path(path));
+    }
+    if !named_set && inv.folders.get(&folder).is_some_and(|root| body_addon_kit(root, &samples)) {
+        let mut path = vec![category_folder(Category::BodyAddons)];
+        path.extend(shop.map(str::to_owned));
         return Some(Dest::Path(path));
     }
     // The same product for multiple bodies can agree on a category even

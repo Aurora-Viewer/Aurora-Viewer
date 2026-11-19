@@ -2,6 +2,51 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Eudora Moth Halo [Black]",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Moth Halo Ambient Sound",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Brass Timepiece Halo",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Gilded Head Wings",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Velvet Winter Fur Boa",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Abhorrent Tome Book Accessory",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Siren Hand Fins [unrigged]",
+   "type": 6,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Siren Ear Fins [add]",
+   "type": 6,
+   "expect": "{body-addons}"
+  },
+  {
+   "name": "Fiberglass Surfboard Fin Kit",
+   "type": 6,
+   "expect": null
+  },
+  {
    "name": "Faux Fur Boa - Short",
    "type": 6,
    "expect": "{accessories}"

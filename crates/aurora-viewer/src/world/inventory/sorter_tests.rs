@@ -4780,6 +4780,35 @@ fn numbered_same_product_style_folders_use_the_named_primary_object() {
 }
 
 #[test]
+fn body_addon_kits_follow_matching_mesh_parts_and_keep_the_layers() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Nookery Clearwater Fins Kit");
+    add_item(&mut inv, 201, 70, "Nookery Clearwater Body Fins [Reborn]", 0);
+    add_item(&mut inv, 202, 70, "Nookery Clearwater Hand Fins", 0);
+    add_item(&mut inv, 203, 70, "Nookery Clearwater Fin Texture HUD", 0);
+    // Old exports represent the instructions and layers as generic objects.
+    add_item(&mut inv, 204, 70, "! About Clearwater Fin Kit", 0);
+    for layer in 205..=208 {
+        add_item(&mut inv, layer, 70, &format!("Nookery Clearwater Fin BOM {layer}"), 0);
+    }
+    let none = HashSet::new();
+    let prefs = Preferences::default();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(planned.moves.len(), 1);
+        assert_eq!(planned.moves[0].id, id(70));
+        assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::BodyAddons)]));
+    }
+
+    add_item(&mut inv, 209, 70, "Nookery Clearwater Evening Dress", 0);
+    let planned = plan_whole(&inv, &prefs, &none, &none);
+    assert!(planned.moves.is_empty());
+    assert!(planned.unknown.iter().any(|name| name == "Nookery Clearwater Fins Kit"));
+}
+
+#[test]
 fn a_numbered_flat_delivery_needs_one_consistent_named_product() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Nookery Midnight Bloom [ADDME]");
