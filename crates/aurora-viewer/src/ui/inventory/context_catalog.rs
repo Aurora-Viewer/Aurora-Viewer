@@ -1198,6 +1198,31 @@ fn item_attachments(
     }
 }
 
+/// The properties of `ids`, each in a window of its own (one already open
+/// for an item is kept, not doubled), the list free behind them.
+pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
+    for id in ids {
+        if !st
+            .windows
+            .iter()
+            .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
+        {
+            let state = InventoryUi {
+                ui_id: Uuid::new_v4(),
+                dialog: Some(EditDialog::Properties(id)),
+                ..Default::default()
+            };
+            st.windows.push(InventoryWindow {
+                id: state.ui_id,
+                root: Uuid::nil(),
+                additional: false,
+                state: Box::new(state),
+                open: false,
+            });
+        }
+    }
+}
+
 pub(super) fn execute(
     command: Command,
     ui: &egui::Ui,
@@ -1250,28 +1275,7 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
-            }
-        }
+        Command::PropertiesMany(ids) => properties_windows(st, ids),
         Command::Properties(id) => {
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));

@@ -114,10 +114,11 @@ pub(super) fn commands(
                     Err(reason) => st.message = reason,
                 }
             }
+            // Explorer's Alt+Enter: the item's properties in a window of
+            // its own, as many as asked for, the list free behind them
             shortcuts::Command::Properties => {
                 if let Some(id) = st.selected.filter(|id| st.selection.contains(id)) {
-                    st.property_edit = None;
-                    st.dialog = Some(EditDialog::Properties(id));
+                    context_catalog::properties_windows(st, vec![id]);
                 }
             }
             // Shift+F10: the selection's menu at its row, else the menu of

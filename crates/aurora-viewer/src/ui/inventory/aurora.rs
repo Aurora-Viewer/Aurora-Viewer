@@ -898,13 +898,32 @@ mod tests {
         assert_eq!(h.st.selected, Some(Uuid::from_u128(8100)));
         h.run(vec![key(egui::Key::Enter, egui::Modifiers::ALT)]);
         h.frames(2);
-        assert!(
-            matches!(h.st.dialog, Some(EditDialog::Properties(id)) if id == Uuid::from_u128(8100)),
-            "Alt+Enter: {:?}, selection {:?}",
-            h.st.dialog.is_some(),
-            h.st.selection.len()
-        );
-        h.st.dialog = None;
+        // in a window of its own; a second Alt+Enter on another row opens
+        // another, the first kept
+        let open = |h: &Harness| {
+            h.st.windows
+                .iter()
+                .filter_map(|w| match w.state.dialog {
+                    Some(EditDialog::Properties(id)) => Some(id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(open(&h), vec![Uuid::from_u128(8100)], "selection {:?}", h.st.selection.len());
+        assert!(h.st.dialog.is_none(), "the list stays free");
+        let other = h.row(8102);
+        // the first press let go, as a hand does (else egui reads a repeat)
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        }]);
+        h.click(egui::pos2(other.left() + 40.0, other.center().y), Default::default());
+        h.run(vec![key(egui::Key::Enter, egui::Modifiers::ALT)]);
+        h.frames(2);
+        assert_eq!(open(&h), vec![Uuid::from_u128(8100), Uuid::from_u128(8102)]);
         h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
         h.run(vec![key(egui::Key::F2, egui::Modifiers::NONE)]);
         h.frames(2);
@@ -963,6 +982,25 @@ mod tests {
         h.run(vec![button(to, false)]);
         h.frames(2);
         assert_eq!(h.prefs.pinned, vec![b, a]);
+    }
+
+    #[test]
+    fn letters_typed_after_a_click_find_a_row() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let before = h.st.selected;
+        let name = |h: &Harness| h.st.selected.map(|id| rules::name(&h.inv, id)).unwrap_or_default();
+        h.run(vec![egui::Event::Text("i".into())]);
+        h.frames(2);
+        assert!(
+            name(&h).to_lowercase().starts_with('i'),
+            "typed i: {} (before {:?})",
+            name(&h),
+            before
+        );
     }
 
     #[test]
