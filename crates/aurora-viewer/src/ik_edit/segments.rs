@@ -185,6 +185,8 @@ impl Editor {
             .movable(false)
             .show(ctx, |ui| ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::click()).1)
             .inner;
+        // a bone under the pointer takes the press, not the studio's camera
+        self.manipulator_hovered |= response.contains_pointer();
         if response.hovered() {
             ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")))
                 .line_segment([s.a.0, s.b.0], Stroke::new(3.0, palette.violet_light));
@@ -201,6 +203,9 @@ impl Editor {
                 self.picked_bone(world, frame, target);
             } else {
                 match s.source {
+                    Source::Bone(b) if self.clip.active => {
+                        self.clip_click_bone(b, rig, frame, ctx.input(|i| super::adds_to_selection(i.modifiers)));
+                    }
                     Source::Bone(b) => self.select(b, rig, frame),
                     Source::Node(id) => self.select_virtual_node(id),
                 }

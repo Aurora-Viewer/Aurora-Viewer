@@ -45,7 +45,7 @@ fn targets(entries: &[Entry]) -> Vec<u128> {
 fn the_folder_is_created_once_in_the_viewer_folder() {
     let mut inv = bare();
     assert!(folder(&inv).is_none());
-    let change = create_plan(&inv).expect("both folders to create");
+    let change = create_plan(&inv, true).expect("both folders to create");
     // #Aurora, then #Wearable Favorites inside it
     let names: Vec<_> = change
         .operations
@@ -58,14 +58,30 @@ fn the_folder_is_created_once_in_the_viewer_folder() {
     assert_eq!(names, [ROOT, FOLDER]);
     demo_mutate(&mut inv, AGENT, change).expect("created");
     let favorites = folder(&inv).expect("found by name");
-    assert!(create_plan(&inv).is_none(), "nothing more to create");
+    assert!(create_plan(&inv, true).is_none(), "nothing more to create");
     // an existing #Aurora only gets the subfolder
     let mut inv2 = bare();
     let (brand, _) = create_folder(inv2.root, ROOT);
     demo_mutate(&mut inv2, AGENT, brand).expect("brand");
-    let change = create_plan(&inv2).expect("subfolder");
+    let change = create_plan(&inv2, true).expect("subfolder");
     assert_eq!(change.operations.len(), 1);
     assert!(entries(&inv, favorites, favorites).is_empty());
+}
+
+#[test]
+fn the_folder_waits_for_the_bridge_to_make_aurora() {
+    // the bridge is making `#Aurora`: no second one is asked for
+    let mut inv = bare();
+    assert!(create_plan(&inv, false).is_none());
+    // once its `#Aurora` is listed, only the favorites folder, in it
+    let (brand, _) = create_folder(inv.root, ROOT);
+    demo_mutate(&mut inv, AGENT, brand).expect("brand");
+    let change = create_plan(&inv, false).expect("subfolder");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Folder { name, .. }] if name == FOLDER),
+        "{:?}",
+        change.operations
+    );
 }
 
 #[test]
@@ -131,16 +147,16 @@ fn the_three_orders_follow_the_legacy_comparators() {
     let root = folder(&inv).expect("favorites");
     let mut all = entries(&inv, root, root);
     let names = |all: &[Entry]| -> Vec<String> { all.iter().map(|e| inv.items[&e.target].name.clone()).collect() };
-    sort(&inv, &mut all, SortOrder::Name);
+    sort(&inv, &mut all, SortOrder::Name, &[]);
     let by_name = names(&all);
     let mut expected = by_name.clone();
     expected.sort_by_key(|n| n.to_uppercase());
     assert_eq!(by_name, expected);
-    sort(&inv, &mut all, SortOrder::MostRecent);
+    sort(&inv, &mut all, SortOrder::MostRecent, &[]);
     // the newest original first (seed_demo dates them one day apart)
     let dates: Vec<i64> = all.iter().map(|e| inv.items[&e.target].created_at).collect();
     assert!(dates.windows(2).all(|w| w[0] >= w[1]), "{dates:?}");
-    sort(&inv, &mut all, SortOrder::TypeName);
+    sort(&inv, &mut all, SortOrder::TypeName, &[]);
     // clothing (by wearable type), objects (by name), body parts
     let kinds: Vec<i32> = all.iter().map(|e| inv.items[&e.target].asset_type).collect();
     assert_eq!(kinds, [5, 5, 5, 6, 6, 6, 6, 13]);
@@ -153,12 +169,47 @@ fn the_three_orders_follow_the_legacy_comparators() {
 }
 
 #[test]
-fn the_filter_reads_the_title_and_its_worn_tag() {
-    assert!(matches("", "Boots", None));
-    assert!(matches("  boo ", "Boots", None));
-    assert!(!matches("hair", "Boots", None));
-    assert!(matches("worn", "Boots", Some("worn on Left Foot")));
-    assert!(!matches("worn", "Boots", None));
+fn the_filter_reads_the_title_its_worn_tag_and_the_type() {
+    assert!(matches("", "Boots", None, "Shoes"));
+    assert!(matches("  boo ", "Boots", None, "Shoes"));
+    assert!(!matches("hair", "Boots", None, "Shoes"));
+    assert!(matches("worn", "Boots", Some("worn on Left Foot"), "Object"));
+    assert!(!matches("worn", "Boots", None, "Object"));
+    // the type too (Aurora's addition)
+    assert!(matches("shoe", "Boots", None, "Shoes"));
+    assert!(!matches("shirt", "Boots", None, "Shoes"));
+}
+
+#[test]
+fn the_custom_order_follows_the_saved_one_then_the_type() {
+    let inv = seeded();
+    let root = folder(&inv).expect("favorites");
+    let mut all = entries(&inv, root, root);
+    sort(&inv, &mut all, SortOrder::TypeName, &[]);
+    let by_type: Vec<Uuid> = all.iter().map(|e| e.target).collect();
+    // nothing saved: the type order
+    sort(&inv, &mut all, SortOrder::Custom, &[]);
+    assert_eq!(all.iter().map(|e| e.target).collect::<Vec<_>>(), by_type);
+    // the last two saved first, the others after them in type order; an id
+    // saved for a favorite gone since is skipped
+    let n = by_type.len();
+    let saved = [by_type[n - 1], Uuid::from_u128(0xdead), by_type[n - 2]];
+    sort(&inv, &mut all, SortOrder::Custom, &saved);
+    let got: Vec<Uuid> = all.iter().map(|e| e.target).collect();
+    assert_eq!(got[..2], [by_type[n - 1], by_type[n - 2]]);
+    assert_eq!(got[2..], by_type[..n - 2]);
+}
+
+#[test]
+fn a_drag_moves_one_place_and_a_drop_inserts_once() {
+    let (a, b, c, d) = (id(1), id(2), id(3), id(4));
+    assert_eq!(moved(&[a, b, c], 0, 2), [b, c, a]);
+    assert_eq!(moved(&[a, b, c], 2, 0), [c, a, b]);
+    assert_eq!(moved(&[a, b, c], 1, 9), [a, c, b], "past the end: last");
+    assert_eq!(moved(&[a, b], 5, 0), [a, b], "a row gone: nothing moves");
+    assert_eq!(inserted(&[a, b], 1, &[d, c]), [a, d, c, b]);
+    assert_eq!(inserted(&[a, b], 1, &[b, c]), [a, c, b], "one already there stays put");
+    assert_eq!(inserted(&[a], 7, &[c]), [a, c]);
 }
 
 #[test]
@@ -277,6 +328,63 @@ fn the_import_links_what_ours_lacks_at_the_same_place() {
     assert!(inv.items.contains_key(&id(713)) && inv.items[&id(713)].parent != root);
     // running it again changes nothing
     assert!(import_plan(&inv, root).is_none());
+}
+
+#[test]
+fn a_large_import_is_sent_in_requests_of_a_hundred_links() {
+    let (mut inv, root) = with_legacy();
+    let legacy = legacy_folder(&inv).expect("legacy");
+    let home = inv.root;
+    // 250 more favorites in the Legacy folder, each a link to its own shirt
+    for n in 0..250u128 {
+        let (original, link) = (id(100_000 + n), id(200_000 + n));
+        for (item, parent, asset_type, asset_id) in [(original, home, 5, Uuid::nil()), (link, legacy, 24, original)] {
+            inv.items.insert(
+                item,
+                InvItem {
+                    id: item,
+                    parent,
+                    name: format!("Shirt {n}"),
+                    asset_type,
+                    asset_id,
+                    inv_type: 18,
+                    owner: AGENT,
+                    creator: AGENT,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    ..Default::default()
+                },
+            );
+            inv.folders.get_mut(&parent).expect("folder").items.push(item);
+        }
+    }
+    let plan = import_plan(&inv, root).expect("something to import");
+    // the top folder: 713 and the 250 shirts, in three requests, in order
+    let top: Vec<usize> = plan
+        .change
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Links { parent, links } if *parent == root => Some(links.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(top, [100, 100, 51]);
+    assert!(plan.change.operations.iter().all(|op| match op {
+        Operation::Links { links, .. } => links.len() <= LINKS_PER_REQUEST,
+        _ => true,
+    }));
+    assert_eq!(plan.links, 4 + 250);
+    demo_mutate(&mut inv, AGENT, plan.change).expect("imported");
+    let linked = link_targets(&inv, root);
+    assert!((0..250u128).all(|n| linked.contains(&(100_000 + n))));
+    // a run cut short is resumed by importing again: nothing is left here
+    assert!(import_plan(&inv, root).is_none());
+    // a drop of as many is cut the same way
+    let shirts: Vec<Uuid> = (0..250u128).map(|n| id(100_000 + n)).collect();
+    let (evening, _) = subfolders(&inv, root)[0].clone();
+    let change = link(&inv, &shirts, evening).expect("drop");
+    assert_eq!(change.operations.len(), 3);
 }
 
 #[test]

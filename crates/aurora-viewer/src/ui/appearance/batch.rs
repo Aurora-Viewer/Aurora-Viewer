@@ -145,6 +145,11 @@ pub struct View<'a> {
 const ROW: f32 = 48.0;
 const PICTURE: f32 = 36.0;
 
+/// Open the settings once in the offline batch-settings scenario.
+pub fn demo_settings(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("outfit_batch_demo_settings"), true));
+}
+
 /// The window; `open` is cleared by its X (Stop while running).
 pub fn window(ctx: &egui::Context, p: &Palette, settings: &mut PortraitSettings, view: &View, open: &mut bool) -> Vec<Action> {
     let mut actions = Vec::new();
@@ -190,30 +195,38 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
         }
         _ => {}
     }
-    if let Phase::Setup(_) = view.phase {
-        widgets::collapsing(
-            ui,
-            p,
-            "outfit_batch_settings",
-            aurora_i18n::tr!("ui-appearance-batch-settings"),
-            false,
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                portrait::choices_ui(ui, p, settings);
-            },
-        );
-        hd_total_ui(ui, p, settings, &view.hd);
-        if view.rows.is_empty() {
-            portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-batch-none"));
-        }
-    }
-    if matches!(view.phase, Phase::Running { .. } | Phase::Restoring | Phase::Finished { .. }) && view.hd.used {
-        hd_result_ui(ui, p, &view.hd);
-    }
+    // Settings and outfits share the scroll area: expanding the choices must
+    // not push their last checkboxes below the fixed action footer (#3907).
     egui::ScrollArea::vertical()
         .id_salt("outfit_batch_rows")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if let Phase::Setup(_) = view.phase {
+                // Keep the demo's default through the initial sizing passes;
+                // the header's saved state still lets the user fold it.
+                let open = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<bool>(egui::Id::unique("outfit_batch_demo_settings")))
+                    .unwrap_or(false);
+                widgets::collapsing(
+                    ui,
+                    p,
+                    "outfit_batch_settings",
+                    aurora_i18n::tr!("ui-appearance-batch-settings"),
+                    open,
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        portrait::choices_ui(ui, p, settings);
+                    },
+                );
+                hd_total_ui(ui, p, settings, &view.hd);
+                if view.rows.is_empty() {
+                    portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-batch-none"));
+                }
+            }
+            if matches!(view.phase, Phase::Running { .. } | Phase::Restoring | Phase::Finished { .. }) && view.hd.used {
+                hd_result_ui(ui, p, &view.hd);
+            }
             ui.spacing_mut().item_spacing.y = 4.0;
             for (i, row) in view.rows.iter().enumerate() {
                 row_ui(ui, p, i, row, actions);
@@ -510,6 +523,102 @@ fn footer_ui(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Acti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expanded_settings_scroll_to_the_last_checkbox_above_the_footer() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        for scale in [1.0, 1.5, 2.0] {
+            let mut frames = Frames::new();
+            theme.apply(&frames.ctx, scale);
+            widgets::place_floater(&frames.ctx, WINDOW, egui::pos2(40.0, 40.0), Vec2::new(520.0, 560.0));
+            demo_settings(&frames.ctx);
+            let mut settings = PortraitSettings::default();
+            let before = settings.keep;
+            let view = View {
+                phase: Phase::Setup(None),
+                rows: rows(RowState::Choose {
+                    chosen: true,
+                    had_picture: false,
+                }),
+                hd: hd(),
+            };
+            let mut draw = |ui: &mut egui::Ui| {
+                window(ui.ctx(), &p, &mut settings, &view, &mut true);
+            };
+            let mut texts = Vec::new();
+            for _ in 0..30 {
+                texts = frames.run(Vec::new(), &mut draw);
+            }
+            let label = aurora_i18n::tr!("ui-appearance-portrait-keep");
+            let scroll_pos = texts
+                .iter()
+                .find(|t| t.source == aurora_i18n::tr!("ui-appearance-batch-settings"))
+                .unwrap_or_else(|| panic!("settings header at text size {scale}"))
+                .rect
+                .center();
+            let mut target = None;
+            for _ in 0..24 {
+                let cancel = texts
+                    .iter()
+                    .find(|t| t.source == aurora_i18n::tr!("common-cancel"))
+                    .expect("fixed footer");
+                target = texts
+                    .iter()
+                    .find(|t| {
+                        t.source == label
+                            && t.rect.bottom() < cancel.rect.top()
+                            && frames.ctx.layer_id_at(t.rect.center()).is_some_and(|layer| {
+                                frames.ctx.viewport(|v| {
+                                    v.this_pass
+                                        .widgets
+                                        .get_layer(layer)
+                                        .filter(|w| w.enabled && w.sense == Sense::click() && w.rect.expand(0.5).contains_rect(t.rect))
+                                        .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                                        .is_some_and(|w| w.interact_rect.expand(0.5).contains_rect(t.rect))
+                                })
+                            })
+                    })
+                    .map(|t| t.rect.center());
+                if target.is_some() {
+                    break;
+                }
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(scroll_pos),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -50.0),
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Unknown,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+                for _ in 0..30 {
+                    texts = frames.run(Vec::new(), &mut draw);
+                }
+            }
+            let pos = target.unwrap_or_else(|| panic!("{scale}: scroll reaches the last settings checkbox"));
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+            assert_ne!(settings.keep, before, "{scale}: last checkbox is clickable");
+        }
+    }
 
     fn rows(state: RowState<'static>) -> Vec<Row<'static>> {
         [

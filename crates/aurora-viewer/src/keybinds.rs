@@ -432,6 +432,11 @@ pub enum Action {
     PushToTalk,
     ToggleMic,
     Conversations,
+    /// Communicate › Contacts (menu_viewer.xml, "Contacts",
+    /// shortcut="control|alt|shift|F", Floater.Toggle imcontacts): the
+    /// Contacts tab of Conversations, or its torn-off window
+    /// (FSFloaterContacts::onOpen).
+    Contacts,
     /// Communicate › Nearby Chat (menu_viewer.xml, `shortcut="control|H"`,
     /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
     NearbyChat,
@@ -711,6 +716,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
+                    (Action::Contacts, aurora_i18n::tr!("common-contacts")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Friends, aurora_i18n::tr!("common-friends")),
                     (Action::Groups, aurora_i18n::tr!("common-groups")),
@@ -948,6 +954,8 @@ impl KeyBindings {
             (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
+            // menu_viewer.xml: Contacts, shortcut="control|alt|shift|F"
+            (Action::Contacts, [kalt(K::KeyF, true, true), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             // menu_viewer.xml: Friends, Groups, Contact Sets
             (Action::Friends, [kmod(K::KeyF, true, true), None]),
@@ -1748,6 +1756,14 @@ mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
 
+    /// The key that carries, on this PC's layout, the letter `us_key` has on
+    /// US QWERTY. `KeyBindings::default` and `sanitized` follow the PC's
+    /// layout: a test that reads their letter shortcuts names the keys
+    /// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
+    fn letter(us_key: KeyCode) -> KeyCode {
+        layout::current().named_key(us_key)
+    }
+
     /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
     /// French keyboards print Début. Japanese keyboards print Home.
     #[test]
@@ -2010,14 +2026,15 @@ mod tests {
             let mut kb = kb.sanitized();
             assert_eq!(kb.get(action), [None, None]);
             assert_eq!(kb.get(Action::CamPanUp)[0], defaults[0]);
-            let binding = kalt(KeyCode::KeyB, false, false);
+            let b = letter(KeyCode::KeyB);
+            let binding = kalt(b, false, false);
             kb.set(action, 1, binding.clone());
             let saved = serde_json::to_string(&kb).expect("save bindings");
             let mut kb = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
             assert_eq!(kb.get(action), [None, binding]);
             assert!(kb.held(
                 action,
-                &HashSet::from([Input::key(KeyCode::KeyB)]),
+                &HashSet::from([Input::key(b)]),
                 Mods {
                     alt: true,
                     ..Default::default()
@@ -2034,18 +2051,19 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        let input = Input::key(KeyCode::KeyU);
+        let input = Input::key(letter(KeyCode::KeyU));
+        let j = letter(KeyCode::KeyJ);
         let mut bindings = KeyBindings::default();
         assert_eq!(bindings.triggered(&input, ctrl), Some(Action::Import));
         assert_eq!(bindings.triggered(&input, Mods::default()), None);
         bindings.map.retain(|(action, _)| *action != Action::Import);
         let mut bindings = bindings.sanitized();
         assert_eq!(bindings.triggered(&input, ctrl), Some(Action::Import));
-        bindings.set(Action::Import, 0, kmod(KeyCode::KeyJ, true, false));
+        bindings.set(Action::Import, 0, kmod(j, true, false));
         let saved = serde_json::to_string(&bindings).expect("save bindings");
         let mut restored = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
         assert_eq!(restored.triggered(&input, ctrl), None);
-        assert_eq!(restored.triggered(&Input::key(KeyCode::KeyJ), ctrl), Some(Action::Import));
+        assert_eq!(restored.triggered(&Input::key(j), ctrl), Some(Action::Import));
         restored.set(Action::Import, 0, None);
         assert_eq!(restored.sanitized().get(Action::Import), [None, None]);
     }
@@ -2085,6 +2103,7 @@ mod tests {
             (KeyCode::KeyQ, m(true, false, false), Action::Quit),
             (KeyCode::KeyO, m(true, false, false), Action::Appearance),
             (KeyCode::KeyF, m(true, true, false), Action::Friends),
+            (KeyCode::KeyF, m(true, true, true), Action::Contacts),
             (KeyCode::KeyG, m(true, true, false), Action::Groups),
             (KeyCode::KeyC, m(true, true, true), Action::ContactSets),
             (KeyCode::KeyI, m(true, true, false), Action::NewInventoryWindow),
@@ -2109,12 +2128,15 @@ mod tests {
             Some(Action::ResetCamera)
         );
         // a settings file from before them gets them, on the keys of the
-        // active layout (`KeyBindings::default`: Ctrl+Q is KeyA on AZERTY)
-        let mut old = kb.clone();
+        // active layout (`KeyBindings::default`: Ctrl+Q is KeyA on AZERTY).
+        // The file is one of that layout too: in a file of US places, a
+        // letter landing on a key the file already uses would be dropped
+        // (`sanitized`)
+        let defaults = KeyBindings::default();
+        let mut old = defaults.clone();
         old.map
             .retain(|(a, _)| !matches!(a, Action::Quit | Action::Friends | Action::ResetCameraAngles));
         let old = old.sanitized();
-        let defaults = KeyBindings::default();
         for action in [Action::Quit, Action::Friends, Action::ResetCameraAngles] {
             assert!(old.get(action)[0].is_some(), "{action:?} bound");
             assert_eq!(old.get(action), defaults.get(action), "{action:?}");
@@ -2128,7 +2150,7 @@ mod tests {
     #[test]
     fn nearby_chat_is_ctrl_h_and_keeps_the_other_h_chords() {
         let kb = KeyBindings::default();
-        let h = Input::key(KeyCode::KeyH);
+        let h = Input::key(letter(KeyCode::KeyH));
         let ctrl = Mods {
             ctrl: true,
             ..Default::default()
@@ -2155,8 +2177,12 @@ mod tests {
         assert_eq!(kb.triggered(&h, shift), Some(Action::ZoomSelection));
         assert!(!text_field_keeps(KeyCode::KeyH, ctrl), "Nearby Chat runs while a field is focused");
         let binding = kb.get(Action::NearbyChat)[0].clone().expect("default binding");
-        assert_eq!(binding.label_on(true), "⌃H");
         assert_eq!(binding.label_on(false), "Ctrl+H");
+        // the Mac's Control label goes by the key's place (`uses_mac_control`),
+        // on the US places macOS keeps; the key reads as on this PC's layout
+        let mac = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let mac = mac.get(Action::NearbyChat)[0].clone().expect("default binding");
+        assert_eq!(mac.label_on(true), format!("⌃{}", Input::key(KeyCode::KeyH).label()));
         let mut old = kb;
         old.map.retain(|(action, _)| *action != Action::NearbyChat);
         assert_eq!(old.sanitized().triggered(&h, ctrl), Some(Action::NearbyChat));
@@ -2309,8 +2335,9 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        kb.set(Action::HudDrag, 1, Some(Binding::captured(Input::key(KeyCode::KeyB), ctrl)));
-        let down = [Input::key(KeyCode::KeyB)].into_iter().collect();
+        let b = Input::key(letter(KeyCode::KeyB));
+        kb.set(Action::HudDrag, 1, Some(Binding::captured(b.clone(), ctrl)));
+        let down = [b.clone()].into_iter().collect();
         assert!(kb.held(
             Action::HudDrag,
             &HashSet::new(),
@@ -2319,10 +2346,10 @@ mod tests {
                 ..Default::default()
             }
         ));
-        assert!(kb.uses_input(Action::HudDrag, &Input::key(KeyCode::KeyB)));
+        assert!(kb.uses_input(Action::HudDrag, &b));
         assert!(kb.held(Action::HudDrag, &down, ctrl));
         assert!(!kb.held(Action::HudDrag, &down, Mods::default()));
-        assert_eq!(kb.triggered(&Input::key(KeyCode::KeyB), ctrl), None);
+        assert_eq!(kb.triggered(&b, ctrl), None);
         kb.set(Action::HudDrag, 0, None);
         kb.set(Action::HudDrag, 1, None);
         assert!(!kb.sanitized().held(Action::HudDrag, &down, Mods { alt: true, ..ctrl }));
@@ -2355,7 +2382,10 @@ mod tests {
 
     #[test]
     fn hud_shortcuts_warn_of_conflicts_without_suppressing_other_held_actions() {
-        let mut kb = KeyBindings::default();
+        // A fixed layout, not the PC's: the letter shortcuts follow the
+        // active layout (Quit is Ctrl + the Q letter, the physical A on
+        // AZERTY), so `default()` would give another map on every keyboard.
+        let mut kb = KeyBindings::for_layout(&layout::KeyboardLayout::wasd());
         let ctrl = Mods {
             ctrl: true,
             ..Default::default()
@@ -2377,10 +2407,14 @@ mod tests {
         assert!(kb.rivals(Action::Preferences, &ctrl_p).contains(&Action::ChatWhisper));
         // a letter too, even one a field keeps on some layout: Ctrl + the Q
         // place selects all on AZERTY but quits on QWERTY
-        // (`text_field_keeps_key` judges the letter typed)
-        let ctrl_q = Binding::captured(Input::key(KeyCode::KeyQ), ctrl);
-        kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
-        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit]);
+        // (`text_field_keeps_key` judges the letter typed); Quit sits on the
+        // Q letter's place of each layout
+        for layout in [layout::KeyboardLayout::wasd(), layout::KeyboardLayout::zqsd()] {
+            let mut kb = KeyBindings::for_layout(&layout);
+            let ctrl_q = Binding::captured(Input::key(layout.named_key(KeyCode::KeyQ)), ctrl);
+            kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
+            assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit], "{ctrl_q:?}");
+        }
         // a plain key never meets: the world's do not run while typing
         let f5 = Binding::captured(Input::key(KeyCode::F5), Mods::default());
         kb.set(Action::ChatWhisper, 0, Some(f5.clone()));
@@ -2560,8 +2594,7 @@ mod tests {
     /// N / X / J, added to older settings files and rebindable.
     #[test]
     fn environment_shortcuts_pick_the_legacy_times_of_day() {
-        let layout = layout::current();
-        let mut kb = KeyBindings::us_places(layout.movement_keys());
+        let mut kb = KeyBindings::default();
         kb.map.retain(|(a, _)| a.time_of_day().is_none());
         let mut kb = kb.sanitized();
         let ctrl_shift = Mods {
@@ -2576,7 +2609,7 @@ mod tests {
             (KeyCode::KeyX, Action::EnvMidnight, 4),
             (KeyCode::KeyJ, Action::EnvShared, 0),
         ] {
-            let code = layout.named_key(us_code);
+            let code = letter(us_code);
             assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
             assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
             assert_eq!(action.time_of_day(), Some(time));
@@ -2603,14 +2636,15 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), ctrl), Some(Action::IkEdit));
-        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), Mods::default()), None);
-        keys.set(Action::IkEdit, 0, kmod(KeyCode::KeyJ, true, false));
+        let (ik, j) = (Input::key(letter(KeyCode::KeyK)), letter(KeyCode::KeyJ));
+        assert_eq!(keys.triggered(&ik, ctrl), Some(Action::IkEdit));
+        assert_eq!(keys.triggered(&ik, Mods::default()), None);
+        keys.set(Action::IkEdit, 0, kmod(j, true, false));
         let mut keys = keys.sanitized();
-        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), ctrl), None);
-        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyJ), ctrl), Some(Action::IkEdit));
+        assert_eq!(keys.triggered(&ik, ctrl), None);
+        assert_eq!(keys.triggered(&Input::key(j), ctrl), Some(Action::IkEdit));
         keys.set(Action::IkEdit, 0, None);
-        assert_eq!(keys.sanitized().triggered(&Input::key(KeyCode::KeyJ), ctrl), None);
+        assert_eq!(keys.sanitized().triggered(&Input::key(j), ctrl), None);
     }
 
     #[test]
@@ -2840,7 +2874,7 @@ mod tests {
     #[test]
     fn resync_shortcut_does_not_walk_back_or_take_snapshot_and_sit_keys() {
         let kb = KeyBindings::default();
-        let input = Input::key(KeyCode::KeyS);
+        let input = Input::key(letter(KeyCode::KeyS));
         let mods = Mods {
             ctrl: true,
             ..Default::default()

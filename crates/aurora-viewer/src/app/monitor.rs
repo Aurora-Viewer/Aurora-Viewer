@@ -127,7 +127,8 @@ impl App {
                 aurora_i18n::tr!("toolbar-command-destinations"),
             ),
         ];
-        for (pid, label) in pages {
+        let signup = self.signup_ui.web_process_ids().map(|pid| (pid, aurora_i18n::tr!("signup-title")));
+        for (pid, label) in pages.into_iter().chain(signup) {
             if let Some(pid) = pid {
                 out.push(MediaProcess {
                     pid,
@@ -722,6 +723,7 @@ impl App {
                     ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                     self.options_ui.open(ui::options::Page::Network, 0);
                 }
+                Action::Autotune(request) => self.autotune_request(request),
             }
         }
     }

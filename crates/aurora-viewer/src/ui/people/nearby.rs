@@ -446,7 +446,15 @@ fn list_part(
                 );
                 if !ui.is_rect_visible(rect) {
                     if !anonymous {
-                        super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                        super::rows::list_menu(
+                            &resp,
+                            p,
+                            world,
+                            crate::world::names::NameScope::World,
+                            &st.radar_selected,
+                            row.id,
+                            AvatarList::Nearby,
+                        );
                     }
                     continue;
                 }
@@ -488,7 +496,15 @@ fn list_part(
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
                 if !anonymous {
-                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    super::rows::list_menu(
+                        &resp,
+                        p,
+                        world,
+                        crate::world::names::NameScope::World,
+                        &st.radar_selected,
+                        row.id,
+                        AvatarList::Nearby,
+                    );
                 }
                 super::rows::contact_tip(resp, tip.as_deref());
             }
@@ -957,7 +973,7 @@ fn paint_rich(
     let mut name = semibold(ui, 13.0, name_color);
     name.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), name);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 13.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
@@ -1056,7 +1072,7 @@ fn paint_compact(
     let mut format = egui::TextFormat::simple(FontId::proportional(12.0), name_color);
     format.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 12.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let g = ui.painter().layout_job(job);

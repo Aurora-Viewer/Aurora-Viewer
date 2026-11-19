@@ -1143,6 +1143,45 @@ fn rlva_camera_owner_and_clamps_are_temporary_and_reject_nonfinite_values() {
 }
 
 #[test]
+fn rlva_camera_view_holds_the_offsets_and_the_mouselook_rule() {
+    use camera::CameraView;
+    let mut r = enabled();
+    assert_eq!(r.camera_view(), CameraView::default());
+    assert!(r.can_mouselook());
+    command(&mut r, A, "@setcam_eyeoffset:-4/0/1=n,setcam_eyeoffsetscale:NaN=n");
+    let view = r.camera_view();
+    assert_eq!(view.eye_offset, Some(glam::Vec3::new(-4.0, 0.0, 1.0)));
+    assert_eq!((view.focus_offset, view.eye_offset_scale), (None, None), "not a number is no scale");
+    assert!(view.preset_locked && !view.no_mouselook);
+    command(&mut r, A, "@clear");
+    assert!(!r.camera_view().preset_locked);
+    // RlvActions::canChangeToMouselook
+    for (set, lift) in [
+        ("@camdistmin:1=n", "@camdistmin:1=y"),
+        ("@setcam_avdistmin:0.5=n", "@setcam_avdistmin:0.5=y"),
+        ("@setcam_mouselook=n", "@setcam_mouselook=y"),
+    ] {
+        command(&mut r, A, set);
+        assert!(!r.can_mouselook() && r.camera_view().no_mouselook, "{set}");
+        command(&mut r, A, lift);
+        assert!(r.can_mouselook() && !r.camera_view().no_mouselook, "{lift}");
+    }
+    command(&mut r, A, "@setcam_avdistmin:0=n");
+    assert!(r.can_mouselook(), "a minimum of zero forbids nothing");
+    command(&mut r, A, "@clear");
+    // under an exclusive @setcam only its owner's restrictions count
+    command(&mut r, B, "@setcam_mouselook=n,setcam_avdistmin:3=n");
+    assert!(!r.can_mouselook());
+    command(&mut r, A, "@setcam=n");
+    assert!(r.can_mouselook());
+    command(&mut r, A, "@setcam_mouselook=n");
+    assert!(!r.can_mouselook());
+    r.configure(false);
+    assert_eq!(r.camera_view(), CameraView::default());
+    assert!(r.can_mouselook());
+}
+
+#[test]
 fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
     let mut r = enabled();
     let query = |name: &str| Command::parse(&format!("{name}=123")).unwrap();
@@ -1835,17 +1874,29 @@ fn rlva_teleport_home_landmarks_and_bare_tplocal_follow_the_legacy_rules() {
     assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark());
     assert!(!world.rlva_can_teleport_global(at(1000.0, 0.0)), "@tploc closes distant places");
     assert!(world.rlva_can_teleport_global(at(100.0, 0.0)), "a local teleport ignores @tploc");
+    assert!(
+        world.rlva_can_teleport_local(at(1000.0, 0.0)),
+        "the area search still shows its entry: @tploc refuses once asked"
+    );
     // RLV_MODIFIER_TPLOCAL_DEFAULT: a bare @tplocal allows 1.5 m, in 3D
     command(&mut world.rlva, A, "@tploc=y,tplocal=n");
     assert!(world.rlva_can_teleport_global(at(1.0, 0.0)));
     assert!(!world.rlva_can_teleport_global(at(2.0, 0.0)));
     assert!(!world.rlva_can_teleport_global(at(0.0, 2.0)));
     assert!(world.rlva_can_teleport_global(at(1000.0, 0.0)), "beyond a region it is not local");
+    assert!(world.rlva_can_teleport_local(at(1.0, 0.0)));
+    assert!(
+        !world.rlva_can_teleport_local(at(1000.0, 0.0)),
+        "asked as a local one, as the area search does"
+    );
+    command(&mut world.rlva, A, "@tplocal=y,sittp=n");
+    assert!(world.rlva_can_teleport_local(at(1.0, 0.0)) && !world.rlva_can_teleport_local(at(1000.0, 0.0)));
+    command(&mut world.rlva, A, "@sittp=y,tplocal=n");
     // seated under @unsit, nothing goes, home and landmarks included
     command(&mut world.rlva, A, "@tplocal=y,unsit=n");
     world.agent.ground_sit = true;
     assert!(!world.rlva_can_teleport_home() && !world.rlva_can_teleport_landmark());
-    assert!(!world.rlva_can_teleport_global(at(1.0, 0.0)));
+    assert!(!world.rlva_can_teleport_global(at(1.0, 0.0)) && !world.rlva_can_teleport_local(at(1.0, 0.0)));
     world.agent.ground_sit = false;
     world.rlva.configure(false);
     assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark() && world.rlva_can_teleport_global(at(0.0, 2.0)));
@@ -3133,7 +3184,51 @@ fn rlva_delete_take_return_and_duplicate_follow_the_delete_or_return_rule() {
         "nor a copy of the locked seat"
     );
     assert!(allowed(&world, other, derez::ACQUIRE_TO_AGENT_INVENTORY));
+    // The seat's contents take nothing in and let nothing out, but an item
+    // already inside keeps its name and its properties
+    // (LLTaskInvFVBridge::isItemRenameable tests a locked attachment only,
+    // LLSidepanelItemInfo nothing).
+    // derenderObject: the prim sat on stays, the prims linked to it go.
+    let seat_id = world.objects.get(seat).unwrap().full_id;
+    assert_eq!(world.rlva_seat_derender(seat, true), Some(Vec::new()), "the root alone is kept");
+    let linked = world.rlva_seat_derender(seat, false).expect("the seat held by @unsit");
+    assert!(!linked.contains(&seat_id) && !linked.contains(&world.agent_id));
+    for prim in &linked {
+        let i = world.objects.index_of_uuid(prim).unwrap();
+        assert_eq!(world.rlva_seat_derender(i, true), Some(vec![*prim]), "a linked prim is hidden");
+    }
+    assert_eq!(world.rlva_seat_derender(other, false), None);
+    let tool = crate::build::BuildTool::default();
+    world.god_level = 1;
+    assert!(!tool.contents_editable(&world, seat) && tool.contents_editable(&world, other));
+    assert!(tool.contents_items_editable(&world, seat) && tool.contents_modifiable(&world, seat));
+    world.god_level = 0;
+    let update = |world: &World, item_id: Uuid| {
+        let key = world.objects.get(seat).unwrap().key;
+        world.rlva_allows_command(
+            &NetCommand::Build(BuildCmd::UpdateTaskInventory {
+                handle: key.region,
+                local_id: key.local_id,
+                item: Box::new(aurora_net::build::TaskItem {
+                    item_id,
+                    ..Default::default()
+                }),
+            }),
+            Uuid::nil(),
+        )
+    };
+    let ours = Uuid::from_u128(9_951);
+    world.inventory.items.insert(
+        ours,
+        aurora_net::inventory::InvItem {
+            id: ours,
+            ..Default::default()
+        },
+    );
+    assert!(update(&world, Uuid::from_u128(9_950)), "an item of the seat is renamed");
+    assert!(!update(&world, ours), "an item of our inventory is a drop");
     command(&mut world.rlva, A, "@unsit=y");
+    assert!(update(&world, ours));
     assert!(moving.iter().all(|d| allowed(&world, seat, *d)));
     // @rez: what the agent owns, may modify or holds through a group stays.
     command(&mut world.rlva, A, "@rez=n");
@@ -3166,11 +3261,38 @@ fn rlva_delete_take_return_and_duplicate_follow_the_delete_or_return_rule() {
         copy_centers: false,
         copy_rotates: false,
     });
+    // LLSelectMgr::selectDuplicate (Ctrl+D): the original answers like a delete.
+    let ctrl_d = |world: &World, i: usize| {
+        let key = world.objects.get(i).unwrap().key;
+        world.rlva_allows_command(
+            &NetCommand::Build(BuildCmd::Duplicate {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+                offset: glam::Vec3::ZERO,
+                flags: 0,
+                group_id: Uuid::nil(),
+            }),
+            Uuid::nil(),
+        )
+    };
     assert!(!world.rlva_allows_command(&duplicate, Uuid::nil()), "a copy on the ground is a rez");
+    assert!(!ctrl_d(&world, seat) && ctrl_d(&world, other));
     command(&mut world.rlva, A, "@rez=y");
-    assert!(world.rlva_allows_command(&duplicate, Uuid::nil()));
-    command(&mut world.rlva, A, "@edit=n");
-    assert!(!world.rlva_allows_command(&duplicate, Uuid::nil()) && !allowed(&world, seat, derez::TRASH));
+    assert!(world.rlva_allows_command(&duplicate, Uuid::nil()) && ctrl_d(&world, seat));
+    // @editworld alone keeps no object in place: the rule is not asked.
+    command(&mut world.rlva, A, "@editworld=n");
+    assert!(!world.rlva_can_edit(seat) && world.rlva_can_delete_or_return(seat));
+    assert!(moving.iter().all(|d| allowed(&world, seat, *d)) && ctrl_d(&world, seat));
+    command(&mut world.rlva, A, "@editworld=y,edit=n");
+    assert!(!allowed(&world, seat, derez::TRASH) && !ctrl_d(&world, seat));
+    assert!(
+        world.rlva_allows_command(&duplicate, Uuid::nil()),
+        "LLToolPlacer::placeObject asks @rez and @interact alone"
+    );
+    assert!(
+        !world.rlva_can_edit(other) && allowed(&world, other, derez::ACQUIRE_TO_AGENT_INVENTORY),
+        "an edit lock does not refuse a copy"
+    );
 }
 
 /// LLGroupActions::leave: the active group cannot be left under @setgroup.
@@ -3262,6 +3384,83 @@ fn rlva_attachment_queries_and_forced_detach_leave_the_viewer_bridge_out() {
     let item = world.inventory.items.get_mut(&bridge).unwrap();
     (item.name, item.parent, item.owner) = (crate::world::bridge::NAME.to_owned(), aurora, B);
     assert!(listed(&mut world, "getattachnames=123"));
+}
+
+/// FSLSLBridge::canDetach (LLVOAvatarSelf::detachAttachmentIntoInventory,
+/// RlvAttachmentLockWatchdog::onDetach) and the fRlvForce of
+/// LLAttachmentsMgr::addAttachmentRequest: the viewer takes its own bridge
+/// off, wears it again and starts its script whatever locks the points and
+/// the editing. Any other attachment on Center 2 obeys them.
+#[test]
+fn rlva_locks_leave_the_viewer_its_own_bridge() {
+    use crate::world::World;
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::build::BuildCmd;
+    use aurora_net::inventory::InvFolder;
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let id = Uuid::from_u128;
+    let (root, aurora, other) = (id(940), id(941), id(943));
+    world.inventory.root = root;
+    for (folder, parent, name) in [
+        (root, Uuid::nil(), "My Inventory"),
+        (aurora, root, crate::world::bridge::FOLDER),
+        (other, root, "Objects"),
+    ] {
+        world.inventory.folders.insert(
+            folder,
+            Folder {
+                info: InvFolder {
+                    id: folder,
+                    parent,
+                    name: name.to_owned(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: if folder == root { vec![aurora, other] } else { Vec::new() },
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    let bridge = worn_attachment(&mut world, 944, 31);
+    let agent = world.agent_id;
+    let object = world.worn_attachment(&bridge).and_then(|i| world.objects.get(i)).unwrap();
+    let (handle, object_id) = (object.key.region, object.full_id);
+    command(&mut world.rlva, A, "@remattach=n,addattach=n,edit=n");
+    let wear = |world: &World| {
+        let item = &world.inventory.items[&bridge];
+        NetCommand::RezAttachments(vec![aurora_net::AttachRequest {
+            item_id: bridge,
+            owner_id: agent,
+            point: 31,
+            add: true,
+            flags: item.flags,
+            group_mask: item.group_mask,
+            everyone_mask: item.everyone_mask,
+            next_owner_mask: item.next_owner_mask,
+            name: item.name.clone(),
+            desc: item.desc.clone(),
+        }])
+    };
+    let script = NetCommand::Build(BuildCmd::SetScriptRunning {
+        handle,
+        object_id,
+        item_id: id(946),
+        running: true,
+    });
+    for (name, parent, ours) in [(crate::world::bridge::NAME, aurora, true), ("Some HUD", other, false)] {
+        let item = world.inventory.items.get_mut(&bridge).unwrap();
+        (item.name, item.parent, item.owner) = (name.to_owned(), parent, agent);
+        let allowed = |command: &NetCommand| world.rlva_allows_command(command, Uuid::nil());
+        assert_eq!(allowed(&NetCommand::DetachAttachments(vec![bridge])), ours, "{name}: taken off");
+        assert_eq!(allowed(&wear(&world)), ours, "{name}: worn again");
+        assert_eq!(allowed(&script), ours, "{name}: its script started");
+    }
 }
 
 /// LLToolPlacer::placeObject, LLToolDragAndDrop::dad3dRezObjectOnLand and
@@ -3669,8 +3868,7 @@ fn rlva_force_sit_without_a_target_and_sitground_with_an_option_sit_on_the_groun
 }
 
 /// RlvBehaviourGenericHandler<RLV_OPTION_EXCEPTION>: without an option the
-/// restriction is stored and listed, and names no one. @sendimto stays
-/// refused here: any rule of that name makes every session be checked.
+/// restriction is stored and listed, and names no one.
 #[test]
 fn rlva_named_restrictions_without_an_option_are_listed_and_name_no_one() {
     let mut r = enabled();
@@ -3683,7 +3881,7 @@ fn rlva_named_restrictions_without_an_option_are_listed_and_name_no_one() {
         parity_replies(&mut r),
         [parity_reply(
             999,
-            "/recvchatfrom/recvemotefrom/recvimfrom/startimto/touchthis/editobj"
+            "/recvchatfrom/recvemotefrom/recvimfrom/startimto/touchthis/editobj/sendimto"
         )]
     );
     for text in ["hello", "/me waves"] {
@@ -3698,7 +3896,7 @@ fn rlva_named_restrictions_without_an_option_are_listed_and_name_no_one() {
         assert!(r.allows_im("recvim", id) && r.allows_im("startim", id) && r.allows_im("sendim", id));
         assert!(!r.targets("touchthis", &id.to_string()) && !r.targets("editobj", &id.to_string()));
     }
-    assert!(r.rules_for("sendimto", Uuid::nil()).next().is_none());
+    assert!(r.rules_for("sendimto", Uuid::nil()).next().is_some());
     command(&mut r, A, &format!("@recvchatfrom:{TARGET}=n,touchthis=y,getstatus:touch=999"));
     assert_eq!(parity_replies(&mut r), [parity_reply(999, "")]);
     let mut heard = chat("hello");
@@ -3790,7 +3988,10 @@ fn build_escape_world() -> (crate::world::World, usize, usize) {
 /// seat does not move either (selectGetEditMoveLinksetPermissions), and under
 /// @unsit it stays linked (enableUnlinkObjects). The scripts of the locked
 /// attachment are neither reset, stopped nor opened
-/// (handle_selected_script_action, LLTaskLSLBridge::openItem).
+/// (handle_selected_script_action, LLTaskLSLBridge::openItem). An item
+/// already inside keeps its name and its properties, which the windows
+/// decide (`rlva_delete_take_return_and_duplicate_follow_the_delete_or_return_rule`):
+/// the update tried here is a drop, an item of our inventory.
 #[test]
 fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_links() {
     use crate::world::World;
@@ -3808,6 +4009,8 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
         let (handle, local_id, item_id) = (o.key.region, o.key.local_id, Uuid::from_u128(9102));
         let item = || {
             Box::new(TaskItem {
+                // (an item of our inventory: `worn_attachment`)
+                item_id: chest,
                 parent_id: o.full_id,
                 ..Default::default()
             })
@@ -3940,6 +4143,89 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
     world.agent.seated = false;
     assert!(!world.rlva_restrained_seat(seat) && world.rlva_can_unlink(seat));
     assert!(all(&world, contents(&world, seat)) && all(&world, transform(&world, seat)) && all(&world, delink(&world, seat)));
+}
+
+/// LLToolSelect::handleObjectSelection (lltoolselect.cpp): what RLVa keeps
+/// from edits is not selected by the build tools, whose click leaves the
+/// selection as it is, and is selected by a right click for the time of its
+/// menu (`temp_select`), with the build tools closed. The menu's Delete and
+/// Take then follow rlvCanDeleteOrReturn, which asks nothing under
+/// @editworld alone. LLSelectMgr::deselectAllIfTooFar keeps such a
+/// selection while it is the menu's, and @interact drops it.
+#[test]
+fn rlva_a_right_click_selects_what_cannot_be_edited_for_its_menu_only() {
+    use crate::build::{BuildTool, menu_selectable, rlva_keeps_menu_selection, rlva_selectable};
+    let (mut world, _, other) = build_escape_world();
+    let s = crate::build::BuildSettings::default();
+    let mut tool = BuildTool::default();
+    let key = world.objects.get(other).unwrap().key;
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert_eq!(tool.selection, [key], "no restriction yet");
+    tool.deselect_all(&world);
+    command(&mut world.rlva, A, "@editworld=n");
+    assert!(!world.rlva_can_edit(other) && !rlva_selectable(&world, other));
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert!(tool.selection.is_empty(), "the build tools select nothing");
+    // open build tools refuse the menu's selection until they are closed
+    assert!(BuildTool::menu_only(&world, other) && menu_selectable(&world, other, false));
+    tool.open = true;
+    assert!(!tool.select_for_menu_near(&mut world, &s, other, false, false));
+    tool.open = false;
+    assert!(tool.select_for_menu_near(&mut world, &s, other, false, false));
+    assert!(tool.menu_selection && tool.selection == [key]);
+    assert!(rlva_keeps_menu_selection(&world, other), "kept while the menu is open");
+    assert!(world.rlva_can_delete_or_return(other) && world.rlva_can_take_copy(other));
+    assert!(
+        world.rlva_allows_command(
+            &NetCommand::Build(aurora_net::build::BuildCmd::Select {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+            }),
+            Uuid::nil()
+        ),
+        "the temporary selection is sent"
+    );
+    // a build-tool click on it changes nothing of the selection either
+    tool.click_select(&mut world, &s, Some(other), false);
+    assert_eq!(tool.selection, [key]);
+    // The menu closes on the entry clicked and releases its selection: the
+    // entry takes it again for its action, where a build-tool click would
+    // select nothing and leave Take and Delete without an object.
+    let derez = |tool: &BuildTool, destination: u8| {
+        tool.out.iter().any(|c| {
+            matches!(
+                c,
+                NetCommand::Build(aurora_net::build::BuildCmd::DeRez { local_ids, destination: d, .. })
+                    if *d == destination && *local_ids == [key.local_id]
+            )
+        })
+    };
+    for (copy, destination) in [
+        (false, aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY),
+        (true, aurora_net::build::derez::ACQUIRE_TO_AGENT_INVENTORY),
+    ] {
+        tool.release_menu_selection(&world);
+        assert!(tool.selection.is_empty());
+        tool.out.clear();
+        assert!(tool.select_for_action(&mut world, &s, other));
+        assert_eq!(tool.selection, [key]);
+        tool.take(&mut world, copy);
+        assert!(derez(&tool, destination), "copy {copy}: {:?}", tool.out);
+        assert!(
+            tool.out.iter().all(|c| world.rlva_allows_command(c, Uuid::nil())),
+            "what is sent is allowed"
+        );
+    }
+    tool.release_menu_selection(&world);
+    tool.out.clear();
+    assert!(tool.select_for_action(&mut world, &s, other));
+    tool.delete(&mut world);
+    assert!(derez(&tool, aurora_net::build::derez::TRASH), "{:?}", tool.out);
+    assert!(tool.out.iter().all(|c| world.rlva_allows_command(c, Uuid::nil())));
+    tool.release_menu_selection(&world);
+    assert!(tool.select_for_menu_near(&mut world, &s, other, false, false));
+    command(&mut world.rlva, A, "@interact=n");
+    assert!(!menu_selectable(&world, other, true) && !rlva_keeps_menu_selection(&world, other));
 }
 
 /// object_selected_and_point_valid (llviewermenu.cpp): a rezzed object is
@@ -4158,6 +4444,73 @@ fn rlva_forced_wear_is_asked_again_once_its_object_came_and_left() {
     );
 }
 
+/// #2718: an object worn from the ground while something else is @detach
+/// locked: its item is not in the inventory yet.
+#[test]
+fn rlva_detach_lock_keeps_an_object_worn_from_the_ground() {
+    use aurora_net::AttachRequest;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let handle = world.main_region.expect("demo region");
+    let attachment = |world: &crate::world::World, item_id: Uuid, point: u8| {
+        crate::demo::outfit_attachment(&AttachRequest {
+            item_id,
+            owner_id: world.agent_id,
+            point,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        })
+    };
+    let (locked, ground) = (Uuid::from_u128(0xE001), Uuid::from_u128(0xE002));
+    let object = attachment(&world, locked, 2);
+    world.objects.upsert(handle, object);
+    let source = world
+        .worn_attachment(&locked)
+        .map(|i| world.objects.get(i).unwrap().full_id)
+        .expect("worn");
+    world.movement_complete = true;
+    let tick = |world: &mut crate::world::World| {
+        world.rlva_watchdog_tick(std::time::Instant::now());
+        world.rlva_watchdog_tick(std::time::Instant::now());
+    };
+    tick(&mut world);
+    command(&mut world.rlva, source, "@detach=n");
+    tick(&mut world);
+
+    // the object keeps its own id: only its item is new
+    let mut object = attachment(&world, ground, 3);
+    object.full_id = Uuid::from_u128(0xE102);
+    world.objects.upsert(handle, object);
+    assert!(!world.inventory.items.contains_key(&ground));
+    tick(&mut world);
+    assert!(
+        world.rlva.watchdog.rejected.is_empty(),
+        "the wearer's other lock does not refuse it"
+    );
+    assert!(world.worn_attachment(&ground).is_some());
+
+    // a lock on the point itself still does
+    let (held, refused) = (Uuid::from_u128(0xE003), 4);
+    command(&mut world.rlva, source, "@detach:chest=n,addattach=n");
+    let mut object = attachment(&world, held, refused);
+    object.full_id = Uuid::from_u128(0xE103);
+    world.objects.upsert(handle, object);
+    tick(&mut world);
+    assert!(world.rlva.watchdog.rejected.contains(&held), "@addattach still refuses it");
+    assert!(
+        !world.rlva_can_add(Uuid::from_u128(0xE00F), 3, Uuid::nil()),
+        "an item neither known nor worn stays refused"
+    );
+}
+
 #[test]
 fn inventory_offer_receipts_preserve_the_share_restriction_and_its_resident_exception() {
     use aurora_net::NetCommand;
@@ -4177,4 +4530,29 @@ fn inventory_offer_receipts_preserve_the_share_restriction_and_its_resident_exce
     command(&mut world.rlva, A, &format!("@share:{TARGET}=add"));
     assert!(world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
     assert!(!world.rlva_allows_command(&offer(B), Uuid::nil()));
+}
+
+#[test]
+fn the_second_camera_pauses_while_rlva_holds_the_view() {
+    for restriction in [
+        "@setcam_unlock=n",
+        "@camdistmax:2=n",
+        "@camunlock=n",
+        "@setsphere=n",
+        "@setoverlay=n",
+        "@camtextures=n",
+        "@showself=n",
+        "@showselfhead=n",
+    ] {
+        let mut r = enabled();
+        assert!(!r.second_camera_blocked(), "{restriction}");
+        command(&mut r, A, restriction);
+        assert!(r.second_camera_blocked(), "{restriction}");
+        command(&mut r, A, "@clear");
+        assert!(!r.second_camera_blocked(), "{restriction} cleared");
+    }
+    // a restriction that does not touch the view leaves it alone
+    let mut r = enabled();
+    command(&mut r, A, "@tplm=n");
+    assert!(!r.second_camera_blocked());
 }

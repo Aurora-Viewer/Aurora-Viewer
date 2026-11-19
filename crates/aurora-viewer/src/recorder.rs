@@ -26,13 +26,13 @@ use std::time::Instant;
 /// Where ffmpeg is downloaded from, by the user.
 pub const DOWNLOAD_PAGE: &str = "https://ffmpeg.org/download.html";
 /// The frames a second a film can have.
-pub const RATES: [u32; 5] = [24, 25, 30, 50, 60];
+pub const RATES: [u32; 6] = [24, 25, 30, 50, 60, 120];
 /// Frames waiting for the writer: past this, a frame is skipped and the next
 /// one written is repeated in its place.
 const QUEUE: usize = 3;
-/// A frame is never written more than this many times in a row (two seconds
-/// of a 60 fps film): past it the film is shortened rather than frozen.
-const MAX_REPEAT: u32 = 120;
+/// A frame is never written more than this many seconds of film in a row:
+/// past it the film is shortened rather than frozen.
+const MAX_REPEAT_SECONDS: u32 = 2;
 /// The first lines of what ffmpeg wrote, kept for the message of a failure:
 /// it names the cause first, then what stopped because of it.
 const ERROR_HEAD: usize = 600;
@@ -82,6 +82,18 @@ impl Format {
         self == Format::ProResAlpha
     }
 
+    /// The ffmpeg audio encoders its sound is written with, the preferred
+    /// first: AAC in an MP4, PCM beside ProRes (what editing expects of a
+    /// MOV), Opus in a WebM, FLAC (lossless, like its picture) in an MKV.
+    pub fn audio_encoders(self) -> &'static [&'static str] {
+        match self {
+            Format::Mp4 => &["aac", "libfdk_aac"],
+            Format::ProRes | Format::ProResAlpha => &["pcm_s16le"],
+            Format::Webm => &["libopus", "opus"],
+            Format::Lossless => &["flac", "libopus"],
+        }
+    }
+
     /// The sides of its picture that must be even (width, height): pixels
     /// stored 4:2:0 halve both, 4:2:2 the width (`prores_ks` would pad an odd
     /// one, the other ProRes encoder refuses it).
@@ -112,6 +124,19 @@ pub struct Options {
     pub fps: u32,
     /// The ffmpeg chosen by hand; `None`: the one on the PATH.
     pub ffmpeg: Option<PathBuf>,
+    /// The Output section's mode: an offline render, not the live film.
+    pub render: bool,
+    /// The render's size (`director_render.rs`).
+    pub resolution: crate::director_render::Resolution,
+    /// The render as a sequence of PNG images (no ffmpeg needed).
+    pub png: bool,
+    /// The live film carries the viewer's own sound: the world's sounds,
+    /// the music and the media, as the user hears them.
+    pub sound: bool,
+    /// The interface's sounds in it too.
+    pub ui_sounds: bool,
+    /// Voice chat in it: other people's voices, off unless asked.
+    pub voice: bool,
 }
 
 impl Default for Options {
@@ -121,6 +146,12 @@ impl Default for Options {
             quality: Quality::Good,
             fps: 30,
             ffmpeg: None,
+            render: false,
+            resolution: crate::director_render::Resolution::default(),
+            png: false,
+            sound: true,
+            ui_sounds: false,
+            voice: false,
         }
     }
 }
@@ -129,6 +160,22 @@ impl Options {
     /// A rate the film can have (a settings file may hold anything).
     pub fn rate(&self) -> u32 {
         if RATES.contains(&self.fps) { self.fps } else { 30 }
+    }
+
+    /// The mixer's channels the film's sound takes (none: a silent film).
+    pub fn sound_channels(&self) -> Vec<aurora_audio::Channel> {
+        use aurora_audio::Channel;
+        if !self.sound {
+            return Vec::new();
+        }
+        let mut channels = vec![Channel::Ambient, Channel::Sfx, Channel::Music, Channel::Media];
+        if self.ui_sounds {
+            channels.push(Channel::Ui);
+        }
+        if self.voice {
+            channels.push(Channel::Voice);
+        }
+        channels
     }
 }
 
@@ -232,6 +279,15 @@ pub fn arguments(encoder: &str, format: Format, quality: Quality, size: (u32, u3
 /// of dashes, each line is its flags (V for video), the encoder's name, then
 /// what it is.
 pub fn parse_encoders(listing: &str) -> Vec<String> {
+    encoders_of(listing, 'V')
+}
+
+/// The audio encoders of the same listing (flags starting with A).
+pub fn parse_audio_encoders(listing: &str) -> Vec<String> {
+    encoders_of(listing, 'A')
+}
+
+fn encoders_of(listing: &str, kind: char) -> Vec<String> {
     listing
         .lines()
         .skip_while(|line| !line.trim_start().starts_with("---"))
@@ -239,9 +295,59 @@ pub fn parse_encoders(listing: &str) -> Vec<String> {
         .filter_map(|line| {
             let mut words = line.split_whitespace();
             let flags = words.next()?;
-            flags.starts_with('V').then(|| words.next().map(str::to_owned)).flatten()
+            flags.starts_with(kind).then(|| words.next().map(str::to_owned)).flatten()
         })
         .collect()
+}
+
+/// The arguments of the pass that gives a film its sound: the picture
+/// `video` copied as it is, the sound `audio` (raw 32-bit float stereo at
+/// 48 kHz, `film_sound.rs`) encoded by `encoder`, both into `out`. The two
+/// last as long as each other (the sound is padded to the picture),
+/// `-shortest` only trims a rounding.
+pub fn mux_arguments(video: &Path, audio: &Path, encoder: &str, out: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = ["-hide_banner", "-loglevel", "error", "-y", "-i"]
+        .iter()
+        .map(OsString::from)
+        .collect();
+    args.push(video.as_os_str().to_owned());
+    for arg in ["-f", "f32le", "-ar", "48000", "-ac", "2", "-i"] {
+        args.push(arg.into());
+    }
+    args.push(audio.as_os_str().to_owned());
+    for arg in ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", encoder] {
+        args.push(arg.into());
+    }
+    let rate: &[&str] = match encoder {
+        "aac" | "libfdk_aac" => &["-b:a", "192k"],
+        "libopus" | "opus" => &["-b:a", "160k"],
+        _ => &[],
+    };
+    args.extend(rate.iter().map(OsString::from));
+    if encoder == "opus" {
+        // (ffmpeg's own Opus encoder is still marked experimental)
+        args.extend(["-strict", "-2"].map(OsString::from));
+    }
+    args.push("-shortest".into());
+    args.push(out.as_os_str().to_owned());
+    args
+}
+
+/// Run ffmpeg with `args` to its end (off the frame thread): what it said
+/// of a failure.
+pub fn run_to_end(program: &Path, args: &[OsString]) -> Result<(), String> {
+    let output = quiet(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("{}: {e}", program.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(head(&String::from_utf8_lossy(&output.stderr)).to_owned())
+    }
 }
 
 /// The ffmpeg program's file name on this system.
@@ -276,6 +382,8 @@ fn quiet(program: &Path) -> Command {
 pub struct Tool {
     pub path: PathBuf,
     encoders: Vec<String>,
+    /// Its audio encoders, for the film's sound.
+    audio: Vec<String>,
 }
 
 impl Tool {
@@ -290,14 +398,26 @@ impl Tool {
         if !output.status.success() {
             return Err(format!("{}: {}", path.display(), output.status));
         }
-        let encoders = parse_encoders(&String::from_utf8_lossy(&output.stdout));
+        let listing = String::from_utf8_lossy(&output.stdout);
+        let encoders = parse_encoders(&listing);
         if encoders.is_empty() {
             return Err(format!("{}: no video encoder listed", path.display()));
         }
         Ok(Tool {
             path: path.to_owned(),
             encoders,
+            audio: parse_audio_encoders(&listing),
         })
+    }
+
+    /// The encoder this ffmpeg writes the sound of a `format` film with;
+    /// `None` when it has none (the film is then silent).
+    pub fn audio_encoder(&self, format: Format) -> Option<&'static str> {
+        format
+            .audio_encoders()
+            .iter()
+            .copied()
+            .find(|name| self.audio.iter().any(|have| have == name))
     }
 
     /// The encoder this ffmpeg writes `format` with; `None` when it has none.
@@ -314,6 +434,7 @@ impl Tool {
         Tool {
             path: PathBuf::from(program()),
             encoders: encoders.iter().map(|name| (*name).to_owned()).collect(),
+            audio: vec!["aac".to_owned(), "pcm_s16le".to_owned(), "flac".to_owned()],
         }
     }
 }
@@ -325,6 +446,9 @@ pub struct Pace {
     fps: u32,
     /// Frames written so far, repeats included.
     written: u64,
+    /// A long stall shortens the film (`MAX_REPEAT_SECONDS`); not for a film with
+    /// sound, whose picture must last what its sound lasts.
+    capped: bool,
 }
 
 impl Pace {
@@ -332,6 +456,16 @@ impl Pace {
         Pace {
             fps: fps.max(1),
             written: 0,
+            capped: true,
+        }
+    }
+
+    /// A pace that owes every frame, however long the stall (a film with
+    /// sound: its picture and its sound keep one clock).
+    pub fn uncapped(fps: u32) -> Pace {
+        Pace {
+            capped: false,
+            ..Pace::new(fps)
         }
     }
 
@@ -339,7 +473,12 @@ impl Pace {
     /// none is due yet, more than 1 when the viewer fell behind.
     pub fn due(&self, elapsed: f64) -> u32 {
         let wanted = (elapsed.max(0.0) * f64::from(self.fps)).floor() as u64 + 1;
-        wanted.saturating_sub(self.written).min(u64::from(MAX_REPEAT)) as u32
+        let owed = wanted.saturating_sub(self.written);
+        if self.capped {
+            owed.min(u64::from(MAX_REPEAT_SECONDS * self.fps)) as u32
+        } else {
+            owed.min(u64::from(u32::MAX)) as u32
+        }
     }
 
     pub fn wrote(&mut self, frames: u32) {
@@ -440,15 +579,40 @@ impl Recording {
     /// Start the writer for frames of `size` at `fps`; `out` is the file the
     /// sink writes, to show afterwards.
     pub fn start(sink: Sink, size: (u32, u32), fps: u32, out: PathBuf) -> Recording {
+        Recording::start_with(sink, size, Pace::new(fps), out)
+    }
+
+    /// The same with its own pace (`Pace::uncapped` for a film with sound;
+    /// an offline render's frames are given with `offer`, the pace unused).
+    pub fn start_with(sink: Sink, size: (u32, u32), pace: Pace, out: PathBuf) -> Recording {
         let (frames, queue) = sync_channel(QUEUE);
         Recording {
             frames,
             writer: std::thread::spawn(move || run(sink, &queue)),
             started: Instant::now(),
-            pace: Pace::new(fps),
+            pace,
             size,
             out,
             skipped: 0,
+        }
+    }
+
+    /// The next frame of an offline render (written once, not paced):
+    /// given back when the writer is behind, to be offered again later (the
+    /// render waits for it; it is not real time). A frame of another size
+    /// is dropped: `None`, and the writer `failed` soon after it ends.
+    pub fn offer(&mut self, pixels: Vec<u8>) -> Option<Vec<u8>> {
+        if pixels.len() != self.size.0 as usize * self.size.1 as usize * 4 {
+            log::warn!("director: a frame of the wrong size for the render, dropped");
+            return None;
+        }
+        match self.frames.try_send(Frame { pixels, repeat: 1 }) {
+            Ok(()) => {
+                self.pace.wrote(1);
+                None
+            }
+            Err(TrySendError::Full(frame)) => Some(frame.pixels),
+            Err(TrySendError::Disconnected(_)) => None,
         }
     }
 
@@ -693,7 +857,7 @@ mod tests {
         assert_eq!(pace.written(), 13);
         assert_eq!(pace.due(0.4), 0);
         // a long stall is not a frozen film without end
-        assert_eq!(pace.due(1000.0), MAX_REPEAT);
+        assert_eq!(pace.due(1000.0), MAX_REPEAT_SECONDS * 30);
         assert_eq!(Pace::new(0).due(-5.0), 1);
     }
 
@@ -941,6 +1105,82 @@ mod tests {
             "{} of {films} films failed:\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+    #[test]
+    fn the_sound_is_written_by_the_container_s_encoder_and_muxed_beside_the_picture() {
+        let listing = format!("{LISTING} A....D libopus              libopus Opus\n A....D flac                 FLAC\n");
+        assert_eq!(parse_audio_encoders(&listing), ["aac", "libopus", "flac"]);
+        let tool = Tool {
+            path: PathBuf::from("ffmpeg"),
+            encoders: parse_encoders(&listing),
+            audio: parse_audio_encoders(&listing),
+        };
+        assert_eq!(tool.audio_encoder(Format::Mp4), Some("aac"));
+        assert_eq!(tool.audio_encoder(Format::Webm), Some("libopus"));
+        assert_eq!(tool.audio_encoder(Format::Lossless), Some("flac"));
+        // no PCM encoder listed: a ProRes film stays silent
+        assert_eq!(tool.audio_encoder(Format::ProRes), None);
+        // FLAC missing: Opus in the MKV
+        let opus = Tool {
+            audio: vec!["libopus".to_owned()],
+            ..tool.clone()
+        };
+        assert_eq!(opus.audio_encoder(Format::Lossless), Some("libopus"));
+        let text = |args: Vec<OsString>| args.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        let (video, audio) = (Path::new("v.mp4"), Path::new("a.f32"));
+        let aac = text(mux_arguments(video, audio, "aac", Path::new("film.mp4")));
+        assert_eq!(
+            aac,
+            "-hide_banner -loglevel error -y -i v.mp4 -f f32le -ar 48000 -ac 2 -i a.f32 -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k -shortest film.mp4"
+        );
+        let pcm = text(mux_arguments(video, audio, "pcm_s16le", Path::new("film.mov")));
+        assert!(pcm.contains("-c:a pcm_s16le -shortest"), "no bit rate for PCM");
+        let native = text(mux_arguments(video, audio, "opus", Path::new("film.webm")));
+        assert!(native.contains("-b:a 160k -strict -2"), "the native Opus is experimental");
+        assert!(!text(mux_arguments(video, audio, "libopus", Path::new("f.webm"))).contains("-strict"));
+    }
+
+    #[test]
+    fn a_film_with_sound_owes_every_frame_and_an_offline_render_writes_each_once() {
+        // a stall of five seconds: the film with sound repeats past the cap
+        let mut capped = Pace::new(60);
+        let mut uncapped = Pace::uncapped(60);
+        capped.wrote(1);
+        uncapped.wrote(1);
+        assert_eq!(capped.due(5.0), MAX_REPEAT_SECONDS * 60);
+        assert_eq!(uncapped.due(5.0), 300);
+        uncapped.wrote(300);
+        assert_eq!(uncapped.written(), 301);
+        assert_eq!(uncapped.due(5.0), 0, "in step again");
+        // the render: frames offered one by one, each written once
+        let out = std::env::temp_dir().join(format!("aurora-offer-{}.raw", std::process::id()));
+        let mut film = Recording::start_with(Sink::Raw(out.clone()), (2, 2), Pace::new(30), out.clone());
+        let mut offered = 0;
+        while offered < 8 {
+            match film.offer(vec![offered as u8; 16]) {
+                None => offered += 1,
+                Some(back) => {
+                    assert_eq!(back.len(), 16, "given back whole");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+        assert_eq!(film.offer(vec![0; 3]), None, "the wrong size is dropped");
+        let mut finishing = film.finish();
+        let done = loop {
+            if let Some(done) = finishing.done() {
+                break done;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!(done.expect("written").1, 8);
+        let bytes = std::fs::read(&out).expect("the frames");
+        let _ = std::fs::remove_file(&out);
+        assert_eq!(bytes.len(), 8 * 16);
+        assert!(
+            bytes.chunks(16).enumerate().all(|(i, frame)| frame.iter().all(|&b| b == i as u8)),
+            "in order, none twice"
         );
     }
 }

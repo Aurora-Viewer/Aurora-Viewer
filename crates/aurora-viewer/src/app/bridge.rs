@@ -13,6 +13,8 @@ impl App {
         if !self.in_world() {
             return;
         }
+        // FSSelfToggleMoveLock (llviewermenu.cpp)
+        self.world.ui_sounds.push(UiSound::MovelockToggle);
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         prefs.enabled = !prefs.enabled;
         if prefs.enabled && self.bridge_runtime.error.is_some() {

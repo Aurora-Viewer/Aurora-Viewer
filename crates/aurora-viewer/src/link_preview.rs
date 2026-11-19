@@ -782,14 +782,19 @@ pub enum Failure {
 /// network: a redirect there stops, and names resolve to public addresses
 /// only (`PublicOnly`). A link written with such an address gets no preview
 /// in the first place (`link_trust`).
+///
+/// Behind a proxy of the viewer the proxy resolves the names, so the public
+/// address check cannot run on the resolved addresses: the link's own check
+/// (`link_trust::leads_to_local_network`) and the redirects' still run, and
+/// a public name the proxy's network resolves to one of its own machines is
+/// the remaining risk (stricter than the Legacy Viewer, which has no check).
 pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
-    builder(trusted_only)
-        .build()
+    aurora_proxy::http_client(|b| configure(trusted_only, b))
         .map_err(|e| log::warn!("link previews: no HTTP client: {e}"))
         .ok()
 }
 
-fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
+fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
@@ -802,13 +807,25 @@ fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .dns_resolver(PublicOnly)
+    public_only(
+        builder
+            .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy),
+    )
+}
+
+/// The `PublicOnly` resolver, when the names are resolved here: behind a
+/// proxy of the viewer it would only resolve the proxy's own name (and refuse
+/// a proxy on this computer or the local network).
+pub(crate) fn public_only(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if aurora_proxy::rule().proxies_http() {
+        builder
+    } else {
+        builder.dns_resolver(PublicOnly)
+    }
 }
 
 /// The name resolver of the previews: the system's, keeping only the
@@ -827,6 +844,7 @@ impl reqwest::dns::Resolve for PublicOnly {
 async fn public_addresses(host: String) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let lookup = host.clone();
     let found = tokio::task::spawn_blocking(move || {
+        // proxy-guard: only without a proxy of the viewer (`public_only`)
         std::net::ToSocketAddrs::to_socket_addrs(&(lookup.as_str(), 0)).map(|addrs| addrs.collect::<Vec<_>>())
     })
     .await??;
@@ -1962,7 +1980,11 @@ mod tests {
         let plain = test_client();
         assert!(rt.block_on(fetch_picture(&plain, &format!("{base}/a.png"))).is_ok());
         // the previews' clients stop at it
-        let guarded = builder(false).no_proxy().pool_max_idle_per_host(0).build().unwrap();
+        let guarded = configure(false, reqwest::Client::builder())
+            .no_proxy()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap();
         assert_eq!(
             rt.block_on(fetch_picture(&guarded, &format!("{base}/a.png"))).err(),
             Some(Failure::Unavailable)

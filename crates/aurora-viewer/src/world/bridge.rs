@@ -23,7 +23,7 @@ pub const NAME: &str = "#Aurora Bridge v1.0";
 pub(crate) const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.41";
+const VERSION: &str = "1.42";
 /// The controller's and query script's owner-say tags, never shown in chat.
 const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridge>",
@@ -330,6 +330,20 @@ impl Bridge {
     }
     pub fn folder(&self) -> Uuid {
         self.folder
+    }
+    /// Whether the bridge makes `#Aurora` when it is missing: it runs for
+    /// this account, on, worn, still looking for its folder, and the grid
+    /// lets it write (`inventory_writable_with_ais`). What else keeps its
+    /// folders under `#Aurora` at login waits for it instead of asking for
+    /// a second `#Aurora` in the same seconds (the Favorite Wearables; the
+    /// AO's bootstrap waits the same way).
+    pub fn makes_brand_folder(&self, world: &World) -> bool {
+        !self.agent.is_nil()
+            && self.agent == world.agent_id
+            && !self.disabled
+            && !self.user_detached
+            && matches!(self.phase, Phase::Inventory | Phase::Folder)
+            && (self.mutation.is_some() || world.inventory_writable_with_ais())
     }
     pub fn locked(&self) -> bool {
         self.phase == Phase::Ready && self.ack.locked && self.error.is_none()

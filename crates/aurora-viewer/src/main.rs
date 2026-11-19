@@ -37,12 +37,24 @@ mod demo;
 mod destination_guide;
 mod dev_toolbox;
 mod director;
+mod director_anim;
+mod director_capture;
+mod director_ffmpeg;
+mod director_keys;
+mod director_library;
+mod director_montage;
+mod director_render;
+mod director_thumbs;
+mod director_titles;
 mod disk_io;
 mod dof;
+mod editor_sync;
 mod external_url;
 mod fast_hash;
+mod film_sound;
 mod frame_par;
 mod frame_profile;
+mod game_control;
 mod gestures;
 mod gif_search;
 mod gpu_driver;
@@ -60,6 +72,7 @@ mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
+mod language_file;
 mod legacy_profile;
 mod link_preview;
 mod link_trust;
@@ -88,6 +101,7 @@ mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod pose_stand;
+mod proxy;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
@@ -162,6 +176,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     cli::get();
+    // the stochastic transparency's measurement switches that weaken it
+    // (AURORA_ST_GUARDS) are read by development builds alone
+    aurora_render::oit_stochastic::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
     // without a window: before the crash watcher, the logs and the link
     // hand-off
     if cli::get().uninstall {
@@ -191,7 +208,15 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // Preferences › Network › Proxy: before the first connection of the
+    // viewer (LLStartUp::startLLProxy, at startup)
+    proxy::install(&settings::Settings::load().proxy);
+    // the interface language file, read with the settings before the log
+    language_file::report();
     splash::settings();
+    // started by an update: its helper waits while the start moves on
+    splash::report_to_update();
+    splash::test_slow_start();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers
     // (crash/mod.rs), so the window never waits for this log line

@@ -158,13 +158,13 @@ fn names_line(world: &World, scope: NameScope, id: &Uuid, shown: &str) -> Vec<St
             (false, false) => Some(format!("{first} {last}")),
         }
     });
-    if let Some(legacy) = from_names.or_else(|| world.legacy_name(id)).filter(|n| n != shown) {
+    if let Some(legacy) = from_names.or_else(|| world.legacy_name_in(scope, id)).filter(|n| n != shown) {
         parts.push(legacy);
     }
     if let Some(user) = world
         .social
         .avatar_names
-        .get(id)
+        .get_in(scope, id)
         .map(|n| n.username.clone())
         .filter(|u| !u.is_empty() && u != shown && !parts.contains(u))
     {
@@ -915,13 +915,12 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             env.world.rlva_can_offer_teleport(id),
             None,
         ),
-        Act::Pay => (
-            "coin-filled",
-            aurora_i18n::tr!("common-pay"),
-            ActionKind::Flat,
-            context::can_pay_resident(env.world),
-            None,
-        ),
+        // Enabled under @pay too, as in the Legacy style
+        // (`profile::action_buttons`): LLPanelProfileSecondLife::updateButtons
+        // (indra/newview/llpanelprofile.cpp) never tests it, and the pay
+        // window refuses to open with the "blocked" notice
+        // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>, indra/newview/rlvhandler.cpp).
+        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")
@@ -1003,7 +1002,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let id = w.id;
     let names = &world.social.avatar_names;
     let display = names.get_in(w.scope, &id).map(|n| n.display(&names.options));
-    let legacy = world.legacy_name(&id);
+    let legacy = world.legacy_name_in(w.scope, &id);
     // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
     let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     crate::ui::chat::moderation::demo_mark(&resp.ctx, crate::ui::chat::moderation::DemoMark::ProfileMore, resp.rect);
@@ -1745,7 +1744,8 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
     let (p, world) = (env.p, env.world);
     world.social.avatar_names.want(&partner);
     env.wanted_pics.insert(partner);
-    let name = display_name(world, NameScope::World, &partner);
+    // LLPanelProfileSecondLife names the partner whatever `@shownames`
+    let name = display_name(world, NameScope::Roster, &partner);
     let font = semibold(ui, 12.5);
     let galley = ui.painter().layout_no_wrap(name.clone(), font, p.ink);
     let size = Vec2::new(2.0 + 20.0 + 6.0 + galley.size().x + 9.0, 24.0);
@@ -1760,7 +1760,7 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        super::request_open(ui.ctx(), partner);
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(partner));
     }
 }
 

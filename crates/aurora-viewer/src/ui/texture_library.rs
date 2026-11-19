@@ -3,6 +3,7 @@
 
 pub(crate) mod catalogue;
 mod material_editor;
+pub(crate) use material_editor::{map_allowed, map_source};
 pub(crate) mod previews;
 pub(crate) mod texture_view;
 mod windows;

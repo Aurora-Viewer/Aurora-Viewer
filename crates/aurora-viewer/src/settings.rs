@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod autotune;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
@@ -590,6 +591,12 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The interface uses `custom_language_file` instead of `language`
+    /// (an Aurora addition, language_file.rs).
+    pub custom_language: bool,
+    /// The Fluent catalog file chosen for the interface, "" for none: read
+    /// at startup (language_file.rs). A path of this PC.
+    pub custom_language_file: String,
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
@@ -632,11 +639,16 @@ pub struct Settings {
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
+    /// Game Controls: GameControlData and the controller's action mappings
+    /// (the LL viewer's "GameControl" setting).
+    pub game_control: crate::game_control::Settings,
     /// Pre-split profile awaiting device classification after an upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -659,6 +671,8 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Swimming in prims named as water (#2008), for every account.
+    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -709,6 +723,13 @@ pub struct Settings {
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
+    /// Autotune, the Performance window's target frame rate
+    /// (settings/autotune.rs; off).
+    pub autotune: autotune::Config,
+    /// The user's draw distance and avatars in full while Autotune holds the
+    /// live ones: never saved, they are what is written in their place.
+    #[serde(skip)]
+    pub autotune_hold: Option<autotune::Hold>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -916,6 +937,9 @@ pub struct Settings {
     pub appearance_fill_previews: bool,
     /// The order of the Favorite Wearables list (FSWearableFavoritesSortOrder).
     pub wearable_favorites_sort: crate::world::wearable_favorites::SortOrder,
+    /// The Favorite Wearables' custom orders (`SortOrder::Custom`), per
+    /// account: for each view, its originals in the order dragged.
+    pub wearable_favorites_order: std::collections::HashMap<uuid::Uuid, crate::world::wearable_favorites::Orders>,
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
@@ -1208,6 +1232,10 @@ pub struct Settings {
     pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
+    /// The Chat Service's history of the private conversations, fetched
+    /// from the region and shown with the transcripts (the LL viewer's
+    /// ChatServiceEnabled, on). Read at login only.
+    pub chat_service_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
     /// Import the Legacy Viewer's transcripts at each login. On by default
@@ -1592,6 +1620,15 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
+    /// The rigged meshes with a touch script or a click action that a left
+    /// click acts on: animated objects (animesh; on), rigged attachments we
+    /// wear (off) and those of other avatars (off). Off, the click passes
+    /// through them as in the Legacy Viewer, which has none of the three
+    /// (scene/drawn.rs; Preferences › Mouse and keyboard, "Left click on
+    /// rigged objects").
+    pub rigged_click_animesh: bool,
+    pub rigged_click_own: bool,
+    pub rigged_click_others: bool,
     /// RenderVolumeSAProtection: prims and sculpts with a very large surface
     /// stop being drawn past a total each frame (scene/surface_area.rs; off).
     pub large_surface_protection: bool,
@@ -1686,6 +1723,11 @@ pub struct Settings {
     /// colour either way and only take the 0.7 curve, a little brighter. An
     /// experimental setting, off by default.
     pub colored_sky_ambient: bool,
+    /// Volumetric clouds (aurora-render `clouds.rs`) in the place of the
+    /// Legacy Viewer's flat cloud layer: Aurora (true) or Legacy. Off by
+    /// default until tried on modest GPUs, and left alone by the two buttons
+    /// of Preferences › Aurora, as the water effects once were.
+    pub volumetric_clouds: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1717,6 +1759,9 @@ pub struct Settings {
     /// by another program), a new window and device instead of closing
     /// (app/gpu_recovery.rs). On by default; the Legacy Viewer closes.
     pub gpu_recovery: bool,
+    /// Gaming mode (app/gaming_mode.rs) ends by itself when the window
+    /// comes back in front. On by default; not in the Legacy Viewer.
+    pub gaming_mode_leave_on_focus: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// RenderAttachedParticles: the particles of what avatars wear (on;
@@ -1836,6 +1881,11 @@ pub struct Settings {
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
     pub no_neighbour_regions: bool,
+    /// Preferences › Network and cache › Proxy (the Legacy Viewer's
+    /// floater_preferences_proxy.xml): read at startup (`proxy.rs`), applied
+    /// at the next start. The SOCKS 5 user name and password are in the
+    /// credential store (`credentials::store_proxy`), never here.
+    pub proxy: aurora_proxy::ProxySettings,
     pub parcel_visibility: crate::world::parcel_visibility::Settings,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
@@ -1930,7 +1980,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 41;
+const SETTINGS_VERSION: u32 = 42;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2071,6 +2121,9 @@ impl Default for ColorSettings {
     }
 }
 
+/// Index of the voice channel in the audio settings (`audio_channels`).
+pub const VOICE_CHANNEL: usize = 6;
+
 /// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
 /// Music, Multimedia, Voice.
 pub fn audio_channels() -> [&'static str; 7] {
@@ -2161,6 +2214,11 @@ pub struct AudioSettings {
     /// Microphone button of the bottom bar: false = toggle (click on / click
     /// off), true = hold to talk (Firestorm PushToTalkToggle inverted).
     pub mic_hold: bool,
+    /// Close the microphone while muted, so that a Bluetooth headset leaves
+    /// its hands-free mode (StopMicCaptureWhenMuted, the LL viewer 26.5's
+    /// "Bluetooth only: Better in-world audio", on; off is "Better voice":
+    /// open the whole time voice is on).
+    pub stop_mic_when_muted: bool,
     /// Microphone gain (0..2).
     pub mic_gain: f32,
     /// Collision sounds (EnableCollisionSounds, on).
@@ -2231,6 +2289,7 @@ impl Default for AudioSettings {
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
+            stop_mic_when_muted: true,
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
@@ -2257,6 +2316,22 @@ pub enum VoiceEar {
 }
 
 impl AudioSettings {
+    /// What the enable box of a channel switches. The voice one is the voice
+    /// connection itself, microphone included (EnableVoiceChat of
+    /// panel_preferences_sound.xml and panel_volume_pulldown.xml).
+    pub fn channel_box(&mut self, i: usize) -> &mut bool {
+        if i == VOICE_CHANNEL {
+            &mut self.voice_enabled
+        } else {
+            &mut self.enabled[i]
+        }
+    }
+
+    /// The state of [`AudioSettings::channel_box`].
+    pub fn channel_on(&self, i: usize) -> bool {
+        if i == VOICE_CHANNEL { self.voice_enabled } else { self.enabled[i] }
+    }
+
     pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
         self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
     }
@@ -2281,6 +2356,8 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            custom_language: false,
+            custom_language_file: String::new(),
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
@@ -2298,8 +2375,10 @@ impl Default for Settings {
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
+            game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
@@ -2330,6 +2409,8 @@ impl Default for Settings {
             draw_distance_stepping: false,
             draw_distance_stepping_interval: 20,
             draw_stepping: None,
+            autotune: Default::default(),
+            autotune_hold: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -2417,11 +2498,13 @@ impl Default for Settings {
             show_appearance: false,
             appearance_fill_previews: false,
             wearable_favorites_sort: Default::default(),
+            wearable_favorites_order: Default::default(),
             appearance_tab: 0,
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
@@ -2522,6 +2605,7 @@ impl Default for Settings {
             conversation_log: Default::default(),
             reopen_ims: false,
             log_show_history: true,
+            chat_service_history: true,
             log_dated_names: false,
             log_import_at_login: true,
             log_legacy_layout: false,
@@ -2655,6 +2739,9 @@ impl Default for Settings {
             fly_override_warned: false,
             avatar_align_mini: false,
             block_click_sit: false,
+            rigged_click_animesh: true,
+            rigged_click_own: false,
+            rigged_click_others: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
             large_surface_sculpt_threshold: 150.0,
@@ -2681,6 +2768,7 @@ impl Default for Settings {
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
             colored_sky_ambient: false,
+            volumetric_clouds: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -2692,6 +2780,7 @@ impl Default for Settings {
             background_fps_limit: 15,
             background_gpu_pause: true,
             gpu_recovery: true,
+            gaming_mode_leave_on_focus: true,
             max_particles: 4096,
             attached_particles: true,
             tracker_beacon: true,
@@ -2737,6 +2826,7 @@ impl Default for Settings {
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
+            proxy: Default::default(),
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
@@ -2791,11 +2881,25 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
         .unwrap_or(false)
 }
 
-/// `language` of a settings file's bytes; "default" for anything else.
-fn language_in(file: Option<&[u8]>) -> String {
-    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+/// `language` of a settings file's bytes ("default" for anything else),
+/// and its language file when its use is chosen.
+fn language_in(file: Option<&[u8]>) -> (String, Option<String>) {
+    let value = file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+    let language = value
+        .as_ref()
         .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
-        .unwrap_or_else(|| "default".into())
+        .unwrap_or_else(|| "default".into());
+    (language, value.as_ref().and_then(language_file_in))
+}
+
+/// The language file of a parsed settings file, when its use is chosen.
+fn language_file_in(value: &serde_json::Value) -> Option<String> {
+    let enabled = value.get("custom_language").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let file = value
+        .get("custom_language_file")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    crate::language_file::chosen(enabled, file).map(str::to_owned)
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -2970,8 +3074,9 @@ impl Settings {
 
     /// The saved language, read the same way for the startup splash
     /// (`splash/`), which loads nothing else; "default" (the system's) when
-    /// the file or the field is missing.
-    pub fn language_at_start() -> String {
+    /// the file or the field is missing. Also the language file, when its
+    /// use is chosen.
+    pub fn language_at_start() -> (String, Option<String>) {
         language_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
@@ -2992,10 +3097,9 @@ impl Settings {
                 saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
-                aurora_i18n::select(
-                    value["language"].as_str().unwrap_or("default"),
-                    crate::cli::get().language.as_deref(),
-                );
+                let file = language_file_in(&value);
+                crate::language_file::start(file.as_deref());
+                crate::language_file::select(value["language"].as_str().unwrap_or("default"), file.is_some());
                 let (s, from_newer) = Self::read_document(value, path)?;
                 newer = from_newer;
                 Some(s)
@@ -3432,6 +3536,22 @@ impl Settings {
         {
             self.chat_bar = if autohide { ChatBar::WhenTyping } else { ChatBar::Always };
         }
+        if self.settings_version < 42 {
+            // the Instant movement is still experimental, and "All in Aurora
+            // version" turned it on with the rest: every earlier file goes
+            // back once to the simulator's movement (Legacy), its row in
+            // Preferences › Aurora keeps Instant as a choice
+            self.predict_own_motion = false;
+        }
+        if !self.audio.enabled[VOICE_CHANNEL] {
+            // this box used to switch a mixer channel of its own, leaving
+            // voice connected and the microphone open: whoever unticked it
+            // wanted voice off. Repaired at every load, not once by version:
+            // no control ticks this channel back on, and an earlier build
+            // sharing the file can still write it
+            self.audio.enabled[VOICE_CHANNEL] = true;
+            self.audio.voice_enabled = false;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3450,6 +3570,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.autotune.sanitize();
         self.local_light_count = self.local_light_count.min(crate::scene::lights::MAX_LIGHTS as u32);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
@@ -3498,6 +3619,7 @@ impl Settings {
         }
         self.snapshot.sanitize();
         self.dof.sanitize();
+        self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
             self.screen_indirect_intensity.clamp(0.0, 4.0)
@@ -3638,6 +3760,7 @@ impl Settings {
         }
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
+            changed |= toolbar.migrate_director_button();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
@@ -3706,6 +3829,11 @@ impl Settings {
         // the draw distance being stepped: the user's
         if let Some(steps) = copy.draw_stepping.take() {
             copy.draw_distance = steps.user;
+        }
+        // the values Autotune holds: the user's (after the two above, whose
+        // own values the hold leaves alone)
+        if let Some(hold) = copy.autotune_hold.take() {
+            hold.restore(&mut copy);
         }
         if !copy.remember_username {
             copy.username.clear();
@@ -3786,6 +3914,15 @@ impl Settings {
             volume_threshold: self.large_surface_prim_threshold,
             sculpt_threshold: self.large_surface_sculpt_threshold,
             frame_max: self.large_surface_frame_max,
+        }
+    }
+
+    /// The rigged meshes a left click acts on (scene/drawn.rs).
+    pub fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
+        crate::scene::drawn::RiggedClicks {
+            animesh: self.rigged_click_animesh,
+            own: self.rigged_click_own,
+            others: self.rigged_click_others,
         }
     }
 
@@ -4395,16 +4532,36 @@ mod tests {
     /// The splash's early read of the language agrees with the settings.
     #[test]
     fn the_splash_reads_the_saved_language() {
-        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        let language = |file: Option<&[u8]>| super::language_in(file).0;
+        assert_eq!(language(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
         for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
-            assert_eq!(super::language_in(file), "default", "{file:?}");
+            assert_eq!(language(file), "default", "{file:?}");
         }
         let saved = serde_json::to_vec(&super::Settings {
             language: "ja".into(),
             ..Default::default()
         })
         .expect("settings json");
-        assert_eq!(super::language_in(Some(&saved)), "ja");
+        assert_eq!(super::language_in(Some(&saved)), ("ja".into(), None));
+    }
+
+    /// The language file is read at startup only when its use is chosen.
+    #[test]
+    fn the_splash_reads_the_language_file_when_it_is_chosen() {
+        let saved = |on: bool, file: &str| {
+            serde_json::to_vec(&super::Settings {
+                language: "fr".into(),
+                custom_language: on,
+                custom_language_file: file.into(),
+                ..Default::default()
+            })
+            .expect("settings json")
+        };
+        let file = r"C:\translations\de.ftl";
+        assert_eq!(super::language_in(Some(&saved(true, file))), ("fr".into(), Some(file.into())));
+        assert_eq!(super::language_in(Some(&saved(false, file))).1, None, "not chosen");
+        assert_eq!(super::language_in(Some(&saved(true, ""))).1, None, "no file");
+        assert_eq!(super::language_in(Some(br#"{"custom_language":"yes"}"#)).1, None);
     }
 
     /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
@@ -4536,6 +4693,24 @@ mod tests {
         let saved = serde_json::to_value(&changed).expect("save preference");
         let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
         assert!(!loaded.double_click_scripted);
+    }
+
+    #[test]
+    fn only_animesh_take_a_left_click_by_default_and_each_choice_round_trips() {
+        use crate::scene::drawn::RiggedClicks;
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without the preferences");
+        assert_eq!(missing.rigged_clicks(), RiggedClicks::default());
+        assert!(missing.rigged_click_animesh && !missing.rigged_click_own && !missing.rigged_click_others);
+
+        for (animesh, own, others) in [(false, false, false), (true, true, false), (true, false, true)] {
+            let mut changed = missing.clone();
+            changed.rigged_click_animesh = animesh;
+            changed.rigged_click_own = own;
+            changed.rigged_click_others = others;
+            let saved = serde_json::to_value(&changed).expect("save the preferences");
+            let loaded: Settings = serde_json::from_value(saved).expect("reload the preferences");
+            assert_eq!(loaded.rigged_clicks(), RiggedClicks { animesh, own, others }, "each switch alone");
+        }
     }
 
     #[test]
@@ -4962,6 +5137,25 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    /// The Instant movement goes back to the simulator's once, on every
+    /// earlier file; chosen again afterwards, it stays.
+    #[test]
+    fn instant_movement_goes_back_to_legacy_once() {
+        for version in [9, 41] {
+            let file = serde_json::json!({ "settings_version": version, "predict_own_motion": true });
+            let migrated = serde_json::from_value::<Settings>(file).expect("load settings").sanitized();
+            assert!(!migrated.predict_own_motion, "version {version}");
+            assert_eq!(migrated.settings_version, SETTINGS_VERSION);
+        }
+        let chosen = Settings {
+            predict_own_motion: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&chosen).expect("save settings");
+        let reloaded = serde_json::from_str::<Settings>(&json).expect("reload settings").sanitized();
+        assert!(reloaded.predict_own_motion, "a choice made after the update stays");
     }
 
     #[test]
@@ -5644,6 +5838,38 @@ mod tests {
         let mut off = Settings::default();
         off.colors.relation_names = false;
         assert!(!off.sanitized().colors.relation_names);
+    }
+
+    #[test]
+    fn a_voice_box_unticked_before_it_meant_voice_turns_voice_off() {
+        // any version: an earlier build sharing the file can write it again
+        for version in [30, SETTINGS_VERSION] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.audio.enabled[VOICE_CHANNEL] = false;
+            let audio = old.sanitized().audio;
+            assert!(!audio.voice_enabled);
+            assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        }
+        // ticked: voice stays as it was
+        assert!(Settings::default().sanitized().audio.voice_enabled);
+        // only the voice box repairs
+        let mut music = Settings::default();
+        music.audio.enabled[4] = false;
+        let audio = music.sanitized().audio;
+        assert!(audio.voice_enabled && !audio.enabled[4]);
+    }
+
+    #[test]
+    fn the_voice_box_of_every_panel_is_the_voice_connection() {
+        let mut audio = AudioSettings::default();
+        *audio.channel_box(VOICE_CHANNEL) = false;
+        assert!(!audio.voice_enabled && !audio.channel_on(VOICE_CHANNEL));
+        assert!(audio.enabled[VOICE_CHANNEL], "the mixer channel keeps playing");
+        *audio.channel_box(1) = false;
+        assert!(!audio.enabled[1] && !audio.channel_on(1));
     }
 
     #[test]

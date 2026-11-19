@@ -163,6 +163,7 @@ fn object_import_replaces_stale_edits_only_after_full_data_and_rebinds_virtual_s
         objects: demo::hand_ik::objects(0.5, true),
     });
     // Advance past the normal simulator update interpolation interval.
+    world.objects.settle_drawables();
     frame.at = Instant::now() + Duration::from_secs(1);
     editor.update_graph(&world, &frame);
     let moved = preview(&editor, &frame, wrist);

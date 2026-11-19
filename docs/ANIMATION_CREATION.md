@@ -4,7 +4,8 @@ Open **Build > IK Edit > Animations**, then **Create an animation**. The
 creation mode uses the same skeleton, move/rotation tools,
 world/local gizmo, Ctrl rotation, symmetry and hand/foot IK handles.
 The Animation editor has its own window: the animation's name with the
-drafts beside it, then four pages:
+drafts beside it (the list shows every draft at a fixed place, the open one
+ticked), then four pages:
 
 - **Bone**: a clickable skeleton to pick a bone, then the selected bone's
   IK/FK mode, position and rotation, its track's interpolation and priority,
@@ -28,23 +29,25 @@ One toolbar sits above the tracks and stays in place while they scroll:
 - **Transport**: rewind (Home), previous key, play/pause (Space), next key
   and loop. The loop range (full timeline or last keyframe) shows while
   looping.
-- **Tools**: Move or Rotate, **IK** or **FK** for the selected bone (IK moves
+- **Tools**: Move or Rotate (R switches between them, and the choice stays
+  from joint to joint), **IK** or **FK** for the selected bone (IK moves
   its chain, FK edits the joint alone), **Mirror** for symmetric edits, and the
   hand/foot limb handles.
 - **Keying**: **Key** records the selected bone (K); auto-key shows its step
   while it is on.
-- **Edit**: undo, redo, copy pose, paste pose, delete the selected bone's key
+- **Edit**: undo, redo, copy and paste (the frame's pose, or the picked keys
+  when several are picked), delete the picked keys or the selected bone's key
   (Delete).
 - **View**: zoom out, zoom in, fit. Ctrl+wheel zooms around the frame under the
   pointer, Shift+wheel pans, the plain wheel scrolls the bone list.
-- **File**: import an animation, open or save an editor project (Ctrl+S), and
-  delete every key of the current frame.
+- **File**: import an animation, open or save an editor project (Ctrl+S),
+  **Save .anim**, **Export .bvh**, and delete every key of the current frame.
 
 The shortcuts belong to the timeline while its window is shown. A shortcut with
 nothing to do keeps its usual action in the viewer: Ctrl+Z with nothing to
 undo, Ctrl+Y with nothing to redo, Ctrl+V with no copied pose, Delete when the
-selected bone has no key on the frame, K with no bone selected, Ctrl+S while a
-file action is under way. With the timeline window closed, every key is the
+selected bone has no key on the frame, K with no bone selected, Ctrl+A with no
+key shown, Esc with no key picked, Ctrl+S while a file action is under way. With the timeline window closed, every key is the
 viewer's again. A press the timeline acts on is not also given to the build
 tools, so Delete or Ctrl+Z never changes a selected object at the same time.
 
@@ -56,12 +59,25 @@ that fall between frames; moving or re-recording such a key snaps it to the
 frame. Copy pose takes the keyed bones only, so pasting never keys the bones
 you did not touch.
 
+Several keys can be picked at once. A click picks one key, Ctrl (Cmd) + click
+adds it or takes it out, Shift + click adds it, and Shift or Ctrl + drag draws
+a box over the lanes: it can start on a key, between two rows or under the
+last one. Ctrl+A picks every shown key; Esc, a right-click over the lanes or a
+click on an empty spot drops them. Picked keys are teal, and the status line
+counts them. Dragging one of them moves them all by the same number of frames
+(the move stops at frame 0 and grows the range past the end), Delete removes
+them all, and with several keys picked Ctrl+C copies the keys themselves and
+Ctrl+V pastes them at the playhead with their spacing. Each of these is one
+undo step. Moving keys leaves the playhead where it is.
+
 ## Work in Avatar Studio
 
 Open **Avatar Studio** from its toolbar button or the Build menu, then choose
 **Animate** in the Studio controls. This opens the same native animation
 editor over the Studio avatar; the existing orbit, pan, focus and zoom controls
-remain available. Create an animation or resume the current draft in the
+remain available. A left drag turns around the avatar and, up or down, tilts
+the view to see it from above or from below (never from under the stage's
+floor); **Reset** returns to the default view. Create an animation or resume the current draft in the
 Animations tab. Pose with the existing bone handles, then use **Key this bone**,
 **Key changes**, **Key full pose**, or auto-key to record the edit. Auto-key
 records when you finish moving a bone, then advances the playhead by the chosen
@@ -86,7 +102,8 @@ and recorded pelvis keys are read without the lift. Its fixed-width toolbar butt
 and wrapped, padded slider panel stay in place while the value changes.
 Zoom and pan there to work on closely spaced keys in a long clip, or choose
 **Fit** to see the full range. Use **Save editor project** to preserve an
-editable draft; **Save .anim** and **Prepare upload** produce the native clip.
+editable draft; **Save .anim** and **Prepare upload** produce the native clip,
+and **Export .bvh** writes it for Blender and the other BVH tools.
 When **mPelvis** is selected in the Animation Editor, **Root height** on the
 Bone page adjusts
 its vertical translation relative to the avatar's rest position. Key the
@@ -104,8 +121,8 @@ rotation and scale gizmos as well as its trackball. Its default of 0.5 keeps
 the existing drag response; lower it for smaller changes per drag, and the
 choice is saved with the other Poser settings. It is the Poser's setting only:
 in the animation editor, in IK Edit and on the virtual bones a handle follows
-the pointer one to one. Holding Shift for a ten times finer rotation is the
-Poser's as well.
+the pointer one to one. Holding Shift while dragging a handle makes the move
+or the turn ten times finer, in the Poser and in the animation editor.
 
 ## Record keys
 
@@ -145,6 +162,14 @@ joints of both hands (seen from above, each hand in its own half) or
 its name, click it to select the bone; the selected bone is teal and a
 violet ring marks the bones keyed at the current frame. Picking a bone of a
 hidden group shows that group's handles.
+
+Several joints can be edited together: Shift or Ctrl + click on a joint (its
+handle or its bone on the avatar, its dot in the skeleton, its row in Tracks)
+adds it to the selected joint, or takes it out; a plain click selects one
+joint again. The joints added are ringed in teal and get the selected joint's
+change on top of their own pose (the same turn in their own frame, the same
+offset for a move), and **Key this bone** keys them with it. The Bone page
+says how many follow, with **Only this one** to drop them.
 
 In the Avatar Studio timeline, zoom in around the current frame to place or
 move closely spaced keys, pan across long clips, and use **Fit** to return to
@@ -230,6 +255,11 @@ into its ranges when the file opens: a base priority of -1 becomes 0, a joint
 priority above 6 becomes 6, and hand pose 14 becomes the first hand pose. The
 joint constraints of an imported `.anim` are not kept: the editor's export
 writes none.
+**Export .bvh** writes the same clip as a BVH file on the avatar's rest
+skeleton, with the rest pose as its first, reference frame: it opens in Blender
+(File > Import > Motion Capture) and imports back here to the same motion. A
+BVH file has no place for priorities, loop points, ease, hand pose or
+expression: they stay in the `.anim` and the project only.
 **Prepare .anim import** opens Aurora's existing animation import inspector
 with the same native bytes. Review its preview, destination, name and
 permissions, then use the normal upload action. Preparing the inspector does
@@ -239,6 +269,48 @@ its drafts stay available through Animations.
 Encoding, preview binding, file dialogs and disk writes use background jobs.
 Grid upload and playback of the resulting inventory animation are validated
 by the human in Second Life.
+
+## Animate a couple
+
+A couple animation (a hug, a dance for two) is two animations in Second Life,
+one per avatar, started together by the furniture or the script that places
+both people. The **Couple animation** section of the Clip page animates both
+in one timeline:
+
+1. Your avatar is Person A. Pick Person B among the residents nearby: **Ask**
+   sends them the same request as the Poser's, and once they accept, **Use as
+   B** starts couple mode. Only you see the pose. Alone, **Mirror yourself**
+   takes a copy of your own avatar as Person B, with what you wear (not your
+   HUDs): only you see it, and it goes when couple mode ends. Person B starts
+   from their rest pose, with your animation's range, rate and settings, and
+   is edited first. The range, rate, loop and ease you set on one person
+   carry over to the other.
+2. The editor works on one person at a time, with every tool. The timeline
+   lists A's lanes, then B's, each under their name: A in violet, B in amber.
+   The person set aside keeps showing their keys at the playhead; a click on
+   their name or one of their lanes edits them, as does **Edit Person A / B**
+   on the Clip page. The other person's joints show as dots in their
+   colour: a click on one edits them with that joint picked. Each person has
+   their own undo.
+3. **Move Person B** on the Clip page places B beside you on screen only:
+   forward, left and up in metres from your facing, and a turn. **Face to
+   face** stands B half a metre in front of you, facing you; **Reset place**
+   puts them back. Their animation does not change; the placement note
+   follows where you put them. Avatar Studio's Hover lifts both people; in
+   its menu, **Person B** gives B a hover of their own (**You** sets yours).
+4. **Save .anim** and **Export .bvh** write both people in the folder you
+   choose: `<name> A`, `<name> B` and `<name> placement.txt`, which gives B's
+   position and turn from A, for the sit targets. **Prepare .anim import**
+   uploads the person being edited.
+
+A request reaches Person B only if they wear the Aurora bridge, stand in
+your region, and their posing privacy allows you (Friends by default): the
+Clip page says when your own bridge is not ready.
+
+If Person B teleports away or logs off, they stay drawn as they were and can
+still be posed until couple mode ends. If they withdraw their consent, couple
+mode ends. **End couple mode** returns to Person A alone; B's animation stays
+among the drafts.
 
 ## Offline validation
 

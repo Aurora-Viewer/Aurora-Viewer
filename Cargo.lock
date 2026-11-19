@@ -535,12 +535,14 @@ dependencies = [
  "thiserror 2.0.21",
  "uuid",
  "vorbis_rs",
+ "zopfli",
 ]
 
 [[package]]
 name = "aurora-audio"
 version = "0.1.0"
 dependencies = [
+ "aurora-proxy",
  "aurora-version",
  "cpal",
  "crossbeam-channel",
@@ -560,6 +562,21 @@ dependencies = [
 [[package]]
 name = "aurora-build-gate"
 version = "0.1.0"
+
+[[package]]
+name = "aurora-editor-sync"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "getrandom 0.3.4",
+ "log",
+ "md5",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "aurora-i18n"
@@ -613,6 +630,7 @@ dependencies = [
  "aurora-llsd",
  "aurora-msg",
  "aurora-prim",
+ "aurora-proxy",
  "aurora-version",
  "base64 0.23.1",
  "crossbeam-channel",
@@ -642,6 +660,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-proxy"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "aurora-render"
 version = "0.1.0"
 dependencies = [
@@ -663,6 +692,7 @@ dependencies = [
  "openxr",
  "parking_lot 0.13.0",
  "pollster 1.0.1",
+ "rayon",
  "spirv",
  "thiserror 2.0.21",
  "wgpu",
@@ -674,14 +704,17 @@ name = "aurora-updater"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aurora-proxy",
  "aurora-version",
  "directories",
+ "flate2",
  "log",
  "reqwest",
  "semver",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
@@ -703,11 +736,13 @@ dependencies = [
  "arboard",
  "aurora-assets",
  "aurora-audio",
+ "aurora-editor-sync",
  "aurora-i18n",
  "aurora-llsd",
  "aurora-media",
  "aurora-net",
  "aurora-prim",
+ "aurora-proxy",
  "aurora-render",
  "aurora-updater",
  "aurora-version",
@@ -2124,6 +2159,16 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -5207,7 +5252,7 @@ dependencies = [
  "md-5",
  "rand",
  "ring",
- "sha1",
+ "sha1 0.10.7",
  "subtle",
  "thiserror 2.0.21",
  "zeroize",
@@ -5755,6 +5800,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -6331,6 +6387,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6556,6 +6622,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6721,6 +6799,22 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand",
+ "sha1 0.11.0",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "type-map"
@@ -8143,9 +8237,9 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zopfli"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
 dependencies = [
  "bumpalo",
  "crc32fast",

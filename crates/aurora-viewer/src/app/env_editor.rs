@@ -193,20 +193,11 @@ impl App {
                 EditorAction::ApplyLocal => {
                     // doApplyEnvironment(ACTION_APPLY_LOCAL): ENV_LOCAL, at once
                     // shown once the editor closes
-                    // its Aurora Weather with it, while it stays applied
-                    let weather = self
-                        .env_editor
-                        .doc
-                        .as_ref()
-                        .and_then(|d| crate::weather::region::SkyWeather::from_name(d.name()));
                     if let Some(doc) = &self.env_editor.doc {
                         let rights = self.env_editor_source_rights();
                         match env_editor::frames(doc) {
                             (Some(sky), _) => {
                                 self.world.eep.apply_local_sky(sky, rights);
-                                self.world
-                                    .eep
-                                    .set_local_weather(weather.map(crate::weather::region::RegionDay::fixed));
                             }
                             (_, Some(water)) => self.world.eep.apply_local_water(water, rights),
                             _ => {}

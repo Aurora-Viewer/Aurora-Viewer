@@ -303,6 +303,7 @@ impl Preset {
             ..self.values()
         }
         .write(s);
+        crate::settings::autotune::Hold::chosen(s);
         s.graphics_saved_active = None;
         // the weather's quality follows the level, but is not one of its
         // values: choosing it in the Weather section keeps the level shown
@@ -864,11 +865,18 @@ impl Values {
     }
 
     pub(crate) fn read(s: &Settings) -> Values {
+        // while Autotune holds them, the user's draw distance and avatars:
+        // the level shown, a profile saved and the photo quality's own
+        // hold are the user's, not the tuned values (settings/autotune.rs)
+        let tuned = s
+            .autotune_hold
+            .as_ref()
+            .map_or_else(|| crate::settings::autotune::Tuned::read(s), |h| h.shown(s));
         Values {
-            draw_distance: s.draw_distance,
+            draw_distance: tuned.draw_distance,
             lod_factor: s.lod_factor,
             tree_lod_factor: s.tree_lod_factor,
-            max_avatars: s.max_avatars,
+            max_avatars: tuned.max_avatars,
             max_complexity: s.max_complexity,
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
