@@ -15472,6 +15472,7 @@ import-window-title = Importer
 import-queue = File d’import
 import-queue-empty = Aucun fichier visible dans la file.
 import-queue-clear = Vider la file
+import-queue-resize = Faites glisser pour redimensionner la liste des fichiers. Double-cliquez pour rétablir sa largeur initiale.
 import-tab-batch = Fichiers
 import-tab-folder = Aperçu des dossiers
 import-tab-permissions = Permissions

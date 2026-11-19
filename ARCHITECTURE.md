@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+`imports/ui/inspector.rs` owns the draggable queue divider. Its preferred width
+is stored under each import window in the shared persisted UI layout; fitting
+a smaller window only clamps the displayed width. Double-click restores the
+automatic width.
+
 `import_gltf::Document` shares material and mesh file acceptance: no aggregate
 byte, material-count or buffer-count cap; each external resource follows
 TinyGLTF's `i32::MAX` byte limit. `imports/files.rs::load_paths` is the ordinary

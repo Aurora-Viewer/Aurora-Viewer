@@ -15382,5 +15382,9 @@ The test reports the material count, decoded bytes and loading time without
 connecting or uploading. In demo, combine that path with
 `AURORA_DEMO_IMPORTS=type-material`; all material rows should load and be checked
 for upload automatically, with the total cost covering the checked materials.
+Drag the divider between the queue and the inspector to reveal complete names;
+its width is saved independently for each import window. Double-click the
+divider to reset it. Shrinking the window fits both panes without discarding
+the preferred queue width.
 The human checks the same document in the online PBR importer and confirms
 the ordinary price/permission dialog before uploading.

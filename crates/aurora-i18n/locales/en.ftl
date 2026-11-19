@@ -15464,6 +15464,7 @@ import-window-title = Import
 import-queue = Import queue
 import-queue-empty = No visible files in the queue.
 import-queue-clear = Clear queue
+import-queue-resize = Drag to resize the file list. Double-click to reset its width.
 import-tab-batch = Files
 import-tab-folder = Folder preview
 import-tab-permissions = Permissions

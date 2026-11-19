@@ -15343,6 +15343,7 @@ import-window-title = アップロード
 import-queue = アップロード待ち
 import-queue-empty = 表示するファイルがありません。
 import-queue-clear = キューを空にする
+import-queue-resize = ドラッグしてファイル一覧の幅を変更します。ダブルクリックで元の幅に戻します。
 import-tab-batch = ファイル
 import-tab-folder = フォルダープレビュー
 import-tab-permissions = 権限
