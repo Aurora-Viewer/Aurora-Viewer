@@ -121,6 +121,24 @@ fn russian_is_available_and_uses_russian_plural_forms() {
 }
 
 #[test]
+fn german_uses_localized_dates_and_number_separators() {
+    use fluent_bundle::FluentArgs;
+
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
+    assert_eq!(resolve_language("default", "de-DE", &codes), "de");
+    assert_eq!(aurora_i18n::text_in("de", "language-name"), "Deutsch");
+    assert_eq!(aurora_i18n::text_in("de", "number-decimal-separator"), ",");
+    assert_eq!(aurora_i18n::text_in("de", "number-thousands-separator"), ".");
+    assert_eq!(aurora_i18n::text_in("de", "extra-sun"), "So");
+
+    let mut args = FluentArgs::new();
+    args.set("day", "16");
+    args.set("month", "November");
+    args.set("year", "2026");
+    assert_eq!(aurora_i18n::format_in("de", "date-day-month-year", &args), "16. November 2026");
+}
+
+#[test]
 fn saved_choice_system_locale_and_english_fallback() {
     let languages = ["en", "fr"];
     assert_eq!(resolve_language("en", "fr-FR", &languages), "en");
