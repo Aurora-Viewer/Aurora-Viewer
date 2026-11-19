@@ -71,8 +71,8 @@ pub(crate) use workspace::{
     organization_typography, overlay, overlay_frame, paint_world_label,
 };
 pub use workspace::{
-    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
-    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    Modal, ModalGround, NoticeKind, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
+    navigation_beside, navigation_wrapped, notice, paint_glyph, section_header, sort_caret, stat, surface,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize

@@ -140,8 +140,8 @@ impl App {
                 self.panels.settings = false;
                 // by file: the import can end before the peer's name is known
                 let name = peer_name();
-                let file = self.world.chat_log.history_file_of(&name);
-                self.history_ui.show_file(name, file);
+                let source = self.world.chat_log.history_source(&name);
+                self.history_ui.show_source(name, source);
             }
             Some(Mode::Import(ImportStage::Again)) if self.demo && !self.chat_import.again => {
                 self.chat_import.again = true;

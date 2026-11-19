@@ -233,3 +233,140 @@ fn a_refresh_after_the_first_history_shows_no_loading_line() {
     assert!(!w.chat_service.loading(JANE));
     clean(&w, &root);
 }
+
+#[test]
+fn shared_legacy_folder_stitches_username_transcripts_after_async_placement() {
+    let root = temp();
+    let legacy_root = root.join("SecondLife");
+    let account_folder = legacy_root.join("alice_resident");
+    std::fs::create_dir_all(&account_folder).unwrap();
+    let legacy_file = account_folder.join("jane_doe.txt");
+    std::fs::write(&legacy_file, "[2020/01/01 10:00]  Jane Doe: from username file\n").unwrap();
+    archive(&root, &[row(1, "from the service")]);
+
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.chat_log = chat_log::ChatLog::in_folder(legacy_root);
+    w.chat_log.set_default_folder(root.join("default"));
+    w.chat_log.set_grid("agni".into());
+    w.chat_log.set_sharing(true);
+    w.agent_id = ME;
+    // Start async placement and open an IM immediately while `open.place` is still `None`.
+    w.chat_log.login_named(ME, Some(("Alice", "Resident")));
+    w.chat_service.enabled = true;
+    w.chat_service_start_in(service_dir(&root));
+
+    w.on_im(im("hello", false, 0));
+    assert!(w.chat_log.settle(Duration::from_secs(10)));
+    w.poll_transcripts();
+    w.chat_service_settle();
+    assert_eq!(
+        texts(&w),
+        [
+            ("from username file".to_owned(), Origin::Log),
+            ("from the service".to_owned(), Origin::Log),
+            ("hello".to_owned(), Origin::Live),
+        ]
+    );
+
+    assert!(w.open_direct_preview(JANE, None));
+    w.chat_service_settle();
+    let preview = w.chat_service.take_preview(JANE).expect("preview loaded");
+    let preview_texts: Vec<&str> = preview.iter().map(|m| m.message.as_str()).collect();
+    assert_eq!(preview_texts, ["from username file", "from the service"]);
+    clean(&w, &root);
+}
+
+/// Conversation Log › Open transcript on a Legacy-only row, with the
+/// service running: the resident is not named yet, so the stem comes from
+/// the entry (R8-M1), and the shared folder is only read.
+#[test]
+fn the_history_window_reads_a_shared_transcript_before_the_name_cache() {
+    use crate::world::chat_log::conversations::{self, Conversation, Kind};
+    let root = temp();
+    let legacy_root = root.join("SecondLife");
+    let account_folder = legacy_root.join("alice_resident");
+    std::fs::create_dir_all(&account_folder).unwrap();
+    let entry = Conversation {
+        time: 100,
+        kind: Kind::Private,
+        name: "Jane Doe".into(),
+        history_file: "jane_doe".into(),
+        session: conversations::private_session(ME, JANE),
+        participant: JANE,
+        offline: false,
+    };
+    std::fs::write(
+        account_folder.join(conversations::FILE),
+        format!("{}\n", conversations::format_line(&entry)),
+    )
+    .unwrap();
+    std::fs::write(
+        account_folder.join("jane_doe.txt"),
+        "[2020/01/01 10:00]  Jane Doe: from the legacy file\n",
+    )
+    .unwrap();
+    let listing = |dir: &Path| {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), std::fs::read(e.path()).unwrap()))
+            .collect();
+        files.sort();
+        files
+    };
+    let before = listing(&account_folder);
+
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.chat_log = chat_log::ChatLog::in_folder(legacy_root);
+    w.chat_log.set_default_folder(root.join("default"));
+    w.chat_log.set_grid("agni".into());
+    w.chat_log.set_sharing(true);
+    w.agent_id = ME;
+    w.chat_log.login_named(ME, Some(("Alice", "Resident")));
+    assert!(w.chat_log.settle(Duration::from_secs(10)));
+    assert!(w.chat_log.shared());
+    w.chat_service.enabled = true;
+    w.chat_service_start_in(service_dir(&root));
+    w.chat_service_settle();
+    assert!(w.chat_service.running());
+    assert_eq!(w.transcript_stem(&JANE), None, "no session, no cached name");
+
+    let (_, source) = w.logged_transcript_source(&entry);
+    let fallback = source.as_ref().and_then(|s| s.stem()).map(str::to_owned);
+    assert_eq!(fallback.as_deref(), Some("jane_doe"));
+    assert!(w.open_direct_preview(JANE, fallback.as_deref()));
+    w.chat_service_settle();
+    let preview = w.chat_service.take_preview(JANE).expect("preview loaded");
+    let preview_texts: Vec<&str> = preview.iter().map(|m| m.message.as_str()).collect();
+    assert_eq!(preview_texts, ["from the legacy file"]);
+    assert_eq!(listing(&account_folder), before, "the shared folder is only read");
+    clean(&w, &root);
+}
+
+#[test]
+fn shared_folder_blocks_service_history_delete() {
+    let root = temp();
+    let legacy_root = root.join("SecondLife");
+    let account_folder = legacy_root.join("alice_resident");
+    std::fs::create_dir_all(&account_folder).unwrap();
+    let legacy_file = account_folder.join("jane_doe.txt");
+    std::fs::write(&legacy_file, "[2020/01/01 10:00]  Jane Doe: keep me\n").unwrap();
+    archive(&root, &[row(1, "from the service")]);
+
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.chat_log = chat_log::ChatLog::in_folder(legacy_root);
+    w.chat_log.set_default_folder(root.join("default"));
+    w.chat_log.set_grid("agni".into());
+    w.chat_log.set_sharing(true);
+    w.agent_id = ME;
+    w.chat_log.login_named(ME, Some(("Alice", "Resident")));
+    assert!(w.chat_log.settle(Duration::from_secs(10)));
+    assert!(w.chat_log.shared());
+    w.chat_service.enabled = true;
+    w.chat_service_start_in(service_dir(&root));
+
+    assert!(!w.request_history_delete());
+    assert!(legacy_file.exists());
+    assert!(service_dir(&root).join(archive_name(JANE)).exists());
+    clean(&w, &root);
+}

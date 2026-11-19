@@ -1060,8 +1060,8 @@ impl App {
             CtxAction::ClearMarks(ids) => self.world.avatar_marks.clear(&ids),
             CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),
             CtxAction::ShowHistory(conversation) => {
-                let (title, file) = self.world.transcript_of(conversation);
-                self.open_history(conversation, title, file);
+                let (title, source) = self.world.transcript_of(conversation);
+                self.open_history(conversation, title, source);
             }
         }
     }
