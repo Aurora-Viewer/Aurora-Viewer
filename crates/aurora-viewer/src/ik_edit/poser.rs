@@ -516,8 +516,6 @@ impl Editor {
         *self = Self {
             clip,
             open: true,
-            initialized: true,
-            ignore_script_ik: true,
             poser: State {
                 active: true,
                 name: aurora_i18n::tr!("poser-new-name").to_string(),
@@ -573,7 +571,6 @@ impl Editor {
         self.poser.active = false;
         self.leave_clip();
         self.open = false;
-        self.cancel_link_pick();
         self.drag = None;
         self.gizmo.cancel();
     }

@@ -3866,13 +3866,6 @@ impl App {
             if self.script_recovery_saved(request, item, &result) {
                 return;
             }
-            if self.ik_editor.project_saving(request) {
-                if let Ok(saved) = &result {
-                    self.world.inventory.add_items(vec![saved.clone()]);
-                }
-                self.ik_editor.project_saved(&result);
-                return;
-            }
             if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
@@ -4025,9 +4018,6 @@ impl App {
             self.local_bakes.loaded(*item, *asset, result);
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
-            if self.ik_editor.project_preview(&self.world, item, &result) {
-                return;
-            }
             if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
                 self.settings.save();
             }
@@ -4198,7 +4188,6 @@ impl App {
                 } else {
                     self.area_search_feed.on_closed_properties(&props);
                 }
-                self.world.ik_targets.on_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);
@@ -8151,38 +8140,19 @@ impl App {
             self.sample_texture();
             return true;
         }
-        if self.ik_editor.open && !self.alt {
-            if self.ik_editor.picking {
-                let Some(picked) = self.click_pick() else {
-                    return true;
-                };
-                let (_, target) = self.scene.left_selection_pick(
-                    &self.world,
-                    picked.ray,
-                    picked.depth,
-                    true,
-                    self.settings.build.select_probes,
-                    self.settings.draw_distance,
-                );
-                if let Some(target) = target {
-                    self.ik_editor.picked_prim(&self.world, &self.build, target);
-                }
-                return true;
-            }
-            if !self.build.open {
-                // A worn HUD takes the press, unless a poser handle drawn over
-                // it does: the Legacy Viewer's poser window leaves HUDs to the
-                // pie tool, and only its visual manipulators take scene clicks
-                // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
-                // World presses stay the editor's.
-                let hud = self.ik_editor.posing()
-                    && !self.ik_editor.poser_owns_pointer()
-                    && self.huds_shown()
-                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
-                // its click leaves the poser's selection as it is
-                self.ik_editor.press_on_hud = hud;
-                return !hud;
-            }
+        if self.ik_editor.open && !self.alt && !self.build.open {
+            // A worn HUD takes the press, unless a poser handle drawn over
+            // it does: the Legacy Viewer's poser window leaves HUDs to the
+            // pie tool, and only its visual manipulators take scene clicks
+            // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
+            // World presses stay the editor's.
+            let hud = self.ik_editor.posing()
+                && !self.ik_editor.poser_owns_pointer()
+                && self.huds_shown()
+                && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
+            // its click leaves the poser's selection as it is
+            self.ik_editor.press_on_hud = hud;
+            return !hud;
         }
         // Report Abuse's object picker takes the click (LLToolObjPicker)
         if self.report_abuse.picking {
@@ -11262,19 +11232,8 @@ impl App {
         self.update_bridge();
         self.update_rlva_selftest();
         self.update_region_restart();
-        if self.demo
-            && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| {
-                std::env::var("AURORA_DEMO_IK_EDIT").and_then(|m| {
-                    if m.starts_with("poser") {
-                        Err(std::env::VarError::NotPresent)
-                    } else {
-                        Ok("1".into())
-                    }
-                })
-            })
-        {
-            crate::demo::hand_ik::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
-            if self.frame_count == 350 {
+        if self.demo && self.frame_count == 350 && std::env::var("AURORA_DEMO_IK_EDIT").is_ok_and(|m| !m.starts_with("poser")) {
+            {
                 self.camera.demo_orbit(0.6, 0.15, Some(3.5), &self.settings.camera);
                 self.panels.chat = false;
                 self.panels.people = false;
@@ -11297,122 +11256,6 @@ impl App {
                 }
             } else {
                 self.ik_editor.demo_tick(&self.world, self.frame_count, &mode);
-            }
-            if mode.starts_with("build-") && self.frame_count == 450 {
-                // Exercise the actual menu transitions in both opening orders.
-                self.handle_actions(
-                    UiActions {
-                        bar: BarAction::Build(1),
-                        ..Default::default()
-                    },
-                    event_loop,
-                );
-                self.settings.build.edit_linked = true;
-                let root = crate::demo::action_id(crate::demo::hand_ik::ROOT);
-                if let Some(index) = self.world.objects.index_of_uuid(&root)
-                    && let Some(object) = self.world.objects.get_mut(index)
-                {
-                    object.update_flags |= ui::context::flags::OBJECT_MOVE | ui::context::flags::OBJECT_MODIFY;
-                }
-                for (local, name) in [(crate::demo::hand_ik::LEFT, "Left"), (crate::demo::hand_ik::RIGHT, "Right")] {
-                    let id = crate::demo::action_id(local);
-                    self.build.props.insert(
-                        id,
-                        aurora_net::build::ObjectProps {
-                            object_id: id,
-                            name: name.into(),
-                            ..Default::default()
-                        },
-                    );
-                }
-                if let Some(index) = self
-                    .world
-                    .objects
-                    .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::LEFT))
-                {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(index), false);
-                    if mode == "build-moved" {
-                        let p = crate::scene::Scene::object_transform(&self.world, index, Instant::now(), 0).map(|t| t.0);
-                        self.build.set_transform(
-                            &mut self.world,
-                            &self.settings.build,
-                            p.map(|p| p + Vec3::Z * 0.08),
-                            None,
-                            None,
-                            true,
-                        );
-                    }
-                }
-                if mode == "build-before" {
-                    for _ in 0..2 {
-                        self.handle_actions(
-                            UiActions {
-                                bar: BarAction::IkEdit,
-                                ..Default::default()
-                            },
-                            event_loop,
-                        );
-                    }
-                }
-                if mode == "build-pick"
-                    && let Some(index) = self
-                        .world
-                        .objects
-                        .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::RIGHT))
-                {
-                    self.ik_editor.picking = true;
-                    self.ik_editor.picked_prim(&self.world, &self.build, index);
-                }
-                crate::ui::widgets::place_floater(
-                    &self.egui_ctx,
-                    "build_tools_inspector_c3",
-                    egui::pos2(self.egui_ctx.content_rect().right() - 370.0, 80.0),
-                    egui::vec2(344.0, 684.0),
-                );
-            }
-            if mode.starts_with("build-") && self.frame_count == 600 {
-                log::info!(
-                    "demo concurrent IK/build: ik={}, build={}, selected={}",
-                    self.ik_editor.open,
-                    self.build.open,
-                    self.build.selection.len()
-                );
-            }
-        }
-        self.world.hand_contacts.relay_required = !self.demo;
-        if self.in_world()
-            && let Some(key) = self
-                .world
-                .update_ik_targets(self.ik_editor.link_target_definition(), &self.build.props, Instant::now())
-        {
-            for command in self.build.prim_properties_query(&self.world, key) {
-                if self.demo {
-                    for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, "") {
-                        match event {
-                            NetEvent::ObjectProperties(props) => {
-                                self.world.ik_targets.on_properties(&props);
-                                self.build.on_properties(&self.world, props);
-                            }
-                            event => {
-                                self.world.apply(event);
-                            }
-                        }
-                    }
-                } else {
-                    self.send(command);
-                }
-            }
-        }
-        if self.in_world()
-            && let Some(command) = self.world.update_hand_contacts(Instant::now())
-        {
-            if self.demo {
-                let mode = std::env::var("AURORA_DEMO_IK_EDIT").unwrap_or_default();
-                for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, &mode) {
-                    self.world.apply(event);
-                }
-            } else {
-                self.send(command);
             }
         }
         if self.demo
@@ -11614,7 +11457,6 @@ impl App {
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
             }
-            self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
             self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             let partner = self.ik_editor.couple_partner();
@@ -13221,10 +13063,6 @@ impl App {
         // a capture leaves the user's layout as it is (as at exit)
         if self.capture.is_none() {
             self.layout_autosave.after_pass(&ctx, Instant::now());
-        }
-        if self.ik_editor.take_binding_paste_request() {
-            let text = egui_state.clipboard_text().unwrap_or_default();
-            self.ik_editor.paste_binding(&self.world, &text);
         }
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
@@ -19106,17 +18944,6 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
-                if !self.ik_editor.posing() {
-                    self.ik_editor.request_object_data(&mut self.world, Instant::now());
-                    self.build.out.extend(self.ik_editor.take_prim_requests());
-                    self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
-                    if self
-                        .ik_editor
-                        .apply_prim_edit(&mut self.world, &mut self.build, &mut self.settings.build)
-                    {
-                        self.settings.save();
-                    }
-                }
                 for prepared in self.ik_editor.take_clip_imports() {
                     self.imports.authored_animation(
                         &self.world,
