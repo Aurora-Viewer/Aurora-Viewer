@@ -63,7 +63,7 @@ use super::context::CtxAction;
 use super::presence;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
-use crate::world::names::NameScope;
+use crate::world::names::{NameScope, TextScope};
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
@@ -376,6 +376,12 @@ impl ChatUi {
         } else {
             self.side_filter.trim()
         }
+    }
+
+    /// The search typed in the column's field, whatever the rail shows: the
+    /// Dev Toolbox's Contacts report (J10) names it when it hides the entry.
+    pub fn column_filter(&self) -> &str {
+        self.side_filter.trim()
     }
 
     /// Recreate only the account-independent nearby window. IMs, messages,
@@ -1328,16 +1334,18 @@ pub(crate) fn text_with_links(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     text: &str,
     names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
+    // the names of its links, and what is rewritten of its labels
+    let (scope, wording) = (scope.names, scope);
     let segs = segments(text);
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
-            super::notifications::text::show(ui, p, t, names, size, color, false, true);
+            super::notifications::text::show(ui, p, t, names, size, color, false, true, scope);
         }
     };
     if segs.iter().all(|s| matches!(s, Seg::Text(_))) {
@@ -1357,18 +1365,70 @@ pub(crate) fn text_with_links(
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, false.into()),
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size, false.into()),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, scope, id, &label, size, false.into()),
-                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
+                    // the label is text someone wrote: filtered like the
+                    // text around it (RlvUtil::filterNames and filterLocation
+                    // run on the raw text, the labels included)
+                    Seg::Agent(id) => agent_link(
+                        ui,
+                        p,
+                        world,
+                        NameScope::Roster,
+                        id,
+                        &world.rlva_filter_text_in(wording, &label),
+                        size,
+                        false.into(),
+                    ),
+                    Seg::Mention(id) => agent_link(
+                        ui,
+                        p,
+                        world,
+                        wording.mentions,
+                        id,
+                        &world.rlva_filter_text_in(wording, &label),
+                        size,
+                        false.into(),
+                    ),
+                    // the text the link was written with, rewritten like
+                    // the text around it (RlvUtil::filterNames runs on the
+                    // raw line, the text of its links included)
+                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &world.rlva_filter_text_in(wording, &label), size),
                     _ => plain(ui, &label),
                 },
                 Seg::App(u, link) => {
-                    let label = app_links::label(world, &mut wanted, u, &link);
+                    let label = app_links::label(world, wording, &mut wanted, u, &link);
                     app_links::link(ui, p, world, u, &link, &label, size);
                 }
-                // a dialog has no mention highlight: the name, as a link
-                Seg::Agent(id) | Seg::Mention(id) => {
+                // a dialog has no mention highlight: the name, as a link. A
+                // bare avatar link shows the name of its resident
+                // (LLUrlEntryAgent has no RLVa test); a mention is rewritten
+                // where RlvUtil::filterMentions runs, so not in a script's
+                // prompt (`TextScope::mentions`)
+                Seg::Agent(id) => {
                     wanted.insert(id);
-                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, false.into());
+                    agent_link(
+                        ui,
+                        p,
+                        world,
+                        NameScope::Roster,
+                        id,
+                        &world.social.name_in(NameScope::Roster, &id),
+                        size,
+                        false.into(),
+                    );
+                }
+                Seg::Mention(id) => {
+                    wanted.insert(id);
+                    let names = wording.mentions;
+                    agent_link(
+                        ui,
+                        p,
+                        world,
+                        names,
+                        id,
+                        &format!("@{}", world.social.name_in(names, &id)),
+                        size,
+                        false.into(),
+                    );
                 }
             }
         }
@@ -1458,12 +1518,16 @@ fn line_job(
     look: JobLook<'_>,
 ) -> BubbleJob {
     // the on-screen chat has no conversation: the line's kind tells its names
-    let scope = line_names(&line.kind);
+    let scope = line_names(world, &line.kind);
+    // what a resident typed is shown as typed (`ChatKind::text_in`)
+    let wording = line.wording(scope);
+    // (a line is rewritten when it arrives, `World::rlva_freeze_line`; a
+    // card's text while it is shown: the whole of it, the labels of its
+    // links included)
     let filtered;
-    let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
+    let line = if wording.rewritten && world.rlva.enabled() {
         let mut copy = line.clone();
-        copy.text = world.rlva_filter_text_in(scope, &copy.text).into_owned();
-        copy.from = sender_name(world, scope, &world.own_name(), &copy);
+        copy.text = world.rlva_filter_text_in(wording, &copy.text).into_owned();
         filtered = copy;
         &filtered
     } else {
@@ -1569,11 +1633,17 @@ fn line_job(
     let mut badges = Vec::new();
     let mut at = job.text.chars().count();
     let name_of = |s: &Seg| match s {
-        Seg::Agent(id) | Seg::Mention(id) => {
+        // a bare avatar link shows the name of its resident
+        // (LLUrlEntryAgent has no RLVa test), a mention is rewritten
+        Seg::Agent(id) => {
+            want_names.insert(*id);
+            world.social.name_in(NameScope::Roster, id)
+        }
+        Seg::Mention(id) => {
             want_names.insert(*id);
             world.social.name_in(scope, id)
         }
-        Seg::App(u, link) => app_links::label(world, want_names, u, link),
+        Seg::App(u, link) => app_links::label(world, wording, want_names, u, link),
         _ => String::new(),
     };
     // the badge of a web link takes the place of an invisible glyph glued to
@@ -1587,11 +1657,16 @@ fn line_job(
     let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
         let piece = if let Some(Link::Agent(id)) = &link
+            && piece.starts_with('@')
             && !world.rlva_shows_name(scope, *id)
         {
             world.social.name_in(scope, id)
+        } else if matches!(link, Some(Link::Agent(_))) {
+            // the name of a bare avatar link, or a label the filter of the
+            // whole text above has already read
+            piece
         } else {
-            world.rlva_filter_text_in(scope, &piece).into_owned()
+            world.rlva_filter_text_in(wording, &piece).into_owned()
         };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
@@ -1795,10 +1870,12 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 /// A message as plain text, for a system notification or a short preview:
 /// agents by their name (a mention with its "@"), places by their label,
 /// app commands by `app` (their label, `app_links::label`), labelled links
-/// by their text, web links as written.
+/// by their text, web links as written. `name` is told whether the link is
+/// a mention: RLVa rewrites a mention where it leaves a bare avatar link
+/// alone (`TextScope::mentions`).
 pub(crate) fn plain_text(
     text: &str,
-    name: impl Fn(&uuid::Uuid) -> Option<String>,
+    name: impl Fn(&uuid::Uuid, bool) -> Option<String>,
     app: impl Fn(&str, &crate::slapp::AppLink) -> String,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1809,9 +1886,9 @@ pub(crate) fn plain_text(
             Seg::Place(_, place) => out.push_str(&place.label),
             Seg::Mention(id) => {
                 out.push('@');
-                out.push_str(&name(&id).unwrap_or_else(|| id.to_string()));
+                out.push_str(&name(&id, true).unwrap_or_else(|| id.to_string()));
             }
-            Seg::Agent(id) => out.push_str(&name(&id).unwrap_or_else(|| id.to_string())),
+            Seg::Agent(id) => out.push_str(&name(&id, false).unwrap_or_else(|| id.to_string())),
             Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
@@ -1819,9 +1896,9 @@ pub(crate) fn plain_text(
 }
 
 /// The label of an app command, for the texts drawn outside the chat (a
-/// system notification).
-pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) -> String {
-    app_links::label(world, &mut HashSet::new(), url, link)
+/// system notification), in a text shown as `wording` says.
+pub(crate) fn app_label(world: &World, wording: impl Into<TextScope>, url: &str, link: &crate::slapp::AppLink) -> String {
+    app_links::label(world, wording.into(), &mut HashSet::new(), url, link)
 }
 
 /// A message with its links shown as in the conversation, in plain text,
@@ -1830,19 +1907,37 @@ pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) 
 /// asked at the end of the frame), places, app commands and labelled links
 /// by their label. The preview cuts the result, never a link's address in
 /// its middle, as the Legacy Viewer's toasts show the labels of their text
-/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it.
-pub(crate) fn resolved_text(world: &World, text: &str) -> String {
-    resolved_text_in(world, NameScope::World, text)
-}
-
-/// `resolved_text` for a text shown in `scope` (`conversation_names`).
-pub(crate) fn resolved_text_in(world: &World, scope: NameScope, text: &str) -> String {
-    let name = |id: &uuid::Uuid| {
-        app_links::want_agents([*id]);
-        Some(world.social.name_in(scope, id))
-    };
-    let text = plain_text(text, name, |u, link| app_label(world, u, link));
-    world.rlva_filter_text_in(scope, &text).into_owned()
+/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it. `scope`:
+/// where the text is shown (`conversation_names`), or `ChatKind::text_in`
+/// for the text of a line.
+pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text: &str) -> String {
+    let scope = scope.into();
+    // as the text is drawn (`chat_text_marked`): its words, the labels it
+    // was written with and what a label takes from an address are rewritten
+    // as `scope` says; a bare avatar link names its resident
+    // (LLUrlEntryAgent has no RLVa test: RlvUtil::filterNames ran on the
+    // raw text, before the link was read), a mention follows
+    // `TextScope::mentions`
+    let hide = |t: &str| world.rlva_filter_text_in(scope, t).into_owned();
+    let mut out = String::with_capacity(text.len());
+    for seg in segments(text) {
+        match seg {
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(&hide(t)),
+            Seg::App(u, link) => out.push_str(&app_label(world, scope, u, &link)),
+            Seg::Place(_, place) => out.push_str(&hide(&place.label)),
+            Seg::Labelled(label, _) => out.push_str(&hide(&label)),
+            Seg::Mention(id) => {
+                app_links::want_agents([id]);
+                out.push('@');
+                out.push_str(&world.social.name_in(scope.mentions, &id));
+            }
+            Seg::Agent(id) => {
+                app_links::want_agents([id]);
+                out.push_str(&world.social.name_in(NameScope::Roster, &id));
+            }
+        }
+    }
+    out
 }
 
 /// The schemes of the links of a text, with or without their own text.
@@ -2154,6 +2249,15 @@ fn link_seg(link: &str) -> Seg<'_> {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
+            // `rlvanonym`, the link RLVa writes for a hidden resident: their
+            // stand-in in plain text, never a link
+            // (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
+            // picked from the id, as RlvUtil::filterMentions does for a
+            // name it does not have)
+            (Some(id), "rlvanonym") => Seg::Labelled(
+                Cow::Owned(crate::world::rlva::privacy::anonymous(id).display_name.clone()),
+                Box::new(Seg::Text("")),
+            ),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
             _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
@@ -2205,23 +2309,37 @@ fn web_target(url: &str) -> Cow<'_, str> {
 
 /// Right click on the sender of a chat line: the name menu, its report on
 /// the line.
-fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+fn line_name_menu(
+    r: &egui::Response,
+    p: &Palette,
+    world: &World,
+    id: uuid::Uuid,
+    scope: NameScope,
+    line: &crate::world::ChatLine,
+    menu: Option<egui::Id>,
+) {
+    // the stand-in of a speaker hidden when the line arrived is plain text
+    // (`super::context::name_has_menu`, decided then)
+    if line.anonymous() {
+        return;
+    }
     if !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         super::contacts::drag::person_source(r, id);
     }
     if let Some(menu) = menu {
         line_menu::sender(r, menu, id, line);
     } else {
-        super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+        super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, scope, line));
     }
 }
 
-/// Right click on an avatar name in a conversation (menu_url_agent.xml).
-fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
+/// Right click on an avatar name shown in `scope` (menu_url_agent.xml).
+fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, scope: NameScope) {
+    if !super::context::name_has_menu(world, scope, id) {
+        return;
+    }
     super::contacts::drag::person_source(r, id);
-    super::menu::context_menu(r, p, |ui| {
-        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
-    });
+    super::menu::context_menu(r, p, |ui| super::context::avatar_name_menu(ui, p, world, id, scope));
     line_menu::inline(r);
 }
 
@@ -2230,7 +2348,8 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
 fn member_menu(r: &egui::Response, p: &Palette, world: &World, conversation: uuid::Uuid, id: uuid::Uuid) {
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
-        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name);
+        // the members' panel names the people of a session
+        super::context::avatar_name_menu(ui, p, world, id, NameScope::Roster);
         moderation::menu(ui, p, world, conversation, id);
     });
     line_menu::inline(r);
@@ -2295,7 +2414,19 @@ pub(crate) fn chat_text(
     color: Color32,
     italics: bool,
 ) {
-    chat_text_marked(ui, p, emoji, world, NameScope::World, want_names, text, size, color, italics, None);
+    chat_text_marked(
+        ui,
+        p,
+        emoji,
+        world,
+        NameScope::World.into(),
+        want_names,
+        text,
+        size,
+        color,
+        italics,
+        None,
+    );
 }
 
 /// A text searched for in the lines, and the wash its matches are drawn on.
@@ -2330,14 +2461,15 @@ fn marked_run(
 }
 
 /// `chat_text` with the matches of a searched text highlighted, for a text
-/// shown in `scope` (`conversation_names`).
+/// shown in `scope` (`conversation_names`, or `ChatKind::text_in` for the
+/// text of a line).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chat_text_marked(
     ui: &mut egui::Ui,
     p: &Palette,
     emoji: &mut super::emoji::Emoji,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
     text: &str,
     size: f32,
@@ -2346,39 +2478,48 @@ pub(crate) fn chat_text_marked(
     mark: Option<Mark>,
 ) {
     let emphasis = emphasis.into();
-    let filtered = world.rlva_filter_text_in(scope, text);
-    let text = filtered.as_ref();
+    // `@shownames` and `@showloc` rewrite the text and the labels of what no
+    // resident typed, those of an avatar link included (RlvUtil::filterNames
+    // and filterLocation run on the raw text of an object's line; `wording`
+    // is as written for a resident's). A bare avatar link shows the name of
+    // its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
+    // test); a `/mention` link is rewritten where RlvUtil::filterMentions
+    // runs (`TextScope::mentions`).
+    let wording = scope;
+    let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
+    let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
     // only a text that has a match is cut into runs
-    let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
+    let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
     if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
-        emoji.rich_text(ui, text, size, color, emphasis);
+        emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
     let k = super::colors::get();
     super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
         for s in segs {
             match s {
-                Seg::Text(t) => marked_run(ui, emoji, t, size, color, emphasis, mark),
+                Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
                 Seg::Url(u) => web_link(ui, p, u, u, size, emphasis),
                 Seg::Slurl(u) => {
                     select::label(ui, emphasis.rich_text(ui.ctx(), u, size, super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Labelled(label, inner) => match *inner {
-                    Seg::Url(u) => web_link(ui, p, u, &label, size, emphasis),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, scope, id, &label, size, emphasis),
+                    Seg::Url(u) => web_link(ui, p, u, &hide(&label), size, emphasis),
+                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &hide(&label), size, emphasis),
+                    Seg::Mention(id) => agent_link(ui, p, world, wording.mentions, id, &hide(&label), size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
                             ui,
-                            emphasis.rich_text(ui.ctx(), label.as_ref(), size, super::colors::text(k.chat_slurl)),
+                            emphasis.rich_text(ui.ctx(), hide(&label), size, super::colors::text(k.chat_slurl)),
                         )
                         .on_hover_text(u);
                     }
-                    Seg::App(u, link) => app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis),
-                    _ => marked_run(ui, emoji, &label, size, color, emphasis, mark),
+                    Seg::App(u, link) => app_links::link_emphasized(ui, p, world, u, &link, &hide(&label), size, emphasis),
+                    _ => marked_run(ui, emoji, &hide(&label), size, color, emphasis, mark),
                 },
                 Seg::App(u, link) => {
-                    let label = app_links::label(world, want_names, u, &link);
+                    let label = app_links::label(world, wording, want_names, u, &link);
                     app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis);
                 }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, emphasis),
@@ -2386,6 +2527,7 @@ pub(crate) fn chat_text_marked(
                     want_names.insert(id);
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
+                    let scope = wording.mentions;
                     let label = format!(" @{} ", world.social.name_in(scope, &id));
                     let r = action_marker::link(
                         ui,
@@ -2396,14 +2538,23 @@ pub(crate) fn chat_text_marked(
                         Some(super::colors::c(bg)),
                         emphasis,
                     );
-                    name_menu(&r, p, world, id);
+                    name_menu(&r, p, world, id, scope);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        super::profile::request_open(ui.ctx(), id);
+                        super::profile::request_open_in(ui.ctx(), scope, id);
                     }
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
-                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, emphasis);
+                    agent_link(
+                        ui,
+                        p,
+                        world,
+                        NameScope::Roster,
+                        id,
+                        &world.social.name_in(NameScope::Roster, &id),
+                        size,
+                        emphasis,
+                    );
                 }
             }
         }
@@ -2441,12 +2592,6 @@ fn agent_link(
     size: f32,
     emphasis: super::fonts::TextEmphasis,
 ) {
-    let projected = if world.rlva_shows_name(scope, id) {
-        world.rlva_filter_text_in(scope, text).into_owned()
-    } else {
-        world.social.name_in(scope, &id)
-    };
-    let text = projected.as_str();
     let k = super::colors::get();
     let r = action_marker::link(
         ui,
@@ -2457,12 +2602,12 @@ fn agent_link(
         None,
         emphasis,
     );
-    name_menu(&r, p, world, id);
+    name_menu(&r, p, world, id, scope);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        super::profile::request_open(ui.ctx(), id);
+        super::profile::request_open_in(ui.ctx(), scope, id);
     }
 }
 
@@ -2582,35 +2727,47 @@ pub(crate) fn conversation_names(session: Option<&uuid::Uuid>) -> NameScope {
 /// `conversation_names` for a line shown outside its conversation (the
 /// on-screen chat): an instant message and a teleport offer or request
 /// name their sender (process_improved_im tests nothing for them,
-/// llimprocessing.cpp), every other line follows the nearby chat.
-pub(crate) fn line_names(kind: &ChatKind) -> NameScope {
+/// llimprocessing.cpp), and so does a payment (money_balance_avatar_notify,
+/// llviewermessage.cpp); an inventory offer names its giver when the offer
+/// did as it arrived (`Offer::named`); every other line follows the nearby
+/// chat.
+pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     match kind {
-        ChatKind::Im | ChatKind::Invite(_) => NameScope::Roster,
+        ChatKind::Im | ChatKind::Invite(_) | ChatKind::Payment(_) => NameScope::Roster,
+        ChatKind::InventoryOffer(id) if world.inventory_offers.get(*id).is_some_and(|offer| offer.named) => NameScope::Roster,
         _ => NameScope::World,
     }
 }
 
-/// The name a line of a conversation shown in `scope` gives its sender
+/// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
-/// the line came with; history lines are looked up for nothing.
-pub(crate) fn sender_name(world: &World, scope: NameScope, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_shows_name(scope, line.source)
-    {
-        return world.rlva_anonymous(line.source).display_name.clone();
+/// the line came with. A line read back from a transcript keeps the name
+/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
+/// `mFromName` as it is for a `message_from_log`, and nothing sets
+/// `mRlvNamesFiltered` on it (`ChatLine::wording`).
+///
+/// Under `@shownames`, who a line said during this session names was
+/// decided when it arrived (`World::rlva_freeze_line`): a speaker hidden
+/// then keeps the stand-in the line holds, one named then keeps their name,
+/// and an object the name it was given then, whatever the restriction
+/// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
+pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if line.origin != Origin::Live || line.anonymous() {
+        return line.from.clone();
     }
-    let logged = line.origin != Origin::Live;
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     let names = &world.social.avatar_names;
-    let cached = if object || logged {
+    let cached = if object {
         None
     } else {
-        names.get_in(scope, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     match cached {
         Some(n) => n.display(&names.options),
-        None if own && !logged => own_name.to_owned(),
-        None => world.rlva_filter_text_in(scope, &line.from).into_owned(),
+        None if own => own_name.to_owned(),
+        None => line.from.clone(),
     }
 }
 
@@ -2633,22 +2790,25 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 /// The text a line shows, as a copy of it gives it: links as written,
 /// places, names and mentions as shown.
 fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, name: &str) -> String {
+    let wording = line.wording(scope);
     let body = match line.kind {
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
-    let text: String = segments(&body)
+    // rewritten piece by piece, as it is drawn (`chat_text_marked`)
+    let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
+    segments(&body)
         .into_iter()
         .map(|s| match s {
-            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
-            Seg::Labelled(label, _) => label.into_owned(),
-            Seg::Place(_, place) => place.label,
-            Seg::Mention(id) => format!(" @{} ", world.social.name_in(scope, &id)),
-            Seg::Agent(id) => world.social.name_in(scope, &id),
-            Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => hide(t),
+            Seg::Labelled(label, _) => hide(&label),
+            Seg::Place(_, place) => hide(&place.label),
+            Seg::Mention(id) => format!(" @{} ", world.social.name_in(wording.mentions, &id)),
+            // a bare avatar link names its resident, as it is drawn
+            Seg::Agent(id) => world.social.name_in(NameScope::Roster, &id),
+            Seg::App(u, link) => app_links::label(world, wording, &mut HashSet::new(), u, &link),
         })
-        .collect();
-    world.rlva_filter_text_in(scope, &text).into_owned()
+        .collect()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -2695,7 +2855,7 @@ impl Copied<'_> {
             let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
                 return (String::new(), String::new());
             };
-            let name = sender_name(self.world, self.names, self.own_name, line);
+            let name = sender_name(self.world, self.own_name, line);
             (copy_prefix(line, &name), shown_text(self.world, self.names, line, &name))
         })
     }
@@ -3085,7 +3245,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     }
     line_menu::show(ui, menu, p, |ui, target| {
         if let Some(avatar) = target.sender {
-            super::context::chat_sender_menu(ui, p, w, avatar, &target.line);
+            super::context::chat_sender_menu(ui, p, w, avatar, env.names, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
             thread::message_menu(ui, &env, th, target);
         }
@@ -3188,7 +3348,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.wording(env.names),
                     env.want_names,
                     &system_text(&line.text),
                     super::fonts::chat_size(ui.ctx(), 12.5),
@@ -3204,10 +3364,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged {
+    let cached = if object || logged || line.anonymous() {
         None
     } else {
-        names.get_in(env.names, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     let name = match cached {
         Some(n) => n.display(&names.options),
@@ -3236,10 +3396,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                             );
                         }
                     } else {
-                        if !line.source.is_nil() {
-                            env.wanted.insert(line.source);
+                        // (none for a speaker `@shownames` hid:
+                        // FSChatHistoryHeader shows Unknown_Icon)
+                        let pictured = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
+                        if !pictured.is_nil() {
+                            env.wanted.insert(pictured);
                         }
-                        avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
+                        avatar_pic(ui, p, env.pics.get(&pictured), &name, 20.0);
                     }
                     let col = super::colors::contact_sender_color(line, world)
                         .or(tone)
@@ -3251,13 +3414,14 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     // the inspector in the Legacy Viewer; Aurora opens the
                     // profile (a history line's when its sender is known)
                     let avatar = match (logged, own) {
+                        _ if line.anonymous() => uuid::Uuid::nil(),
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
                     if object && !line.source.is_nil() {
                         object_sender(&r.clone().on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
                     } else if !avatar.is_nil() {
-                        line_name_menu(&r, p, world, avatar, line, env.menu);
+                        line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                     }
                     if !object
                         && !avatar.is_nil()
@@ -3265,7 +3429,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                             .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                             .clicked()
                     {
-                        super::profile::request_open(ui.ctx(), avatar);
+                        super::profile::request_open_in(ui.ctx(), env.names, avatar);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(time);
@@ -3290,7 +3454,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.wording(env.names),
                     env.want_names,
                     &visible,
                     super::fonts::chat_size(ui.ctx(), 13.5),
@@ -3997,7 +4161,7 @@ fn classic_pane(
                         for (id, n, moderator) in names {
                             let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
                             let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
-                            name_menu(&r, p, world, id);
+                            name_menu(&r, p, world, id, NameScope::Roster);
                             let tip = if moderator {
                                 aurora_i18n::tr!("ui-chat-moderator-click-profile")
                             } else {
@@ -4769,7 +4933,8 @@ enum SenderLink {
 fn sender_link(world: &World, line: &crate::world::ChatLine) -> Option<SenderLink> {
     let id = if line.kind.is_own() { world.agent_id } else { line.source };
     match line.kind {
-        _ if id.is_nil() || line.kind.is_notice() => None,
+        // (the stand-in of a hidden speaker is plain text)
+        _ if id.is_nil() || line.kind.is_notice() || line.anonymous() => None,
         ChatKind::Object(_) | ChatKind::ObjectIm => Some(SenderLink::Object(id)),
         _ => Some(SenderLink::Resident(id)),
     }
@@ -4787,7 +4952,11 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
     if matches!(target, SenderLink::Resident(_)) && super::bars::demo::get().click_name {
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique("chat_toast_demo_name"), rect));
     }
-    egui::Area::new(egui::Id::unique(("chat_toast_sender", k)))
+    let id = egui::Id::unique(("chat_toast_sender", k));
+    // The toast's glass lets clicks through, but the name is a link of its
+    // own: keep its press from also reaching the world behind the toast.
+    super::widgets::solid_background(ctx, id);
+    egui::Area::new(id)
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
@@ -4795,9 +4964,9 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             match target {
                 SenderLink::Resident(id) => {
-                    line_name_menu(&resp, p, world, id, line, None);
+                    line_name_menu(&resp, p, world, id, line_names(world, &line.kind), line, None);
                     if resp.clicked() {
-                        super::profile::request_open(ui.ctx(), id);
+                        super::profile::request_open_in(ui.ctx(), line_names(world, &line.kind), id);
                     }
                 }
                 SenderLink::Object(_) => object_sender(&resp, p, world, line),
@@ -4817,6 +4986,7 @@ fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate
                 name: line.from.clone(),
                 owner: uuid::Uuid::nil(),
                 group_owned: false,
+                owner_hidden: false,
                 slurl: String::new(),
             },
         )))
@@ -4875,7 +5045,11 @@ pub(crate) fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std:
 /// (LLFloaterIMNearbyChatToastPanel::handleMouseUp): same actions and
 /// right-click menus as in the conversation window.
 fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, link: &Link, col: Color32) {
-    egui::Area::new(egui::Id::unique(("chat_toast_link", k)))
+    let id = egui::Id::unique(("chat_toast_link", k));
+    // As the sender's name above: the link is its own click target, not a
+    // way for the same press to reach the world through the toast's glass.
+    super::widgets::solid_background(ctx, id);
+    egui::Area::new(id)
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
@@ -4910,14 +5084,16 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                     }
                 }
                 Link::Agent(id) => {
-                    name_menu(&resp, p, world, *id);
+                    name_menu(&resp, p, world, *id, NameScope::World);
                     if resp.on_hover_text(aurora_i18n::tr!("common-view-profile")).clicked() {
                         super::profile::request_open(ui.ctx(), *id);
                     }
                 }
                 Link::App(u, app) => {
-                    // the bubble's label is the menu's "copy name"
-                    let label = app_links::label(world, &mut HashSet::new(), u, app);
+                    // the bubble's label is the menu's "copy name" (the text
+                    // of the line was rewritten before its links were read,
+                    // `line_job`: the address is taken as it stands)
+                    let label = app_links::label(world, TextScope::verbatim(NameScope::World), &mut HashSet::new(), u, app);
                     app_links::menu(&resp, p, world, u, app, &label);
                     if resp.on_hover_text(app_links::tooltip(app)).clicked() {
                         super::context::request(ui.ctx(), CtxAction::AppLink(app.clone()));
@@ -5704,7 +5880,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
@@ -5764,7 +5940,7 @@ mod tests {
                                 if chat {
                                     chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false);
                                 } else {
-                                    text_with_links(ui, &p, &world, NameScope::World, &text, &[], size, p.ink);
+                                    text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], size, p.ink);
                                 }
                             },
                         );
@@ -5829,7 +6005,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, &text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         let mut shown = String::new();
@@ -5909,7 +6085,7 @@ mod tests {
         assert!(mentions(&t, &me));
         assert!(!mentions(&t, &jane), "an about link is not a mention");
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
-        let name = |id: &uuid::Uuid| (*id == me).then(|| "Aurora Demo".to_owned());
+        let name = |id: &uuid::Uuid, _: bool| (*id == me).then(|| "Aurora Demo".to_owned());
         let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
         assert_eq!(
             plain_text(&t, name, app),
@@ -5943,10 +6119,10 @@ mod tests {
              http://maps.secondlife.com/secondlife/Pinède/1/2/3 [https://example.org le site] https://example.org/x"
         );
         assert_eq!(
-            resolved_text(&world, &text),
+            resolved_text_in(&world, NameScope::World, &text),
             "Lune Étoilée, @Lune Étoilée et … à Cercle des Brumes Pinède (1,2,3) le site https://example.org/x"
         );
-        assert_eq!(resolved_text(&world, "plain words"), "plain words");
+        assert_eq!(resolved_text_in(&world, NameScope::World, "plain words"), "plain words");
     }
 
     #[test]
@@ -6141,6 +6317,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6190,6 +6367,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -6226,6 +6404,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
         }
         let ctx = egui::Context::default();
@@ -6772,6 +6951,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
             world.chat_clock.pushed_back();
         }

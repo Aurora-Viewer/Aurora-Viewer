@@ -13,7 +13,7 @@ use crate::{
     Cancel, Failure, Progress,
     feed::Source,
     install::validate_tree,
-    package::{Fetch, failure, parse_sha256, unpack},
+    package::{Fetch, failure, parse_sha256, unpack_zip},
 };
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -35,10 +35,13 @@ pub struct FfmpegPack {
 }
 
 // ---------------------------------------------------------------------------
-// TO FILL IN BY THE HUMAN once the pack is published (see the Director's
-// TASKS.md line): until then every field is empty, and the Director offers
-// no download (`published` is `None`). The archive is published under the
-// release tag `ffmpeg-<version>` of this repository, as
+// The pack this viewer downloads: pack 1, published on 2026-11-18
+// (https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/ffmpeg-1).
+// An empty entry (every field "" or 0) offers no download (`published` is
+// `None`). The "FFmpeg pack" workflow
+// (.github/workflows/ffmpeg-pack.yml, scripts/ffmpeg-pack.sh) builds the
+// archives and publishes them under the release tag `ffmpeg-<version>` of
+// this repository, with their sizes and SHA-256 in its notes, as
 // `Aurora-FFmpeg-<version>-<system>.zip` (system: windows-x64, linux-x64,
 // macos-universal), holding one folder of that name with
 // `aurora-ffmpeg.json` (`{"schema": 1, "version": "<version>"}`), the
@@ -47,21 +50,21 @@ pub struct FfmpegPack {
 // ---------------------------------------------------------------------------
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const PACK: FfmpegPack = FfmpegPack {
-    version: "",
-    size: 0,
-    sha256: "",
+    version: "1",
+    size: 15_218_154,
+    sha256: "65bb1b3fd6f4c5293c9c1f0192ddd59ced30414ef8e03220cc074203355d819f",
 };
 #[cfg(target_os = "linux")]
 pub const PACK: FfmpegPack = FfmpegPack {
-    version: "",
-    size: 0,
-    sha256: "",
+    version: "1",
+    size: 15_676_239,
+    sha256: "4cb6829592810f521dcefd7f49919ecbb157bd9d38abb67ad30c385d86e44605",
 };
 #[cfg(target_os = "macos")]
 pub const PACK: FfmpegPack = FfmpegPack {
-    version: "",
-    size: 0,
-    sha256: "",
+    version: "1",
+    size: 26_238_094,
+    sha256: "947e39e9bad5f56e9b4229dc378d916f6f5550b6df246525f5518a6987d7bc18",
 };
 
 /// No ffmpeg pack is larger than this: a size above it is a mistake.
@@ -256,7 +259,7 @@ pub async fn install(
         verify_file(&archive, pack.size, &pack.sha256)?;
         let prepare = || -> Result<PathBuf> {
             let prepared = stage.0.join("prepared");
-            unpack(&archive, &prepared, &folder, &cancel)?;
+            unpack_zip(&archive, &prepared, &folder, &cancel)?;
             fs::write(prepared.join(ORIGIN), pack.hex)?;
             ensure!(pack.complete(&prepared), "incomplete ffmpeg pack");
             let dir = root.join(pack.version.to_string());
@@ -289,9 +292,19 @@ mod tests {
     }
 
     #[test]
-    fn the_viewer_names_no_pack_until_one_is_published() {
-        // the entry of this build: empty, no download offered
-        assert_eq!(published(&PACK), None);
+    fn a_pack_is_named_only_by_sound_fields() {
+        // the entry of this build: pack 1, published
+        let own = published(&PACK).expect("this viewer names pack 1");
+        assert_eq!(own.version, 1);
+        assert!(own.size > 1_000_000 && own.size <= MAX_SIZE);
+        assert_eq!(own.tag(), "ffmpeg-1");
+        // an empty entry names nothing: no download offered
+        let empty = FfmpegPack {
+            version: "",
+            size: 0,
+            sha256: "",
+        };
+        assert_eq!(published(&empty), None);
         let good = FfmpegPack {
             version: "1",
             size: 80_000_000,

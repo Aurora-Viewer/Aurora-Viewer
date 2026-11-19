@@ -428,16 +428,11 @@ impl SearchUi {
             } else {
                 aurora_i18n::tr!("search-aurora-hint")
             };
-            let clear = if self.aurora.text.is_empty() { 0.0 } else { 28.0 };
-            let field = widgets::search_box(ui, p, &mut self.aurora.text, hint, ui.available_width() - clear);
+            let field = widgets::clearable_search_box(ui, p, &mut self.aurora.text, hint, ui.available_width());
             if std::mem::take(&mut self.focus) {
                 field.request_focus();
             }
             find |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if clear > 0.0 && widgets::icon_button(ui, p, "x", aurora_i18n::tr!("search-aurora-clear"), true) {
-                self.aurora.text.clear();
-                self.focus = true;
-            }
         });
         ui.add_space(6.0);
         // Counts and translated labels can exceed the minimum width. Wrap
@@ -1048,7 +1043,7 @@ impl SearchUi {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(id));
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
+                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Search)
                 });
             }
             (Tab::Groups, Key::Id(id)) if resp.double_clicked() => crate::ui::group_profile::request_open(ui.ctx(), id),

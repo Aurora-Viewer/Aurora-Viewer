@@ -11,16 +11,26 @@ use super::invite_card::{card_frame, icon, notice};
 use super::{LineEnv, chat_text_marked};
 use crate::ui::fonts::chat_size;
 use crate::world::ChatLine;
-use crate::world::names::NameScope;
+use crate::world::names::{NameScope, TextScope};
 use crate::world::payments::{self, Payment};
 use egui::RichText;
 
 /// The icon of paying, the same as the Pay menu items'.
 const ICON: &str = "coin-filled";
-/// The names a payment shows under `@shownames`, in the conversation that
-/// names the other resident too: those the world shows, like the payment's
-/// notice. Kept stricter than the conversation's lines on purpose.
-const NAMES: NameScope = NameScope::World;
+/// The names a payment shows under RLVa's `@shownames`: the other
+/// resident's, whoever stands around. process_money_balance_reply_extended
+/// (indra/newview/llviewermessage.cpp) writes the `inspect` and
+/// `completename` links of the payer or the payee with no RLVa test on the
+/// name; its only one is RlvActions::canReceiveIM, for the message.
+const NAMES: NameScope = NameScope::Roster;
+
+/// The text of the card under `@shownames` and `@showloc`: as written, like
+/// the lines of the conversation it stands in. PaymentReceived and
+/// PaymentSent go through no RlvUtil::filterNames nor filterLocation
+/// (money_balance_avatar_notify, the same file).
+fn wording() -> TextScope {
+    TextScope::verbatim(NAMES)
+}
 
 fn title(env: &LineEnv, line: &ChatLine, v: &Payment) -> String {
     let name = env.world.person_name_in(NAMES, &v.other).unwrap_or_else(|| line.from.clone());
@@ -48,7 +58,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
                 p,
                 env.emoji,
                 world,
-                NAMES,
+                wording(),
                 env.want_names,
                 &v.message,
                 chat_size(ui.ctx(), 12.5),
@@ -75,7 +85,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
             p,
             env.emoji,
             world,
-            NAMES,
+            wording(),
             env.want_names,
             &line.text,
             chat_size(ui.ctx(), 12.5),
@@ -172,6 +182,23 @@ mod tests {
         let (world, line) = paid("Payment");
         let texts: Vec<_> = frame(&world, &line, true).into_iter().map(|t| t.source).collect();
         assert!(!texts.iter().any(|t| t.contains("Payment")), "{texts:?}");
+    }
+
+    /// process_money_balance_reply_extended has no `@shownames` test: the
+    /// card names a payer RLVa hides around us, in both presentations.
+    #[test]
+    fn shownames_leaves_the_payer_named() {
+        let (mut world, line) = paid("Rent");
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownames=n");
+        world.coarse.entry(1).or_default().push((JANE, glam::Vec3::ONE));
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_shows_name(NameScope::World, JANE));
+        for bubbles in [true, false] {
+            let texts: Vec<_> = frame(&world, &line, bubbles).into_iter().map(|t| t.source).collect();
+            let all = texts.concat();
+            assert!(all.contains("Jane Doe") && all.contains("Rent"), "{bubbles}: {texts:?}");
+        }
     }
 
     #[test]

@@ -181,7 +181,7 @@ fn item_kind(it: &aurora_net::inventory::InvItem) -> String {
 
 /// What a hovered row offers in place.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Quick {
+pub(super) enum Quick {
     /// Add without replacing, independently of the double-click preferences.
     Add,
     /// Wear a non-stackable wearable, or take off a worn item.
@@ -218,7 +218,7 @@ fn quick_label(quick: Quick) -> &'static str {
 /// The buttons a hovered item shows: add or take off a wearable, and
 /// "more actions" at the wide width. Body parts and physics only replace;
 /// a worn body part cannot be taken off.
-fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Vec<Quick> {
+pub(super) fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Vec<Quick> {
     let mut quick = Vec::new();
     if let Some(original) = rules::original(inv, id).and_then(|id| inv.items.get(&id))
         && matches!(original.asset_type, 5 | 6 | 13)
@@ -238,7 +238,7 @@ fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Ve
 
 /// Draw the quick buttons ending at `right`, centred on `center_y`.
 #[allow(clippy::too_many_arguments)]
-fn show_quick(
+pub(super) fn show_quick(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &Inventory,

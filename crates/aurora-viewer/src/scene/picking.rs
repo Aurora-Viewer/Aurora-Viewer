@@ -122,6 +122,22 @@ pub(super) fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
     !g.rigged && !g.is_avatar && g.owner_avatar.is_some() && o.visual_volume().is_mesh()
 }
 
+/// Where an avatar's click box stands: where its body is drawn. The
+/// animation editor's couple partner is drawn away from their place
+/// (`World::couple_shift`), and a click on them where they show picks them.
+fn avatar_center(world: &World, idx: usize, g: &ObjGpu) -> Vec3 {
+    world
+        .objects
+        .get(idx)
+        .and_then(|o| {
+            world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+        })
+        .map_or(g.center, |shift| shift.transform_point3(g.center))
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -176,6 +192,45 @@ impl Scene {
             }
         }
         true
+    }
+    /// Phantom prims of the world (no attachment, HUD or rigged mesh) whose
+    /// bounds reach `range` of `center`: the prims that could be water
+    /// volumes, before their names are known (`app/water_volumes`).
+    pub fn water_candidates(&self, world: &World, center: Vec3, range: f32, out: &mut Vec<usize>) {
+        self.pick
+            .box_candidates(center - Vec3::splat(range), center + Vec3::splat(range), out);
+        out.retain(|&idx| {
+            world.objects.get(idx).is_some_and(|o| {
+                o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+                    && o.update_flags & crate::build::edits::FLAGS_PHANTOM != 0
+                    && !o.is_attachment()
+            }) && self.gpu.get(idx).is_some_and(|g| !g.hud && !g.rigged && g.owner_avatar.is_none())
+        });
+    }
+    /// The upright box a water prim fills, from its drawn bounds.
+    pub fn water_volume(&self, world: &World, idx: usize) -> Option<crate::movement::water_volume::Volume> {
+        let (center, size) = self.click_bounds(world, idx)?;
+        let (_, rotation, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
+        crate::movement::water_volume::Volume::new(center, rotation, size)
+    }
+    /// Highest upward-facing solid top under `position`, within `depth`:
+    /// the floor of a pool, or the ground a water plane lies over.
+    pub fn water_floor(&self, world: &World, position: Vec3, depth: f32) -> Option<f32> {
+        if !position.is_finite() {
+            return None;
+        }
+        let ray = (position, -Vec3::Z);
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        candidates
+            .iter()
+            .filter(|&&idx| self.movement_solid(world, idx))
+            .filter_map(|&idx| self.geometry_hit(world, idx, ray, now))
+            .filter(|hit| hit.normal.z > 0.7 && hit.t <= depth)
+            .map(|hit| hit.t)
+            .min_by(f32::total_cmp)
+            .map(|t| position.z - t)
     }
     /// Independent support check for water exits when Falling/foot-plane
     /// messages lag. Only a nearby upward-facing solid top counts as land.
@@ -593,7 +648,7 @@ impl Scene {
                 || g.rigged
                 || o.extra.reflection_probe.is_some()
                 || !self.first_person_object_visible(idx, g)
-                || !ray_may_hit(g, ray)
+                || (!g.is_avatar && !ray_may_hit(g, ray))
             {
                 return None;
             }
@@ -604,8 +659,8 @@ impl Scene {
                     ray_box(
                         ray.0,
                         ray.1,
-                        g.center - Vec3::new(0.35, 0.35, 1.0),
-                        g.center + Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                     )?,
                     None,
                 )
@@ -750,8 +805,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
                 self.face_hit_mode(world, idx, ray, now, false, FacePick::Inventory).map(|h| h.t)
@@ -812,8 +867,9 @@ impl Scene {
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
             // (what is not drawn is not picked: a hidden rendering type, as
-            // LLPipeline::lineSegmentIntersectInWorld skips its partitions)
-            .filter(|(idx, gpu)| !gpu.hidden && self.first_person_object_visible(*idx, gpu))
+            // LLPipeline::lineSegmentIntersectInWorld skips its partitions,
+            // or what the photo leaves out)
+            .filter(|(idx, gpu)| !gpu.hidden && !gpu.unseen && self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -1549,8 +1605,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if mode == FacePick::Left {
                 self.face_hit_mode(world, idx, ray, now, false, mode).map(|h| h.t)
@@ -1635,8 +1691,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
                 self.face_hit_mode(world, idx, ray, now, clicker, FacePick::Left).map(|h| h.t)
@@ -3529,6 +3585,20 @@ pub(crate) mod tests {
             .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
             .unwrap();
         assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
+    }
+
+    #[test]
+    fn the_couple_partner_is_clicked_where_the_animation_editor_draws_them() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let id = world.objects.get(front).unwrap().full_id;
+        scene.gpu[front].is_avatar = true;
+        scene.gpu[front].center = Vec3::new(10.0, 10.0, 1.0);
+        world.avatar_models.insert(id, Mat4::from_translation(Vec3::new(10.0, 10.0, 0.0)));
+        assert_eq!(avatar_center(&world, front, &scene.gpu[front]), Vec3::new(10.0, 10.0, 1.0));
+        world.couple_partner = Some(id);
+        world.couple_place = (Vec3::new(0.0, 2.0, 0.0), 0.0);
+        let at = avatar_center(&world, front, &scene.gpu[front]);
+        assert!(at.abs_diff_eq(Vec3::new(10.0, 12.0, 1.0), 1e-4), "{at}");
     }
 
     #[test]

@@ -97,7 +97,14 @@ pub fn buttons(s: &State) -> Buttons {
 pub fn show(ctx: &egui::Context, p: &Palette, shown: Buttons, bottom_top: f32) -> Option<Action> {
     let screen = ctx.content_rect();
     let mut action = None;
-    egui::Area::new(Id::unique("stand_stop_flying"))
+    let id = Id::unique("stand_stop_flying");
+    // Under the windows, but a press on it is the panel's, never the world's:
+    // egui's is_pointer_over_egui skips a background area in the root's free
+    // room, so the viewer would also click the avatar behind the button,
+    // start steering and grab the cursor before the button saw its release
+    // (#4071, #3749). Same helper as the Director's timeline.
+    widgets::solid_background(ctx, id);
+    egui::Area::new(id)
         .order(egui::Order::Background)
         .pivot(egui::Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(screen.center().x.round(), (bottom_top - GAP).round()))
@@ -296,6 +303,55 @@ mod tests {
             })
             .any()
         );
+    }
+
+    /// A press on the panel belongs to the interface even when egui still
+    /// thinks the pointer is in the open world: without that the viewer
+    /// steered the avatar behind it and cancelled the button (#4071), and a
+    /// touch object behind it was clicked too (#3749).
+    #[test]
+    fn the_panel_keeps_its_press_when_it_is_over_the_world() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let bottom_top = 840.0;
+        let shown = Buttons {
+            stand: true,
+            ..Buttons::default()
+        };
+        let mut time = 0.0;
+        let mut frame = |shown: Buttons| {
+            time += 1.0 / 60.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), &p, shown, bottom_top);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..4 {
+            frame(shown);
+        }
+        let panel = ctx.memory(|m| m.area_rect(Id::unique("stand_stop_flying"))).expect("the panel");
+        let at = panel.center();
+        assert!(!ctx.is_pointer_over_egui(), "egui leaves this part of the screen to the world");
+        assert!(widgets::pointer_over_ui(&ctx, at), "the panel keeps its own press");
+        assert!(
+            !widgets::pointer_over_ui(&ctx, at + Vec2::new(0.0, -80.0)),
+            "the world above stays the world's"
+        );
+        // once hidden, the room belongs to the world again
+        for _ in 0..3 {
+            frame(Buttons::default());
+        }
+        assert!(!widgets::pointer_over_ui(&ctx, at), "a hidden panel claims nothing");
     }
 
     /// The click path: the face drawn for each state answers with its own

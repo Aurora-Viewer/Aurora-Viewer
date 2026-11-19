@@ -2180,3 +2180,43 @@ fn surface_double_ascent_requires_two_edges_and_expires_or_cancels_with_context(
         "an underwater return must not count as the first surface tap"
     );
 }
+
+/// #2008: the runtime swims in a skybox pool from the volume's top and
+/// floor alone, the region water and terrain far below.
+#[test]
+fn a_prim_water_volume_drives_swimming_and_is_left_at_its_top() {
+    use water_volume::{Volume, water_at};
+    let pool = [Volume::new(Vec3::new(128.0, 128.0, 1001.2), glam::Quat::IDENTITY, Vec3::new(8.0, 8.0, 2.4)).expect("pool")];
+    let in_pool = |z: f32, floor: f32| {
+        let mut f = frame();
+        f.position.z = z;
+        let water = water_at(&pool, f.position, f.height, Some(floor));
+        f.water = water.map(|w| w.surface).or(Some(20.0));
+        f.ground = water.map(|w| w.floor).or(Some(10.0));
+        f.on_ground = false;
+        f
+    };
+    let mut runtime = Runtime::default();
+    let now = Instant::now();
+    let mut f = in_pool(1001.8, 1000.0);
+    assert_eq!(f.water, Some(1002.4));
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert_eq!(runtime.state, State::Surface);
+    f.position.z = 1000.8;
+    let down = MoveInput {
+        down: true,
+        ..Default::default()
+    };
+    runtime.update(&prefs(), &f, &down, now);
+    assert_eq!(runtime.state, State::Submerged);
+    // above the top: the same exit as region water
+    let f = in_pool(1004.5, 1000.0);
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert!(!runtime.state.swimming());
+
+    // a wading pool (its floor 0.6 m under the top) is not deep enough to swim
+    let mut runtime = Runtime::default();
+    let f = in_pool(1002.1, 1001.8);
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert!(!runtime.state.swimming());
+}

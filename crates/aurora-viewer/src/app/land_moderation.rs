@@ -117,16 +117,22 @@ impl App {
         let info = self.world.regions.get(&handle)?.info.as_ref()?;
         let god = self.world.god_level > 0;
         let ours = info.owner == self.world.agent_id;
-        Some((god || ours, god.then(|| self.resident_full_name(info.owner))))
+        // (the owner's `inspect` link of LLAvatarActions::estateBanMultiple
+        // has no RLVa test)
+        Some((
+            god || ours,
+            god.then(|| self.world.social.name_in(crate::world::names::NameScope::Roster, &info.owner)),
+        ))
     }
 
-    /// The complete name, anonymous under RLVa's shownames.
+    /// The name a question writes: under RLVa's `@shownames` everyone's
+    /// stand-in, an exception's included (`rlvanonym` on
+    /// `hasBehaviour(RLV_BHVR_SHOWNAMES)` alone in
+    /// LLAvatarActions::landEjectMultiple, landFreezeMultiple,
+    /// estateKickMultiple, estateTeleportHomeMultiple and estateBanMultiple,
+    /// indra/newview/llavataractions.cpp).
     fn resident_full_name(&self, target: Uuid) -> String {
-        self.world
-            .social
-            .avatar_names
-            .complete(&target)
-            .unwrap_or_else(|| self.world.social.name_of(&target))
+        self.world.rlva_name_unless_hidden(target)
     }
 
     /// landFreeze / landEject: asked first, while the rights hold.
