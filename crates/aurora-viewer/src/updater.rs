@@ -534,6 +534,12 @@ impl Updater {
                         Failure::Filesystem
                     })?;
                     let parent = path.parent().ok_or(Failure::Filesystem)?;
+                    // a sandbox's folder is a read-only package: say so before
+                    // the layout check, which would otherwise answer "extract
+                    // it into a dedicated folder" first
+                    if let Some(problem) = aurora_updater::install::sandboxed() {
+                        return Err(problem);
+                    }
                     if let Err(e) = Workspace::check_install(parent) {
                         log::warn!("update: this folder cannot be updated in place: {e:#}");
                         return Err(if aurora_updater::install::at_drive_root(parent) {
@@ -542,8 +548,8 @@ impl Updater {
                             Failure::Unsupported
                         });
                     }
-                    // a sandbox's folder or one this account may not write:
-                    // the package manager or the bundle owns the viewer
+                    // one this account may not write: the package manager or
+                    // the bundle owns the viewer
                     if let Some(problem) = aurora_updater::install::self_update_problem(parent) {
                         return Err(problem);
                     }

@@ -253,6 +253,22 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The refusal a sandbox gives by itself, before the layout and write checks:
+/// its folder is a read-only package, so `Protected` must win over the
+/// `Unsupported` answer ("extract it into a dedicated folder") that a folder
+/// without the release layout would otherwise get. `None` outside a sandbox.
+#[cfg(target_os = "linux")]
+pub fn sandboxed() -> Option<crate::Failure> {
+    let sandbox = sandbox()?;
+    log::warn!("update: the viewer runs in a {sandbox} sandbox, which owns its folder");
+    Some(crate::Failure::Protected)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sandboxed() -> Option<crate::Failure> {
+    None
+}
+
 /// Why this installation cannot replace itself in place, when it cannot: the
 /// viewer runs in a sandbox whose folder belongs to a package mounted
 /// read-only (Flatpak, Snap, AppImage), or the folder above the installation
@@ -261,9 +277,8 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
 /// its own errors already say that the folder cannot be written.
 #[cfg(target_os = "linux")]
 pub fn self_update_problem(install: &Path) -> Option<crate::Failure> {
-    if let Some(sandbox) = sandbox() {
-        log::warn!("update: the viewer runs in a {sandbox} sandbox, which owns its folder");
-        return Some(crate::Failure::Protected);
+    if let Some(problem) = sandboxed() {
+        return Some(problem);
     }
     let parent = install.parent()?;
     // what `Workspace::new` writes a moment later: the staging folder, the

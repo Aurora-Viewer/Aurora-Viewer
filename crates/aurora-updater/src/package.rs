@@ -326,7 +326,7 @@ pub(crate) fn unpack_tar_gz(path: &Path, root: &Path, prefix: &str, cancel: &Can
             "invalid package root or link"
         );
         ensure!(names.insert(name.trim_end_matches('/').to_lowercase()), "duplicate package path");
-        expanded = expanded.saturating_add(entry.header().size()?);
+        expanded = expanded.saturating_add(entry.size());
         ensure!(expanded <= MAX_EXPANDED, "expanded package too large");
         count += 1;
         ensure!(count <= MAX_ENTRIES, "invalid package entry count");
@@ -346,7 +346,7 @@ pub(crate) fn unpack_tar_gz(path: &Path, root: &Path, prefix: &str, cancel: &Can
         ensure!(parts.len() > 1, "package root is a file");
         fs::create_dir_all(target.parent().context("package file parent")?)?;
         let mut out = OpenOptions::new().write(true).create_new(true).open(target)?;
-        let expected = entry.header().size()?;
+        let expected = entry.size();
         let mut buffer = [0_u8; 64 * 1024];
         let mut size = 0_u64;
         loop {
