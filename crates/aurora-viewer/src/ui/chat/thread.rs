@@ -204,7 +204,9 @@ impl Who {
     fn of(env: &LineEnv, line: &ChatLine) -> Who {
         let logged = line.origin != Origin::Live;
         let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-        let avatar = if object {
+        // (nor the speaker `@shownames` hid when the line arrived: no
+        // picture, mark nor menu, FSChatHistoryHeader)
+        let avatar = if object || line.anonymous() {
             uuid::Uuid::nil()
         } else if line.kind.is_own() {
             env.world.agent_id
@@ -315,12 +317,12 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
     if who.avatar.is_nil() {
         return;
     }
-    line_name_menu(&r, env.p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, env.p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -387,7 +389,19 @@ fn roomy_row(
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, emphasis, mark);
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    env.world,
+                    line.wording(env.names),
+                    env.want_names,
+                    &visible,
+                    size,
+                    color,
+                    emphasis,
+                    mark,
+                );
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -442,7 +456,19 @@ fn compact_row(
             ui.add_space(1.0);
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, emphasis, mark);
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    env.world,
+                    line.wording(env.names),
+                    env.want_names,
+                    &visible,
+                    size,
+                    color,
+                    emphasis,
+                    mark,
+                );
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -474,9 +500,9 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         ui.scope_id().with(("thread_pic", line.time, line.source)),
         egui::Sense::click(),
     );
-    line_name_menu(&r, p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -551,6 +577,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
                 p,
                 env.emoji,
                 env.world,
+                line.wording(env.names),
                 env.want_names,
                 &super::system_text(&line.text),
                 chat_size(ui.ctx(), 12.0),
@@ -621,7 +648,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
         // selected text takes priority over the message under the menu.
         let text = target.selected_text.clone().unwrap_or_else(|| {
             let prefix = super::copy_prefix(line, &name);
-            format!("{prefix}{}", super::shown_text(env.world, line, &name))
+            format!("{prefix}{}", super::shown_text(env.world, env.names, line, &name))
         });
         ui.ctx().copy_text(text);
     }
@@ -633,7 +660,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
     }
     if !who.avatar.is_nil() {
         crate::ui::menu::separator(ui, p);
-        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
+        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, env.names, line);
     }
 }
 

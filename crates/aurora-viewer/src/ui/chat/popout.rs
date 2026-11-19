@@ -160,6 +160,20 @@ impl Popped {
         });
     }
 
+    pub(super) fn rekey(&mut self, from: Uuid, to: Uuid) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.conversation == Some(from)) {
+            // Keep the floater's identity, geometry and minimized state.
+            w.conversation = Some(to);
+            w.view.selected = Some(to);
+            if w.view.selection.0 == Some(from) {
+                w.view.selection.0 = Some(to);
+            }
+            if w.view.reveal == Some(from) {
+                w.view.reveal = Some(to);
+            }
+        }
+    }
+
     /// The window of `conversation` waits for the next frame to draw: the
     /// Conversations window drew that conversation in this one (one field,
     /// one selection in a frame).
@@ -627,6 +641,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
             }
@@ -754,6 +769,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1041,6 +1057,7 @@ mod tests {
                             origin: crate::world::Origin::Live,
                             blocked: false,
                             beyond_range: false,
+                            speaker: Default::default(),
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1154,6 +1171,7 @@ mod tests {
                     origin: crate::world::Origin::Live,
                     blocked: false,
                     beyond_range: false,
+                    speaker: Default::default(),
                 },
             );
             kit.main_open = true;

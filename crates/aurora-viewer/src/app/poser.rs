@@ -7,6 +7,70 @@ use crate::{
 };
 
 impl App {
+    /// AURORA_DEMO_COUPLE: Nova stands beside you and accepts an Ask from
+    /// the animation editor's couple section 1.5 s later, as a resident
+    /// would. `leave`: 10 s after she becomes Person B she teleports away
+    /// (her avatar is killed), and stays drawn and posable. `clip`,
+    /// `hover` and `mirror` script the screenshots (below).
+    pub(super) fn couple_demo(&mut self, mode: &str) {
+        let peer = crate::demo::poser::PEER;
+        if self.frame_count == 400
+            && let Some(handle) = self.world.main_region
+        {
+            self.world.apply(aurora_net::NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![crate::demo::poser::peer()],
+            });
+        }
+        if self.world.objects.index_of_uuid(&peer).is_some() {
+            let mut consent = std::mem::take(&mut self.world.poser_consent);
+            consent.demo_accept(&self.world, peer, std::time::Duration::from_millis(1500));
+            self.world.poser_consent = consent;
+        }
+        // the scripted modes, for screenshots (with
+        // AURORA_DEMO_AVATAR_STUDIO=animation-editor, which opens the
+        // editor at frame 800): Nova is asked and becomes Person B
+        // (`mirror`: a mirror of you is Person B instead)
+        let scripted = matches!(mode, "clip" | "hover" | "mirror");
+        if scripted && self.frame_count >= 860 && self.frame_count.is_multiple_of(30) && self.world.couple_partner.is_none() {
+            if mode == "mirror" {
+                self.ik_editor.demo_mirror_step();
+            } else if self.ik_editor.demo_couple_step(&self.world, peer) {
+                log::info!("demo couple: Nova is Person B (frame {})", self.frame_count);
+            }
+        }
+        // once the world has B (the Studio drops B's hover until then): a
+        // side view, so that face to face B is not hidden behind you, and
+        // in `hover` B's own hover chosen in the menu
+        let b = if mode == "mirror" { self.world.mirror() } else { Some(peer) };
+        if scripted && b.is_some() && self.world.couple_partner == b && self.couple_demo_since.is_none() {
+            self.couple_demo_since = Some(Instant::now());
+            self.avatar_studio.yaw = (self.avatar_studio.facing + std::f32::consts::FRAC_PI_2).rem_euclid(std::f32::consts::TAU);
+            if mode == "hover" {
+                self.avatar_studio.hover_height = 0.1;
+                self.avatar_studio.partner_hover_height = Some(0.3);
+                self.avatar_studio.hover_partner = true;
+            }
+        }
+        if mode == "leave" && self.world.couple_partner == Some(peer) {
+            let since = *self.couple_demo_since.get_or_insert(Instant::now());
+            if since.elapsed() >= std::time::Duration::from_secs(10)
+                && let Some(key) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&peer)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.key)
+            {
+                log::info!("demo couple: Person B teleports away");
+                self.world.apply(aurora_net::NetEvent::ObjectsKilled {
+                    handle: key.region,
+                    local_ids: vec![key.local_id],
+                });
+                self.couple_demo_since = Some(Instant::now() + std::time::Duration::from_secs(3600));
+            }
+        }
+    }
     pub(super) fn poser_demo(&mut self, mode: &str) {
         if self.frame_count == 300
             && let Some(handle) = self.world.main_region
@@ -20,6 +84,12 @@ impl App {
         // forehead joints' scale negative on one axis (#1249)
         if mode == "square-head" && self.frame_count == 300 {
             let values = self.world.avatar_lib.shape_params.values_with(&[(193, 1.0)]);
+            self.world.preview_shape(Some(values));
+        }
+        // shape-change: our Height slider at 100 after the head edit, with the
+        // pose active, which must follow the new shape at once (#2415)
+        if mode == "shape-change" && self.frame_count == 600 {
+            let values = self.world.avatar_lib.shape_params.values_with(&[(33, 1.0)]);
             self.world.preview_shape(Some(values));
         }
         // bridge-* modes show the subject menu's bridge hints for the same peer.

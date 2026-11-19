@@ -9,6 +9,8 @@
 //! A trusted browser (`WebView::trust`, LLMediaCtrl's `trusted_content`,
 //! the Avatar Welcome Pack's) may also wear folders: the folder commands its
 //! own page sends are handed to its window (`folder_commands`).
+//! The sign-up window's browser (`WebView::accept_join_commands`) hands its
+//! window the sign-up page's commands instead (`join_requests`).
 
 use crate::media::pack::PackState;
 use crate::media::private_profile::PrivateProfile;
@@ -146,6 +148,23 @@ pub struct WebView {
     document: Option<String>,
     /// The folder commands the trusted page sent, for its window to take.
     pub folder_commands: Vec<crate::slapp::FolderCommand>,
+    /// The sign-up commands are handed to the window (`join_requests`).
+    accepts_join: bool,
+    /// The sign-up commands the page sent, for its window to take.
+    pub join_requests: Vec<JoinRequest>,
+}
+
+/// A sign-up command (`secondlife:///app/floaterjoin/…`) a page sent: the
+/// window decides, from whether it was clicked and which document sent it
+/// (`ui/signup.rs`).
+#[derive(Debug)]
+pub struct JoinRequest {
+    pub command: crate::slapp::JoinCommand,
+    /// Sent by a click (NAV_TYPE_CLICKED), not by the page's script alone.
+    pub clicked: bool,
+    /// The origin of the top document when it was sent (`origin`), None
+    /// while a navigation to another origin is under way.
+    pub document: Option<String>,
 }
 
 impl WebView {
@@ -177,6 +196,14 @@ impl WebView {
         }
     }
 
+    /// The sign-up window's browser: the page's `floaterjoin` commands,
+    /// clicked or not, go to `join_requests` instead of the link rules
+    /// (LLFloaterJoinHandler is UNTRUSTED_THROTTLE: the window throttles
+    /// those that were not clicked).
+    pub fn accept_join_commands(&mut self) {
+        self.accepts_join = true;
+    }
+
     pub fn navigate(&mut self, url: &str) {
         if self.url != url {
             self.url = url.to_owned();
@@ -194,6 +221,7 @@ impl WebView {
         self.cookie_set = false;
         self.document = None;
         self.folder_commands.clear();
+        self.join_requests.clear();
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
@@ -372,11 +400,22 @@ impl WebView {
         }
         p.idle();
         for ev in p.take_events() {
+            if self.accepts_join
+                && let MediaEvent::ClickLinkNoFollow { url, nav_type } = &ev
+                && let Some(command) = crate::slapp::join_command(url)
+            {
+                self.join_requests.push(JoinRequest {
+                    command,
+                    clicked: nav_type == "clicked",
+                    document: self.document.clone(),
+                });
+                continue;
+            }
             if let Some(command) = trusted_folder_command(&ev, self.trusted.as_deref(), self.document.as_deref()) {
                 self.folder_commands.push(command);
                 continue;
             }
-            if let Some(url) = clicked_url(&ev) {
+            if let Some(url) = ev.clicked_url() {
                 super::context::request(ui.ctx(), clicked_link_action(url));
                 continue;
             }
@@ -472,7 +511,10 @@ impl WebView {
             command: i.modifiers.mac_cmd,
         });
         let to_px = |pos: egui::Pos2| (((pos.x - rect.left()) * ppp) as i32, ((pos.y - rect.top()) * ppp) as i32);
-        if let Some(pos) = resp.hover_pos() {
+        // a disabled page (under another window, `ui/signup.rs`) is drawn
+        // but gets no pointer
+        let enabled = ui.is_enabled();
+        if enabled && let Some(pos) = resp.hover_pos() {
             let (x, y) = to_px(pos);
             p.mouse_event(MouseEvent::Move, 0, x, y, mods);
             // wheel clicks (LL: down = positive)
@@ -498,7 +540,7 @@ impl WebView {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
             }
         }
-        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+        if enabled && let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             let (pressed, released) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released()));
             let inside = rect.contains(pos);
             if pressed {
@@ -525,18 +567,8 @@ impl WebView {
     }
 }
 
-/// Links from the browser are actionable only after a user click. CEF sends
-/// custom schemes separately and records whether navigation had a gesture;
-/// a redirect or script navigation must never trigger a SLURL action.
-fn clicked_url(event: &MediaEvent) -> Option<&str> {
-    match event {
-        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
-        _ => None,
-    }
-}
-
 /// `scheme://host:port` of a web address.
-fn origin(url: &str) -> Option<String> {
+pub(crate) fn origin(url: &str) -> Option<String> {
     reqwest::Url::parse(url)
         .ok()
         .filter(|u| matches!(u.scheme(), "http" | "https"))
@@ -557,8 +589,9 @@ fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, document: O
     (document == Some(trusted)).then_some(command)
 }
 
-/// Follow the same SLURL and app-link rules as a clicked link in chat.
-fn clicked_link_action(url: &str) -> super::context::CtxAction {
+/// Follow the same SLURL and app-link rules as a clicked link in chat
+/// (also used for a link clicked in a page shown on a prim, `media/update.rs`).
+pub(crate) fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
     if let Some(place) = crate::slurl::place_link(url) {
         let location = place.location;
@@ -581,21 +614,21 @@ mod tests {
     #[test]
     fn custom_scheme_links_require_a_click_gesture() {
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "clicked".into(),
             }),
             Some("secondlife:///app/teleport/Aurora/12/34/56")
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "navigated".into(),
             }),
             None
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: String::new(),
                 nav_type: "clicked".into(),
             }),

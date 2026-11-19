@@ -158,13 +158,13 @@ fn names_line(world: &World, scope: NameScope, id: &Uuid, shown: &str) -> Vec<St
             (false, false) => Some(format!("{first} {last}")),
         }
     });
-    if let Some(legacy) = from_names.or_else(|| world.legacy_name(id)).filter(|n| n != shown) {
+    if let Some(legacy) = from_names.or_else(|| world.legacy_name_in(scope, id)).filter(|n| n != shown) {
         parts.push(legacy);
     }
     if let Some(user) = world
         .social
         .avatar_names
-        .get(id)
+        .get_in(scope, id)
         .map(|n| n.username.clone())
         .filter(|u| !u.is_empty() && u != shown && !parts.contains(u))
     {
@@ -421,6 +421,7 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         w.web.focused = false;
     }
     // the bar of the edits not saved stays at the bottom
+    w.pick_wait_notice(ui, env.p, env.world, env.actions);
     let closing = w.confirm_close;
     let bar = closing || (own && has_unsaved(w));
     let bar_h = if bar { 46.0 } else { 0.0 };
@@ -914,13 +915,12 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             env.world.rlva_can_offer_teleport(id),
             None,
         ),
-        Act::Pay => (
-            "coin-filled",
-            aurora_i18n::tr!("common-pay"),
-            ActionKind::Flat,
-            context::can_pay_resident(env.world),
-            None,
-        ),
+        // Enabled under @pay too, as in the Legacy style
+        // (`profile::action_buttons`): LLPanelProfileSecondLife::updateButtons
+        // (indra/newview/llpanelprofile.cpp) never tests it, and the pay
+        // window refuses to open with the "blocked" notice
+        // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>, indra/newview/rlvhandler.cpp).
+        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")
@@ -944,7 +944,13 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        Act::Done => ("check", aurora_i18n::tr!("ui-profile-aurora-done"), ActionKind::Primary, true, None),
+        Act::Done => (
+            "check",
+            aurora_i18n::tr!("ui-profile-aurora-done"),
+            ActionKind::Primary,
+            !w.pick_save_waits(),
+            None,
+        ),
     };
     // the block button and "…" are icons in the large header too
     let alone = look != Look::Labelled || matches!(act, Act::Block | Act::More);
@@ -984,10 +990,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
-        Act::Done => {
-            save_all(w, env.actions);
-            w.editing = false;
-        }
+        Act::Done => w.editing = !save_all(w, env.actions),
         Act::More => {}
     }
 }
@@ -999,7 +1002,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let id = w.id;
     let names = &world.social.avatar_names;
     let display = names.get_in(w.scope, &id).map(|n| n.display(&names.options));
-    let legacy = world.legacy_name(&id);
+    let legacy = world.legacy_name_in(w.scope, &id);
     // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
     let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     crate::ui::chat::moderation::demo_mark(&resp.ctx, crate::ui::chat::moderation::DemoMark::ProfileMore, resp.rect);
@@ -1741,7 +1744,8 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
     let (p, world) = (env.p, env.world);
     world.social.avatar_names.want(&partner);
     env.wanted_pics.insert(partner);
-    let name = display_name(world, NameScope::World, &partner);
+    // LLPanelProfileSecondLife names the partner whatever `@shownames`
+    let name = display_name(world, NameScope::Roster, &partner);
     let font = semibold(ui, 12.5);
     let galley = ui.painter().layout_no_wrap(name.clone(), font, p.ink);
     let size = Vec2::new(2.0 + 20.0 + 6.0 + galley.size().x + 9.0, 24.0);
@@ -1756,7 +1760,7 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        super::request_open(ui.ctx(), partner);
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(partner));
     }
 }
 
@@ -1800,7 +1804,7 @@ fn picks_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     }
     if let Some(pick) = open {
         w.tab = TAB_PICKS;
-        if pick.is_some() {
+        if pick.is_some() && !w.pick_save_waits() {
             w.pick_sel = pick;
             w.pick_edit = None;
         }
@@ -2112,29 +2116,29 @@ fn unsaved_bar(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, closing: bool) 
                 ui.label(RichText::new(text).font(semibold(ui, 12.5)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 26.0);
-                    if widgets::action_button(
+                    if widgets::action_button_if(
                         ui,
                         p,
                         "device-floppy-filled",
                         aurora_i18n::tr!("common-save"),
                         ActionKind::Primary,
                         size,
+                        !w.pick_save_waits(),
                     )
                     .clicked()
                     {
-                        save_all(w, env.actions);
                         if closing {
-                            w.open = false;
+                            w.answer_close(super::CloseChoice::Save, env.actions);
+                        } else {
+                            save_all(w, env.actions);
                         }
-                        w.confirm_close = false;
                     }
                     if closing && widgets::action_button(ui, p, "", aurora_i18n::tr!("common-ignore"), ActionKind::Flat, size).clicked() {
-                        revert(w);
-                        w.open = false;
+                        w.answer_close(super::CloseChoice::Ignore, env.actions);
                     }
                     if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                         if closing {
-                            w.confirm_close = false;
+                            w.answer_close(super::CloseChoice::Cancel, env.actions);
                         } else {
                             revert(w);
                         }

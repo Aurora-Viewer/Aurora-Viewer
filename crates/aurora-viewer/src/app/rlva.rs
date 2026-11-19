@@ -1,4 +1,5 @@
 //! RLVa preference and action integration, shared by every UI layout.
+use super::own_motion::temprun_resync;
 use super::*;
 use uuid::Uuid;
 
@@ -120,6 +121,7 @@ impl App {
             login_locked,
         );
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
+        self.world.rlva_yield_environment();
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
         // An outfit change is over once its detaches have landed too: the
@@ -199,23 +201,39 @@ impl App {
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
         }
-        if self.world.rlva.has("temprun") {
-            self.temp_run = None;
+        // RlvUIEnabler::onToggleMovement: clearTempRun tells the simulator,
+        // which would otherwise keep running with nothing left to stop it.
+        let temprun = self.world.rlva.has("temprun");
+        let ended = temprun && self.temp_run.take().is_some();
+        let changed = temprun != std::mem::replace(&mut self.rlva_temprun, temprun);
+        if temprun_resync(ended, changed, self.autopilot.as_ref().is_some_and(|a| a.run)) {
+            self.send(NetCommand::SetAlwaysRun(self.walk_run()));
         }
         // RlvUIEnabler::onToggleMovement (rlvui.cpp): @fly lands a flight
         // under way (gAgent.setFlying(false)), not only refuses a takeoff.
         if self.world.agent.flying && self.world.rlva.has("fly") {
             self.world.agent.flying = false;
         }
+        // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
+        // leaves the selection, the temporary one of a menu excepted
+        let menu = self.build.menu_selection;
         let invalid: Vec<_> = self
             .build
             .selection
             .iter()
-            .filter(|key| self.world.objects.index_of(key).is_none_or(|i| !self.world.rlva_can_edit(i)))
+            .filter(|key| {
+                self.world.objects.index_of(key).is_none_or(|i| {
+                    if menu {
+                        !crate::build::rlva_keeps_menu_selection(&self.world, i)
+                    } else {
+                        !crate::build::rlva_selectable(&self.world, i)
+                    }
+                })
+            })
             .copied()
             .collect();
         if !invalid.is_empty() {
-            self.build.deselect(&self.world, &invalid);
+            self.build.drop_selected(&self.world, &invalid);
         }
         let locked_hud = self.world.rlva_has_locked_hud();
         if locked_hud {
@@ -266,9 +284,13 @@ impl App {
             self.world.rlva_configure(self.settings.rlva_enabled);
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
             if scenario == "baseline"
+                || scenario == "ground-wear"
                 || scenario.starts_with("sphere-")
                 || scenario.starts_with("camera-")
-                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
+                || matches!(
+                    scenario,
+                    "overlay" | "textures" | "textures-grey" | "silhouette" | "self" | "head" | "resolution" | "interact" | "fartouch"
+                )
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
@@ -285,6 +307,9 @@ impl App {
             let message = if scenario == "baseline" {
                 self.panels.settings = false;
                 "@clear".to_owned()
+            } else if scenario == "interact" || scenario == "fartouch" {
+                self.panels.settings = false;
+                format!("@{scenario}=n")
             } else if scenario == "camera-prefs" {
                 self.options_ui.page = ui::options::Page::Camera;
                 self.options_ui.tab = 0;
@@ -295,6 +320,39 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if let Some(limit) = scenario.strip_prefix("camera-zoom-") {
+                // the camera starts 7.6 m from the focus point, which is
+                // over the avatar: about 6 m from where the avatar's own
+                // view would put it (the origin) and 7 m from the head
+                self.panels.settings = false;
+                match limit {
+                    "max" => "@setcam_origindistmax:8=n".to_owned(),
+                    // the origin limit alone holds the camera: the
+                    // avatar's is left out unless its two ends are equal
+                    "both" => "@setcam_avdistmax:5=n,setcam_origindistmax:8=n".to_owned(),
+                    // the avatar's limits made equal hold it alone
+                    "locked" => "@setcam_avdistmin:5=n,setcam_avdistmax:5=n,setcam_origindistmax:8=n".to_owned(),
+                    _ => "@setcam_origindistmin:5=n".to_owned(),
+                }
+            } else if matches!(scenario, "offset-zoom" | "no-mouselook" | "avatar-zoom") {
+                // the avatar's own view, with nothing over it
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                match scenario {
+                    // 1.5 times a 6.08 m offset: 9.12 m behind the avatar
+                    "offset-zoom" => "@setcam_eyeoffset:-6/0/1=n,setcam_eyeoffsetscale:1.5=n".to_owned(),
+                    "no-mouselook" => "@camdistmin:1=n".to_owned(),
+                    _ => "@camdistmax:5=n".to_owned(),
+                }
+            } else if let Some(run) = scenario.strip_prefix("run-") {
+                self.panels.settings = false;
+                match run {
+                    "temprun" => "@temprun=n".to_owned(),
+                    "alwaysrun" => "@alwaysrun=n".to_owned(),
+                    "both" => "@temprun=n,alwaysrun=n".to_owned(),
+                    _ => "@clear".to_owned(),
+                }
             } else if scenario == "rename" {
                 self.settings.rlva.shared_wear = false;
                 self.settings.rlva.auto_rename = true;
@@ -311,6 +369,9 @@ impl App {
                     objects: vec![crate::demo::hud::object(31, false)],
                 });
                 "@remattach:center 2=n".to_owned()
+            } else if scenario == "ground-wear" {
+                self.panels.settings = false;
+                "@detach=n".to_owned()
             } else if scenario == "communication" || scenario == "temporary" {
                 self.panels.settings = false;
                 self.panels.inventory = false;
@@ -461,10 +522,12 @@ impl App {
                     "@setoverlay=n,setoverlay_texture:{}=force,setoverlay_alpha:0.7=force,setoverlay_touch=n",
                     crate::demo::TEX_HOLES
                 )
-            } else if matches!(scenario, "textures" | "silhouette" | "self" | "head") {
+            } else if matches!(scenario, "textures" | "textures-grey" | "silhouette" | "self" | "head") {
                 self.panels.settings = false;
                 match scenario {
                     "textures" => format!("@setcam_textures:{}=n", crate::demo::TEX_GRADIENT),
+                    // Empty @setcam_textures is IMG_DEFAULT, the local flat grey.
+                    "textures-grey" => "@setcam_textures=n".to_owned(),
                     "silhouette" => "@camavdist:0=n".to_owned(),
                     "self" => "@showself=n".to_owned(),
                     _ => "@showselfhead=n".to_owned(),
@@ -481,6 +544,88 @@ impl App {
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
             );
+        }
+        if let Some(limit) = mode.strip_suffix("-released").unwrap_or(&mode).strip_prefix("camera-zoom-") {
+            // five wheel clicks past the distance limit, then one back
+            let out = if limit == "min" { -1.0 } else { 1.0 };
+            let clicks = match self.frame_count {
+                n @ 740..=788 if n % 12 == 8 => out,
+                810 => -out,
+                _ => 0.0,
+            };
+            if clicks != 0.0 {
+                self.camera
+                    .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
+            }
+            if matches!(self.frame_count, 730 | 800 | 840) {
+                let (head, origin) = self.camera.rlva_distances();
+                log::info!(
+                    "RLVa demo: {mode}, frame {}, camera to its origin {origin:.3} m, to the head {head:.3} m, to focus {:.3} m",
+                    self.frame_count,
+                    self.camera.position.distance(self.camera.target),
+                );
+            }
+        }
+        if mode == "offset-zoom" {
+            // four wheel clicks out, then four back in, through the window's
+            // own wheel path (#3372)
+            match self.frame_count {
+                n @ 740..=776 if n % 12 == 8 => self.camera_wheel(1.0),
+                n @ 800..=836 if n % 12 == 8 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if mode == "no-mouselook" {
+            // the M key, then the wheel all the way in (#3357)
+            match self.frame_count {
+                740 => self.toggle_mouselook(),
+                n @ 752..=860 if n % 6 == 2 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if mode == "avatar-zoom" {
+            // four wheel clicks out, two of them past the limit, then one
+            // back in (#3356)
+            match self.frame_count {
+                n @ 740..=776 if n % 12 == 8 => self.camera_wheel(1.0),
+                800 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if matches!(mode.as_str(), "offset-zoom" | "no-mouselook" | "avatar-zoom") && matches!(self.frame_count, 730 | 741 | 790 | 880) {
+            log::info!(
+                "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to the head {:.3} m, mouselook={}, cursor held={}",
+                self.frame_count,
+                self.camera.position.distance(self.camera.target),
+                self.camera.rlva_distances().0,
+                self.camera.mouselook(),
+                self.cursor_hold.held()
+            );
+        }
+        if mode.starts_with("run-") {
+            // A double tap through the real input path, held until frame 750;
+            // `run-autopilot` runs to a point and @temprun comes and goes;
+            // `run-autopilot-always` has Always run on and @alwaysrun comes.
+            let autopilot = mode.starts_with("run-autopilot");
+            let always = mode == "run-autopilot-always";
+            match self.frame_count {
+                715 if always => self.set_always_run(true),
+                720 if autopilot => self.walk_to(self.world.agent.position + Vec3::X * 25.0, true),
+                730 if always => self.rlva_demo_message("@alwaysrun=n".to_owned()),
+                730 if autopilot => self.rlva_demo_message("@temprun=n".to_owned()),
+                745 if autopilot && !always => self.rlva_demo_message("@temprun=y".to_owned()),
+                720 => self.walk_tap(0, true),
+                722 if !autopilot => {
+                    // over NUDGE_TIME is no double tap: a slow frame, not a refusal
+                    let gap = self.last_tap.map_or(0.0, |(_, at)| at.elapsed().as_secs_f32());
+                    log::info!("RLVa demo: {mode} tap gap {gap:.3} s");
+                    self.walk_tap(0, true);
+                }
+                721 | 750 if !autopilot => self.walk_tap(0, false),
+                730 if mode == "run-late" => self.rlva_demo_message("@temprun=n".to_owned()),
+                740 | 749 => log::info!("RLVa demo: {mode} temp_run={}, running={}", self.temp_run.is_some(), self.running()),
+                _ => {}
+            }
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());
@@ -618,6 +763,37 @@ impl App {
             log::info!(
                 "RLVa communication demo: new_session_blocked={new_session_blocked}, local_placeholders={blocked}, existing_session_allowed={}",
                 self.world.rlva_can_start_im(from)
+            );
+        }
+        // An object worn from the ground: it attaches with an item the
+        // inventory has not heard of, and keeps its own object id.
+        let ground_item = Uuid::from_u128(0x726c7667);
+        if mode == "ground-wear" && self.frame_count == 760 {
+            let mut object = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+                item_id: ground_item,
+                owner_id: self.world.agent_id,
+                point: 3,
+                add: true,
+                flags: 0,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            });
+            object.full_id = Uuid::from_u128(0x726c7668);
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle: self.world.main_region.unwrap_or_default(),
+                objects: vec![object],
+            });
+        }
+        if mode == "ground-wear" && self.frame_count == 860 {
+            log::info!(
+                "RLVa ground wear demo: detach={}, in_inventory={}, worn={}, rejected={}",
+                self.world.rlva.has("detach"),
+                self.world.inventory.items.contains_key(&ground_item),
+                self.world.worn_attachment(&ground_item).is_some(),
+                self.world.rlva.watchdog.rejected.contains(&ground_item),
             );
         }
         if mode == "temporary" && self.frame_count == 740 {
@@ -863,19 +1039,18 @@ impl App {
                 continue;
             }
             match c.behaviour.as_str() {
-                "setcam_mode" => match c.option.as_str() {
-                    "mouselook"
-                        if self.world.rlva.camera_value("setcam_mouselook").is_none()
-                            && self.world.rlva.camera_limit("setcam_avdistmin", 0.0, true) <= 0.0 =>
-                    {
-                        self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true)
+                "setcam_mode" => {
+                    self.camera.read_rlva(&self.world.rlva);
+                    match c.option.as_str() {
+                        // (refused by the camera where RLVa forbids mouselook)
+                        "mouselook" => self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true),
+                        "thirdperson" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
+                        "reset" | "" => self
+                            .camera
+                            .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
+                        _ => {}
                     }
-                    "thirdperson" | "thirdview" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
-                    "reset" | "" => self
-                        .camera
-                        .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
-                    _ => {}
-                },
+                }
                 "setcam_focus" => {
                     let Some(request) = FocusRequest::parse(&c.option) else {
                         continue;

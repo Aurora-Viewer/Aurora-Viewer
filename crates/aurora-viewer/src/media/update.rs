@@ -637,6 +637,11 @@ impl MediaManager {
                 if !f.window_focused && p > Priority::Low {
                     p = Priority::Low;
                 }
+                // gaming mode: loaded but not drawn, the sound going on
+                // (app/gaming_mode.rs; not in the Legacy Viewer)
+                if f.gaming_mode && p > Priority::Hidden {
+                    p = Priority::Hidden;
+                }
             }
             m.priority = p;
         }
@@ -647,6 +652,7 @@ impl MediaManager {
     fn drive_plugins(&mut self, f: &MediaFrame, now: Instant) -> Vec<(Uuid, u8, String)> {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
+        let mut links = Vec::new();
         let paths = self.paths.clone();
         let browser = browser_settings(f.cache_dir, f.language, f.settings);
         for m in &mut self.impls {
@@ -735,6 +741,9 @@ impl MediaManager {
             p.idle();
             let mut close = false;
             for ev in p.take_events() {
+                if let Some(url) = ev.clicked_url() {
+                    links.push(url.to_owned());
+                }
                 let complete = matches!(ev, MediaEvent::NavigateComplete { .. });
                 match ev {
                     MediaEvent::StatusChanged(s) => m.status = s,
@@ -802,6 +811,7 @@ impl MediaManager {
             }
         }
         self.messages.extend(messages);
+        self.links.extend(links);
         navs
     }
 
@@ -1156,6 +1166,24 @@ mod tests {
     }
 
     #[test]
+    fn custom_scheme_links_in_media_act_only_on_a_click() {
+        let link = |nav_type: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/chat/824619/hello".into(),
+            nav_type: nav_type.into(),
+        };
+        assert_eq!(link("clicked").clicked_url(), Some("secondlife:///app/chat/824619/hello"));
+        assert_eq!(link("navigated").clicked_url(), None);
+        assert_eq!(
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: String::new(),
+                nav_type: "clicked".into()
+            }),
+            None
+        );
+        assert_eq!(MediaEvent::CloseRequest.clicked_url(), None);
+    }
+
+    #[test]
     fn minimized_mute_restores_media_source_volume_and_rolloff() {
         for key in [
             MediaKey::Parcel,
@@ -1214,6 +1242,7 @@ mod tests {
                 channel_volume: 1.0,
                 agent_speed: 0.0,
                 window_focused: true,
+                gaming_mode: false,
                 net: None,
                 cache_dir: std::path::Path::new(""),
                 language: "en",

@@ -254,8 +254,10 @@ impl Timeline {
 /// The GPU effects and quality switches on, as the report's fixed words
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
 /// from one that is not. Conditions follow the renderer: the contact shadows
-/// need the shadows, the indirect light needs the GTAO.
-pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String {
+/// need the shadows, the indirect light needs the GTAO. `drawn` is the shadow
+/// quality and the ambient occlusion the world is drawn with (the photo
+/// window's over Preferences', `App::photo_shadow_quality`).
+pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let mut word = |on: bool, text: std::fmt::Arguments| {
@@ -266,12 +268,13 @@ pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String 
             let _ = out.write_fmt(text);
         }
     };
-    let shadows = settings.shadow_quality > 0;
-    let ao = settings.ssao > 0;
-    word(shadows, format_args!("shadows{}", settings.shadow_quality));
+    let (shadow_quality, ssao) = drawn;
+    let shadows = shadow_quality > 0;
+    let ao = ssao > 0;
+    word(shadows, format_args!("shadows{shadow_quality}"));
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
-    word(ao && settings.ao_method == 0, format_args!("ao-legacy{}", settings.ssao));
+    word(ao && settings.ao_method == 0, format_args!("ao-legacy{ssao}"));
     word(ao && settings.ao_method == 1, format_args!("ao-gtao{}", settings.gtao_quality));
     word(settings.ssr, format_args!("ssr"));
     match settings.antialiasing {
@@ -481,7 +484,8 @@ impl App {
             regions: self.world.regions.len(),
             ..Default::default()
         };
-        state.effects = effects(&self.settings, renderer.vr_engaged());
+        let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
+        state.effects = effects(&self.settings, drawn, renderer.vr_engaged());
         live.apply(&mut state);
         state.window_state = if window.is_minimized().unwrap_or(false) {
             "minimized"
@@ -600,7 +604,7 @@ mod tests {
             screen_indirect_light: true,
             ..Default::default()
         };
-        let list = effects(&settings, true);
+        let list = effects(&settings, (settings.shadow_quality, settings.ssao), true);
         for word in [
             "shadows3",
             "contact-shadows",
@@ -614,10 +618,13 @@ mod tests {
         ] {
             assert!(list.split(',').any(|w| w.starts_with(word)), "{word} missing in {list}");
         }
+        // the photo window's shadows off: the report says what is drawn
+        let list = effects(&settings, (0, settings.ssao), false);
+        assert!(!list.split(',').any(|w| w.starts_with("shadows")), "{list}");
         // the contact shadows and the indirect light need what they ride on
         settings.shadow_quality = 0;
         settings.ssao = 0;
-        let list = effects(&settings, false);
+        let list = effects(&settings, (settings.shadow_quality, settings.ssao), false);
         assert!(
             !list.contains("contact-shadows") && !list.contains("indirect-light") && !list.contains("shadows"),
             "{list}"
@@ -642,7 +649,7 @@ mod tests {
             antialiasing: 3,
             ..Default::default()
         };
-        let mut list = effects(&settings, true);
+        let mut list = effects(&settings, (settings.shadow_quality, settings.ssao), true);
         add_photo(&mut list);
         assert!(crate::crash::summary_state_value(&list).is_some(), "{list}");
         for element in aurora_render::GpuElement::ALL {

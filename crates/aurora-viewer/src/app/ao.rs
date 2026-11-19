@@ -300,7 +300,7 @@ impl App {
             .index_of_uuid(&self.world.agent_id)
             .and_then(|i| self.world.objects.get(i))
             .is_some_and(|o| o.parent_id != 0);
-        let water = self.world.main_water_height();
+        let water = self.movement_water.unwrap_or_else(|| self.world.main_water_height());
         let mut swim_input = self.input;
         swim_input.run |= self.always_run;
         if self.demo

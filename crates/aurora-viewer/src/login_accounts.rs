@@ -3,6 +3,8 @@
 //! hashes remain in the OS credential store. Merge changes under an OS lock.
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LastPlace {
@@ -84,9 +86,17 @@ fn read(path: &Path) -> std::io::Result<(Vec<Account>, bool)> {
     }
 }
 
+/// The catalogue as the disk has it, with the changes still waiting for
+/// a write.
 pub fn load() -> Vec<Account> {
-    match read(&crate::settings::config_dir().join("login_accounts.json")) {
-        Ok((accounts, _)) => accounts,
+    let catalogue = catalogue();
+    // the login screen's changes still on their way reach the disk first
+    crate::saves::wait_for(&catalogue.path, crate::saves::BEFORE_READ);
+    match read(&catalogue.path) {
+        Ok((mut accounts, _)) => {
+            catalogue.owed.lock().iter().for_each(|c| c.apply(&mut accounts));
+            accounts
+        }
         Err(error) => {
             log::warn!("account catalogue unreadable: {error}");
             Vec::new()
@@ -94,44 +104,257 @@ pub fn load() -> Vec<Account> {
     }
 }
 
-fn change_at(path: &Path, update: impl FnOnce(&mut Vec<Account>)) -> std::io::Result<Vec<Account>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path.with_extension("lock"))?;
-    lock.lock()?;
-    let (mut accounts, repaired) = read(path)?;
+/// Why a change of the catalogue is not on the disk.
+#[derive(Debug)]
+enum Failure {
+    /// The catalogue cannot be rewritten: unreadable, or holding accounts
+    /// of a newer build. The change is dropped, as it always was.
+    Refused(std::io::Error),
+    /// The write was refused (the file held by another program, a folder
+    /// that refuses writes, a full disk): `accounts` is the list the change
+    /// makes, to be written again.
+    Kept { accounts: Vec<Account>, error: std::io::Error },
+}
+
+fn change_at(path: &Path, update: impl FnOnce(&mut Vec<Account>)) -> Result<Vec<Account>, Failure> {
+    // the lock, held to the write; when it cannot be taken the catalogue is
+    // still read, for the list the change makes
+    let lock = (|| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))?;
+        lock.lock()?;
+        Ok::<_, std::io::Error>(lock)
+    })();
+    let (mut accounts, repaired) = read(path).map_err(Failure::Refused)?;
     if repaired {
         // Rewriting would drop what a newer build saved there (as an
         // unreadable catalogue always was): shown, never overwritten.
-        return Err(std::io::Error::other(
+        return Err(Failure::Refused(std::io::Error::other(
             "account catalogue holds entries from a newer Aurora, not rewritten",
-        ));
+        )));
     }
     update(&mut accounts);
-    let bytes = serde_json::to_vec_pretty(&accounts).map_err(std::io::Error::other)?;
-    crate::atomic_file::write(path, &bytes)?;
+    let written = match &lock {
+        Ok(_) => serde_json::to_vec_pretty(&accounts)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| crate::atomic_file::write(path, &bytes)),
+        Err(error) => Err(std::io::Error::new(error.kind(), error.to_string())),
+    };
+    drop(lock);
+    match written {
+        Ok(()) => Ok(accounts),
+        Err(error) => Err(Failure::Kept { accounts, error }),
+    }
+}
+
+/// A change of the catalogue, kept to be made again on the latest file
+/// while its write is refused.
+#[derive(Clone, Debug)]
+enum Change {
+    Upsert {
+        previous: (String, String),
+        account: Account,
+    },
+    Remove((String, String)),
+    Forget {
+        key: (String, String),
+        mfa: bool,
+    },
+    Move {
+        from: (String, String),
+        target: (String, String),
+        after: bool,
+    },
+    Place {
+        account: Account,
+        place: LastPlace,
+    },
+}
+
+impl Change {
+    fn apply(&self, accounts: &mut Vec<Account>) {
+        match self {
+            Change::Upsert { previous, account } => upsert(accounts, previous, account.clone()),
+            Change::Remove(key) => accounts.retain(|old| old.key() != *key),
+            Change::Forget { key, mfa } => {
+                if let Some(current) = accounts.iter_mut().find(|current| current.key() == *key) {
+                    if *mfa {
+                        current.remember_mfa = false;
+                    } else {
+                        current.remember_password = false;
+                    }
+                }
+            }
+            Change::Move { from, target, after } => {
+                move_in(accounts, from, target, *after);
+            }
+            Change::Place { account, place } => {
+                if let Some(current) = accounts
+                    .iter_mut()
+                    .find(|current| current.key() == account.key() && current.agent == account.agent)
+                {
+                    current.last_place = Some(place.clone());
+                }
+            }
+        }
+    }
+}
+
+/// The catalogue file and the changes its writes could not save yet. Each
+/// change is made on the latest file after the ones still owed, in their
+/// order, until a write takes them all: a refused edit is neither dropped
+/// nor undone by the copy on the disk, and another Aurora's changes made
+/// meanwhile are kept. The Legacy Viewer keeps its saved logins in memory
+/// and writes them once (LLSecAPIBasicHandler::_writeProtectedData,
+/// indra/newview/llsechandler_basic.cpp); here they are also tried again
+/// (`save_retry`) and once more at exit (`save_before_exit`).
+struct Catalogue {
+    path: std::path::PathBuf,
+    owed: parking_lot::Mutex<Vec<Change>>,
+}
+
+impl Catalogue {
+    fn new(path: std::path::PathBuf) -> Self {
+        Catalogue {
+            path,
+            owed: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The list `change` makes, saved now or kept to be saved: true when it
+    /// still waits for a write. An error when the catalogue cannot be
+    /// rewritten; the changes owed are dropped then.
+    fn change(&self, change: Change) -> Result<(Vec<Account>, bool), std::io::Error> {
+        let mut owed = self.owed.lock();
+        owed.push(change);
+        match change_at(&self.path, |accounts| owed.iter().for_each(|c| c.apply(accounts))) {
+            Ok(accounts) => {
+                owed.clear();
+                Ok((accounts, false))
+            }
+            Err(Failure::Kept { accounts, error }) => {
+                log::warn!("account catalogue not saved ({error}); kept, tried again later");
+                Ok((accounts, true))
+            }
+            Err(Failure::Refused(error)) => {
+                owed.clear();
+                Err(error)
+            }
+        }
+    }
+
+    /// Writes what is owed (the retry, the exit): an error while it stays
+    /// owed.
+    fn flush(&self) -> std::io::Result<()> {
+        let mut owed = self.owed.lock();
+        if owed.is_empty() {
+            return Ok(());
+        }
+        match change_at(&self.path, |accounts| owed.iter().for_each(|c| c.apply(accounts))) {
+            Ok(_) => {
+                owed.clear();
+                Ok(())
+            }
+            Err(Failure::Kept { error, .. }) => Err(error),
+            Err(Failure::Refused(error)) => {
+                log::warn!("account catalogue changes dropped: {error}");
+                owed.clear();
+                Ok(())
+            }
+        }
+    }
+}
+
+/// The user's catalogue.
+fn catalogue() -> &'static Catalogue {
+    static CATALOGUE: std::sync::OnceLock<Catalogue> = std::sync::OnceLock::new();
+    CATALOGUE.get_or_init(|| Catalogue::new(crate::settings::config_dir().join("login_accounts.json")))
+}
+
+/// The thread that tries again what the user's catalogue owes.
+static RETRY: crate::save_retry::OnDemand = crate::save_retry::OnDemand::new("aurora-login-accounts", "account catalogue");
+
+/// A change of the user's catalogue: the list it makes, saved now or later.
+fn change(change: Change) -> Result<Vec<Account>, std::io::Error> {
+    let (accounts, owed) = catalogue().change(change)?;
+    if owed {
+        RETRY.ask(|| catalogue().flush());
+    }
     Ok(accounts)
 }
 
-pub fn save(account: Account) -> Vec<Account> {
-    replace(&account.key(), account)
+/// The viewer closing: what the catalogue still owes is tried once more,
+/// and waited for.
+pub fn save_before_exit() {
+    RETRY.finish();
+}
+
+/// The catalogue's file: the key of its saves' queue (saves.rs).
+pub(crate) fn catalogue_path() -> std::path::PathBuf {
+    catalogue().path.clone()
+}
+
+/// The changes asked from the login screen: each is made at once on the
+/// list it shows, and in the catalogue by a save thread (saves.rs), in
+/// their order: the frame no longer waits for the disk. A refused write
+/// keeps the change owed ([`Catalogue::change`]). `ISSUED` numbers them,
+/// and `ANSWER` keeps what the last one left in the catalogue (with what
+/// another viewer changed meanwhile), for [`answer`].
+static ISSUED: AtomicU64 = AtomicU64::new(0);
+static ANSWER: Mutex<Option<(u64, Answer)>> = Mutex::new(None);
+
+/// What the catalogue said of the login screen's last change.
+#[derive(Debug)]
+pub enum Answer {
+    /// The catalogue as it is now, the changes still owed included.
+    Saved(Vec<Account>),
+    /// Dropped, the catalogue cannot be rewritten (logged); `reorder` when
+    /// it was a move of the order.
+    Failed { reorder: bool },
+}
+
+/// `edit` made on `accounts` now, and in the catalogue by its save thread.
+fn queue(what: &'static str, accounts: &mut Vec<Account>, edit: Change) {
+    edit.apply(accounts);
+    let reorder = matches!(edit, Change::Move { .. });
+    let number = ISSUED.fetch_add(1, Ordering::Relaxed) + 1;
+    crate::saves::change(catalogue_path(), move || {
+        let answer = match change(edit) {
+            Ok(accounts) => Answer::Saved(accounts),
+            Err(error) => {
+                log::warn!("{what}: {error}");
+                Answer::Failed { reorder }
+            }
+        };
+        *ANSWER.lock().unwrap_or_else(PoisonError::into_inner) = Some((number, answer));
+    });
+}
+
+/// The catalogue's answer to the last change asked, once it is made; none
+/// while a later change is still on its way (its own answer follows).
+pub fn answer() -> Option<Answer> {
+    let mut answer = ANSWER.lock().unwrap_or_else(PoisonError::into_inner);
+    match answer.take() {
+        Some((number, answer)) if number == ISSUED.load(Ordering::Relaxed) => Some(answer),
+        _ => None,
+    }
+}
+
+pub fn save(accounts: &mut Vec<Account>, account: Account) {
+    replace(accounts, &account.key(), account);
 }
 
 /// A card can switch grids without deleting credentials for its previous grid.
-pub fn replace(previous: &(String, String), account: Account) -> Vec<Account> {
-    let result = change_at(&crate::settings::config_dir().join("login_accounts.json"), |accounts| {
-        upsert(accounts, previous, account);
-    });
-    result.unwrap_or_else(|error| {
-        log::warn!("account catalogue not saved: {error}");
-        load()
-    })
+pub fn replace(accounts: &mut Vec<Account>, previous: &(String, String), account: Account) {
+    let previous = previous.clone();
+    queue("account catalogue not saved", accounts, Change::Upsert { previous, account });
 }
 
 fn upsert(accounts: &mut Vec<Account>, previous: &(String, String), mut account: Account) {
@@ -148,13 +371,9 @@ fn upsert(accounts: &mut Vec<Account>, previous: &(String, String), mut account:
 
 /// A scene capture changes only this account's last-place metadata.
 pub fn remember_place(account: &Account, place: LastPlace) -> bool {
-    change_at(&crate::settings::config_dir().join("login_accounts.json"), |accounts| {
-        if let Some(current) = accounts
-            .iter_mut()
-            .find(|current| current.key() == account.key() && current.agent == account.agent)
-        {
-            current.last_place = Some(place.clone());
-        }
+    change(Change::Place {
+        account: account.clone(),
+        place: place.clone(),
     })
     .map(|accounts| {
         accounts
@@ -167,21 +386,15 @@ pub fn remember_place(account: &Account, place: LastPlace) -> bool {
     })
 }
 
-pub fn remove(account: &Account) -> Vec<Account> {
-    change_at(&crate::settings::config_dir().join("login_accounts.json"), |accounts| {
-        accounts.retain(|old| old.key() != account.key())
-    })
-    .unwrap_or_else(|error| {
-        log::warn!("account not removed: {error}");
-        load()
-    })
+pub fn remove(accounts: &mut Vec<Account>, account: &Account) {
+    queue("account not removed", accounts, Change::Remove(account.key()));
 }
 
-/// Move identities in the latest catalogue without replacing any profile data.
-pub fn move_relative(from: &(String, String), target: &(String, String), after: bool) -> std::io::Result<Vec<Account>> {
-    change_at(&crate::settings::config_dir().join("login_accounts.json"), |accounts| {
-        move_in(accounts, from, target, after);
-    })
+/// Move identities in the latest catalogue without replacing any profile
+/// data. A refused write keeps the new order and tries again.
+pub fn move_relative(accounts: &mut Vec<Account>, from: &(String, String), target: &(String, String), after: bool) {
+    let (from, target) = (from.clone(), target.clone());
+    queue("account order not saved", accounts, Change::Move { from, target, after });
 }
 
 pub fn move_in(accounts: &mut Vec<Account>, from: &(String, String), target: &(String, String), after: bool) -> bool {
@@ -204,20 +417,12 @@ pub fn move_in(accounts: &mut Vec<Account>, from: &(String, String), target: &(S
 }
 
 /// Update only the chosen preference in the latest catalogue, under its lock.
-pub fn forget_preference(account: &Account, mfa: bool) -> Vec<Account> {
-    change_at(&crate::settings::config_dir().join("login_accounts.json"), |accounts| {
-        if let Some(current) = accounts.iter_mut().find(|current| current.key() == account.key()) {
-            if mfa {
-                current.remember_mfa = false;
-            } else {
-                current.remember_password = false;
-            }
-        }
-    })
-    .unwrap_or_else(|error| {
-        log::warn!("account preference not forgotten: {error}");
-        load()
-    })
+pub fn forget_preference(accounts: &mut Vec<Account>, account: &Account, mfa: bool) {
+    queue(
+        "account preference not forgotten",
+        accounts,
+        Change::Forget { key: account.key(), mfa },
+    );
 }
 
 #[cfg(test)]
@@ -356,6 +561,51 @@ mod tests {
         upsert(&mut accounts, &alpha.key(), login);
         assert!(accounts[0].last_place.is_none());
     }
+    fn synthetic(name: &str) -> Account {
+        let mut account = Account::from_settings(&crate::settings::Settings::default(), true, None);
+        account.username = name.into();
+        account
+    }
+
+    /// A refused write (here a folder stands where the lock file goes: the
+    /// catalogue reads, the write cannot be made) keeps the edit: the list
+    /// returned has it, a later edit adds to it, and the next write puts
+    /// both on the disk.
+    #[test]
+    fn a_refused_write_keeps_the_edit_until_a_write_takes_it() {
+        let root = std::env::temp_dir().join(format!("aurora-accounts-refused-{}", uuid::Uuid::new_v4()));
+        let path = root.join("accounts.json");
+        let alpha = synthetic("synthetic-alpha");
+        let beta = synthetic("synthetic-beta");
+        change_at(&path, |accounts| accounts.extend([alpha.clone(), beta.clone()])).unwrap();
+        let catalogue = Catalogue::new(path.clone());
+        std::fs::remove_file(path.with_extension("lock")).unwrap();
+        std::fs::create_dir(path.with_extension("lock")).unwrap();
+        let (accounts, owed) = catalogue
+            .change(Change::Forget {
+                key: alpha.key(),
+                mfa: false,
+            })
+            .unwrap();
+        assert!(owed, "the write was refused");
+        assert!(!accounts[0].remember_password, "the list shows the edit");
+        let (accounts, owed) = catalogue.change(Change::Remove(beta.key())).unwrap();
+        assert!(owed);
+        assert_eq!(accounts.len(), 1);
+        assert!(!accounts[0].remember_password, "the first edit is still there");
+        assert!(catalogue.flush().is_err(), "still refused");
+        assert_eq!(catalogue.owed.lock().len(), 2, "nothing dropped");
+        let (on_disk, _) = read(&path).unwrap();
+        assert_eq!(on_disk.len(), 2, "the disk still has the old list");
+        std::fs::remove_dir(path.with_extension("lock")).unwrap();
+        catalogue.flush().unwrap();
+        assert!(catalogue.owed.lock().is_empty());
+        let (saved, _) = read(&path).unwrap();
+        assert_eq!(saved.iter().map(Account::key).collect::<Vec<_>>(), vec![alpha.key()]);
+        assert!(!saved[0].remember_password);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn concurrent_catalogue_changes_keep_every_account() {
         let root = std::env::temp_dir().join(format!("aurora-accounts-{}", uuid::Uuid::new_v4()));

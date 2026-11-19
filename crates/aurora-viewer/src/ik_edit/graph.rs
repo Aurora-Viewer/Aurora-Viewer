@@ -1111,6 +1111,8 @@ impl Editor {
                         || ctx
                             .input(|i| i.pointer.interact_pos())
                             .is_some_and(|p| self.point_owns_pointer(ctx, &world.avatar_lib.rig, p));
+                    // a virtual bone's handle follows the pointer one to one
+                    self.gizmo.shift_fine = false;
                     let (o, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit, self.gizmo_sensitivity());
                     gizmo_owns |= o;
                     owns |= o;

@@ -42,6 +42,37 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
 /// Reflection probe flags (LLReflectionProbeParams).
 const PROBE_BOX: u8 = 0x01;
 const PROBE_DYNAMIC: u8 = 0x02;
+const PROBE_MIRROR: u8 = 0x04;
+const PROBE_UPDATE: u8 = PROBE_DYNAMIC | PROBE_MIRROR;
+
+fn probe_updates() -> [(&'static str, u8); 4] {
+    [
+        (aurora_i18n::tr!("build-ui-features-probe-static"), 0),
+        (aurora_i18n::tr!("build-ui-features-dynamic"), PROBE_DYNAMIC),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-environment"), PROBE_MIRROR),
+        (aurora_i18n::tr!("build-ui-features-probe-mirror-everything"), PROBE_UPDATE),
+    ]
+}
+
+/// LLPanelVolume::onCommitProbe: mirrors are boxes; keep unrelated flags.
+fn probe_update_flags(flags: u8, update: u8) -> u8 {
+    let flags = (flags & !PROBE_UPDATE) | (update & PROBE_UPDATE);
+    if flags & PROBE_MIRROR != 0 { flags | PROBE_BOX } else { flags }
+}
+
+#[cfg(test)]
+#[test]
+fn probe_modes_preserve_unknown_flags_and_keep_mirrors_boxed() {
+    for flags in 0..=u8::MAX {
+        for mode in [0, PROBE_DYNAMIC, PROBE_MIRROR, PROBE_UPDATE] {
+            let changed = probe_update_flags(flags, mode);
+            assert_eq!(changed & PROBE_UPDATE, mode);
+            assert_eq!(changed & !(PROBE_UPDATE | PROBE_BOX), flags & !(PROBE_UPDATE | PROBE_BOX));
+            assert_eq!(changed & PROBE_BOX != 0, flags & PROBE_BOX != 0 || mode & PROBE_MIRROR != 0);
+            assert_eq!(probe_update_flags(changed, mode), changed);
+        }
+    }
+}
 
 const W: f32 = 56.0;
 
@@ -72,8 +103,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let enabled = editable && single;
     let (extra, volume, material, click, flexible) = (o.extra.clone(), o.volume, o.prim_material, o.click_action, o.has_flexible_path());
     let mesh = volume.is_mesh();
-    let legacy_canvas =
-        super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
+    let probe_height = 110.0 * super::common::font_scale(ui);
+    let legacy_canvas = super::legacy::active(ui)
+        .then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 380.0 + probe_height)));
 
     ui.horizontal(|ui| {
         small(
@@ -289,7 +321,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         probe,
         open,
         legacy_canvas,
-        [0.0, 360.0, 275.0, 80.0],
+        [0.0, 360.0, 275.0, probe_height],
         |ui| {
             probe_section(ui, p, tool, world, idx, &extra, enabled && !mesh);
         },
@@ -507,21 +539,31 @@ fn probe_section(
                 tool.set_extra(world, idx, Extra::Probe(None));
             }
         }
-        if let Some(b) = combo(ui, "probe_shape", on.then_some(pr.flags & PROBE_BOX), &shape_items, 90.0, on) {
+        if let Some(b) = combo(
+            ui,
+            "probe_shape",
+            probe.map(|_| pr.flags & PROBE_BOX),
+            &shape_items,
+            90.0,
+            on && pr.flags & PROBE_MIRROR == 0,
+        ) {
             np.flags = (pr.flags & !PROBE_BOX) | b;
             send = true;
         }
     });
     ui.add_enabled_ui(on, |ui| {
-        if let Some(d) = check(
+        // Unlike LLPanelVolume, keep the mode visible even when graphics
+        // mirrors are disabled: editing an object's flags does not need them.
+        label(ui, p, aurora_i18n::tr!("build-ui-features-probe-update"));
+        if let Some(update) = combo(
             ui,
-            p,
-            on && pr.flags & PROBE_DYNAMIC != 0,
-            false,
-            aurora_i18n::tr!("build-ui-features-dynamic"),
+            "probe_update",
+            probe.map(|_| pr.flags & PROBE_UPDATE),
+            &probe_updates(),
+            ui.available_width(),
             on,
         ) {
-            np.flags = if d { np.flags | PROBE_DYNAMIC } else { np.flags & !PROBE_DYNAMIC };
+            np.flags = probe_update_flags(np.flags, update);
             send = true;
         }
         let mut e = Edit::default();
@@ -533,20 +575,27 @@ fn probe_section(
             };
             row(ui, p, name, 70.0, |ui| spin(ui, value, 0.05, 0.0..=max, 3, W, false))
         };
-        if super::legacy::active(ui) {
-            ui.columns(2, |columns| {
-                e = e.or(field(&mut columns[0], true));
-                e = e.or(field(&mut columns[1], false));
-            });
-        } else {
-            ui.vertical(|ui| {
-                e = e.or(field(ui, true));
-                e = e.or(field(ui, false));
-            });
-        }
+        ui.add_enabled_ui(np.flags & PROBE_MIRROR == 0, |ui| {
+            if super::legacy::active(ui) {
+                ui.columns(2, |columns| {
+                    e = e.or(field(&mut columns[0], true));
+                    e = e.or(field(&mut columns[1], false));
+                });
+            } else {
+                ui.vertical(|ui| {
+                    e = e.or(field(ui, true));
+                    e = e.or(field(ui, false));
+                });
+            }
+        });
         send |= e.commit;
     });
     if send && np != pr && on {
+        // LLPanelVolume::onCommitProbe turns a spherical probe into a box
+        // when Mirror is chosen. Its volume must agree with its probe flag.
+        if pr.flags & PROBE_BOX == 0 && np.flags & PROBE_BOX != 0 && np.flags & PROBE_MIRROR != 0 {
+            tool.set_shape(world, idx, crate::build::shapes::shapes()[0].raw().to_params());
+        }
         tool.set_extra(world, idx, Extra::Probe(Some(np)));
     }
 }

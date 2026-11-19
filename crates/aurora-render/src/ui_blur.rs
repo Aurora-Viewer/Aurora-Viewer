@@ -16,12 +16,15 @@ pub fn blurred_backdrop(ctx: &egui::Context, layer: egui::LayerId) {
     });
 }
 
+/// Where the blur ends: at the topmost modal's marker, so that a modal over
+/// another (the sign-up window's Terms page) blurs the one under it too.
+/// Every marker is taken out: the UI renderer knows no such callback.
 pub(crate) fn take_boundary(primitives: &mut Vec<egui::ClippedPrimitive>) -> Option<usize> {
-    let at = primitives
-        .iter()
-        .position(|p| matches!(&p.primitive, egui::epaint::Primitive::Callback(c) if c.callback.is::<Boundary>()))?;
-    primitives.remove(at);
-    Some(at)
+    let marker = |p: &egui::ClippedPrimitive| matches!(&p.primitive, egui::epaint::Primitive::Callback(c) if c.callback.is::<Boundary>());
+    let at = primitives.iter().rposition(marker)?;
+    let before = primitives[..at].iter().filter(|p| marker(p)).count();
+    primitives.retain(|p| !marker(p));
+    Some(at - before)
 }
 
 /// Step between two taps of the shader, in UI points.
@@ -306,6 +309,36 @@ mod tests {
         assert!(!colors(&primitives[..boundary]).contains(&egui::Color32::GREEN));
         assert!(colors(&primitives[boundary..]).contains(&egui::Color32::GREEN));
         assert!(!colors(&primitives[boundary..]).contains(&egui::Color32::RED));
+    }
+
+    #[test]
+    fn a_modal_over_another_blurs_it_and_no_marker_is_left() {
+        let ctx = egui::Context::default();
+        let under = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("under"));
+        let over = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("over"));
+        let square = |x: f32| egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(20.0, 20.0));
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            blurred_backdrop(&ctx, under);
+            ctx.layer_painter(under).rect_filled(square(20.0), 0.0, egui::Color32::GREEN);
+            blurred_backdrop(&ctx, over);
+            ctx.layer_painter(over).rect_filled(square(40.0), 0.0, egui::Color32::BLUE);
+        });
+        output.textures_delta.clear();
+        let mut primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        let boundary = take_boundary(&mut primitives).expect("the top marker");
+        let has = |jobs: &[egui::ClippedPrimitive], color| {
+            jobs.iter()
+                .any(|p| matches!(&p.primitive, egui::epaint::Primitive::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == color)))
+        };
+        assert!(has(&primitives[..boundary], egui::Color32::GREEN));
+        assert!(has(&primitives[boundary..], egui::Color32::BLUE));
+        assert!(!has(&primitives[boundary..], egui::Color32::GREEN));
+        assert!(
+            !primitives
+                .iter()
+                .any(|p| matches!(p.primitive, egui::epaint::Primitive::Callback(_))),
+            "no marker reaches the UI renderer"
+        );
     }
 
     /// [x, y, width, height] to (left, top, right, bottom).

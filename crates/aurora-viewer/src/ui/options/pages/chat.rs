@@ -110,6 +110,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-chat-keep-focus-hint"),
                     &field!(chat_keep_focus),
                 );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-toggles"),
+                    tr!("ui-options-chat-enter-toggles-hint"),
+                    &field!(chat_enter_toggles),
+                );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-last-field"),
+                    tr!("ui-options-chat-enter-last-field-hint"),
+                    &field!(chat_enter_last_field),
+                );
                 // #980: FSChatbarGestureAutoCompleteEnable (on),
                 // FSChatbarNamePrediction (on, the human's choice; off in the Legacy
                 // Viewer), FSUseChatMentionAutoComplete
@@ -141,11 +151,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-mention-autocomplete-hint"),
                     &field!(chat_mention_autocomplete),
                 );
-                // AutohideChatBar (Chat › Typing), off (#1009)
-                cx.toggle(
-                    tr!("ui-options-autohide-chat-bar"),
-                    tr!("ui-options-autohide-chat-bar-hint"),
-                    &field!(autohide_chat_bar),
+                // AutohideChatBar (Chat › Typing), off (#1009), and
+                // Aurora's Conversations window only (#2696)
+                use crate::settings::ChatBar;
+                cx.combo(
+                    tr!("ui-options-chat-bar"),
+                    tr!("ui-options-chat-bar-hint"),
+                    &field!(chat_bar),
+                    &[
+                        (ChatBar::Always, tr!("ui-options-chat-bar-always")),
+                        (ChatBar::WhenTyping, tr!("ui-options-chat-bar-typing")),
+                        (ChatBar::ConversationsOnly, tr!("ui-options-chat-bar-window")),
+                    ],
                 );
                 cx.slider(
                     tr!("ui-options-chat-bubble-duration"),
@@ -189,11 +206,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
             cx.group(tr!("ui-options-conversations"), |cx| {
                 // FSShowTimestampsIM (on): private and group conversations
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_im));
-                cx.toggle(
+                if cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
                     tr!("ui-options-show-contacts-tab-hint"),
                     &field!(show_contacts_tab),
-                );
+                ) && cx.s.show_contacts_tab
+                {
+                    // a torn-off Contacts goes back into Conversations
+                    cx.r.show_contacts_tab_on = true;
+                }
                 // FSChatWindow: separate IM windows (0) or the tabbed one (1,
                 // the default)
                 cx.toggle(
@@ -235,6 +256,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-flash-unread"),
                     tr!("ui-options-flash-unread-hint"),
                     &field!(flash_unread_conversations),
+                );
+                // Aurora's button back to the latest messages (#558); the
+                // Legacy Viewer has none
+                cx.toggle(
+                    tr!("ui-options-chat-latest-button"),
+                    tr!("ui-options-chat-latest-button-hint"),
+                    &field!(chat_latest_button),
                 );
                 // "Flash chat toolbar button if a new IM arrives" (FSNotifyIMFlash)
                 cx.toggle(
@@ -1122,6 +1150,13 @@ fn history(cx: &mut Cx) {
             tr!("ui-options-chat-logs-show"),
             tr!("ui-options-chat-logs-show-help"),
             &field!(log_show_history),
+        );
+        // ChatServiceEnabled (LL viewer 26.5), beside the transcripts it
+        // completes; read at login
+        cx.toggle(
+            tr!("ui-options-chat-service-history"),
+            tr!("ui-options-chat-service-history-help"),
+            &field!(chat_service_history),
         );
         // FSIMChatHistoryFade, adapted (`conversation_options::faded`)
         cx.slider(

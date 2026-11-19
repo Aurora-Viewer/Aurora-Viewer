@@ -406,8 +406,9 @@ impl App {
                 } else {
                     library::Presentation::Vertical
                 };
-            self.panels.texture_library =
-                !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag") && !mode.starts_with("cascade");
+            self.panels.texture_library = !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag")
+                && !mode.starts_with("cascade")
+                && !mode.starts_with("panorama");
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.perf = false;
@@ -464,6 +465,9 @@ impl App {
                 self.panels.inventory = false;
                 ui::inventory::drag::demo::setup(ctx, &mut self.world.inventory, &mut self.inventory_ui);
             }
+            if mode.starts_with("panorama") {
+                crate::demo::texture_library::seed_panorama(&mut self.world.inventory, self.world.agent_id);
+            }
             if mode.starts_with("cascade") {
                 let kind = match mode.as_str() {
                     "cascade-notecard" => 7,
@@ -489,6 +493,7 @@ impl App {
             let items = crate::demo::texture_library::cascade_items(kind);
             self.apply_inventory_action(crate::ui::inventory::InvAction::Preview(
                 items[((self.frame_count - 620) / 20) as usize],
+                None,
             ));
         }
         if self.demo
@@ -514,6 +519,34 @@ impl App {
             }
             if self.frame_count >= 760 && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("multi-preview-closed") {
                 self.panels.texture_library = false;
+            }
+        }
+        // `panorama`: the Aurora 360° upload opens as a panorama; `-switch`:
+        // a plain 2:1 texture, its 360° switch turned on; `-full`: enlarged;
+        // `-nocopy`: a marked item the agent may not copy (Copy UUID and
+        // Save As stay off)
+        if self.demo
+            && self.library_demo_seeded
+            && let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+            && mode.starts_with("panorama")
+        {
+            let items = crate::demo::texture_library::panorama_items();
+            let item = match mode.as_str() {
+                "panorama-switch" => items[1],
+                "panorama-nocopy" => items[2],
+                _ => items[0],
+            };
+            if self.frame_count == 620 {
+                ui::widgets::place_floater(
+                    ctx,
+                    &library::preview_window_id(item),
+                    egui::pos2(20.0, 60.0),
+                    egui::vec2(720.0, 480.0),
+                );
+                self.texture_library.open_preview(ctx, &self.world, item);
+            }
+            if self.frame_count == 700 {
+                self.texture_library.demo_panorama(&mode);
             }
         }
         if self.demo && self.library_demo_seeded && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("preview-sizes") {
@@ -623,7 +656,7 @@ impl App {
                         let action = if item.asset_type == 3 {
                             ui::inventory::InvAction::AboutLandmark(id, item.asset_id)
                         } else {
-                            ui::inventory::InvAction::Preview(id)
+                            ui::inventory::InvAction::Preview(id, None)
                         };
                         self.apply_inventory_action(action);
                     }
@@ -634,7 +667,9 @@ impl App {
                 }
                 library::Action::SaveMaterial { item, material, name } => self.resource_material_save(item, material, name),
                 library::Action::RefreshTexture(asset) => {
-                    self.ui_images.remove(&asset);
+                    if let Some(image) = self.ui_images.remove(&asset) {
+                        self.ui_image_cache.forget(&asset, image.id());
+                    }
                     self.scene.textures.refresh(&asset);
                     self.texture_library.refresh_texture(&self.world, asset);
                 }
@@ -946,6 +981,11 @@ impl App {
             });
         }
         let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_refused(&self.world, idx, item));
+        // dad3dApplyToObject asks willObjectAcceptInventory before anything
+        // else (indra/newview/lltooldraganddrop.cpp): the seat the agent is
+        // held on under @unsit or @sittp takes no drop, not even a texture
+        // its faces could show (ACCEPT_NO_LOCKED).
+        let seat_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| self.world.rlva_restrained_seat(idx));
         // dad3dApplyToObject: a texture without copy and transfer has nowhere
         // to go when every face it covers carries a material
         let pbr_refused = !ctrl
@@ -960,6 +1000,8 @@ impl App {
             });
         if worn_refused {
             reason = Some(contents_drop::worn_refusal_text(item, self.world.agent_id));
+        } else if seat_refused {
+            reason = Some(aurora_i18n::tr!("texture-library-locked"));
         } else if pbr_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed

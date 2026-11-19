@@ -366,6 +366,20 @@ pub(super) fn phase2() -> Vec<Case> {
                 "its prim is gone",
             ),
         ),
+        // RlvHandler::setSitSource (rlvhandler.cpp): a sit asked under
+        // @standtp keeps where the avatar stood. The rule is released before
+        // the avatar stands, so that the run never teleports it back.
+        Step::Say(Who::Controller, "@standtp=n"),
+        Step::Expect(
+            "@standtp is held",
+            test(|w, c| {
+                if !w.rlva.has("standtp") {
+                    return Err("not held".to_owned());
+                }
+                c.stood = w.main_region.map(|handle| (handle, w.agent.position));
+                Ok(())
+            }),
+        ),
         Step::Say(Who::Controller, "@sit:{seat}=force"),
         Step::Expect(
             "the avatar sits on its prim",
@@ -378,6 +392,19 @@ pub(super) fn phase2() -> Vec<Case> {
                     Err("not seated".to_owned())
                 }
             }),
+        ),
+        Step::Now(
+            "@standtp kept the place the avatar stood (#2738)",
+            test(|w, c| match (w.rlva.stand_origin, c.stood) {
+                (Some((region, at)), Some((stood_region, stood))) if region == stood_region && at.distance(stood) <= 1.0 => Ok(()),
+                (Some(_), _) => Err("another place is kept".to_owned()),
+                (None, _) => Err("no place is kept".to_owned()),
+            }),
+        ),
+        Step::Say(Who::Controller, "@standtp=y"),
+        Step::Expect(
+            "no return is owed once @standtp is released",
+            holds(|w, c| w.rlva.stand_origin.is_none() || c.foreign_rules(w), "a return is still owed"),
         ),
         Step::Say(Who::Controller, "@unsit=n"),
         Step::Expect("the seat is locked", holds(seat(|w, i| w.rlva_locked_seat(i)), "not locked")),
@@ -431,21 +458,34 @@ pub(super) fn phase2() -> Vec<Case> {
                 item_id: script_item(c),
             }),
         ),
-        Step::Refused(
-            "renaming in the seat's contents is refused",
-            build(false, |_, c, handle, local_ids| BuildCmd::UpdateTaskInventory {
-                handle,
-                local_id: local_ids[0],
-                item: Box::new(aurora_net::build::TaskItem {
-                    item_id: script_item(c),
-                    parent_id: c.prims.first().map_or(Uuid::nil(), |p| p.id),
-                    owner_id: c.agent,
-                    asset_type: 10,
-                    inv_type: 10,
-                    name: "renamed".to_owned(),
-                    ..Default::default()
-                }),
-            }),
+        // LLTaskInvFVBridge::isItemRenameable (llpanelobjectinventory.cpp)
+        // keeps the names in a locked attachment only: an item of the seat
+        // is renamed. Asked of the rule, never sent.
+        Step::Now(
+            "renaming in the seat's contents stays allowed, as in the Legacy Viewer",
+            holds(
+                |w, c| {
+                    c.prims.first().is_some_and(|p| {
+                        can(
+                            w,
+                            &NetCommand::Build(BuildCmd::UpdateTaskInventory {
+                                handle: p.handle,
+                                local_id: p.local_id,
+                                item: Box::new(aurora_net::build::TaskItem {
+                                    item_id: script_item(c),
+                                    parent_id: p.id,
+                                    owner_id: c.agent,
+                                    asset_type: 10,
+                                    inv_type: 10,
+                                    name: "renamed".to_owned(),
+                                    ..Default::default()
+                                }),
+                            }),
+                        )
+                    })
+                },
+                "refused",
+            ),
         ),
         // handle_selected_script_action (llviewermenu.cpp) only keeps the
         // scripts of a locked attachment: those of the seat can be reset and

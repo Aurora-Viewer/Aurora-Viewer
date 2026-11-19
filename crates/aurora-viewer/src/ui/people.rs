@@ -34,6 +34,7 @@ mod recent;
 mod rows;
 mod sets;
 mod sheet;
+pub(crate) mod type_ahead;
 pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 /// The tabs (`Panels::people_tab`), in Aurora's order: Near you, Friends,
@@ -202,7 +203,7 @@ fn person_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut Peopl
         data,
         st,
         id,
-        NameScope::World,
+        NameScope::Roster,
         false,
         !c.contact_sheet_on_click,
         c.actions,
@@ -465,7 +466,12 @@ pub fn people_window(
         st.tab_shown(panels.people_tab);
     }
     nearby::fit_window(ctx, st);
-    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size).help(help);
+    // Hold the body in the floater's exact rect so the Legacy radar table
+    // (and Aurora nearby) cannot ratchet the window wider while an edge is
+    // dragged, then refuse to shrink (#3033). Same pattern as Imports.
+    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size)
+        .help(help)
+        .steady_size();
     if aurora {
         // the mock-up's tabs right under the title
         floater = floater.compact_header();

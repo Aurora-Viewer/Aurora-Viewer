@@ -173,6 +173,7 @@ pub fn show(
     let mut arrow_direction = 0;
     let mut centred = None;
     let enter_shortcut = !grids_open
+        && !form.signup_open
         && !egui::Popup::is_any_open(&ctx)
         && ctx.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
     let available_height = (screen.height() - if first_account { 84.0 } else { 148.0 }).max(100.0);
@@ -618,20 +619,7 @@ pub fn show(
                     )
                     .clicked()
                     {
-                        form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
-                        form.adding = true;
-                        settings.username.clear();
-                        settings.remember_username = true;
-                        settings.remember_password = false;
-                        settings.mfa_hash.clear();
-                        form.password.clear();
-                        form.stored = None;
-                        form.stored_for = None;
-                        form.mfa_authorization = None;
-                        form.mfa_for = None;
-                        form.remember_mfa = false;
-                        form.editing = true;
-                        form.focused = false;
+                        begin_adding(settings, form);
                     }
                 });
             });
@@ -645,10 +633,11 @@ pub fn show(
             account.apply(settings);
         }
         if std::env::var_os("AURORA_DEMO").is_none() {
-            form.accounts = crate::login_accounts::replace(&previous, account);
+            crate::login_accounts::replace(&mut form.accounts, &previous, account);
         }
     }
     if !grids_open
+        && !form.signup_open
         && !form.busy
         && !form.editing
         && !form.managing
@@ -741,6 +730,25 @@ pub fn show(
         super::manager::show(&ctx, p, icons, settings, form);
     }
     action
+}
+
+/// "Add an account": an empty form over the cards, which returns to the
+/// selected card when cancelled.
+pub(super) fn begin_adding(settings: &mut Settings, form: &mut LoginForm) {
+    form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
+    form.adding = true;
+    settings.username.clear();
+    settings.remember_username = true;
+    settings.remember_password = false;
+    settings.mfa_hash.clear();
+    form.password.clear();
+    form.stored = None;
+    form.stored_for = None;
+    form.mfa_authorization = None;
+    form.mfa_for = None;
+    form.remember_mfa = false;
+    form.editing = true;
+    form.focused = false;
 }
 
 fn reveal(form: &mut LoginForm, index: usize, per_page: usize) {

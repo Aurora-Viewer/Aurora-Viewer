@@ -3,7 +3,11 @@
 use super::*;
 use crate::scene::{anim::BoundAnim, jobs::Jobs};
 use aurora_assets::Animation;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
+mod couple;
 pub(super) mod document;
 pub(super) mod files;
 #[cfg(test)]
@@ -12,9 +16,11 @@ mod picker;
 #[cfg(test)]
 mod tests;
 mod timeline;
+mod together;
 mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
+pub(super) use ui::equal_width;
 
 /// The animation editor's window: its own, narrower than IK contacts'.
 pub(super) const WINDOW: &str = "animation-editor";
@@ -81,10 +87,24 @@ pub(super) struct State {
     rig: Option<Arc<Rig>>,
     pub(super) document: Option<Arc<Document>>,
     history: Vec<Arc<Document>>,
+    /// Where the current document stands among the drafts, so that the list
+    /// keeps every draft in its place when another one is opened.
+    pub(super) draft_slot: usize,
     undo: Vec<Arc<Document>>,
     redo: Vec<Arc<Document>>,
     clipboard: Vec<document::Keyframe>,
+    /// Keys copied from the timeline with their spacing. Only one of the two
+    /// clipboards holds something: the last copy wins.
+    key_clipboard: Vec<document::CopiedKey>,
+    /// The press of a box: Shift or Ctrl went down over the lanes. The box
+    /// starts once that press becomes a drag, wherever it began.
+    key_box_armed: bool,
     drag_key: Option<(usize, u32, u32)>,
+    /// The keys picked in the timeline, as (bone, frame): a drag of one of
+    /// them moves them all, Delete removes them all.
+    pub(super) selected_keys: BTreeSet<(usize, u32)>,
+    /// A box drawn over the lanes to pick the keys inside it.
+    key_box: Option<timeline::KeyBox>,
     /// Presses the timeline's shortcuts acted on, until egui's next pass.
     taken_keys: Vec<(egui::Key, egui::Modifiers)>,
     timeline_zoom: f32,
@@ -104,10 +124,17 @@ pub(super) struct State {
     timeline_tracks: Option<(u64, Arc<Vec<TimelineTrack>>)>,
     preview_revision: Option<u64>,
     selection_sync: Option<(usize, u64, u64, Option<u64>)>,
+    /// When the fields of an edited joint were last read from the pose
+    /// (`authoring::sync_authored_selection`).
+    pub(super) authored_sync: Option<((usize, u64, u64, Option<u64>, u64), u8)>,
+    /// Counts the edits of the pose, for `authored_sync`.
+    pub(super) edits: u64,
     building: bool,
     preview: Option<Preview>,
     pub(super) capture: Option<Capture>,
     pub(super) modified: HashSet<usize>,
+    /// The joints that follow the selected one (`together`).
+    pub(super) together: Vec<usize>,
     pub(super) translations: HashSet<usize>,
     clear_after: Option<u64>,
     clear_bones: Vec<usize>,
@@ -127,6 +154,12 @@ pub(super) struct State {
     tx: crossbeam_channel::Sender<files::Output>,
     rx: crossbeam_channel::Receiver<files::Output>,
     pub prepared: Vec<Prepared>,
+    /// Couple mode: Person B beside our avatar (`couple`).
+    pub(super) couple: Option<couple::Couple>,
+    /// The pair a couple save or export writes (`prepare_couple_files`).
+    couple_files: Option<files::CoupleFiles>,
+    /// "Mirror yourself" pressed, waiting for the mirror to show.
+    pub(super) mirror_wanted: Option<std::time::Instant>,
     from_avatar_studio: bool,
     pub(super) return_after_upload: bool,
 }
@@ -138,10 +171,15 @@ impl Default for State {
             rig: None,
             document: None,
             history: Vec::new(),
+            draft_slot: 0,
             undo: Vec::new(),
             redo: Vec::new(),
             clipboard: Vec::new(),
+            key_clipboard: Vec::new(),
+            key_box_armed: false,
             drag_key: None,
+            selected_keys: BTreeSet::new(),
+            key_box: None,
             taken_keys: Vec::new(),
             timeline_zoom: 1.0,
             timeline_start: 0,
@@ -160,10 +198,13 @@ impl Default for State {
             timeline_tracks: None,
             preview_revision: None,
             selection_sync: None,
+            authored_sync: None,
+            edits: 0,
             building: false,
             preview: None,
             capture: None,
             modified: HashSet::new(),
+            together: Vec::new(),
             translations: HashSet::new(),
             clear_after: None,
             clear_bones: Vec::new(),
@@ -181,6 +222,9 @@ impl Default for State {
             tx,
             rx,
             prepared: Vec::new(),
+            couple: None,
+            couple_files: None,
+            mirror_wanted: None,
             from_avatar_studio: false,
             return_after_upload: false,
         }
@@ -215,30 +259,7 @@ impl State {
             return Some(tracks.clone());
         }
         let document = self.document.as_ref()?;
-        let fps = document.fps as f32;
-        let tracks: Vec<TimelineTrack> = document
-            .tracks
-            .iter()
-            .map(|track| {
-                let mut keys: Vec<_> = track
-                    .motion
-                    .rot_keys
-                    .iter()
-                    .map(|key| (key.time * fps).round() as u32)
-                    .chain(track.motion.pos_keys.iter().map(|key| (key.time * fps).round() as u32))
-                    .collect();
-                keys.sort_unstable();
-                keys.dedup();
-                TimelineTrack {
-                    bone: track.bone,
-                    name: track.motion.joint_name.clone(),
-                    enabled: track.enabled,
-                    authored: track.authored,
-                    keys,
-                }
-            })
-            .collect();
-        let tracks = Arc::new(tracks);
+        let tracks = Arc::new(couple::lanes_of(document));
         self.timeline_tracks = Some((self.revision, tracks.clone()));
         Some(tracks)
     }
@@ -276,6 +297,8 @@ impl State {
         self.undo.clear();
         self.redo.clear();
         self.drag_key = None;
+        self.selected_keys.clear();
+        self.key_box = None;
     }
     /// Whether another document would push the current one out of the
     /// drafts. With no current document there is nothing to lose.
@@ -348,7 +371,12 @@ impl State {
             }
         }
     }
+    /// What `authoring::sync_authored_selection` reads the fields again on.
+    pub(super) fn authored_sync_key(&self, bone: usize) -> (usize, u64, u64, Option<u64>, u64) {
+        (bone, self.cursor.to_bits(), self.revision, self.preview_revision, self.edits)
+    }
     pub(super) fn mark(&mut self, goal: &Goal) {
+        self.edits = self.edits.wrapping_add(1);
         self.playing = false;
         self.clear_bones.retain(|b| *b != goal.bone);
         if goal.mode == Mode::Direct {
@@ -361,6 +389,42 @@ impl State {
         }
         self.auto_key_pending |= self.document.as_ref().is_some_and(|document| document.auto_keyframe);
     }
+    /// Keep the document that was current among the drafts, in its place;
+    /// the new one comes last.
+    pub(super) fn shelve(&mut self, old: Arc<Document>) {
+        let at = self.draft_slot.min(self.history.len());
+        self.history.insert(at, old);
+        self.draft_slot = self.history.len();
+    }
+    /// Every draft in its place, the current one included (`None`), for
+    /// the drafts list.
+    pub(super) fn draft_order(&self) -> Vec<Option<usize>> {
+        let slot = self.draft_slot.min(self.history.len());
+        let mut order: Vec<_> = (0..self.history.len()).map(Some).collect();
+        if self.document.is_some() {
+            order.insert(slot, None);
+        }
+        order
+    }
+    /// Open the draft at `position` of `draft_order`: the others keep their
+    /// places, the one that was current included.
+    pub(super) fn pick_draft(&mut self, position: usize) -> bool {
+        let Some(Some(index)) = self.draft_order().get(position).copied() else {
+            return false;
+        };
+        match self.document.take() {
+            Some(current) => {
+                let slot = self.draft_slot.min(self.history.len());
+                let mut all = std::mem::take(&mut self.history);
+                all.insert(slot, current);
+                self.document = Some(all.remove(position));
+                self.history = all;
+            }
+            None => self.document = Some(self.history.remove(index)),
+        }
+        self.draft_slot = position;
+        true
+    }
     pub(super) fn waiting_source(&self) -> bool {
         self.active && self.hold_source && self.preview_revision != Some(self.revision)
     }
@@ -370,13 +434,7 @@ impl State {
         }
         self.preview.as_ref().map_or_else(Vec::new, |p| {
             let timeline_fps = self.document.as_ref().map_or(FPS, |document| document.fps as f32);
-            let playhead = self.cursor.clamp(f64::from(p.start), f64::from(p.end));
-            let time_seconds = ((playhead - f64::from(p.start)) / f64::from(timeline_fps)) as f32;
-            vec![ik::animations::Sample {
-                animation: p.bound.clone(),
-                frame: (time_seconds * ik::animations::FPS).round() as u32,
-                time_seconds: Some(time_seconds),
-            }]
+            vec![couple::sample_at(p, timeline_fps, self.cursor)]
         })
     }
     fn tick(&mut self, jobs: &Jobs, ctx: &egui::Context, rig: Arc<Rig>, skeleton: Option<&aurora_assets::Skeleton>) -> Vec<usize> {
@@ -429,7 +487,7 @@ impl State {
                         continue;
                     }
                     if let Some(current) = self.document.replace(Arc::new(document)) {
-                        self.history.push(current);
+                        self.shelve(current);
                     }
                     self.auto_key_retime_from = None;
                     let start = self.document.as_ref().map_or(0, |document| document.start);
@@ -451,10 +509,9 @@ impl State {
             }
         }
         if let Some((action, document)) = self.take_file_action() {
-            let import_skeleton = matches!(action, files::Action::Load)
-                .then(|| skeleton.cloned().map(Arc::new))
-                .flatten();
-            files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton);
+            let import_skeleton = action.needs_skeleton().then(|| skeleton.cloned().map(Arc::new)).flatten();
+            let couple = self.couple_files.take();
+            files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton, couple);
         }
         if let Some(document) = &self.document {
             if !self.building && self.preview_revision != Some(self.revision) {
@@ -613,19 +670,38 @@ impl Editor {
         }
     }
 
+    /// Copy the picked keys when several are picked, else the pose of the
+    /// frame, as before multi-key selection: a single picked key is the one
+    /// a click on the lanes leaves, and Copy pose must keep working there.
     pub(super) fn studio_copy_clip_keyframe(&mut self) {
         if let Some(document) = &self.clip.document {
-            self.clip.clipboard = document.copy_keyframe(self.clip.frame);
+            if self.clip.selected_keys.len() > 1 {
+                self.clip.key_clipboard = document.copy_keys(&self.clip.selected_keys);
+                self.clip.clipboard.clear();
+            } else {
+                self.clip.clipboard = document.copy_keyframe(self.clip.frame);
+                self.clip.key_clipboard.clear();
+            }
         }
     }
 
+    pub(super) fn has_clip_clipboard(&self) -> bool {
+        !self.clip.clipboard.is_empty() || !self.clip.key_clipboard.is_empty()
+    }
+
+    /// Paste at the playhead what was copied last: keys keep their spacing
+    /// from there and are picked once pasted.
     pub(super) fn studio_paste_clip_keyframe(&mut self) {
-        if self.clip.clipboard.is_empty() {
+        if !self.has_clip_clipboard() {
             return;
         }
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
-            Arc::make_mut(document).paste_keyframe(self.clip.frame, &self.clip.clipboard);
+            if self.clip.key_clipboard.is_empty() {
+                Arc::make_mut(document).paste_keyframe(self.clip.frame, &self.clip.clipboard);
+            } else {
+                self.clip.selected_keys = Arc::make_mut(document).paste_keys(self.clip.frame, &self.clip.key_clipboard);
+            }
             self.clip.changed();
         }
     }
@@ -634,6 +710,31 @@ impl Editor {
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
             Arc::make_mut(document).remove_keyframe(self.clip.frame);
+            self.clip.changed();
+        }
+        self.clip_seek(self.clip.frame);
+    }
+
+    /// Whether Delete has picked keys to remove: at least one of them on a
+    /// track the user authored (the hidden rest keys of a draft stay).
+    pub(super) fn has_deletable_key_selection(&mut self) -> bool {
+        let Some(tracks) = self.clip.timeline_tracks() else { return false };
+        self.clip.selected_keys.iter().any(|(bone, frame)| {
+            tracks
+                .iter()
+                .any(|track| track.bone == *bone && track.authored && track.keys.binary_search(frame).is_ok())
+        })
+    }
+
+    /// Delete every picked key in one step of the undo history.
+    pub(super) fn studio_delete_selected_keys(&mut self) {
+        if !self.has_deletable_key_selection() {
+            return;
+        }
+        self.clip.checkpoint();
+        let keys = std::mem::take(&mut self.clip.selected_keys);
+        if let Some(document) = self.clip.document.as_mut() {
+            Arc::make_mut(document).remove_selected_keys(&keys);
             self.clip.changed();
         }
         self.clip_seek(self.clip.frame);
@@ -840,9 +941,11 @@ impl Editor {
         self.clip.active
     }
     pub fn tick_clip(&mut self, jobs: &Jobs, ctx: &egui::Context, world: &World) {
+        self.prepare_couple_files(world);
         let clear = self
             .clip
             .tick(jobs, ctx, world.avatar_lib.rig.clone(), world.avatar_lib.skeleton.as_ref());
+        self.tick_couple(world);
         if self.clip.active && !clear.is_empty() {
             let baked = self.authoring.baked(&clear);
             self.goals.retain(|g| !clear.contains(&g.bone) && !baked.contains(&g.bone));
@@ -864,12 +967,19 @@ impl Editor {
     fn authored_frame(&self, rig: &Rig, frame: &Frame, world: &World) -> Option<Frame> {
         let (shaped, scales) = authoring::local_pose(rig, frame)?;
         let base = if !self.clip.active || self.clip.waiting_source() {
-            // without its base an edit cannot be told from it: nothing is recorded
             let base = world
                 .ik_edit_base
                 .clone()
-                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len())?;
-            Some(base)
+                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len());
+            // without its base an edit cannot be told from it: nothing is
+            // recorded. With no edit yet there is nothing to tell apart, and
+            // the base only exists once an edit session ran: Avatar Studio's
+            // first Animate came here before any, and its new animation
+            // failed until a second press. It starts from the rest skeleton.
+            if base.is_none() && !self.authoring.request(&self.goals, &self.disabled).is_empty() {
+                return None;
+            }
+            base
         } else {
             None
         };
@@ -934,7 +1044,7 @@ impl Editor {
             track.authored = false;
         }
         if let Some(old) = self.clip.document.replace(Arc::new(document)) {
-            self.clip.history.push(old);
+            self.clip.shelve(old);
         }
         self.clip.clear_undo_history();
         self.clip.seek(0);
@@ -1026,12 +1136,14 @@ impl Editor {
         if !self.clip.active {
             return;
         }
+        self.end_couple();
         self.clip.active = false;
         self.clip.playing = false;
         self.clip.capture = None;
         self.clip.drag_key = None;
         self.clip.auto_key_pending = false;
         self.clip.modified.clear();
+        self.clip.together.clear();
         self.clip.translations.clear();
         self.clip.clear_after = None;
         self.clip.clear_bones.clear();
@@ -1061,6 +1173,18 @@ impl Editor {
         let bones: Vec<_> = match capture {
             Capture::Bone(b) => {
                 let mut selected = vec![b];
+                // the joints selected with it are keyed with it
+                if self.selected == Some(b) {
+                    let followers = self.clip_followers();
+                    for bone in followers {
+                        selected.push(bone);
+                        if self.symmetry
+                            && let Some(other) = self.mirrors.counterpart(bone)
+                        {
+                            selected.push(other);
+                        }
+                    }
+                }
                 if self.symmetry
                     && let Some(other) = self.mirrors.counterpart(b)
                 {
@@ -1078,6 +1202,8 @@ impl Editor {
                         result.push(bone);
                     }
                 }
+                result.sort_unstable();
+                result.dedup();
                 result
             }
             Capture::Modified | Capture::AutoKeyModified => self.clip.modified.iter().copied().collect(),

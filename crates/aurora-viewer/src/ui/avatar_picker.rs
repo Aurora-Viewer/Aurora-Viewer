@@ -6,6 +6,7 @@
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
@@ -38,6 +39,8 @@ pub struct AvatarPicker {
     query: String,
     uuid_text: String,
     selected: Vec<Uuid>,
+    /// Row Shift selects from (LLScrollListCtrl::mLastSelected).
+    anchor: Option<Uuid>,
 }
 
 impl AvatarPicker {
@@ -46,6 +49,7 @@ impl AvatarPicker {
         self.id = id.to_owned();
         self.multiple = multiple;
         self.selected.clear();
+        self.anchor = None;
     }
 
     /// Start on the search by name with `query` typed (a search begun
@@ -88,6 +92,7 @@ impl AvatarPicker {
             );
             if before != self.tab {
                 self.selected.clear();
+                self.anchor = None;
             }
             ui.add_space(6.0);
             let rows: Vec<(Uuid, String, String)> = match self.tab {
@@ -96,7 +101,10 @@ impl AvatarPicker {
                         .social
                         .friends
                         .iter()
-                        .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
+                        // (LLFloaterAvatarPicker has an RLVa test on its
+                        // "near me" tab alone: a list of people known
+                        // besides the world, `NameScope::Roster`)
+                        .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id), String::new()))
                         .collect();
                     v.sort_by_key(|r| crate::natural_order::key(&r.1));
                     v
@@ -116,7 +124,7 @@ impl AvatarPicker {
                     match Uuid::parse_str(self.uuid_text.trim()) {
                         Ok(id) if !id.is_nil() => {
                             world.social.want_name(id);
-                            vec![(id, world.social.name_of(&id), String::new())]
+                            vec![(id, world.social.name_in(NameScope::Roster, &id), String::new())]
                         }
                         _ => Vec::new(),
                     }
@@ -140,6 +148,7 @@ impl AvatarPicker {
                             {
                                 world.land.search_avatars(&self.query);
                                 self.selected.clear();
+                                self.anchor = None;
                             }
                         });
                     });
@@ -162,6 +171,19 @@ impl AvatarPicker {
                 }
             };
             ui.add_space(4.0);
+            // The active picker owns Ctrl+A after a row or button took focus.
+            // A text editor keeps its native Select All, including in the UUID tab.
+            let focused = ui.memory(|m| m.focused());
+            if self.multiple
+                && !rows.is_empty()
+                && ui.ctx().top_layer_id() == Some(ui.layer_id())
+                && ui.memory(|m| m.allows_interaction(ui.layer_id()))
+                && !focused.is_some_and(|id| egui::TextEdit::load_state(ui.ctx(), id).is_some())
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A))
+            {
+                self.selected = rows.iter().map(|(id, ..)| *id).collect();
+                self.anchor = rows.last().map(|(id, ..)| *id);
+            }
             // fixed like the window: the available height of a window
             // sized from its content is the whole screen
             let list_h = LIST_H;
@@ -214,14 +236,15 @@ impl AvatarPicker {
                             let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 6.0, rect.center().y);
                             ui.painter().galley(at, g, p.ink);
                             if r.clicked() {
-                                let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
-                                if !add {
-                                    self.selected.clear();
-                                }
-                                if sel && add {
-                                    self.selected.retain(|x| x != id);
+                                let mods = ui.input(|i| i.modifiers);
+                                if self.multiple {
+                                    let order: Vec<Uuid> = rows.iter().map(|(row, ..)| *row).collect();
+                                    // Ctrl+click toggle, Shift+click range (no Contacts
+                                    // MAX_SELECT cap — Share can pick a whole crowd)
+                                    click_select(&mut self.selected, &mut self.anchor, &order, *id, mods);
                                 } else {
-                                    self.selected.push(*id);
+                                    self.selected = vec![*id];
+                                    self.anchor = Some(*id);
                                 }
                             }
                             if r.double_clicked() {
@@ -249,6 +272,28 @@ impl AvatarPicker {
     }
 }
 
+/// Multi-select like LLScrollListCtrl / Contacts, without the friend-action
+/// row cap: Ctrl toggles, Shift fills from the anchor, plain click alone.
+fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], id: Uuid, mods: egui::Modifiers) {
+    if mods.ctrl || mods.command {
+        if let Some(i) = sel.iter().position(|s| *s == id) {
+            sel.remove(i);
+        } else {
+            sel.push(id);
+        }
+        *anchor = Some(id);
+    } else if mods.shift
+        && let Some(a) = anchor.and_then(|a| order.iter().position(|x| *x == a))
+        && let Some(b) = order.iter().position(|x| *x == id)
+    {
+        let (lo, hi) = (a.min(b), a.max(b));
+        *sel = order[lo..=hi].to_vec();
+    } else {
+        *sel = vec![id];
+        *anchor = Some(id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +307,129 @@ mod tests {
         for tab in [TAB_SEARCH, TAB_FRIENDS, TAB_UUID] {
             assert_eq!(open_tab(tab, false), tab, "the other tabs stay open");
         }
+    }
+
+    #[test]
+    fn select_all_applies_to_resident_rows_or_the_focused_search_text() {
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let residents: Vec<_> = (1..=18).map(Uuid::from_u128).collect();
+        let hits = residents
+            .iter()
+            .enumerate()
+            .map(|(i, id)| aurora_net::land::FoundAvatar {
+                id: *id,
+                display_name: format!("Resident {i}"),
+                username: format!("resident{i}"),
+            })
+            .collect();
+        let query = "picker fixture";
+        world.land.avatar_search = Some((query.to_owned(), Some(hits)));
+        let mut picker = AvatarPicker::default();
+        picker.open("select-all-residents", true);
+        picker.set_query(query);
+        let mut frame = |picker: &mut AvatarPicker, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(950.0, 700.0))),
+                    events,
+                    ..Default::default()
+                },
+                |_| {
+                    picker.show(&ctx, &palette, &mut world);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let select_all = || egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        for _ in 0..3 {
+            frame(&mut picker, vec![]);
+        }
+        let shapes = frame(&mut picker, vec![]);
+        let position_of = |label: &str| {
+            shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("drawn picker text")
+        };
+        let row = position_of("Resident 1");
+        let search = position_of(query);
+        frame(&mut picker, vec![egui::Event::PointerMoved(row), button(row, true)]);
+        frame(&mut picker, vec![button(row, false)]);
+        assert_eq!(picker.selected, vec![residents[1]]);
+        frame(&mut picker, vec![select_all()]);
+        assert_eq!(picker.selected, residents, "Ctrl+A after a row click includes every match");
+        // Tab navigation can leave the actual row focused, even on platforms
+        // where a mouse click normally leaves no keyboard focus.
+        let layer = ctx.top_layer_id().expect("picker in front");
+        let row_id = ctx
+            .viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .get_layer(layer)
+                    .filter(|w| w.enabled && w.sense.is_focusable() && w.interact_rect.contains(row))
+                    .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                    .map(|w| w.id)
+            })
+            .expect("focusable resident row");
+        picker.selected = vec![residents[1]];
+        ctx.memory_mut(|m| m.request_focus(row_id));
+        frame(&mut picker, vec![select_all()]);
+        assert_eq!(picker.selected, residents, "non-text keyboard focus keeps list Select All");
+        picker.selected.clear();
+        frame(&mut picker, vec![egui::Event::PointerMoved(search), button(search, true)]);
+        frame(&mut picker, vec![button(search, false)]);
+        frame(&mut picker, vec![select_all(), egui::Event::Text("replacement".into())]);
+        assert_eq!(picker.query, "replacement");
+        assert!(picker.selected.is_empty(), "Ctrl+A in Search only edits its text");
+    }
+
+    #[test]
+    fn shift_click_selects_the_range_between_anchor_and_row() {
+        let order: Vec<Uuid> = (1..=5).map(Uuid::from_u128).collect();
+        let mut sel = Vec::new();
+        let mut anchor = None;
+        let plain = egui::Modifiers::default();
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        click_select(&mut sel, &mut anchor, &order, order[1], plain);
+        assert_eq!(sel, vec![order[1]]);
+        assert_eq!(anchor, Some(order[1]));
+        click_select(&mut sel, &mut anchor, &order, order[4], shift);
+        assert_eq!(sel, order[1..=4].to_vec());
+        click_select(&mut sel, &mut anchor, &order, order[0], shift);
+        assert_eq!(sel, order[0..=1].to_vec());
+    }
+
+    #[test]
+    fn shift_range_is_not_capped_at_twenty() {
+        let order: Vec<Uuid> = (1..=40).map(Uuid::from_u128).collect();
+        let mut sel = Vec::new();
+        let mut anchor = Some(order[0]);
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        click_select(&mut sel, &mut anchor, &order, order[39], shift);
+        assert_eq!(sel.len(), 40);
     }
 }

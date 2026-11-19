@@ -374,6 +374,16 @@ impl Preferences {
                     ui.label(aurora_i18n::tr!("script-preferences-external"));
                     ui.text_edit_singleline(&mut settings.external_editor);
                     ui.label(RichText::new(aurora_i18n::tr!("script-preferences-external-hint")).small().color(p.muted));
+                    // LLScriptEditorWSServer's settings (floater_scripting_settings.xml)
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.websocket_sync, aurora_i18n::tr!("script-preferences-websocket"));
+                    ui.add_enabled_ui(settings.websocket_sync, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(aurora_i18n::tr!("script-preferences-websocket-port"));
+                            ui.add(egui::DragValue::new(&mut settings.websocket_port).range(1024..=u16::MAX));
+                        });
+                        crate::ui::widgets::switch_labeled(ui, p, &mut settings.websocket_forward_debug, aurora_i18n::tr!("script-preferences-websocket-debug"));
+                    });
+                    ui.label(RichText::new(aurora_i18n::tr!("script-preferences-websocket-hint")).small().color(p.muted));
                 });
             });
         *settings != before

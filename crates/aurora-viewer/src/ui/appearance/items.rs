@@ -2,6 +2,7 @@
 //! (indra/newview/llwearableitemslist.cpp / llviewerattachmenu.cpp, LGPL 2.1).
 
 use super::{Action, AppearanceUi, model};
+use crate::world::names::NameScope;
 use crate::{
     theme::Palette,
     ui::{menu, widgets},
@@ -84,24 +85,31 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
 pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
-    if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
-        return;
+    if double_clicked(response)
+        && let Some(action) = wear_toggle(world, it, worn)
+    {
+        actions.push(action);
+    }
+}
+
+/// What a double-click on `it` does (`double_click`), when RLVa allows it:
+/// None for what cannot be worn, a worn body part, or a lock. Also the
+/// Favorite Wearables rows' Wear / Take off button.
+pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Action> {
+    if !matches!(it.asset_type, 5 | 6 | 13) {
+        return None;
     }
     let locks = world.rlva_wear_locks();
     if worn {
-        if it.asset_type != 13 && locks.can_remove(it.id) {
-            actions.push(Action::Remove(it.id));
-        }
+        (it.asset_type != 13 && locks.can_remove(it.id)).then_some(Action::Remove(it.id))
     } else {
         let replace = it.asset_type == 13;
         let allowed = locks.wear(&world.inventory, it.id, 0);
-        if if replace { allowed.replace } else { allowed.add } {
-            actions.push(Action::WearItem {
-                item: it.id,
-                replace,
-                point: 0,
-            });
-        }
+        (if replace { allowed.replace } else { allowed.add }).then_some(Action::WearItem {
+            item: it.id,
+            replace,
+            point: 0,
+        })
     }
 }
 
@@ -456,22 +464,28 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             ui.add(egui::Label::new(&item.desc).wrap());
         }
         ui.add_space(8.0);
-        for (label, id) in [
-            (aurora_i18n::tr!("common-creator"), item.creator),
-            (aurora_i18n::tr!("common-owner"), item.owner),
+        // RLVa `@shownames`, as LLSidepanelItemInfo::refreshFromItem
+        // (indra/newview/llsidepaneliteminfo.cpp): the owner is hidden unless
+        // excepted, the creator only when they also own the item or stand in
+        // a region around; a hidden name opens no profile.
+        let [owner, creator] = crate::ui::inventory::resident_scopes(item);
+        for (label, (id, scope)) in [
+            (aurora_i18n::tr!("common-creator"), creator),
+            (aurora_i18n::tr!("common-owner"), owner),
         ] {
             ui.horizontal(|ui| {
                 ui.label(label);
-                if !id.is_nil()
-                    && ui
-                        .link(
-                            world
-                                .person_name(&id)
-                                .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into()),
-                        )
-                        .clicked()
-                {
-                    crate::ui::profile::request_open(ctx, id);
+                if id.is_nil() {
+                    return;
+                }
+                let name = world
+                    .person_name_in(scope, &id)
+                    .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into());
+                if !world.rlva_shows_name(scope, id) {
+                    ui.label(RichText::new(name).color(p.muted));
+                } else if ui.link(name).clicked() {
+                    // the name is shown here whoever stands around
+                    crate::ui::profile::request_open_in(ctx, NameScope::Roster, id);
                 }
             });
         }
