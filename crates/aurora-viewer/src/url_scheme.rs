@@ -29,7 +29,7 @@ pub enum Handler {
 /// the sandbox sees its own `$XDG_DATA_HOME` and `$XDG_CONFIG_HOME`, not the
 /// host's, and the host could not run its `/app/bin` path anyway. The
 /// Flatpak's desktop entry declares the schemes instead
-/// (`packaging/flatpak/`), and the desktop's default applications settings
+/// (`packaging/linux/flatpak/`), and the desktop's default applications settings
 /// choose between it and another viewer.
 pub fn supported() -> bool {
     cfg!(any(windows, target_os = "linux")) && crate::cli::flatpak_id().is_none()

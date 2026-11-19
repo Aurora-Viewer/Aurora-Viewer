@@ -9,10 +9,21 @@ finish-args:
   - --share=ipc
   - --share=network
   - --socket=fallback-x11
+  # Wayland, with X11 as the fallback for an X11-only session. Under Wayland
+  # the fallback hides the X11 socket, so a compositor offering no
+  # data-control protocol to sandboxed clients (KWin) leaves the clipboard
+  # unusable; `--socket=x11` instead gives copy / paste back there.
   - --socket=wayland
   - --socket=pulseaudio
   - --device=dri
-  - --device=all
+  # Input devices (gamepads, joysticks, SpaceMouse) rather than --device=all,
+  # which would also open every other device node. The SpaceMouse driver
+  # wants write access to /dev/hidraw*; its owner grants it with
+  #   flatpak override --user --device=all org.aurora_viewer.AuroraViewer
+  - --device=input
+  # Snapshots are saved in <Pictures>/Aurora Viewer (snapshot/mod.rs);
+  # :create makes the host folder if the user has none.
+  - --filesystem=xdg-pictures:create
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.secrets
   # A SLURL opened while the viewer runs goes to it over the session bus

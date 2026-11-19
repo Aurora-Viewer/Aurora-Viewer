@@ -225,8 +225,10 @@ pub const DESKTOP_ID: &str = "aurora-viewer";
 /// The Flatpak application id (`org.aurora_viewer.AuroraViewer`) when the
 /// viewer runs inside a Flatpak sandbox: `flatpak run` sets `FLATPAK_ID`.
 /// The Flatpak's desktop entry is named after it
-/// (`packaging/flatpak/`), so the window takes it as its identity, and the
-/// sandbox cannot register link handlers in the host's files.
+/// (`packaging/linux/flatpak/`), so the window takes it as its identity, and
+/// the sandbox cannot register link handlers in the host's files. From the
+/// `feat/flatpak` branch of the drraccoony fork (credited in NOTICE.md),
+/// adapted to Aurora's own manifest.
 pub fn flatpak_id() -> Option<String> {
     flatpak_id_from(std::env::var("FLATPAK_ID").ok())
 }

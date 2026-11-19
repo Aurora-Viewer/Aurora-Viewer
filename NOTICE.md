@@ -104,6 +104,7 @@ GPL-3.0-or-later as described above.
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
+| Flatpak awareness and packaging (`packaging/linux/flatpak/`), the `feat/flatpak` branch of the `drraccoony/Aurora-Viewer` fork (commit `a974b394`), adapted to Aurora's from-source manifest — Copyright © 2026 Shawn McHenry | `aurora-viewer/src/cli.rs`, `url_scheme.rs`, `system_notify.rs`, `ui/update.rs` | GPL-3.0-or-later, like the rest of Aurora Viewer |
 
 ## Bundled assets
 

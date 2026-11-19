@@ -171,8 +171,8 @@ your desktop (GNOME, KDE and other GLib desktops read such paths).
 
 ## Flatpak
 
-Each release also has `Aurora-Viewer-vX.Y.Z-linux-x64.flatpak`: the viewer
-of the archive, in a sandbox, with the libraries of the Freedesktop runtime.
+Each release also has `Aurora-Viewer-vX.Y.Z-linux-x64.flatpak`: the same
+viewer, in a sandbox, built with the libraries of the Freedesktop runtime.
 Nothing else needs installing (GStreamer, the browser's libraries and the
 Vulkan loader come with the runtime; the graphics driver comes from the
 system, as for any Flatpak). Download it and its `.sha256` file, then:
@@ -211,16 +211,12 @@ What changes from the archive:
   and the Blender bridge (the sandbox cannot find or start the system's
   Blender). The external script editor is not tested there yet.
 
-To build the bundle yourself, from a packaged viewer (the release archive,
-or the folder `scripts/package.ps1` makes):
-
-```bash
-scripts/package-flatpak.sh Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz vX.Y.Z aurora.flatpak
-```
-
-It needs `flatpak` and `flatpak-builder`, and installs the runtime and SDK
-of `packaging/flatpak/org.aurora_viewer.AuroraViewer.yml` for your user if
-they are missing.
+To build the bundle yourself, from a repository checkout, follow
+`packaging/linux/flatpak/README.md`: `flatpak-builder` compiles the viewer
+from that checkout
+(`packaging/linux/flatpak/org.aurora_viewer.AuroraViewer.yml`). It needs
+`flatpak` and `flatpak-builder`, and the Freedesktop runtime, SDK and Rust
+extension that the README installs.
 
 ## Not on Linux yet
 
