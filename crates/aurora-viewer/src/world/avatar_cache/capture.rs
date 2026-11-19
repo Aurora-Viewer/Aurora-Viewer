@@ -4,11 +4,14 @@
 //! them needs. The text over them, their media, sounds, particles, click
 //! actions and name-values (the AttachItemID among them) are left out: a
 //! copy is never taken for the object, by the outfit, RLVa or a click.
+//! With them, the avatar's last appearance from the region: its shape, its
+//! bakes and its hover height.
 
-use super::file::{WornObject, WornPrim, WornSet};
+use super::file::{KeptAvatar, KeptLook, WornObject, WornPrim};
 use crate::world::World;
 use crate::world::objects::Object;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate};
+use aurora_net::types::AvatarAppearance;
 use glam::Vec3;
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -86,8 +89,49 @@ fn prims_of(world: &World, root: usize) -> Vec<usize> {
         .collect()
 }
 
+/// What is kept of an appearance (its list of worn objects aside).
+pub fn look_of(a: &AvatarAppearance) -> KeptLook {
+    KeptLook {
+        visual_params: a.visual_params.clone(),
+        texture_entry: a
+            .texture_entry
+            .as_ref()
+            .map(|te| aurora_prim::te::pack_texture_entry(te, te.faces.len()))
+            .unwrap_or_default(),
+        hover_height: a.hover_height,
+        appearance_version: i32::from(a.appearance_version),
+        cof_version: a.cof_version,
+    }
+}
+
+/// The appearance a kept look draws until the region's comes. It lists no
+/// worn object: the ids it named change at each login, and what is
+/// matched against the region's list is that list only.
+pub fn appearance_of(avatar: Uuid, look: &KeptLook) -> AvatarAppearance {
+    AvatarAppearance {
+        avatar_id: avatar,
+        texture_entry: aurora_prim::parse_texture_entry(&look.texture_entry).map(std::sync::Arc::new),
+        visual_params: look.visual_params.clone(),
+        cof_version: look.cof_version,
+        appearance_version: u8::try_from(look.appearance_version).unwrap_or(0),
+        hover_height: look.hover_height,
+        attachments: Vec::new(),
+    }
+}
+
+/// The look kept for the avatar at `avatar`: its last appearance from the
+/// region, or the one its file kept when none came this session.
+fn kept_look(world: &World, avatar: usize) -> Option<KeptLook> {
+    let id = world.objects.get(avatar)?.full_id;
+    match world.appearances.get(&id) {
+        Some((a, _)) => Some(look_of(a)),
+        None => world.avatar_cache.sets.get(&id)?.as_ref()?.look.clone(),
+    }
+}
+
 /// What changes when what the avatar wears or how it looks changes: its
-/// roots, and each prim's count of full updates and GLTF overrides.
+/// roots, each prim's count of full updates and GLTF overrides, and its
+/// appearance's shape, bakes and hover height.
 pub fn signature(world: &World, avatar: usize) -> u64 {
     let mut roots: Vec<(Uuid, usize)> = worn_roots(world, avatar)
         .into_iter()
@@ -95,6 +139,11 @@ pub fn signature(world: &World, avatar: usize) -> u64 {
         .collect();
     roots.sort();
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(look) = kept_look(world, avatar) {
+        look.visual_params.hash(&mut h);
+        look.texture_entry.hash(&mut h);
+        look.hover_height.to_bits().hash(&mut h);
+    }
     for (id, root) in roots {
         id.hash(&mut h);
         for p in prims_of(world, root) {
@@ -141,9 +190,9 @@ pub fn read_overrides(d: &[u8]) -> Vec<(u8, aurora_assets::material::PbrOverride
         .collect()
 }
 
-/// The worn set of the avatar at `avatar`, written at `saved_at` (Unix
+/// What is kept of the avatar at `avatar`, written at `saved_at` (Unix
 /// seconds).
-pub fn capture(world: &World, avatar: usize, saved_at: u64) -> WornSet {
+pub fn capture(world: &World, avatar: usize, saved_at: u64) -> KeptAvatar {
     let mut objects = Vec::new();
     let mut room = super::file::MAX_PRIMS;
     for root in worn_roots(world, avatar).into_iter().take(super::file::MAX_OBJECTS) {
@@ -171,5 +220,9 @@ pub fn capture(world: &World, avatar: usize, saved_at: u64) -> WornSet {
             prims,
         });
     }
-    WornSet { saved_at, objects }
+    KeptAvatar {
+        saved_at,
+        objects,
+        look: kept_look(world, avatar),
+    }
 }

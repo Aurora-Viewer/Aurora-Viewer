@@ -297,7 +297,7 @@ impl Scene {
             }
         }
         for &att in world.objects.children_of(&av.key) {
-            // (nor the copies drawn from the cache, world/worn_cache: the
+            // (nor the copies drawn from the cache, world/avatar_cache: the
             // region's objects count once they come)
             let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;

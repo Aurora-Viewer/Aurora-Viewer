@@ -60,6 +60,10 @@ pub mod auto_hover;
 /// Face nearest avatar and the Compass (AURORA_DEMO_AVATAR_ALIGN).
 #[path = "demo_avatar_align.rs"]
 pub mod avatar_align;
+/// AURORA_DEMO_AVATAR_CACHE: worn objects drawn from the cache while the
+/// region sends them.
+#[path = "demo_avatar_cache.rs"]
+pub mod avatar_cache;
 /// Blended panes standing in the sun, for their shadows
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
@@ -372,10 +376,6 @@ pub mod wet_layer;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
-/// AURORA_DEMO_WORN_CACHE: worn objects drawn from the cache while the
-/// region sends them.
-#[path = "demo_worn_cache.rs"]
-pub mod worn_cache;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
@@ -505,7 +505,7 @@ fn shape(path: u8, profile: u8, sy: u8, hollow: u16, cut_end: u16) -> aurora_pri
 
 /// Violet Wolf (local id 9001) wears a hat (skull) and holds a glowing orb
 /// (right hand): non-rigged attachments that must follow the animated
-/// bones. `kept`: as AURORA_DEMO_WORN_CACHE's cache kept them, before the
+/// bones. `kept`: as AURORA_DEMO_AVATAR_CACHE's cache kept them, before the
 /// hat went from pink to violet.
 pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
     let cyl = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0);
@@ -516,9 +516,9 @@ pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
         [0.545, 0.361, 0.965, 1.0]
     };
     let teal = [0.369, 0.918, 0.831, 1.0];
-    // (AURORA_DEMO_WORN_CACHE gives the wolf the classic look, whose big
+    // (AURORA_DEMO_AVATAR_CACHE gives the wolf the classic look, whose big
     // hair hides the hat: a taller one, and a larger orb, for that scenario)
-    let (hat_at, hat_size, orb) = if worn_cache::enabled() {
+    let (hat_at, hat_size, orb) = if avatar_cache::enabled() {
         (Vec3::new(0.0, 0.0, 0.3), Vec3::new(0.36, 0.36, 0.34), 0.2)
     } else {
         (Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), 0.12)
@@ -828,9 +828,9 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     };
     o.state = point.rotate_right(4);
     o.name_values = format!("AttachItemID STRING RW SV {}", item.item_id);
-    // AURORA_DEMO_WORN_CACHE: the hair, earrings and boots it keeps are
+    // AURORA_DEMO_AVATAR_CACHE: the hair, earrings and boots it keeps are
     // drawn, so that their copies and the region's objects can be seen
-    if worn_cache::enabled() {
+    if avatar_cache::enabled() {
         let round = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
         let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
         let look = match item.item_id.as_u128() {
@@ -6465,8 +6465,8 @@ pub fn events() -> Vec<NetEvent> {
         o.name_values = format!("FirstName STRING RW SV {first}\nLastName STRING RW SV {last}\nTitle STRING RW SV Aurora");
         avatars.push(o);
     }
-    // (AURORA_DEMO_WORN_CACHE sends them later, demo_worn_cache.rs)
-    if !worn_cache::enabled() {
+    // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
+    if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);

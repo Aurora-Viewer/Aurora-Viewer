@@ -63,7 +63,7 @@ impl World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| self.objects.get(*i))
-            // (not the copies drawn from the cache, world/worn_cache)
+            // (not the copies drawn from the cache, world/avatar_cache)
             .filter(|o| o.attachment_point() != 0 && !o.is_client_preview())
             .map(|o| {
                 (

@@ -1,31 +1,48 @@
-//! The file of one avatar's worn objects: what [`super::capture`] keeps of
-//! them, read back by [`decode`]. One sealed store file per avatar
-//! (`objects/<name>.worn`, the name derived from the avatar id like every
+//! The file of one avatar: what [`super::capture`] keeps of its look and of
+//! what it wears, read back by [`decode`]. One sealed store file per avatar
+//! (`objects/<name>.look`, the name derived from the avatar id like every
 //! store file), so that the cache's size limit and Clear Cache take them
 //! with the region object caches.
 //!
-//! Layout (little-endian): `AWC1`, the time it was written (Unix seconds,
+//! Layout (little-endian): `AAC1`, the time it was written (Unix seconds,
 //! u64), the number of objects (u16); each object: its root's id at the
 //! time (16 bytes), its inventory item (16, nil when unknown), its
 //! attachment point (u8), the number of prims (u16); each prim, the root
 //! first: its update flags (u32), its compressed update
 //! (`aurora_net::objects::encode_compressed`, u32 length then the bytes),
 //! its GLTF overrides (LLSD binary of an array of `[face, override]`, u32
-//! length, empty when it has none).
+//! length, empty when it has none). Then its look: 0, or 1 followed by its
+//! visual parameters (u32 length then the bytes), its texture entry as
+//! AvatarAppearance sends it (u32 length then the bytes), its hover height
+//! (f32), its appearance and COF versions (i32 each).
 
 use uuid::Uuid;
 
-const MAGIC: &[u8; 4] = b"AWC1";
+const MAGIC: &[u8; 4] = b"AAC1";
 /// Bounds of what a file may hold (an outfit is a few hundred prims).
 pub const MAX_OBJECTS: usize = 80;
 pub const MAX_PRIMS: usize = 2048;
 const MAX_PRIM_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct WornSet {
+pub struct KeptAvatar {
     /// Unix seconds.
     pub saved_at: u64,
     pub objects: Vec<WornObject>,
+    /// Its last appearance from the region, when one had come.
+    pub look: Option<KeptLook>,
+}
+
+/// What an AvatarAppearance said of the avatar's look (its list of worn
+/// objects aside: the ids it names change at each login).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct KeptLook {
+    pub visual_params: Vec<u8>,
+    /// The texture entry's bytes (`aurora_prim::te::pack_texture_entry`).
+    pub texture_entry: Vec<u8>,
+    pub hover_height: f32,
+    pub appearance_version: i32,
+    pub cof_version: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,13 +64,18 @@ pub struct WornPrim {
     pub overrides: Vec<u8>,
 }
 
-impl WornSet {
+impl KeptAvatar {
     pub fn prim_count(&self) -> usize {
         self.objects.iter().map(|o| o.prims.len()).sum()
     }
 }
 
-pub fn encode(set: &WornSet) -> Vec<u8> {
+fn put_blob(out: &mut Vec<u8>, blob: &[u8]) {
+    out.extend_from_slice(&(blob.len() as u32).to_le_bytes());
+    out.extend_from_slice(blob);
+}
+
+pub fn encode(set: &KeptAvatar) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 + set.prim_count() * 320);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&set.saved_at.to_le_bytes());
@@ -67,10 +89,19 @@ pub fn encode(set: &WornSet) -> Vec<u8> {
         out.extend_from_slice(&(prims.len() as u16).to_le_bytes());
         for p in prims {
             out.extend_from_slice(&p.update_flags.to_le_bytes());
-            for blob in [&p.data, &p.overrides] {
-                out.extend_from_slice(&(blob.len() as u32).to_le_bytes());
-                out.extend_from_slice(blob);
-            }
+            put_blob(&mut out, &p.data);
+            put_blob(&mut out, &p.overrides);
+        }
+    }
+    match &set.look {
+        None => out.push(0),
+        Some(l) => {
+            out.push(1);
+            put_blob(&mut out, &l.visual_params);
+            put_blob(&mut out, &l.texture_entry);
+            out.extend_from_slice(&l.hover_height.to_le_bytes());
+            out.extend_from_slice(&l.appearance_version.to_le_bytes());
+            out.extend_from_slice(&l.cof_version.to_le_bytes());
         }
     }
     out
@@ -93,6 +124,9 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
     }
+    fn i32(&mut self) -> Option<i32> {
+        Some(i32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
     fn u64(&mut self) -> Option<u64> {
         Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
     }
@@ -110,7 +144,7 @@ impl<'a> Reader<'a> {
 
 /// A file of [`encode`]; anything else, truncated or over the bounds, is
 /// none (a cache miss).
-pub fn decode(d: &[u8]) -> Option<WornSet> {
+pub fn decode(d: &[u8]) -> Option<KeptAvatar> {
     let mut r = Reader { d, p: 0 };
     if r.take(4)? != MAGIC {
         return None;
@@ -146,15 +180,26 @@ pub fn decode(d: &[u8]) -> Option<WornSet> {
             prims,
         });
     }
-    (r.p == d.len()).then_some(WornSet { saved_at, objects })
+    let look = match r.take(1)?[0] {
+        0 => None,
+        1 => Some(KeptLook {
+            visual_params: r.blob()?,
+            texture_entry: r.blob()?,
+            hover_height: f32::from_bits(r.u32()?),
+            appearance_version: r.i32()?,
+            cof_version: r.i32()?,
+        }),
+        _ => return None,
+    };
+    (r.p == d.len()).then_some(KeptAvatar { saved_at, objects, look })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn sample() -> WornSet {
-        WornSet {
+    fn sample() -> KeptAvatar {
+        KeptAvatar {
             saved_at: 1_763_500_000,
             objects: vec![
                 WornObject {
@@ -185,15 +230,24 @@ mod tests {
                     }],
                 },
             ],
+            look: Some(KeptLook {
+                visual_params: vec![128; 253],
+                texture_entry: vec![7; 40],
+                hover_height: -0.05,
+                appearance_version: 1,
+                cof_version: 42,
+            }),
         }
     }
 
     #[test]
-    fn a_worn_set_reads_back() {
+    fn a_kept_avatar_reads_back() {
         let set = sample();
         let bytes = encode(&set);
-        assert_eq!(decode(&bytes), Some(set));
-        assert_eq!(decode(&encode(&WornSet::default())), Some(WornSet::default()));
+        assert_eq!(decode(&bytes), Some(set.clone()));
+        let without_look = KeptAvatar { look: None, ..set };
+        assert_eq!(decode(&encode(&without_look)), Some(without_look));
+        assert_eq!(decode(&encode(&KeptAvatar::default())), Some(KeptAvatar::default()));
     }
 
     #[test]

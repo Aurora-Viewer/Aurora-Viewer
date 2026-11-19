@@ -23,7 +23,7 @@
 //! 30 s check. The Appearance window opens on its Worn tab then (opened
 //! sooner, it would look the items up itself).
 
-use super::worn_cache::request;
+use super::avatar_cache::request;
 use crate::world::World;
 use aurora_net::inventory::{FolderContents, InvItem};
 use aurora_net::{AttachRequest, NetCommand, NetEvent};

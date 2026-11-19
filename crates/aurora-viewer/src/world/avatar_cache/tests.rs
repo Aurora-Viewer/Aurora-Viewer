@@ -14,7 +14,7 @@ const COF: u128 = 11;
 fn setup() -> (World, RegionHandle, ObjectUpdate) {
     let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     world.agent_id = ME;
-    world.worn_cache.set_enabled(true);
+    world.avatar_cache.set_enabled(true);
     let (handle, avatar) = crate::demo::events()
         .into_iter()
         .find_map(|ev| match ev {
@@ -173,12 +173,12 @@ fn our_outfit_is_drawn_from_the_cache_until_the_region_sends_it() {
 
     // the next login: our avatar, nothing worn yet
     let (mut world, handle, me) = setup();
-    world.worn_cache.insert_set(ME, kept);
+    world.avatar_cache.insert_set(ME, kept);
     let t0 = Instant::now();
-    world.update_worn_cache(t0);
+    world.update_avatar_cache(t0);
     assert!(copies_of(&world, &ME).is_empty(), "the outfit is not known yet");
     outfit_links(&mut world, &[HAT_ITEM]);
-    world.update_worn_cache(t0);
+    world.update_avatar_cache(t0);
     let copies = copies_of(&world, &ME);
     assert_eq!(copies.len(), 1, "the hat, as a copy");
     let copy = world.objects.get(copies[0]).expect("copy");
@@ -186,9 +186,9 @@ fn our_outfit_is_drawn_from_the_cache_until_the_region_sends_it() {
     assert_eq!(copy.attachment_item_id(), None, "never taken for the worn hat");
     assert_eq!(world.objects.children_of(&copy.key).len(), 1, "with its child prim");
     assert!(world.outfit_attachment_items().is_empty());
-    assert_eq!(world.worn_cache.copy_count(), 1);
+    assert_eq!(world.avatar_cache.copy_count(), 1);
     // drawn once only
-    world.update_worn_cache(t0 + Duration::from_secs(1));
+    world.update_avatar_cache(t0 + Duration::from_secs(1));
     assert_eq!(copies_of(&world, &ME).len(), 1);
 
     // the region's hat comes: the copy stays until it is drawn, 5 s at most
@@ -196,20 +196,21 @@ fn our_outfit_is_drawn_from_the_cache_until_the_region_sends_it() {
         handle,
         objects: worn(&me, me.local_id, 80_000, 990, 2, Some(HAT_ITEM)),
     });
-    world.update_worn_cache(t0 + Duration::from_secs(2));
+    world.update_avatar_cache(t0 + Duration::from_secs(2));
     assert_eq!(copies_of(&world, &ME).len(), 1);
-    world.update_worn_cache(t0 + Duration::from_secs(8));
+    world.update_avatar_cache(t0 + Duration::from_secs(8));
     assert!(copies_of(&world, &ME).is_empty());
-    assert_eq!(world.worn_cache.copy_count(), 0);
+    assert_eq!(world.avatar_cache.copy_count(), 0);
     assert!(world.outfit_attachment_items().contains(&Uuid::from_u128(HAT_ITEM)));
 }
 
 #[test]
 fn a_copy_goes_when_its_object_is_no_longer_worn() {
     let (mut world, _, me) = setup();
-    let mut kept = WornSet {
+    let mut kept = KeptAvatar {
         saved_at: unix_now(),
         objects: Vec::new(),
+        look: None,
     };
     // a hat of ours, and a scarf another avatar wore
     for (id, item) in [(900, HAT_ITEM), (920, 0)] {
@@ -228,13 +229,13 @@ fn a_copy_goes_when_its_object_is_no_longer_worn() {
             prims,
         });
     }
-    world.worn_cache.insert_set(ME, kept.clone());
-    world.worn_cache.insert_set(OTHER, kept);
+    world.avatar_cache.insert_set(ME, kept.clone());
+    world.avatar_cache.insert_set(OTHER, kept);
     outfit_links(&mut world, &[HAT_ITEM]);
     let mut appearance = appearance(OTHER, vec![(Uuid::from_u128(920), 2)]);
     world.apply(NetEvent::Appearance(appearance.clone()));
     let t0 = Instant::now();
-    world.update_worn_cache(t0);
+    world.update_avatar_cache(t0);
     assert_eq!(copies_of(&world, &ME).len(), 1, "our hat only (the scarf is no outfit item)");
     assert_eq!(copies_of(&world, &OTHER).len(), 1, "the listed scarf only (the hat is not listed)");
     // a copy is no worn object: not ours (the arrival's patience), not for
@@ -245,13 +246,13 @@ fn a_copy_goes_when_its_object_is_no_longer_worn() {
     let listed = world.worn_vs_listed(other).expect("an avatar");
     assert_eq!((listed.arrived, listed.missing.len()), (0, 1), "the scarf is still missing");
     // but the cloud gate sees it come, as a copy
-    assert_eq!(world.worn_cache.standing_in(&OTHER), 1);
+    assert_eq!(world.avatar_cache.standing_in(&OTHER), 1);
 
     // we take the hat off elsewhere, they take the scarf off
     outfit_links(&mut world, &[]);
     appearance.attachments.clear();
     world.apply(NetEvent::Appearance(appearance));
-    world.update_worn_cache(t0 + Duration::from_secs(1));
+    world.update_avatar_cache(t0 + Duration::from_secs(1));
     assert!(copies_of(&world, &ME).is_empty());
     assert!(copies_of(&world, &OTHER).is_empty());
 }
@@ -267,9 +268,9 @@ fn copies_wait_a_limited_time_and_go_with_the_setting() {
             overrides: Vec::new(),
         })
         .collect();
-    world.worn_cache.insert_set(
+    world.avatar_cache.insert_set(
         OTHER,
-        WornSet {
+        KeptAvatar {
             saved_at: unix_now(),
             objects: vec![WornObject {
                 root_id: Uuid::from_u128(920),
@@ -277,17 +278,18 @@ fn copies_wait_a_limited_time_and_go_with_the_setting() {
                 point: 2,
                 prims,
             }],
+            look: None,
         },
     );
     world.apply(NetEvent::Appearance(appearance(OTHER, vec![(Uuid::from_u128(920), 2)])));
     let t0 = Instant::now();
-    world.update_worn_cache(t0);
+    world.update_avatar_cache(t0);
     assert_eq!(copies_of(&world, &OTHER).len(), 1);
-    world.worn_cache.set_enabled(false);
-    world.update_worn_cache(t0);
+    world.avatar_cache.set_enabled(false);
+    world.update_avatar_cache(t0);
     assert!(copies_of(&world, &OTHER).is_empty(), "the setting off takes them away");
-    world.worn_cache.set_enabled(true);
-    world.update_worn_cache(t0 + WINDOW + Duration::from_secs(1));
+    world.avatar_cache.set_enabled(true);
+    world.update_avatar_cache(t0 + WINDOW + Duration::from_secs(1));
     assert!(copies_of(&world, &OTHER).is_empty(), "too late: never drawn again");
 }
 
@@ -299,9 +301,10 @@ fn only_wanted_objects_not_there_yet_are_drawn() {
         point: 2,
         prims: Vec::new(),
     };
-    let set = WornSet {
+    let set = KeptAvatar {
         saved_at: 0,
         objects: vec![object(1, 10), object(2, 20), object(3, 0)],
+        look: None,
     };
     let ids = |v: Vec<&WornObject>| v.iter().map(|o| o.root_id.as_u128()).collect::<Vec<_>>();
     let outfit: HashSet<Uuid> = [Uuid::from_u128(10), Uuid::from_u128(20)].into();
@@ -320,7 +323,7 @@ fn only_wanted_objects_not_there_yet_are_drawn() {
 fn a_copy_keeps_the_textures_of_its_object() {
     let (mut world, _, _) = setup();
     let original = crate::demo::wolf_attachments(true);
-    let set = WornSet {
+    let set = KeptAvatar {
         saved_at: unix_now(),
         objects: original
             .iter()
@@ -335,11 +338,12 @@ fn a_copy_keeps_the_textures_of_its_object() {
                 }],
             })
             .collect(),
+        look: None,
     };
-    world.worn_cache.insert_set(OTHER, set);
+    world.avatar_cache.insert_set(OTHER, set);
     let listed = original.iter().map(|o| (o.full_id, o.state.rotate_left(4))).collect();
     world.apply(NetEvent::Appearance(appearance(OTHER, listed)));
-    world.update_worn_cache(Instant::now());
+    world.update_avatar_cache(Instant::now());
     let copies = copies_of(&world, &OTHER);
     assert_eq!(copies.len(), 2);
     for (copy, o) in copies.iter().zip(&original) {
@@ -351,4 +355,94 @@ fn a_copy_keeps_the_textures_of_its_object() {
             assert!((got - want).abs() < 1.0 / 255.0, "{got} for {want}");
         }
     }
+}
+
+/// An appearance with a shape and a bake (TE face 8, the head's).
+fn shaped(avatar_id: Uuid, value: u8, bake: u128) -> aurora_net::AvatarAppearance {
+    let mut te = aurora_prim::TextureEntry::default();
+    if let Some(face) = te.faces.get_mut(8) {
+        face.texture = Uuid::from_u128(bake);
+    }
+    aurora_net::AvatarAppearance {
+        texture_entry: Some(Arc::new(te)),
+        visual_params: vec![value; 218],
+        hover_height: 0.1,
+        cof_version: 7,
+        ..appearance(avatar_id, Vec::new())
+    }
+}
+
+#[test]
+fn a_kept_look_is_drawn_until_the_region_sends_its_own() {
+    let (mut world, _, _) = setup();
+    let idx = world.objects.index_of_uuid(&OTHER).expect("other avatar");
+    assert_eq!(world.visual_params(&OTHER), None, "a cloud: nothing to draw yet");
+    world.avatar_cache.insert_set(
+        OTHER,
+        KeptAvatar {
+            saved_at: unix_now(),
+            objects: Vec::new(),
+            look: Some(capture::look_of(&shaped(OTHER, 40, 0xBA4E))),
+        },
+    );
+    world.update_avatar_cache(Instant::now());
+    // the kept look is drawn: shape, bakes and hover height
+    assert_eq!(world.visual_params(&OTHER), Some(&[40u8; 218][..]));
+    assert_eq!(world.server_bake_texture(idx, 8), Some(Uuid::from_u128(0xBA4E)));
+    assert!((world.appearance_hover(&OTHER) - 0.1).abs() < 1e-6);
+    let kept_generation = world.appearance_generation(&OTHER);
+    assert!(kept_generation > 0);
+    // never taken for the region's
+    assert_eq!(world.appearance_cof_version(&OTHER), -1);
+    assert_eq!(world.announced_attachments(&OTHER), 0);
+    // the region's replaces it
+    world.apply(NetEvent::Appearance(shaped(OTHER, 90, 0xBA4F)));
+    assert!(world.avatar_cache.kept_look(&OTHER).is_none());
+    assert_eq!(world.server_bake_texture(idx, 8), Some(Uuid::from_u128(0xBA4F)));
+    assert_eq!(world.appearance_cof_version(&OTHER), 7);
+    assert_ne!(world.appearance_generation(&OTHER), kept_generation);
+    world.update_avatar_cache(Instant::now());
+    assert!(world.avatar_cache.kept_look(&OTHER).is_none(), "not drawn again");
+    // and is what is kept next
+    let set = capture::capture(&world, idx, unix_now());
+    assert_eq!(set.look, Some(capture::look_of(&shaped(OTHER, 90, 0xBA4F))));
+}
+
+#[test]
+fn a_kept_look_goes_with_the_setting_and_an_empty_one_is_not_drawn() {
+    let (mut world, _, _) = setup();
+    let look = capture::look_of(&shaped(OTHER, 40, 0xBA4E));
+    world.avatar_cache.insert_set(
+        OTHER,
+        KeptAvatar {
+            saved_at: unix_now(),
+            objects: Vec::new(),
+            look: Some(look.clone()),
+        },
+    );
+    world.update_avatar_cache(Instant::now());
+    assert!(world.visual_params(&OTHER).is_some());
+    world.avatar_cache.set_enabled(false);
+    world.update_avatar_cache(Instant::now());
+    assert_eq!(world.visual_params(&OTHER), None, "the setting off: a cloud again");
+    // an appearance the region sent without parameters keeps the kept look
+    world.avatar_cache.set_enabled(true);
+    world.update_avatar_cache(Instant::now());
+    world.apply(NetEvent::Appearance(appearance(OTHER, Vec::new())));
+    assert_eq!(world.visual_params(&OTHER), Some(&[40u8; 218][..]));
+    // a kept look without parameters is none
+    let (mut world, _, _) = setup();
+    world.avatar_cache.insert_set(
+        OTHER,
+        KeptAvatar {
+            saved_at: unix_now(),
+            objects: Vec::new(),
+            look: Some(file::KeptLook {
+                visual_params: Vec::new(),
+                ..look
+            }),
+        },
+    );
+    world.update_avatar_cache(Instant::now());
+    assert!(world.avatar_cache.kept_look(&OTHER).is_none());
 }

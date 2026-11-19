@@ -239,7 +239,7 @@ pub(super) fn worn_roots(world: &crate::world::World, id: &Uuid) -> Vec<Uuid> {
         .children_of(&avatar.key)
         .iter()
         .filter_map(|&i| world.objects.get(i))
-        // (not the copies drawn from the cache, world/worn_cache)
+        // (not the copies drawn from the cache, world/avatar_cache)
         .filter(|o| !o.is_avatar() && !o.is_client_preview())
         .map(|o| o.full_id)
         .collect()

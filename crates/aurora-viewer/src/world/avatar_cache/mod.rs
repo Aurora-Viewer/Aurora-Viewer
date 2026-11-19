@@ -1,5 +1,6 @@
-//! Worn objects drawn from a cache while the region sends them. Aurora's
-//! own: the Legacy Viewer draws an avatar's attachments only once the
+//! Avatars drawn from a cache while the region sends them: their look and
+//! what they wear. Aurora's own: the Legacy Viewer draws an avatar as a
+//! cloud until its appearance comes, and its attachments only once the
 //! region has sent them. At login our outfit took 15 to 74 s to be whole
 //! (the region puts back about half of it by itself, `outfit.rs` asks for
 //! the rest once it is quiet), and the objects another avatar wears came
@@ -25,13 +26,22 @@
 //! most after it came), when the avatar no longer wears it, when the
 //! avatar leaves or changes region, or when the time it was waited for is
 //! over. Nothing about a copy is sent to the region.
+//!
+//! The file also keeps the avatar's last appearance (its shape, bakes and
+//! hover height). Until the region's AvatarAppearance comes for an avatar,
+//! that look is drawn in its place (`World::shown_appearance`): the avatar
+//! shows as it was, not as a cloud. It is never taken for the region's: the
+//! outfit's COF checks, the list of worn objects and the appearance editor
+//! read the region's only. When the region's comes, it replaces the kept
+//! one (a shape that changed glides to it, like any new appearance).
 
 pub mod capture;
 pub mod file;
 
 use super::World;
 use super::objects::{ObjKey, PREVIEW_REGION};
-use file::{WornObject, WornSet};
+use aurora_net::types::AvatarAppearance;
+use file::{KeptAvatar, WornObject};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,14 +77,14 @@ struct Io {
     dir: PathBuf,
     jobs: Sender<Job>,
     // (behind a lock: the world is shared with the frame's worker threads)
-    read: std::sync::Mutex<Receiver<(Uuid, Option<WornSet>)>>,
+    read: std::sync::Mutex<Receiver<(Uuid, Option<KeptAvatar>)>>,
 }
 
 impl Io {
     fn start(dir: PathBuf) -> Option<Io> {
         let (jobs, todo) = std::sync::mpsc::channel::<Job>();
         let (done, read) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new().name("aurora-worn-cache".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("aurora-avatar-cache".into()).spawn(move || {
             for job in todo {
                 match job {
                     Job::Read(avatar, path) => {
@@ -87,11 +97,11 @@ impl Io {
                         if let Some(parent) = path.parent()
                             && let Err(e) = std::fs::create_dir_all(parent)
                         {
-                            log::warn!("worn objects cache: cannot create its folder: {e}");
+                            log::warn!("avatar cache: cannot create its folder: {e}");
                             continue;
                         }
                         if let Err(e) = crate::cache::write(&path, &bytes) {
-                            log::warn!("worn objects cache: cannot write a file: {e}");
+                            log::warn!("avatar cache: cannot write a file: {e}");
                         }
                     }
                 }
@@ -104,14 +114,14 @@ impl Io {
                 read: std::sync::Mutex::new(read),
             }),
             Err(e) => {
-                log::warn!("worn objects cache: cannot start its thread: {e}");
+                log::warn!("avatar cache: cannot start its thread: {e}");
                 None
             }
         }
     }
 
     fn path(&self, avatar: &Uuid) -> PathBuf {
-        crate::cache::path(&self.dir, "objects", avatar, "worn")
+        crate::cache::path(&self.dir, "objects", avatar, "look")
     }
 }
 
@@ -130,13 +140,16 @@ struct Copy {
 }
 
 #[derive(Default)]
-pub struct WornCache {
+pub struct AvatarCache {
     enabled: bool,
     io: Option<Io>,
     /// The files read: none when there was none (or it was too old).
-    sets: HashMap<Uuid, Option<Arc<WornSet>>>,
+    sets: HashMap<Uuid, Option<Arc<KeptAvatar>>>,
     first_seen: HashMap<Uuid, Instant>,
     copies: HashMap<Uuid, Vec<Copy>>,
+    /// The kept looks drawn for avatars no appearance came for yet, with
+    /// their generation (`World::appearance_generation`).
+    looks: HashMap<Uuid, (AvatarAppearance, u64)>,
     /// What was last written for each avatar ([`capture::signature`]).
     saved: HashMap<Uuid, u64>,
     next_local: u32,
@@ -146,7 +159,7 @@ pub struct WornCache {
     handed_over: usize,
 }
 
-impl WornCache {
+impl AvatarCache {
     /// Use the store at `dir` (the asset cache folder), or none.
     pub fn set_store(&mut self, dir: Option<PathBuf>) {
         self.io = dir.and_then(Io::start);
@@ -170,8 +183,18 @@ impl WornCache {
             .map_or(0, |v| v.iter().filter(|c| c.real_since.is_none()).count())
     }
 
+    /// The look kept for `avatar`, drawn while no appearance came for it.
+    pub fn kept_look(&self, avatar: &Uuid) -> Option<&(AvatarAppearance, u64)> {
+        self.looks.get(avatar)
+    }
+
+    /// The region's appearance came for `avatar`: its kept look goes.
+    pub fn appearance_came(&mut self, avatar: &Uuid) -> Option<AvatarAppearance> {
+        self.looks.remove(avatar).map(|(a, _)| a)
+    }
+
     /// Give a set read elsewhere (the demo, the tests).
-    pub fn insert_set(&mut self, avatar: Uuid, set: WornSet) {
+    pub fn insert_set(&mut self, avatar: Uuid, set: KeptAvatar) {
         self.sets.insert(avatar, Some(Arc::new(set)));
     }
 
@@ -214,7 +237,7 @@ fn fresh(saved_at: u64, now: u64) -> bool {
 /// outfit links to; for another avatar, those whose id its appearance lists.
 /// `present` tells whether the region's object of a kept one is there.
 pub fn wanted<'a>(
-    set: &'a WornSet,
+    set: &'a KeptAvatar,
     own: bool,
     outfit: &HashSet<Uuid>,
     listed: &HashSet<Uuid>,
@@ -235,17 +258,24 @@ pub fn wanted<'a>(
 
 impl World {
     /// Read, draw, hand over and keep what the avatars wear (every frame).
-    pub fn update_worn_cache(&mut self, now: Instant) {
-        if !self.worn_cache.enabled {
-            if self.worn_cache.copy_count() > 0 {
-                let all: Vec<Copy> = self.worn_cache.copies.drain().flat_map(|(_, v)| v).collect();
+    pub fn update_avatar_cache(&mut self, now: Instant) {
+        if !self.avatar_cache.enabled {
+            if self.avatar_cache.copy_count() > 0 {
+                let all: Vec<Copy> = self.avatar_cache.copies.drain().flat_map(|(_, v)| v).collect();
                 for c in all {
                     self.remove_worn_copy(c.root);
                 }
             }
+            let looks: Vec<Uuid> = self.avatar_cache.looks.drain().map(|(id, _)| id).collect();
+            for id in looks {
+                // (back to a cloud: the appearance generation moves on)
+                self.appearance_counter += 1;
+                self.mark_avatar_materials_dirty(&id);
+            }
             return;
         }
         self.read_worn_sets(now);
+        self.draw_kept_looks();
         self.draw_worn_copies(now);
         self.retire_worn_copies(now);
         self.capture_worn_sets(now);
@@ -253,7 +283,7 @@ impl World {
 
     /// The avatars in the world a copy can hang from (not the viewer's own
     /// previews, the mirror among them).
-    fn worn_cache_avatars(&self) -> Vec<(usize, Uuid, ObjKey)> {
+    fn avatar_cache_avatars(&self) -> Vec<(usize, Uuid, ObjKey)> {
         self.objects
             .avatars()
             .filter(|(_, o)| !o.is_client_preview())
@@ -262,7 +292,7 @@ impl World {
     }
 
     fn read_worn_sets(&mut self, now: Instant) {
-        let cache = &mut self.worn_cache;
+        let cache = &mut self.avatar_cache;
         if let Some(io) = &cache.io
             && let Ok(read) = io.read.lock()
         {
@@ -272,9 +302,9 @@ impl World {
                 cache.sets.insert(avatar, set);
             }
         }
-        let avatars = self.worn_cache_avatars();
+        let avatars = self.avatar_cache_avatars();
         let present: HashSet<Uuid> = avatars.iter().map(|a| a.1).collect();
-        let cache = &mut self.worn_cache;
+        let cache = &mut self.avatar_cache;
         // an avatar gone is seen for the first time again when it comes back
         cache.first_seen.retain(|id, _| present.contains(id));
         for (_, id, _) in avatars {
@@ -291,22 +321,47 @@ impl World {
         }
     }
 
+    /// Draw the look kept for each avatar no appearance came for yet.
+    fn draw_kept_looks(&mut self) {
+        let mut todo = Vec::new();
+        for (_, id, _) in self.avatar_cache_avatars() {
+            if self.appearances.contains_key(&id) || self.avatar_cache.looks.contains_key(&id) {
+                continue;
+            }
+            let Some(Some(set)) = self.avatar_cache.sets.get(&id) else {
+                continue;
+            };
+            // (an empty one is no look: AvatarAppearance's own rule,
+            // `appearance_verdict`)
+            if let Some(look) = set.look.as_ref().filter(|l| l.visual_params.len() > 1) {
+                todo.push(capture::appearance_of(id, look));
+            }
+        }
+        for a in todo {
+            let id = a.avatar_id;
+            log::debug!("avatar cache: the look kept for {id} is drawn until its appearance comes");
+            self.appearance_counter += 1;
+            self.avatar_cache.looks.insert(id, (a, self.appearance_counter));
+            self.mark_avatar_materials_dirty(&id);
+        }
+    }
+
     /// The objects our Current Outfit folder links to, while it is known.
-    fn worn_cache_outfit(&self) -> Option<HashSet<Uuid>> {
+    fn avatar_cache_outfit(&self) -> Option<HashSet<Uuid>> {
         super::outfit::current_outfit_objects(&self.inventory).map(|v| v.into_iter().collect())
     }
 
     fn draw_worn_copies(&mut self, now: Instant) {
-        let outfit = self.worn_cache_outfit().unwrap_or_default();
+        let outfit = self.avatar_cache_outfit().unwrap_or_default();
         let worn_items = self.outfit_attachment_items();
-        for (_, id, key) in self.worn_cache_avatars() {
+        for (_, id, key) in self.avatar_cache_avatars() {
             let own = id == self.agent_id;
-            let Some(Some(set)) = self.worn_cache.sets.get(&id).cloned() else {
+            let Some(Some(set)) = self.avatar_cache.sets.get(&id).cloned() else {
                 continue;
             };
             let window = if own { WINDOW_OWN } else { WINDOW };
             if self
-                .worn_cache
+                .avatar_cache
                 .first_seen
                 .get(&id)
                 .is_none_or(|t| now.saturating_duration_since(*t) > window)
@@ -319,7 +374,7 @@ impl World {
                 self.listed_attachments(&id).iter().map(|(object, _)| *object).collect()
             };
             let shown: HashSet<Uuid> = self
-                .worn_cache
+                .avatar_cache
                 .copies
                 .get(&id)
                 .map(|v| v.iter().map(|c| c.root_id).collect())
@@ -338,8 +393,8 @@ impl World {
             .collect();
             for object in todo {
                 if let Some(root) = self.insert_worn_copy(key, &object) {
-                    self.worn_cache.drawn += 1;
-                    self.worn_cache.copies.entry(id).or_default().push(Copy {
+                    self.avatar_cache.drawn += 1;
+                    self.avatar_cache.copies.entry(id).or_default().push(Copy {
                         avatar: key,
                         root,
                         root_id: object.root_id,
@@ -378,7 +433,7 @@ impl World {
                 }
             };
             let objects = &self.objects;
-            let local = self.worn_cache.alloc_local(|id| {
+            let local = self.avatar_cache.alloc_local(|id| {
                 objects
                     .index_of(&ObjKey {
                         region: PREVIEW_REGION,
@@ -439,10 +494,10 @@ impl World {
     }
 
     fn retire_worn_copies(&mut self, now: Instant) {
-        if self.worn_cache.copies.is_empty() {
+        if self.avatar_cache.copies.is_empty() {
             return;
         }
-        let outfit = self.worn_cache_outfit();
+        let outfit = self.avatar_cache_outfit();
         let worn_items: HashMap<Uuid, usize> = self
             .objects
             .index_of_uuid(&self.agent_id)
@@ -457,13 +512,13 @@ impl World {
             .unwrap_or_default();
         let mut gone = Vec::new();
         let mut handed = 0;
-        let mut copies = std::mem::take(&mut self.worn_cache.copies);
+        let mut copies = std::mem::take(&mut self.avatar_cache.copies);
         for (avatar, list) in &mut copies {
             let own = *avatar == self.agent_id;
             let current = self.objects.index_of_uuid(avatar).and_then(|i| self.objects.get(i)).map(|o| o.key);
             let window = if own { WINDOW_OWN } else { WINDOW };
             let late = self
-                .worn_cache
+                .avatar_cache
                 .first_seen
                 .get(avatar)
                 .is_none_or(|t| now.saturating_duration_since(*t) > window);
@@ -496,55 +551,56 @@ impl World {
             });
         }
         copies.retain(|_, list| !list.is_empty());
-        self.worn_cache.copies = copies;
-        self.worn_cache.handed_over += handed;
+        self.avatar_cache.copies = copies;
+        self.avatar_cache.handed_over += handed;
         for root in gone {
             self.remove_worn_copy(root);
         }
-        if self.worn_cache.copies.is_empty() && self.worn_cache.drawn > 0 {
+        if self.avatar_cache.copies.is_empty() && self.avatar_cache.drawn > 0 {
             log::info!(
-                "worn objects cache: {} copies drawn, {} handed over to the region's objects",
-                self.worn_cache.drawn,
-                self.worn_cache.handed_over
+                "avatar cache: {} copies drawn, {} handed over to the region's objects",
+                self.avatar_cache.drawn,
+                self.avatar_cache.handed_over
             );
-            self.worn_cache.drawn = 0;
-            self.worn_cache.handed_over = 0;
+            self.avatar_cache.drawn = 0;
+            self.avatar_cache.handed_over = 0;
         }
     }
 
-    /// Keep what the avatars wear, once it is whole and changed.
+    /// Keep how the avatars look and what they wear, once it is whole and
+    /// changed.
     fn capture_worn_sets(&mut self, now: Instant) {
-        if self.worn_cache.io.is_none() {
+        if self.avatar_cache.io.is_none() {
             return;
         }
         if self
-            .worn_cache
+            .avatar_cache
             .last_capture
             .is_some_and(|t| now.saturating_duration_since(t) < CAPTURE_EVERY)
         {
             return;
         }
-        self.worn_cache.last_capture = Some(now);
+        self.avatar_cache.last_capture = Some(now);
         let today = unix_now();
         let mut written = 0;
-        for (idx, id, _) in self.worn_cache_avatars() {
+        for (idx, id, _) in self.avatar_cache_avatars() {
             if written >= CAPTURES_PER_PASS {
                 break;
             }
-            if self.worn_cache.copies.contains_key(&id) || !self.worn_set_whole(idx, id) {
+            if self.avatar_cache.copies.contains_key(&id) || !self.worn_set_whole(idx, id) {
                 continue;
             }
             let signature = capture::signature(self, idx);
-            if self.worn_cache.saved.get(&id) == Some(&signature) {
+            if self.avatar_cache.saved.get(&id) == Some(&signature) {
                 continue;
             }
             let set = capture::capture(self, idx, today);
             let bytes = file::encode(&set);
-            let Some(io) = &self.worn_cache.io else { return };
+            let Some(io) = &self.avatar_cache.io else { return };
             if io.jobs.send(Job::Write(io.path(&id), bytes)).is_ok() {
-                self.worn_cache.saved.insert(id, signature);
+                self.avatar_cache.saved.insert(id, signature);
                 // what a return to this avatar later in the session draws
-                self.worn_cache.sets.insert(id, Some(Arc::new(set)));
+                self.avatar_cache.sets.insert(id, Some(Arc::new(set)));
                 written += 1;
             }
         }

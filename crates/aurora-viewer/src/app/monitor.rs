@@ -604,7 +604,7 @@ impl App {
         let bridge = self.bridge_runtime.item();
         let (mut worn, mut huds) = (Vec::new(), Vec::new());
         for &att in world.objects.children_of(&me.key) {
-            // (not the copies drawn from the cache, world/worn_cache)
+            // (not the copies drawn from the cache, world/avatar_cache)
             let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };

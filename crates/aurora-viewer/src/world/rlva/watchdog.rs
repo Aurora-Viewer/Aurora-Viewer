@@ -215,7 +215,7 @@ impl super::super::World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| {
-                // (not the copies drawn from the cache, world/worn_cache)
+                // (not the copies drawn from the cache, world/avatar_cache)
                 let object = self.objects.get(*i).filter(|o| !o.is_client_preview())?;
                 let item = object.attachment_item_id().filter(|item| !item.is_nil()).unwrap_or(object.full_id);
                 let point = object.attachment_point();

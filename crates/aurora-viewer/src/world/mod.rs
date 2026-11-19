@@ -15,6 +15,7 @@ pub mod object_motion_trace;
 pub mod shape_tween;
 
 mod arrival_wait;
+pub mod avatar_cache;
 pub mod beacons;
 pub mod beams;
 pub mod bridge;
@@ -122,7 +123,6 @@ pub mod voice_moderation;
 pub mod wearable_favorites;
 pub mod windlight_presets;
 pub mod worldmap;
-pub mod worn_cache;
 pub mod worn_listed;
 
 #[cfg(test)]
@@ -571,7 +571,7 @@ pub struct World {
     /// even when the message itself is dropped (stale, no parameters): the
     /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
     /// those checks. Read by the Dev Toolbox's J2 (world/worn_listed.rs) and
-    /// the worn objects cache (world/worn_cache).
+    /// the worn objects cache (world/avatar_cache).
     listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
@@ -642,7 +642,7 @@ pub struct World {
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
     /// Worn objects drawn from the cache while the region sends them.
-    pub worn_cache: worn_cache::WornCache,
+    pub avatar_cache: avatar_cache::AvatarCache,
     /// Objects already reported by a diagnostic (logged once).
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
@@ -1129,7 +1129,7 @@ impl World {
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
-            worn_cache: Default::default(),
+            avatar_cache: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             motd: String::new(),
@@ -2810,7 +2810,32 @@ impl World {
         if let Some(values) = self.shape_tweens.shown(avatar) {
             return Some(values);
         }
-        self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+        self.shown_appearance(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// The avatar's last appearance from the region or, until one comes,
+    /// the look the avatar cache kept for it (world/avatar_cache): what is
+    /// drawn. What reads the region's own (the outfit's COF checks, the
+    /// list of worn objects, the appearance editor) reads `appearances`.
+    fn shown_appearance(&self, avatar: &Uuid) -> Option<&(AvatarAppearance, u64)> {
+        self.appearances.get(avatar).or_else(|| self.avatar_cache.kept_look(avatar))
+    }
+
+    /// Redraw the avatar's skin and what it wears with bakes on mesh.
+    fn mark_avatar_materials_dirty(&mut self, avatar: &Uuid) {
+        let Some(idx) = self.objects.index_of_uuid(avatar) else {
+            return;
+        };
+        if let Some(o) = self.objects.get(idx) {
+            let key = o.key;
+            let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
+            for k in kids {
+                self.mark_tree_material_dirty(k);
+            }
+        }
+        if let Some(o) = self.objects.get_mut(idx) {
+            o.material_dirty = true;
+        }
     }
 
     /// Whether `avatar` stands within `range` of the agent (a seated one:
@@ -2854,8 +2879,7 @@ impl World {
                 0.0
             };
         }
-        self.appearances
-            .get(avatar)
+        self.shown_appearance(avatar)
             .map(|(a, _)| a.hover_height)
             .filter(|h| h.is_finite())
             .unwrap_or(0.0)
@@ -3055,7 +3079,7 @@ impl World {
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         let avatar = &self.appearance_of(avatar);
-        self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
+        self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
@@ -3121,7 +3145,7 @@ impl World {
         if self.is_mirror(&o.full_id) {
             return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
-        if let Some((a, _)) = self.appearances.get(&o.full_id)
+        if let Some((a, _)) = self.shown_appearance(&o.full_id)
             && let Some(te) = &a.texture_entry
         {
             return te.faces.get(te_index).map(|f| f.texture);
@@ -3736,16 +3760,20 @@ impl World {
                         return None;
                     }
                 }
+                // the look the avatar cache drew in its place goes
+                let kept = self.avatar_cache.appearance_came(&id);
                 // LLVOAvatar::processAvatarAppearance: another avatar's
                 // shape glides to its new values (setAnimationTarget), its
                 // first appearance lands at once; from what it shows now
                 // when a glide is under way. Within shape_tween::RANGE only.
+                // (Aurora's own: from the kept look too, which was drawn)
                 if !own {
                     let from = self
                         .shape_tweens
                         .shown(&id)
                         .map(<[u8]>::to_vec)
-                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()));
+                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()))
+                        .or_else(|| kept.map(|k| k.visual_params));
                     match from {
                         Some(from) if self.near_agent(&id, shape_tween::RANGE) => {
                             self.shape_tweens.start(id, from, a.visual_params.clone(), Instant::now());
@@ -3764,18 +3792,7 @@ impl World {
                 }
                 self.appearances.insert(id, (a, self.appearance_counter));
                 // Attachments using bakes-on-mesh must refresh too.
-                if let Some(idx) = self.objects.index_of_uuid(&id) {
-                    if let Some(o) = self.objects.get(idx) {
-                        let key = o.key;
-                        let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
-                        for k in kids {
-                            self.mark_tree_material_dirty(k);
-                        }
-                    }
-                    if let Some(o) = self.objects.get_mut(idx) {
-                        o.material_dirty = true;
-                    }
-                }
+                self.mark_avatar_materials_dirty(&id);
                 None
             }
             NetEvent::Sun(s) => {
