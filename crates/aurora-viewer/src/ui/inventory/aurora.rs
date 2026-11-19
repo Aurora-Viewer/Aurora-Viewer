@@ -23,6 +23,7 @@ mod smart_bar;
 mod toolbar;
 
 pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
+pub(super) use columns::ColumnFit;
 pub(super) use history::{History, Place};
 pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
@@ -141,6 +142,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"
+            | "aurora-columns-all"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -537,7 +539,7 @@ fn explorer_list(
     let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
     // the combination view titles its list under its tiles
     if shown == view::ExplorerView::List {
-        rows::header(ui, p, frame, list_id, prefs, st.tab);
+        rows::header(ui, p, frame, list_id, prefs, st.tab, &mut st.column_fit);
         frame.columns = prefs.explorer;
     }
     st.aurora = Some(frame);
@@ -711,8 +713,8 @@ mod tests {
                 h.frames(3);
             }
             assert!(h.prefs.explorer.sidebar_width > 0);
-            assert!(h.prefs.explorer.kind_width > 0);
-            assert!(h.prefs.explorer.date_width > 0);
+            assert!(h.prefs.explorer.columns.slot(view::ColumnId::Kind).width > 0);
+            assert!(h.prefs.explorer.columns.slot(view::ColumnId::Date).width > 0);
             assert_eq!(h.st.selection, selection);
             assert!(h.actions.is_empty(), "splitters cannot perform inventory operations");
             let saved = h.prefs.explorer;
@@ -731,7 +733,8 @@ mod tests {
                 (header.name_end - row.name_end).abs() < 0.5,
                 "headers stay aligned with scrolled rows"
             );
-            for (header, row) in [(header.kind, row.kind), (header.rights, row.rights), (header.date, row.date)] {
+            for id in [view::ColumnId::Kind, view::ColumnId::Rights, view::ColumnId::Date] {
+                let (header, row) = (header.get(id), row.get(id));
                 assert!((header.unwrap().min - row.unwrap().min).abs() < 0.5);
             }
             let hit = h
@@ -771,6 +774,57 @@ mod tests {
         assert_eq!(h.prefs.sort.header(), (SortHeader::Name, false));
         assert_eq!(h.st.selection, selection);
         assert!(h.actions.is_empty(), "sorting performs no inventory operation");
+    }
+
+    #[test]
+    fn titles_drag_columns_into_place_and_dividers_fit_them() {
+        use view::{ColumnId, SortHeader};
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(8);
+        h.actions.clear();
+        let sort = h.prefs.sort;
+        let title = |h: &Harness, header: SortHeader| {
+            h.ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_title", header))))
+                .expect("title drawn")
+        };
+        // the date carried left of the type
+        let from = title(&h, SortHeader::Date).center();
+        let to = title(&h, ColumnId::Kind.header()).left_center() + egui::vec2(4.0, 0.0);
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from + (to - from) * (step as f32 / 6.0))]);
+        }
+        h.run(vec![egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(3);
+        let order: Vec<_> = h.prefs.explorer.columns.0.iter().map(|s| s.id).collect();
+        assert_eq!(order[..3], [ColumnId::Date, ColumnId::Kind, ColumnId::Rights]);
+        assert_eq!(h.prefs.sort, sort, "a drag does not sort");
+        assert!(h.actions.is_empty());
+        // the divider right of the date fits it to its widest text
+        h.prefs.explorer.columns.slot_mut(ColumnId::Date).width = 400;
+        h.frames(3);
+        let handle = h
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_column_handle", 1_usize))))
+            .expect("the divider after the date");
+        h.double_click(handle.center());
+        h.frames(2);
+        let fitted = h.prefs.explorer.columns.slot(ColumnId::Date).width;
+        assert!((64..200).contains(&fitted), "fitted to its dates and title, got {fitted}");
+        assert_eq!(h.prefs.sort, sort, "a fit does not sort");
     }
 
     /// Aurora's window `width` wide in a headless context.

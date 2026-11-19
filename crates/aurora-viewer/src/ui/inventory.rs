@@ -268,6 +268,9 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    /// The creator column's names by creator and owner (`None`: not known
+    /// yet), RLVa's `@shownames` stand-ins included.
+    pub creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
     /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
     /// the field that shows them (`resident_scopes`): it opens no profile.
     pub hidden_names: HiddenNames,
@@ -324,6 +327,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            creator_names: Default::default(),
             hidden_names: Default::default(),
             pictures: Default::default(),
             online: world
@@ -591,6 +595,12 @@ pub struct InventoryUi {
     result_width: f32,
     creator_generation: Option<u64>,
     creators: HashSet<Uuid>,
+    /// The creators and owners of the items (`aurora::rows::creator_key`),
+    /// for the creator column, by inventory generation.
+    creator_keys: Vec<(Uuid, Uuid)>,
+    creator_keys_generation: Option<u64>,
+    /// What each details column showed, for the fit of its divider.
+    pub(super) column_fit: aurora::ColumnFit,
     fetch_poll: Option<std::time::Instant>,
     fetch_generation: Option<(Uuid, u64, bool, bool, bool)>,
     /// The clipboard's folders were all loaded at this inventory generation.
@@ -2642,6 +2652,51 @@ pub fn show(
             facts
                 .names
                 .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
+        }
+    }
+    // Aurora's creator column, and the sorts by creator or worn: the names
+    // as the column shows them, a stand-in where `@shownames` hides one
+    // (resident_scopes), and the worn items.
+    let sorts_by = |column| (0..=4).any(|tab| prefs.sort_for(tab).column == Some(column));
+    if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator)) {
+        if st.creator_keys_generation != Some(world.inventory.generation) {
+            let keys: HashSet<(Uuid, Uuid)> = world
+                .inventory
+                .items
+                .values()
+                .map(|it| aurora::rows::creator_key(&world.inventory, it))
+                .filter(|(creator, _)| !creator.is_nil())
+                .collect();
+            st.creator_keys = keys.into_iter().collect();
+            st.creator_keys_generation = Some(world.inventory.generation);
+        }
+        let mut names = std::collections::HashMap::with_capacity(st.creator_keys.len());
+        for &(creator, owner) in &st.creator_keys {
+            let scope = crate::world::names::NameScope::Creator { owner };
+            let name = if creator == world.agent_id {
+                Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
+            } else if !world.rlva_shows_name(scope, creator) {
+                Some(world.social.name_in(scope, &creator))
+            } else {
+                world.social.want_name(creator);
+                world
+                    .social
+                    .avatar_names
+                    .complete_in(crate::world::names::NameScope::Roster, &creator)
+                    .or_else(|| world.social.names.get(&creator).cloned())
+            };
+            names.insert((creator, owner), name);
+        }
+        facts.creator_names = std::sync::Arc::new(names);
+    }
+    if sorts_by(view::SortColumn::Creator) || sorts_by(view::SortColumn::Worn) {
+        let worn = facts.worn.iter().chain(&facts.active_gestures).copied().collect();
+        let context = view::SortContext::new(facts.creator_names.clone(), worn);
+        for state in std::iter::once(&mut *st).chain(dual.as_deref_mut()) {
+            state.view.set_context(context.clone());
+            for window in &mut state.windows {
+                window.state.view.set_context(context.clone());
+            }
         }
     }
     let inv = &mut world.inventory;

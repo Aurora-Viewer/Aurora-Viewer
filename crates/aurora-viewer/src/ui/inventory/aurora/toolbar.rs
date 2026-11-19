@@ -535,7 +535,7 @@ pub(super) fn explorer_row(
             view_button(ui, p, prefs);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
@@ -563,7 +563,7 @@ pub(super) fn explorer_row(
             view_button(ui, p, prefs);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights, &st.column_fit, layout);
             });
             additional_button(ui, p, st);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
@@ -816,6 +816,9 @@ fn sort_text(prefs: &InventoryPreferences, tab: usize) -> String {
         Some(SortColumn::Kind) => aurora_i18n::tr!("common-type"),
         Some(SortColumn::Rights) => super::rights::heading(prefs.rights),
         Some(SortColumn::Description) => aurora_i18n::tr!("inventory-sort-description"),
+        Some(SortColumn::Creator) => aurora_i18n::tr!("inventory-column-creator"),
+        Some(SortColumn::Worn) => aurora_i18n::tr!("common-worn"),
+        Some(SortColumn::Count) => aurora_i18n::tr!("inventory-column-count"),
         None if sort.by_date => aurora_i18n::tr!("inventory-sort-date"),
         None => aurora_i18n::tr!("inventory-sort-name"),
     };

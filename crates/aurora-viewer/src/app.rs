@@ -23442,6 +23442,7 @@ impl ApplicationHandler for App {
                         | "aurora-wide"
                         | "aurora-columns"
                         | "aurora-columns-hidden"
+                        | "aurora-columns-all"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
                         | "aurora-system-folders"
@@ -23558,13 +23559,26 @@ impl ApplicationHandler for App {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
                         }
                         if view.starts_with("aurora-columns") {
-                            let columns = &mut self.settings.inventory.explorer;
-                            columns.sidebar_width = 280;
-                            columns.kind_width = 176;
-                            columns.rights_width = 80;
-                            columns.date_width = 110;
-                            columns.show_kind = view != "aurora-columns-hidden";
-                            columns.show_date = view != "aurora-columns-hidden";
+                            use ui::inventory::view::{ColumnId, SortColumn};
+                            let explorer = &mut self.settings.inventory.explorer;
+                            explorer.sidebar_width = 280;
+                            let columns = &mut explorer.columns;
+                            columns.slot_mut(ColumnId::Kind).width = 176;
+                            columns.slot_mut(ColumnId::Rights).width = 80;
+                            columns.slot_mut(ColumnId::Date).width = 110;
+                            columns.slot_mut(ColumnId::Kind).show = view != "aurora-columns-hidden";
+                            columns.slot_mut(ColumnId::Date).show = view != "aurora-columns-hidden";
+                            // every column, the creator first, sorted by type
+                            // in reverse: the details' columns and their order
+                            if view == "aurora-columns-all" {
+                                for id in ColumnId::ALL {
+                                    columns.slot_mut(id).show = true;
+                                }
+                                columns.move_to(ColumnId::Creator, 0);
+                                let sort = &mut self.settings.inventory.sort;
+                                sort.column = Some(SortColumn::Kind);
+                                sort.descending = true;
+                            }
                         }
                         if view.ends_with("-no-details") {
                             self.settings.inventory.show_details = false;

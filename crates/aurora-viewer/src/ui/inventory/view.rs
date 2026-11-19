@@ -262,6 +262,9 @@ pub enum SortColumn {
     Kind,
     Rights,
     Description,
+    Creator,
+    Worn,
+    Count,
 }
 
 /// A header of the explorer's details.
@@ -525,15 +528,11 @@ impl Default for InventoryPreferences {
 /// Expanded inventory geometry in logical points. Zero widths inherit the
 /// layout's defaults; resizing a small window never overwrites saved widths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "SavedExplorer")]
 pub struct ExplorerPreferences {
     pub sidebar_width: u16,
-    pub kind_width: u16,
-    pub rights_width: u16,
-    pub date_width: u16,
-    pub show_kind: bool,
-    pub show_rights: bool,
-    pub show_date: bool,
+    /// The details' columns after the name, in their order.
+    pub columns: ColumnList,
     /// How the explorer shows its folder: rows, tiles, or both.
     pub view: ExplorerView,
     /// The side of a tile's picture; 0 is the Legacy Viewer's 128.
@@ -547,15 +546,220 @@ impl Default for ExplorerPreferences {
     fn default() -> Self {
         Self {
             sidebar_width: 0,
+            columns: ColumnList::default(),
+            view: ExplorerView::List,
+            tile_size: 0,
+            gallery_height: 0,
+        }
+    }
+}
+
+/// The saved explorer preferences, those from before the column list
+/// included (their three columns' widths and switches).
+#[derive(Deserialize)]
+#[serde(default)]
+struct SavedExplorer {
+    sidebar_width: u16,
+    columns: Option<ColumnList>,
+    kind_width: u16,
+    rights_width: u16,
+    date_width: u16,
+    show_kind: bool,
+    show_rights: bool,
+    show_date: bool,
+    view: ExplorerView,
+    tile_size: u16,
+    gallery_height: u16,
+}
+
+impl Default for SavedExplorer {
+    fn default() -> Self {
+        let now = ExplorerPreferences::default();
+        Self {
+            sidebar_width: now.sidebar_width,
+            columns: None,
             kind_width: 0,
             rights_width: 0,
             date_width: 0,
             show_kind: true,
             show_rights: true,
             show_date: true,
-            view: ExplorerView::List,
-            tile_size: 0,
-            gallery_height: 0,
+            view: now.view,
+            tile_size: now.tile_size,
+            gallery_height: now.gallery_height,
+        }
+    }
+}
+
+impl From<SavedExplorer> for ExplorerPreferences {
+    fn from(saved: SavedExplorer) -> Self {
+        let columns = saved.columns.unwrap_or_else(|| {
+            let mut columns = ColumnList::default();
+            for (id, show, width) in [
+                (ColumnId::Kind, saved.show_kind, saved.kind_width),
+                (ColumnId::Rights, saved.show_rights, saved.rights_width),
+                (ColumnId::Date, saved.show_date, saved.date_width),
+            ] {
+                let slot = columns.slot_mut(id);
+                slot.show = show;
+                slot.width = width;
+            }
+            columns
+        });
+        Self {
+            sidebar_width: saved.sidebar_width,
+            columns,
+            view: saved.view,
+            tile_size: saved.tile_size,
+            gallery_height: saved.gallery_height,
+        }
+    }
+}
+
+/// A column of the explorer's details, after the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnId {
+    Kind,
+    Rights,
+    Date,
+    Creator,
+    Description,
+    Worn,
+    Count,
+}
+
+impl ColumnId {
+    pub const ALL: [Self; COLUMNS] = [
+        Self::Kind,
+        Self::Rights,
+        Self::Date,
+        Self::Creator,
+        Self::Description,
+        Self::Worn,
+        Self::Count,
+    ];
+
+    /// The header a click on its title sorts by.
+    pub fn header(self) -> SortHeader {
+        match self {
+            Self::Date => SortHeader::Date,
+            Self::Kind => SortHeader::Column(SortColumn::Kind),
+            Self::Rights => SortHeader::Column(SortColumn::Rights),
+            Self::Creator => SortHeader::Column(SortColumn::Creator),
+            Self::Description => SortHeader::Column(SortColumn::Description),
+            Self::Worn => SortHeader::Column(SortColumn::Worn),
+            Self::Count => SortHeader::Column(SortColumn::Count),
+        }
+    }
+}
+
+pub const COLUMNS: usize = 7;
+
+/// A column's place: shown or not, and its saved width (0: the default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnSlot {
+    pub id: ColumnId,
+    pub show: bool,
+    #[serde(default)]
+    pub width: u16,
+}
+
+/// Every column once, in the order they are drawn. Saved as a list, read
+/// back whatever it holds: an unknown or repeated column is dropped, a
+/// missing one comes back hidden at the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Vec<SavedSlot>", into = "Vec<ColumnSlot>")]
+pub struct ColumnList(pub [ColumnSlot; COLUMNS]);
+
+/// A column as saved; `None` for one this version does not know.
+#[derive(Deserialize)]
+struct SavedSlot {
+    #[serde(default, deserialize_with = "known_column")]
+    id: Option<ColumnId>,
+    #[serde(default)]
+    show: bool,
+    #[serde(default)]
+    width: u16,
+}
+
+fn known_column<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<ColumnId>, D::Error> {
+    Ok(serde_json::Value::deserialize(de)
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok()))
+}
+
+impl Default for ColumnList {
+    /// The type, the rights and the date, as before; the others hidden.
+    fn default() -> Self {
+        Self(ColumnId::ALL.map(|id| ColumnSlot {
+            id,
+            show: matches!(id, ColumnId::Kind | ColumnId::Rights | ColumnId::Date),
+            width: 0,
+        }))
+    }
+}
+
+impl From<Vec<SavedSlot>> for ColumnList {
+    fn from(saved: Vec<SavedSlot>) -> Self {
+        let mut slots: Vec<ColumnSlot> = Vec::with_capacity(COLUMNS);
+        for slot in saved {
+            if let Some(id) = slot.id
+                && !slots.iter().any(|s| s.id == id)
+            {
+                slots.push(ColumnSlot {
+                    id,
+                    show: slot.show,
+                    width: slot.width,
+                });
+            }
+        }
+        for id in ColumnId::ALL {
+            if !slots.iter().any(|s| s.id == id) {
+                slots.push(ColumnSlot { id, show: false, width: 0 });
+            }
+        }
+        let mut list = Self::default();
+        list.0.copy_from_slice(&slots[..COLUMNS]);
+        list
+    }
+}
+
+impl From<ColumnList> for Vec<ColumnSlot> {
+    fn from(list: ColumnList) -> Self {
+        list.0.to_vec()
+    }
+}
+
+impl ColumnList {
+    pub fn slot(&self, id: ColumnId) -> &ColumnSlot {
+        self.0.iter().find(|s| s.id == id).expect("every column is in the list")
+    }
+
+    pub fn slot_mut(&mut self, id: ColumnId) -> &mut ColumnSlot {
+        self.0.iter_mut().find(|s| s.id == id).expect("every column is in the list")
+    }
+
+    pub fn shown(&self, id: ColumnId) -> bool {
+        self.slot(id).show
+    }
+
+    /// Moves `id` to `index` among all the columns, the others keeping their
+    /// order.
+    pub fn move_to(&mut self, id: ColumnId, index: usize) {
+        let mut slots = self.0.to_vec();
+        let Some(from) = slots.iter().position(|s| s.id == id) else {
+            return;
+        };
+        let slot = slots.remove(from);
+        slots.insert(index.min(slots.len()), slot);
+        self.0.copy_from_slice(&slots);
+    }
+
+    /// Every width back to its default, the order and the switches kept.
+    pub fn reset_widths(&mut self) {
+        for slot in &mut self.0 {
+            slot.width = 0;
         }
     }
 }
@@ -674,9 +878,45 @@ struct Query {
     names: HashMap<Uuid, String>,
 }
 
+/// What the sorts by creator and by worn read beside the inventory: the
+/// creators' names as the column shows them (`None` while unknown) by
+/// creator and owner (`resident_scopes`), and the worn or active items.
+#[derive(Default, Clone)]
+pub struct SortContext {
+    pub creators: std::sync::Arc<HashMap<(Uuid, Uuid), Option<String>>>,
+    pub worn: std::sync::Arc<HashSet<Uuid>>,
+    /// Changes when either changes; the order is rebuilt then.
+    pub fingerprint: u64,
+}
+
+impl SortContext {
+    pub fn new(creators: std::sync::Arc<HashMap<(Uuid, Uuid), Option<String>>>, worn: HashSet<Uuid>) -> Self {
+        use std::hash::{Hash, Hasher};
+        // order-free: the sum of each entry's hash
+        let hash = |value: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value(&mut hasher);
+            hasher.finish()
+        };
+        let mut fingerprint = ((creators.len() as u64) << 32) | worn.len() as u64;
+        for entry in creators.iter() {
+            fingerprint = fingerprint.wrapping_add(hash(&|h| entry.hash(h)));
+        }
+        for id in &worn {
+            fingerprint = fingerprint.wrapping_add(hash(&|h| id.hash(h)).rotate_left(17));
+        }
+        Self {
+            creators,
+            worn: std::sync::Arc::new(worn),
+            fingerprint,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ViewCache {
-    version: Option<(Uuid, Uuid, u64, Sort, &'static str)>,
+    version: Option<(Uuid, Uuid, u64, Sort, &'static str, u64)>,
+    context: SortContext,
     entries: Vec<Entry>,
     children: IdMap<Vec<Uuid>>,
     result_children: IdMap<Vec<Uuid>>,
@@ -694,8 +934,17 @@ pub struct ViewCache {
 }
 
 impl ViewCache {
+    /// The creators' names and the worn items the sorts by them read.
+    pub fn set_context(&mut self, context: SortContext) {
+        self.context = context;
+    }
+
     pub fn prepare(&mut self, inv: &Inventory, sort: Sort) {
-        let version = (inv.root, inv.lib_root, inv.generation, sort, aurora_i18n::language());
+        let context = match sort.column {
+            Some(SortColumn::Creator | SortColumn::Worn) => self.context.fingerprint,
+            _ => 0,
+        };
+        let version = (inv.root, inv.lib_root, inv.generation, sort, aurora_i18n::language(), context);
         if self.version == Some(version) {
             return;
         }
@@ -794,10 +1043,37 @@ impl ViewCache {
         }
         self.folder_dates = dates;
         if let Some(column) = sort.column {
-            self.entries.par_iter_mut().filter(|e| !e.folder).for_each(|e| match column {
-                SortColumn::Kind => e.key = super::aurora::rows::kind_name(inv, e.id).to_lowercase(),
-                SortColumn::Description => e.key.clone_from(&e.desc),
-                SortColumn::Rights => e.rank = rights_rank(inv, e.id),
+            let context = &self.context;
+            self.entries.par_iter_mut().for_each(|e| {
+                if e.folder {
+                    // a folder counts what it holds, once loaded
+                    if column == SortColumn::Count
+                        && let Some(f) = inv.folders.get(&e.id)
+                        && f.state == crate::world::inventory::FetchState::Fetched
+                    {
+                        e.rank = 1 + (f.items.len() + f.children.len()) as u32;
+                    }
+                    return;
+                }
+                match column {
+                    SortColumn::Kind => e.key = super::aurora::rows::kind_name(inv, e.id).to_lowercase(),
+                    SortColumn::Description => e.key.clone_from(&e.desc),
+                    SortColumn::Rights => e.rank = rights_rank(inv, e.id),
+                    SortColumn::Creator => {
+                        let name = inv
+                            .items
+                            .get(&e.id)
+                            .filter(|it| it.asset_type != 25)
+                            .and_then(|it| context.creators.get(&super::aurora::rows::creator_key(inv, it)).cloned().flatten());
+                        e.rank = u32::from(name.is_none());
+                        e.key = name.unwrap_or_default().to_lowercase();
+                    }
+                    SortColumn::Worn => {
+                        let original = rules::original(inv, e.id).unwrap_or(e.id);
+                        e.rank = u32::from(context.worn.contains(&original));
+                    }
+                    SortColumn::Count => {}
+                }
             });
         }
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
@@ -827,7 +1103,7 @@ impl ViewCache {
     /// The rendered sort, without the model generation: a late Delete respects
     /// a new sort while ordinary inventory updates keep the same intent.
     pub(super) fn selection_sort(&self) -> Option<Sort> {
-        self.version.map(|(_, _, _, sort, _)| sort)
+        self.version.map(|(_, _, _, sort, _, _)| sort)
     }
 
     /// The date a folder sorts by: its newest descendant's, 0 when it holds
@@ -1419,10 +1695,18 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     if let Some(column) = sort.column {
         // Folders have no type, rights or description: they keep their names.
         let key = match column {
-            SortColumn::Rights => a.rank.cmp(&b.rank),
-            SortColumn::Kind | SortColumn::Description => cmp_folded(&a.key, &b.key),
+            SortColumn::Rights | SortColumn::Count => a.rank.cmp(&b.rank),
+            // the worn items first
+            SortColumn::Worn => b.rank.cmp(&a.rank),
+            SortColumn::Kind | SortColumn::Description | SortColumn::Creator => cmp_folded(&a.key, &b.key),
         };
         let key = if sort.descending { key.reverse() } else { key };
+        // the creators not named yet stay last, whichever way
+        let key = if column == SortColumn::Creator {
+            a.rank.cmp(&b.rank).then(key)
+        } else {
+            key
+        };
         return groups
             .then_with(|| key)
             .then_with(|| cmp_folded(&a.name, &b.name))
@@ -2078,6 +2362,77 @@ mod tests {
             root(kind)[0],
             "the system folders stay first when reversed"
         );
+    }
+
+    #[test]
+    fn creators_worn_and_counts_sort_with_their_context() {
+        let (mut inv, _) = fixture();
+        folder(&mut inv, 7, id(2), -1, "full");
+        folder(&mut inv, 8, id(2), -1, "empty");
+        inv.add_items(vec![item(30, id(7), "inside", 10), item(31, id(7), "inside too", 10)]);
+        inv.folders.get_mut(&id(7)).unwrap().items = vec![id(30), id(31)];
+        // 10 by Zed, 11 by Amy, 12 by a creator not named yet
+        for (n, creator) in [(10, 50), (11, 51), (12, 52)] {
+            let mut it = inv.items[&id(n)].clone();
+            it.creator = id(creator);
+            it.owner = id(99);
+            inv.add_items(vec![it]);
+        }
+        let creators: HashMap<_, _> = [
+            ((id(50), id(99)), Some("Zed".to_owned())),
+            ((id(51), id(99)), Some("amy".to_owned())),
+            ((id(52), id(99)), None),
+        ]
+        .into();
+        let context = SortContext::new(std::sync::Arc::new(creators), [id(11)].into());
+        let children = |sort: Sort, context: &SortContext| {
+            let prefs = InventoryPreferences::default();
+            let mut cache = ViewCache::default();
+            cache.set_context(context.clone());
+            cache.prepare(&inv, sort);
+            cache.children(id(2), &prefs, inv.lib_root)
+        };
+        let by = |column| Sort {
+            by_date: false,
+            column: Some(column),
+            ..Sort::default()
+        };
+        assert_eq!(children(by(SortColumn::Creator), &context)[2..], [id(11), id(10), id(12)]);
+        assert_eq!(
+            children(
+                Sort {
+                    descending: true,
+                    ..by(SortColumn::Creator)
+                },
+                &context
+            )[2..],
+            [id(10), id(11), id(12)],
+            "a creator not named yet stays last"
+        );
+        assert_eq!(children(by(SortColumn::Worn), &context)[2], id(11), "the worn item first");
+        assert_eq!(
+            children(by(SortColumn::Count), &context)[..2],
+            [id(8), id(7)],
+            "the fuller folder later"
+        );
+        // a name that arrives sorts again
+        let mut cache = ViewCache::default();
+        cache.set_context(context.clone());
+        cache.prepare(&inv, by(SortColumn::Creator));
+        let built = cache.built();
+        cache.set_context(context.clone());
+        cache.prepare(&inv, by(SortColumn::Creator));
+        assert_eq!(cache.built(), built, "the same names keep the order");
+        let named: HashMap<_, _> = [((id(52), id(99)), Some("Bea".to_owned()))].into();
+        cache.set_context(SortContext::new(std::sync::Arc::new(named), HashSet::new()));
+        cache.prepare(&inv, by(SortColumn::Creator));
+        assert_ne!(cache.built(), built);
+        cache.set_context(SortContext::default());
+        let built = cache.built();
+        cache.prepare(&inv, by(SortColumn::Kind));
+        cache.set_context(context);
+        cache.prepare(&inv, by(SortColumn::Kind));
+        assert_eq!(cache.built(), built + 1, "a sort that reads no names ignores them");
     }
 
     #[test]

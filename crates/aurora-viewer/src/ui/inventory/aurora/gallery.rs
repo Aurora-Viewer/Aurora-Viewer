@@ -258,7 +258,7 @@ pub(super) fn combination(
     let header = Rect::from_min_size(below.min, Vec2::new(below.width(), HEADER));
     in_rect(ui, header, "aurora_inventory_gallery_header", |ui| {
         if let Some(frame) = st.aurora {
-            row::header(ui, p, frame, list_id, prefs, st.tab);
+            row::header(ui, p, frame, list_id, prefs, st.tab, &mut st.column_fit);
             if let Some(frame) = &mut st.aurora {
                 frame.columns = prefs.explorer;
             }
