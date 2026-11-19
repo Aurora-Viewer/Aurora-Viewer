@@ -657,6 +657,8 @@ pub struct DrawLists {
     pub mask: Vec<DrawCmd>,
     pub mask_two_sided: Vec<DrawCmd>,
     pub water: Vec<DrawCmd>,
+    /// Object faces using surface water optics.
+    pub object_water: Vec<DrawCmd>,
     pub water_events: Vec<crate::WaterEvent>,
     pub water_contacts: Vec<crate::WaterEvent>,
     pub water_ground: crate::WaterGround,
@@ -857,6 +859,7 @@ impl DrawLists {
         self.mask.clone_from(&src.mask);
         self.mask_two_sided.clone_from(&src.mask_two_sided);
         self.water.clone_from(&src.water);
+        self.object_water.clone_from(&src.object_water);
         self.water_exclusion.clone_from(&src.water_exclusion);
         self.blend.clone_from(&src.blend);
         self.blend_under_water.clone_from(&src.blend_under_water);
@@ -918,6 +921,7 @@ impl DrawLists {
         self.mask.clear();
         self.mask_two_sided.clear();
         self.water.clear();
+        self.object_water.clear();
         self.water_exclusion.clear();
         self.blend.clear();
         self.blend_under_water.clear();
@@ -978,6 +982,7 @@ impl DrawLists {
             + self.mask.len()
             + self.mask_two_sided.len()
             + self.water.len()
+            + self.object_water.len()
             + self.blend.len()
             + self.blend_under_water.len()
     }
@@ -2138,6 +2143,33 @@ impl GpuElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_water_draws_survive_frame_transfer_and_clear() {
+        let source = DrawLists {
+            object_water: vec![DrawCmd {
+                index_count: 6,
+                first_index: 12,
+                base_vertex: 4,
+                record: 13,
+                bounds: [0.0; 4],
+            }],
+            ..Default::default()
+        };
+
+        let mut submitted = DrawLists::default();
+        submitted.copy_from(&source);
+        assert_eq!(submitted.total(), 1);
+        assert_eq!(submitted.object_water[0].record, 13);
+        assert_eq!(submitted.object_water[0].first_index, 12);
+
+        submitted.copy_from(&DrawLists::default());
+        assert!(submitted.object_water.is_empty());
+
+        submitted.copy_from(&source);
+        submitted.clear();
+        assert_eq!(submitted.total(), 0);
+    }
 
     #[test]
     fn small_weights_on_long_bone_offsets_deform_smoothly() {

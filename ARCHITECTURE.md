@@ -138,6 +138,7 @@ TextureStreamer's reslotted queue to rebuild affected material users; pixel-only
 reloads retain their GPU slots. Removing a file also retires picker snapshots.
 
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
+`world/objects/water_surface.rs` parses the description directive. Object property replies update the selected face in the object's render state and mark its materials dirty when the selection changes. The scene keeps the original material record and routes the marked face to the batched object-water draw in scene pass B. The shader uses the face's UVs and transformed normal for animated waves, probe or screen-space reflections, and depth-checked refraction of the scene copy.
 
 `world/objects/local_duplicates.rs` retains local face/channel bindings while
 ObjectDuplicate or ObjectDuplicateOnRay is in flight. New server prims are

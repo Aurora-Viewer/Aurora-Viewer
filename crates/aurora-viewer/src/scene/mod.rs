@@ -349,6 +349,8 @@ impl Pass {
 pub struct FaceDraw {
     /// Texture-entry index; omitted transparent geometry leaves holes.
     pub te_index: u8,
+    /// Replaces the ordinary material in the main view.
+    pub object_water: bool,
     pub record: u32,
     pub cmd: DrawCmd,
     pub base_slot: u32,
@@ -732,7 +734,9 @@ fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
         first_index: f.cmd.first_index,
         base_vertex: f.cmd.base_vertex,
         object: idx as u32,
-        bits: if f.water_exclusion() {
+        bits: if f.object_water {
+            Pass::Hidden.gpu_code()
+        } else if f.water_exclusion() {
             aurora_render::gpu_cull::pass::WATER_EXCLUSION
         } else {
             f.pass.gpu_code()
@@ -749,7 +753,9 @@ fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
 /// Faces listed by the CPU even with the GPU lists: blended (sorted back
 /// to front) and glowing ones.
 fn is_special(faces: &[FaceDraw]) -> bool {
-    faces.iter().any(|f| f.pass == Pass::Blend || (f.glow && f.pass != Pass::Hidden))
+    faces
+        .iter()
+        .any(|f| f.object_water || f.pass == Pass::Blend || (f.glow && f.pass != Pass::Hidden))
 }
 
 struct TerrainChunk {
@@ -4203,7 +4209,13 @@ impl Scene {
             // a glTF material ignores the texture entry's color: its own base
             // color alpha decides, in `classify`
             let invisible = tf.color[3] < 0.004 && mat_id.is_none();
+            let object_water = o.render.water_surface_face.map(usize::from) == Some(fi)
+                && !g.hud
+                && wearer.is_none()
+                && rigged_owner.is_none()
+                && plant.is_none();
             if invisible
+                && !object_water
                 && self.debug_alpha.is_none()
                 && !self.pass_view
                 && !self.beacon_highlights.contains(&idx)
@@ -4467,6 +4479,7 @@ impl Scene {
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
                 te_index: fi as u8,
+                object_water,
                 record,
                 cmd: DrawCmd {
                     index_count: alloc.index_count,
@@ -4848,6 +4861,7 @@ impl Scene {
                 let record = renderer.records.alloc(rec);
                 g.faces.push(FaceDraw {
                     te_index: 0,
+                    object_water: false,
                     record,
                     cmd: DrawCmd {
                         index_count: alloc.index_count,
@@ -5258,6 +5272,7 @@ impl Scene {
             .try_normalize()
             .unwrap_or_else(|| view.planes[4].truncate().normalize_or_zero());
         struct Local {
+            object_water: Vec<DrawCmd>,
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
             opaque2: Vec<DrawCmd>,
@@ -5289,6 +5304,7 @@ impl Scene {
             usage: Vec<(Uuid, f32, bool)>,
         }
         let new_local = || Local {
+            object_water: Vec::new(),
             water_exclusion: Vec::new(),
             opaque: Vec::new(),
             opaque2: Vec::new(),
@@ -5436,6 +5452,15 @@ impl Scene {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
                 let cmd = f.cmd.with_bounds(sc, sr);
+                if f.object_water {
+                    if in_view {
+                        l.object_water.push(cmd);
+                        if face_pattern::has_face(selection_faces, idx, f.te_index) {
+                            l.select_faces.push(cmd);
+                        }
+                    }
+                    continue;
+                }
                 let pass = f.pass;
                 // blended faces glow in their sorted place; hidden faces do not glow
                 if f.glow && in_view && pass != Pass::Blend && pass != Pass::Hidden {
@@ -5606,6 +5631,7 @@ impl Scene {
         })
         .into_iter()
         .reduce(|mut a, mut b| {
+            a.object_water.append(&mut b.object_water);
             a.water_exclusion.append(&mut b.water_exclusion);
             a.opaque.append(&mut b.opaque);
             a.opaque2.append(&mut b.opaque2);
@@ -5638,6 +5664,7 @@ impl Scene {
         .unwrap_or_else(new_local);
         self.visit_tmp = visit;
         self.lists.opaque = result.opaque;
+        self.lists.object_water = result.object_water;
         self.lists.water_exclusion = result.water_exclusion;
         self.lists.opaque_two_sided = result.opaque2;
         self.lists.mask = result.mask;
@@ -7924,6 +7951,7 @@ mod tests {
     pub(in crate::scene) fn test_face(p: Pass, glow: bool) -> FaceDraw {
         FaceDraw {
             te_index: 0,
+            object_water: false,
             record: 0,
             cmd: DrawCmd {
                 index_count: 6,

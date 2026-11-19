@@ -4201,6 +4201,7 @@ impl App {
                 }
                 self.world.ik_targets.on_properties(&props);
                 self.water_volumes.on_properties(&self.world, &props);
+                self.world.objects.on_water_surface_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);

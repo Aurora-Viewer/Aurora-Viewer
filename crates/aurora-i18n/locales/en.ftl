@@ -16035,3 +16035,11 @@ game-control-action-truck-right = Truck →
 game-control-action-boom-up = Boom ↑
 game-control-action-boom-down = Boom ↓
 game-control-action-escape = ESC
+
+build-surface-effects = Aurora Surface Effects
+build-surface-water-selected-face = Selected face: { $face }
+build-surface-water-active-face = Water on face { $face }
+build-surface-water-apply = Apply Water
+build-surface-water-remove = Remove Water
+build-surface-water-invalid-marker = Correct the existing Aurora Water marker in the object description.
+build-surface-water-description-full = The object description is too long for the Aurora Water marker.

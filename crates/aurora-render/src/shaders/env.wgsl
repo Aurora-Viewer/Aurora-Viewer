@@ -1384,6 +1384,93 @@ fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f3
 // 1 / 255 / 1000 of the white the surface is capped at.
 const WATER_GLINT_FLOOR: f32 = 0.0000039;
 
+struct WaterRefractionSample {
+    uv: vec2<f32>,
+    depth: f32,
+    position: vec3<f32>,
+};
+
+// Reject distorted samples in front of the surface in camera space. This
+// test also works on tilted faces because it only uses the surface distance.
+fn water_refraction_sample(
+    distorted_uv: vec2<f32>,
+    surface_distance: f32,
+    base: WaterRefractionSample,
+    view_direction: vec3<f32>,
+) -> WaterRefractionSample {
+    let depth = scene_depth_at(distorted_uv);
+    var position = frame.camera_pos.xyz + view_direction * 1e5;
+    if (depth > 0.0) {
+        position = world_from_depth(distorted_uv, depth);
+    }
+    if (distance(position, frame.camera_pos.xyz) < surface_distance - 0.05) {
+        return base;
+    }
+    return WaterRefractionSample(distorted_uv, depth, position);
+}
+
+struct ObjectWaterOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_object_water(in: VsIn) -> ObjectWaterOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let pos = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    return ObjectWaterOut(eye_clip(rec, pos), pos.xyz + frame.eye.xyz, cofactor(model) * vertex_normal(rec, in), in.uv);
+}
+
+@fragment
+fn fs_object_water_depth() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
+@fragment
+fn fs_object_water(in: ObjectWaterOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let uv = screen_uv(in.clip.xy);
+    let offset = in.world_pos - frame.camera_pos.xyz;
+    let dist = max(length(offset), 0.001);
+    let incident = offset / dist;
+    let geometric_normal = water_unit(in.normal) * select(-1.0, 1.0, front);
+    let broad = analytic_wave(in.uv * 38.0, frame.camera_pos.w);
+    let detail = analytic_wave(in.uv * 95.0, frame.camera_pos.w * 1.45);
+    let wave = water_unit(vec3<f32>(broad.xy * 1.8 + detail.xy * 0.85, 1.0));
+    let normal = perturb_normal(geometric_normal, in.world_pos, in.uv, vec3<f32>(0.0), 1.0, true, wave * 0.5 + vec3<f32>(0.5));
+    let slope = normal - geometric_normal;
+    let camera_normal = vec2<f32>(dot(slope, frame.cam_right.xyz), dot(slope, frame.cam_up.xyz));
+    let sample_uv = clamp(uv + camera_normal * vec2<f32>(1.0, -1.0) * 0.065 / max(sqrt(dist), 1.0),
+        vec2<f32>(0.001), vec2<f32>(0.999));
+    let depth = scene_depth_at(uv);
+    var position = frame.camera_pos.xyz + incident * 1e5;
+    if (depth > 0.0) {
+        position = world_from_depth(uv, depth);
+    }
+    let sample = water_refraction_sample(sample_uv, dist, WaterRefractionSample(uv, depth, position), incident);
+    let scene_color = textureSampleLevel(scene_tex, lin_clamp, sample.uv, 0.0).rgb;
+    // A thin water layer: keep the refracted scene, with a cool scattering
+    // contribution that follows the wave normals even against flat scenery.
+    let scatter = clamp(0.60 + 2.0 * dot(wave.xy, vec2<f32>(0.55, 0.83)), 0.25, 0.95);
+    let transmission = scene_color * vec3<f32>(0.56, 0.78, 0.88)
+        + vec3<f32>(0.025, 0.15, 0.23) * scatter;
+    let direction = reflect(incident, normal);
+    var radiance = sky_color(vec3<f32>(direction.xy, abs(direction.z)));
+    if (probes_on()) {
+        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+        let probe = sample_probes_water(in.world_pos, in.clip.xy, direction, lod);
+        radiance = mix(radiance, probe.rgb, probe.w);
+    }
+    if (frame.misc.y > 0.5) {
+        let hit = ssr_trace(in.world_pos + geometric_normal * 0.02, direction, 24);
+        radiance = mix(radiance, hit.rgb, hit.a);
+    }
+    let fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(-incident, normal), 0.0, 1.0), 5.0);
+    return vec4<f32>(mix(transmission, radiance, fresnel), 1.0);
+}
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1549,22 +1636,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         distort2=clamp(uv+n.xy*min(water_path*0.018,0.16)/max(dmod*0.5,1.0),vec2<f32>(0.0),vec2<f32>(0.999));
     }
     distort2 = mix(uv, distort2, min(1.0, fade * 10.0));
-    var d1 = scene_depth_at(distort2);
-    var ref_pos = frame.camera_pos.xyz + view_vec * 1e5;
-    if (d1 > 0.0) {
-        ref_pos = world_from_depth(distort2, d1);
-    }
-    if (distance(ref_pos, frame.camera_pos.xyz) < surf_dist - 0.05) {
-        // the distorted sample is in front of the water: don't refract it.
-        // The depth goes back to the pixel's own with it: kept, the depth of
-        // what stands in front (a leaf, a cliff's edge) left the void behind
-        // deep water without its fog below, and the bare sky showed as white
-        // ripples along everything standing over the sea.
-        distort2 = uv;
-        d1 = d0;
-        ref_pos = frame.camera_pos.xyz + view_vec * refr_dist;
-    }
-    var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
+    let base_sample = WaterRefractionSample(uv, d0, frame.camera_pos.xyz + view_vec * refr_dist);
+    let sample = water_refraction_sample(distort2, surf_dist, base_sample, view_vec);
+    let d1 = sample.depth;
+    let ref_pos = sample.position;
+    var fb = textureSampleLevel(scene_tex, lin_clamp, sample.uv, 0.0).rgb;
     // Fog of the water volume between the surface and the refracted point.
     if (water_fx_on(256u)) {
         let source_fog=water_source_fog(ref_pos);

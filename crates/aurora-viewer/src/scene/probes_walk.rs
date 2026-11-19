@@ -15,6 +15,7 @@ use std::sync::Arc;
 fn face() -> crate::scene::FaceDraw {
     crate::scene::FaceDraw {
         te_index: 0,
+        object_water: false,
         record: 0,
         cmd: aurora_render::DrawCmd {
             index_count: 6,

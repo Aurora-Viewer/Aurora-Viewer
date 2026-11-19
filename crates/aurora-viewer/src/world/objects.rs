@@ -28,6 +28,7 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
 mod local_appearance;
+pub(crate) mod water_surface;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 mod local_duplicates;
 
@@ -43,6 +44,8 @@ pub struct RenderState {
     pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
+    /// Viewer-local material override from the object description.
+    pub water_surface_face: Option<u8>,
     /// Temporary material-inspector display mode; no simulator state changes.
     pub blinn_phong_preview: bool,
     /// Geometry cache key currently bound (and its LOD).
@@ -785,6 +788,21 @@ struct HeldPose {
 }
 
 impl ObjectStore {
+    pub fn on_water_surface_properties(&mut self, props: &[aurora_net::build::ObjectProps]) {
+        for props in props {
+            let Some(idx) = self.index_of_uuid(&props.object_id) else {
+                continue;
+            };
+            let face = water_surface::face(&props.description);
+            if self.get(idx).is_some_and(|object| object.render.water_surface_face != face)
+                && let Some(object) = self.get_mut(idx)
+            {
+                object.render.water_surface_face = face;
+                object.material_dirty = true;
+            }
+        }
+    }
+
     pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
         let Some(o) = self.get(idx) else { return };
         if o.render.blinn_phong_preview == preview {

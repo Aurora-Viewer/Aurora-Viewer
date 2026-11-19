@@ -469,7 +469,32 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         if tool.ui.tex_tab != 2 {
             face_options(ui, p, tool, world, s, env, &sel);
+            surface_effects(ui, p, tool, world, &sel);
         }
+    });
+}
+
+fn surface_effects(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, selection: &[Sel]) {
+    let [selected] = selection else { return };
+    if tool.sel_te(world).len() != 1 {
+        return;
+    }
+    let Some(object) = world.objects.get(selected.idx) else { return };
+    let Some(props) = tool.props.get(&object.full_id) else { return };
+    let current = crate::world::objects::water_surface::face(&props.description);
+    crate::ui::widgets::collapsing(ui, p, "surface_effects", aurora_i18n::tr!("build-surface-effects"), false, |ui| {
+        ui.label(aurora_i18n::tr!("build-surface-water-selected-face", face = selected.face));
+        if let Some(face) = current {
+            ui.label(aurora_i18n::tr!("build-surface-water-active-face", face = face));
+        }
+        ui.horizontal_wrapped(|ui| {
+            if current != Some(selected.face) && ui.button(aurora_i18n::tr!("build-surface-water-apply")).clicked() {
+                tool.set_water_surface(world, selected.idx, Some(selected.face));
+            }
+            if current.is_some() && ui.button(aurora_i18n::tr!("build-surface-water-remove")).clicked() {
+                tool.set_water_surface(world, selected.idx, None);
+            }
+        });
     });
 }
 

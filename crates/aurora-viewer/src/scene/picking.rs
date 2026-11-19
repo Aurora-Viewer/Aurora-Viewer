@@ -2831,6 +2831,7 @@ pub(crate) mod tests {
         );
         let face = FaceDraw {
             te_index: 0,
+            object_water: false,
             record: 0,
             cmd: DrawCmd {
                 index_count: 6,

@@ -235,17 +235,24 @@ impl super::App {
                 .on_server_update_at(position, Vec3::ZERO, Vec3::ZERO, false, true, Instant::now());
             self.world.agent.position = position;
             self.world.agent.flying = true;
-            let target = center.with_z(crate::demo::prim_water::surface());
+            let target = if matches!(mode.as_str(), "description" | "surface-edit") {
+                crate::demo::prim_water::surface_cube(false).position
+            } else {
+                center.with_z(crate::demo::prim_water::surface())
+            };
             self.camera.set_view(
                 target + Vec3::new(-7.0, -7.0, 4.0),
                 target,
                 &mut self.world.agent,
                 &self.settings.camera,
             );
-            self.panels.ao = true;
+            self.panels.ao = !matches!(mode.as_str(), "description" | "surface-edit");
             self.ao_ui.tab = 1;
             self.panels.perf = false;
             self.panels.inventory = false;
+        }
+        if mode == "surface-edit" {
+            return;
         }
         // The seeded set loads over a few frames; swimming waits for it.
         let selected = self.settings.ao.accounts.get(&self.world.agent_id).map(|a| a.selected);
@@ -257,6 +264,37 @@ impl super::App {
         // volume (out of it), then falling back in (a splash).
         if self.frame_count > 360 {
             let phase = (self.frame_count - 360) % 720;
+            if mode == "description" {
+                if phase == 1 || phase == 95 {
+                    self.world.apply(aurora_net::NetEvent::ObjectUpdates {
+                        handle: crate::demo::HANDLE,
+                        objects: vec![crate::demo::prim_water::surface_cube(phase == 95)],
+                    });
+                }
+                let directive = match phase {
+                    1 => Some("Demo cube [AURORA_WATER:face=0]"),
+                    320 => Some("[AURORA_WATER:face=2]"),
+                    540 => Some(""),
+                    660 => Some("[AURORA_WATER:face=-1]"),
+                    _ => None,
+                };
+                if let Some(description) = directive {
+                    let object_id = crate::demo::prim_water::id(crate::demo::prim_water::SURFACE_CUBE);
+                    self.on_app_event(aurora_net::NetEvent::ObjectProperties(vec![ObjectProps {
+                        object_id,
+                        name: "Surface effects cube".into(),
+                        description: description.into(),
+                        ..Default::default()
+                    }]));
+                    let face = self
+                        .world
+                        .objects
+                        .index_of_uuid(&object_id)
+                        .and_then(|idx| self.world.objects.get(idx))
+                        .and_then(|object| object.render.water_surface_face);
+                    log::info!(target: "aurora_viewer::prim_water", "Object water directive {description:?}: face {face:?}");
+                }
+            }
             let surface = crate::demo::prim_water::surface();
             let (x, z) = match phase {
                 0..180 => (0.0, surface - 0.6),

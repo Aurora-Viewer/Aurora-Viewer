@@ -7,11 +7,13 @@
 //! - `plane`: a 5 cm water plane over the pool's floor;
 //! - `nomatch`: named "Liverpool sign" with the word "pool": not water;
 //! - `off`: prim water left off, the region water only.
+//! - `surface-edit`: an editable cube for testing the Texture tab controls.
 
 use super::*;
 
 pub const FLOOR: u32 = 122_000;
 pub const WATER: u32 = FLOOR + 1;
+pub const SURFACE_CUBE: u32 = FLOOR + 2;
 /// The pool's centre on the plaza, and the top of its floor.
 pub const CENTER: Vec3 = Vec3::new(132.0, 118.0, 0.0);
 pub const FLOOR_TOP: f32 = 60.0;
@@ -79,8 +81,41 @@ pub fn events(mode: &str) -> Vec<NetEvent> {
     water.update_flags |= crate::build::edits::FLAGS_PHANTOM;
     vec![NetEvent::ObjectUpdates {
         handle: HANDLE,
-        objects: vec![floor, water],
+        objects: if matches!(mode, "description" | "surface-edit") {
+            vec![floor, water, surface_cube(false)]
+        } else {
+            vec![floor, water]
+        },
     }]
+}
+
+pub fn surface_cube(moved: bool) -> aurora_net::objects::ObjectUpdate {
+    let (offset, rotation) = if moved {
+        (
+            Vec3::new(-2.5, -2.0, 4.0),
+            Quat::from_rotation_y(-0.50) * Quat::from_rotation_z(0.30),
+        )
+    } else {
+        (Vec3::new(-3.5, -2.8, 3.8), Quat::IDENTITY)
+    };
+    let mut cube = prim(
+        SURFACE_CUBE,
+        CENTER.with_z(FLOOR_TOP) + offset,
+        rotation,
+        Vec3::splat(2.0),
+        shape(
+            aurora_prim::params::LL_PCODE_PATH_LINE,
+            aurora_prim::params::LL_PCODE_PROFILE_SQUARE,
+            100,
+            0,
+            0,
+        ),
+        te([0.78, 0.52, 0.29, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    cube.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    cube
 }
 
 /// The properties a hover would get for the scenario's prims.

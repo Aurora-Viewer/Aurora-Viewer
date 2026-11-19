@@ -49,6 +49,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
             _ => media(ui, p, tool, world, env, &sel),
         }
         footer(ui, p, tool, world, s, &sel, env);
+        if tool.ui.tex_tab != 2 {
+            surface_effects(ui, p, tool, world, &sel);
+        }
     });
 }
 

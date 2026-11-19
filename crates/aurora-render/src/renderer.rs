@@ -1026,6 +1026,8 @@ struct Pipelines {
     mask_2s: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
+    object_water: wgpu::RenderPipeline,
+    object_water_depth: wgpu::RenderPipeline,
     water_mask: wgpu::RenderPipeline,
     water_exclusion: wgpu::RenderPipeline,
     blend: SidedPipelines,
@@ -3633,6 +3635,7 @@ struct Ranges {
     mask: (u64, u32),
     mask_2s: (u64, u32),
     water: (u64, u32),
+    object_water: (u64, u32),
     water_exclusion: (u64, u32),
     blend: (u64, u32),
     /// `DrawLists::blend_under_water`.
@@ -4996,6 +4999,18 @@ impl Backend {
             unclipped_depth: hardware_water_depth,
             ..base("water", "vs_water", "fs_water")
         });
+        let object_water = pipe(PipeDesc {
+            cull: None,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("object water", "vs_object_water", "fs_object_water")
+        });
+        let object_water_depth = pipe(PipeDesc {
+            cull: None,
+            write_mask: wgpu::ColorWrites::empty(),
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("object water depth", "vs_object_water", "fs_object_water_depth")
+        });
         let water_unclipped = (!hardware_water_depth).then(|| {
             pipe(PipeDesc {
                 cull: None,
@@ -5953,6 +5968,8 @@ impl Backend {
             mask: mask.resolve(&mut done),
             mask_2s: mask_2s.resolve(&mut done),
             water: water.resolve(&mut done),
+            object_water: object_water.resolve(&mut done),
+            object_water_depth: object_water_depth.resolve(&mut done),
             water_unclipped: water_unclipped.resolve(&mut done),
             water_mask: water_mask.resolve(&mut done),
             water_exclusion: water_exclusion.resolve(&mut done),
@@ -9442,6 +9459,9 @@ impl Backend {
             }
         };
         let main_count = cpu.len();
+        if !f.cutout {
+            rg.object_water = push(cpu, &lists.object_water);
+        }
         // GPU draw lists this frame (gpu_cull.rs)
         let gpu = lists.gpu.filter(|_| self.gpu_cull);
         // GPU occlusion of the main draws (AURORA_NO_OCCLUSION turns it off)
@@ -9621,6 +9641,10 @@ impl Backend {
         if !lists.water.is_empty() {
             stats.draws += lists.water.len() as u32;
             stats.triangles += lists.water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
+        }
+        if rg.object_water.1 > 0 {
+            stats.draws += rg.object_water.1;
+            stats.triangles += lists.object_water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
         }
         let cpu_casters: [u32; CASCADES] =
             std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len() + shadow_terrain_lists[i].len()) as u32);
@@ -11232,6 +11256,20 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        if rg.object_water.1 > 0 {
+            // Read opaque depth for refraction before writing the interface.
+            // Subsequent blended draws then respect the object-water surface.
+            {
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "object water color", false, false);
+                bind_mesh(&mut pass, &self.groups.b);
+                draw(&mut pass, &self.pipelines.object_water, rg.object_water);
+            }
+            {
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "object water depth", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                draw(&mut pass, &self.pipelines.object_water_depth, rg.object_water);
+            }
+        }
         let exact_glow = glow_on && glow_skip & 8 == 0;
         {
             // deep snow: its surface, before the rest of pass B (what is

@@ -16041,3 +16041,11 @@ game-control-action-truck-right = Travelling latéral →
 game-control-action-boom-up = Grue ↑
 game-control-action-boom-down = Grue ↓
 game-control-action-escape = Échap
+
+build-surface-effects = Effets de surface Aurora
+build-surface-water-selected-face = Face s?lectionn?e : { $face }
+build-surface-water-active-face = Eau sur la face { $face }
+build-surface-water-apply = Appliquer l?eau
+build-surface-water-remove = Retirer l?eau
+build-surface-water-invalid-marker = Corrigez la balise Aurora Water dans la description de l?objet.
+build-surface-water-description-full = La description de l?objet est trop longue pour la balise Aurora Water.

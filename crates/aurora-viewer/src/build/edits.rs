@@ -599,6 +599,35 @@ impl BuildTool {
         }
     }
 
+    /// The description belongs to the prim whose face is being edited, including linked children.
+    pub(in crate::build) fn set_water_surface(&mut self, world: &World, idx: usize, face: Option<u8>) {
+        if !self.can_modify(world, idx) {
+            return;
+        }
+        let Some(object) = world.objects.get(idx) else { return };
+        let Some(props) = self.props.get_mut(&object.full_id) else { return };
+        let description = match crate::world::objects::water_surface::with_face(&props.description, face) {
+            Ok(description) if description != props.description => description,
+            Ok(_) => return,
+            Err(reason) => {
+                self.status = reason.to_owned();
+                return;
+            }
+        };
+        if let Err(reason) =
+            crate::text_validation::require_edit(crate::text_validation::Policy::PrintableNoPipe, &props.description, &description)
+        {
+            self.status = reason;
+            return;
+        }
+        props.description.clone_from(&description);
+        self.send(BuildCmd::SetDescription {
+            handle: object.key.region,
+            local_ids: vec![object.key.local_id],
+            description,
+        });
+    }
+
     /// Name / description of the property targets (ObjectName / ObjectDescription).
     /// Port of `LLSelectMgr::selectionSetObjectName` and `selectionSetObjectDescription`
     /// (`indra/newview/llselectmgr.cpp`, originally LGPL 2.1): send selected roots per region.
