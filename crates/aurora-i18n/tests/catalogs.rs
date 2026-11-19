@@ -139,6 +139,35 @@ fn german_uses_localized_dates_and_number_separators() {
 }
 
 #[test]
+fn brazilian_portuguese_uses_regional_dates_numbers_and_counts() {
+    use fluent_bundle::FluentArgs;
+
+    let codes: Vec<_> = aurora_i18n::available_languages().map(|(code, _)| code).collect();
+    for locale in ["pt-BR", "pt_BR"] {
+        assert_eq!(resolve_language("default", locale, &codes), "pt-BR");
+    }
+    assert_eq!(aurora_i18n::text_in("pt-BR", "language-name"), "Português (Brasil)");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "number-decimal-separator"), ",");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "number-thousands-separator"), ".");
+    assert_eq!(aurora_i18n::text_in("pt-BR", "extra-sun"), "dom");
+
+    let mut date = FluentArgs::new();
+    date.set("day", "16");
+    date.set("month", "novembro");
+    date.set("year", "2026");
+    assert_eq!(
+        aurora_i18n::format_in("pt-BR", "date-day-month-year", &date),
+        "16 de novembro de 2026"
+    );
+
+    for (count, expected) in [(0, "0 itens"), (1, "1 item"), (2, "2 itens")] {
+        let mut args = FluentArgs::new();
+        args.set("count", count);
+        assert_eq!(aurora_i18n::format_in("pt-BR", "language-item-count", &args), expected);
+    }
+}
+
+#[test]
 fn saved_choice_system_locale_and_english_fallback() {
     let languages = ["en", "fr"];
     assert_eq!(resolve_language("en", "fr-FR", &languages), "en");
