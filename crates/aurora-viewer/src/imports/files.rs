@@ -480,7 +480,8 @@ pub(super) fn load(
                     63,
                 );
                 entry.material_index = index;
-                entry.selected = choice != Choice::Material || index == 0;
+                // Keep every material checked, as do_bulk_upload does for
+                // each model material (indra/newview/llviewermenufile.cpp).
                 entry.local = choice == Choice::Local;
                 if entry.local {
                     entry.watch = Some(local::Watch::new(dependencies(&doc, &root, path)));
@@ -535,12 +536,7 @@ fn load_selected(
                 .any(|entry| matches!(&entry.source, Some(Source::Mesh(draft)) if draft.scene.materials.len() > 1))
             {
                 match load(path, Choice::Material, options, sound_limit, prefs, local) {
-                    Ok(mut materials) => {
-                        for material in &mut materials {
-                            material.selected = true;
-                        }
-                        entries.extend(materials);
-                    }
+                    Ok(materials) => entries.extend(materials),
                     Err(error) => entries.push(Entry::new(path.to_owned(), Err(error.to_string()), options)),
                 }
             }
@@ -936,12 +932,25 @@ mod tests {
             })
             .collect();
         let prefs = Preferences::default();
-        let entries = load_paths(paths, Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
+        let entries = load_paths(paths.clone(), Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
         assert_eq!(entries.len(), 771);
         assert!(entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(entries.iter().all(|entry| entry.selected));
+        let material_only = load_paths(
+            paths,
+            Choice::Bulk,
+            prefs.texture(),
+            30,
+            &prefs,
+            false,
+            [false, false, false, true, false],
+        );
+        assert_eq!(material_only.len(), entries.len());
+        assert!(material_only.iter().all(|entry| entry.selected));
         let folder = load_folder(&root, &prefs, prefs.texture(), 30);
         assert_eq!(folder.len(), entries.len());
         assert!(folder.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(folder.iter().all(|entry| entry.selected));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -983,6 +992,7 @@ mod tests {
             entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))),
             "every material loaded"
         );
+        assert!(entries.iter().all(|entry| entry.selected), "every imported material checked");
         let bytes: usize = entries
             .iter()
             .filter_map(|entry| entry.source.as_ref())

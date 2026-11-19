@@ -15380,6 +15380,7 @@ set `AURORA_DEMO_IMPORT_FILE` to its absolute path, then run
 `cargo test --workspace large_material_fixture_passes_the_ordinary_file_import -- --ignored --nocapture`.
 The test reports the material count, decoded bytes and loading time without
 connecting or uploading. In demo, combine that path with
-`AURORA_DEMO_IMPORTS=type-material`; all material rows should load.
+`AURORA_DEMO_IMPORTS=type-material`; all material rows should load and be checked
+for upload automatically, with the total cost covering the checked materials.
 The human checks the same document in the online PBR importer and confirms
 the ordinary price/permission dialog before uploading.
