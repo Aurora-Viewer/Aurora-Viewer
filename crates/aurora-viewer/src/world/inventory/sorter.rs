@@ -1197,8 +1197,11 @@ pub fn target_by(
     }
     // Waifus and Squish versions of clothes get their folder below the
     // category; the Waifus mod itself is a body add-on and gets none.
-    let mod_itself = found.category == Some(Category::BodyAddons);
-    if !path.is_empty() && worn && !mod_itself && (found.squish || found.waifus) {
+    let variant_category = !matches!(
+        found.category,
+        Some(Category::BodyAddons | Category::Environment | Category::Materials)
+    );
+    if !path.is_empty() && variant_category && (found.squish || found.waifus) {
         path.push(variant_folder(found.waifus, found.squish));
     }
     (!path.is_empty()).then_some(Dest::Path(path))
@@ -2002,7 +2005,8 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
         // named for a kind or a body (`Stuff`, `2024`, `Hunt Gifts`, `My
         // Shoes`, `Old Hair`, `Reborn Stuff`)
-        tagged || store_named || named && names_a_product(name) && one_product_named(inv, f, name)
+        let fatpack = !shelf_marked && name_words.iter().any(|w| w == "fatpack");
+        tagged || store_named || named && (fatpack || names_a_product(name) && one_product_named(inv, f, name))
     }
 }
 
@@ -2013,25 +2017,16 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 /// not recognized with everything in it: it is opened instead, and each
 /// product in it still moves whole.
 ///
-/// Never a delivery: no loose item beside its folders (a delivery's main
-/// item and its `Extras`), no folder that is a delivery's part (`HUD`,
-/// `Textures`, `Rez Box`, a body's version, `Gold`), no store tag in its
-/// name (a tagged store shelf keeps its own rule, `Stores/<store>`), and
-/// its products differ by more than a colour or a finish (`Aphrodite`
-/// holding `Aphrodite Black` and `Aphrodite Red` is one product's colours
-/// and stays whole). A lone product counts when the shelf is named for its
-/// store, and a lone shelf of the user's is opened
-/// (`!! miscellaneous` holding `blog brands`).
+/// Delivery parts (`HUD`, `Textures`, a body's version, `Gold`) and
+/// products that differ only by finish keep a package intact. A shelf
+/// with loose items needs independently marked products under its own
+/// store name. A lone product counts for an otherwise empty store shelf.
 fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &HashSet<String>) -> bool {
     let tag = store_tagged(name);
     // A tag by itself is a label for a store's shelf. A tag followed by
     // product words belongs to the delivery and keeps it together.
     let bare_tag = tag.as_deref().is_some_and(|tag| same_store(name, tag));
-    if !f.items.is_empty()
-        || tag.is_some() && !bare_tag
-        || matches!(delivery_mark(name), Some(Mark::Strong))
-        || target(name, -1, 0, None, &[], false).is_some()
-    {
+    if tag.is_some() && !bare_tag || matches!(delivery_mark(name), Some(Mark::Strong)) || target(name, -1, 0, None, &[], false).is_some() {
         return false;
     }
     let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
@@ -2057,7 +2052,6 @@ fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &
     let own: HashSet<String> = if bare_tag { joined_words(name) } else { product_words(name) }
         .into_iter()
         .collect();
-    let products: Vec<&&super::Folder> = subs.iter().filter(|s| product_folder_in(inv, s.info.id, reserved)).collect();
     let rest = |sub: &str| -> Vec<String> {
         let mut rest: Vec<String> = product_words(sub)
             .into_iter()
@@ -2067,6 +2061,46 @@ fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &
         rest.dedup();
         rest
     };
+    if !f.items.is_empty() {
+        let prefix = joined_words(tag.as_deref().unwrap_or(name));
+        if prefix.is_empty() || subs.len() < 2 {
+            return false;
+        }
+        let signature = |title: &str| {
+            let words = joined_words(without_number(title.trim()));
+            let suffix = words.strip_prefix(prefix.as_slice())?;
+            // An internal dash may introduce a colour. Read the product
+            // after the shelf's label before interpreting its separators.
+            let mut words = rest(&suffix.join(" "));
+            words.retain(|word| {
+                word.chars().count() > 1
+                    && !matches!(
+                        word.as_str(),
+                        "pack" | "unbox" | "unboxed" | "unpack" | "unpacker" | "me" | "rez" | "wear"
+                    )
+                    && !VOCABULARY.unpackers.contains(word)
+                    && !VOCABULARY.bodies.iter().any(|body| body.fit_aliases.contains(word))
+            });
+            Some(words)
+        };
+        // A loose main object may belong to a package named for itself.
+        if f.items.iter().any(|id| {
+            inv.items.get(id).is_some_and(|it| {
+                matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) && signature(&it.name).is_some_and(|words| words.is_empty())
+            })
+        }) {
+            return false;
+        }
+        let mut products = subs.iter().filter_map(|sub| {
+            let title = sub.info.name.trim();
+            if sub.info.type_default != -1 || delivery_mark(title) != Some(Mark::Strong) || demos::is_demo(title) {
+                return None;
+            }
+            signature(title).filter(|words| !words.is_empty())
+        });
+        return products.next().is_some_and(|first| products.any(|other| other != first));
+    }
+    let products: Vec<&&super::Folder> = subs.iter().filter(|s| product_folder_in(inv, s.info.id, reserved)).collect();
     if let [only] = subs.as_slice() {
         let sub = only.info.name.trim();
         let sub_words = words(sub);
@@ -2538,7 +2572,7 @@ fn loose_plural(w: &str) -> bool {
 
 /// Folders a user marks a shelf of their own with: a folder of folders so
 /// named is never kept whole as one product.
-const SHELF_MARKERS: [&str; 27] = [
+const SHELF_MARKERS: [&str; 29] = [
     "stuff",
     "misc",
     "my",
@@ -2553,6 +2587,8 @@ const SHELF_MARKERS: [&str; 27] = [
     "unorganised",
     "unfiled",
     "backup",
+    "archive",
+    "archives",
     "inventory",
     "saved",
     "favorites",
@@ -2902,7 +2938,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 58] = [
+const SHELF_WORDS: [&str; 60] = [
     "my",
     "old",
     "new",
@@ -2918,6 +2954,8 @@ const SHELF_WORDS: [&str; 58] = [
     "extras",
     "mine",
     "saved",
+    "archive",
+    "archives",
     "fav",
     "favs",
     "favorites",
@@ -3035,16 +3073,26 @@ fn names_a_product(name: &str) -> bool {
 #[cfg(test)]
 pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
     let places = Places::of(inv, prefs);
-    whole_sources_in(inv, prefs, &places, &HashSet::new())
+    sort_sources(inv, inv.root, prefs, &places, &HashSet::new())
 }
 
-fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
-    let mut sources = vec![inv.root];
-    let mut seen = HashSet::from([inv.root]);
-    let mut pending = vec![inv.root];
+fn sort_sources(inv: &Inventory, scope: Uuid, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut sources = vec![scope];
+    if !folder_open(inv, scope)
+        || prefs.excludes(inv, scope)
+        || actions::ancestors(inv, scope).any(|id| protected.contains(&id) || places.pre_trash.contains(&id))
+    {
+        return sources;
+    }
+    let mut seen = HashSet::from([scope]);
+    let mut pending = vec![scope];
     // User-designated shelves are opened even inside a delivery.
     for id in prefs.own.iter().copied().filter(|id| places.own.opens(id)) {
-        if !folder_open(inv, id) || prefs.excludes(inv, id) || actions::ancestors(inv, id).any(|a| protected.contains(&a)) {
+        if !actions::under(inv, id, scope)
+            || !folder_open(inv, id)
+            || prefs.excludes(inv, id)
+            || actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        {
             continue;
         }
         if seen.insert(id) {
@@ -3067,6 +3115,8 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places, prote
                 || prefs.excludes(inv, id)
                 || protected.contains(&id)
                 || (parent != inv.root && f.info.type_default != -1)
+                || f.state == FetchState::Failed
+                || inv.too_big.contains(&id)
             {
                 continue;
             }
@@ -3112,24 +3162,9 @@ impl Places {
 /// listed as kept, so the preview names what is never touched.
 pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let places = Places::of(inv, prefs);
-    let sources = whole_sources_in(inv, prefs, &places, protected);
-    let mut entries = Vec::new();
-    for source in &sources {
-        // the root's own folders are sources, products or hands-off: only
-        // its loose items are entries
-        let folders = prefs.folders && *source != inv.root;
-        entries.extend(contents_in(inv, *source, folders, &places));
-    }
-    // the sources not loaded yet are asked for as the plan arrives (the
-    // window only reads the root's folders on the frame)
-    let unread: Vec<Uuid> = sources
-        .iter()
-        .copied()
-        .filter(|id| inv.folders.get(id).is_some_and(|f| f.state != FetchState::Fetched))
-        .collect();
-    let sources: HashSet<Uuid> = sources.into_iter().collect();
-    // a folder opened as a source is never moved as an entry of its parent
-    entries.retain(|id| !sources.contains(id));
+    let sources = sort_sources(inv, inv.root, prefs, &places, protected);
+    let (mut entries, unread) = source_contents(inv, &sources, prefs.folders, &places);
+    let sources: HashSet<_> = sources.into_iter().collect();
     // a product's folder at the root moves whole
     if prefs.folders
         && let Some(root) = inv.folders.get(&inv.root)
@@ -3687,16 +3722,21 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     names
 }
 
-/// The moves of the direct contents of `source`. A folder goes as a whole
-/// (`prefs.folders`), classified by its own name. Entries already in the
-/// folder they would go to are left out. Rules read all the way down
-/// from `source` ([`scan_rules`]).
+/// Sort the shelves below an explicitly chosen folder. Product folders
+/// still go whole. Choosing My Inventory uses the root-only preview until
+/// the user confirms Whole inventory.
 pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let places = Places::of(inv, prefs);
-    let entries = contents_in(inv, source, prefs.folders, &places);
-    let entries = open_store_shelves(inv, entries, prefs, &places, protected);
+    let (entries, unread) = if source == inv.root {
+        let entries = contents_in(inv, source, prefs.folders, &places);
+        (open_store_shelves(inv, entries, prefs, &places, protected), Vec::new())
+    } else {
+        let sources = sort_sources(inv, source, prefs, &places, protected);
+        source_contents(inv, &sources, prefs.folders, &places)
+    };
     let scan = scan_rules(inv, prefs, source, protected, worn);
     let mut plan = plan_with(inv, entries, scan, prefs, protected, worn, true);
+    plan.unfetched.extend(unread);
     plan.unfetched.sort_unstable();
     plan.unfetched.dedup();
     plan
@@ -4323,6 +4363,22 @@ fn folder_items(inv: &Inventory, folder: Uuid) -> (usize, i64) {
         stack.extend(f.children.iter().copied());
     }
     (count, newest)
+}
+
+/// Read the opened shelves and retain their deliveries as indivisible entries.
+fn source_contents(inv: &Inventory, sources: &[Uuid], folders: bool, places: &Places) -> (Vec<Uuid>, Vec<Uuid>) {
+    let mut entries = Vec::new();
+    let mut unread = Vec::new();
+    for &source in sources {
+        match inv.folders.get(&source).map(|folder| folder.state) {
+            Some(FetchState::Fetched) => entries.extend(contents_in(inv, source, folders && source != inv.root, places)),
+            Some(FetchState::Unknown | FetchState::Fetching) if !inv.too_big.contains(&source) => unread.push(source),
+            _ => {}
+        }
+    }
+    let opened: HashSet<_> = sources.iter().copied().collect();
+    entries.retain(|id| !opened.contains(id));
+    (entries, unread)
 }
 
 /// The direct contents of `source` a sort reads: its items, and its folders

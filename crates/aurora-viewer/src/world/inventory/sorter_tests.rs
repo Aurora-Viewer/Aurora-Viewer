@@ -4396,6 +4396,84 @@ fn a_products_colours_and_parts_are_no_shelf() {
 }
 
 #[test]
+fn mixed_store_shelves_open_but_their_products_stay_together() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, OBJECTS, "JuniperWorks");
+    add_item(&mut inv, 200, 80, "JuniperWorks * Garden Bench - White", 0);
+    add_folder(&mut inv, 81, 80, "JuniperWorks * Driftwood Planter (unpacked)");
+    add_item(&mut inv, 201, 81, "Planter", 0);
+    add_folder(&mut inv, 82, 80, "JuniperWorks * Bay Candle [box]");
+    add_item(&mut inv, 202, 82, "Candle", 0);
+    let prefs = Preferences::default();
+    let none = HashSet::new();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+        plan_entries(&inv, &[id(80)], &prefs, &none, &none),
+    ] {
+        assert_eq!(
+            planned.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+            HashSet::from([id(81), id(82), id(200)])
+        );
+        assert!(planned.unknown.is_empty());
+    }
+
+    // Two variants of one product, including its demo, provide no shelf evidence.
+    let names = ["JuniperWorks * Bay Candle Blue [box]", "JuniperWorks * Bay Candle Red (unpacked)"];
+    for (at, name) in [(81, names[0]), (82, names[1])] {
+        inv.folders.get_mut(&id(at)).expect("delivery").info.name = name.into();
+    }
+    let reserved = sorter_folder_names(&prefs);
+    let shelf = &inv.folders[&id(80)];
+    assert!(!shelf_of_products(&inv, shelf, &shelf.info.name, &reserved));
+    inv.folders.get_mut(&id(81)).expect("delivery").info.name = "JuniperWorks * Cedar Tree Demo [box]".into();
+    assert!(!shelf_of_products(&inv, &inv.folders[&id(80)], "JuniperWorks", &reserved));
+    inv.folders.get_mut(&id(81)).expect("delivery").info.name = "JuniperWorks * Cedar Tree [box]".into();
+    inv.items.get_mut(&id(200)).expect("item").name = "JuniperWorks [box]".into();
+    assert!(!shelf_of_products(&inv, &inv.folders[&id(80)], "JuniperWorks", &reserved));
+}
+
+#[test]
+fn a_scoped_sort_reads_a_deep_archive_and_keeps_guarded_branches_closed() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 60, OBJECTS, "Casual");
+    let mut parent = 60;
+    for at in 61..125 {
+        add_folder(&mut inv, at, parent, &format!("Archive {at}"));
+        parent = at;
+    }
+    add_folder(&mut inv, 125, parent, "Dresses");
+    add_item(&mut inv, 200, 125, "Gold Dress", 0);
+    add_folder(&mut inv, 126, 125, "[Birch Vale] Rose Dress (unpacked)");
+    add_item(&mut inv, 201, 126, "Rose Dress", 0);
+    add_folder(&mut inv, 127, 125, "Private archive");
+    add_item(&mut inv, 202, 127, "Velvet Skirt", 0);
+    add_folder(&mut inv, 128, 125, "Still loading");
+    add_item(&mut inv, 204, 128, "Cedar Lamp", 0);
+    inv.folders.get_mut(&id(128)).expect("shelf").state = FetchState::Unknown;
+    add_item(&mut inv, 203, OBJECTS, "Jade Bracelet", 0);
+    let prefs = Preferences::default();
+    let protected = HashSet::from([id(127)]);
+    let none = HashSet::new();
+    let planned = plan(&inv, id(60), &prefs, &protected, &none);
+    assert_eq!(
+        planned.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+        HashSet::from([id(126), id(200)])
+    );
+    assert!(planned.unfetched.contains(&id(128)));
+    let prefs = Preferences { folders: false, ..prefs };
+    let loose_only = plan(&inv, id(60), &prefs, &protected, &none);
+    assert_eq!(loose_only.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(200)]);
+    inv.folders.get_mut(&id(128)).expect("shelf").state = FetchState::Fetched;
+    inv.generation += 1;
+    let loaded = plan(&inv, id(60), &prefs, &protected, &none);
+    assert_eq!(
+        loaded.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+        HashSet::from([id(200), id(204)])
+    );
+}
+
+#[test]
 fn a_folder_sort_and_selected_shelf_keep_the_delivery_whole() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 80, 1, "My Archive");

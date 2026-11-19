@@ -2,6 +2,31 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Harbor Logo",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Velvet Logo Dress",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "Nomad Pendant Planter",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Prairie Ring Hanger",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Birch Kokedama Bowl Set (unpacked)",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
    "name": "[Moss Vale] Crystal Nose Stud",
    "type": 6,
    "expect": "{jewelry}/Moss Vale"
