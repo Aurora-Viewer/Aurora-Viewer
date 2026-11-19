@@ -2193,7 +2193,7 @@ mod tests {
         assert!(!offers_friendship(AvatarList::Name, true, true));
         // FSAvatarSearchMenu: no `@shownames` test either (its results name
         // their residents), neither on the profile nor on "can_add"
-        assert!(!name_menu_restricted(AvatarList::Search, true));
+        assert!(!name_menu_restricted(AvatarList::Search, false, true));
         assert!(offers_friendship(AvatarList::Search, false, false));
         assert!(!offers_friendship(AvatarList::Search, true, true));
     }
