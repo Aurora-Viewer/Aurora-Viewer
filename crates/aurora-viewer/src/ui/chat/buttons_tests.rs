@@ -2235,6 +2235,51 @@ fn inventory_drops_give_to_the_resident_in_every_conversation_style() {
     }
 }
 
+/// A landmark dragged from Places (or a favorite) is the inventory item of
+/// that landmark: dropped on a resident's conversation it is given, as in the
+/// Legacy Viewer (#4241). A place with no item (history, parcel) is not.
+#[test]
+fn a_landmark_dragged_from_places_gives_to_the_resident() {
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    const ITEM: Uuid = Uuid::from_u128(0x1A4);
+    let place = |target| PlaceDrag {
+        target,
+        favorite: None,
+        name: "A place".into(),
+        thumbnail: None,
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(Some(JANE));
+        let over = h.text_rect("hello from Jane").center();
+        let away = egui::pos2(4.0, 4.0);
+        for (target, gives) in [(Target::Landmark(ITEM), true), (Target::Parcel(ITEM), false)] {
+            h.take();
+            h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+            egui::DragAndDrop::set_payload(&h.frames.ctx, place(target));
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            h.frame(vec![button(over, false)]);
+            h.settle();
+            let actions = h.take();
+            assert_eq!(
+                has(
+                    &actions,
+                    |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && *items == [ITEM])
+                ),
+                gives,
+                "{style:?}: {target:?}"
+            );
+            egui::DragAndDrop::clear_payload(&h.frames.ctx);
+        }
+    }
+}
+
 #[test]
 fn inventory_drops_do_not_give_to_nearby_groups_or_conferences() {
     const ITEM: Uuid = Uuid::from_u128(0x17E);

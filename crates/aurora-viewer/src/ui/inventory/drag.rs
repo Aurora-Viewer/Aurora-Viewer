@@ -120,7 +120,19 @@ fn feedback_id() -> egui::Id {
 /// folder counts as one): a conversation says what a drop would do before
 /// the pointer reaches it.
 pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
-    Cargo::carried(ctx).map(|c| c.ids().len())
+    give_ids(ctx).map(|ids| ids.len())
+}
+
+/// What a drop that gives inventory away would hand over: the inventory
+/// cargo, or the landmark a Places row, a favorite or a search result carries
+/// (LLFolderView::startDrag drags the landmark's inventory item from
+/// Places, indra/llui/llfolderview.cpp). Only the give drops read it: a
+/// place list reordering keeps its own cargo.
+pub(crate) fn give_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
+    carried_ids(ctx).or_else(|| {
+        let cargo = egui::DragAndDrop::payload::<crate::ui::places::drag::PlaceDrag>(ctx)?;
+        cargo.target.item().map(|item| vec![item])
+    })
 }
 
 /// The entries a drag of inventory carries (an item, a folder or a
@@ -159,7 +171,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
     if !ctx.rect_contains_pointer(layer, zone) {
         return None;
     }
-    let cargo = Cargo::carried(ctx)?;
+    let ids = give_ids(ctx)?;
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|d| {
         d.insert_temp(
@@ -174,7 +186,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
     if released {
         egui::DragAndDrop::clear_payload(ctx);
     }
-    Some((cargo.ids().to_vec(), released))
+    Some((ids, released))
 }
 
 /// Rows precede their enclosing list. A rejected row consumes the release,
