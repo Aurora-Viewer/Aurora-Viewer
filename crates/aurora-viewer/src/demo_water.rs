@@ -71,7 +71,14 @@ pub fn update(
         }
     }
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
-        let (eye, target) = if mode.contains("exclusion") {
+        let (eye, target) = if mode.contains("deep-lights") {
+            // Looking down at the deep floor of the `deep-lights` set, 48 m
+            // under the water line, its lamp in the middle.
+            (Vec3::new(32.0, 92.0, -21.0), Vec3::new(40.0, 100.0, -27.6))
+        } else if mode.contains("caustics") {
+            // From above the lagoon, down at its sunny bed 2 to 4 m deep.
+            (Vec3::new(26.0, 104.0, 25.0), Vec3::new(36.0, 116.0, 16.5))
+        } else if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
         } else if mode.contains("alpha-layers") || mode.contains("alpha-cross") {
             (Vec3::new(46.0, 117.0, 24.0), Vec3::new(56.0, 130.0, 19.5))
@@ -264,6 +271,38 @@ pub fn update(
             Default::default(),
             "",
         ));
+    }
+    if mode.contains("deep-lights") {
+        // A floor 48 m under the water line (region water at 20 m) with a
+        // point light just above it and one at 30 m under: the lamps must
+        // light it in their own colour, not as dim as the sunlight down
+        // there (water_scene_lit).
+        for (id, pos, scale, color, light) in [
+            (99540, Vec3::new(40.0, 100.0, -28.2), Vec3::new(16.0, 16.0, 0.4), [0.8, 0.8, 0.78, 1.0], None),
+            (99541, Vec3::new(36.0, 104.0, -26.0), Vec3::new(1.0, 1.0, 4.0), [0.55, 0.5, 0.45, 1.0], None),
+            (99542, Vec3::new(41.0, 99.0, -27.4), Vec3::new(0.3, 0.3, 0.3), [1.0, 0.85, 0.6, 1.0], Some([1.0, 0.8, 0.55, 1.0])),
+            (99543, Vec3::new(46.0, 104.0, -10.0), Vec3::new(4.0, 4.0, 0.3), [0.8, 0.8, 0.78, 1.0], None),
+            (99544, Vec3::new(46.0, 104.0, -9.0), Vec3::new(0.3, 0.3, 0.3), [0.5, 0.8, 1.0, 1.0], Some([0.5, 0.8, 1.0, 1.0])),
+        ] {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                box_shape,
+                super::te(color, 0, light.is_some(), 0.0),
+                aurora_prim::ExtraParams {
+                    light: light.map(|color| aurora_prim::LightParams {
+                        color,
+                        radius: 8.0,
+                        cutoff: 0.0,
+                        falloff: 0.75,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+        }
     }
     if mode.contains("optics-") {
         for (id, x, z, color) in [
