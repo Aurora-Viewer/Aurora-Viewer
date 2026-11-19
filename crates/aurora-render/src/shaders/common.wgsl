@@ -1252,6 +1252,17 @@ fn water_scene_light(world_pos:vec3<f32>) -> vec3<f32> {
     return exp(-vec3<f32>(0.06,0.025,0.012)*depth*frame.water_normal.w);
 }
 
+// A submerged surface's light `col` with the environment's share dimmed by
+// the depth (water_scene_light): the sun, the sky, the ambient and the
+// caustics come down from the surface and lose their wavelengths on the
+// way. `own` is the share of `col` that shines from where it is, the local
+// lights and the emissive: a lamp on a seabed 50 m down lights it in its
+// own colour. What the camera's line of sight crosses is the fog's
+// (apply_fog), for both.
+fn water_scene_lit(col:vec3<f32>,own:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
+    return max(col-own,vec3<f32>(0.0))*water_scene_light(world_pos)+own;
+}
+
 fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     if (frame.sky_ll.x < 0.5) {
         // a sky with a reflection probe ambiance: hazeF.glsl, as its surfaces
@@ -1789,6 +1800,11 @@ fn mirror_tap(world_pos: vec3<f32>, r: vec3<f32>, gloss: f32) -> vec4<f32> {
 // branch of a sky with a probe ambiance: the sunlight (frame.sun_color / 3,
 // env.rs) times n.l on its albedo, no specular nor reflection of its own
 // (legacy_light adds those of its shininess or material)
+// The local lights' share of the last shade_pbr (its point lights and
+// projectors), for water_scene_lit. Returned aside rather than worked out
+// again: a second walk of the lights costs as much as the first.
+var<private> shade_pbr_local: vec3<f32> = vec3<f32>(0.0);
+
 fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: vec3<f32>, v: vec3<f32>,
              world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, legacy: bool) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
@@ -1814,6 +1830,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
     }
     // local lights
+    var local = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
@@ -1832,13 +1849,15 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
                 let f = f_schlick(f0, vh);
                 let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
                 let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+                local += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
             }
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        col += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
+        local += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
     }
+    col += local;
+    shade_pbr_local = local;
     // ambient: hemisphere diffuse + sky reflection
     let up = n.z * 0.5 + 0.5;
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
@@ -2712,9 +2731,33 @@ fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
 // A global constant avoids Naga re-emitting a local splat when specializing
 // masked/blended pipelines. The alpha specialization regression covers this.
 const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
+// The second reading of the caustics map: turned 37 degrees and 1.618 times
+// larger (an irrational ratio), so its 16 m tile never lines up with the
+// first one's.
+const WATER_CAUSTIC_TURN:mat2x2<f32>=mat2x2<f32>(0.7986355,0.6018150,-0.6018150,0.7986355);
+const WATER_CAUSTIC_TILE2:f32=16.0*1.618034;
+// The map's focus at `uv` (in tiles) for a point `depth` under the water:
+// its three layers (0.75, 2.5 and 7 m, water_caustics.wgsl) mixed by depth.
+fn water_caustic_tap(uv:vec2<f32>,depth:f32)->f32 {
+    let focus=textureSampleLevel(water_light,lin_clamp,fract(uv),0.0).rgb;
+    if(depth>2.5){return mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
+    return mix(focus.r,focus.g,smoothstep(0.75,2.5,depth));
+}
+// The first reading's focus `a` broken up by the second one's `b`: the
+// lines of one stay where the other is bright too, so the network has no
+// period, and the gain keeps their brightness over the threshold of
+// water_caustic_light about where it was.
+fn water_caustic_combine(a:vec3<f32>,b:f32)->vec3<f32> {
+    return mix(a,min(a,vec3<f32>(b))*1.5,0.7);
+}
 // The light the water focuses on a submerged point, before the sun's shadow.
 // A surface that already looked its shadow up multiplies by it (the terrain);
 // water_caustics looks it up for the others.
+// The map is one 16 m tile of a few sine waves (water_micro): stamped as it
+// is, its interference reads as a grid. It is read twice, the second time
+// turned and larger (WATER_CAUSTIC_TURN), through a slow warp of the
+// lookup, and red and blue a little apart along the sun's refracted ray
+// (the water's dispersion, more with the depth).
 fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
@@ -2724,15 +2767,23 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     let ray=refract(-light,vec3<f32>(0.0,0.0,1.0),0.7501875);
     var project=pos.xy-ray.xy*depth/max(-ray.z,0.2);
     project-=water_swell(project,frame.camera_pos.w,water_fx.counts.w).gradient*min(depth,7.0)*0.25;
-    let uv=fract(project/16.0);
-    var focus=textureSampleLevel(water_light,lin_clamp,uv,0.0).rgb;
-    if(water_fx.counts.w>0u){
-        focus=(textureSampleLevel(water_light,lin_clamp,fract(uv+WATER_CAUSTIC_FILTER),0.0).rgb+textureSampleLevel(water_light,lin_clamp,fract(uv-WATER_CAUSTIC_FILTER),0.0).rgb
-            +textureSampleLevel(water_light,lin_clamp,fract(uv+vec2<f32>(WATER_CAUSTIC_FILTER.x,-WATER_CAUSTIC_FILTER.y)),0.0).rgb+textureSampleLevel(water_light,lin_clamp,fract(uv+vec2<f32>(-WATER_CAUSTIC_FILTER.x,WATER_CAUSTIC_FILTER.y)),0.0).rgb)*0.25;
+    // about 11 m across, drifting at a few centimetres a second
+    let time=frame.camera_pos.w;
+    let warp_at=project*0.09;
+    project+=(vec2<f32>(water_fx_noise(warp_at+vec2<f32>(time*0.021,0.0)),water_fx_noise(warp_at+vec2<f32>(4.7,3.1-time*0.017)))-0.5)*2.4;
+    let uv=project/16.0;
+    let second=water_caustic_tap((WATER_CAUSTIC_TURN*project)/WATER_CAUSTIC_TILE2+vec2<f32>(time*0.0041,-time*0.0029),depth);
+    var focus:vec3<f32>;
+    if(water_fx.counts.w==0u){focus=vec3<f32>(water_caustic_tap(uv,depth));}
+    else{
+        // about 9 mm per metre of depth between red and blue, along the
+        // sun's direction (less under a high sun)
+        let spread=ray.xy/max(length(ray.xy),0.35)*(min(depth,7.0)*0.009/16.0);
+        focus=vec3<f32>(water_caustic_tap(uv+spread,depth),
+            (water_caustic_tap(uv+WATER_CAUSTIC_FILTER,depth)+water_caustic_tap(uv-WATER_CAUSTIC_FILTER,depth))*0.5,
+            water_caustic_tap(uv-spread,depth));
     }
-    var intensity=mix(focus.r,focus.g,smoothstep(0.75,2.5,depth));
-    if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
-    let energy=max(intensity-0.9,0.0)*0.42;
+    let energy=max(water_caustic_combine(focus,second)-vec3<f32>(0.9),vec3<f32>(0.0))*0.42;
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
     return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
 }

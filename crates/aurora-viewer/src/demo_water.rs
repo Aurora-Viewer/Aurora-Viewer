@@ -76,8 +76,8 @@ pub fn update(
             // under the water line, its lamp in the middle.
             (Vec3::new(32.0, 92.0, -21.0), Vec3::new(40.0, 100.0, -27.6))
         } else if mode.contains("caustics") {
-            // From above the lagoon, down at its sunny bed 2 to 4 m deep.
-            (Vec3::new(26.0, 104.0, 25.0), Vec3::new(36.0, 116.0, 16.5))
+            // Under the lagoon, down at its sunny bed 2 to 4 m deep.
+            (Vec3::new(28.0, 110.0, 19.2), Vec3::new(37.0, 119.0, 15.8))
         } else if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
         } else if mode.contains("alpha-layers") || mode.contains("alpha-cross") {
