@@ -1207,7 +1207,7 @@ mod tests {
         let s = w.social.ims.iter().find(|s| s.other == group).unwrap();
         let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
         assert_eq!(shown, [("hi all", Origin::Live)]);
-        w.start_group_chat(quiet);
+        w.start_group_chat(quiet, false);
         settle(&mut w);
         w.add_server_history(quiet, vec![server_line(jane, "Jane Doe", t - 600, "anyone?")]);
         settle(&mut w);
