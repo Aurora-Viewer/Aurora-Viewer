@@ -193,3 +193,37 @@ fn mesh_import_parity_dae_palettes_over_110_declared_joints_remain_uploadable() 
     draft.options.skin = true;
     assert!(request(&draft).validate().is_ok());
 }
+
+#[test]
+fn mesh_base_hull_comes_from_the_collision_model_then_the_low_lod_like_the_legacy_viewer() {
+    // LLMeshUploadThread::generateHulls: physics, else low, else medium, else
+    // high. #4213's flat walkways had collision models with volume.
+    let draft = draft();
+    let high = &draft.scene.models[0];
+    let named = |name: &str| Model {
+        name: name.into(),
+        ..high.clone()
+    };
+    let physics = named("physics");
+    let mut lods = [
+        Some(named("lowest")),
+        Some(named("low")),
+        Some(named("medium")),
+        Some(named("high")),
+    ];
+    assert_eq!(hull_source(Some(&physics), &lods, high).name, "physics");
+    assert_eq!(hull_source(None, &lods, high).name, "low");
+    lods[1] = None;
+    assert_eq!(hull_source(None, &lods, high).name, "medium");
+    let mut empty = named("empty collision");
+    for face in &mut empty.faces {
+        face.indices.clear();
+    }
+    assert_eq!(
+        hull_source(Some(&empty), &lods, high).name,
+        "medium",
+        "a model with no triangle is passed over"
+    );
+    lods[2] = None;
+    assert_eq!(hull_source(None, &lods, high).name, high.name);
+}

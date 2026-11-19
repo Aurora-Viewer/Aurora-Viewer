@@ -392,34 +392,82 @@ pub fn base_hull(model: &Model) -> Result<Hull, AssetError> {
     if vertices.is_empty() || model.faces.iter().all(|face| face.indices.is_empty()) {
         return Err(AssetError::invalid("empty physics geometry"));
     }
+    // A flat part (a single quad) has no volume: the hull of coplanar points
+    // comes back as that plane, sometimes with only 2 of its points, and the
+    // upload server refuses it (MAV_TOO_FEW_VERTICES, #4213). Such a part
+    // takes its thin bounding box instead, as when no hull can be made.
     let (points, indices) = match try_convex_hull(&vertices) {
-        Ok(hull) => hull,
-        Err(_) => {
+        Ok(hull) if has_volume(&hull.0, &hull.1) => hull,
+        _ => {
             let mut min = Vector::splat(f32::MAX);
             let mut max = Vector::splat(f32::MIN);
             for p in &vertices {
                 min = min.min(*p);
                 max = max.max(*p);
             }
-            let center = (min + max) * 0.5;
-            let size = (max - min).max(Vector::splat(0.0001));
             if (max - min).length_squared() < 0.000000001 {
                 return Err(AssetError::invalid("degenerate physics points"));
             }
-            let corners = (0..8)
-                .map(|i| {
-                    center
-                        + Vector::new(
-                            if i & 1 == 0 { -0.5 } else { 0.5 },
-                            if i & 2 == 0 { -0.5 } else { 0.5 },
-                            if i & 4 == 0 { -0.5 } else { 0.5 },
-                        ) * size
-                })
-                .collect::<Vec<_>>();
-            try_convex_hull(&corners).map_err(|_| AssetError::invalid("physics bounding hull"))?
+            // At least 1% of the part's size thick, so that the hull keeps a
+            // volume once its points are quantized into the asset.
+            let center = (min + max) * 0.5;
+            let size = (max - min).max(Vector::splat((max - min).max_element() * 0.01));
+            bounding_box(center, size)
         }
     };
     bounded_hull(points, indices, 256)
+}
+/// The 8 corners of a box and its 12 triangles, wound outwards. Built here,
+/// not by the hull maker, which flattens a thin box.
+fn bounding_box(center: Vector, size: Vector) -> (Vec<Vector>, Vec<[u32; 3]>) {
+    let corner = |i: u32| {
+        center
+            + Vector::new(
+                if i & 1 == 0 { -0.5 } else { 0.5 },
+                if i & 2 == 0 { -0.5 } else { 0.5 },
+                if i & 4 == 0 { -0.5 } else { 0.5 },
+            ) * size
+    };
+    let corners: Vec<_> = (0..8).map(corner).collect();
+    let mut indices = Vec::with_capacity(12);
+    for [a, b, c, d] in [[0, 2, 6, 4], [1, 3, 7, 5], [0, 1, 5, 4], [2, 3, 7, 6], [0, 1, 3, 2], [4, 5, 7, 6]] {
+        let [pa, pb, pc, pd] = [a, b, c, d].map(|i: u32| corners[i as usize]);
+        let outward = (pb - pa).cross(pc - pa).dot((pa + pb + pc + pd) * 0.25 - center) > 0.0;
+        if outward {
+            indices.extend([[a, b, c], [a, c, d]]);
+        } else {
+            indices.extend([[a, c, b], [a, d, c]]);
+        }
+    }
+    (corners, indices)
+}
+/// Whether a hull encloses a volume: at least 4 points, and a volume (sum of
+/// the tetrahedra its triangles make with the origin) that is not negligible
+/// next to the cube of its extent.
+fn has_volume(points: &[Vector], indices: &[[u32; 3]]) -> bool {
+    if points.len() < 4 {
+        return false;
+    }
+    let (mut min, mut max) = (Vector::splat(f32::MAX), Vector::splat(f32::MIN));
+    for p in points {
+        min = min.min(*p);
+        max = max.max(*p);
+    }
+    let extent = (max - min).max_element();
+    let volume = indices
+        .iter()
+        .filter_map(|t| {
+            Some([
+                *points.get(t[0] as usize)?,
+                *points.get(t[1] as usize)?,
+                *points.get(t[2] as usize)?,
+            ])
+        })
+        .map(|[a, b, c]| (a - min).dot((b - min).cross(c - min)))
+        .sum::<f32>()
+        .abs()
+        / 6.0;
+    volume > extent * extent * extent * 1e-6
 }
 fn bounded_hull(points: Vec<Vector>, indices: Vec<[u32; 3]>, maximum: usize) -> Result<Hull, AssetError> {
     if points.len() <= maximum {
