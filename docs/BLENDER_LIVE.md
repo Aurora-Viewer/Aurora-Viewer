@@ -788,7 +788,7 @@ modifiers removed, keeping geometry modifiers and shape keys. The source mesh,
 selection, object mode and modifier settings remain intact. Custom joint
 position overrides are not applied to Aurora's skeleton.
 
-## Maya (plug-in 0.1.0)
+## Maya (plug-in 0.1.1)
 
 Aurora LiveMesh also works from Autodesk Maya 2022 and later. It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
@@ -819,11 +819,17 @@ now** sends at once and reloads the texture files.
   position and takes Aurora's own joint axes: use it for a rig whose joint
   orientations do not follow Second Life's (the mesh then twists after an
   upload too).
-- **Axes and units.** Maya's Y-up scene in centimetres becomes Second Life's
-  Z-up frame in metres, turned like a Y-up Collada file at upload. A rig is
-  also turned so that its left side (found from `mShoulderLeft` and
-  `mShoulderRight`, or the collar, hip, eye or wrist pairs) is the avatar's
-  left, whichever way it faces in Maya.
+- **Axes and units.** The plug-in reads Maya's up axis: a Y-up scene is
+  turned to Second Life's Z-up frame like a Y-up Collada file at upload, a
+  Z-up scene is not turned. **Scene units** says how long one Maya unit is.
+  **Automatic** reads it from the rig: Second Life's pelvis stands about a
+  metre above the feet, so a rig whose mPelvis is about 1 unit high is built
+  at one unit per metre (as many Second Life kits are, whatever unit Maya's
+  preferences name), and one about 100 units high is in real centimetres.
+  Without a rig, Automatic uses real centimetres. The window shows the scale
+  and up axis in use. A rig is also turned so that its left side (found from
+  `mShoulderLeft` and `mShoulderRight`, or the collar, hip, eye or wrist
+  pairs) is the avatar's left, whichever way it faces in Maya.
 - **Static meshes** (no skin) keep their rotation and scale; their position in
   the scene is not used: Aurora places them in front of your avatar, as with
   Blender. A static mesh parented under another synchronized static mesh is a
@@ -840,7 +846,7 @@ now** sends at once and reloads the texture files.
   does not follow these rules is shown in its plain colour, and the list says
   why.
 - **Not in this version:** shape transfer, rig creation, posing helpers, the
-  Import / LOD bundle and explicit grouping. Use the Blender plug-in or a
+  Import / LOD bundle (the Import button says so) and explicit grouping. Use the Blender plug-in or a
   normal upload for those.
 
 The plug-in's pure rules (frames, binds, weights, packing, colour tables) have

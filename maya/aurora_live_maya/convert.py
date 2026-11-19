@@ -129,10 +129,46 @@ def normal_matrix(matrix):
     return [[inverted[column][row] for column in range(4)] for row in range(4)]
 
 
-# Maya world (centimetres, Y up) to Second Life (metres, Z up): (x, y, z) ->
-# (x, -z, y), the Legacy Viewer's rotation of a Y_UP Collada file.
+# Maya world (Y up) to Second Life (Z up): (x, y, z) -> (x, -z, y), the Legacy
+# Viewer's rotation of a Y_UP Collada file. A Z-up Maya scene needs no turn.
 Y_UP = [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
-TO_SL = multiply(Y_UP, scale(CM))
+
+
+def base_frame(up_axis="y", unit=CM):
+    """Maya world to the SL frame: `unit` metres per Maya unit, then the turn
+    of a Y-up scene."""
+    scaled = scale(unit)
+    return multiply(Y_UP, scaled) if str(up_axis).lower() == "y" else scaled
+
+
+TO_SL = base_frame("y", CM)
+
+# Metres per Maya unit a scene can be built in: real centimetres (Maya's own
+# unit), or one unit per metre as many Second Life kits are, whatever unit the
+# Maya preferences name.
+UNITS = {"cm": CM, "m": 1.0}
+SCALES = (1.0, 0.1, 0.01, 0.001)
+# Second Life's mPelvis stands about a metre above the feet (avatar_skeleton.xml).
+PELVIS_HEIGHT = 1.0
+
+
+def rig_unit(heads, up_axis="y"):
+    """Metres per Maya unit of a Second Life rig, from its pelvis height above
+    its lowest joint, or None when the rig has no mPelvis.
+
+    `heads` maps SL joint names to world positions in Maya units. The scale
+    that brings the pelvis nearest a metre above the feet wins, among the
+    powers of ten a scene is built in.
+    """
+    pelvis = heads.get("mPelvis")
+    if pelvis is None:
+        return None
+    up = 1 if str(up_axis).lower() == "y" else 2
+    lowest = min(head[up] for head in heads.values())
+    height = pelvis[up] - lowest
+    if not math.isfinite(height) or height <= 1e-9:
+        return None
+    return min(SCALES, key=lambda unit: abs(math.log(height * unit / PELVIS_HEIGHT)))
 
 
 # ------------------------------------------------------------------ joints

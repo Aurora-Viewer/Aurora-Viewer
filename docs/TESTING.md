@@ -4224,7 +4224,7 @@ objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
 The Maya plug-in's rules run without Maya: `python maya/tests/test_convert.py`
 (frames, binds, weights, packing, colour tables, and a fake viewer checking
 that it negotiates no Blender-only control). Capture itself needs Maya: see
-[LiveMesh](BLENDER_LIVE.md#maya-plug-in-010).
+[LiveMesh](BLENDER_LIVE.md#maya-plug-in-011).
 
 Blender's synchronization-list linksets are exercised by
 `blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.

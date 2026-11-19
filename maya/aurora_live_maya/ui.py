@@ -4,7 +4,12 @@ from maya import cmds
 
 from . import session
 
+
+def capture_up():
+    return cmds.upAxis(query=True, axis=True).upper()
+
 WINDOW = "auroraLiveMayaWindow"
+UNIT_LABELS = {"Automatic (from the rig)": "auto", "Centimetres (Maya's own)": "cm", "1 unit = 1 metre": "m"}
 
 
 class Window:
@@ -47,6 +52,16 @@ class Window:
             annotation="On: only each joint's bind position is used, with Second Life's own joint axes. "
                        "Off: the skin's bind matrices are used whole, as a Collada export writes them.",
             changeCommand=lambda value: self.live.set_bind_axes(bool(value)))
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2)
+        cmds.text(label="Scene units ")
+        self.units = cmds.optionMenu(changeCommand=lambda label: self.live.set_units(UNIT_LABELS[label]),
+                                     annotation="How long one Maya unit is. Automatic reads it from the rig's "
+                                                "pelvis height; many Second Life kits use one unit per metre.")
+        for label in UNIT_LABELS:
+            cmds.menuItem(label=label)
+        cmds.optionMenu(self.units, edit=True, select=list(UNIT_LABELS.values()).index(self.live.units()) + 1)
+        cmds.setParent("..")
+        self.unit_text = cmds.text(label="", align="left")
         cmds.text(label="Only you see this preview. Nothing is uploaded.", align="left", wordWrap=True)
         cmds.showWindow(WINDOW)
         self.live.listeners.append(self.refresh)
@@ -108,6 +123,10 @@ class Window:
                 if index <= len(rows):
                     cmds.textScrollList(self.list, edit=True, selectIndexedItem=index)
             self._rows = rows
+        unit = self.live.unit
+        text = "" if unit is None else "1 Maya unit = {:g} m, {}-up".format(unit, capture_up())
+        if cmds.text(self.unit_text, query=True, label=True) != text:
+            cmds.text(self.unit_text, edit=True, label=text)
         message = self.live.message
         if cmds.text(self.message, query=True, label=True) != message:
             cmds.text(self.message, edit=True, label=message)

@@ -17,6 +17,8 @@ from . import capture, client, convert, materials
 
 SOURCES_KEY = "auroraLiveMayaSources"
 BIND_KEY = "auroraLiveMayaBindAxes"
+UNITS_KEY = "auroraLiveMayaUnits"
+UNIT_MODES = ("auto", "cm", "m")
 PORT, AUTO, INTERVAL = "auroraLiveMayaPort", "auroraLiveMayaAuto", "auroraLiveMayaInterval"
 DEFAULT_PORT, DEFAULT_INTERVAL = 17655, 2.0
 EDIT_QUIET_SECONDS = 0.15
@@ -57,6 +59,7 @@ class Session:
         self.listeners = []
         self.jobs = []
         self._rewatch_later = False
+        self.unit = None  # metres per Maya unit of the last capture
         self.load()
 
     # ----------------------------------------------------------- sources
@@ -79,6 +82,16 @@ class Session:
     def set_bind_axes(self, enabled):
         cmds.fileInfo(BIND_KEY, "1" if enabled else "0")
         self.touch()
+
+    def units(self):
+        """The scene's unit choice: auto (from the rig), cm or m."""
+        values = cmds.fileInfo(UNITS_KEY, query=True)
+        return values[0] if values and values[0] in UNIT_MODES else "auto"
+
+    def set_units(self, mode):
+        if mode in UNIT_MODES:
+            cmds.fileInfo(UNITS_KEY, mode)
+            self.touch()
 
     def node(self, identity):
         """The transform of a stored id, or None while it is missing."""
@@ -287,6 +300,9 @@ class Session:
         images = convert.Images()
         meshes, corners, errors, nodes = [], 0, {}, {}
         axes_mode = self.bind_axes()
+        unit = capture.scene_unit(self.units(), [self.node(identity) for identity in self.sources if self.node(identity)])
+        base = convert.base_frame(capture.up_axis(), unit)
+        self.unit = unit
         for identity in self.sources:
             transform = self.node(identity)
             if transform:
@@ -296,7 +312,7 @@ class Session:
             mark = images.mark()
             warnings = []
             try:
-                mesh, count = capture.mesh(transform, supported, rest_axes, images, warnings, axes_mode)
+                mesh, count = capture.mesh(transform, supported, rest_axes, images, warnings, axes_mode, base)
                 if corners + count > convert.MAX_CORNERS:
                     raise ValueError("Snapshot exceeds 600,000 mesh corners")
             except (ValueError, RuntimeError) as error:
@@ -326,7 +342,7 @@ class Session:
             identity = next(key for key in nodes if _uuid_for(key) == mesh["source_id"])
             root = roots.get(identity)
             if root is not None and root != identity:
-                mesh["link"] = {"parent": _uuid_for(root), "offset": capture.link_offset(static[identity], static[root])}
+                mesh["link"] = {"parent": _uuid_for(root), "offset": capture.link_offset(static[identity], static[root], base)}
         self.errors = errors
         self.message = ""
         return {"protocol": 1, "revision": revision, "meshes": meshes, "images": images.images}

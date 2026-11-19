@@ -34,6 +34,32 @@ class Frames(unittest.TestCase):
         self.assertTrue(close(convert.point(convert.TO_SL, (100, 0, 0)), (1, 0, 0)))
         self.assertAlmostEqual(convert.determinant3(convert.Y_UP), 1.0)
 
+    def test_a_z_up_scene_is_not_turned_and_takes_its_unit(self):
+        frame = convert.base_frame("z", 1.0)
+        self.assertTrue(close(convert.point(frame, (0, 0, 1.067)), (0, 0, 1.067)))
+        self.assertTrue(close(convert.point(convert.base_frame("y", 1.0), (0, 1.067, 0)), (0, 0, 1.067)))
+
+    def test_rig_unit_follows_the_pelvis_height(self):
+        # A Z-up kit modelled at one unit per metre, Maya set to centimetres
+        # (human report, 2026-11-18): pelvis 1.067 units above the origin.
+        metre_kit = {"mPelvis": (0, 0, 1.067), "mFootLeft": (0.1, 0, 0.08), "mFootRight": (-0.1, 0, 0.08)}
+        self.assertEqual(convert.rig_unit(metre_kit, "z"), 1.0)
+        # The same rig at real size in centimetres, Y up.
+        cm_kit = {"mPelvis": (0, 106.7, 0), "mFootLeft": (10, 8, 0)}
+        self.assertEqual(convert.rig_unit(cm_kit, "y"), 0.01)
+        # A pelvis alone gives no height above the feet.
+        self.assertIsNone(convert.rig_unit({"mPelvis": (0, 0, 1.067)}, "z"))
+        self.assertEqual(convert.rig_unit({"mPelvis": (0, 0, 1.067), "mChest": (0, 0, 1.3), "mHipLeft": (0, 0.1, 0)}, "z"), 1.0)
+        self.assertIsNone(convert.rig_unit({"mChest": (0, 0, 1)}, "z"))
+
+    def test_a_metre_kit_in_a_z_up_scene_reaches_the_viewer_at_full_size(self):
+        base = convert.base_frame("z", convert.rig_unit({"mPelvis": (0, 0, 1.067), "mToeLeft": (0.1, 0.1, 0.0)}, "z"))
+        bind_pre = {"mPelvis": convert.translation((0, 0, -1.067))}
+        [values] = convert.inverse_binds(["mPelvis"], bind_pre, base)
+        # A hip vertex 15 cm to the side of the pelvis stays 15 cm away.
+        local = convert.point(convert.from_column_major(values), convert.point(base, (0.15, 0, 1.067)))
+        self.assertTrue(close(local, (0.15, 0, 0)))
+
     def test_maya_matrices_are_transposed_to_column_vectors(self):
         maya = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
         matrix = convert.from_maya(maya)

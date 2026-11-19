@@ -124,6 +124,29 @@ def _rig_heads(skin):
     return heads
 
 
+def up_axis():
+    return cmds.upAxis(query=True, axis=True)
+
+
+def scene_unit(mode, transforms):
+    """Metres per Maya unit: the chosen one, or found from the first rig of
+    the synchronized meshes; real centimetres when no rig tells."""
+    if mode in convert.UNITS:
+        return convert.UNITS[mode]
+    axis = up_axis()
+    for transform in transforms:
+        shape = shape_of(transform)
+        skin = skin_of(shape) if shape else None
+        if skin:
+            try:
+                unit = convert.rig_unit(_rig_heads(skin), axis)
+            except (RuntimeError, ValueError):
+                unit = None
+            if unit is not None:
+                return unit
+    return convert.CM
+
+
 def _mesh_arrays(fn, uv_set):
     counts, vertices = fn.getVertices()
     normal_counts, normal_ids = fn.getNormalIds()
@@ -149,8 +172,10 @@ def _mesh_arrays(fn, uv_set):
     return list(counts), list(vertices), list(normal_ids), fv_uv, uvs, triangles, polygons
 
 
-def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False):
-    """One source as a wire mesh (without source_id or link)."""
+def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False, base=None):
+    """One source as a wire mesh (without source_id or link). `base` takes
+    Maya world to the SL frame (base_frame of the scene's up axis and unit)."""
+    base = base if base is not None else convert.base_frame(up_axis(), convert.CM)
     shape = shape_of(transform)
     if shape is None:
         raise ValueError("No mesh shape")
@@ -161,14 +186,14 @@ def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False):
         fn, bind_shape, bind_pre, per_vertex = _skin(shape_path, skin, supported)
         if fn.numPolygons != shape_fn.numPolygons:
             raise ValueError("The skin's input mesh and the shape differ; delete non-deformer history")
-        heads = {name: convert.point(convert.TO_SL, head) for name, head in _rig_heads(skin).items()}
-        frame = convert.multiply(convert.facing(heads), convert.TO_SL)
+        heads = {name: convert.point(base, head) for name, head in _rig_heads(skin).items()}
+        frame = convert.multiply(convert.facing(heads), base)
         transform_matrix = convert.multiply(frame, bind_shape)
     else:
         fn, per_vertex, bind_pre = shape_fn, None, {}
         world = convert.from_maya(_values(shape_path.inclusiveMatrix()))
         # Rotation and scale stay; the world position is the preview's own.
-        frame = convert.TO_SL
+        frame = base
         transform_matrix = convert.multiply(frame, convert.linear(world))
     points = fn.getPoints(om.MSpace.kObject)
     if len(points) == 0:
@@ -223,9 +248,9 @@ def mesh(transform, supported, rest_axes, images, warnings, axes_mode=False):
     return {"name": name, "joints": names, "inverse_bind": inverse_bind, "faces": faces}, convert.corner_count(packed)
 
 
-def link_offset(child, root):
+def link_offset(child, root, base):
     """The child origin minus the root origin in the SL frame, metres: the
     origins whose world position each static capture drops."""
     a = cmds.xform(child, query=True, worldSpace=True, matrix=True)[12:15]
     b = cmds.xform(root, query=True, worldSpace=True, matrix=True)[12:15]
-    return convert.direction(convert.TO_SL, [a[axis] - b[axis] for axis in range(3)])
+    return convert.direction(base, [a[axis] - b[axis] for axis in range(3)])
