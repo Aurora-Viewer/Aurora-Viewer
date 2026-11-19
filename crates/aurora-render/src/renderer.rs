@@ -61,7 +61,42 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// A colour target of 16 normalized bits per channel, on the device that has
+/// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
+pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+
+/// The adapter draws into that target, resolves it and filters it: what the
+/// G-buffer needs of its format.
+pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
+    if !adapter
+        .features()
+        .contains(GBUF_WIDE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+    {
+        return false;
+    }
+    let f = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm);
+    f.allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
+        && f.flags.contains(
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::FILTERABLE,
+        )
+}
+
+/// The G-buffer (octahedral normal, roughness, metallic): 16 bits per
+/// channel, as the normals of LLPipeline::addDeferredAttachments
+/// (indra/newview/pipeline.cpp, GL_RGBA16; originally LGPL 2.1). Eight bits
+/// step the normal by 0.45 degrees, and a mirror doubles it: the reflection
+/// of a smooth face came in terraces, 30 cm apart at 20 m. Without the
+/// normalized format, 16-bit floats: steps of 0.06 degrees at most.
+pub(crate) fn gbuf_format(features: wgpu::Features) -> wgpu::TextureFormat {
+    if features.contains(GBUF_WIDE) {
+        wgpu::TextureFormat::Rgba16Unorm
+    } else {
+        wgpu::TextureFormat::Rgba16Float
+    }
+}
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -2990,7 +3025,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
     }
     if d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: GBUF_FORMAT,
+            format: gbuf_format(device.features()),
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -4287,7 +4322,7 @@ impl Backend {
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(GBUF_FORMAT);
+        let gbuf_features = adapter.get_texture_format_features(gbuf_format(device.features()));
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -6291,8 +6326,8 @@ impl Backend {
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         let (gbuf_msaa, gbuf) = if s.gbuffer() {
             (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, gbuf_format(device.features()), samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, gbuf_format(device.features()), 1, sampled).1),
             )
         } else {
             (None, None)
@@ -9136,6 +9171,8 @@ impl Backend {
             main.light_sets = light_tiles::bin(fu.view, fu.proj, eye, size, lights);
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check || f.debug.check_light_sets);
         }
+        // (the traced lamps walk the same sets, rt_lights.wgsl `lights_near`)
+        let traced_light_sets = main.light_sets;
         stats.light_tiles = light_tiles_on;
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
@@ -10700,13 +10737,23 @@ impl Backend {
             let rt_motion_drawn = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
             let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
             // (the sun's soft shadow too, whether the lights are traced or not)
+            let light = crate::rt_shadows::TraceLight {
+                light_sets: traced_light_sets,
+                clip_from_world: rt_clip_from_world,
+                camera: fu_camera,
+                sun_dir: f.sun_dir,
+                sun_up: f.sun_visible > 0.0,
+                sun_color: fu_sun_color,
+                sky_zenith: fu_sky[0],
+                sky_horizon: fu_sky[1],
+                ground_color: fu_sky[2],
+            };
             rt.encode_lights(
                 &self.device,
                 &self.queue,
                 &mut encoder,
                 t,
-                rt_clip_from_world,
-                fu_camera,
+                &light,
                 &f.lights,
                 &self.targets.depth_ss,
                 rt_motion_drawn,
@@ -10714,22 +10761,13 @@ impl Backend {
                 &scene,
             );
             if rt_gi_now {
-                let light = crate::rt_shadows::TraceLight {
-                    clip_from_world: rt_clip_from_world,
-                    camera: fu_camera,
-                    sun_dir: f.sun_dir,
-                    sun_up: f.sun_visible > 0.0,
-                    sun_color: fu_sun_color,
-                    sky_zenith: fu_sky[0],
-                    sky_horizon: fu_sky[1],
-                    ground_color: fu_sky[2],
-                };
                 rt.encode_gi(
                     &self.device,
                     &self.queue,
                     &mut encoder,
                     t,
                     &light,
+                    &f.lights[..f.lights.len().min(MAX_LIGHTS)],
                     crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
                     &self.targets.depth_ss,
                     rt_motion,
@@ -11162,7 +11200,14 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+            clouds.prepare(
+                &self.device,
+                scene_samples,
+                scene_gbuf,
+                HDR_FORMAT,
+                gbuf_format(self.device.features()),
+                DEPTH_FORMAT,
+            );
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
@@ -11491,6 +11536,7 @@ impl Backend {
             && match (&mut self.rt, &self.targets.rt, &self.targets.gbuf) {
                 (Some(rt), Some(t), Some(gbuf)) if rt.reflects() => {
                     let light = crate::rt_shadows::TraceLight {
+                        light_sets: traced_light_sets,
                         clip_from_world: rt_clip_from_world,
                         camera: fu_camera,
                         sun_dir: f.sun_dir,

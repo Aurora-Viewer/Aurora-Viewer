@@ -1859,6 +1859,12 @@ struct LightsU {
     prev_camera: [f32; 4],
     screen: [f32; 4],
     mode: [f32; 4],
+    changed: [[f32; 4]; crate::rt_light_changes::MAX_CHANGES],
+    changes: [f32; 4],
+    sets: [f32; 4],
+    columns: [[u32; 4]; crate::light_tiles::TILES / 2],
+    rows: [[u32; 4]; crate::light_tiles::TILES / 2],
+    slices: [[u32; 4]; crate::light_tiles::SLICES / 2],
 }
 
 /// A light of the frame's list (must match `Light` in rt_lights.wgsl).
@@ -1872,6 +1878,8 @@ struct TracedLightU {
 
 /// The most lights of the frame's list (the frame uniform's).
 const MAX_TRACED_LIGHTS: usize = 64;
+/// The frames the lamps' share averages at most (rt_lights.wgsl `HISTORY`).
+const LIGHTS_HISTORY: f32 = 12.0;
 
 /// The traced point lights' passes (shaders/rt_lights.wgsl), which average
 /// and filter the sun's soft shadow too: they run with the traced shadows,
@@ -1886,10 +1894,15 @@ struct Lights {
     reuse: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
-    lights: wgpu::Buffer,
     denoise: Denoise,
     /// Last frame's lights: the same list keeps last frame's choices.
     listed: Vec<TracedLightU>,
+    /// Where each light was last frame, by what it shines from
+    /// (`PointLight::source_id`): how far it moved shortens its shadows'
+    /// history.
+    places: HashMap<u32, glam::Vec3>,
+    /// The lamps that came, went or changed: the history lets go there.
+    changes: crate::rt_light_changes::LightChanges,
     timer: Option<Timer>,
     last: usize,
     history_for: Option<(u32, u32)>,
@@ -1907,10 +1920,20 @@ pub(crate) struct GiTargets {
     guide: [wgpu::TextureView; 2],
     /// The denoiser's two images at half resolution.
     ping: [wgpu::TextureView; 2],
+    /// The denoiser's first pass, kept: next frame's history takes its
+    /// light from it (rt_gi.wgsl `prev_color`).
+    fed: wgpu::TextureView,
+    /// The pixels' picks (rt_gi.wgsl `Pick`), their hits and their light:
+    /// last frame's and this one's, in turn as the history.
+    pick_hit: [wgpu::TextureView; 2],
+    pick_light: [wgpu::TextureView; 2],
     pub result: wgpu::TextureView,
 }
 
 const GI_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// A pick's hit (rt_gi.wgsl `Pick`): a place in the world, and a whole
+/// number (`pack_tail`), which 16 bits a channel would not hold.
+const GI_HIT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// A history's denoiser guide: the normal, the distance from the eye, the
 /// luminance's second moment (rt_history.wgsl `pack_normal`).
 const GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -1951,6 +1974,16 @@ struct Denoise {
 /// How far an indirect ray goes (m): the light bounced from further off
 /// is faint, and shorter rays are quicker.
 const GI_REACH: f32 = 64.0;
+/// The frames the indirect light's history averages: about half a second
+/// of them, 32 at 60 frames a second. A fixed count is a fourth of that
+/// time at 240 frames a second: as much noise in each frame, crawling four
+/// times as fast, which shows as grain on the still faces.
+const GI_HISTORY_SECONDS: f32 = 32.0 / 60.0;
+const GI_HISTORY_FRAMES: (f32, f32) = (32.0, 128.0);
+
+fn gi_history_frames(frame_seconds: f32) -> f32 {
+    (GI_HISTORY_SECONDS / frame_seconds.max(1e-4)).clamp(GI_HISTORY_FRAMES.0, GI_HISTORY_FRAMES.1)
+}
 
 /// The GI pass's constants (must match `Params` in rt_gi.wgsl).
 #[repr(C)]
@@ -1965,13 +1998,18 @@ struct GiU {
     screen: [f32; 4],
     half: [f32; 4],
     mode: [f32; 4],
+    changed: [[f32; 4]; crate::rt_light_changes::MAX_CHANGES],
+    changes: [f32; 4],
+    lamps: [f32; 4],
 }
 
 /// The traced indirect light's passes (shaders/rt_gi.wgsl).
 struct Gi {
     trace_layout: wgpu::BindGroupLayout,
+    reuse_layout: wgpu::BindGroupLayout,
     filter_layout: wgpu::BindGroupLayout,
     trace: wgpu::ComputePipeline,
+    reuse: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
     denoise: Denoise,
@@ -1983,6 +2021,12 @@ struct Gi {
     prev_clip_from_world: glam::Mat4,
     prev_camera: glam::Vec3,
     frame: u32,
+    /// When the last frame was traced, and the frames' length smoothed
+    /// (`gi_history_frames`).
+    traced_at: Option<std::time::Instant>,
+    frame_seconds: f32,
+    /// Where the light changed, for the history to let go there.
+    changes: crate::rt_light_changes::LightChanges,
 }
 
 const REFLECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -2002,6 +2046,9 @@ struct ReflectU {
 /// The frame's view and light, as the reflections and the GI shade what
 /// the view does not see.
 pub(crate) struct TraceLight {
+    /// The main view's lights by screen tile and depth, of the frame's
+    /// list in its order (the whole list where the frame has none).
+    pub light_sets: crate::light_tiles::LightSets,
     pub clip_from_world: glam::Mat4,
     pub camera: glam::Vec3,
     pub sun_dir: glam::Vec3,
@@ -2025,6 +2072,17 @@ impl TraceLight {
             self.sky_horizon,
             self.ground_color,
         ]
+    }
+
+    fn sky(&self) -> crate::rt_light_changes::SkyLight {
+        let rgb = |c: [f32; 4]| glam::Vec3::new(c[0], c[1], c[2]);
+        crate::rt_light_changes::SkyLight {
+            sun: self.sun_up.then(|| self.sun_dir.normalize_or(glam::Vec3::Z)),
+            sun_color: rgb(self.sun_color),
+            zenith: rgb(self.sky_zenith),
+            horizon: rgb(self.sky_horizon),
+            ground: rgb(self.ground_color),
+        }
     }
 }
 
@@ -2112,6 +2170,14 @@ pub(crate) struct RtShadows {
     logged_set: u64,
     cpu: Cpu,
     frame: u64,
+    /// The frame's point lights (rt_light.wgsl `Light`, in the frame
+    /// uniform's order) and how many: written by [`Self::encode_lights`],
+    /// for its pass and for the hits the reflections and the indirect light
+    /// shade.
+    lamps: wgpu::Buffer,
+    lamps_count: u32,
+    /// Whether one of them moved since the last frame.
+    lamps_moved: bool,
     pub stats: RtStats,
     timer: Option<Timer>,
     poser: Poser,
@@ -2371,6 +2437,14 @@ impl RtShadows {
             logged_set: 0,
             cpu: Cpu::default(),
             frame: 0,
+            lamps: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt lights list"),
+                size: (std::mem::size_of::<TracedLightU>() * MAX_TRACED_LIGHTS) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            lamps_count: 0,
+            lamps_moved: false,
             stats: RtStats::default(),
             timer: Timer::new(device, queue, 4),
             poser: Poser::new(device, &scene_layout),
@@ -2856,6 +2930,12 @@ impl Targets {
                     view("rt gi denoise", half, DENOISE_FORMAT),
                     view("rt gi denoise", half, DENOISE_FORMAT),
                 ],
+                fed: view("rt gi denoise fed", half, DENOISE_FORMAT),
+                pick_hit: [
+                    view("rt gi pick hit", half, GI_HIT_FORMAT),
+                    view("rt gi pick hit", half, GI_HIT_FORMAT),
+                ],
+                pick_light: [view("rt gi pick light", half, GI_FORMAT), view("rt gi pick light", half, GI_FORMAT)],
                 result: view("rt gi", size, GI_FORMAT),
             }
         });
@@ -3548,6 +3628,7 @@ impl Reflect {
                     },
                     count: None,
                 },
+                storage_entry(7, true),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3674,6 +3755,10 @@ impl Denoise {
 
     /// Filters `history` (rgb its mean, a its frames) of `size` beside its
     /// `guide`, through `ping`: the image of the two that holds the result.
+    /// With `first`, the first à-trous pass is written there in place of
+    /// `ping`, for the caller to keep as the next frame's history: rounded
+    /// by a chance that changes with the frame number beside it
+    /// (rt_denoise.wgsl `dithered`).
     /// A pair's `tint` is its history, its two images and whether it is
     /// kept (one pixel each otherwise, bound and left alone): the second
     /// image returned holds its result.
@@ -3687,15 +3772,19 @@ impl Denoise {
         history: &'a wgpu::TextureView,
         guide: &wgpu::TextureView,
         ping: &'a [wgpu::TextureView; 2],
+        first: Option<(&'a wgpu::TextureView, u32)>,
         tint: Option<(&'a wgpu::TextureView, &'a [wgpu::TextureView; 2], bool)>,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let tinted = tint.is_some_and(|(_, _, kept)| kept);
         if self.params_for != Some((size.0, size.1, tinted)) {
             for (k, buffer) in self.params.iter().enumerate() {
                 let step = if k == 0 { 0.0 } else { (1u32 << (k - 1)) as f32 };
+                // (an instance is always given a first image, or never)
+                let (held, tint_held) = calm_held(k, first.is_some());
+                let flag = |on: bool| if on { 1.0 } else { 0.0 };
                 let u = DenoiseU {
                     size: [size.0 as f32, size.1 as f32, step, self.floor],
-                    mode: [if tinted { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                    mode: [flag(tinted), 0.0, flag(held), flag(tint_held)],
                 };
                 queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
             }
@@ -3708,6 +3797,13 @@ impl Denoise {
             }));
             self.params_for = Some((size.0, size.1, tinted));
         }
+        if let (Some((_, frame)), Some(buffer)) = (first, self.params.get(1)) {
+            let u = DenoiseU {
+                size: [size.0 as f32, size.1 as f32, 1.0, self.floor],
+                mode: [if tinted { 1.0 } else { 0.0 }, 1.0 + (frame % (1 << 20)) as f32, 0.0, 0.0],
+            };
+            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+        }
         let mut input_tint = tint.map(|(history, _, _)| history);
         let Some(tiles) = &self.tiles else {
             return (history, input_tint);
@@ -3715,7 +3811,7 @@ impl Denoise {
         let groups = (size.0.div_ceil(8), size.1.div_ceil(8));
         let mut input = history;
         for (k, params) in self.params.iter().enumerate() {
-            let output = &ping[k % 2];
+            let output = first.filter(|_| k == 1).map_or(&ping[k % 2], |(kept, _)| kept);
             let mut entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -3750,6 +3846,20 @@ impl Denoise {
     }
 }
 
+/// Whether the image pass `k` of the denoiser writes to holds this frame's
+/// tiles with no noise already, and whether its tint's does: a pass copies
+/// them as they are, so the image an earlier pass of the frame wrote to has
+/// them. The passes write to two images in turn (`Denoise::encode`), the
+/// second to `kept` instead where there is one; the tint's start at the
+/// second pass.
+fn calm_held(k: usize, kept: bool) -> (bool, bool) {
+    let image = |pass: usize| if kept && pass == 1 { 2 } else { pass % 2 };
+    (
+        (0..k).any(|before| image(before) == image(k)),
+        (1..k).any(|before| before % 2 == k % 2),
+    )
+}
+
 impl Gi {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3762,14 +3872,34 @@ impl Gi {
             entries: &[
                 uniform_entry::<GiU>(),
                 texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(3, unfiltered),
+                tlas_entry(4),
+                tlas_entry(5),
+                texture_entry(8, unfiltered),
+                texture_entry(12, unfiltered),
+                texture_entry(14, unfiltered),
+                texture_entry(15, unfiltered),
+                storage_texture_entry(16, GI_HIT_FORMAT),
+                storage_texture_entry(17, GI_FORMAT),
+                storage_entry(20, true),
+            ],
+        });
+        let reuse_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt gi reuse"),
+            entries: &[
+                uniform_entry::<GiU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
                 texture_entry(2, unfiltered),
                 texture_entry(3, unfiltered),
                 tlas_entry(4),
                 tlas_entry(5),
                 storage_texture_entry(6, GI_FORMAT),
                 storage_texture_entry(7, GUIDE_FORMAT),
-                texture_entry(8, unfiltered),
                 texture_entry(12, unfiltered),
+                texture_entry(13, unfiltered),
+                texture_entry(18, unfiltered),
+                texture_entry(19, unfiltered),
+                storage_entry(20, true),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3798,6 +3928,12 @@ impl Gi {
             })
         };
         let trace = pipeline("rt gi trace", &[Some(&trace_layout), Some(scene_layout), Some(textures)], "cs_gi");
+        // (the reuse's shadow ray reads the scene's tables and textures too)
+        let reuse = pipeline(
+            "rt gi reuse",
+            &[Some(&reuse_layout), Some(scene_layout), Some(textures)],
+            "cs_gi_reuse",
+        );
         let filter = pipeline("rt gi filter", &[Some(&filter_layout)], "cs_gi_filter");
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rt gi"),
@@ -3808,8 +3944,10 @@ impl Gi {
         log::info!("ray tracing: indirect light on, in the screen-space indirect light's place");
         Gi {
             trace_layout,
+            reuse_layout,
             filter_layout,
             trace,
+            reuse,
             filter,
             buffer,
             denoise: Denoise::new(device, "rt gi denoise", GI_NOISE_FLOOR, false),
@@ -3819,6 +3957,9 @@ impl Gi {
             prev_clip_from_world: glam::Mat4::IDENTITY,
             prev_camera: glam::Vec3::ZERO,
             frame: 0,
+            traced_at: None,
+            frame_seconds: 1.0 / 60.0,
+            changes: crate::rt_light_changes::LightChanges::default(),
         }
     }
 }
@@ -3910,12 +4051,6 @@ impl Lights {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let lights = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rt lights list"),
-            size: (std::mem::size_of::<TracedLightU>() * MAX_TRACED_LIGHTS) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Lights {
             points,
             trace_layout,
@@ -3925,9 +4060,10 @@ impl Lights {
             reuse,
             filter,
             buffer,
-            lights,
             denoise: Denoise::new(device, "rt lights denoise", SHARE_NOISE_FLOOR, true),
             listed: Vec::new(),
+            places: HashMap::new(),
+            changes: crate::rt_light_changes::LightChanges::default(),
             timer: Timer::new(device, queue, 5),
             last: 0,
             history_for: None,
@@ -3939,15 +4075,28 @@ impl Lights {
 }
 
 /// The frame's lights as rt_lights.wgsl reads them, in the frame uniform's
-/// order.
-fn traced_lights(lights: &[crate::types::PointLight]) -> Vec<TracedLightU> {
+/// order; `places` is where each was last frame, then where it is.
+fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>) -> Vec<TracedLightU> {
+    let before = std::mem::take(places);
     lights
         .iter()
         .take(MAX_TRACED_LIGHTS)
-        .map(|l| TracedLightU {
-            pos_radius: l.position.extend(l.radius).to_array(),
-            color_falloff: l.color.extend(l.falloff).to_array(),
-            source: [l.source_radius, if l.projector.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0],
+        .map(|l| {
+            let mut moved = 0.0;
+            if l.source_id != 0 {
+                moved = before.get(&l.source_id).map_or(0.0, |was| was.distance(l.position));
+                places.insert(l.source_id, l.position);
+            }
+            TracedLightU {
+                pos_radius: l.position.extend(l.radius).to_array(),
+                color_falloff: l.color.extend(l.falloff).to_array(),
+                source: [
+                    l.source_radius,
+                    if l.projector.is_some() { 1.0 } else { 0.0 },
+                    if moved.is_finite() { moved } else { 0.0 },
+                    0.0,
+                ],
+            }
         })
         .collect()
 }
@@ -3996,8 +4145,7 @@ impl RtShadows {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         t: &Targets,
-        clip_from_world: glam::Mat4,
-        camera: glam::Vec3,
+        light: &TraceLight,
         point_lights: &[crate::types::PointLight],
         depth: &wgpu::TextureView,
         motion: Option<&wgpu::TextureView>,
@@ -4005,6 +4153,17 @@ impl RtShadows {
         scene: &crate::packet::SceneGpu,
     ) {
         let scene_group = self.scene_group(device, scene);
+        // the frame's lights, for the hits the reflections and the indirect
+        // light shade too
+        let lamps = match self.lights.as_mut() {
+            Some(l) => traced_lights(point_lights, &mut l.places),
+            None => traced_lights(point_lights, &mut HashMap::new()),
+        };
+        if !lamps.is_empty() {
+            queue.write_buffer(&self.lamps, 0, bytemuck::cast_slice(&lamps));
+        }
+        self.lamps_count = lamps.len() as u32;
+        self.lamps_moved = lamps.iter().any(|l| l.source[2] > 0.0);
         let (Some(l), Some(tlas), Some(lt)) = (self.lights.as_mut(), self.tlas.as_ref(), t.lights.as_ref()) else {
             return;
         };
@@ -4022,15 +4181,17 @@ impl RtShadows {
                 l.listed.len()
             );
         }
-        let listed = if l.points { traced_lights(point_lights) } else { Vec::new() };
+        let (clip_from_world, camera) = (light.clip_from_world, light.camera);
+        let listed = if l.points { lamps } else { Vec::new() };
         let same_lights = listed == l.listed;
-        if !listed.is_empty() {
-            queue.write_buffer(&l.lights, 0, bytemuck::cast_slice(&listed));
-        }
         l.listed = listed;
         let (read, write) = (l.last, 1 - l.last);
         let valid = l.history_for == Some(t.size);
         let tinted = l.points && lt.tinted;
+        let traced = &point_lights[..point_lights.len().min(if l.points { MAX_TRACED_LIGHTS } else { 0 })];
+        let changed = l
+            .changes
+            .update(traced, light.sky(), clip_from_world, camera, 1.0 / LIGHTS_HISTORY, valid);
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
         let u = LightsU {
             world_from_clip: clip_from_world.inverse().to_cols_array_2d(),
@@ -4048,6 +4209,17 @@ impl RtShadows {
                     (true, true) => 3.0,
                 },
             ],
+            changed: changed.places,
+            changes: [changed.count as f32, 0.0, changed.flags()[2], 0.0],
+            sets: [
+                light.light_sets.forward[0],
+                light.light_sets.forward[1],
+                light.light_sets.forward[2],
+                light.light_sets.mode[0] as f32,
+            ],
+            columns: light.light_sets.columns,
+            rows: light.light_sets.rows,
+            slices: light.light_sets.slices,
         };
         queue.write_buffer(&l.buffer, 0, bytemuck::bytes_of(&u));
         let uniform = wgpu::BindGroupEntry {
@@ -4062,7 +4234,7 @@ impl RtShadows {
                 view(1, depth),
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: l.lights.as_entire_binding(),
+                    resource: self.lamps.as_entire_binding(),
                 },
                 view(3, &lt.choice[read]),
                 wgpu::BindGroupEntry {
@@ -4087,7 +4259,7 @@ impl RtShadows {
                 view(1, depth),
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: l.lights.as_entire_binding(),
+                    resource: self.lamps.as_entire_binding(),
                 },
                 view(4, &lt.choice[write]),
                 view(7, &lt.share[read]),
@@ -4150,6 +4322,7 @@ impl RtShadows {
                 &lt.share[write],
                 &lt.guide[write],
                 &lt.ping,
+                None,
                 Some((&lt.tint[write], &lt.tint_ping, tinted)),
             )
         };
@@ -4199,6 +4372,8 @@ impl RtShadows {
     /// after the shadows' pass built this frame's levels and before the
     /// scene is lit; the view's hits read `scene_copy`, last frame's.
     /// `intensity` scales it as it scales GTAO's (Indirect light intensity).
+    /// `point_lights` are the frame's, as the shading takes them: where one
+    /// changed, the history lets go (rt_light_changes.rs).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_gi(
         &mut self,
@@ -4207,6 +4382,7 @@ impl RtShadows {
         encoder: &mut wgpu::CommandEncoder,
         t: &Targets,
         light: &TraceLight,
+        point_lights: &[crate::types::PointLight],
         intensity: f32,
         depth: &wgpu::TextureView,
         motion: &wgpu::TextureView,
@@ -4214,6 +4390,7 @@ impl RtShadows {
         scene: &crate::packet::SceneGpu,
     ) {
         let scene_group = self.scene_group(device, scene);
+        let lamps_shadowed = self.traces_lights();
         let (Some(g), Some(tlas), Some(gt)) = (self.gi.as_mut(), self.tlas.as_ref(), t.gi.as_ref()) else {
             return;
         };
@@ -4221,7 +4398,7 @@ impl RtShadows {
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
-                "rt gi: trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
+                "rt gi: trace and reuse {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
                 ms[0],
                 ms[1],
                 ms[2],
@@ -4232,6 +4409,21 @@ impl RtShadows {
         let (read, write) = (g.last, 1 - g.last);
         let valid = g.history_for == Some(t.size);
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
+        let now = std::time::Instant::now();
+        if let Some(before) = g.traced_at.replace(now) {
+            // a pause (a window left aside) is not a frame's length
+            let seconds = now.duration_since(before).as_secs_f32().min(0.1);
+            g.frame_seconds += (seconds - g.frame_seconds) * 0.05;
+        }
+        let history_frames = gi_history_frames(g.frame_seconds);
+        let changed = g.changes.update(
+            point_lights,
+            light.sky(),
+            light.clip_from_world,
+            light.camera,
+            1.0 / history_frames,
+            valid,
+        );
         let u = GiU {
             clip_from_world: light.clip_from_world.to_cols_array_2d(),
             world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
@@ -4240,15 +4432,34 @@ impl RtShadows {
             prev_camera: g.prev_camera.extend(1.0).to_array(),
             lit: light.lit(),
             screen: [w, h, 1.0 / w, 1.0 / h],
-            half: [gt.half.0 as f32, gt.half.1 as f32, intensity, 0.0],
+            half: [gt.half.0 as f32, gt.half.1 as f32, intensity, history_frames],
             mode: [
                 GI_REACH,
                 if self.posed_live { 1.0 } else { 0.0 },
                 (g.frame % (1 << 20)) as f32,
                 if valid { 1.0 } else { 0.0 },
             ],
+            changed: changed.places,
+            changes: changed.flags(),
+            lamps: [
+                self.lamps_count as f32,
+                if lamps_shadowed { 1.0 } else { 0.0 },
+                if self.lamps_moved { 1.0 } else { 0.0 },
+                0.0,
+            ],
         };
         queue.write_buffer(&g.buffer, 0, bytemuck::bytes_of(&u));
+        let levels = [
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::AccelerationStructure(tlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                // without posed faces the scene's stands in, unread
+                resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+            },
+        ];
         let trace_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rt gi trace"),
             layout: &g.trace_layout,
@@ -4258,24 +4469,49 @@ impl RtShadows {
                     resource: g.buffer.as_entire_binding(),
                 },
                 view(1, depth),
-                view(2, &gt.color[read]),
                 view(3, &gt.guide[read]),
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::AccelerationStructure(tlas),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    // without posed faces the scene's stands in, unread
-                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
-                },
-                view(6, &gt.color[write]),
-                view(7, &gt.guide[write]),
+                levels[0].clone(),
+                levels[1].clone(),
                 view(8, scene_copy),
                 view(12, motion),
+                view(14, &gt.pick_hit[read]),
+                view(15, &gt.pick_light[read]),
+                view(16, &gt.pick_hit[write]),
+                view(17, &gt.pick_light[write]),
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: self.lamps.as_entire_binding(),
+                },
+            ],
+        });
+        let reuse_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt gi reuse"),
+            layout: &g.reuse_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: g.buffer.as_entire_binding(),
+                },
+                view(1, depth),
+                view(2, &gt.color[read]),
+                view(3, &gt.guide[read]),
+                levels[0].clone(),
+                levels[1].clone(),
+                view(6, &gt.color[write]),
+                view(7, &gt.guide[write]),
+                view(12, motion),
+                view(13, &gt.fed),
+                view(18, &gt.pick_hit[write]),
+                view(19, &gt.pick_light[write]),
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: self.lamps.as_entire_binding(),
+                },
             ],
         });
         {
+            // the trace then the reuse: the first timestamp to the
+            // denoiser's is the two
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt gi trace"),
                 timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
@@ -4284,11 +4520,15 @@ impl RtShadows {
                     end_of_pass_write_index: None,
                 }),
             });
-            pass.set_pipeline(&g.trace);
-            pass.set_bind_group(0, &trace_group, &[]);
+            let groups = (gt.half.0.div_ceil(8), gt.half.1.div_ceil(8));
             pass.set_bind_group(1, &scene_group, &[]);
             pass.set_bind_group(2, &scene.textures, &[]);
-            pass.dispatch_workgroups(gt.half.0.div_ceil(8), gt.half.1.div_ceil(8), 1);
+            pass.set_pipeline(&g.trace);
+            pass.set_bind_group(0, &trace_group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
+            pass.set_pipeline(&g.reuse);
+            pass.set_bind_group(0, &reuse_group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
         let denoised = {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -4308,6 +4548,7 @@ impl RtShadows {
                     &gt.color[write],
                     &gt.guide[write],
                     &gt.ping,
+                    Some((&gt.fed, g.frame)),
                     None,
                 )
                 .0
@@ -4374,6 +4615,7 @@ impl RtShadows {
         scene: &crate::packet::SceneGpu,
     ) {
         let scene_group = self.scene_group(device, scene);
+        let lamps_shadowed = self.traces_lights();
         let (Some(r), Some(tlas), Some(out)) = (self.reflect.as_mut(), self.tlas.as_ref(), t.reflect.as_ref()) else {
             return;
         };
@@ -4389,7 +4631,12 @@ impl RtShadows {
             camera: light.camera.extend(1.0).to_array(),
             lit: light.lit(),
             screen: [w, h, 1.0 / w, 1.0 / h],
-            mode: [REACH, if self.posed_live { 1.0 } else { 0.0 }, 0.0, 0.0],
+            mode: [
+                REACH,
+                if self.posed_live { 1.0 } else { 0.0 },
+                self.lamps_count as f32,
+                if lamps_shadowed { 1.0 } else { 0.0 },
+            ],
         };
         queue.write_buffer(&r.buffer, 0, bytemuck::bytes_of(&u));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4424,6 +4671,10 @@ impl RtShadows {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(out),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.lamps.as_entire_binding(),
                 },
             ],
         });
@@ -4510,6 +4761,19 @@ fn row_major(m: &[[f32; 4]; 4]) -> [f32; 12] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The indirect light's history lasts as long at every frame rate,
+    /// between its bounds.
+    #[test]
+    fn gi_history_lasts_half_a_second() {
+        assert_eq!(gi_history_frames(1.0 / 60.0), 32.0);
+        assert!((gi_history_frames(1.0 / 120.0) - 64.0).abs() < 1e-3);
+        assert!((gi_history_frames(1.0 / 240.0) - 128.0).abs() < 1e-3);
+        // no shorter under 60 frames a second, no longer over 240
+        assert_eq!(gi_history_frames(1.0 / 20.0), 32.0);
+        assert_eq!(gi_history_frames(1.0 / 500.0), 128.0);
+        assert_eq!(gi_history_frames(0.0), 128.0);
+    }
 
     #[test]
     fn rt_shadows_shaders_are_valid() {
@@ -5328,6 +5592,45 @@ mod tests {
         let front = Override::parse(Some("front"), None, None, None);
         assert_eq!((front.cull, front.applied(RayTracing::default())), (Cull::Front, sun));
         assert_eq!(Override::parse(Some(" back "), None, None, None).cull, Cull::Back);
+    }
+
+    #[test]
+    fn rt_shadows_denoiser_copies_a_calm_tile_once_to_each_image() {
+        // two images in turn: the variance pass and the first filter pass
+        // fill one each, the others find the tiles there
+        let passes = |kept: bool| (0..=ATROUS_PASSES).map(|k| calm_held(k, kept).0).collect::<Vec<_>>();
+        assert_eq!(passes(false), [false, false, true, true, true]);
+        // the first filter pass's image is kept apart: the second of the
+        // two is filled a pass later
+        assert_eq!(passes(true), [false, false, true, false, true]);
+        // the tint is not written by the variance pass
+        let tint = (0..=ATROUS_PASSES).map(|k| calm_held(k, false).1).collect::<Vec<_>>();
+        assert_eq!(tint, [false, false, false, true, true]);
+    }
+
+    #[test]
+    fn rt_shadows_a_light_says_how_far_it_moved() {
+        let lamp = |id: u32, x: f32| crate::types::PointLight {
+            position: glam::Vec3::new(x, 0.0, 2.0),
+            radius: 10.0,
+            color: glam::Vec3::ONE,
+            falloff: 0.5,
+            projector: None,
+            source_radius: 0.2,
+            source_id: id,
+        };
+        let mut places = HashMap::new();
+        // a light seen for the first time has not moved
+        let first = traced_lights(&[lamp(7, 1.0), lamp(0, 5.0)], &mut places);
+        assert_eq!([first[0].source[2], first[1].source[2]], [0.0, 0.0]);
+        // the list's order changes with the camera: a light is known by
+        // what it shines from, and one of no prim never moves
+        let next = traced_lights(&[lamp(0, 6.0), lamp(7, 1.25)], &mut places);
+        assert_eq!([next[0].source[2], next[1].source[2]], [0.0, 0.25]);
+        // a light that left the list starts again when it comes back
+        traced_lights(&[lamp(0, 6.0)], &mut places);
+        let back = traced_lights(&[lamp(7, 4.0)], &mut places);
+        assert_eq!(back[0].source[2], 0.0);
     }
 
     #[test]

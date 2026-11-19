@@ -5392,6 +5392,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
+| `AURORA_DEMO_LAMP_BLINK=<frames>` | A lamp ahead of the start view, switched off and on every `frames` frames |
+| `AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]` | The same lamp carried from side to side behind a post, a crossing every `frames` frames |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
@@ -5871,6 +5873,31 @@ both open states and the selection count. Capture at frame 620.
   reach the view: the list holds 64 of those (#1032: the 64 nearest all
   around the camera held only 50, and the pools of light halfway across
   the ground went out).
+- **`AURORA_DEMO_LAMP_BLINK=<frames>`**: a lamp 6 m ahead of the start
+  view and 2.5 m up, lit for `frames` frames (240 if the value is not a
+  number), dark for as many, and so on from the first frame; the log line
+  `demo lamp:` names each switch. For what keeps a history of the
+  light: with the traced indirect light (`AURORA_RT_GI=1`) in the closed
+  room of `AURORA_DEMO_PROBE_ROOM=1` (`AURORA_DEMO_POS="100,100"`, at
+  night with `AURORA_DEMO_TOD=4`), capture a few frames after a switch
+  (`AURORA_CAPTURE_FRAMES=1204` with 1200) and long after it (2390): the
+  walls must not keep the lamp's glow once it is out. With
+  `AURORA_FPS_LIMIT=60` and `240`, the settled room must be as bright
+  (the history holds four times the frames at 240).
+- **`AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]`**: the lamp of
+  `AURORA_DEMO_LAMP_BLINK` (lit throughout unless that variable is set
+  too) carried from 3 m on one side to 3 m on the other in `frames`
+  frames (120 if the value is not a number) and back, and so on; from
+  the frame `stop` it stays where it is (the log line
+  `demo lamp: stopped at frame`). A post 1.5 m before it throws a shadow
+  that crosses the floor the other way. For what must follow a lamp that
+  moves: in the closed room of `AURORA_DEMO_PROBE_ROOM=1` at night
+  (`AURORA_DEMO_POS="100,100" AURORA_DEMO_CAM="0,30,2.6"
+  AURORA_DEMO_TOD=4`), with `AURORA_RT_LIGHTS=1` the post's shadow must
+  stay sharp and under the post while the lamp moves, not trail behind
+  it; with `AURORA_RT_GI=1` the glow on the walls must go with the lamp.
+  The viewer smooths an object's movement, so the lamp drawn is about
+  two frames behind the place sent.
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
