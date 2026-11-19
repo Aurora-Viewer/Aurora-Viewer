@@ -1818,6 +1818,10 @@ pub struct Settings {
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
+    /// Aurora's own: while an avatar's worn objects are on their way, draw
+    /// copies of the ones kept from the last time (world/worn_cache), then
+    /// the region's own.
+    pub worn_cache: bool,
     /// RenderAvatarComplexityMode: 0 limit everyone, 1 always show friends
     /// fully, 2 show only friends.
     pub complexity_mode: u8,
@@ -2796,6 +2800,7 @@ impl Default for Settings {
             max_attachment_area: 1000.0,
             complexity_notice_seconds: 0,
             loading_avatars: 0,
+            worn_cache: true,
             complexity_mode: 0,
             avatar_physics: true,
             avatar_physics_detail: 1.0,

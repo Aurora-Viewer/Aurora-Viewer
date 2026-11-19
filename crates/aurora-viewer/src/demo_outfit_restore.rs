@@ -25,6 +25,7 @@
 
 use crate::world::World;
 use aurora_net::inventory::{FolderContents, InvItem};
+use super::worn_cache::request;
 use aurora_net::{AttachRequest, NetCommand, NetEvent};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -198,21 +199,6 @@ impl OutfitRestoreDemo {
 fn local_id(item: Uuid) -> u32 {
     // as crate::demo::outfit_attachment numbers them
     30_000 + (item.as_u128() & 0xffff) as u32
-}
-
-fn request(item: Uuid, point: u8) -> AttachRequest {
-    AttachRequest {
-        item_id: item,
-        owner_id: Uuid::nil(),
-        point,
-        add: true,
-        flags: 0,
-        group_mask: 0,
-        everyone_mask: 0,
-        next_owner_mask: 0,
-        name: String::new(),
-        desc: String::new(),
-    }
 }
 
 fn wear(world: &mut World, list: &[AttachRequest]) {

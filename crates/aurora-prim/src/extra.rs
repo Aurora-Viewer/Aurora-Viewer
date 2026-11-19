@@ -228,6 +228,55 @@ pub fn pack_reflection_probe(r: &ReflectionProbeParams) -> Vec<u8> {
     v
 }
 
+/// LLRenderMaterialParams::pack: a count, then each face and its GLTF
+/// material id (at most 255 entries, as the count is one byte).
+pub fn pack_render_materials(m: &[(u8, Uuid)]) -> Vec<u8> {
+    let m = &m[..m.len().min(255)];
+    let mut v = Vec::with_capacity(1 + m.len() * 17);
+    v.push(m.len() as u8);
+    for (face, id) in m {
+        v.push(*face);
+        v.extend_from_slice(id.as_bytes());
+    }
+    v
+}
+
+/// The whole ExtraParams blob of an object (LLViewerObject's block in an
+/// ObjectUpdateCompressed, what [`parse_extra_params`] reads): each set
+/// parameter as `type u16, size u32, data`. A sculpt or a mesh is written
+/// as PARAMS_SCULPT, which the parser reads like PARAMS_MESH.
+pub fn pack_extra_params(ep: &ExtraParams) -> Vec<u8> {
+    let mut entries: Vec<(u16, Vec<u8>)> = Vec::new();
+    if let Some(f) = &ep.flexible {
+        entries.push((PARAMS_FLEXIBLE, pack_flexible(f)));
+    }
+    if let Some(l) = &ep.light {
+        entries.push((PARAMS_LIGHT, pack_light(l)));
+    }
+    if let Some(s) = &ep.sculpt {
+        entries.push((PARAMS_SCULPT, pack_sculpt(s)));
+    }
+    if let Some(l) = &ep.light_image {
+        entries.push((PARAMS_LIGHT_IMAGE, pack_light_image(l)));
+    }
+    if let Some(flags) = ep.extended_mesh_flags {
+        entries.push((PARAMS_EXTENDED_MESH, pack_extended_mesh(flags)));
+    }
+    if !ep.render_materials.is_empty() {
+        entries.push((PARAMS_RENDER_MATERIAL, pack_render_materials(&ep.render_materials)));
+    }
+    if let Some(r) = &ep.reflection_probe {
+        entries.push((PARAMS_REFLECTION_PROBE, pack_reflection_probe(r)));
+    }
+    let mut v = vec![entries.len() as u8];
+    for (ty, d) in entries {
+        v.extend_from_slice(&ty.to_le_bytes());
+        v.extend_from_slice(&(d.len() as u32).to_le_bytes());
+        v.extend_from_slice(&d);
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +325,52 @@ mod tests {
             params: Vec3::new(1.0, 2.0, 0.5),
         };
         assert_eq!(entry(PARAMS_LIGHT_IMAGE, &pack_light_image(&li)).light_image, Some(li));
+    }
+
+    #[test]
+    fn whole_blob_round_trips() {
+        let ep = ExtraParams {
+            flexible: Some(FlexibleParams {
+                softness: 2,
+                tension: 1.5,
+                air_friction: 2.0,
+                gravity: 0.3,
+                wind_sensitivity: 4.0,
+                user_force: Vec3::new(0.0, 1.0, 0.0),
+            }),
+            light: Some(LightParams {
+                color: [1.0, 128.0 / 255.0, 0.0, 1.0],
+                radius: 4.0,
+                cutoff: 0.0,
+                falloff: 0.75,
+            }),
+            sculpt: Some(SculptParams {
+                texture: Uuid::from_bytes([9; 16]),
+                sculpt_type: 5,
+            }),
+            light_image: Some(LightImageParams {
+                texture: Uuid::from_bytes([3; 16]),
+                params: Vec3::new(1.0, 2.0, 0.5),
+            }),
+            extended_mesh_flags: Some(EXTENDED_MESH_ANIMATED),
+            render_materials: vec![(0, Uuid::from_bytes([1; 16])), (3, Uuid::from_bytes([2; 16]))],
+            reflection_probe: Some(ReflectionProbeParams {
+                ambiance: 0.5,
+                clip_distance: 2.0,
+                flags: 1,
+            }),
+        };
+        let back = parse_extra_params(&pack_extra_params(&ep));
+        assert_eq!(back.sculpt, ep.sculpt);
+        assert_eq!(back.light, ep.light);
+        assert_eq!(back.light_image, ep.light_image);
+        assert_eq!(back.extended_mesh_flags, ep.extended_mesh_flags);
+        assert_eq!(back.render_materials, ep.render_materials);
+        assert_eq!(back.reflection_probe, ep.reflection_probe);
+        let f = back.flexible.expect("flexible");
+        assert_eq!(f.softness, 2);
+        assert!((f.tension - 1.5).abs() < 0.01);
+        assert_eq!(parse_extra_params(&pack_extra_params(&ExtraParams::default())), ExtraParams::default());
     }
 
     #[test]

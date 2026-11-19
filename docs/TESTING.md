@@ -6370,6 +6370,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
+| `AURORA_DEMO_WORN_CACHE=1` | Worn objects drawn from the cache until the region sends them (Violet Wolf; ours with `AURORA_DEMO_OUTFIT_RESTORE`) |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
@@ -10851,6 +10852,21 @@ later and `outfit: 5 of 5 attachments worn` about 30 s after the requests;
 the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
+
+**`AURORA_DEMO_WORN_CACHE=1`** — worn objects drawn from the cache while
+the region sends them (`world/worn_cache`). The cache holds what Violet
+Wolf wore the last time it was seen: its hat, pink then, and its orb. Its
+appearance lists both, but the demo region only sends them 6 s after the
+loading fade: until then the copies are drawn (the pink hat), then the
+region's own (the violet hat). With `AURORA_DEMO_OUTFIT_RESTORE=warm`, the
+cache also holds the demo outfit's hair, earrings and boots, drawn visible
+for this scenario (pink, gold, brown): they show from the start instead of
+when the restore puts them back. Right-clicking a copy finds no object.
+The log says `demo worn cache: the region sends Violet Wolf's worn objects
+(<n> copies drawn now)`, then `worn objects cache: <n> copies drawn, <n>
+handed over to the region's objects` once every copy is gone. With the
+setting off (Preferences › Graphics, "Worn objects from the cache"),
+nothing is drawn before the region's objects.
 
 In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from the
 texture disk cache, as after login. Reopen the showcase or select the outfit again:

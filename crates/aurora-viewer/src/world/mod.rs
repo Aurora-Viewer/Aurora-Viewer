@@ -122,6 +122,7 @@ pub mod voice_moderation;
 pub mod wearable_favorites;
 pub mod windlight_presets;
 pub mod worldmap;
+pub mod worn_cache;
 pub mod worn_listed;
 
 #[cfg(test)]
@@ -569,7 +570,8 @@ pub struct World {
     /// The worn objects each avatar's last AvatarAppearance listed, kept
     /// even when the message itself is dropped (stale, no parameters): the
     /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
-    /// those checks. Read by the Dev Toolbox's J2 only (world/worn_listed.rs).
+    /// those checks. Read by the Dev Toolbox's J2 (world/worn_listed.rs) and
+    /// the worn objects cache (world/worn_cache).
     listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
@@ -639,6 +641,8 @@ pub struct World {
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
+    /// Worn objects drawn from the cache while the region sends them.
+    pub worn_cache: worn_cache::WornCache,
     /// Objects already reported by a diagnostic (logged once).
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
@@ -1125,6 +1129,7 @@ impl World {
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
+            worn_cache: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             motd: String::new(),

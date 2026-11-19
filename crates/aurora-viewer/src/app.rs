@@ -1153,6 +1153,7 @@ pub struct App {
     rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
+    worn_cache_demo: Option<crate::demo::worn_cache::WornCacheDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_MASK_255: a Mask of cutoff 255 over an alpha under opaque.
@@ -1840,6 +1841,7 @@ impl App {
             window_icon: None,
             world: {
                 let mut w = World::new(lib);
+                w.worn_cache.set_store(Some(cache_root.clone()));
                 w.cache_dir = Some(cache_root);
                 // OmnifilterEngine::init (the demo's rules are its own)
                 match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
@@ -2264,6 +2266,7 @@ impl App {
             rez_demo: None,
             arrival_demo: None,
             outfit_restore_demo: None,
+            worn_cache_demo: None,
             tex_refresh_demo: None,
             mask_255_demo: None,
             texture_res_demo: None,
@@ -10750,6 +10753,9 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            // copies of the worn objects on their way (world/worn_cache)
+            self.world.worn_cache.set_enabled(self.settings.worn_cache);
+            self.world.update_worn_cache(Instant::now());
             // a new account's outfit: worn like the Welcome Pack's folders
             if let Some(outfit) = self.world.outfit.take_initial_outfit() {
                 self.welcome_wears
@@ -14758,6 +14764,9 @@ impl App {
                 self.panels.appearance = true;
                 self.appearance_ui.open(2, false);
             }
+        }
+        if let Some(demo) = &mut self.worn_cache_demo {
+            demo.tick(self.frame_count, &mut self.world, Instant::now());
         }
         if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
@@ -23819,6 +23828,10 @@ impl ApplicationHandler for App {
             if let Some(demo) = &mut self.outfit_restore_demo {
                 demo.setup(&mut self.world);
                 self.panels.perf = false;
+            }
+            self.worn_cache_demo = crate::demo::worn_cache::WornCacheDemo::from_env();
+            if let Some(demo) = &mut self.worn_cache_demo {
+                demo.setup(&mut self.world);
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.mask_255_demo = crate::demo::mask_255::Mask255Demo::from_env();
