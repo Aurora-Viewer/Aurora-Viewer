@@ -105,6 +105,13 @@ impl Override {
         })
     }
 
+    /// Whether a device whose graphics card has them is opened with
+    /// [`FEATURES`]: always, but in a launch that forces the sun's shadows
+    /// off, which never traces.
+    fn opens_with_ray_queries(self) -> bool {
+        self.shadows != Some(false)
+    }
+
     /// What is traced when the settings ask `asked`: nothing without the
     /// sun's shadows, whose scene the others trace.
     fn applied(self, asked: crate::RayTracing) -> crate::RayTracing {
@@ -118,15 +125,13 @@ impl Override {
     }
 }
 
-/// Whether a device is to be opened with [`FEATURES`]: the settings ask for
-/// ray tracing (`asked`) or a launch variable forces it.
-pub(crate) fn wanted_at_open(asked: bool) -> bool {
-    Override::from_env()
-        .applied(crate::RayTracing {
-            shadows: asked,
-            ..Default::default()
-        })
-        .shadows
+/// Whether a device is to be opened with [`FEATURES`] where the graphics
+/// card has them: whatever the settings ask, so that ray tracing turned on
+/// in Preferences needs no other device (a renderer made again for it held
+/// the picture for 20 s). `AURORA_RT_SHADOWS=0` opens the device of a card
+/// without ray queries.
+pub(crate) fn wanted_at_open() -> bool {
+    Override::from_env().opens_with_ray_queries()
 }
 
 /// What `device` traces when the settings ask `asked`: nothing on a device
@@ -231,8 +236,9 @@ pub struct Faces {
 
 /// Posed triangles built again in one frame besides the nearest avatar's,
 /// which is always built: the most pressing avatars first ([`pressing`]),
-/// and the first of them whatever its size; the others keep an earlier
-/// frame's pose.
+/// and the first of them whatever its size that the frame can pose with
+/// the nearest ([`POSED_VERTICES`]); the others keep an earlier frame's
+/// pose.
 const REBUILD_TRIANGLES: u64 = 1 << 19;
 /// How far from its joint a vertex is taken to be when a joint turns (m).
 const JOINT_REACH: f32 = 1.0;
@@ -1629,9 +1635,12 @@ fn choose_rebuilds(
         slots.push(nearest.slot);
         // (stable: the nearer of two as pressing)
         rest.sort_by(|a, b| pressing(b.distance, b.waited).total_cmp(&pressing(a.distance, a.waited)));
+        // (what the render thread poses in a frame, `Poser::pose`: a level
+        // past it would not be built, nor asked for again)
+        let room = (POSED_VERTICES / 3).saturating_sub(nearest.triangles);
         let mut triangles = 0u64;
         for u in rest.iter() {
-            if triangles > 0 && triangles + u.triangles > REBUILD_TRIANGLES {
+            if triangles + u.triangles > room || (triangles > 0 && triangles + u.triangles > REBUILD_TRIANGLES) {
                 continue;
             }
             triangles += u.triangles;
@@ -2280,7 +2289,18 @@ pub struct RtStats {
     pub skeletons_built: usize,
 }
 
+/// What an effect turned on needs and the ray tracer lacks
+/// ([`RtShadows::parts_maker`]), made like it on a worker thread.
+pub(crate) struct Parts {
+    reflect: Option<Reflect>,
+    gi: Option<Gi>,
+}
+
 pub(crate) struct RtShadows {
+    /// Its number, no other ray tracer's and never 0: the main thread
+    /// starts what it follows for one from nothing when another one draws
+    /// (`FrameResult::rt`).
+    pub(crate) made: u32,
     layout: wgpu::BindGroupLayout,
     /// The scene's tables as the ray-traced passes read them (group 1 of
     /// rt_common.wgsl).
@@ -2491,8 +2511,12 @@ impl Timer {
 
 impl RtShadows {
     /// The ray tracer of a device opened with ray queries, tracing
-    /// `options` ([`traced`], with the sun's shadows).
+    /// `options` ([`traced`], with the sun's shadows). Its pipelines are
+    /// the driver's to compile, seconds the first time on a PC: the
+    /// renderer makes it on a worker thread.
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, textures: &wgpu::BindGroupLayout, options: crate::RayTracing) -> Self {
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1).max(1);
         let cull = Override::from_env().cull;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt shadows"),
@@ -2628,6 +2652,7 @@ impl RtShadows {
             posed_live: false,
             scene_layout,
             warned: false,
+            made,
         }
     }
 }
@@ -4491,26 +4516,50 @@ fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, 
 }
 
 impl RtShadows {
-    /// Follows the options ([`traced`], still with the sun's shadows):
-    /// makes what an effect turned on needs, drops what one turned off
-    /// held.
-    pub(crate) fn set_options(
-        &mut self,
+    /// Follows `options` with what it has: drops what an effect turned off
+    /// held. What an effect turned on lacks is made apart
+    /// ([`RtShadows::parts_maker`]) and comes later ([`RtShadows::take`]):
+    /// until then the frame keeps that effect's screen-space one.
+    pub(crate) fn set_options(&mut self, options: crate::RayTracing) {
+        if !options.reflections {
+            self.reflect = None;
+        }
+        if !options.indirect {
+            self.gi = None;
+        }
+        if let Some(l) = &mut self.lights {
+            l.points = options.lights;
+        }
+    }
+
+    /// What makes, on a worker thread, the parts `options` asks for and it
+    /// lacks; None when it lacks none.
+    pub(crate) fn parts_maker(
+        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         textures: &wgpu::BindGroupLayout,
         options: crate::RayTracing,
-    ) {
-        if options.reflections != self.reflect.is_some() {
-            self.reflect = options
-                .reflections
-                .then(|| Reflect::new(device, queue, &self.scene_layout, textures));
+    ) -> Option<impl FnOnce() -> Parts + Send + 'static> {
+        let reflect = options.reflections && self.reflect.is_none();
+        let gi = options.indirect && self.gi.is_none();
+        if !reflect && !gi {
+            return None;
         }
-        if options.indirect != self.gi.is_some() {
-            self.gi = options.indirect.then(|| Gi::new(device, queue, &self.scene_layout, textures));
+        let (device, queue, scene, textures) = (device.clone(), queue.clone(), self.scene_layout.clone(), textures.clone());
+        Some(move || Parts {
+            reflect: reflect.then(|| Reflect::new(&device, &queue, &scene, &textures)),
+            gi: gi.then(|| Gi::new(&device, &queue, &scene, &textures)),
+        })
+    }
+
+    /// Takes the parts a worker made, those it still lacks.
+    pub(crate) fn take(&mut self, parts: Parts) {
+        if self.reflect.is_none() {
+            self.reflect = parts.reflect;
         }
-        if let Some(l) = &mut self.lights {
-            l.points = options.lights;
+        if self.gi.is_none() {
+            self.gi = parts.gi;
         }
     }
 
@@ -5558,6 +5607,33 @@ mod tests {
         }
     }
 
+    /// Two avatars that walk hold more triangles together than a frame
+    /// poses: the farther one waits, and is counted as waiting, rather
+    /// than be sent to a frame that would leave its level out. It is built
+    /// when the nearer one stands.
+    #[test]
+    fn rt_shadows_no_more_is_built_than_a_frame_poses() {
+        let mut t = BTreeMap::new();
+        let stride = crate::types::PALETTE_STRIDE;
+        let (near, far) = (stride, 2 * stride);
+        let (large, larger) = ((POSED_VERTICES / 2) as u32, (POSED_VERTICES * 3 / 4) as u32);
+        let choose_waiting = |t: &mut BTreeMap<u32, Skeleton>| {
+            let mut out = Faces::default();
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
+            let posed: u64 = out.groups.iter().filter(|g| g.rebuild).map(|g| g.vertices as u64).sum();
+            assert!(posed <= POSED_VERTICES, "{posed} vertices to pose");
+            (out.groups.iter().map(|g| (g.key, g.rebuild)).collect::<Vec<_>>(), out.waiting)
+        };
+        for step in 0..4 {
+            let walked = step as f32 * 0.5;
+            read(&mut t, near, &[1], larger, 3.0 + walked);
+            read(&mut t, far, &[2], large, 9.0 + walked);
+            assert_eq!(choose_waiting(&mut t), (vec![(near, true), (far, false)], 1), "frame {step}");
+        }
+        read(&mut t, far, &[2], large, 11.0);
+        assert_eq!(choose_waiting(&mut t), (vec![(near, false), (far, true)], 0));
+    }
+
     /// The nearest walks at every frame and fills the budget alone: the
     /// others that move are still built again in turn, the near ones more
     /// often than the far ones, and none waits for ever.
@@ -6309,6 +6385,13 @@ mod tests {
         assert_eq!(none.applied(RayTracing { shadows: false, ..all }), RayTracing::default());
         // empty is unset
         assert_eq!(Override::parse(Some(""), Some(" "), None, None), none);
+        // the device has its ray queries from the start, the settings on or
+        // off, but in a launch that forces the sun's shadows off
+        assert!(none.opens_with_ray_queries());
+        assert!(Override::parse(Some("1"), None, None, None).opens_with_ray_queries());
+        assert!(Override::parse(None, Some("0"), Some("0"), Some("0")).opens_with_ray_queries());
+        assert!(!Override::parse(Some("0"), None, None, None).opens_with_ray_queries());
+        assert!(!Override::parse(Some("off"), Some("1"), None, None).opens_with_ray_queries());
         // forced on, over settings that are off; the others stay theirs
         let on = Override::parse(Some("1"), Some("1"), None, None);
         assert_eq!(on.applied(RayTracing::default()), RayTracing { lights: true, ..sun });

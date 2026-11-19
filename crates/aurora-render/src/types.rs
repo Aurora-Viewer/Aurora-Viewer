@@ -1231,8 +1231,7 @@ pub enum RayTracingSupport {
     /// The device was opened with ray queries: the options apply at once.
     Ready,
     /// The graphics card has ray queries and the device was opened without
-    /// them (ray tracing was off then): the renderer is opened again to
-    /// trace (`Renderer::new`'s `ray_tracing`).
+    /// them, for a launch that never traces (`AURORA_RT_SHADOWS=0`).
     NotOpened,
     /// The device is the VR runtime's: no ray tracing in a run set up for
     /// VR.

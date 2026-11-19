@@ -186,6 +186,9 @@ pub(crate) struct FrameResult {
     pub thumbnails: Vec<crate::Thumbnail>,
     /// The film frames read back since the last result, in their order.
     pub films: Vec<crate::film_readback::FilmFrame>,
+    /// The ray tracer that drew this frame (`RtShadows::made`), 0 without
+    /// one: turned off, or still being made.
+    pub rt: u32,
     pub spent: Spent,
 }
 

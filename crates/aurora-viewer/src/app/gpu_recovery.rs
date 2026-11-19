@@ -60,18 +60,7 @@ impl App {
         // restart the VR button offers) or Preferences › Camera › VR (#2309);
         // never again in a run whose runtime closed (`reopen_without_vr`)
         self.vr_set_up = !self.vr_runtime_gone && (crate::cli::get().vr || self.settings.camera.vr_at_start);
-        // the device with ray queries only when ray tracing is on
-        // (Preferences › Graphics); turned on later, the renderer is made
-        // again (`reopen_for_ray_tracing`)
-        let renderer = Renderer::new(
-            window.clone(),
-            size.width,
-            size.height,
-            self.settings.vsync,
-            &gpu,
-            self.vr_set_up,
-            self.settings.ray_tracing.enabled,
-        )?;
+        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu, self.vr_set_up)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
@@ -265,44 +254,6 @@ impl App {
             .to_owned(),
             crate::world::notifications::Data::None,
         );
-        true
-    }
-
-    /// Whether ray tracing was turned on (Preferences › Graphics) on a GPU
-    /// device opened without ray queries, which only a new device gets:
-    /// `reopen_for_ray_tracing` is due. Not again in a run where that
-    /// brought none (a launch variable forcing it off).
-    pub(super) fn ray_tracing_wants_reopen(&self) -> bool {
-        self.settings.ray_tracing.enabled
-            && !self.ray_tracing_refused
-            && self
-                .gfx
-                .as_ref()
-                .is_some_and(|g| g.renderer.info.ray_tracing == aurora_render::RayTracingSupport::NotOpened)
-    }
-
-    /// Ray tracing turned on while the GPU device has no ray queries (it was
-    /// opened with ray tracing off): the renderer is made again with them,
-    /// as after a device loss, the session and the world kept. False when
-    /// no new renderer could be made: the caller closes.
-    pub(super) fn reopen_for_ray_tracing(&mut self, event_loop: &ActiveEventLoop) -> bool {
-        // replaced the way a lost renderer is, its surface left alone
-        if let Some(gfx) = &self.gfx {
-            gfx.renderer.leave_surface();
-        }
-        let Some(started) = self.replace_renderer(event_loop, false) else {
-            return false;
-        };
-        let support = self.gfx.as_ref().map(|g| g.renderer.info.ray_tracing);
-        self.ray_tracing_refused = support != Some(aurora_render::RayTracingSupport::Ready);
-        if self.ray_tracing_refused {
-            log::warn!("ray tracing turned on: the new GPU device has no ray queries either ({support:?}), nothing is traced");
-        } else {
-            log::info!(
-                "ray tracing turned on: new window and renderer with ray queries in {} ms",
-                started.elapsed().as_millis()
-            );
-        }
         true
     }
 

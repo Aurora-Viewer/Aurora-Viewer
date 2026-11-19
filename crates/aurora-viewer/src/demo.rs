@@ -266,6 +266,9 @@ pub mod rez;
 /// (AURORA_DEMO_RIGGED_PROP).
 #[path = "demo_rigged_prop.rs"]
 pub mod rigged_prop;
+/// AURORA_DEMO_RT_SWITCH: ray tracing turned on at given frames.
+#[path = "demo_rt_switch.rs"]
+pub mod rt_switch;
 #[path = "demo_sculpt.rs"]
 pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
@@ -7624,7 +7627,7 @@ pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
 
 /// AURORA_DEMO_RT_WALK=1: our avatar walks with what makes an avatar of the
 /// grid heavy for the ray tracer, to see its traced shadow follow it
-/// (app/rt_walk.rs).
+/// (app/double_click.rs `demo_rt_walk_steps`).
 pub fn rt_walk() -> bool {
     std::env::var("AURORA_DEMO_RT_WALK").is_ok_and(|v| v.trim() == "1")
 }

@@ -504,9 +504,6 @@ pub struct App {
     /// was made again without it, and VR waits for the next start
     /// (`reopen_without_vr`).
     vr_runtime_gone: bool,
-    /// The renderer made again for ray tracing still had no ray queries:
-    /// not tried again in this run (`reopen_for_ray_tracing`).
-    ray_tracing_refused: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -1167,6 +1164,8 @@ pub struct App {
     texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
+    /// AURORA_DEMO_RT_SWITCH: ray tracing turned on at given frames.
+    rt_switch_demo: Option<crate::demo::rt_switch::RtSwitch>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
@@ -1901,7 +1900,6 @@ impl App {
             restart_into_vr: false,
             vr_set_up: false,
             vr_runtime_gone: false,
-            ray_tracing_refused: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -2288,6 +2286,7 @@ impl App {
             } else {
                 Vec::new()
             },
+            rt_switch_demo: std::env::var_os("AURORA_DEMO").and_then(|_| crate::demo::rt_switch::from_env()),
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             slideshow_demo: None,
@@ -11311,6 +11310,20 @@ impl App {
             self.settings.antialiasing = mode;
             gfx.renderer.apply_settings(self.photo_render_settings());
         }
+        let tracing = gfx.renderer.rt_tracing();
+        if let Some(step) = self
+            .rt_switch_demo
+            .as_mut()
+            .and_then(|d| d.tick(self.frame_count, Instant::now(), tracing))
+        {
+            use crate::demo::rt_switch::Step;
+            let rt = &mut self.settings.ray_tracing;
+            match step {
+                Step::Shadows => rt.enabled = true,
+                Step::Effects => (rt.lights, rt.indirect, rt.reflections) = (true, true, true),
+            }
+            gfx.renderer.apply_settings(self.photo_render_settings());
+        }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
             && let Some(camera) = self.vr_camera.take()
@@ -14364,14 +14377,6 @@ impl App {
                 .is_some_and(|g| g.renderer.vr_runtime_lost() && !g.renderer.vr_engaged())
         {
             if !self.reopen_without_vr(event_loop) {
-                self.close_while_gpu_stalled(event_loop);
-            }
-            return;
-        }
-        // ray tracing turned on, and the device opened without ray queries: a
-        // new renderer with them (gpu_recovery.rs)
-        if self.ray_tracing_wants_reopen() {
-            if !self.reopen_for_ray_tracing(event_loop) {
                 self.close_while_gpu_stalled(event_loop);
             }
             return;
