@@ -11458,8 +11458,16 @@ ui-options-chat-logs-dated-help = Un fichier par mois pour chaque conversation (
 ui-options-chat-logs-note = Ces fichiers sont du texte lisible par toute personne qui a accès à cet ordinateur. Ils restent sur cette machine, séparés pour chaque compte et chaque grille, et ne sont jamais joints à un rapport de bug.
 ui-options-chat-logs-open = Ouvrir le dossier
 ui-options-chat-logs-folder-help = Les fichiers de ce compte sont déplacés dans le nouveau dossier.
-ui-options-chat-logs-legacy-layout = Partager le dossier du Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Écrit les fichiers de ce compte comme le Legacy Viewer les range, dans le dossier choisi (prénom_nom), pour que les deux viewers lisent et complètent le même historique. Choisissez plus haut le dossier des historiques du Legacy Viewer. Aurora n'y fait qu'ajouter des lignes : rien n'est déplacé, importé ni effacé, et les fichiers d'Aurora reviennent quand l'option est désactivée. Gardez le même réglage « Fichiers datés » dans les deux viewers. Second Life uniquement. Désactivé par défaut.
+ui-options-chat-logs-legacy-sharing = Partage de { $folder } avec le Legacy Viewer
+ui-options-chat-logs-legacy-append-only = Les formats First Last.txt et first_last.txt sont tous deux reconnus. Aurora ajoute les nouvelles lignes aux fichiers existants et ne les réécrit ni ne les renomme jamais.
+ui-options-chat-logs-legacy-found = { $count ->
+    [one] Historique existant détecté dans { $folder } ({ $count } fichier) — le partager avec le Legacy Viewer ?
+   *[other] Historique existant détecté dans { $folder } ({ $count } fichiers) — le partager avec le Legacy Viewer ?
+    }
+ui-options-chat-logs-legacy-folder-found = Dossier d'historique du Legacy Viewer détecté ({ $folder }) — le partager avec le Legacy Viewer ?
+ui-options-chat-logs-other-account = Ce dossier appartient à un autre compte ({ $folder }). Le dossier actuel est conservé.
+ui-options-chat-logs-main-grid-folder = Ce dossier ({ $folder }) contient vos historiques de la grille principale, et non ceux de Second Life Beta (Aditi). Le dossier actuel est conservé.
+ui-options-chat-logs-switch-to = Passer à { $folder }
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } fichier déplacé.
    *[other] { $count } fichiers déplacés.

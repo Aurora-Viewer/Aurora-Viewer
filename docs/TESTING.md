@@ -10822,7 +10822,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `other-grid` the warning of a grid whose folders cannot be told apart. The
   four lists are in memory during the run; no transcript is written or
   removed.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on[:log]]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -10893,21 +10893,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     image, before any join/history request; their ordinary group history
     and participants arrive only after the reply. Closing or snoozing a
     displayed group before frame 1100 must prevent its automatic rejoin.
-  - `shared`: the Legacy layout (Preferences › Chat, "Share the Legacy
-    Viewer's folder"). A synthetic Legacy Viewer folder,
+  - `shared`: sharing the Legacy Viewer's folder (Preferences › Chat ›
+    History). A synthetic Legacy Viewer folder,
     `chat_logs\demo-legacy-viewer\<first_last>.demo\`, rewritten at each
     launch, holds Nova's conversation three days ago and a
-    `conversation.log` of its own; it is chosen as the transcripts folder
-    for this run only (never saved in the demo's settings). Preferences ›
-    Chat opens on History. Turn the option on: the folder shown becomes
-    `…\demo-legacy-viewer\<first_last>.demo`, Erase and Import are
-    greyed, and the next message from Nova is added to the end of the
-    Legacy Viewer's `Nova Example.txt` (its four lines left as written,
-    `conversation.log` untouched). Off again: back to the Aurora layout,
-    nothing moved. `shared:on`: the option on from the start, Nova's
-    conversation showing the Legacy Viewer's four lines in grey, then the
-    new message. The option is saved like any setting; without a chosen
-    folder it does nothing.
+    `conversation.log` of its own (entries for Nova and Tess); it is
+    picked as the transcripts folder for this run only (never saved in
+    the demo's settings). Preferences › Chat opens on History with the
+    question under Account folder: "Existing chat log found in
+    <first_last>.demo (2 files) — share it with the Legacy Viewer?", a
+    violet Share button and a plain Cancel one. Cancel: the notice goes,
+    the folder stays Aurora's own and nothing is moved or shared. Share:
+    the folder shown becomes `…\demo-legacy-viewer\<first_last>.demo`
+    with "Sharing <first_last>.demo with the Legacy Viewer" and the
+    append-only rule under it, Erase, Import and "Clear conversation
+    log…" are greyed, and the next message from Nova is added to the end
+    of the Legacy Viewer's `Nova Example.txt` (its four lines left as
+    written, `conversation.log` untouched). "Default folder" stops
+    sharing, nothing moved. `shared:on`: Share answered from the start,
+    Nova's conversation showing the Legacy Viewer's four lines in grey,
+    then the new message. `shared:on:log` also opens Communicate ›
+    Conversation log…, which lists the Legacy Viewer's entries (Nova,
+    Tess) read from its `conversation.log`; the entries of this session
+    are listed until the logout and never written there.
   - `im`: a conversation with Nova whose file contains two past
     days. What to see: these lines in grey, with their senders' profile
     pictures dimmed (this scenario gives Nova and us one), with a date

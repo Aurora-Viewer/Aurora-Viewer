@@ -11327,8 +11327,13 @@ ui-options-chat-logs-dated-help = １つのファイルが大きくなり続け�
 ui-options-chat-logs-note = これらのファイルはプレーンテキストで、このコンピュータを使える人なら誰でも読めます。アカウントとグリッドごとに分けてこのマシンに保存され、バグレポートに添付されることはありません。
 ui-options-chat-logs-open = フォルダを開く
 ui-options-chat-logs-folder-help = このアカウントのファイルは新しいフォルダに移動されます。
-ui-options-chat-logs-legacy-layout = Legacy Viewerのフォルダを共有
-ui-options-chat-logs-legacy-layout-help = 選んだフォルダに、Legacy Viewerと同じ形式（first_last）でこのアカウントのファイルを書き込み、両方のビューアで同じ履歴を読んで追加できるようにします。上でLegacy Viewerのチャットログのフォルダを選んでください。Auroraは行を追加するだけで、移動・インポート・消去は行いません。オフにするとAuroraのファイルに戻ります。「日付付きのファイル」の設定は両方のビューアで同じにしてください。Second Lifeのみです。既定ではオフです。
+ui-options-chat-logs-legacy-sharing = { $folder }をレガシービューアと共有中
+ui-options-chat-logs-legacy-append-only = First Last.txtとfirst_last.txtの両方の形式に対応しています。Auroraは既存のファイルに新しい行を追加するだけで、書き換えたり名前を変えたりすることはありません。
+ui-options-chat-logs-legacy-found = { $folder }に既存のチャット履歴（{ $count }個のファイル）が見つかりました。レガシービューアと共有しますか？
+ui-options-chat-logs-legacy-folder-found = レガシービューアのチャット履歴フォルダ（{ $folder }）が見つかりました。レガシービューアと共有しますか？
+ui-options-chat-logs-other-account = このフォルダは別のアカウント（{ $folder }）のものです。現在のフォルダを維持します。
+ui-options-chat-logs-main-grid-folder = このフォルダ（{ $folder }）にはメイングリッドの履歴があり、Second Life Beta（Aditi）の履歴ではありません。現在のフォルダを維持します。
+ui-options-chat-logs-switch-to = { $folder }に切り替える
 ui-options-chat-logs-moved = { $count ->
     [one] { $count }個のファイルを移動しました。
    *[other] { $count }個のファイルを移動しました。

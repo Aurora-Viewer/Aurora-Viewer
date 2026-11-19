@@ -371,7 +371,6 @@ const BEFORE: &[&str] = &[
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
-    "log_legacy_layout",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
@@ -2518,4 +2517,201 @@ fn the_selected_system_font_stays_in_view() {
         texts = draw(vec![], &mut state, &mut settings);
     }
     assert!(drawn(&texts, "Font 35"), "the list opens on the chosen font");
+}
+
+#[test]
+fn legacy_layout_status_shows_shared_folder_append_rule_and_login_prompt() {
+    fn render(s: &mut Settings, st: &mut OptionsUi) -> Vec<String> {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let d = Settings::default();
+        let mut r = OptionsResult::default();
+        frames
+            .run(Vec::new(), |ui| {
+                ui.set_width(700.0);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let mut cx = Cx::new(ui, p, s, &d, st, &mut r, Mode::Show, "");
+                run_page(&mut cx, Page::Chat, Some(3));
+            })
+            .into_iter()
+            .map(|t| t.source)
+            .collect()
+    }
+
+    let mut s = Settings::default();
+    let mut st = OptionsUi::default();
+    let no_account_line = aurora_i18n::tr!("ui-options-chat-logs-no-account");
+    let append_line = aurora_i18n::tr!("ui-options-chat-logs-legacy-append-only");
+    let sharing_line = aurora_i18n::tr!("ui-options-chat-logs-legacy-sharing", folder = "jane_doe");
+    let switch_label = aurora_i18n::tr!("ui-options-chat-logs-switch-to", folder = "jane_doe");
+    let rejected_line = aurora_i18n::tr!("ui-options-chat-logs-other-account", folder = "other_resident");
+
+    // Logged out: Account folder row prompts login and no sharing status or switch offer is shown
+    let off_texts = render(&mut s, &mut st);
+    assert!(off_texts.iter().any(|t| t == no_account_line), "{off_texts:?}");
+    assert!(!off_texts.iter().any(|t| t == &sharing_line));
+    assert!(!off_texts.iter().any(|t| t == &switch_label));
+
+    // Logged in on Aurora's default folder: sharing status stays absent and login note clears
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni"));
+    let default_texts = render(&mut s, &mut st);
+    assert!(!default_texts.iter().any(|t| t == no_account_line));
+    assert!(!default_texts.iter().any(|t| t == &sharing_line));
+
+    // Sharing an empty or existing Legacy folder shows sharing status & append-only rule
+    st.chat_log_custom = true;
+    st.chat_log_shared = true;
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/SecondLife/jane_doe"));
+    let logged_in_texts = render(&mut s, &mut st);
+    assert!(logged_in_texts.iter().any(|t| t == &sharing_line), "{logged_in_texts:?}");
+    assert!(logged_in_texts.iter().any(|t| t == append_line), "{logged_in_texts:?}");
+
+    // A Legacy Viewer's folder picked: the question, with Share and Cancel
+    st.chat_log_custom = false;
+    st.chat_log_shared = false;
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni"));
+    let question = aurora_i18n::tr!("ui-options-chat-logs-legacy-found", folder = "jane_doe", count = 3);
+    st.chat_log_share_offer = Some(crate::ui::options::ShareOffer {
+        root: std::path::PathBuf::from("/data/SecondLife"),
+        folder: "jane_doe".into(),
+        count: 3,
+    });
+    let question_texts = render(&mut s, &mut st);
+    for line in [
+        question.as_str(),
+        aurora_i18n::tr!("common-share"),
+        aurora_i18n::tr!("common-cancel"),
+    ] {
+        assert!(question_texts.iter().any(|t| t == line), "{line:?} in {question_texts:?}");
+    }
+    assert!(!question_texts.iter().any(|t| t == &sharing_line));
+    // a Legacy root without the account's folder yet: the same question, worded for it
+    st.chat_log_share_offer = Some(crate::ui::options::ShareOffer {
+        root: std::path::PathBuf::from("/data/SecondLife"),
+        folder: "jane_doe".into(),
+        count: 0,
+    });
+    let empty_question = aurora_i18n::tr!("ui-options-chat-logs-legacy-folder-found", folder = "jane_doe");
+    let empty_texts = render(&mut s, &mut st);
+    assert!(empty_texts.iter().any(|t| t == &empty_question), "{empty_texts:?}");
+    st.chat_log_share_offer = None;
+
+    // Foreign folder rejected while on default folder: warning callout & switch button render
+    st.chat_log_custom = false;
+    st.chat_log_shared = false;
+    st.chat_log_dir = Some(std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni"));
+    st.chat_log_status = rejected_line.clone();
+    st.chat_log_status_warn = true;
+    st.chat_log_switch_offer = Some((std::path::PathBuf::from("/data/SecondLife"), "jane_doe".into()));
+    let offer_texts = render(&mut s, &mut st);
+    assert!(offer_texts.iter().any(|t| t == &rejected_line), "{offer_texts:?}");
+    assert!(offer_texts.iter().any(|t| t == &switch_label), "{offer_texts:?}");
+
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let d = Settings::default();
+    let mut r = OptionsResult::default();
+    let shapes = frames.shapes(Vec::new(), |ui| {
+        ui.set_width(700.0);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Show, "");
+        run_page(&mut cx, Page::Chat, Some(3));
+    });
+    assert!(
+        shapes.iter().any(|shape| matches!(
+            shape,
+            egui::Shape::Rect(rect)
+                if rect.fill == p.warn.gamma_multiply(0.16) && rect.stroke.color == p.warn.gamma_multiply(0.75)
+        )),
+        "expected the shared warning notice around rejected folder status"
+    );
+}
+
+#[test]
+fn clicking_switch_to_offer_updates_account_folder_row() {
+    let mut frames = Frames::new();
+    let ctx = frames.ctx.clone();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let p = theme.palette();
+    let icons = Icons::load(&ctx, None);
+    let mut settings = Settings::default();
+    let mut st = OptionsUi::default();
+    let initial_dir = std::path::PathBuf::from("/data/aurora/accounts/0001/chat_logs/agni");
+    let switched_root = std::path::PathBuf::from("/data/SecondLife");
+    let switched_dir = switched_root.join("jane_doe");
+    st.open(Page::Chat, 3);
+    st.chat_log_dir = Some(initial_dir.clone());
+    st.chat_log_status = aurora_i18n::tr!("ui-options-chat-logs-other-account", folder = "other_resident");
+    st.chat_log_status_warn = true;
+    st.chat_log_switch_offer = Some((switched_root.clone(), "jane_doe".into()));
+
+    let switch_label = aurora_i18n::tr!("ui-options-chat-logs-switch-to", folder = "jane_doe");
+    let default_label = aurora_i18n::tr!("ui-options-default-folder");
+    let mut draw = |events: Vec<egui::Event>, settings: &mut Settings, st: &mut OptionsUi| {
+        let mut accepted = false;
+        let shapes = frames.shapes(events, |ui| {
+            let mut open = true;
+            let res = show(ui.ctx(), &p, &icons, settings, st, &mut open);
+            accepted |= res.accept_chat_log_offer;
+        });
+        let texts: Vec<(String, egui::Rect)> = shapes
+            .into_iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect();
+        (accepted, texts)
+    };
+
+    let mut texts = Vec::new();
+    for _ in 0..4 {
+        (_, texts) = draw(Vec::new(), &mut settings, &mut st);
+    }
+    let initial_text = initial_dir.to_string_lossy().into_owned();
+    assert!(texts.iter().any(|(t, _)| t == &initial_text), "{texts:?}");
+    let button_rect = texts
+        .iter()
+        .find(|(t, _)| t == &switch_label)
+        .expect("Switch to button in Preferences › Chat")
+        .1;
+
+    let pos = button_rect.center();
+    let pointer_button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut accepted = false;
+    for events in [
+        vec![egui::Event::PointerMoved(pos)],
+        vec![pointer_button(true)],
+        vec![pointer_button(false)],
+    ] {
+        let (clicked, latest) = draw(events, &mut settings, &mut st);
+        accepted |= clicked;
+        texts = latest;
+    }
+    assert!(accepted, "clicking {switch_label:?} should set accept_chat_log_offer");
+
+    settings.chat_log_location = switched_root.to_string_lossy().into_owned();
+    st.chat_log_dir = Some(switched_dir.clone());
+    st.chat_log_custom = true;
+    st.chat_log_shared = true;
+    st.chat_log_switch_offer = None;
+    st.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-legacy-sharing", folder = "jane_doe"), false);
+
+    for _ in 0..3 {
+        (_, texts) = draw(Vec::new(), &mut settings, &mut st);
+    }
+    let switched_text = switched_dir.to_string_lossy().into_owned();
+    assert!(
+        texts.iter().any(|(t, _)| t == &switched_text),
+        "expected switched path {switched_text:?} in Account folder row, got {texts:?}"
+    );
+    assert!(!texts.iter().any(|(t, _)| t == &initial_text), "{texts:?}");
+    assert!(!texts.iter().any(|(t, _)| t == &switch_label), "{texts:?}");
+    assert!(texts.iter().any(|(t, _)| t == default_label), "{texts:?}");
 }

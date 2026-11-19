@@ -10885,8 +10885,6 @@ ui-options-chat-logs-dated-help = Un file al mese per ogni conversazione (nome-2
 ui-options-chat-logs-note = Questi file sono testo semplice, leggibile da chiunque possa usare questo computer. Restano su questa macchina, separati per ogni account e ogni grid, e non vengono mai allegati a una segnalazione di bug.
 ui-options-chat-logs-open = Apri la cartella
 ui-options-chat-logs-folder-help = I file di questo account vengono spostati nella nuova cartella.
-ui-options-chat-logs-legacy-layout = Condividi la cartella del Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Scrive i file di questo account nella struttura propria del Legacy Viewer sotto la cartella scelta (nome_cognome), così entrambi i viewer leggono e aggiungono alla stessa cronologia. Scegliere sopra la cartella dei log della chat del Legacy Viewer. Aurora vi aggiunge solo righe: nulla viene spostato, importato o cancellato, e i file propri di Aurora tornano quando è disattivato. Mantenere la stessa impostazione “File con data” in entrambi i viewer. Solo Second Life. Disattivato per impostazione predefinita.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } file spostato.
    *[other] { $count } file spostati.

@@ -1270,7 +1270,8 @@ fn history(cx: &mut Cx) {
                             st.confirm_erase_logs = true;
                         }
                         // Clear log… (Pref.ClearLog), enabled while the log
-                        // has entries
+                        // has entries and not sharing the Legacy Viewer's
+                        // folder: its conversation log is the Legacy Viewer's
                         if action_button_if(
                             ui,
                             &p,
@@ -1278,7 +1279,7 @@ fn history(cx: &mut Cx) {
                             tr!("ui-options-chat-logs-clear"),
                             ActionKind::FlatDanger,
                             size,
-                            st.conversation_log_entries > 0,
+                            st.conversation_log_entries > 0 && !st.chat_log_shared,
                         )
                         .clicked()
                         {
@@ -1310,21 +1311,96 @@ fn history(cx: &mut Cx) {
                             None,
                         );
                     }
-                    if !st.chat_log_status.is_empty() {
-                        ui.label(RichText::new(&st.chat_log_status).size(11.5).color(p.muted));
-                    }
+                    chat_log_notices(ui, &p, st, r);
                 });
                 false
             },
         );
-        // an Aurora addition: the folder of the Legacy Viewer's own layout,
-        // shared with it (`world::chat_log`, `shared`)
-        cx.toggle(
-            tr!("ui-options-chat-logs-legacy-layout"),
-            tr!("ui-options-chat-logs-legacy-layout-help"),
-            &field!(log_legacy_layout),
-        );
+        // An Aurora addition: when a Legacy Viewer account folder is shared,
+        // display the active folder and append-only rule below the row.
+        if cx.st.chat_log_shared
+            && let Some(folder) = cx
+                .st
+                .chat_log_dir
+                .as_deref()
+                .and_then(|d| d.file_name())
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+        {
+            let line1 = tr!("ui-options-chat-logs-legacy-sharing", folder = folder);
+            cx.status(&line1, tr!("ui-options-chat-logs-legacy-append-only"));
+        }
     });
+}
+
+/// The notices under the folder row (shared notices of `ui/widgets.rs`):
+/// whether to share a Legacy Viewer's folder just picked (Share or
+/// Cancel; an Aurora addition), a refusal or an error (with the account's
+/// own folder beside a refused one to switch to), or the line of a folder
+/// action that went through.
+fn chat_log_notices(ui: &mut egui::Ui, p: &crate::theme::Palette, st: &mut super::super::OptionsUi, r: &mut super::super::OptionsResult) {
+    use crate::ui::widgets::{ActionKind, NoticeKind, action_button, action_button_if, glyph, notice};
+    use aurora_i18n::tr;
+
+    let size = Vec2::new(0.0, 24.0);
+    let idle = st.chat_log_importing.is_none();
+    if let Some(offer) = st.chat_log_share_offer.clone() {
+        let question = if offer.count > 0 {
+            tr!(
+                "ui-options-chat-logs-legacy-found",
+                folder = offer.folder.as_str(),
+                count = offer.count
+            )
+        } else {
+            tr!("ui-options-chat-logs-legacy-folder-found", folder = offer.folder.as_str())
+        };
+        ui.add_space(4.0);
+        notice(ui, p, NoticeKind::Question, |ui| {
+            ui.add(egui::Label::new(RichText::new(question).size(12.0).strong().color(p.ink)).wrap());
+            ui.horizontal(|ui| {
+                if action_button_if(ui, p, "link-filled", tr!("common-share"), ActionKind::Primary, size, idle).clicked() {
+                    st.chat_log_share_offer = None;
+                    r.share_chat_log = Some(offer.clone());
+                }
+                if action_button(ui, p, "x", tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    // nothing changes: the folder and sharing stay as they were
+                    st.chat_log_share_offer = None;
+                }
+            });
+        });
+    }
+
+    let offer = st.chat_log_switch_offer.as_ref().map(|(_, f)| f.clone());
+    if st.chat_log_status.is_empty() && offer.is_none() {
+        return;
+    }
+    ui.add_space(4.0);
+    if st.chat_log_status_warn || offer.is_some() {
+        notice(ui, p, NoticeKind::Warning, |ui| {
+            if !st.chat_log_status.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&st.chat_log_status).size(12.0).strong().color(p.ink)).wrap());
+            }
+            if let Some(folder) = offer
+                && action_button_if(
+                    ui,
+                    p,
+                    "folder-filled",
+                    &tr!("ui-options-chat-logs-switch-to", folder = folder),
+                    ActionKind::Primary,
+                    size,
+                    idle,
+                )
+                .clicked()
+            {
+                r.accept_chat_log_offer = true;
+            }
+        });
+    } else {
+        ui.horizontal_top(|ui| {
+            glyph(ui, "circle-check-filled", p.success, 14.0);
+            ui.add(egui::Label::new(RichText::new(&st.chat_log_status).size(11.5).color(p.ink)).wrap());
+        });
+    }
 }
 
 /// Away (Legacy Viewer › General: AvatarSitOnAway, QuitAfterSecondsOfAFK)

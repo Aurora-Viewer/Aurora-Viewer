@@ -10874,8 +10874,6 @@ ui-options-chat-logs-dated-help = 每个对话每月一个文件（name-2026-10�
 ui-options-chat-logs-note = 这些文件为纯文本，任何能使用本机的人都能读取。它们留在此机器上，按账号与服务器分开存放，且绝不会附加到问题报告中。
 ui-options-chat-logs-open = 打开文件夹
 ui-options-chat-logs-folder-help = 本账号的文件将移至新文件夹。
-ui-options-chat-logs-legacy-layout = 共用传统查看器的聊天记录文件夹
-ui-options-chat-logs-legacy-layout-help = 在所选文件夹下按传统查看器的目录结构（名_姓）保存当前账号的聊天记录文件，使两个查看器能够读取并追加写入同一份历史记录。请在上方选择传统查看器的聊天记录文件夹。Aurora 仅会向其中追加新内容，不会移动、导入或删除任何现有文件；关闭此选项后将恢复使用 Aurora 自己的记录文件。请确保两个查看器中的“按日期分文件”设置保持一致。仅适用于 Second Life，默认关闭。
 ui-options-chat-logs-moved = { $count ->
     [one] 已移动 { $count } 个文件。
    *[other] 已移动 { $count } 个文件。
