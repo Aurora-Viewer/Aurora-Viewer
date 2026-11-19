@@ -211,21 +211,24 @@ fn mesh_base_hull_comes_from_the_collision_model_then_the_low_lod_like_the_legac
         Some(named("medium")),
         Some(named("high")),
     ];
-    assert_eq!(hull_source(Some(&physics), &lods, high).name, "physics");
-    assert_eq!(hull_source(None, &lods, high).name, "low");
+    assert_eq!(hull_source(Some(&physics), &lods, high, LodProfile::Linden).name, "physics");
+    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, "low");
+    // Aurora's LOD defaults take the smallest LOD first, after a collision model.
+    assert_eq!(hull_source(Some(&physics), &lods, high, LodProfile::Aurora).name, "physics");
+    assert_eq!(hull_source(None, &lods, high, LodProfile::Aurora).name, "lowest");
     lods[1] = None;
-    assert_eq!(hull_source(None, &lods, high).name, "medium");
+    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, "medium");
     let mut empty = named("empty collision");
     for face in &mut empty.faces {
         face.indices.clear();
     }
     assert_eq!(
-        hull_source(Some(&empty), &lods, high).name,
+        hull_source(Some(&empty), &lods, high, LodProfile::Linden).name,
         "medium",
         "a model with no triangle is passed over"
     );
     lods[2] = None;
-    assert_eq!(hull_source(None, &lods, high).name, high.name);
+    assert_eq!(hull_source(None, &lods, high, LodProfile::Linden).name, high.name);
 }
 
 #[test]
@@ -257,7 +260,7 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
     assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
     assert_eq!(
         sources(&draft),
-        [LodSource::Fast, LodSource::Fast, LodSource::Auto, LodSource::File]
+        [LodSource::Legacy, LodSource::Legacy, LodSource::Legacy, LodSource::File]
     );
     // A LOD loaded from a file keeps its file; the others start again.
     draft.lods[1].source = LodSource::File;
@@ -272,7 +275,7 @@ fn mesh_lod_profiles_linden_by_default_and_aurora_on_request() {
     draft.set_lod_profile(LodProfile::Linden);
     assert_eq!(
         sources(&draft),
-        [LodSource::Fast, LodSource::File, LodSource::Auto, LodSource::File]
+        [LodSource::Legacy, LodSource::File, LodSource::Legacy, LodSource::File]
     );
 }
 

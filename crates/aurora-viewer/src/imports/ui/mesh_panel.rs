@@ -281,6 +281,7 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
         mesh::LodSource::Combine => aurora_i18n::tr!("import-lod-combine"),
         mesh::LodSource::Fast => aurora_i18n::tr!("import-lod-fast"),
         mesh::LodSource::Reliable => aurora_i18n::tr!("import-lod-reliable"),
+        mesh::LodSource::Legacy => aurora_i18n::tr!("import-lod-legacy"),
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
@@ -412,6 +413,7 @@ fn mesh_controls(
                             .show_ui(ui, |ui| {
                                 for choice in [
                                     mesh::LodSource::File,
+                                    mesh::LodSource::Legacy,
                                     mesh::LodSource::Auto,
                                     mesh::LodSource::Combine,
                                     mesh::LodSource::Fast,

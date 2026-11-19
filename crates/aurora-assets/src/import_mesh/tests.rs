@@ -417,6 +417,86 @@ fn a_flat_part_gets_a_base_hull_of_at_least_four_points_that_is_not_flat() {
 }
 
 #[test]
+fn legacy_generation_falls_back_part_by_part_like_the_legacy_viewer() {
+    // A 24 x 24 grid of 1,152 triangles. Shared corners: the precise pass
+    // reaches the target. Every triangle with corners of its own (seams
+    // everywhere): precise cannot, and genMeshOptimizerLODs welds the
+    // positions or goes sloppy; the result still lands near the target.
+    let grid = |shared: bool| {
+        let n = 24u32;
+        let corner = |x: u32, y: u32| Vertex {
+            position: [
+                x as f32 / n as f32 - 0.5,
+                y as f32 / n as f32 - 0.5,
+                ((x * 7 + y * 3) % 5) as f32 * 0.01,
+            ],
+            normal: [0.0, 0.0, 1.0],
+            uv: [x as f32 / n as f32, y as f32 / n as f32],
+            joints: [0; 4],
+            weights: [0.0; 4],
+        };
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        if shared {
+            for y in 0..=n {
+                for x in 0..=n {
+                    vertices.push(corner(x, y));
+                }
+            }
+        }
+        for y in 0..n {
+            for x in 0..n {
+                for [a, b, c] in [[(x, y), (x + 1, y), (x + 1, y + 1)], [(x, y), (x + 1, y + 1), (x, y + 1)]] {
+                    for (cx, cy) in [a, b, c] {
+                        if shared {
+                            indices.push(cy * (n + 1) + cx);
+                        } else {
+                            let mut v = corner(cx, cy);
+                            // a seam: each triangle's own UV island
+                            v.uv[0] += indices.len() as f32;
+                            indices.push(vertices.len() as u32);
+                            vertices.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        Model {
+            name: "Grid".into(),
+            submodel: 0,
+            center: Vec3::ZERO,
+            size: Vec3::ONE,
+            skin: None,
+            faces: vec![Face {
+                material: 0,
+                vertices,
+                indices,
+            }],
+        }
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let options = process::LodOptions {
+        triangles: 1152 / 9,
+        error: 1.0,
+        method: process::Method::Legacy,
+        crease_angle: None,
+        error_only: false,
+    };
+    for shared in [true, false] {
+        let source = grid(shared);
+        let lod = process::lod(&source, options, &cancel).expect("legacy LOD");
+        let triangles = lod.triangles();
+        assert!(
+            triangles > 0 && triangles as f32 <= 128.0 * 1.8,
+            "near the target of 128 (shared corners {shared}): {triangles}"
+        );
+        let face = &lod.faces[0];
+        assert!(face.indices.iter().all(|i| (*i as usize) < face.vertices.len()));
+        assert!(face.vertices.len() <= face.indices.len(), "only the corners in use are kept");
+    }
+}
+
+#[test]
 fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
     let source = cube();
     let hull = process::base_hull(&source).expect("hull");

@@ -23,21 +23,23 @@ pub enum LodSource {
     Fast,
     Reliable,
     Above,
+    /// The Legacy Viewer's automatic chain, part by part.
+    Legacy,
 }
 /// Which defaults the generated LODs start from, chosen in the LOD tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodProfile {
-    /// The Legacy Viewer's: each level a third of the one above, Medium by
-    /// the automatic method, Low and Lowest by the fast one. What its older
-    /// meshoptimizer (0.22) ends up doing: its precise pass cannot reach
-    /// the Low and Lowest targets with the texture and shading seams kept,
-    /// and LLModelPreview::genMeshOptimizerLODs (MESH_OPTIMIZER_AUTO) falls
-    /// back to the sloppy one. Close to its download cost (#3433).
+    /// The Legacy Viewer's: each level a third of the one above, made by its
+    /// own automatic chain (LLModelPreview::genMeshOptimizerLODs with
+    /// MESH_OPTIMIZER_AUTO), part by part: a part keeps the precise result
+    /// when it nearly reaches the target, and goes to the sloppy pass when
+    /// it cannot. Its LODs and download cost match the Legacy Viewer's
+    /// (#3433).
     #[default]
     Linden,
     /// Aurora's own: each level a quarter of the one above, all by the
-    /// automatic method, which keeps the seams. Better looking far away,
-    /// and a higher download cost on small objects.
+    /// automatic method, which keeps the seams, and the collision hull from
+    /// the Lowest LOD (`hull_source`) to keep the physics cost down.
     Aurora,
 }
 impl LodProfile {
@@ -53,10 +55,10 @@ impl LodProfile {
         std::array::from_fn(|level| (high_triangles / divisor.pow((3 - level) as u32)).max(1))
     }
     /// How a generated level (0 Lowest to 2 Medium) is made.
-    pub fn source(self, level: usize) -> LodSource {
-        match (self, level) {
-            (Self::Linden, 0 | 1) => LodSource::Fast,
-            _ => LodSource::Auto,
+    pub fn source(self, _level: usize) -> LodSource {
+        match self {
+            Self::Linden => LodSource::Legacy,
+            Self::Aurora => LodSource::Auto,
         }
     }
 }
@@ -500,6 +502,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                             method: match method {
                                 LodSource::Auto => process::Method::Auto,
                                 LodSource::Reliable => process::Method::Reliable,
+                                LodSource::Legacy => process::Method::Legacy,
                                 LodSource::Fast => process::Method::Fast,
                                 _ => process::Method::Precise,
                             },
@@ -524,7 +527,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 // (indra/newview/llmeshrepository.cpp) also supplies a base
                 // hull for split models whose instance collision is None.
                 let hulls = process::Physics {
-                    base: Some(process::base_hull(hull_source(None, &lods, high))?),
+                    base: Some(process::base_hull(hull_source(None, &lods, high, draft.lod_profile))?),
                     hulls: Vec::new(),
                 };
                 return Ok((lods, None, hulls));
@@ -578,7 +581,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?
             } else {
                 process::Physics {
-                    base: Some(process::base_hull(hull_source(physics.as_ref(), &lods, high))?),
+                    base: Some(process::base_hull(hull_source(physics.as_ref(), &lods, high, draft.lod_profile))?),
                     hulls: Vec::new(),
                 }
             };
@@ -617,8 +620,14 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
 /// (indra/newview/llmeshrepository.cpp) picks it. The high LOD alone gives a
 /// flat hull for a part whose collision file has volume (#4213). A model
 /// reduced to no triangle is passed over: no hull is made from it.
-fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
-    [physics, lods[1].as_ref(), lods[2].as_ref()]
+///
+/// With Aurora's LOD defaults the Lowest LOD comes before the Low one, a
+/// difference from the Legacy Viewer (which never takes Lowest): Aurora's
+/// LODs keep more of the model, and a hull from the smallest one keeps the
+/// physics cost down.
+fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model, profile: LodProfile) -> &'a Model {
+    let lowest = (profile == LodProfile::Aurora).then_some(&lods[0]).and_then(Option::as_ref);
+    [physics, lowest, lods[1].as_ref(), lods[2].as_ref()]
         .into_iter()
         .flatten()
         .find(|model| model.triangles() > 0)
