@@ -2225,6 +2225,9 @@ pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
         .unwrap_or_else(|| egui::FontId::proportional(default_size))
 }
 
+/// How much of its colour the label of a disabled tab keeps.
+const DISABLED_TAB_LABEL: f32 = 0.5;
+
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
     tabs_row(ui, p, selected, labels, false, false)
@@ -2277,9 +2280,15 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 };
                 ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
             }
-            underline(ui, p, &resp, sel, *enabled);
+            // A disabled tab (@showinv's "Outfits", for one) must not pass
+            // for an enabled one: no rule under it, and its label fades into
+            // the surface, well below the muted label of a tab that can be
+            // chosen.
+            if *enabled {
+                underline(ui, p, &resp, sel, true);
+            }
             let col = if !*enabled {
-                p.muted_dim
+                p.muted_dim.gamma_multiply(DISABLED_TAB_LABEL)
             } else if sel {
                 p.ink
             } else {
@@ -3916,5 +3925,42 @@ mod segmented_disabled_tests {
             chosen.push((selected, clicks_work));
         }
         assert_eq!(chosen, vec![(0, false), (1, true)]);
+    }
+}
+
+#[cfg(test)]
+mod tabs_disabled_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    fn label_color(shapes: &[egui::Shape], label: &str) -> Color32 {
+        shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.fallback_color),
+                _ => None,
+            })
+            .expect("the label is drawn")
+    }
+
+    /// A disabled tab reads as disabled: its label is fainter than the
+    /// muted label of an enabled tab that is not chosen, and it is no
+    /// brighter than the palette's own dim colour.
+    #[test]
+    fn a_disabled_tab_label_is_fainter_than_an_enabled_one() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let mut selected = 2usize;
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            shapes = frames.shapes(Vec::new(), |ui| {
+                tabs(ui, &p, &mut selected, &[("Aaaa", true), ("Bbbb", false), ("Cccc", true)]);
+            });
+        }
+        let enabled = label_color(&shapes, "Aaaa");
+        let disabled = label_color(&shapes, "Bbbb");
+        assert_eq!(enabled, p.muted, "an enabled tab that is not chosen");
+        assert!(disabled.a() < p.muted_dim.a(), "the disabled label fades: {disabled:?}");
+        assert_eq!(label_color(&shapes, "Cccc"), p.ink, "the chosen tab");
     }
 }
