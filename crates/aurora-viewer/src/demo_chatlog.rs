@@ -106,6 +106,30 @@ pub fn mode() -> Option<Mode> {
     })
 }
 
+/// How far `service:skew`'s grid clock is ahead of the computer's: the
+/// reporter's computer of #4233 was 133 s behind the grid.
+pub const SKEW_SECS: i64 = 133;
+
+/// `service:skew`: the demo grid's clock ahead of the computer's, and a
+/// live IM the service keeps too.
+pub fn service_skew() -> bool {
+    std::env::var("AURORA_DEMO_CHATLOG").is_ok_and(|value| value == "service:skew")
+}
+
+/// When `service:skew`'s live IM was received, on the grid's clock, in
+/// seconds: the service's copy of it.
+static LIVE_RECEIVED: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
+
+/// `service:skew`'s live IM, its service copy stamped on the grid's clock
+/// when it is sent, as the grid records it.
+pub fn skewed_live_message(agent: Uuid) -> NetEvent {
+    let grid = crate::ui::bars::clock::now_unix().saturating_add(SKEW_SECS);
+    if let Ok(mut live) = LIVE_RECEIVED.lock() {
+        *live = Some(u64::try_from(grid).unwrap_or(0));
+    }
+    new_message(agent)
+}
+
 static DELAYED_MUTES: std::sync::Mutex<Option<NetEvent>> = std::sync::Mutex::new(None);
 
 fn slow_restore() -> bool {
@@ -424,12 +448,25 @@ fn service_row(
     text: &str,
     n: u64,
 ) -> aurora_net::chat_service::HistoryRow {
-    use aurora_net::chat_service::{TimeUuidKey, UUID_EPOCH, direct_conversation_id, format_time_uuid};
     let when = SystemTime::now()
         .checked_sub(ago)
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
+    service_row_at(agent, resident, from, from_name, when, text, n)
+}
+
+/// A row of the service at `when` since the epoch.
+fn service_row_at(
+    agent: Uuid,
+    resident: Uuid,
+    from: Uuid,
+    from_name: &str,
+    when: Duration,
+    text: &str,
+    n: u64,
+) -> aurora_net::chat_service::HistoryRow {
+    use aurora_net::chat_service::{TimeUuidKey, UUID_EPOCH, direct_conversation_id, format_time_uuid};
     // whole seconds plus a step per row: every key distinct and in order
     let ticks = UUID_EPOCH + when.as_secs() * 10_000_000 + n;
     let key = TimeUuidKey {
@@ -495,6 +532,12 @@ fn service_history(agent: Uuid, resident: Uuid) -> Vec<aurora_net::chat_service:
             Duration::from_secs(2 * 3600),
             aurora_i18n::tr!("demo-chatlog-offline-3"),
         );
+        // service:skew's live IM, on the grid's clock
+        if let Some(at) = LIVE_RECEIVED.lock().ok().and_then(|live| *live) {
+            n += 1;
+            let text = aurora_i18n::tr!("demo-chatlog-new");
+            rows.push(service_row_at(agent, resident, PEER, &peer, Duration::from_secs(at), text, n));
+        }
     } else if resident == ORION {
         let name = format!("Orion {}", aurora_i18n::tr!("demo-example"));
         add(&mut rows, ORION, &name, day * 3, s[2]);
