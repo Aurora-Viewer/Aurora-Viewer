@@ -69,6 +69,7 @@ impl Category {
             Category::Textures => "textures",
             Category::Environment => "environment",
             Category::Materials => "materials",
+            Category::AnimatedObjects => "animated-objects",
             Category::Gestures => "gestures",
         }
     }

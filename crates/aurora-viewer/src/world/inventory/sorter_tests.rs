@@ -4678,6 +4678,39 @@ fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
 }
 
 #[test]
+fn opaque_asset_packs_use_consistent_native_types_and_keep_their_contents() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Meadow 1024 [boxed]");
+    add_typed(&mut inv, 201, 70, "Meadow 1024 8-2", NEW, 0);
+    add_typed(&mut inv, 202, 70, "Meadow 1024 1-3", NEW, 0);
+    add_typed(&mut inv, 203, 70, "Read me", NEW, 7);
+    add_typed(&mut inv, 204, 70, "Update checker", NEW, 10);
+    let prefs = Preferences::default();
+    let none = HashSet::new();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(planned.moves.len(), 1);
+        assert_eq!(planned.moves[0].id, id(70));
+        assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Textures)]));
+    }
+    add_typed(&mut inv, 205, 70, "Meadow sky", NEW, 56);
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+    inv.items.get_mut(&id(205)).expect("item").asset_type = 6;
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+}
+
+#[test]
+fn sorter_uses_wearable_types_without_guessing_from_opaque_product_titles() {
+    for flags in [13, 15, 16] {
+        assert_eq!(classify("Untitled layer", 5, flags).category, Some(Category::BodyAddons));
+    }
+    assert!(classify("Friendly Fangs", 6, 0).category.is_none());
+    assert_eq!(classify("Velvet Vampire Fangs", 6, 0).category, Some(Category::BodyAddons));
+}
+
+#[test]
 fn sorter_uses_native_types_for_environment_presets_and_materials() {
     for (kind, category) in [(56, Category::Environment), (57, Category::Materials)] {
         assert_eq!(

@@ -541,6 +541,7 @@ pub enum Category {
     Gestures,
     Environment,
     Materials,
+    AnimatedObjects,
 }
 
 impl Category {
@@ -585,6 +586,7 @@ impl Category {
             Category::Gestures => aurora_i18n::tr!("inventory-sorter-gestures"),
             Category::Environment => aurora_i18n::tr!("inventory-sorter-environment"),
             Category::Materials => aurora_i18n::tr!("inventory-sorter-materials"),
+            Category::AnimatedObjects => aurora_i18n::tr!("inventory-sorter-animated-objects"),
         }
     }
 
@@ -615,6 +617,7 @@ impl Category {
                 9 => Category::Gloves,
                 11 => Category::Lingerie,
                 12 => Category::Skirts,
+                13 | 15 | 16 if asset_type == 5 => Category::BodyAddons,
                 14 => Category::Tattoos,
                 _ => return None,
             },
@@ -952,6 +955,19 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         let skin = has(&words, "body for") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
         (body.is_some() && skin).then_some(Category::Skins)
     });
+    let category = category.or_else(|| {
+        if !matches!(asset_type, -1 | 6) {
+            return None;
+        }
+        let held_prop = ["holdable", "held prop", "handheld prop", "hand held prop"]
+            .iter()
+            .any(|term| has(&words, term));
+        let food = ["tumbler", "popsicle", "lollipop", "cotton candy", "ice cream"]
+            .iter()
+            .any(|term| has(&words, term));
+        let held_food = food && ["hold", "held", "bento", "mouth", "tongue"].iter().any(|term| has(&words, term));
+        (held_prop || held_food).then_some(Category::Accessories)
+    });
     Classified {
         body,
         category,
@@ -990,7 +1006,7 @@ impl Default for StoreHint {
 
 impl Category {
     /// Every category, in folder order, for the store hints' list.
-    pub const ALL: [Category; 39] = [
+    pub const ALL: [Category; 40] = [
         Category::Tattoos,
         Category::Skins,
         Category::Makeup,
@@ -1030,6 +1046,7 @@ impl Category {
         Category::Gestures,
         Category::Environment,
         Category::Materials,
+        Category::AnimatedObjects,
     ];
 }
 
@@ -1173,6 +1190,7 @@ pub fn target_by(
                 | Category::Textures
                 | Category::Environment
                 | Category::Materials
+                | Category::AnimatedObjects
         )
     );
     path.extend(found.body.filter(|_| worn).map(Body::folder));
@@ -1199,7 +1217,7 @@ pub fn target_by(
     // category; the Waifus mod itself is a body add-on and gets none.
     let variant_category = !matches!(
         found.category,
-        Some(Category::BodyAddons | Category::Environment | Category::Materials)
+        Some(Category::BodyAddons | Category::Environment | Category::Materials | Category::AnimatedObjects)
     );
     if !path.is_empty() && variant_category && (found.squish || found.waifus) {
         path.push(variant_folder(found.waifus, found.squish));
@@ -4465,12 +4483,15 @@ fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
 
 /// Where a folder whose name says nothing goes, from what it holds: the
 /// destination most of its objects, clothing, body parts, animations and
-/// gestures read as (notecards, landmarks, textures and scripts say nothing
-/// of the product), when at least three in five agree; none otherwise.
+/// gestures read as when at least three in five agree. Asset-only packs
+/// can also be identified from a consistent native payload type.
 fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: Option<&str>) -> Option<Dest> {
     const READ: usize = 200;
     let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
     let mut counted = 0;
+    let mut bulk_type = None;
+    let mut bulk_count = 0;
+    let mut mixed_bulk = false;
     let mut samples = Vec::new();
     let mut stack = vec![folder];
     let mut seen = HashSet::new();
@@ -4480,6 +4501,17 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         };
         for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
             if !matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) {
+                match it.asset_type {
+                    0 | 1 | 56 | 57 => {
+                        mixed_bulk |= bulk_type.is_some_and(|kind| kind != it.asset_type);
+                        bulk_type = Some(it.asset_type);
+                        bulk_count += 1;
+                    }
+                    // Distribution scripts, instructions and landmarks can
+                    // ship alongside the actual assets.
+                    3 | 7 | 10 | 24 | 25 => {}
+                    _ => mixed_bulk = true,
+                }
                 continue;
             }
             counted += 1;
@@ -4492,6 +4524,11 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
             }
         }
         stack.extend(f.children.iter().copied());
+    }
+    if counted == 0 && bulk_count >= 2 && !mixed_bulk {
+        let mut path = vec![category_folder(Category::of_asset(bulk_type?, 0)?)];
+        path.extend(shop.map(str::to_owned));
+        return Some(Dest::Path(path));
     }
     if let Some((path, best)) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         && best * 5 >= counted * 3

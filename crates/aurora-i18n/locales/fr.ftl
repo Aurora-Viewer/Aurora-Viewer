@@ -14927,6 +14927,7 @@ inventory-sorter-sounds = Sons
 inventory-sorter-textures = Textures
 inventory-sorter-environment = Environnement
 inventory-sorter-materials = Matériaux
+inventory-sorter-animated-objects = Objets animés
 inventory-sorter-gestures = Gestes
 inventory-sorter-intro = Range les éléments et dossiers en vrac dans des dossiers par corps et par genre, d'après leur nom. Rien n'est copié, renommé ni modifié : les éléments sont seulement déplacés.
 inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : la première qui correspond à un nom décide où il va.

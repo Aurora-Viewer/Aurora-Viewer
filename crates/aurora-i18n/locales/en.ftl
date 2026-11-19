@@ -14922,6 +14922,7 @@ inventory-sorter-sounds = Sounds
 inventory-sorter-textures = Textures
 inventory-sorter-environment = Environment
 inventory-sorter-materials = Materials
+inventory-sorter-animated-objects = Animated objects
 inventory-sorter-gestures = Gestures
 inventory-sorter-intro = Moves loose items and folders into folders by body and by kind, read from their names. Nothing is copied, renamed or changed: entries only move.
 inventory-sorter-rules-hint = Your rules come first, from the top: the first one that matches a name decides where it goes.

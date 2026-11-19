@@ -14791,6 +14791,7 @@ inventory-sorter-sounds = サウンド
 inventory-sorter-textures = テクスチャ
 inventory-sorter-environment = 環境設定
 inventory-sorter-materials = マテリアル
+inventory-sorter-animated-objects = アニメーション付きオブジェクト
 inventory-sorter-gestures = ジェスチャー
 inventory-sorter-intro = 直下のアイテムとフォルダを、名前からボディと種類を読み取ってフォルダに振り分けます。コピー、名前の変更、権限の変更は行わず、移動のみです。
 inventory-sorter-rules-hint = マイルールが上から順に先に適用され、最初に一致したルールで移動先が決まります。
