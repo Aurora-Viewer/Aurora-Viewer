@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn restricted_text_generated_folder_labels_are_cleaned_without_rejecting_creation() {
-        for language in ["en", "fr", "ja"] {
+        for (language, _) in aurora_i18n::available_languages() {
             let name = super::default_name_in(language, "common-new-folder");
             let change = actions::create_folder(Uuid::from_u128(1), name).expect("localized folder");
             assert!(
@@ -147,6 +147,7 @@ mod tests {
                 "inventory-new-outfit",
                 "ui-appearance-new-outfit",
                 "common-object",
+                "wearable-favorites-new-folder-default",
             ] {
                 let name = super::default_name_in(language, key);
                 assert!(
@@ -154,6 +155,11 @@ mod tests {
                     "{language} {key}: {name}"
                 );
             }
+            let favorites_default = super::default_name_in(language, "wearable-favorites-new-folder-default");
+            assert_eq!(
+                crate::world::wearable_favorites::folder_name(favorites_default).unwrap(),
+                favorites_default
+            );
             let variant = super::new_variant_name_in(language, "Party");
             assert!(variant.is_ascii() && !variant.contains('?'), "{language}: {variant}");
             assert!(variant.starts_with("Party") && variant != "Party", "{language}: {variant}");
