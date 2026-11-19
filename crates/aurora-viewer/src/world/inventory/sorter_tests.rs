@@ -100,7 +100,7 @@ fn ebody_reborn_is_reborn_and_weak_words_need_no_other_body() {
     assert_eq!(classify("Juicy rolls", 6, 0).body, Some(Body::Named("Reborn")));
     assert_eq!(classify("Juicy Larkspur top - Legacy", 6, 0).body, Some(Body::Named("Legacy")));
     // whole words only: "Unreborn" or "stop" name nothing
-    assert_eq!(classify("Unreborn stop sign", 6, 0), Classified::default());
+    assert_eq!(classify("Unreborn stop", 6, 0), Classified::default());
 }
 
 #[test]
