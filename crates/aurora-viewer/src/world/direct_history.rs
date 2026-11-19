@@ -831,7 +831,11 @@ impl World {
             };
             ChatLine {
                 time: last,
-                from: if kind == ChatKind::System { String::new() } else { m.from.clone() },
+                from: if kind == ChatKind::System {
+                    String::new()
+                } else {
+                    self.private_log_name(kind, peer, m.from.clone())
+                },
                 text: m.message.clone(),
                 kind,
                 source,
