@@ -158,8 +158,6 @@ pub mod group;
 /// (AURORA_DEMO_GROUP_REGION).
 #[path = "demo_group_region.rs"]
 pub mod group_region;
-#[path = "demo_hand_ik.rs"]
-pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]

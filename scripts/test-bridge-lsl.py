@@ -31,14 +31,12 @@ def private_channel(key):
 
 DISCOVERY = private_channel(ROOT)
 LEGACY_DISCOVERY = -184735219
-LEGACY_CONTROL = -190018106
-IK_CHANNEL = -190018107
 OBJECT_ROOT = 18
 REGION = 256
 REGION_START = 1024
 TELEPORT = 512
 PERMISSIONS = 4 | 32 | 1024
-SCRIPTS = ("bridge.lsl", "query.lsl", "ik.lsl")
+SCRIPTS = ("bridge.lsl", "query.lsl")
 
 
 class ResetScript(Exception):
@@ -276,14 +274,10 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 await sim.grant()
                 await sim.probe()
                 for change in (REGION_START, REGION, REGION_START):
-                    previous_session = getattr(sim.script, "session", None)
                     sim.messages.clear()
                     await sim.event("changed", change)
                     await sim.grant()
                     self.assertEqual(len(sim.messages), 1, "the current Aurora login must be reconnected immediately")
-                    if filename == "ik.lsl":
-                        self.assertNotEqual(sim.script.session, previous_session)
-                        self.assertEqual(len(sim.listeners), 3, "retired listeners must not accumulate")
 
     async def test_discovery_still_works_after_unpaired_crossings(self):
         for filename in SCRIPTS:
@@ -416,35 +410,12 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.broadcasts[-1][0], OTHER)
 
-        sim = Simulator("ik.lsl")
-        await sim.start()
-        await sim.probe()
-        control = private_channel(sim.script.session)
-        self.assertNotEqual(control, DISCOVERY)
-        await sim.event("listen", LEGACY_CONTROL, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        self.assertEqual(sim.broadcasts, [], "commands on the old fixed channel are ignored")
-        await sim.event("listen", control, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        # Only the seat in use and the wearer's own attachments are asked.
-        discover = f"auroraIKDiscover|{sim.script.session}"
-        self.assertEqual(sim.regionwide, [])
-        self.assertEqual(sorted(sim.broadcasts), sorted([(SEAT, IK_CHANNEL, discover), (OWNER, IK_CHANNEL, discover)]))
-        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
-        self.assertTrue(sim.messages[-1].startswith("<auroraIKRelay>"))
-        # A crossing draws a new session, and with it a new command channel.
-        await sim.event("changed", REGION)
-        self.assertNotEqual(private_channel(sim.script.session), control)
 
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
         await sim.start()
         await sim.event("listen", -184735220, "", OTHER, f"pose1|{OTHER}|request|{OWNER}")
         self.assertEqual(sim.messages, [])
-        sim = Simulator("ik.lsl")
-        await sim.start()
-        await sim.event("listen", private_channel(sim.script.session), "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
-        self.assertEqual(sim.messages, [])
-        self.assertEqual(sim.broadcasts, [])
 
     async def test_the_query_script_relays_no_portal(self):
         # 1.43: portals are the viewer's own; nothing listens on or speaks
