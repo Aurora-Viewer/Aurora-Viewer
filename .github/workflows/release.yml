@@ -412,7 +412,7 @@ jobs:
         with:
           bundle: Aurora-Viewer-${{ env.TAG }}-linux-x64.flatpak
           manifest-path: packaging/linux/flatpak/org.aurora_viewer.AuroraViewer.yml
-          cache-key: flatpak-${{ hashFiles('packaging/linux/flatpak/cargo-sources.json', 'Cargo.lock') }}
+          cache-key: flatpak-${{ hashFiles('packaging/linux/flatpak/org.aurora_viewer.AuroraViewer.yml', 'packaging/linux/flatpak/cargo-sources.json', 'Cargo.lock') }}
           # the release and dry-run steps below upload the bundle, named like
           # the other jobs' artifacts, instead of the action's default one
           upload-artifact: false

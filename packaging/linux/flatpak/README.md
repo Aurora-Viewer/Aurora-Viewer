@@ -16,8 +16,8 @@ Files:
 
 ```sh
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
-flatpak install flathub org.freedesktop.Sdk.Extension.rust-stable//25.08
+flatpak install flathub org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08
+flatpak install flathub org.freedesktop.Sdk.Extension.rust-stable//26.08
 ```
 
 ## Build and install
