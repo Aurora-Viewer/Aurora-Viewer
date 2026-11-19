@@ -845,12 +845,14 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
             Some(longer.map_or(*first, |(c, _)| c))
         })
         .or_else(|| Category::of_asset(asset_type, flags));
-    // A maintenance HUD has its own function even when it names the product.
-    let maintenance_hud = matches!(asset_type, -1 | 6)
-        && ["hud update", "update hud", "hud updater", "redelivery hud"]
+    // A maintenance HUD or shoe giver HUD has its own function even when
+    // it names the product.
+    let standalone_hud = matches!(asset_type, -1 | 6)
+        && (["hud update", "update hud", "hud updater", "redelivery hud"]
             .iter()
-            .any(|term| has(&words, term));
-    let category = if maintenance_hud { Some(Category::Huds) } else { category };
+            .any(|term| has(&words, term))
+            || category == Some(Category::Shoes) && has(&words, "giver") && has(&words, "hud"));
+    let category = if standalone_hud { Some(Category::Huds) } else { category };
     // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`,
     // `Kitchen Decor . Glasses 8`: a name that says decor is decor, never
     // worn glasses; hair decor is the hair's)
@@ -983,11 +985,12 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
             ]
             .iter()
             .any(|term| has(&words, term));
-        let food = ["tumbler", "popsicle", "lollipop", "cotton candy", "ice cream"]
+        let food = ["tumbler", "popsicle", "lollipop", "lolli", "cotton candy", "ice cream"]
             .iter()
             .any(|term| has(&words, term));
         let held_food = food && ["hold", "held", "bento", "mouth", "tongue"].iter().any(|term| has(&words, term));
-        (held_prop || sided_hold || held_food).then_some(Category::Accessories)
+        let chat_attachment = asset_type == 6 && has(&words, "typer");
+        (held_prop || sided_hold || held_food || chat_attachment).then_some(Category::Accessories)
     });
     Classified {
         body,
@@ -2261,8 +2264,8 @@ fn delivery_mark(name: &str) -> Option<Mark> {
     }
     // (a bracket of marks only, `(Wear)`, `[BOXED]`, `(add me)`, or one
     // naming the unpacker; never `(Casual Wear)`, `(Add-Ons)`, `(Gift Box)`)
-    const MARK_WORDS: [&str; 11] = [
-        "unpacked", "unpacker", "unpack", "boxed", "box", "wear", "add", "me", "to", "auto", "touch",
+    const MARK_WORDS: [&str; 12] = [
+        "unpacked", "unpacker", "unpack", "boxed", "box", "wear", "add", "me", "addme", "to", "auto", "touch",
     ];
     let marked = inside.iter().any(|s| {
         let segment = words(s);
@@ -4521,6 +4524,109 @@ fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
     asset_type == -1 || Kind::of(asset_type).is_none_or(|k| prefs.kinds.contains(&k))
 }
 
+/// Drop the unpacker's words at the end of a product or numbered style.
+fn delivery_title(name: &str) -> Vec<String> {
+    let mut title = words(name);
+    while title.last().is_some_and(|word| {
+        matches!(
+            word.as_str(),
+            "add" | "me" | "addme" | "boxed" | "box" | "unpacked" | "unpack" | "wear" | "rez"
+        )
+    }) {
+        title.pop();
+    }
+    title
+}
+
+/// A pack can ship a named object in each numbered style, alongside many
+/// overlays for that object. Use the named object across the styles as the
+/// evidence for the entire delivery, while leaving the overlays in it.
+fn numbered_product_category(inv: &Inventory, root: &super::Folder) -> Option<Category> {
+    if root.children.len() > 24
+        || root.children.len() == 1
+        || root.children.is_empty() && root.items.len() < 2
+        || delivery_mark(&root.info.name) != Some(Mark::Strong)
+    {
+        return None;
+    }
+    let stem = delivery_title(&root.info.name);
+    if stem.len() < 3 {
+        return None;
+    }
+    let kind = |descriptor: &[String]| {
+        // A lone horn word is ambiguous outside an explicitly numbered
+        // product component (vehicle horn, a horn-tip tattoo, and so on).
+        if descriptor.len() == 1 && descriptor[0] == "horn" {
+            Some(Category::Accessories)
+        } else {
+            let title = descriptor.join(" ");
+            classify(&title, -1, 0)
+                .category
+                .filter(|kind| !matches!(kind, Category::Huds | Category::Outfits))
+        }
+    };
+    let number = |value: &str| value.parse::<u32>().ok();
+    let mut agreed = None;
+    let mut observed = HashSet::new();
+    if root.children.is_empty() {
+        for item in root.items.iter().filter_map(|id| inv.items.get(id)) {
+            if matches!(item.asset_type, 3 | 4 | 7 | 10 | 11) {
+                continue;
+            }
+            if item.asset_type != 6 {
+                return None;
+            }
+            let (name, label) = item.name.trim().strip_suffix(']')?.rsplit_once('[')?;
+            if words(name) != stem {
+                return None;
+            }
+            let label = words(label);
+            let (style, descriptor) = label.split_last()?;
+            let category = kind(descriptor)?;
+            if !observed.insert(number(style)?) || agreed.is_some_and(|other| other != category) {
+                return None;
+            }
+            agreed = Some(category);
+        }
+        return (observed.len() >= 2).then_some(agreed).flatten();
+    }
+    let mut styles = HashSet::new();
+    for id in &root.children {
+        let child = inv.folders.get(id)?;
+        let title = delivery_title(&child.info.name);
+        let [marker, style] = title.strip_prefix(stem.as_slice())? else {
+            return None;
+        };
+        let style = number(style)?;
+        if marker != "style" || !styles.insert(style) {
+            return None;
+        }
+        for item in child
+            .items
+            .iter()
+            .filter_map(|id| inv.items.get(id))
+            .filter(|item| item.asset_type == 6)
+        {
+            let title = words(&item.name);
+            let Some([descriptor @ .., marker, ending]) = title.strip_prefix(stem.as_slice()) else {
+                continue;
+            };
+            if marker != "style" || number(ending) != Some(style) {
+                continue;
+            }
+            let Some(category) = kind(descriptor) else { continue };
+            if agreed.is_some_and(|other| other != category) {
+                return None;
+            }
+            observed.insert(style);
+            agreed = Some(category);
+        }
+    }
+    (observed.len() >= 2 && observed.len() * 3 >= styles.len() * 2)
+        .then_some(agreed)
+        .flatten()
+}
+
 /// Where a folder whose name says nothing goes, from what it holds: the
 /// destination most of its objects, clothing, body parts, animations and
 /// gestures read as when at least three in five agree. A pack already
@@ -4528,6 +4634,11 @@ fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
 /// Asset-only packs can also be identified from their native types.
 fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: Option<&str>, named_set: bool) -> Option<Dest> {
     const READ: usize = 200;
+    if !named_set && let Some(category) = inv.folders.get(&folder).and_then(|root| numbered_product_category(inv, root)) {
+        let mut path = vec![category_folder(category)];
+        path.extend(shop.map(str::to_owned));
+        return Some(Dest::Path(path));
+    }
     let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
     let mut counted = 0;
     let mut bulk_type = None;

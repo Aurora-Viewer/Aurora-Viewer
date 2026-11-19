@@ -253,6 +253,11 @@
     {
       "category": "shoes",
       "words": [
+        "ice skates",
+        "ice skate",
+        "figure skates",
+        "roller skates",
+        "roller skate",
         "stompers",
         "platforms",
         "shoes",
@@ -506,6 +511,16 @@
     {
       "category": "accessories",
       "words": [
+        "arm cuff",
+        "arm cuffs",
+        "wrist cuff",
+        "wrist cuffs",
+        "ankle cuff",
+        "ankle cuffs",
+        "spiked cuff",
+        "spiked cuffs",
+        "fishing rod",
+        "fishing rods",
         "butterfly antennae",
         "moth antennae",
         "vine cuff",
@@ -661,6 +676,8 @@
     {
       "category": "furniture",
       "words": [
+        "daybed",
+        "daybeds",
         "lower counter",
         "corner counter",
         "kitchen counter",
@@ -776,6 +793,10 @@
     {
       "category": "decor",
       "words": [
+        "stepping stones",
+        "stepping stone",
+        "spider cobweb",
+        "spider cobwebs",
         "waterfall parts",
         "waterfall kit",
         "waterfall base piece",

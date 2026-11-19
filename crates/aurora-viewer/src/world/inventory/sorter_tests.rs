@@ -4735,6 +4735,63 @@ fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
 }
 
 #[test]
+fn numbered_same_product_style_folders_use_the_named_primary_object() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "[Nookery] Midnight Bloom [addme] (unpacked)");
+    for (variant, folder_id) in (1..=3).zip(71..=73) {
+        add_folder(
+            &mut inv,
+            folder_id,
+            70,
+            &format!("[Nookery] Midnight Bloom - Style {variant} (unpacked)"),
+        );
+        let stem = if variant == 3 { "Midnight Bloo" } else { "Midnight Bloom" };
+        add_item(
+            &mut inv,
+            201 + variant,
+            folder_id,
+            &format!("[Nookery] {stem} - Horn Style {variant}"),
+            0,
+        );
+        for layer in 1..=4 {
+            add_typed(
+                &mut inv,
+                300 + variant * 10 + layer,
+                folder_id,
+                &format!("[Nookery] Midnight Bloom - Color {layer}"),
+                NEW,
+                5,
+            );
+            inv.items.get_mut(&id(300 + variant * 10 + layer)).expect("layer").flags = 14;
+        }
+    }
+    let none = HashSet::new();
+    let prefs = Preferences::default();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(planned.moves.len(), 1);
+        assert_eq!(planned.moves[0].id, id(70));
+        assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Accessories)]));
+    }
+    inv.items.get_mut(&id(203)).expect("style 2").name = "[Nookery] Midnight Bloom - Chair Style 2".into();
+    assert_eq!(numbered_product_category(&inv, &inv.folders[&id(70)]), None);
+}
+
+#[test]
+fn a_numbered_flat_delivery_needs_one_consistent_named_product() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Nookery Midnight Bloom [ADDME]");
+    add_item(&mut inv, 201, 70, "Nookery Midnight Bloom [Horn 1]", 0);
+    add_item(&mut inv, 202, 70, "Nookery Midnight Bloom [Horn 2]", 0);
+    let root = &inv.folders[&id(70)];
+    assert_eq!(numbered_product_category(&inv, root), Some(Category::Accessories));
+    add_item(&mut inv, 203, 70, "Unrelated horn", 0);
+    assert_eq!(numbered_product_category(&inv, &inv.folders[&id(70)]), None);
+}
+
+#[test]
 fn a_mixed_treasure_chest_shelf_is_opened_as_an_archive() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Hunt Treasure Chest");
