@@ -689,6 +689,63 @@ mod tests {
         };
         assert_eq!(NAMES, NameScope::Roster);
         assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
+        // a private conversation's history shows the cached display name;
+        // not cached yet, the file's name (and the lookup is queued)
+        let mut im = line.clone();
+        im.kind = crate::world::ChatKind::Im;
+        im.source = near;
+        world.social.avatar_names.on_display_names(
+            &[aurora_net::AvatarNameData {
+                id: near,
+                username: "near.tester".into(),
+                display_name: "Nova".into(),
+                legacy_first: "Near".into(),
+                legacy_last: "Tester".into(),
+                ..Default::default()
+            }],
+            &[],
+            Some(3600),
+        );
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &im), "Nova");
+        // `draw_line` (the transcript's rows) follows the same rule
+        assert!(super::super::log_names_resolve(&im));
+        assert!(!super::super::log_names_resolve(&line));
+        assert!(!super::super::log_names_resolve(&crate::world::ChatLine {
+            source: uuid::Uuid::nil(),
+            ..im.clone()
+        }));
+        let mut unknown = im.clone();
+        unknown.source = uuid::Uuid::from_u128(77);
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &unknown), "Near Tester");
+        // with display names off, the same setting as the live lines
+        world.social.avatar_names.options.use_display_names = false;
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &im), "Near Tester");
+        world.social.avatar_names.options.use_display_names = true;
+        // our own lines: renamed when a private conversation loads them,
+        // never in the nearby chat or a group
+        let me = world.agent_id;
+        world.social.avatar_names.on_display_names(
+            &[aurora_net::AvatarNameData {
+                id: me,
+                username: "aurora.demo".into(),
+                display_name: "Aurie".into(),
+                legacy_first: "Aurora".into(),
+                legacy_last: "Demo".into(),
+                ..Default::default()
+            }],
+            &[],
+            Some(3600),
+        );
+        let own = crate::world::ChatKind::OWN;
+        assert_eq!(world.private_log_name(own, Some(near), "Aurora Demo".into()), "Aurie");
+        assert_eq!(world.private_log_name(own, None, "Aurora Demo".into()), "Aurora Demo");
+        assert_eq!(
+            world.private_log_name(crate::world::ChatKind::Im, Some(near), "Near Tester".into()),
+            "Near Tester"
+        );
+        let mut mine = line.clone();
+        mine.kind = own;
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &mine), "Near Tester");
         // said now: the stand-in the line takes when it arrives
         let mut said = line.clone();
         said.origin = crate::world::Origin::Live;
