@@ -1391,12 +1391,7 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
     // (a pack word, `[Moon Hair] Ada Fatpack`, `[Store Jewelry] Lily Set`,
     // says how it is sold, not what it is: only an outfit or a costume
     // named in the rest is one)
-    let outfit = rest.split(|c: char| !c.is_alphanumeric()).any(|w| {
-        ["outfit", "outfits", "costume", "costumes"]
-            .iter()
-            .any(|k| w.eq_ignore_ascii_case(k))
-    });
-    if piece == Some(Category::Outfits) && !outfit {
+    if piece == Some(Category::Outfits) && !names_an_outfit(rest) {
         return whole;
     }
     // (only a thing sold on its own names what the item is; what it fits
@@ -1435,6 +1430,14 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
         return whole;
     }
     piece.or(whole)
+}
+
+fn names_an_outfit(name: &str) -> bool {
+    name.split(|c: char| !c.is_alphanumeric()).any(|word| {
+        ["outfit", "outfits", "costume", "costumes"]
+            .iter()
+            .any(|kind| word.eq_ignore_ascii_case(kind))
+    })
 }
 
 /// A bracketed tag says more than a status and what the item is: `[Moon
@@ -2018,6 +2021,11 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     };
     if delivered {
         return true;
+    }
+    // A backdrop shelf may contain outfits and their props. A kind word
+    // elsewhere in a folder called "stuff" does not make it a delivery.
+    if !store_named && name_words.last().is_some_and(|word| word == "stuff") && !has(&name_words, "box") {
+        return false;
     }
     if has_folders {
         // a folder of folders is the user's own (`My Dresses`, `Reborn
@@ -4494,9 +4502,10 @@ fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
 
 /// Where a folder whose name says nothing goes, from what it holds: the
 /// destination most of its objects, clothing, body parts, animations and
-/// gestures read as when at least three in five agree. Asset-only packs
-/// can also be identified from a consistent native payload type.
-fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: Option<&str>) -> Option<Dest> {
+/// gestures read as when at least three in five agree. A pack already
+/// named as a set changes category only if its payload agrees throughout.
+/// Asset-only packs can also be identified from their native types.
+fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: Option<&str>, named_set: bool) -> Option<Dest> {
     const READ: usize = 200;
     let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
     let mut counted = 0;
@@ -4531,11 +4540,20 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
                 continue;
             }
             counted += 1;
-            samples.push(it);
-            if let Some(Dest::Path(path)) = target_with(&it.name, it.asset_type, it.flags, None, &[], prefs.stores, &prefs.store_hints) {
+            let mut found = classify(&it.name, it.asset_type, it.flags);
+            found.category = category_past_store(&it.name, it.asset_type, found.category);
+            samples.push((it, found));
+            // A vendor HUD can be the last thing left in a clothing set.
+            if (!named_set || found.category.is_some_and(|category| category != Category::Huds))
+                && let Some(Dest::Path(path)) =
+                    target_classified(&it.name, found, prefs.stores && shop.is_none(), &prefs.store_hints, None, None)
+            {
                 *votes.entry(path).or_default() += 1;
             }
             if counted >= READ {
+                if named_set {
+                    return None;
+                }
                 break 'walk;
             }
         }
@@ -4556,19 +4574,27 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
             return Some(Dest::Path(path));
         }
     }
-    if let Some((path, best)) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-        && best * 5 >= counted * 3
+    let required = if named_set { counted } else { (counted * 3).div_ceil(5) };
+    if let Some((mut path, best)) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        && best >= required
         && path.first() != Some(&stores_folder())
     {
+        if let Some(shop) = shop {
+            let variant = path.last().is_some_and(|last| {
+                [(true, false), (false, true), (true, true)]
+                    .into_iter()
+                    .any(|(waifus, squish)| *last == variant_folder(waifus, squish))
+            });
+            path.insert(path.len() - usize::from(variant), shop.to_owned());
+        }
         return Some(Dest::Path(path));
     }
     // The same product for multiple bodies can agree on a category even
     // when neither body has a majority. Demo variants alone cannot make
     // a shop folder holding a demo and a full purchase look like one pack.
     let mut kinds: HashMap<Category, (usize, HashSet<Body>)> = HashMap::new();
-    for it in samples.into_iter().filter(|it| !demos::is_demo(&it.name)) {
-        let found = classify(&it.name, it.asset_type, it.flags);
-        if let Some(category) = category_past_store(&it.name, it.asset_type, found.category)
+    for (_, found) in samples.into_iter().filter(|(it, _)| !demos::is_demo(&it.name)) {
+        if let Some(category) = found.category
             && clothing_fit_category(Some(category))
         {
             let (count, bodies) = kinds.entry(category).or_default();
@@ -4577,7 +4603,7 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         }
     }
     let (category, (count, bodies)) = kinds.into_iter().max_by_key(|(category, (count, _))| (*count, *category))?;
-    if count * 5 < counted * 3 || bodies.len() < 2 {
+    if count < required || bodies.len() < 2 {
         return None;
     }
     let mut path = vec![Body::Several.folder(), category_folder(category)];
@@ -4613,8 +4639,9 @@ fn manual_shelf_category(
 
 /// A manual shelf cannot override explicit evidence inside an intact pack.
 /// Documentation, links and distribution scripts can accompany any product.
-fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category) -> bool {
-    let mut has_product = false;
+fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category, family: Option<&[String]>) -> bool {
+    let mut products = 0;
+    let mut related = 0;
     let mut stack = vec![id];
     let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
@@ -4628,14 +4655,45 @@ fn delivery_fits_category(inv: &Inventory, id: Uuid, category: Category) -> bool
             let classified = classify(&item.name, item.asset_type, item.flags);
             match category_past_store(&item.name, item.asset_type, classified.category) {
                 Some(other) if other != category => return false,
-                Some(_) => has_product = true,
-                None if item.asset_type == 6 => has_product = true,
+                Some(_) => {}
+                None if item.asset_type == 6 => {}
                 None => return false,
             }
+            products += 1;
+            related += usize::from(family.is_some_and(|stem| words(&item.name).starts_with(stem)));
         }
         stack.extend(folder.children.iter().copied());
     }
-    has_product
+    products > 0 && (family.is_none() || related * 5 >= products * 4)
+}
+
+/// A retailer can label a product family separately from the contents of
+/// each box: `Orchid {Night Bloom} horns`, `Orchid {Night Bloom} fades`.
+/// The exact seller and multi-word product label must both agree. A bare
+/// colour or variant word does not identify a product anywhere else.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ProductFamily {
+    prefix: Vec<String>,
+    seller_words: usize,
+}
+
+fn bracketed_family(name: &str) -> Option<(ProductFamily, bool)> {
+    let (seller, group) = name.split_once('{')?;
+    let (title, rest) = group.split_once('}')?;
+    let mut prefix = words(seller);
+    let title = words(title);
+    if !(1..=3).contains(&prefix.len()) || !(2..=6).contains(&title.len()) || prefix.iter().all(|w| w.chars().all(|c| !c.is_alphabetic())) {
+        return None;
+    }
+    let rest = words(rest);
+    let qualifier = rest.first()?;
+    let seller_words = prefix.len();
+    prefix.extend(title);
+    let variant = matches!(
+        qualifier.as_str(),
+        "fade" | "fades" | "tips" | "recolors" | "recolours" | "colorways" | "colourways"
+    );
+    Some((ProductFamily { prefix, seller_words }, variant))
 }
 
 struct ReadEntry {
@@ -4764,6 +4822,7 @@ fn plan_with(
     // it runs on all cores, the inventory itself is only read above.
     use rayon::prelude::*;
     let stores_root = stores_folder();
+    let outfits_root = category_folder(Category::Outfits);
     let mut read: Vec<_> = candidates
         .into_par_iter()
         .map(|(id, folder, from, name, asset_type, flags, created, sorted, creator)| {
@@ -4784,12 +4843,21 @@ fn plan_with(
                     .and_then(|(creator, prefix)| observed_stores.get(&(creator, prefix.to_lowercase())))
                     .map(String::as_str);
                 let to = target_classified(&name, found, prefs.stores, &prefs.store_hints, creator, observed_store);
+                let named_set = folder && found.category == Some(Category::Outfits) && !names_an_outfit(&name);
                 let shop = match &to {
                     Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).map(String::as_str),
+                    Some(Dest::Path(path)) if named_set => {
+                        let end = path.len() - usize::from(found.squish || found.waifus);
+                        path[..end]
+                            .iter()
+                            .position(|part| *part == outfits_root)
+                            .and_then(|at| path[..end].get(at + 1))
+                            .map(String::as_str)
+                    }
                     _ => None,
                 };
-                if (to.is_none() || shop.is_some()) && folder && product_folder_in(inv, id, &reserved) {
-                    target_from_items(inv, id, prefs, shop).or(to)
+                if folder && (to.is_none() || shop.is_some() || named_set) && product_folder_in(inv, id, &reserved) {
+                    target_from_items(inv, id, prefs, shop, named_set).or(to)
                 } else {
                     to
                 }
@@ -4835,6 +4903,77 @@ fn plan_with(
         })
         .flat_map(|category| [(words(category.key()), category), (words(&category_folder(category)), category)])
         .collect();
+    let merge_family = |known: &mut Option<(Category, Option<Uuid>)>, category, creator| {
+        if let Some((other, owner)) = known {
+            if *other != category || owner.zip(creator).is_some_and(|(a, b)| a != b) {
+                *known = None;
+            } else {
+                *owner = owner.or(creator);
+            }
+        }
+    };
+    let mut families = HashMap::new();
+    let mut requested = HashSet::new();
+    for entry in &read {
+        if !entry.contextual || !entry.folder {
+            continue;
+        }
+        let Some((family, variant)) = bracketed_family(&entry.name) else {
+            continue;
+        };
+        if variant && entry.category.is_none() {
+            requested.insert(family);
+        } else if !variant
+            && let Some(category) = entry.category.filter(|&kind| kind != Category::Outfits)
+            && product_folder_in(inv, entry.id, &reserved)
+        {
+            let creator = creator_of(inv, entry.id);
+            families
+                .entry((entry.from, family))
+                .and_modify(|known| merge_family(known, category, creator))
+                .or_insert(Some((category, creator)));
+        }
+    }
+    // A moved product still corroborates its variants when its sorted
+    // category is explicit and matches the user's manual category.
+    let mut sorted_families = HashMap::new();
+    if let Some(base) = base.filter(|_| !requested.is_empty()) {
+        for folder in inv.folders.values() {
+            let id = folder.info.id;
+            if folder.info.type_default != -1
+                || folder.state != FetchState::Fetched
+                || !folder.info.name.contains('{')
+                || !actions::under(inv, id, base)
+                || prefs.excludes(inv, id)
+                || actions::ancestors(inv, id)
+                    .any(|a| protected.contains(&a) || inv.folders.get(&a).is_some_and(|parent| parent.state != FetchState::Fetched))
+            {
+                continue;
+            }
+            let Some((family, false)) = bracketed_family(&folder.info.name) else {
+                continue;
+            };
+            if !requested.contains(&family) {
+                continue;
+            }
+            let Some(category) = actions::ancestors(inv, folder.info.parent)
+                .take_while(|&a| a != base)
+                .filter_map(|a| inv.folders.get(&a))
+                .find_map(|f| categories.get(&words(&f.info.name)).copied())
+            else {
+                continue;
+            };
+            let found = classify(&folder.info.name, -1, 0);
+            if category_past_store(&folder.info.name, -1, found.category) != Some(category) || !product_folder_in(inv, id, &reserved) {
+                continue;
+            }
+            let creator = creator_of(inv, id);
+            sorted_families
+                .entry((category, family))
+                .and_modify(|known| merge_family(known, category, creator))
+                .or_insert(Some((category, creator)));
+        }
+    }
     let mut shelves = HashMap::new();
     for entry in &mut read {
         let shop = match &entry.to {
@@ -4842,7 +4981,34 @@ fn plan_with(
             Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).cloned(),
             _ => continue,
         };
-        if !entry.contextual || entry.category.is_some() || totals.get(&entry.from).copied().unwrap_or(0) < 2 {
+        if !entry.contextual || entry.category.is_some() {
+            continue;
+        }
+        if entry.folder
+            && let Some((family, true)) = bracketed_family(&entry.name)
+        {
+            let same_shelf = families.get(&(entry.from, family.clone()));
+            let evidence = same_shelf.or_else(|| {
+                if sorted_families.is_empty() {
+                    return None;
+                }
+                let shelf = shelves
+                    .entry(entry.from)
+                    .or_insert_with(|| manual_shelf_category(inv, entry.from, &categories, &reserved, &own));
+                shelf.and_then(|(_, category)| sorted_families.get(&(category, family.clone())))
+            });
+            if let Some(Some((category, creator))) = evidence
+                && creator.zip(creator_of(inv, entry.id)).is_none_or(|(a, b)| a == b)
+                && product_folder_in(inv, entry.id, &reserved)
+                && delivery_fits_category(inv, entry.id, *category, Some(&family.prefix))
+            {
+                let mut path = vec![category_folder(*category)];
+                path.extend(shop);
+                entry.to = Some(Dest::Path(path));
+                continue;
+            }
+        }
+        if totals.get(&entry.from).copied().unwrap_or(0) < 2 {
             continue;
         }
         let shelf = shelves
@@ -4867,7 +5033,7 @@ fn plan_with(
         if count < 2 || count * 3 < totals[&entry.from] * 2 {
             continue;
         }
-        if entry.folder && (!product_folder_in(inv, entry.id, &reserved) || !delivery_fits_category(inv, entry.id, category)) {
+        if entry.folder && (!product_folder_in(inv, entry.id, &reserved) || !delivery_fits_category(inv, entry.id, category, None)) {
             continue;
         }
         let mut path = vec![category_folder(category)];

@@ -2,6 +2,66 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Vine Cuffs",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Winter Mesh Snowman Set",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Rigged Purity Seals Pack",
+   "type": -1,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Bayside Skybox [boxed]",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Overgrown Photography Backdrop",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Ivy Garden Arch",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Summer Wall Vines",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Vine Nose Piercing",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Photography Backdrop Instructions",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Cedar Skybox Vendor Photo",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Vine Street Shop Mainstore Landmark",
+   "type": 3,
+   "expect": "{landmarks}"
+  },
+  {
+   "name": "Neutral Environment for PBR",
+   "type": 6,
+   "expect": "{environment}"
+  },
+  {
    "name": "Bronze Hinge Rotation Script [boxed]",
    "type": -1,
    "expect": "{scripts}"

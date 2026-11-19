@@ -4731,7 +4731,146 @@ fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
     add_folder(&mut inv, 71, 70, "MoonCove - Velvet Top [DEMO]");
     add_item(&mut inv, 201, 71, "MoonCove - Velvet Top / Reborn [DEMO]", NEW);
     add_item(&mut inv, 202, 71, "MoonCove - Velvet Top / Hourglass [DEMO]", NEW);
-    assert_eq!(target_from_items(&inv, id(70), &Preferences::default(), None), None);
+    assert_eq!(target_from_items(&inv, id(70), &Preferences::default(), None, false), None);
+}
+
+#[test]
+fn generic_set_names_take_a_consistent_payload_category_and_keep_the_store() {
+    let mut inv = fixture(&[]);
+    for (at, title) in [
+        (70, "Nightfall Set"),
+        (71, "Nightfall Outfit"),
+        (72, "Winter Bundle"),
+        (73, "Meadow Collection"),
+        (74, "Summer Set"),
+    ] {
+        add_folder(&mut inv, at, OBJECTS, &format!("[Birch Vale] {title} [boxed]"));
+    }
+    for (at, parent, title) in [
+        (201, 70, "Velvet Dress Blue"),
+        (202, 70, "Velvet Dress Red"),
+        (203, 71, "Velvet Dress Blue"),
+        (204, 71, "Velvet Dress Red"),
+        (205, 72, "Winter Boots Blue"),
+        (206, 72, "Winter Boots Red"),
+        (207, 72, "Winter Boots Black"),
+        (208, 72, "Velvet Dress Red"),
+    ] {
+        add_item(&mut inv, at, parent, title, 0);
+    }
+    add_typed(&mut inv, 209, 73, "East", NEW, 0);
+    add_typed(&mut inv, 210, 73, "West", NEW, 0);
+    add_typed(&mut inv, 211, 73, "Read me", NEW, 7);
+    add_item(&mut inv, 212, 74, "Colour Change HUD", 0);
+    add_folder(&mut inv, 75, OBJECTS, "Backdrop stage stuff");
+    add_item(&mut inv, 213, 75, "Silk Dress", 0);
+    add_folder(&mut inv, 76, 1, "Hawker Car Red Box Free Stuff");
+    add_item(&mut inv, 214, 76, "Hawker Car Red", 0);
+    add_item(&mut inv, 215, 76, "Add to wear", 0);
+    let prefs = Preferences {
+        stores: true,
+        ..Preferences::default()
+    };
+    let none = HashSet::new();
+    let whole = plan_whole(&inv, &prefs, &none, &none);
+    assert!(whole.moves.iter().any(|entry| entry.id == id(76) && entry.folder));
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(planned.moves.iter().filter(|entry| entry.id != id(76)).count(), 6);
+        assert!(planned.moves.iter().any(|entry| entry.id == id(213) && !entry.folder));
+        assert!(planned.moves.iter().all(|entry| entry.id != id(75)));
+        for (at, category) in [
+            (70, Category::Dresses),
+            (71, Category::Outfits),
+            (72, Category::Outfits),
+            (73, Category::Textures),
+            (74, Category::Outfits),
+        ] {
+            let planned_move = planned.moves.iter().find(|entry| entry.id == id(at)).expect("intact delivery");
+            assert_eq!(
+                planned_move.to,
+                Dest::Path(vec![category_folder(category), "Birch Vale".to_owned()])
+            );
+        }
+    }
+}
+
+#[test]
+fn opaque_delivery_variants_use_an_exact_sibling_family_with_matching_contents() {
+    let mut inv = fixture(&[]);
+    for (at, title) in [
+        (70, "Nookery {Night Bloom} Horns [boxed]"),
+        (71, "Nookery {Night Bloom} Fades [boxed]"),
+        (72, "Other {Night Bloom} Fades [boxed]"),
+        (73, "Nookery {Night Bloom} Tips [boxed]"),
+        (74, "Nookery {Night Bloom} Colourways [boxed]"),
+    ] {
+        add_folder(&mut inv, at, OBJECTS, title);
+    }
+    for (at, parent, title) in [
+        (201, 70, "Nookery {Night Bloom} Horns Black"),
+        (202, 71, "Nookery {Night Bloom} Fade Orange"),
+        (203, 71, "Nookery {Night Bloom} Fade Red"),
+        (204, 72, "Other {Night Bloom} Fade Orange"),
+        (205, 73, "Something unrelated"),
+        (206, 74, "Nookery {Night Bloom} Orange"),
+        (207, 74, "Nookery {Night Bloom} Scarlet"),
+    ] {
+        add_item(&mut inv, at, parent, title, 0);
+    }
+    for (at, creator) in [(201, 900), (202, 900), (203, 900), (206, 901), (207, 901)] {
+        inv.items.get_mut(&id(at)).expect("item").creator = id(creator);
+    }
+    let prefs = Preferences::default();
+    let none = HashSet::new();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        let moved = planned
+            .moves
+            .iter()
+            .find(|entry| entry.id == id(71))
+            .expect("the intact variant pack");
+        assert_eq!(moved.to, Dest::Path(vec![category_folder(Category::Accessories)]));
+        assert!(
+            planned
+                .moves
+                .iter()
+                .all(|entry| ![72, 73, 74, 202, 203].into_iter().any(|at| entry.id == id(at)))
+        );
+    }
+}
+
+#[test]
+fn a_sorted_family_can_confirm_the_same_manual_category_without_reading_locked_anchors() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 50, 1, "!!!!!SORTED!!!!!!");
+    add_folder(&mut inv, 51, 50, "Accessories");
+    add_folder(&mut inv, 52, OBJECTS, "Accessories");
+    add_folder(&mut inv, 53, OBJECTS, "Old assorted stock");
+    add_folder(&mut inv, 70, 51, "Nookery {Night Bloom} Horns [boxed]");
+    add_folder(&mut inv, 71, 52, "Nookery {Night Bloom} Fades [boxed]");
+    add_folder(&mut inv, 72, 53, "Nookery {Night Bloom} Tips [boxed]");
+    add_item(&mut inv, 201, 70, "Nookery {Night Bloom} Horns", 0);
+    add_item(&mut inv, 202, 71, "Nookery {Night Bloom} Fade Red", 0);
+    add_item(&mut inv, 203, 72, "Nookery {Night Bloom} Tip Orange", 0);
+    let prefs = Preferences {
+        base: "!!!!!SORTED!!!!!!".into(),
+        ..Preferences::default()
+    };
+    let none = HashSet::new();
+    let planned = plan_whole(&inv, &prefs, &none, &none);
+    assert_eq!(planned.moves.iter().map(|entry| entry.id).collect::<Vec<_>>(), [id(71)]);
+    let locked = HashSet::from([id(51)]);
+    let planned = plan_whole(&inv, &prefs, &locked, &none);
+    assert!(planned.moves.is_empty());
+    assert!(planned.unknown.contains(&"Nookery {Night Bloom} Fades [boxed]".into()));
+    inv.folders.get_mut(&id(51)).expect("sorted category").state = FetchState::Failed;
+    let planned = plan_whole(&inv, &prefs, &none, &none);
+    assert!(planned.moves.is_empty());
 }
 
 #[test]
@@ -4753,9 +4892,9 @@ fn opaque_asset_packs_use_consistent_native_types_and_keep_their_contents() {
         assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Textures)]));
     }
     add_typed(&mut inv, 205, 70, "Meadow sky", NEW, 56);
-    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None, false), None);
     inv.items.get_mut(&id(205)).expect("item").asset_type = 6;
-    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None, false), None);
 }
 
 #[test]
@@ -4773,7 +4912,7 @@ fn opaque_script_deliveries_use_native_payload_and_keep_the_guide() {
     assert_eq!(planned.moves[0].id, id(70));
     assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Scripts)]));
     add_item(&mut inv, 205, 70, "Something unrelated", 0);
-    assert_eq!(target_from_items(&inv, id(70), &prefs, None), None);
+    assert_eq!(target_from_items(&inv, id(70), &prefs, None, false), None);
 }
 
 #[test]
