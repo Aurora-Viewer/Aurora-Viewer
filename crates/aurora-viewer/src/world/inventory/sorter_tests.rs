@@ -4735,6 +4735,20 @@ fn mixed_fit_consensus_never_files_a_shop_by_its_demos() {
 }
 
 #[test]
+fn a_mixed_treasure_chest_shelf_is_opened_as_an_archive() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Hunt Treasure Chest");
+    add_item(&mut inv, 201, 70, "Blue Velvet Dress", 0);
+    add_item(&mut inv, 202, 70, "Amber Necklace", 0);
+    let none = HashSet::new();
+    let planned = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert_eq!(
+        planned.moves.iter().map(|entry| entry.id).collect::<HashSet<_>>(),
+        HashSet::from([id(201), id(202)])
+    );
+}
+
+#[test]
 fn generic_set_names_take_a_consistent_payload_category_and_keep_the_store() {
     let mut inv = fixture(&[]);
     for (at, title) in [

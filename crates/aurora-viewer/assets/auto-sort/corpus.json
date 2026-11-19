@@ -2,6 +2,16 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "Treasure Chest",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Oak Decorative Treasure Chest",
+   "type": -1,
+   "expect": "{decor}"
+  },
+  {
    "name": "Nightwater Stompers-SINGLE-HUD_UPDATE",
    "type": 6,
    "expect": "{huds}"
