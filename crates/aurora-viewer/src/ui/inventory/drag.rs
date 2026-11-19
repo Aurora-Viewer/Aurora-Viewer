@@ -481,7 +481,10 @@ pub(super) fn copied_folders(ctx: &egui::Context, inv: &Inventory) -> Vec<Uuid> 
 
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
 pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx))) {
+    // the flag is read before `input`: egui's context is locked inside it,
+    // and reading its data there would wait on itself forever
+    let right = right_drag(ctx);
+    if !ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right)) {
         return None;
     }
     let pass = ctx.cumulative_pass_nr();
@@ -496,7 +499,9 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
         return;
     };
     // (Esc ends a drag without dropping: egui's DragAndDrop does it)
-    let held = ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx)));
+    // (read outside `input`, which holds egui's context lock)
+    let right = right_drag(ctx);
+    let held = ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right));
     let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| held)) else {
         return;
     };
@@ -543,3 +548,42 @@ pub(super) fn record_row(ctx: &egui::Context, editor: Uuid, id: Uuid, rect: egui
 pub(crate) mod demo;
 #[path = "drag_navigation.rs"]
 pub(crate) mod navigation;
+
+#[cfg(test)]
+mod right_button_tests {
+    use super::*;
+
+    /// A right-button drag over the world: the cursor and the badge read
+    /// the drag's flag without locking egui's context inside itself (the
+    /// viewer froze at the first right-click when they did).
+    #[test]
+    fn a_right_button_drag_never_locks_egui_twice() {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| d.insert_temp(right_drag_id(), true));
+        egui::DragAndDrop::set_payload(&ctx, InvDrag(Uuid::from_u128(1)));
+        let p = crate::theme::Theme::default().palette();
+        let pos = egui::pos2(100.0, 100.0);
+        for events in [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: Default::default(),
+            }],
+        ] {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    let _ = cursor(&ctx);
+                    badge(&ctx, &p);
+                },
+            );
+        }
+        assert!(ctx.input(|i| i.pointer.secondary_down()));
+    }
+}
