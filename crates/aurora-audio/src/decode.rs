@@ -774,7 +774,11 @@ pub(crate) mod tests {
             for &b in data {
                 crc ^= u32::from(b) << 24;
                 for _ in 0..8 {
-                    crc = if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04c1_1db7 } else { crc << 1 };
+                    crc = if crc & 0x8000_0000 != 0 {
+                        (crc << 1) ^ 0x04c1_1db7
+                    } else {
+                        crc << 1
+                    };
                 }
             }
             crc
