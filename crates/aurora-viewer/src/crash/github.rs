@@ -344,14 +344,14 @@ fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
 }
 
 fn client() -> Result<reqwest::Client, Failure> {
-    reqwest::Client::builder()
-        .user_agent(aurora_version::user_agent())
-        .https_only(true)
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|_| Failure::Network)
+    aurora_proxy::http_client(|b| {
+        b.user_agent(aurora_version::user_agent())
+            .https_only(true)
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(20))
+    })
+    .map_err(|_| Failure::Network)
 }
 
 async fn json(mut response: reqwest::Response) -> Result<Value, Failure> {

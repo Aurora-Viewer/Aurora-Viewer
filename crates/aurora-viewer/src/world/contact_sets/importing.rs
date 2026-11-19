@@ -3,6 +3,7 @@
 //! replacing existing sets; local appearance and nicknames take precedence.
 use super::*;
 
+#[derive(Clone)]
 pub struct ImportData(ContactSets);
 
 impl ImportData {
@@ -86,10 +87,27 @@ fn validate_color(data: &Llsd) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// An import whose file a save thread writes (saves.rs): the sets in use
+/// change only once it is on the disk ([`ContactSets::finish_import`]).
+pub struct Saving {
+    next: ContactSets,
+    data: ImportData,
+    /// The generation of the sets the import was merged into.
+    from: u64,
+    count: usize,
+    written: std::sync::mpsc::Receiver<std::io::Result<()>>,
+}
+
+/// How [`ContactSets::begin_import`] went.
+pub enum Begun {
+    /// Made at once (no file: the demo, the tests).
+    Done(usize),
+    Saving(Box<Saving>),
+}
+
 impl ContactSets {
-    /// Validate before this call. Publish the complete merged file before
-    /// changing live state, so a failed save leaves both versions intact.
-    pub fn merge_import(&mut self, data: ImportData, is_friend: impl Fn(&Uuid) -> bool) -> std::io::Result<usize> {
+    /// The sets with `data` merged in, and how many sets it held.
+    fn merged(&self, data: ImportData, is_friend: impl Fn(&Uuid) -> bool) -> (ContactSets, usize) {
         let mut next = self.clone();
         let count = data.0.sets.len();
         for (name, set) in data.0.sets {
@@ -114,18 +132,82 @@ impl ContactSets {
                 .filter(|id| !is_friend(id))
                 .copied(),
         );
-        if let Some(path) = &next.path {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            crate::atomic_file::write(path, &aurora_llsd::to_xml(&next.export()))?;
-        }
         next.generation += 1;
         next.rebuild_appearances();
         next.rebuild_chat_sections();
+        (next, count)
+    }
+
+    /// Validate before this call. Publish the complete merged file before
+    /// changing live state, so a failed save leaves both versions intact.
+    /// Written here: for the demo and the tests; the window goes through
+    /// [`Self::begin_import`].
+    pub fn merge_import(&mut self, data: ImportData, is_friend: impl Fn(&Uuid) -> bool) -> std::io::Result<usize> {
+        let (next, count) = self.merged(data, is_friend);
+        if let Some(path) = &next.path {
+            write_file(path, &aurora_llsd::to_xml(&next.export()))?;
+        }
         *self = next;
         Ok(count)
     }
+
+    /// [`Self::merge_import`] with the file written by a save thread: the
+    /// sets in use stay as they are until [`Self::finish_import`] hears
+    /// that the file is on the disk.
+    pub fn begin_import(&mut self, data: ImportData, is_friend: impl Fn(&Uuid) -> bool) -> std::io::Result<Begun> {
+        let Some(path) = self.path.clone() else {
+            return self.merge_import(data, is_friend).map(Begun::Done);
+        };
+        let (next, count) = self.merged(data.clone(), is_friend);
+        let xml = aurora_llsd::to_xml(&next.export());
+        let (tx, written) = std::sync::mpsc::channel();
+        crate::saves::replace(path.clone(), move || {
+            let _ = tx.send(write_file(&path, &xml));
+        });
+        Ok(Begun::Saving(Box::new(Saving {
+            next,
+            data,
+            from: self.generation,
+            count,
+            written,
+        })))
+    }
+
+    /// The import of `saving`, once its file is written: the merged sets
+    /// are taken and the count returned. A refused save changes nothing
+    /// (its error is returned). When the sets changed while the file was
+    /// written, or a newer save of the file took the import's place, the
+    /// import is merged again into the sets as they are now and saved with
+    /// them. `None` while the save thread has not answered.
+    pub fn finish_import(&mut self, saving: &mut Option<Box<Saving>>, is_friend: impl Fn(&Uuid) -> bool) -> Option<std::io::Result<usize>> {
+        let answer = match saving.as_ref()?.written.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Ok(answer) => Some(answer),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+        };
+        let saving = *saving.take()?;
+        match answer {
+            Some(Err(e)) => Some(Err(e)),
+            Some(Ok(())) if self.generation == saving.from => {
+                *self = saving.next;
+                Some(Ok(saving.count))
+            }
+            _ => {
+                let (next, count) = self.merged(saving.data, is_friend);
+                *self = next;
+                self.queue_save();
+                Some(Ok(count))
+            }
+        }
+    }
+}
+
+/// The sets' file, whole (atomic_file.rs).
+pub(super) fn write_file(path: &std::path::Path, xml: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::atomic_file::write(path, xml)
 }
 
 #[cfg(test)]

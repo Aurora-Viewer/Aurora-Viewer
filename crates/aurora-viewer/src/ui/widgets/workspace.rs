@@ -3,10 +3,13 @@
 use super::*;
 use egui::AtomExt;
 
+/// The padding around a row's label in the user tree and object contents.
+pub(crate) const INVENTORY_LABEL_PADDING: egui::Vec2 = egui::vec2(2.0, 1.0);
+
 /// The user tree and object contents share row density and interaction styling.
 pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().button_padding = INVENTORY_LABEL_PADDING;
     ui.spacing_mut().interact_size.y = 20.0;
 }
 
@@ -534,10 +537,13 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",
+        // the toolbar's conversation_log command
+        "conversation_log" => "file-text-filled",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -546,6 +552,8 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
         "controls" | "camera_controls" => "video-filled",
+        "director" => "movie",
+        "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
@@ -575,23 +583,41 @@ pub(super) fn window_icon(id: &str) -> &'static str {
 /// Reserve a drawing slot before the content, then resolve its exact bounds
 /// after layout. The opaque skin remains available with panel_alpha = 255.
 pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette, radius: f32) {
+    finish_glass_faded(painter, slot, rect, p, radius, 1.0);
+}
+
+/// `finish_glass` of a see-through window (`ui::surface_opacity`).
+pub(crate) fn finish_glass_faded(
+    painter: &egui::Painter,
+    slot: egui::layers::ShapeIdx,
+    rect: egui::Rect,
+    p: &Palette,
+    radius: f32,
+    opacity: f32,
+) {
     if p.panel_alpha < 255 {
-        painter.set(
-            slot,
-            aurora_render::glass_panel(
-                rect.shrink(1.0),
-                radius,
-                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
-            ),
-        );
+        painter.set(slot, faded_glass(rect.shrink(1.0), radius, p.panel, p.panel_alpha, opacity));
+    }
+}
+
+/// The blur and the tint of `color` at `opacity` of a surface's own alpha.
+fn faded_glass(rect: egui::Rect, radius: f32, color: Color32, alpha: u8, opacity: f32) -> egui::Shape {
+    let (blur, alpha) = crate::ui::surface_opacity::glass(alpha, opacity);
+    let tint = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+    match blur {
+        Some(blur) => aurora_render::glass_panel_faded(rect, radius, tint, blur),
+        None => egui::Shape::rect_filled(rect, radius, tint),
     }
 }
 
 /// Glass of the top and bottom bars: the windows' blur under the `bar` color.
 pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette) {
+    let opacity = crate::ui::surface_opacity::bars();
+    crate::ui::surface_opacity::fade_after(painter.ctx(), painter.layer_id(), slot, p, opacity);
     if p.panel_alpha < 255 {
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha);
-        painter.with_clip_rect(rect).set(slot, aurora_render::glass_panel(rect, 0.0, tint));
+        painter
+            .with_clip_rect(rect)
+            .set(slot, faded_glass(rect, 0.0, p.bar, p.panel_alpha, opacity));
     }
 }
 
@@ -604,14 +630,18 @@ pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::Shap
 pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -> egui::Shape {
     let visuals = &ctx.global_style().visuals;
     let radius = visuals.window_corner_radius;
-    let shadow = visuals.window_shadow.as_shape(rect, radius);
+    let opacity = crate::ui::surface_opacity::bars();
+    let shadow = egui::Shadow {
+        color: visuals.window_shadow.color.gamma_multiply(opacity),
+        ..visuals.window_shadow
+    }
+    .as_shape(rect, radius);
     let border = super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)));
     let face = if p.panel_alpha < 255 {
         let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha);
-        aurora_render::glass_panel(rect.shrink(1.0), f32::from(radius.nw), tint)
+        faded_glass(rect.shrink(1.0), f32::from(radius.nw), p.bar, alpha, opacity)
     } else {
-        egui::Shape::rect_filled(rect, radius, p.bar)
+        egui::Shape::rect_filled(rect, radius, p.bar.gamma_multiply(opacity))
     };
     egui::Shape::Vec(vec![
         shadow.into(),

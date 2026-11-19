@@ -302,12 +302,18 @@ async fn refusal_reply(mut response: reqwest::Response) -> Option<Llsd> {
     aurora_llsd::from_xml(&bytes).ok()
 }
 
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): every AIS command
+/// waits up to three minutes for its reply. A write the server is still
+/// carrying out when the viewer gives up is done anyway, and the viewer then
+/// reads a folder the server is busy with.
+const AIS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(aurora_llsd::to_xml(body))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(AIS_TIMEOUT)
         .send()
         .await
         .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;
@@ -500,7 +506,7 @@ pub(crate) mod tests {
         .await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -548,7 +554,7 @@ pub(crate) mod tests {
         };
         let announced = order.clone();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             Some(&format!("{url}/create")),
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -583,7 +589,7 @@ pub(crate) mod tests {
         let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -704,9 +710,15 @@ pub(crate) mod tests {
                 ],
             )),
         };
-        let result = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::from_u128(5), change)
-            .await
-            .expect("saved outfit");
+        let result = mutate(
+            &crate::test_http_client(),
+            &url,
+            &format!("{url}/fetch"),
+            Uuid::from_u128(5),
+            change,
+        )
+        .await
+        .expect("saved outfit");
         assert_eq!(result[0].folder_id, parent, "parent must be applied before its new child");
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with(&format!("POST /category/{parent}?tid=")));
@@ -725,7 +737,7 @@ pub(crate) mod tests {
             links: Vec::new(),
             cof: None,
         };
-        let error = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
+        let error = mutate(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
             .await
             .expect_err("refused");
         assert!(error.contains("403"));
@@ -776,7 +788,7 @@ pub(crate) mod tests {
                 ),
             ])
             .await;
-            let it = set_favorite(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
+            let it = set_favorite(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
                 .await
                 .expect("favorite");
             assert_eq!(it.favorite, favorite);

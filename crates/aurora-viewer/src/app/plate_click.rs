@@ -71,9 +71,21 @@ pub(super) fn visible_tag(tags: &[(Uuid, Vec3)], depth: Option<Vec3>, ray: Optio
 }
 
 /// Whether a plate click acts, and so shows the hand: an action chosen, on
-/// someone else's plate, or Profile / Menu on our own.
-pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid) -> bool {
-    action != PlateClick::Nothing && plate.is_some_and(|id| id != me || matches!(action, PlateClick::Profile | PlateClick::Menu))
+/// someone else's plate, or Profile / Menu on our own. `named`: the name
+/// `@shownames` leaves on someone else's plate is the real one
+/// (`World::rlva_can_name`); under the restriction only the menu opens, whose
+/// entries are greyed like the Legacy Viewer's (menu_avatar_other.xml:
+/// `RLV.CanShowName`), never a profile, an IM or a teleport offer that would
+/// name the resident. Our own name is never hidden from us.
+pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid, named: impl Fn(Uuid) -> bool) -> bool {
+    action != PlateClick::Nothing
+        && plate.is_some_and(|id| {
+            if id == me {
+                matches!(action, PlateClick::Profile | PlateClick::Menu)
+            } else {
+                action == PlateClick::Menu || named(id)
+            }
+        })
 }
 
 /// Alt retains LLToolCamera's gestures; Ctrl+Shift retains the grab tool
@@ -205,7 +217,10 @@ impl App {
 
     /// The hand of a clickable object over a plate that acts.
     pub(super) fn plate_cursor(&self) -> bool {
-        !self.classic_name_tags() && plate_click_acts(self.plate_click_action(), self.plate_hover, self.world.agent_id)
+        !self.classic_name_tags()
+            && plate_click_acts(self.plate_click_action(), self.plate_hover, self.world.agent_id, |id| {
+                self.world.rlva_can_name(id)
+            })
     }
 
     /// A left press on the world: on another avatar's plate with an action
@@ -225,7 +240,7 @@ impl App {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else {
             return false;
         };
-        if !plate_click_acts(action, Some(id), self.world.agent_id) {
+        if !plate_click_acts(action, Some(id), self.world.agent_id, |id| self.world.rlva_can_name(id)) {
             return false;
         }
         self.run_plate_click(idx);
@@ -331,13 +346,30 @@ mod tests {
     #[test]
     fn own_plate_allows_profile_and_menu_but_not_im_or_teleport() {
         let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        assert!(!plate_click_acts(PlateClick::Nothing, Some(other), me));
+        let named = |_: Uuid| true;
+        assert!(!plate_click_acts(PlateClick::Nothing, Some(other), me, named));
         for action in PlateClick::ALL.into_iter().filter(|a| *a != PlateClick::Nothing) {
-            assert!(plate_click_acts(action, Some(other), me), "{action:?}");
+            assert!(plate_click_acts(action, Some(other), me, named), "{action:?}");
             let acts_on_self = matches!(action, PlateClick::Profile | PlateClick::Menu);
-            assert_eq!(plate_click_acts(action, Some(me), me), acts_on_self, "{action:?}");
-            assert!(!plate_click_acts(action, None, me));
+            assert_eq!(plate_click_acts(action, Some(me), me, named), acts_on_self, "{action:?}");
+            // @shownames hides others' names, not ours
+            assert_eq!(plate_click_acts(action, Some(me), me, |_: Uuid| false), acts_on_self, "{action:?}");
+            assert!(!plate_click_acts(action, None, me, named));
         }
+    }
+
+    /// `@shownames` hides the resident: a click that would open their
+    /// profile, an IM or a teleport offer does nothing; the menu still opens
+    /// (its entries are greyed).
+    #[test]
+    fn a_hidden_name_leaves_only_the_menu_to_the_click() {
+        let (me, hidden, shown) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let named = |id: Uuid| id == shown;
+        for action in [PlateClick::Profile, PlateClick::InstantMessage, PlateClick::OfferTeleport] {
+            assert!(!plate_click_acts(action, Some(hidden), me, named), "{action:?}");
+            assert!(plate_click_acts(action, Some(shown), me, named), "{action:?}");
+        }
+        assert!(plate_click_acts(PlateClick::Menu, Some(hidden), me, named));
     }
 
     #[test]

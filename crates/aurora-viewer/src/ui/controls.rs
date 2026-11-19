@@ -104,6 +104,14 @@ pub struct View<'a> {
     pub flying: bool,
     pub always_run: bool,
     pub seated: bool,
+    /// What is greyed, as LLFloaterMove::sUpdateMovementStatus and
+    /// LLPanelStandStopFlying::onStandButtonClick (indra/newview/
+    /// llmoveview.cpp) decide it: the Run mode under RLVa's @alwaysrun, the
+    /// Fly mode where no takeoff is allowed (LLAgent::canFly; never while
+    /// flying, so that it still lands), Stand up under @unsit.
+    pub run_locked: bool,
+    pub fly_locked: bool,
+    pub stand_locked: bool,
     pub mouselook: bool,
     /// "Object view": a click in the world focuses the camera (Alt+click).
     pub object_view: bool,
@@ -964,9 +972,9 @@ fn movement_tab(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
             aurora_i18n::tr!("common-stand-up"),
             widgets::ActionKind::Flat,
             Vec2::new(w, BUTTON_H),
-            view.seated,
+            view.seated && !view.stand_locked,
         );
-        if stand.clicked() && view.seated {
+        if stand.clicked() && view.seated && !view.stand_locked {
             out.actions.push(ControlAction::StandUp);
         }
     });
@@ -1005,6 +1013,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         ],
     ];
     let width = 4.0 * PAD_BUTTON + 3.0 * 4.0 + 12.0;
+    let drag_id = ui.scope_id().with("movement-pad-press");
     for row in rows {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -1018,7 +1027,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
                     Some(b) => format!("{} ({})", tr_key(tip), b.label()),
                     None => tr_key(tip).to_owned(),
                 };
-                if pad_button(ui, p, icon, &tip, binding.as_ref()) {
+                if pad_button(ui, p, icon, &tip, binding.as_ref(), drag_id) {
                     out.held.push(action);
                 }
             }
@@ -1044,12 +1053,23 @@ fn modes(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         ui.spacing_mut().item_spacing.x = 4.0;
         let w = (ui.available_width() - 8.0) / 3.0;
         for (n, (icon, label, action)) in options.into_iter().enumerate() {
-            if mode_button(ui, p, icon, label, n == mode, w).clicked() && n != mode {
+            let enabled = !mode_locked(view, &action);
+            if mode_button(ui, p, icon, label, n == mode, enabled, w).clicked() && n != mode && enabled {
                 mode = n;
                 out.actions.push(action);
             }
         }
     });
+}
+
+/// Whether a movement mode's button is greyed (`View::run_locked`,
+/// `View::fly_locked`); Walk never is.
+fn mode_locked(view: &View, action: &ControlAction) -> bool {
+    match action {
+        ControlAction::Run => view.run_locked,
+        ControlAction::Fly => view.fly_locked && !view.flying,
+        _ => false,
+    }
 }
 
 /// Firestorm's camera window: views on top, the joysticks and the zoom,
@@ -1125,11 +1145,19 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
             ),
             ("plane-tilt-filled", aurora_i18n::tr!("common-fly"), view.flying, ControlAction::Fly),
         ] {
-            if widgets::icon_toggle(ui, p, icon, tip, on) {
+            if mode_locked(view, &action) {
+                let _ = widgets::icon_button(ui, p, icon, tip, false);
+            } else if widgets::icon_toggle(ui, p, icon, tip, on) {
                 out.actions.push(action);
             }
         }
-        if view.seated && widgets::flat_button(ui, p, aurora_i18n::tr!("common-stand-up")).clicked() {
+        if view.seated
+            && ui
+                .add_enabled_ui(!view.stand_locked, |ui| {
+                    widgets::flat_button(ui, p, aurora_i18n::tr!("common-stand-up")).clicked()
+                })
+                .inner
+        {
             out.actions.push(ControlAction::StandUp);
         }
     });
@@ -1333,9 +1361,23 @@ fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool 
 
 /// One of the movement buttons: its icon, its key in the corner, lit while
 /// held.
-fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>) -> bool {
+fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>, drag_id: egui::Id) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
-    let held = resp.is_pointer_button_down_on();
+    // Continue only a primary press observed on this pad in consecutive frames.
+    // A hidden pad may miss a release; a fresh press must start on a visible button.
+    let frame = ui.ctx().cumulative_frame_nr();
+    let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
+    let pad_pressed = down
+        && ui.data_mut(|d| {
+            let last = d.get_temp::<u64>(drag_id);
+            let continuing = last == Some(frame) || (!pressed && last.is_some_and(|last| last + 1 == frame));
+            let active = continuing || (pressed && resp.is_pointer_button_down_on() && resp.contains_pointer());
+            if active && last != Some(frame) {
+                d.insert_temp(drag_id, frame);
+            }
+            active
+        });
+    let held = pad_pressed && resp.contains_pointer();
     let resp = resp.on_hover_text(tip);
     let fill = if held {
         p.violet
@@ -1376,16 +1418,22 @@ fn paint_icon(ui: &egui::Ui, icon: &str, center: Pos2, size: f32, tint: egui::Co
     }
 }
 
-/// A movement mode: its icon and its name, the accent's face when chosen.
-fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, width: f32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, BUTTON_H + 2.0), Sense::click());
-    let fill = match (on, resp.hovered()) {
+/// A movement mode: its icon and its name, the accent's face when chosen,
+/// dimmed and deaf to clicks when not `enabled`.
+fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, enabled: bool, width: f32) -> egui::Response {
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, BUTTON_H + 2.0), sense);
+    let fill = match (on, resp.hovered() && enabled) {
         (true, _) => p.violet,
         (false, true) => p.raised.gamma_multiply(1.3),
         (false, false) => p.raised,
     };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
-    let color = if on { p.on_accent } else { p.muted };
+    let color = match (on, enabled) {
+        (true, _) => p.on_accent,
+        (false, true) => p.muted,
+        (false, false) => p.muted_dim.gamma_multiply(0.7),
+    };
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), color);
@@ -1556,6 +1604,9 @@ mod tests {
             flying: false,
             always_run: false,
             seated: false,
+            run_locked: false,
+            fly_locked: false,
+            stand_locked: false,
             mouselook: false,
             object_view: false,
             keys: &keys,
@@ -1625,6 +1676,98 @@ mod tests {
     }
 
     #[test]
+    fn held_movement_pad_switches_to_the_button_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut time = 0.0;
+        let mut draw = |events, visible: bool, cover: Option<Rect>| {
+            time += 1.0 / 60.0;
+            let mut rects = [Rect::NOTHING; 2];
+            let mut held = [false; 2];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    if !visible {
+                        return;
+                    }
+                    let drag_id = ui.scope_id().with("movement-pad-test");
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            rects[0] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[0] = pad_button(ui, &p, "arrow-up", "", None, drag_id);
+                        });
+                        ui.horizontal(|ui| {
+                            rects[1] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[1] = pad_button(ui, &p, "rotate-2", "", None, drag_id);
+                        });
+                    });
+                    if let Some(rect) = cover {
+                        egui::Area::new(egui::Id::unique("cover-pad-button"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(rect.min)
+                            .show(ui.ctx(), |ui| ui.allocate_exact_size(rect.size(), Sense::click()));
+                    }
+                },
+            );
+            output.textures_delta.clear();
+            (rects, held)
+        };
+        let mut frame = |events| draw(events, true, None);
+        let (rects, _) = frame(vec![]);
+        let start = rects[0].center();
+        let end = rects[1].center();
+        let moved = |pos| vec![egui::Event::PointerMoved(pos)];
+        let primary = |pos, pressed| {
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        frame(moved(start));
+        frame(primary(start, true));
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, true], "dragging between pad buttons switches the held direction");
+        let (_, held) = frame(moved(start));
+        assert_eq!(held, [true, false], "dragging back switches to the original direction");
+        frame(primary(start, false));
+        let (_, held) = frame(vec![]);
+        assert_eq!(held, [false, false], "releasing the mouse stops the movement buttons");
+
+        let outside = Pos2::new(350.0, 180.0);
+        frame(moved(outside));
+        frame(primary(outside, true));
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, false], "a drag that starts outside the pad does not activate it");
+        frame(primary(end, false));
+
+        let cover = Some(rects[1]);
+        draw(moved(start), true, cover);
+        draw(vec![], true, cover);
+        assert_eq!(draw(primary(start, true), true, cover).1, [true, false]);
+        assert_eq!(draw(moved(end), true, cover).1, [false, false], "a window covers the second button");
+
+        draw(vec![], false, None);
+        draw(primary(end, false), false, None);
+        draw(moved(outside), false, None);
+        draw(primary(outside, true), false, None);
+        draw(vec![], true, None);
+        assert_eq!(
+            draw(moved(end), true, None).1,
+            [false, false],
+            "a new press started while the pad was closed"
+        );
+    }
+
+    #[test]
     fn roll_buttons_ramp_stop_on_release_and_level_without_resetting_the_view() {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
@@ -1643,6 +1786,9 @@ mod tests {
                 flying: false,
                 always_run: false,
                 seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
                 mouselook,
                 object_view: false,
                 keys: &keys,
@@ -1826,11 +1972,11 @@ mod tests {
 
     #[test]
     fn the_speed_reads_and_types_in_metres_a_second() {
-        // (in the viewer's language: "0.5" or "0,5")
-        assert!(speed_text(2.0).starts_with("2 "), "{}", speed_text(2.0));
+        // (in the viewer's language: "0.5 m/s", "0,5 m/s" or "0.5ｍ／ｓ")
+        let written = |speed: &str| aurora_i18n::tr!("controls-free-speed-value", speed = speed);
+        assert_eq!(speed_text(2.0), written("2"));
         assert!(speed_text(0.5).starts_with('0') && speed_text(0.5).contains('5'));
-        assert!(speed_text(12.4).starts_with("12 "), "whole metres from 10");
-        assert!(speed_text(2.0).ends_with("m/s"));
+        assert_eq!(speed_text(12.4), written("12"), "whole metres from 10");
         assert_eq!(parse_speed("3 m/s"), Some(3.0));
         assert_eq!(parse_speed(" 12"), Some(12.0));
         assert_eq!(parse_speed("vite"), None);
@@ -1863,6 +2009,9 @@ mod tests {
                 flying: false,
                 always_run: false,
                 seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
                 mouselook: false,
                 object_view: false,
                 keys: &keys,
@@ -1934,5 +2083,44 @@ mod tests {
         // the slides borrow the turn's key with Shift
         let slide = pad_binding(&keys, Action::StrafeLeft).expect("a slide key");
         assert!(slide.shift);
+    }
+
+    #[test]
+    fn the_run_and_fly_modes_are_greyed_when_refused_and_landing_never_is() {
+        let keys = KeyBindings::default();
+        let views = SavedViews::default();
+        let view = |flying: bool, run_locked: bool, fly_locked: bool| View {
+            zoom: 0.5,
+            roll: 0.0,
+            preset: CameraPreset::Rear,
+            shots: &[],
+            views: &views,
+            flying,
+            always_run: false,
+            seated: false,
+            run_locked,
+            fly_locked,
+            stand_locked: false,
+            mouselook: false,
+            object_view: false,
+            keys: &keys,
+            free: None,
+        };
+        let free = view(false, false, false);
+        for action in [ControlAction::Walk, ControlAction::Run, ControlAction::Fly] {
+            assert!(!mode_locked(&free, &action), "{action:?}");
+        }
+        // @alwaysrun: Run alone
+        let no_run = view(false, true, false);
+        assert!(mode_locked(&no_run, &ControlAction::Run));
+        assert!(!mode_locked(&no_run, &ControlAction::Walk) && !mode_locked(&no_run, &ControlAction::Fly));
+        // no takeoff: Fly alone, and only on the ground
+        let no_fly = view(false, false, true);
+        assert!(mode_locked(&no_fly, &ControlAction::Fly));
+        assert!(!mode_locked(&no_fly, &ControlAction::Walk) && !mode_locked(&no_fly, &ControlAction::Run));
+        assert!(
+            !mode_locked(&view(true, false, true), &ControlAction::Fly),
+            "the Fly mode still lands"
+        );
     }
 }
