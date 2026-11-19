@@ -75,6 +75,18 @@ pub fn update(
             // Looking down at the deep floor of the `deep-lights` set, 48 m
             // under the water line, its lamp in the middle.
             (Vec3::new(32.0, 92.0, -21.0), Vec3::new(40.0, 100.0, -27.6))
+        } else if mode.contains("glint") {
+            // Looking down 56 degrees at the lagoon from 12 m above it,
+            // toward `glint-<heading>` (degrees from east, 45 by default:
+            // the sun of AURORA_DEMO_TOD=5), at the sun's glint on the ripples.
+            let heading = mode
+                .split(':')
+                .find_map(|part| part.strip_prefix("glint-")?.parse::<f32>().ok())
+                .unwrap_or(45.0)
+                .to_radians();
+            let target = Vec3::new(40.0, 112.0, 20.0);
+            let back = glam::Vec2::new(heading.cos(), heading.sin()) * 8.1;
+            (target - back.extend(-12.0), target)
         } else if mode.contains("caustics") {
             // Under the lagoon, down at its sunny bed 2 to 4 m deep.
             (Vec3::new(28.0, 110.0, 19.2), Vec3::new(37.0, 119.0, 15.8))
