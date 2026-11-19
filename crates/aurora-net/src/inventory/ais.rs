@@ -435,43 +435,57 @@ pub struct ItemReads {
     pub failed: Vec<Uuid>,
 }
 
+async fn read_item(http: &reqwest::Client, url: String, owner: Uuid, id: Uuid) -> Result<Option<InvItem>, FetchError> {
+    get(http, url).await.map(|doc| match parse_item_reply(&doc, id, owner) {
+        Ok(item) => Some(item),
+        Err(reason) => {
+            log::warn!("AIS item {id} response could not be parsed: {reason}");
+            None
+        }
+    })
+}
+
+impl ItemReads {
+    fn record(&mut self, id: Uuid, result: Result<Option<InvItem>, FetchError>) {
+        match result {
+            Ok(Some(item)) => self.items.push(item),
+            Err(FetchError {
+                status: Some(404 | 410), ..
+            }) => self.missing.push(id),
+            Ok(None) => self.failed.push(id),
+            Err(error) => {
+                log::warn!("AIS item {id} read failed: {error}");
+                self.failed.push(id);
+            }
+        }
+    }
+}
+
+/// A single read for the session reader, which already owns its task and
+/// handles task failure and cancellation.
+pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid, id: Uuid) -> ItemReads {
+    let mut reads = ItemReads::default();
+    let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
+    reads.record(id, read_item(http, url, owner, id).await);
+    reads
+}
+
 /// Bounded parallel reads of single items (AISAPI::FetchItem).
 pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> ItemReads {
     let mut reads = ItemReads::default();
+    let cap = cap.trim_end_matches('/');
     for chunk in ids.chunks(16) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();
-            let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
-            tasks.spawn(async move {
-                let read = get(&http, url).await;
-                (
-                    id,
-                    read.map(|doc| match parse_item_reply(&doc, id, owner) {
-                        Ok(item) => Some(item),
-                        Err(reason) => {
-                            log::warn!("AIS item {id} response could not be parsed: {reason}");
-                            None
-                        }
-                    }),
-                )
-            });
+            let url = format!("{cap}/item/{id}");
+            tasks.spawn(async move { (id, read_item(&http, url, owner, id).await) });
         }
         let mut answered = HashSet::new();
         while let Some(result) = tasks.join_next().await {
             let Ok((id, read)) = result else { continue };
             answered.insert(id);
-            match read {
-                Ok(Some(item)) => reads.items.push(item),
-                Err(FetchError {
-                    status: Some(404 | 410), ..
-                }) => reads.missing.push(id),
-                Ok(None) => reads.failed.push(id),
-                Err(error) => {
-                    log::warn!("AIS item {id} read failed: {error}");
-                    reads.failed.push(id);
-                }
-            }
+            reads.record(id, read);
         }
         // a panicked read task answers nothing: failed, asked again
         reads.failed.extend(chunk.iter().filter(|id| !answered.contains(id)));

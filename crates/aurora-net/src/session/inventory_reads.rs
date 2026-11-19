@@ -184,7 +184,7 @@ impl Reader {
     pub(super) fn new(http: reqwest::Client, events: crate::EventSender) -> Self {
         Self::with_fetch(events, move |owner, item, cap| {
             let http = http.clone();
-            async move { crate::inventory::ais::read_items(&http, &cap, owner, &[item]).await }
+            async move { crate::inventory::ais::read_one_item(&http, &cap, owner, item).await }
         })
     }
 
