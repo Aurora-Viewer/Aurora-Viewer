@@ -80,6 +80,9 @@ def validate(payload, joints):
             reference = convert.from_column_major(_numbers(joint.get("reference_bind"), 16))
             if abs(convert.determinant3(reference)) < 1e-8:
                 raise ValueError("Invalid reference shape bind")
+    archetype = payload.get("archetype")
+    if archetype is not None and (not isinstance(archetype, str) or len(archetype) > 1024 * 1024):
+        raise ValueError("Invalid shape appearance XML")
     params = payload.get("params")
     if not isinstance(params, dict) or len(params) > 512:
         raise ValueError("Invalid shape parameters")

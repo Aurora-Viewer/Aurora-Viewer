@@ -404,6 +404,138 @@ class Shape(unittest.TestCase):
         self.assertEqual(shape_rules.node_name("ゆき"), "Shape")
 
 
+class FakeCmds:
+    """The maya.cmds calls mayastar.py makes, over a tiny scene."""
+
+    def __init__(self, joints, selection=(), exists=("Female_Male",)):
+        self.joints, self.selection, self.exists, self.attributes, self.chunks = list(joints), list(selection), set(exists), {}, []
+
+    def ls(self, *args, selection=False, type=None, long=False):
+        return list(self.selection) if selection else list(self.joints)
+
+    def listRelatives(self, root, allDescendents=False, type=None, fullPath=False):
+        return [joint for joint in self.joints if joint.startswith(root + "|")]
+
+    def nodeType(self, node):
+        return "joint" if node in self.joints else "transform"
+
+    def objExists(self, node):
+        return node in self.exists
+
+    def attributeQuery(self, name, node=None, exists=False):
+        return (node, name) in self.attributes
+
+    def addAttr(self, node, longName=None, dataType=None):
+        self.attributes[(node, longName)] = None
+
+    def setAttr(self, plug, values, type=None):
+        node, name = plug.rsplit(".", 1)
+        self.attributes[(node, name)] = values
+
+    def getAttr(self, plug):
+        return self.attributes.get(tuple(plug.rsplit(".", 1)))
+
+    def undoInfo(self, **kwargs):
+        self.chunks.append(kwargs)
+
+
+def load_mayastar(fake):
+    import types
+    maya = types.ModuleType("maya")
+    maya.cmds = fake
+    sys.modules["maya"], sys.modules["maya.cmds"] = maya, fake
+    # A fresh copy bound to this fake: the package keeps the last import.
+    import importlib
+    import aurora_live_maya
+    sys.modules.pop("aurora_live_maya.mayastar", None)
+    if hasattr(aurora_live_maya, "mayastar"):
+        delattr(aurora_live_maya, "mayastar")
+    return importlib.import_module("aurora_live_maya.mayastar")
+
+
+class MayaStar(unittest.TestCase):
+    RIG = ["|mPelvis", "|mPelvis|mTorso", "|mPelvis|mTorso|mChest", "|mPelvis|mTorso|mChest|mNeck",
+           "|mPelvis|mTorso|mChest|mNeck|mHead"]
+
+    def fake_mayastar(self, fail=False):
+        import types
+        seen = {}
+
+        class ShapeImport:
+            @classmethod
+            def importShape(cls):
+                path = module.cmds.fileDialog2(fileFilter="SL Avatar Shape XML(*.xml)")[0]
+                with open(path, "r") as file:
+                    seen["text"] = file.read()
+                seen["objExists"] = module.cmds.objExists("Female_Male")
+                if fail:
+                    raise RuntimeError("MayaStar failed")
+
+        module = types.ModuleType("Mayastar" + "_xmlShape")
+        module.ShapeImport, module.cmds = ShapeImport, "the real cmds"
+        sys.modules[module.__name__] = module
+        return module, seen
+
+    def payload(self):
+        payload = shape_payload("apply")
+        payload["archetype"] = '<?xml version="1.0"?><linden_genepool><archetype name="Ünï"/></linden_genepool>'
+        return payload
+
+    def tearDown(self):
+        for name in ("Mayastar" + "_xmlShape", "maya", "maya.cmds", "aurora_live_maya.mayastar"):
+            sys.modules.pop(name, None)
+
+    def test_mayastar_imports_auroras_xml_and_its_module_is_restored(self):
+        fake = FakeCmds(self.RIG)
+        mayastar = load_mayastar(fake)
+        module, seen = self.fake_mayastar()
+        self.assertEqual(mayastar.apply(self.payload()), "mPelvis")
+        self.assertIn("linden_genepool", seen["text"])
+        self.assertIn("&#220;n&#239;", seen["text"])  # ASCII, readable in any encoding
+        self.assertTrue(seen["objExists"])  # other cmds reach Maya's
+        self.assertEqual(module.cmds, "the real cmds")
+        self.assertIsNotNone(fake.getAttr("|mPelvis.auroraShapeBind"))
+        self.assertEqual([list(chunk)[0] for chunk in fake.chunks], ["openChunk", "closeChunk"])
+
+    def test_a_failing_import_still_restores_mayastar_and_removes_the_file(self):
+        fake = FakeCmds(self.RIG)
+        mayastar = load_mayastar(fake)
+        module, seen = self.fake_mayastar(fail=True)
+        import glob, tempfile
+        before = set(glob.glob(tempfile.gettempdir() + "/aurora-shape-*.xml"))
+        with self.assertRaises(RuntimeError):
+            mayastar.apply(self.payload())
+        self.assertEqual(module.cmds, "the real cmds")
+        self.assertEqual(set(glob.glob(tempfile.gettempdir() + "/aurora-shape-*.xml")), before)
+        self.assertEqual(fake.chunks[-1], {"closeChunk": True})
+
+    def test_apply_is_refused_without_mayastar_its_rig_or_the_xml(self):
+        mayastar = load_mayastar(FakeCmds(self.RIG))
+        with self.assertRaises(ValueError):
+            mayastar.apply(self.payload())  # MayaStar not loaded
+        self.fake_mayastar()
+        mayastar = load_mayastar(FakeCmds(self.RIG, exists=()))
+        with self.assertRaises(ValueError):
+            mayastar.apply(self.payload())  # no MayaStar rig
+        mayastar = load_mayastar(FakeCmds(self.RIG))
+        payload = self.payload()
+        del payload["archetype"]
+        with self.assertRaises(ValueError):
+            mayastar.apply(payload)  # an older viewer
+
+    def test_two_rigs_need_a_selection(self):
+        second = ["|ns:" + joint.rsplit("|", 1)[-1] for joint in self.RIG]  # namespaced: ignored
+        mayastar = load_mayastar(FakeCmds(self.RIG + second))
+        names = {name for name, _parent in shape_rules.skeleton()}
+        self.assertEqual(mayastar.rig_joints(names)["mHead"], self.RIG[-1])
+        other = ["|rig2" + joint for joint in self.RIG]
+        mayastar = load_mayastar(FakeCmds(self.RIG + other))
+        with self.assertRaises(ValueError):
+            mayastar.rig_joints(names)
+        mayastar = load_mayastar(FakeCmds(self.RIG + other, selection=["|rig2|mPelvis|mTorso"]))
+        self.assertEqual(mayastar.rig_joints(names)["mPelvis"], "|rig2|mPelvis")
+
+
 class ShapeTransport(unittest.TestCase):
     def test_the_maya_client_receives_a_shape_and_answers(self):
         token = b"0123456789abcdef" * 4
@@ -445,7 +577,7 @@ class ShapeTransport(unittest.TestCase):
 
         thread = threading.Thread(target=viewer)
         thread.start()
-        live = client.Client(server.getsockname()[1], capabilities=("import-lods", "shape-transfer"))
+        live = client.Client(server.getsockname()[1], capabilities=("import-lods", "shape-transfer", "shape-apply"))
         payload = None
         for _ in range(200):
             payload = live.take_shape()
@@ -457,8 +589,9 @@ class ShapeTransport(unittest.TestCase):
         thread.join(10)
         live.close()
         server.close()
-        # Shape creation and Import / LOD; never shape-apply.
-        self.assertEqual(received["control"], {"type": "features", "features": ["shape-transfer", "import-lods"]})
+        # The Maya plug-in's capabilities, in the client's order.
+        self.assertEqual(received["control"], {"type": "features",
+                                               "features": ["shape-transfer", "shape-apply", "import-lods"]})
         self.assertEqual(received["result"], {"type": "shape-result", "id": payload["id"], "error": None})
 
 

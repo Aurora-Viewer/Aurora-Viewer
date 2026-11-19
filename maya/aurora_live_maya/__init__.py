@@ -7,7 +7,7 @@ Open the window with:
     aurora_live_maya.show()
 """
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 
 
 def show():

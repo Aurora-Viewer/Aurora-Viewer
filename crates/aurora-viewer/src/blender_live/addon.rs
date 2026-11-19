@@ -73,6 +73,10 @@ const MAYA_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../maya/aurora_live_maya/lods.py"),
     ),
     (
+        "aurora_live_maya/mayastar.py",
+        include_bytes!("../../../../maya/aurora_live_maya/mayastar.py"),
+    ),
+    (
         "aurora_live_maya/shape.py",
         include_bytes!("../../../../maya/aurora_live_maya/shape.py"),
     ),

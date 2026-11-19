@@ -790,7 +790,7 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.3.2). It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.4.0). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
@@ -877,9 +877,19 @@ now** sends at once and reloads the texture files.
   `auroraShapeHead`), so a garment skinned to this skeleton previews with
   your shape once, not twice. Nothing existing is changed and nothing is
   added to the live list.
-- **Not in this version:** **Apply my shape to the selected skeleton** (Aurora
-  says it needs the Blender plug-in), rig creation, posing helpers and
-  explicit grouping. Use the Blender plug-in for those.
+- **Apply my shape to a MayaStar rig.** With MayaStar open and its rig in the
+  scene (select the rig when the scene holds more than one), **Apply my
+  shape to the selected skeleton** hands your shape to MayaStar's own
+  **Import XML shape**, as the Blender plug-in hands it to Avastar: MayaStar
+  moves its sliders, controls and meshes itself. Aurora sends the shape as
+  the Legacy Viewer's appearance XML (the shape editor's **Save as XML**,
+  now with the `display`, `u8` and `type` attributes MayaStar reads); the
+  plug-in answers MayaStar's file dialog with it for that one call and
+  deletes the file. One undo reverts it. Each joint of the rig then keeps
+  the shape's bind, so a garment previews with your shape once. A rig
+  without MayaStar is refused: Maya has no other shape updater to drive.
+- **Not in this version:** rig creation, posing helpers and explicit
+  grouping. Use the Blender plug-in for those.
 
 The plug-in's pure rules (frames, binds, weights, packing, colour tables) have
 tests that run without Maya: `python maya/tests/test_convert.py`.

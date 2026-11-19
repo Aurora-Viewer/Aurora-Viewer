@@ -13,7 +13,7 @@ import uuid
 import maya.api.OpenMaya as om
 from maya import cmds
 
-from . import capture, client, convert, lods, materials, shape
+from . import capture, client, convert, lods, materials, mayastar, shape, shape_rules
 
 SOURCES_KEY = "auroraLiveMayaSources"
 BIND_KEY = "auroraLiveMayaBindAxes"
@@ -152,8 +152,8 @@ class Session:
     def connect(self, port):
         self.disconnect()
         set_option(PORT, int(port))
-        # Import / LOD and shape creation; applying a shape stays Blender's.
-        self.client = client.Client(int(port), capabilities=("import-lods", "shape-transfer"))
+        # Import / LOD, shape creation, and shape application through MayaStar.
+        self.client = client.Client(int(port), capabilities=("import-lods", "shape-transfer", "shape-apply"))
         self.revision, self.last_content, self.forced = 0, None, True
         self._start_timer()
 
@@ -346,6 +346,13 @@ class Session:
         success only once this answers."""
         identity = payload.get("id", "") if isinstance(payload, dict) else ""
         try:
+            if isinstance(payload, dict) and payload.get("action") == "apply":
+                shape_rules.validate(payload, shape_rules.skeleton())
+                rig = mayastar.apply(payload)
+                self.notice = "Shape applied with MayaStar to " + rig
+                self.touch()
+                self.client.shape_result(identity)
+                return
             unit = capture.scene_unit(self.units(), [self.node(key) for key in self.sources if self.node(key)])
             group = shape.create(payload, capture.up_axis(), unit)
             self.notice = "Shape received: " + group.rsplit("|", 1)[-1]
