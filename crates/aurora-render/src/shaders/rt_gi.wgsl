@@ -318,7 +318,7 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
     if (before.x < 0.0) {
         return out;
     }
-    let n = normal_at(px, there, d);
+    let n = normal_at(px, d);
     out.light = textureLoad(scene_tex, vec2<i32>(before), 0).rgb;
     out.normal = select(n, -n, dot(n, dir) > 0.0);
     out.seen = true;
@@ -491,7 +491,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let world = unproject(pixel, depth);
-    let flat = normal_at(pixel, world, depth);
+    let flat = normal_at(pixel, depth);
     let n = smooth_normal(pixel, flat);
     let dist = distance(world, params.camera.xyz);
     let origin = ray_origin(world, flat, dist);
@@ -657,7 +657,7 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let world = unproject(pixel, depth);
-    let flat = normal_at(pixel, world, depth);
+    let flat = normal_at(pixel, depth);
     let n = smooth_normal(pixel, flat);
     let dist = distance(world, params.camera.xyz);
     let origin = ray_origin(world, flat, dist);
@@ -695,7 +695,7 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         if (abs(dot(flat, at_q - world)) > 0.01 + 0.01 * dist) {
             continue;
         }
-        let flat_q = normal_at(q * 2, at_q, depth_q);
+        let flat_q = normal_at(q * 2, depth_q);
         let n_q = smooth_normal(q * 2, flat_q);
         if (dot(n, n_q) < 0.9) {
             continue;

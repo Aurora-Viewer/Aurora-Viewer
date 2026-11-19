@@ -397,7 +397,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let world = unproject(pixel, depth);
-    let flat = normal_at(pixel, world, depth);
+    let flat = normal_at(pixel, depth);
     let n = smooth_normal(pixel, flat);
     let dist = distance(world, params.camera.xyz);
     var seed = pcg(id.x + pcg(id.y + pcg(u32(params.mode.z))));
@@ -556,7 +556,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         own = textureLoad(mid, pixel, 0);
         n = unpack_normal(unpack2x16snorm(own.w));
     } else {
-        n = smooth_normal(pixel, normal_at(pixel, world, depth));
+        n = smooth_normal(pixel, normal_at(pixel, depth));
     }
     let dist = distance(world, params.camera.xyz);
     var seed = pcg(id.y + pcg(id.x + pcg(u32(params.mode.z) + 0x9e3779b9u)));
@@ -666,7 +666,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         // a fifth of the pass.)
         let own_light = select(0xFFFFFFFFu, own.x & 0xFFu, (own.x & MID_DRAWN) != 0u);
         let own_seen = select(0.0, 1.0, (own.x & MID_SEEN) != 0u);
-        let pixel_size = distance(unproject(pixel + vec2<i32>(1, 0), depth), world);
+        let pixel_size = pixel_width(pixel, depth);
         let soft = 0.5 * penumbra / max(pixel_size, 1e-6);
         var arrived = 0.0;
         var reached = 0.0;
