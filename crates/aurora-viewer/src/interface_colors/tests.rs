@@ -33,8 +33,47 @@ fn colors(p: &Palette) -> Vec<(&'static str, Color32)> {
         ("warn", p.warn),
         ("danger_dim", p.danger_dim),
         ("indigo_light", p.indigo_light),
+        ("axis_z", p.axis_z),
         ("on_accent", p.on_accent),
     ]
+}
+
+/// #3657: Z took `indigo_light`, which follows the accent: a red accent drew
+/// Z in the red of X.
+#[test]
+fn the_accent_leaves_the_z_axis_blue() {
+    let skin = skin();
+    for accent in ["#EF4444", "#22C55E", "#14B8A6"] {
+        let (p, _) = derive(
+            skin,
+            &InterfaceColors {
+                accent: rgba(accent),
+                ..Default::default()
+            },
+        );
+        assert_ne!(p.indigo_light, skin.indigo_light, "{accent}: the accent family still moves");
+        let z = crate::build::draw::axis_color(&p, 2);
+        assert_eq!(z, skin.indigo_light, "{accent}");
+        assert_ne!(z, crate::build::draw::axis_color(&p, 0), "{accent}: Z is not X");
+        assert_ne!(z, crate::build::draw::axis_color(&p, 1), "{accent}: Z is not Y");
+    }
+}
+
+/// The X / Y / Z fields write their letter in the axis colour: on a light
+/// surface Z gets the readability X and Y get.
+#[test]
+fn the_z_axis_reads_on_a_light_surface() {
+    let (p, _) = derive(
+        skin(),
+        &InterfaceColors {
+            surface: rgba("#F4F4F5"),
+            ..Default::default()
+        },
+    );
+    for axis in 0..3 {
+        let c = crate::build::draw::axis_color(&p, axis);
+        assert!(contrast(c, p.panel) >= TEXT - 0.05, "axis {axis}: {}", contrast(c, p.panel));
+    }
 }
 
 fn assert_same(a: &Palette, b: &Palette) {

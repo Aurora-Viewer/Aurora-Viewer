@@ -32,6 +32,7 @@ use crate::ui::place_details::Ctx;
 use crate::ui::texture_picker::TexturePicker;
 use crate::ui::widgets::{self, ActionKind, DialogButton, Floater};
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_llsd::Llsd;
 use aurora_net::groups::{GroupInfo, name};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
@@ -451,7 +452,7 @@ impl GroupCreateUi {
                 c.want_names.insert(me);
                 ui.label(small(aurora_i18n::tr!("ui-group-profile-founded-by").to_owned() + " "));
                 ui.label(
-                    egui::RichText::new(c.world.social.display_name_of(&me))
+                    egui::RichText::new(c.world.social.display_name_in(NameScope::Roster, &me))
                         .size(12.0)
                         .color(p.violet_light),
                 );

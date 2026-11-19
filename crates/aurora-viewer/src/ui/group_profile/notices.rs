@@ -94,6 +94,7 @@ pub fn sender(from: &str) -> &str {
 /// the attachment, the date. Shared with the Home tab.
 pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, selected: bool, icon: bool, now: i64) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -165,9 +166,18 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
         ui.max_rect().right_bottom() - Vec2::new(4.0, 0.0),
     );
     ui.allocate_rect(body, Sense::hover());
-    let list_w = LIST_W.min(body.width() * 0.45);
-    let left = Rect::from_min_max(body.min, Pos2::new(body.left() + list_w, body.bottom()));
-    let right = Rect::from_min_max(Pos2::new(left.right() + 12.0, body.top()), body.max);
+    // panel_group_notices.xml places the message below the list. Keep
+    // Aurora's two columns only when both panes have room for their actions.
+    let scale = crate::ui::fonts::scale(ui.ctx());
+    let (left, right) = if body.width() < 640.0 * scale {
+        let list_h = (body.height() * 0.4).min(220.0 * scale);
+        let left = Rect::from_min_size(body.min, Vec2::new(body.width(), list_h));
+        (left, Rect::from_min_max(Pos2::new(body.left(), left.bottom() + 12.0), body.max))
+    } else {
+        let list_w = LIST_W.min(body.width() * 0.45);
+        let left = Rect::from_min_max(body.min, Pos2::new(body.left() + list_w, body.bottom()));
+        (left, Rect::from_min_max(Pos2::new(left.right() + 12.0, body.top()), body.max))
+    };
     let mut l = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(left)
@@ -197,11 +207,22 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
 /// The search, "New notice", "Refresh", then the notices.
 fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let send = v.can(powers::NOTICES_SEND);
-        let w = ui.available_width() - if send { 150.0 } else { 40.0 };
-        widgets::search_field(ui, &mut st.notices.search, aurora_i18n::tr!("ui-group-notices-search"), w.max(80.0));
+        let new_width = if send {
+            widgets::action_button_fit(ui, "pencil-filled", aurora_i18n::tr!("ui-group-notices-new")) + 5.0
+        } else {
+            0.0
+        };
+        let w = ui.available_width() - new_width - 32.0;
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.notices.search,
+            aurora_i18n::tr!("ui-group-notices-search"),
+            w.max(80.0),
+        );
         if send
             && widgets::action_button(
                 ui,
@@ -323,13 +344,9 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 });
             });
             ui.add_space(8.0);
-            for line in n.message.lines() {
-                if line.trim().is_empty() {
-                    ui.add_space(6.0);
-                } else {
-                    crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
-                }
-            }
+            crate::ui::chat::select::document(ui, p, n.id, &n.message, |ui, line| {
+                crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
+            });
             if let Some((name, asset_type)) = &n.attachment {
                 ui.add_space(8.0);
                 egui::Frame::new()
@@ -338,29 +355,52 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                     .inner_margin(egui::Margin::symmetric(9, 7))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
+                        let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+                        let title_width = ui.painter().layout_no_wrap(name.clone(), font.clone(), p.ink).size().x;
+                        let kind_width = ui
+                            .painter()
+                            .layout_no_wrap(asset_label(*asset_type).into(), FontId::proportional(11.5), p.muted)
+                            .size()
+                            .x;
+                        let info_width = (25.0 + title_width.max(kind_width)).min(ui.available_width());
+                        let (icon, label) = if n.saved {
+                            ("check", aurora_i18n::tr!("ui-group-notices-saved"))
+                        } else {
+                            ("download-filled", aurora_i18n::tr!("ui-group-notices-save"))
+                        };
+                        let button_label = if widgets::action_button_fit(ui, icon, label) > ui.available_width() && !n.saved {
+                            aurora_i18n::tr!("common-save")
+                        } else {
+                            label
+                        };
+                        // The attachment and its action are separate items of
+                        // a wrapping row: neither may paint over the other.
+                        ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
-                            widgets::glyph(ui, attachment_icon(*asset_type), p.amber, 17.0);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                ui.label(
-                                    egui::RichText::new(name)
-                                        .font(FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())))
-                                        .color(p.ink),
-                                );
-                                ui.label(egui::RichText::new(asset_label(*asset_type)).size(11.5).color(p.muted));
-                            });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let (icon, label) = if n.saved {
-                                    ("check", aurora_i18n::tr!("ui-group-notices-saved"))
-                                } else {
-                                    ("download-filled", aurora_i18n::tr!("ui-group-notices-save"))
-                                };
-                                if widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, Vec2::new(0.0, 26.0), !n.saved).clicked()
-                                {
-                                    actions.push(GroupAction::SaveAttachment(v.id));
-                                }
-                            });
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(info_width, 0.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    widgets::glyph(ui, attachment_icon(*asset_type), p.amber, 17.0);
+                                    ui.vertical(|ui| {
+                                        ui.set_width((info_width - 25.0).max(1.0));
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        ui.add(egui::Label::new(egui::RichText::new(name).font(font).color(p.ink)).wrap());
+                                        ui.add(
+                                            egui::Label::new(egui::RichText::new(asset_label(*asset_type)).size(11.5).color(p.muted))
+                                                .wrap(),
+                                        );
+                                    });
+                                },
+                            );
+                            let height = 26.0_f32.max(ui.text_style_height(&egui::TextStyle::Body) + 8.0);
+                            if widgets::action_button_if(ui, p, icon, button_label, ActionKind::Flat, Vec2::new(0.0, height), !n.saved)
+                                .on_hover_text(label)
+                                .clicked()
+                            {
+                                actions.push(GroupAction::SaveAttachment(v.id));
+                            }
                         });
                     });
             }

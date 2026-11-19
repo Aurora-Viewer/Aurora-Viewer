@@ -113,6 +113,7 @@ script is started. Rigged sources continue to follow the avatar as before.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
      then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
 3. In Aurora's **LiveMesh** window, open the **Connection** tab and click **Enable preview**.
+   The plug-in finds the preview's key by itself (see "Wire protocol v1").
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
@@ -767,8 +768,17 @@ can be opened normally and connected through the Aurora sidebar.
 
 ## Wire protocol v1
 
-TCP listens on IPv4 loopback only. The client sends the eight bytes
-`AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
+TCP listens on IPv4 loopback only. Each time the preview starts, Aurora draws
+a new random key (64 hex characters) and writes it to `blender-live/<port>.token`
+in its data folder (`%LOCALAPPDATA%\Aurora\AuroraViewer\data` on Windows,
+`~/.local/share/auroraviewer` on Linux, `~/Library/Application
+Support/org.Aurora.AuroraViewer` on macOS; owner-only on Linux and macOS). It
+removes the file when the preview stops. The plug-in reads it before every
+connection, so no other program, another user's included, can push meshes to
+the preview. The client sends the eight bytes `AURBLD2\n`, then that key.
+A wrong key closes the connection and the LiveMesh window says so. A plug-in
+older than 0.15.0 sends `AURBLD1\n` alone: it receives `{"protocol":2}` and
+reports an incompatible protocol until it is updated. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
 translation removed), negotiated `features`, `max_bytes` (64 MiB), and
 `max_decoded_bytes` (256 MiB). Every subsequent client message is a four-byte

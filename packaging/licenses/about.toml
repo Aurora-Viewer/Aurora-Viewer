@@ -1,0 +1,38 @@
+# cargo-about configuration: the licences of the crates built into Aurora
+# Viewer, written to THIRD-PARTY-LICENSES.md by scripts/third-party-licenses.ps1.
+# A licence missing from this list makes the script fail: check that it is
+# compatible with the GPL version 3 (AGENTS.md section 5) before adding it.
+accepted = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "GPL-3.0-or-later",
+]
+# The systems the viewer is published for.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+# Build scripts, code generators and tests are not part of the viewer.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Aurora's own crates are under its own licence (LICENSE, NOTICE.md).
+private = { ignore = true }
+# Crates whose packages lack a licence file cargo-about can read.
+workarounds = ["ring", "rustls"]

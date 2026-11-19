@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn vr_body_follow_walk_override_suspends_run_enhancement_then_restores_user_run() {
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    f.water = None;
+    f.running = true;
+    let input = MoveInput {
+        forward: true,
+        ..Default::default()
+    };
+    let mut walk = crate::camera::vr::WalkOverride::default();
+    assert_eq!(walk.update(true, true), Some(false));
+    walk.apply_frame(&mut f);
+    assert!(!f.running && f.suspended);
+    assert_eq!(runtime.update(&prefs(), &f, &input, Instant::now()).motion, Motion::default());
+    assert_eq!(walk.update(false, true), Some(true));
+    let mut f = frame();
+    f.water = None;
+    f.running = true;
+    walk.apply_frame(&mut f);
+    assert_eq!(runtime.update(&prefs(), &f, &input, Instant::now()).motion.mode, 1);
+}
+
+#[test]
 fn passage_feedback_requires_the_current_action_and_an_actual_terminal_report() {
     use aurora_net::bridge::PassageReport;
     let now = Instant::now();
@@ -2156,4 +2179,44 @@ fn surface_double_ascent_requires_two_edges_and_expires_or_cancels_with_context(
         Some(Action::Jump),
         "an underwater return must not count as the first surface tap"
     );
+}
+
+/// #2008: the runtime swims in a skybox pool from the volume's top and
+/// floor alone, the region water and terrain far below.
+#[test]
+fn a_prim_water_volume_drives_swimming_and_is_left_at_its_top() {
+    use water_volume::{Volume, water_at};
+    let pool = [Volume::new(Vec3::new(128.0, 128.0, 1001.2), glam::Quat::IDENTITY, Vec3::new(8.0, 8.0, 2.4)).expect("pool")];
+    let in_pool = |z: f32, floor: f32| {
+        let mut f = frame();
+        f.position.z = z;
+        let water = water_at(&pool, f.position, f.height, Some(floor));
+        f.water = water.map(|w| w.surface).or(Some(20.0));
+        f.ground = water.map(|w| w.floor).or(Some(10.0));
+        f.on_ground = false;
+        f
+    };
+    let mut runtime = Runtime::default();
+    let now = Instant::now();
+    let mut f = in_pool(1001.8, 1000.0);
+    assert_eq!(f.water, Some(1002.4));
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert_eq!(runtime.state, State::Surface);
+    f.position.z = 1000.8;
+    let down = MoveInput {
+        down: true,
+        ..Default::default()
+    };
+    runtime.update(&prefs(), &f, &down, now);
+    assert_eq!(runtime.state, State::Submerged);
+    // above the top: the same exit as region water
+    let f = in_pool(1004.5, 1000.0);
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert!(!runtime.state.swimming());
+
+    // a wading pool (its floor 0.6 m under the top) is not deep enough to swim
+    let mut runtime = Runtime::default();
+    let f = in_pool(1002.1, 1001.8);
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert!(!runtime.state.swimming());
 }

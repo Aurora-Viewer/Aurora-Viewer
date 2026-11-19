@@ -9,6 +9,17 @@ pub(super) struct State {
     edits: Vec<(usize, ik::JointEdit)>,
 }
 impl State {
+    /// Carry each rotation edit from the old base to the new one, as a change
+    /// on the joint's own base: the edit keeps what the user did, never what
+    /// the old base held. Translations are already offsets from the base.
+    fn rebase(&mut self, old: &ik::LocalPose, new: &ik::LocalPose) {
+        for (_, edit) in &mut self.edits {
+            let (Some(rotation), Some(from), Some(to)) = (edit.rotation, old.rotations.get(edit.bone), new.rotations.get(edit.bone)) else {
+                continue;
+            };
+            edit.rotation = Some((*to * from.inverse() * rotation).normalize());
+        }
+    }
     pub fn owns(&self, bone: usize) -> bool {
         self.owners.contains(&bone)
     }
@@ -49,7 +60,7 @@ impl State {
             })
             .collect()
     }
-    fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
+    pub(super) fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
         self.owners.insert(owner);
         for bone in 0..before.rotations.len() {
             let rotation = (before.rotations[bone].dot(after.rotations[bone]).abs() < 0.9999999).then_some(after.rotations[bone]);
@@ -171,7 +182,9 @@ impl Editor {
             self.authoring.remove(bone);
         }
         self.commit();
+        let start = pose.clone();
         let bones = [Some(bone), mirror];
+        let mut applied = Vec::new();
         for bone in bones.into_iter().flatten() {
             if Some(bone) == pinned_mirror {
                 continue;
@@ -188,6 +201,34 @@ impl Editor {
             let before = pose.clone();
             if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, &goal) {
                 self.authoring.record(bone, &before, &pose);
+                applied.push(goal);
+            }
+        }
+        if self.clip.active {
+            let followers = self.clip_followers();
+            self.follow_clip_lead(rig, bone, mirror, &start, &mut pose, &scale, rotate);
+            // A turned follower above the selected joint (an elbow picked
+            // with its wrist) carries it: the joint is solved again under its
+            // turned parent so that it holds the handle's rotation. Left
+            // carried, the next drag frame read the joint off the handle and
+            // turned it back, and the follower with it, so the hand shook.
+            let above = |joint: usize| {
+                let mut at = rig.parent[joint];
+                while let Some(parent) = at {
+                    if followers.contains(&parent) {
+                        return true;
+                    }
+                    at = rig.parent[parent];
+                }
+                false
+            };
+            if rotate {
+                for goal in applied.iter().filter(|goal| above(goal.bone)) {
+                    let before = pose.clone();
+                    if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, goal) {
+                        self.authoring.record(goal.bone, &before, &pose);
+                    }
+                }
             }
         }
         self.refresh_clip_marks();
@@ -199,10 +240,64 @@ impl Editor {
         if self.graph.selected.is_some() || self.drag.is_some() || self.gizmo.dragging() || self.weight != 1.0 {
             return;
         }
+        // In the animation editor the fields are read again only when the
+        // joint, the playhead, the clip or its preview changes, or an edit
+        // ends: read every frame, the shown pose's last digits made them
+        // flicker while nothing was being done.
+        if self.clip.active {
+            // a few reads after a change: the shown pose may follow an edit
+            // a frame late
+            let key = self.clip.authored_sync_key(bone);
+            let reads = match self.clip.authored_sync {
+                Some((last, reads)) if last == key => reads,
+                _ => 0,
+            };
+            if reads >= 3 {
+                return;
+            }
+            self.clip.authored_sync = Some((key, reads + 1));
+        }
         let local = frame.model.inverse() * frame.joints[bone];
         self.position = local.transform_point3(self.contact);
         let (z, y, x) = local.to_scale_rotation_translation().1.to_euler(EulerRot::ZYX);
         self.degrees = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
+    }
+    /// The edits and contacts follow the session's base when it changes (an
+    /// animation layer added, removed, moved or scrubbed): they stay the
+    /// user's change on whatever is under them, and a base taken away never
+    /// leaves its pose behind in them (`clip::authored_frame` records that
+    /// change only). Not inside the clip: there the base is the clip itself,
+    /// and the edits saved on entering it come back with the base they had.
+    pub(super) fn follow_edit_base(&mut self, world: &World) {
+        if self.clip.active {
+            return;
+        }
+        let Some(new) = world.ik_edit_base.clone() else { return };
+        let Some(old) = self.edit_base.replace(new.clone()) else { return };
+        let rig = &world.avatar_lib.rig;
+        if std::sync::Arc::ptr_eq(&old, &new)
+            || old.pose.rotations.len() != rig.len()
+            || new.pose.rotations.len() != rig.len()
+            || old.pose.positions.len() != rig.len()
+            || new.pose.positions.len() != rig.len()
+        {
+            return;
+        }
+        self.authoring.rebase(&old.pose, &new.pose);
+        let before = rig.world_with(&old.pose.rotations, Vec3::ZERO, &old.pose.positions, &rig.scale);
+        let after = rig.world_with(&new.pose.rotations, Vec3::ZERO, &new.pose.positions, &rig.scale);
+        // a contact on an object follows that object, not the base
+        for goal in self.goals.iter_mut().filter(|g| g.follow.is_none()) {
+            let (Some(from), Some(to)) = (before.get(goal.bone), after.get(goal.bone)) else {
+                continue;
+            };
+            let moved = *to * from.inverse();
+            let (_, turn, _) = moved.to_scale_rotation_translation();
+            goal.position = moved.transform_point3(goal.position);
+            goal.rotation = goal.rotation.map(|q| (turn * q).normalize());
+            goal.pole = goal.pole.map(|p| moved.transform_point3(p));
+        }
+        self.refresh = true;
     }
 }
 

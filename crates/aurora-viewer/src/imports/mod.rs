@@ -358,6 +358,8 @@ pub struct Entry {
     pub local_mesh_ids: Vec<Uuid>,
     pub local_model: usize,
     pub local_use_scale: bool,
+    pub local_scene: bool,
+    pub local_scene_size: Option<glam::Vec3>,
     pub watch: Option<local::Watch>,
     pub material_index: usize,
     pub empty_alpha: bool,
@@ -398,6 +400,7 @@ impl Entry {
             Ok(source) => (Some(source), Status::Ready),
             Err(error) => (None, Status::Error(error)),
         };
+        let local_scene = matches!(&source, Some(Source::Mesh(draft)) if local::scene::supported(draft));
         Self {
             id: Uuid::new_v4(),
             load_choice: None,
@@ -441,6 +444,8 @@ impl Entry {
             local_mesh_ids: Vec::new(),
             local_model: 0,
             local_use_scale: false,
+            local_scene,
+            local_scene_size: None,
             watch: None,
             material_index: 0,
             local_live: true,
@@ -622,6 +627,13 @@ impl Default for Imports {
         }
     }
 }
+/// The largest side of a material's maps: the Legacy Viewer material
+/// editor encodes each map with LLViewerTextureList::convertToUploadFile at
+/// its default, MAX_IMAGE_SIZE_DEFAULT (2048; llmaterialeditor.cpp). Given
+/// to every material row, when added and when a saved local preview is
+/// restored.
+pub(super) const MATERIAL_MAP_MAX: u32 = 2048;
+
 impl Imports {
     /// Stage a locally authored, already validated native file in the ordinary
     /// inspector. Upload/payment still follows the existing explicit action.
@@ -762,6 +774,17 @@ impl Imports {
         }
         actions::system(&world.inventory, kind.asset_type()).unwrap_or(world.inventory.root)
     }
+    /// The demo server's upload prices. `texture-free` plays an account whose
+    /// benefits make every upload free (L$0).
+    pub fn demo_prices(&self) -> Prices {
+        let (price, large) = if self.demo_mode == "texture-free" { (0, 0) } else { (10, 40) };
+        Prices {
+            texture: Some(price),
+            large_texture: Some(large),
+            sound: Some(price),
+            animation: Some(price),
+        }
+    }
     pub fn total(&self, prices: &Prices) -> Option<i32> {
         if self
             .entries
@@ -886,7 +909,7 @@ impl Imports {
                             } else {
                                 Self::default_folder(world, prefs, Kind::Texture)
                             },
-                            name: image.name.clone(),
+                            name: files::texture_names::upload_name(&entry.name, &image.name),
                             description: String::new(),
                             source: Source::Texture(image.pixels.clone()),
                             options,
@@ -1012,7 +1035,9 @@ impl Imports {
                     self.cost_overrides
                         .insert((step.kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), cost);
                 }
-                self.fail(step.entry, ui::error(error));
+                // A price change stops the batch: the user confirms the new price.
+                let price_changed = matches!(error, Error::PriceChanged(_));
+                self.step_failed(&step, ui::error(error), price_changed);
                 None
             }
         }
@@ -1035,6 +1060,82 @@ impl Imports {
         }
         self.message = reason;
         self.cancel_remaining();
+    }
+    /// A step that could not be encoded or uploaded. do_bulk_upload
+    /// (llviewermenufile.cpp) saves each material on its own, so a free
+    /// material or free map that fails only fails the materials that need it;
+    /// a paid step, or one that `stops_batch`, stops the batch.
+    fn step_failed(&mut self, step: &Step, reason: String, stops_batch: bool) {
+        let material_map = step.kind == Kind::Texture && step.entry.is_none();
+        let continues = !stops_batch && step.cost == 0 && (step.kind == Kind::Material || material_map);
+        if material_map || continues {
+            self.fail_material_batch_step(step, reason.clone());
+        }
+        if !continues {
+            self.fail(step.entry, reason);
+        }
+    }
+    /// The current step's encoded asset: its upload command, or the step fails
+    /// like an upload refusal (a free map or material fails alone).
+    fn encoded(&mut self, result: Result<Vec<u8>, String>) -> Option<aurora_net::NetCommand> {
+        match result {
+            Ok(data) => {
+                let (request, step) = self.current.as_ref()?;
+                if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
+                    entry.status = Status::Uploading;
+                }
+                Some(aurora_net::NetCommand::UploadAsset {
+                    request: *request,
+                    upload: Request {
+                        kind: step.kind,
+                        folder: step.folder,
+                        name: step.name.clone(),
+                        description: step.description.clone(),
+                        expected_cost: step.cost,
+                        permissions: step.permissions,
+                        data,
+                    },
+                })
+            }
+            Err(error) => {
+                let (_, step) = self.current.take()?;
+                log::warn!("import: {} could not be encoded: {error}", step.name);
+                self.step_failed(&step, error, false);
+                None
+            }
+        }
+    }
+    fn fail_material_batch_step(&mut self, step: &Step, reason: String) {
+        let failed: HashSet<Uuid> = if let Some(entry) = step.entry {
+            HashSet::from([entry])
+        } else if step.kind == Kind::Texture {
+            self.entries
+                .iter()
+                .filter_map(|entry| {
+                    if !matches!(entry.status, Status::Preparing) {
+                        return None;
+                    }
+                    // The same options as the map's step in `start`, "scale to 1K" included.
+                    let options = self.options(entry);
+                    let depends_on_failed_texture = matches!(
+                        &entry.source,
+                        Some(Source::Material { images, .. })
+                            if images.iter().flatten().any(|image| image.asset.is_none() && image.upload_key(options) == step.key)
+                    );
+                    depends_on_failed_texture.then_some(entry.id)
+                })
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        for entry in &mut self.entries {
+            if failed.contains(&entry.id) {
+                entry.status = Status::Error(reason.clone());
+            }
+        }
+        self.queue
+            .retain(|pending| !pending.entry.is_some_and(|entry| failed.contains(&entry)));
+        self.message = reason;
     }
     pub fn poll(
         &mut self,
@@ -1079,6 +1180,9 @@ impl Imports {
                             };
                             entry.options.max_width = maximum;
                             entry.options.max_height = maximum;
+                        } else if matches!(&entry.source, Some(Source::Material { .. })) {
+                            entry.options.max_width = MATERIAL_MAP_MAX;
+                            entry.options.max_height = MATERIAL_MAP_MAX;
                         }
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
@@ -1142,30 +1246,9 @@ impl Imports {
                         }
                     }
                 }
-                Worker::Encoded(request, result) if self.current.as_ref().is_some_and(|(id, _)| *id == request) => match result {
-                    Ok(data) => {
-                        let step = &self.current.as_ref().expect("matched request").1;
-                        if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-                            entry.status = Status::Uploading;
-                        }
-                        commands.push(aurora_net::NetCommand::UploadAsset {
-                            request,
-                            upload: Request {
-                                kind: step.kind,
-                                folder: step.folder,
-                                name: step.name.clone(),
-                                description: step.description.clone(),
-                                expected_cost: step.cost,
-                                permissions: step.permissions,
-                                data,
-                            },
-                        });
-                    }
-                    Err(error) => {
-                        let step = self.current.take().expect("matched request").1;
-                        self.fail(step.entry, error);
-                    }
-                },
+                Worker::Encoded(request, result) if self.current.as_ref().is_some_and(|(id, _)| *id == request) => {
+                    commands.extend(self.encoded(result));
+                }
                 Worker::Preview(id, generation, pixels) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
@@ -1328,13 +1411,14 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
+                                    let targets = mesh::default_lod_targets(triangles);
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;
                                             lod.path = None;
-                                            lod.source = mesh::LodSource::Auto;
+                                            lod.source = mesh::LodSource::Legacy;
                                         }
-                                        lod.triangles = (triangles / 4usize.pow((3 - i) as u32)).max(1);
+                                        lod.triangles = targets[i];
                                     }
                                     draft.lods[3].file = None;
                                     draft.lods[3].path = Some(path.clone());
@@ -1420,7 +1504,12 @@ impl Imports {
                         && image.asset.is_none()
                     {
                         let Some(receipt) = self.uploaded.get(&image.upload_key(step.options)) else {
-                            self.fail(step.entry, aurora_i18n::tr!("import-unverified").into());
+                            let reason = aurora_i18n::tr!("import-unverified").into();
+                            if step.cost == 0 {
+                                self.fail_material_batch_step(&step, reason);
+                            } else {
+                                self.fail(step.entry, reason);
+                            }
                             return commands;
                         };
                         ids[slot] = Some(receipt.item.asset_id);
