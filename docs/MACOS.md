@@ -123,6 +123,19 @@ would show. A Legacy Viewer installed on the Mac can
 lend its plugins instead: in **Preferences › Media**, type the path of its
 application (its `.app` in `/Applications`) as the plugins folder.
 
+## Second Life links
+
+Aurora Viewer.app declares the `secondlife://`, `hop://` and
+`x-grid-location-info://` links, so macOS can open them with it: a link
+clicked in a web browser starts the viewer, or goes to the one already
+running. Preferences › Language and updates › "Open SLURL and Hypergrid
+links in Aurora" makes Aurora the default application for the three, and
+names the application that has them otherwise. macOS always gives a link to
+an application that declares it: turning the switch off hands the links to
+another viewer when one is installed, and they stay with Aurora when there
+is none. The switch is not shown when the viewer runs outside the
+application (`./target/release/aurora-viewer`).
+
 ## Updates
 
 The viewer tells you when a new version is out, but it cannot replace
@@ -142,7 +155,6 @@ paste the path.
 ## Not on macOS yet
 
 - Automatic installation of updates (above).
-- Opening `secondlife://` links from a web browser.
 - The crash report window.
 
 ## Building from source

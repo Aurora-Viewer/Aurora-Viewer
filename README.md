@@ -1193,7 +1193,10 @@ exe before publishing; the local build also writes it to `version.txt`.
   Preferences › Language and updates › "Open SLURL and Hypergrid links in
   Aurora" registers all three schemes for the current user (the registry on
   Windows, a desktop entry and `mimeapps.list` on Linux, see
-  [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
+  [docs/LINUX.md](docs/LINUX.md#second-life-links); the default application
+  of Launch Services on macOS, which sends the link to the application
+  itself instead of the command line, see
+  [docs/MACOS.md](docs/MACOS.md#second-life-links)). Manage saved grids from
   the login grid menu or Preferences › Network and cache › Manage grids.
 - `--uninstall`: what Preferences › Language and updates › "Remove Aurora
   from this computer" does, without its confirmation (see

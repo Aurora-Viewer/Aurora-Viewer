@@ -3548,6 +3548,7 @@ ui-options-layout = レイアウト
 ui-options-slurl-links = Second Lifeリンク
 ui-options-slurl-links-open = SlurlとHypergridリンクをAuroraで開く
 ui-options-slurl-links-open-help = このユーザの secondlife://、hop://、x-grid-location-info:// を登録します。ログイン前は場所からグリッドと開始地点を選択し、ワールド内では詳細を開きます。
+ui-options-slurl-links-kept = これらのリンクを開くアプリケーションがほかにないため、macOSは引き続きAuroraで開きます。
 ui-options-slurl-links-other = これらのリンクは現在{ $program }で開きます。
 ui-options-backup = バックアップ
 ui-options-backup-save = 設定をバックアップ
