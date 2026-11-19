@@ -4201,6 +4201,11 @@ impl Scene {
         animesh::owner(&world.objects, idx)
     }
 
+    /// The palette base of a skeleton owner that has one.
+    pub fn palette_of(&self, owner: &Uuid) -> Option<u32> {
+        self.palette_slots.get(owner).map(|s| *s * anim::PALETTE_JOINTS as u32)
+    }
+
     /// Palette base (first matrix index) for a skeleton owner.
     fn palette_base(&mut self, owner: Uuid) -> u32 {
         if let Some(s) = self.palette_slots.get(&owner) {

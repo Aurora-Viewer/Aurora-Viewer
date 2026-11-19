@@ -637,6 +637,8 @@ pub struct App {
     cursors: crate::cursors::Cursors,
     /// Demo mode: answers to the build tools' commands.
     build_demo: crate::build::demo_sim::DemoSim,
+    /// AURORA_DEMO_RT_WALK (app/double_click.rs).
+    rt_walk_demo: double_click::RtWalkDemo,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -1977,6 +1979,7 @@ impl App {
             interactions: Default::default(),
             cursors: crate::cursors::Cursors::with_palette(&palette),
             build_demo: Default::default(),
+            rt_walk_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -14407,6 +14410,7 @@ impl App {
         }
         if self.demo {
             self.demo_double_click_steps();
+            self.demo_rt_walk_steps();
             self.demo_avatar_travel_steps();
         }
         self.demo_hud_drag_steps();
@@ -23850,6 +23854,19 @@ impl ApplicationHandler for App {
                 }
                 for ev in crate::demo::animesh_events() {
                     self.world.apply(ev);
+                }
+                // AURORA_DEMO_RT_WALK: our avatar heavy and hatted
+                if crate::demo::rt_walk()
+                    && let Some(wearer) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key.local_id)
+                {
+                    for ev in crate::demo::rt_walk_events(wearer) {
+                        self.world.apply(ev);
+                    }
                 }
                 if crate::demo::animation_edit_demo()
                     && let Some(wearer) = self

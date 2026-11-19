@@ -7622,6 +7622,64 @@ pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
     }]
 }
 
+/// AURORA_DEMO_RT_WALK=1: our avatar walks with what makes an avatar of the
+/// grid heavy for the ray tracer, to see its traced shadow follow it
+/// (app/rt_walk.rs).
+pub fn rt_walk() -> bool {
+    std::env::var("AURORA_DEMO_RT_WALK").is_ok_and(|v| v.trim() == "1")
+}
+
+/// What `wearer` (our avatar) wears for AURORA_DEMO_RT_WALK: the rigged
+/// demo mesh twice, on the chest and the pelvis (with AURORA_DEMO_ANIMESH
+/// and AURORA_DEMO_ANIMESH_TRIS=315000, more triangles than the ray tracer
+/// poses again in a frame besides the nearest skeleton's), and a hat, a
+/// prim on the skull: from the camera behind the avatar it is nearer than
+/// the body, and it moves as the body does.
+pub fn rt_walk_events(wearer: u32) -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let mut objects = Vec::new();
+    for (k, state) in [0x10u8, 0xA0].into_iter().enumerate() {
+        let mut worn = prim(
+            OWN_RIGGED + 1 + k as u32,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            aurora_prim::VolumeParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            "",
+        );
+        worn.parent_id = wearer;
+        // (chest, pelvis)
+        worn.state = state;
+        objects.push(worn);
+    }
+    let mut hat = prim(
+        OWN_RIGGED + 3,
+        Vec3::new(0.0, 0.0, 0.12),
+        Quat::IDENTITY,
+        Vec3::new(0.3, 0.3, 0.12),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0),
+        te([0.75, 0.2, 0.25, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    hat.parent_id = wearer;
+    // (skull)
+    hat.state = 0x20;
+    objects.push(hat);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 /// Bakes of AURORA_DEMO_CLASSIC: a skin whose alpha is partly soft and cut
 /// by holes (an alpha layer), and hair in strands that fade out.
 pub const TEX_BAKE_SKIN: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0030);

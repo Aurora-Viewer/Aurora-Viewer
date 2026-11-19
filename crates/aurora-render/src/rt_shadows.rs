@@ -222,10 +222,17 @@ pub struct Faces {
     /// The faces of the skeletons built again this frame, by skeleton.
     pub posed: Vec<Posed>,
     pub groups: Vec<PosedGroup>,
+    /// The skeletons that had to be built again and wait for a later frame,
+    /// and the farthest one of them stands from where its level was built
+    /// (m): how far behind it its shadow is.
+    pub waiting: u32,
+    pub behind: f32,
 }
 
-/// Posed triangles built again in one frame, nearest skeleton first (the
-/// nearest is always built); the others keep an earlier frame's pose.
+/// Posed triangles built again in one frame besides the nearest avatar's,
+/// which is always built: the most pressing avatars first ([`pressing`]),
+/// and the first of them whatever its size; the others keep an earlier
+/// frame's pose.
 const REBUILD_TRIANGLES: u64 = 1 << 19;
 /// How far from its joint a vertex is taken to be when a joint turns (m).
 const JOINT_REACH: f32 = 1.0;
@@ -1077,6 +1084,10 @@ struct Skeleton {
     /// did, as each was last written (infinite: past what a shadow shows).
     moved: f32,
     drifted: f32,
+    /// Frames it had to be built again and was left waiting.
+    waited: u32,
+    /// Where it stood when its level was built ([`Skeleton::origin`]).
+    built_at: glam::Vec3,
 }
 
 impl Skeleton {
@@ -1489,6 +1500,25 @@ pub(crate) fn gather(
     out.spent = tracker.spent;
 }
 
+impl PoseTracker {
+    /// How far the avatar of the palette that starts at `base` stands from
+    /// where its levels that wait were built (m): 0 when none waits,
+    /// infinite when one was never built.
+    pub(crate) fn behind(&self, base: u32, palettes: &[[[f32; 4]; 4]]) -> f32 {
+        self.skeletons
+            .range(base..base + crate::types::PALETTE_STRIDE)
+            .filter(|(_, s)| s.waited > 0)
+            .map(|(&key, s)| {
+                if s.built {
+                    s.origin(key, palettes).distance(s.built_at)
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .fold(0.0, f32::max)
+    }
+}
+
 /// Sorts `ranges` and joins those that touch.
 fn merge(ranges: &mut Vec<std::ops::Range<usize>>) {
     ranges.sort_unstable_by_key(|r| r.start);
@@ -1504,9 +1534,34 @@ fn merge(ranges: &mut Vec<std::ops::Range<usize>>) {
     ranges.truncate(kept + 1);
 }
 
+/// How pressing an avatar's new levels are: more the longer it waited, and
+/// more for a near one than for a far one. One that keeps moving is so
+/// built again about as often as it is near, and none waits for ever.
+fn pressing(distance: f32, waited: u32) -> f32 {
+    (1 + waited) as f32 / distance.max(1.0)
+}
+
+/// An avatar (or an animated object) whose levels must be built again: its
+/// skeleton and what it wears on its attachment points, which share its
+/// palette's entries and are built in the same frame, so no hat takes its
+/// wearer's turn nor leaves its head.
+struct Unit {
+    slot: u32,
+    /// Of the nearest of its skeletons, the one that waited longest, and
+    /// all of them.
+    distance: f32,
+    waited: u32,
+    triangles: u64,
+}
+
 /// Picks the skeletons built again this frame: new ones, those whose faces
-/// changed, and those whose vertices drifted past what a shadow shows,
-/// nearest first within [`REBUILD_TRIANGLES`]; and lists them all.
+/// changed, and those whose vertices drifted past what a shadow shows, by
+/// avatar ([`Unit`]). The nearest always, then the most pressing within
+/// [`REBUILD_TRIANGLES`], the first of them whatever its size: taken
+/// nearest first within the budget, an avatar of more triangles than it
+/// that walked behind anything that moved too (the hat it wore, nearer the
+/// eye) was left out at every frame, and its shadow stayed where it had
+/// stood. Lists them all.
 /// `written` is the palettes' entries written since the last frame, in
 /// order and apart ([`merge`]): only those are read, the other joints are
 /// as they were last measured (a skeleton's are 261 matrices, a crowd's
@@ -1525,8 +1580,10 @@ fn choose_rebuilds(
             .unwrap_or(&[])
     };
     skeletons.retain(|_, s| !s.faces.is_empty());
-    // the skeletons that must be built again, nearest first, within budget
-    let mut must: Vec<(f32, u32)> = Vec::new();
+    // the skeletons that must be built again, in their order, and their
+    // avatars
+    let mut must: Vec<u32> = Vec::new();
+    let mut units: Vec<Unit> = Vec::new();
     let mut next = 0;
     for (&key, s) in skeletons.iter_mut() {
         let distance = s.origin(key, palettes).distance(camera);
@@ -1548,23 +1605,60 @@ fn choose_rebuilds(
             at += 1;
         }
         if !s.built || s.moved > allowed || s.drifted > allowed {
-            must.push((distance, key));
+            must.push(key);
+            let slot = key / stride as u32;
+            let triangles: u64 = s.faces.iter().map(|f| f.index_count as u64 / 3).sum();
+            match units.last_mut().filter(|u| u.slot == slot) {
+                Some(u) => {
+                    u.distance = u.distance.min(distance);
+                    u.waited = u.waited.max(s.waited);
+                    u.triangles += triangles;
+                }
+                None => units.push(Unit {
+                    slot,
+                    distance,
+                    waited: s.waited,
+                    triangles,
+                }),
+            }
         }
     }
-    must.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut chosen: Vec<u32> = Vec::new();
-    let mut triangles = 0u64;
-    for (_, key) in must {
-        let tris: u64 = skeletons
-            .get(&key)
-            .map_or(0, |s| s.faces.iter().map(|f| f.index_count as u64 / 3).sum());
-        if triangles > 0 && triangles + tris > REBUILD_TRIANGLES {
+    units.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    let mut slots: Vec<u32> = Vec::new();
+    if let Some((nearest, rest)) = units.split_first_mut() {
+        slots.push(nearest.slot);
+        // (stable: the nearer of two as pressing)
+        rest.sort_by(|a, b| pressing(b.distance, b.waited).total_cmp(&pressing(a.distance, a.waited)));
+        let mut triangles = 0u64;
+        for u in rest.iter() {
+            if triangles > 0 && triangles + u.triangles > REBUILD_TRIANGLES {
+                continue;
+            }
+            triangles += u.triangles;
+            slots.push(u.slot);
+        }
+    }
+    slots.sort_unstable();
+    let chosen: Vec<u32> = must
+        .iter()
+        .copied()
+        .filter(|key| slots.binary_search(&(key / stride as u32)).is_ok())
+        .collect();
+    (out.waiting, out.behind) = (0, 0.0);
+    for &key in &must {
+        let Some(s) = skeletons.get_mut(&key) else {
+            continue;
+        };
+        if chosen.binary_search(&key).is_ok() {
+            s.waited = 0;
             continue;
         }
-        triangles += tris;
-        chosen.push(key);
+        s.waited += 1;
+        out.waiting += 1;
+        if s.built {
+            out.behind = out.behind.max(s.origin(key, palettes).distance(s.built_at));
+        }
     }
-    chosen.sort_unstable();
     for (&key, s) in skeletons.iter_mut() {
         let rebuild = chosen.binary_search(&key).is_ok();
         let first = out.posed.len() as u32;
@@ -1574,6 +1668,7 @@ fn choose_rebuilds(
             s.joints.clear();
             s.joints.extend_from_slice(joints_of(key));
             s.built_models.clone_from(&s.models);
+            s.built_at = s.origin(key, palettes);
             (s.moved, s.drifted) = (0.0, 0.0);
         }
         out.groups.push(PosedGroup {
@@ -2227,6 +2322,9 @@ pub(crate) struct RtShadows {
     built_at: u64,
     scene_instances: usize,
     scene_builds: u32,
+    /// The most skeletons left waiting in a frame, and the farthest one's
+    /// level stood behind it, since the last log line.
+    left_waiting: (u32, f32),
     /// The still faces by size, for the log: how many have up to 64, 256,
     /// 1024 and 4096 triangles or more, and their triangles.
     still_sizes: [(u32, u64); 5],
@@ -2504,6 +2602,7 @@ impl RtShadows {
             built_at: 0,
             scene_instances: 0,
             scene_builds: 0,
+            left_waiting: (0, 0.0),
             still_sizes: [(0, 0); 5],
             why: [0; 10],
             spent: [0; 3],
@@ -3231,6 +3330,7 @@ impl RtShadows {
         let (vertices, indices) = (&scene.vertices, &scene.indices);
         self.frame += 1;
         let frame = self.frame;
+        self.left_waiting = (self.left_waiting.0.max(faces.waiting), self.left_waiting.1.max(faces.behind));
         if let Some(timer) = &mut self.timer {
             if let Some((ms, frames)) = timer.harvest() {
                 let st = &self.stats;
@@ -3238,8 +3338,9 @@ impl RtShadows {
                     std::array::from_fn(|i| faces.spent[i].saturating_sub(std::mem::replace(&mut self.spent[i], faces.spent[i])));
                 let sets = faces.set.saturating_sub(std::mem::replace(&mut self.logged_set, faces.set));
                 let cpu = std::mem::take(&mut self.cpu);
+                let left_waiting = std::mem::take(&mut self.left_waiting);
                 log::info!(
-                    "rt shadows: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame ({} faces looked at), {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame; the slowest: {:?}",
+                    "rt shadows: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices; {} left waiting at most, {:.2} m behind at most); CPU: main thread {:.2} ms a frame ({} faces looked at), {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame; the slowest: {:?}",
                     ms[0],
                     ms[1],
                     ms[2],
@@ -3260,6 +3361,8 @@ impl RtShadows {
                     st.skeletons_built,
                     st.posed_faces,
                     st.posed_vertices,
+                    left_waiting.0,
+                    left_waiting.1,
                     main[0] as f64 / 1000.0 / frames.max(1) as f64,
                     main[2] / frames.max(1) as u64,
                     main[1] as f64 / 1000.0 / sets.max(1) as f64,
@@ -5418,12 +5521,74 @@ mod tests {
     fn rt_shadows_rebuilds_go_nearest_first_within_the_budget() {
         let mut t = BTreeMap::new();
         let big = (REBUILD_TRIANGLES * 3 / 2) as u32;
-        for (key, x) in [(1, 30.0), (2, 3.0), (3, 10.0)] {
+        let [a, b, c, d] = [1, 2, 3, 4].map(|k| k * crate::types::PALETTE_STRIDE);
+        for (key, x) in [(a, 30.0), (b, 3.0), (c, 10.0), (d, 20.0)] {
             read(&mut t, key, &[key], big, x);
         }
-        // the nearest two fit, the farthest waits for a later frame
-        assert_eq!(choose(&mut t), vec![(1, false), (2, true), (3, true)]);
-        assert_eq!(choose(&mut t), vec![(1, true), (2, false), (3, false)]);
+        // the nearest, then the next two fill the budget: the farthest
+        // waits for a later frame
+        assert_eq!(choose(&mut t), vec![(a, false), (b, true), (c, true), (d, true)]);
+        assert_eq!(choose(&mut t), vec![(a, true), (b, false), (c, false), (d, false)]);
+    }
+
+    /// An avatar of more triangles than a frame's budget walks, in the hat
+    /// it wears (nearer the eye than its body), behind a light one that
+    /// walks too: its levels follow it at every frame, the hat's with the
+    /// body's.
+    #[test]
+    fn rt_shadows_a_heavy_skeleton_that_walks_is_not_left_behind_a_light_one() {
+        let mut t = BTreeMap::new();
+        let heavy = (REBUILD_TRIANGLES * 4) as u32;
+        let stride = crate::types::PALETTE_STRIDE;
+        let (light, body, hat) = (stride, 2 * stride, 2 * stride + crate::types::SKELETON_ANCHOR + 2);
+        for step in 0..6 {
+            let walked = step as f32 * 0.05;
+            read(&mut t, light, &[1], 300, 3.0 + walked);
+            read(&mut t, body, &[2], heavy, 5.0 + walked);
+            read(&mut t, hat, &[3], 300, 4.6 + walked);
+            assert_eq!(choose(&mut t), vec![(light, true), (body, true), (hat, true)], "frame {step}");
+        }
+        // alone, it is the nearest: its hat does not take its turn
+        read(&mut t, light, &[], 300, 3.0);
+        for step in 6..12 {
+            let walked = step as f32 * 0.05;
+            read(&mut t, body, &[2], heavy, 5.0 + walked);
+            read(&mut t, hat, &[3], 300, 4.6 + walked);
+            assert_eq!(choose(&mut t), vec![(body, true), (hat, true)], "frame {step}");
+        }
+    }
+
+    /// The nearest walks at every frame and fills the budget alone: the
+    /// others that move are still built again in turn, the near ones more
+    /// often than the far ones, and none waits for ever.
+    #[test]
+    fn rt_shadows_no_skeleton_that_moves_waits_for_ever() {
+        let mut t = BTreeMap::new();
+        let heavy = (REBUILD_TRIANGLES * 4) as u32;
+        let stride = crate::types::PALETTE_STRIDE;
+        let places = [(1u32, 3.0f32), (2, 6.0), (3, 12.0), (4, 24.0), (5, 48.0)];
+        let mut built = [0u32; 6];
+        let mut waited = [0u32; 6];
+        let mut longest = [0u32; 6];
+        for step in 0..240 {
+            for (k, x) in places {
+                read(&mut t, k * stride, &[k], heavy, x + step as f32 * 0.5);
+            }
+            for (key, rebuilt) in choose(&mut t) {
+                let k = (key / stride) as usize;
+                if rebuilt {
+                    built[k] += 1;
+                    waited[k] = 0;
+                } else {
+                    waited[k] += 1;
+                    longest[k] = longest[k].max(waited[k]);
+                }
+            }
+        }
+        assert_eq!(built[1], 240, "the nearest at every frame");
+        assert!(built[2] > built[3] && built[3] > built[4] && built[4] > built[5], "{built:?}");
+        assert!(built[5] >= 8, "{built:?}");
+        assert!(longest.iter().all(|&w| w <= 60), "{longest:?}");
     }
 
     #[test]
