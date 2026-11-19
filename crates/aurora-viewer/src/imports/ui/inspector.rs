@@ -2,6 +2,55 @@
 
 use super::*;
 
+/// The queue is an Aurora addition to the Legacy Viewer's material editor
+/// (floater_material_editor.xml); keep its width with each window's layout.
+fn queue_width(ui: &mut egui::Ui, window: Choice, height: f32) -> (f32, bool) {
+    let available = ui.available_width();
+    let gap = ui.spacing().item_spacing.x * 2.0 + 1.0;
+    let usable = (available - gap).max(1.0);
+    let minimum = 176.0_f32.min(usable * 0.4);
+    let maximum = (usable - 320.0).max(minimum);
+    let default = (available - 840.0).clamp(176.0, 228.0).clamp(minimum, maximum);
+    let key = egui::Id::unique(window.window_id()).with("queue_width");
+    let mut width = ui
+        .ctx()
+        .data_mut(|data| data.get_persisted::<f32>(key))
+        .filter(|width| width.is_finite())
+        .unwrap_or(default)
+        .clamp(minimum, maximum);
+    let start = ui.next_widget_position();
+    let handle = egui::Rect::from_center_size(
+        egui::pos2(start.x + width + ui.spacing().item_spacing.x + 0.5, start.y + height * 0.5),
+        Vec2::new(8.0, height),
+    );
+    let response = ui
+        .interact(handle, key.with("resize"), egui::Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text(aurora_i18n::tr!("import-queue-resize"));
+    #[cfg(test)]
+    ui.ctx().data_mut(|data| data.insert_temp(key.with("handle"), handle));
+    let origin_key = key.with("drag_origin");
+    if response.double_clicked() {
+        ui.ctx().data_mut(|data| data.remove::<f32>(key));
+        width = default;
+    } else if response.dragged()
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        // Anchor to the press, so repeated layout passes cannot apply a delta twice.
+        let origin = ui.ctx().data(|data| data.get_temp::<Vec2>(origin_key)).unwrap_or_else(|| {
+            let origin = Vec2::new(width, ui.input(|input| input.pointer.press_origin()).unwrap_or(pointer).x);
+            ui.ctx().data_mut(|data| data.insert_temp(origin_key, origin));
+            origin
+        });
+        width = (origin.x + pointer.x - origin.y).clamp(minimum, maximum);
+        ui.ctx().data_mut(|data| data.insert_persisted(key, width));
+    }
+    if !ui.input(|input| input.pointer.primary_down()) {
+        ui.ctx().data_mut(|data| data.remove::<Vec2>(origin_key));
+    }
+    (width, response.hovered() || response.dragged())
+}
+
 pub(super) fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -31,17 +80,21 @@ pub(super) fn show(
     floater.min_size = min_size;
     floater.show(ctx, p, &mut open, |ui| {
         let height = ui.available_height().max(100.0);
-        let files_width = (ui.available_width() - 840.0).clamp(176.0, 228.0);
+        let (files_width, resizing_queue) = queue_width(ui, window, height);
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(files_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(files_width);
                 queue::show(ui, p, imports, prefs, height, busy, actions);
             });
             let (separator, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
-            ui.painter()
-                .vline(separator.center().x, separator.y_range(), widgets::divider_stroke(p));
+            let stroke = if resizing_queue {
+                widgets::border_stroke(p, egui::Stroke::new(1.0, p.violet_light))
+            } else {
+                widgets::divider_stroke(p)
+            };
+            ui.painter().vline(separator.center().x, separator.y_range(), stroke);
             ui.allocate_ui_with_layout(
-                Vec2::new((ui.available_width()).max(260.0), height),
+                Vec2::new(ui.available_width().max(1.0), height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     let (bounds, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::hover());

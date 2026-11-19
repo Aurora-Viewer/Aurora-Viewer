@@ -97,6 +97,108 @@ fn text_position(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
 }
 
 #[test]
+fn import_queue_drag_reveals_names_and_remembers_each_window_without_changing_selection() {
+    for window in [Choice::Bulk, Choice::Material] {
+        let mut f = Fixture::new();
+        f.imports.entries = ["Laundry SPP (CABINETS 1001)", "Laundry SPP (CABINETS 1002)"]
+            .into_iter()
+            .map(|name| {
+                let mut entry = Entry::new(
+                    "laundry.glb".into(),
+                    Ok(Source::Material {
+                        value: PbrMaterial::default(),
+                        images: Box::new([None, None, None, None]),
+                    }),
+                    Default::default(),
+                );
+                entry.name = name.into();
+                entry
+            })
+            .collect();
+        if window != Choice::Bulk {
+            f.imports.open = false;
+            f.imports.open_type_window(&f.ctx, window);
+        }
+        f.settle();
+        let window_id = egui::Id::unique(window.window_id());
+        let key = window_id.with("queue_width");
+        let row_key = egui::Id::unique(("import_queue_row", f.imports.entries[0].id));
+        let row = |f: &Fixture| f.ctx.data(|data| data.get_temp::<egui::Rect>(row_key)).expect("queue row");
+        let handle = |f: &Fixture| {
+            f.ctx
+                .data(|data| data.get_temp::<egui::Rect>(key.with("handle")))
+                .expect("queue resize handle")
+        };
+        let initial_row = row(&f);
+        let initial_window = f.ctx.memory(|memory| memory.area_rect(window_id)).unwrap();
+        let active = f.imports.active_ids().collect::<Vec<_>>();
+        let from = handle(&f).center();
+        let to = from + Vec2::new(140.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        f.frame(vec![egui::Event::PointerMoved(from)]);
+        f.frame(vec![button(from, true)]);
+        f.frame(vec![egui::Event::PointerMoved(to)]);
+        let (_, actions) = f.frame(vec![button(to, false)]);
+        f.settle();
+        assert!((row(&f).width() - initial_row.width() - 140.0).abs() < 1.0);
+        let full_name = f.ctx.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    f.imports.entries[0].name.clone(),
+                    egui::FontId::proportional(14.0),
+                    f.theme.palette().ink,
+                )
+                .size()
+                .x
+        });
+        assert!(row(&f).width() > full_name + 16.0, "the full material name fits");
+        assert_eq!(f.imports.active_ids().collect::<Vec<_>>(), active);
+        assert!(f.imports.entries.iter().all(|entry| entry.selected));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::Start | Action::StartFor(_) | Action::Remove(_)))
+        );
+        let after_window = f.ctx.memory(|memory| memory.area_rect(window_id)).unwrap();
+        assert!(
+            (after_window.size() - initial_window.size()).length() < 1.0,
+            "only the columns resize"
+        );
+        let saved_width = f.ctx.data_mut(|data| data.get_persisted::<f32>(key)).expect("saved width");
+        let other = egui::Id::unique(Choice::Texture.window_id()).with("queue_width");
+        assert!(f.ctx.data_mut(|data| data.get_persisted::<f32>(other)).is_none());
+        let saved = ron::to_string(&f.ctx.memory(|memory| memory.clone())).expect("saved layout");
+        // layout::restore preserves the current theme/options around the memory.
+        let options = f.ctx.options(|options| options.clone());
+        f.ctx.memory_mut(|memory| *memory = ron::from_str(&saved).expect("restored layout"));
+        f.ctx.options_mut(|current| *current = options);
+        f.settle();
+        assert_eq!(f.ctx.data_mut(|data| data.get_persisted::<f32>(key)), Some(saved_width));
+        assert!(
+            (row(&f).width() - initial_row.width() - 140.0).abs() < 1.0,
+            "{window:?}: restored row {:?}, initial {initial_row:?}, saved {saved_width}",
+            row(&f)
+        );
+        let reset = handle(&f).center();
+        for _ in 0..2 {
+            f.frame(vec![egui::Event::PointerMoved(reset), button(reset, true)]);
+            f.frame(vec![button(reset, false)]);
+        }
+        f.settle();
+        assert!(
+            f.ctx.data_mut(|data| data.get_persisted::<f32>(key)).is_none(),
+            "double-click resets the width"
+        );
+        assert!((row(&f).width() - initial_row.width()).abs() < 1.0);
+    }
+}
+
+#[test]
 fn unified_import_selects_the_first_entry_and_pins_destinations_above_the_existing_mesh_inspector() {
     let mut f = Fixture::new();
     let first = f.imports.entries[0].id;

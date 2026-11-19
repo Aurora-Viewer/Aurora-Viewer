@@ -7024,7 +7024,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stay existing assets. Upload drafts have fresh IDs and independent mesh fee/job
   state; staging sends nothing and spends nothing. The ordinary destination,
   quote and paid confirmation flow follows. No selection, loading and busy states
-  disable the action; exceeding queue/input budgets creates no partial batch.
+  disable the action. Large selections and shared decoded images remain accepted.
   Empty the queue and complete an upload with its payment receipt visible:
   the window keeps its size, and the controls below the queue stay reachable.
 - **`AURORA_DEMO_IMPORTS=loose-folder|loose-folder-preview|type-sound-folder`**
@@ -7078,9 +7078,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The left column’s **Add folder** action scans supported
   files recursively on a worker. The selected source folder is retained in
   the editable inventory preview; unsupported files, empty directories and
-  links/reparse points are skipped. Existing batch limits remain 256 source
-  files per selection, 512 drafts and 1 GiB of retained non-mesh data; scans
-  also stop explicitly beyond 100,000 entries or 64 directory levels.
+  links/reparse points are skipped. Files and materials have no aggregate count
+  or decoded-memory quota, like ordinary file imports. Directory scans still
+  stop explicitly beyond 100,000 entries or 64 directory levels.
   **`AURORA_DEMO_IMPORTS=folders|folders-lods|folders-type|folders-flat|folders-upload`** supplies a
   nested Creator Pack with equal Fabric names in Coat and Hat, a mesh, an
   animation and a sound. Recognized configured LOD/physics companions are
@@ -15352,3 +15352,21 @@ before linking, for manual Ctrl+L and button checks. `link-denied,0,0` leaves on
 prim without Modify and attempts the same link: the refusal dialog must appear
 and both prims stay separate. Use `AURORA_DEMO_BUILD_STYLE=aurora|legacy` to
 compare the layouts and capture at frame 720 or later. These use no grid assets.
+
+
+### Large PBR material imports (#4211)
+
+Run `cargo test --workspace material_` for document, file and folder admission
+regressions. For a local glTF/GLB with more than 1 GiB of decoded material maps,
+set `AURORA_DEMO_IMPORT_FILE` to its absolute path, then run
+`cargo test --workspace large_material_fixture_passes_the_ordinary_file_import -- --ignored --nocapture`.
+The test reports the material count, decoded bytes and loading time without
+connecting or uploading. In demo, combine that path with
+`AURORA_DEMO_IMPORTS=type-material`; all material rows should load and be checked
+for upload automatically, with the total cost covering the checked materials.
+Drag the divider between the queue and the inspector to reveal complete names;
+its width is saved independently for each import window. Double-click the
+divider to reset it. Shrinking the window fits both panes without discarding
+the preferred queue width.
+The human checks the same document in the online PBR importer and confirms
+the ordinary price/permission dialog before uploading.
