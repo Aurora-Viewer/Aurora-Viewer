@@ -217,6 +217,8 @@ pub struct Renderer {
     /// Its entries written since the ray tracer last read it.
     rt_written: Vec<std::ops::Range<usize>>,
     rt_poses: crate::rt_shadows::PoseTracker,
+    /// The last frame's `Faces::waiting` and `Faces::behind`.
+    rt_waiting: (u32, f32),
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
     /// `shift_world`'s moves not yet sent with a frame.
@@ -809,6 +811,7 @@ impl Renderer {
             rt_palettes: Vec::new(),
             rt_written: Vec::new(),
             rt_poses: Default::default(),
+            rt_waiting: (0, 0.0),
             vertices_uploaded: 0,
             geometry_uploaded: 0,
             skin_bind_buffer,
@@ -1027,6 +1030,20 @@ impl Renderer {
     /// arrival and not as a move (rt_shadows.rs `StillTracker::rebase`).
     pub fn rebase_world(&mut self) {
         self.rt_rebased = true;
+    }
+
+    /// The skeletons whose ray-traced level had to be built again last
+    /// frame and waits for a later one, and the farthest one of them stands
+    /// from where its level was built (m): how far behind it its traced
+    /// shadow is.
+    pub fn rt_skeletons_waiting(&self) -> (u32, f32) {
+        self.rt_waiting
+    }
+
+    /// The same distance for one avatar, the one whose palette starts at
+    /// matrix `base`: 0 when its levels are those of last frame's pose.
+    pub fn rt_avatar_behind(&self, base: u32) -> f32 {
+        self.rt_poses.behind(base, &self.rt_palettes)
     }
 
     /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
@@ -1705,6 +1722,7 @@ impl Renderer {
                     &mut self.rt_poses,
                     &mut faces,
                 );
+                self.rt_waiting = (faces.waiting, faces.behind);
                 std::sync::Arc::new(faces)
             }),
         };

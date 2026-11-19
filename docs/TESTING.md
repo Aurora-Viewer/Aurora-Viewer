@@ -4759,6 +4759,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GLOSSY_BUMPS=1` | An upright polished PBR panel with a bump normal map, seen along its face (ray-traced reflections) |
 | `AURORA_DEMO_SATIN=1\|room` | Satin PBR metal from a roughness of 0.15 to 0.55 and a frame of thin dark bars (blurred ray-traced reflections); `room`: inside the closed room of `AURORA_DEMO_PROBE_ROOM` |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
+| `AURORA_DEMO_RT_WALK=1` | Our avatar, heavy and in a hat, walks: its ray-traced shadow follows it |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -5014,6 +5015,20 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_POS="100,100"`) and adds an upright satin panel that faces
   the start position: it mirrors the wall behind the camera in the room's
   own warm colour, not in the sky's (rt_probes.wgsl).
+- **`AURORA_DEMO_RT_WALK=1`**: with `AURORA_RT_SHADOWS=1`,
+  `AURORA_DEMO_ANIMESH=1` and `AURORA_DEMO_ANIMESH_TRIS=315000`, our avatar
+  wears the rigged demo mesh twice (about 640,000 triangles, more than the
+  ray tracer poses again in a frame besides the nearest avatar's) and a
+  hat, nearer the camera than its body, and walks 8 m from frame 700. Its
+  shadow must stay under it all the way. At frame 940 the log says `demo rt
+  walk: the avatar walked 5.3 m in 240 frames; its traced levels were left
+  waiting in 0 of them, 0.00 m behind at most (any skeleton's: 0 frames,
+  0.00 m)`: the frames in which the bottom levels its shadow is traced from
+  were not built again though it had moved, and how far it stood from them.
+  Before the choice went by avatar (rt_shadows.rs `choose_rebuilds`), the
+  hat took the frame's budget and the same run said 239 of them, 5.33 m.
+  With `AURORA_PROFILE=1`, the `rt shadows:` line gives the same for every
+  skeleton (`… left waiting at most, … m behind at most`).
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
