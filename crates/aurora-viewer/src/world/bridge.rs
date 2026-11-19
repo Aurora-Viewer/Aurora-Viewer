@@ -25,6 +25,8 @@ pub(crate) const POINT: u8 = 31;
 // instead of wearing two bridges with competing physics.
 const VERSION: &str = "1.43";
 /// The controller's and query script's owner-say tags, never shown in chat.
+/// `<auroraPortal>` is a 1.42 query script's, kept hidden until it is
+/// replaced: portals are this viewer's own and no longer relayed.
 const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridge>",
     "<auroraBridgeQuery>",
@@ -1439,18 +1441,6 @@ impl Bridge {
                             Err(_) => {}
                         }
                     } else if chat.source_id == self.object {
-                        if chat.message.starts_with("<auroraPortal>")
-                            && self.available()
-                            && world
-                                .objects
-                                .index_of_uuid(&self.object)
-                                .and_then(|i| world.objects.get(i))
-                                .is_some_and(|o| Some(o.key.region) == world.main_region)
-                        {
-                            let mut portals = std::mem::take(&mut world.portals);
-                            portals.receive(world, &chat.message, now, super::portals::unix_time());
-                            world.portals = portals;
-                        }
                         if chat.message.starts_with("<auroraPose>")
                             && self.available()
                             && world

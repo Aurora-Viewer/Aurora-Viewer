@@ -12,9 +12,6 @@ key gOwner;
 integer DISCOVERY_CHANNEL;
 integer gListener;
 integer gPoseListener;
-integer gPortalListener;
-integer PORTAL_CHANNEL = -184735221;
-list gPortalPeers;
 integer POSE_CHANNEL = -184735220;
 list gPosePeers;
 integer gPaired;
@@ -47,34 +44,10 @@ initialize() {
     llListenRemove(gPoseListener);
     gPoseListener = llListen(POSE_CHANNEL, "", NULL_KEY, "");
     gPosePeers = [];
-    llListenRemove(gPortalListener);
-    gPortalListener = llListen(PORTAL_CHANNEL, "", NULL_KEY, "");
-    gPortalPeers = [];
     requestURL();
 }
 query(key request, string kind, string targets) {
-    if (kind == "portal") {
-        // The viewer validates the typed, base64 invitation. The script only
-        // authenticates its sender and relays bounded region-local data.
-        key target = (key)llGetSubString(targets, 0, 35);
-        string payload = llDeleteSubString(targets, 0, 36);
-        if (llStringLength(targets) < 41 || llStringLength(payload) > 640
-            || llGetSubString(targets, 36, 36) != ","
-            || (!validKey(target) && llGetSubString(targets, 0, 35) != (string)NULL_KEY)) {
-            llHTTPResponse(request, 400, "invalid"); return;
-        }
-        // Private detail requests/replies can never use the regional broadcast.
-        if (!validKey(target)) {
-            string decoded = llBase64ToString(payload);
-            if (llJsonValueType(decoded, ["Details"]) != JSON_INVALID
-                || llJsonValueType(decoded, ["Request"]) != JSON_INVALID) {
-                llHTTPResponse(request, 400, "invalid"); return;
-            }
-        }
-        if (target) llRegionSayTo(target, PORTAL_CHANNEL, "portal2|" + payload);
-        else llRegionSay(PORTAL_CHANNEL, "portal2|" + payload);
-        llHTTPResponse(request, 200, "[]");
-    } else if (kind == "pose") {
+    if (kind == "pose") {
         list fields = llParseStringKeepNulls(targets, [","], []);
         string action = llList2String(fields, 0);
         key nonce = llList2Key(fields, 1);
@@ -144,9 +117,6 @@ default {
             llListenRemove(gPoseListener);
             gPoseListener = 0;
             gPosePeers = [];
-            llListenRemove(gPortalListener);
-            gPortalListener = 0;
-            gPortalPeers = [];
             gListener = 0;
             llSetTimerEvent(0.0);
             llReleaseURL(gURL);
@@ -163,24 +133,6 @@ default {
         }
     }
     listen(integer channel, string name, key sender, string message) {
-        if (channel == PORTAL_CHANNEL) {
-            if (!llGetAttached() || !gPaired || llStringLength(message) > 648
-                || llGetSubString(message, 0, 7) != "portal2|") return;
-            key peer = llGetOwnerKey(sender);
-            if (!validKey(peer) || peer == sender || peer == gOwner) return;
-            list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);
-            if (llGetListLength(attached) != 1 || llList2Integer(attached, 0) <= 0) return;
-            integer at = llListFindList(gPortalPeers, [peer]);
-            float now = llGetTime();
-            if (at >= 0) {
-                if (now - llList2Float(gPortalPeers, at + 1) < 0.2) return;
-                gPortalPeers = llDeleteSubList(gPortalPeers, at, at + 1);
-            }
-            if (llGetListLength(gPortalPeers) >= 128) gPortalPeers = llDeleteSubList(gPortalPeers, 0, 1);
-            gPortalPeers += [peer, now];
-            llOwnerSay("<auroraPortal>" + (string)peer + "|" + llDeleteSubString(message, 0, 7) + "</auroraPortal>");
-            return;
-        }
         if (channel == POSE_CHANNEL) {
             if (!llGetAttached() || !gPaired || llStringLength(message) > 130) return;
             list fields = llParseStringKeepNulls(message, ["|"], []);
