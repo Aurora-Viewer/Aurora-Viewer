@@ -1248,6 +1248,26 @@ pub enum PaneText {
 /// another one that they neither own nor stand near.
 pub(crate) type HiddenNames = std::collections::HashMap<(Uuid, crate::world::names::NameScope), String>;
 
+/// The name the creator column shows for an item made by `creator` and
+/// owned by `owner` (nil for a group's): "You", the stand-in where
+/// `@shownames` hides them (`resident_scopes`, as the properties' field),
+/// their name, or `None` while it is not known.
+pub(crate) fn creator_label(world: &World, creator: Uuid, owner: Uuid) -> Option<String> {
+    use crate::world::names::NameScope;
+    let scope = NameScope::Creator { owner };
+    if creator == world.agent_id {
+        Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
+    } else if !world.rlva_shows_name(scope, creator) {
+        Some(world.social.name_in(scope, &creator))
+    } else {
+        world
+            .social
+            .avatar_names
+            .complete_in(NameScope::Roster, &creator)
+            .or_else(|| world.social.names.get(&creator).cloned())
+    }
+}
+
 /// Notes in `hidden` the stand-in of the owner and of the creator of `it`
 /// where `@shownames` hides them.
 pub(crate) fn hide_residents(world: &World, it: &aurora_net::inventory::InvItem, hidden: &mut HiddenNames) {
@@ -2712,19 +2732,10 @@ pub fn show(
         }
         let mut names = std::collections::HashMap::with_capacity(st.creator_keys.len());
         for &(creator, owner) in &st.creator_keys {
-            let scope = crate::world::names::NameScope::Creator { owner };
-            let name = if creator == world.agent_id {
-                Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
-            } else if !world.rlva_shows_name(scope, creator) {
-                Some(world.social.name_in(scope, &creator))
-            } else {
+            let name = creator_label(world, creator, owner);
+            if name.is_none() {
                 world.social.want_name(creator);
-                world
-                    .social
-                    .avatar_names
-                    .complete_in(crate::world::names::NameScope::Roster, &creator)
-                    .or_else(|| world.social.names.get(&creator).cloned())
-            };
+            }
             names.insert((creator, owner), name);
         }
         facts.creator_names = std::sync::Arc::new(names);
@@ -3265,6 +3276,52 @@ mod tests {
         // an exception names the resident in every field
         restrict(&mut world, format!("@shownames:{near}=add"));
         assert!(hidden(&world, &item(near, near, false)).is_empty());
+    }
+
+    #[test]
+    fn the_creator_column_names_follow_shownames() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != me)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let unknown = Uuid::from_u128(0xc4ea);
+        // the resident around, their name known
+        world.social.names.insert(near, "Nora Example".into());
+        let real = creator_label(&world, near, me);
+        assert_eq!(real.as_deref(), Some("Nora Example"));
+        assert_eq!(
+            creator_label(&world, me, me),
+            Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
+        );
+        assert_eq!(creator_label(&world, unknown, me), None, "not known yet");
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Names fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: me,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let hidden = creator_label(&world, near, me);
+        assert_eq!(hidden, Some(world.social.name_in(NameScope::Creator { owner: me }, &near)));
+        assert_ne!(hidden, real, "the stand-in, never the real name");
+        assert_eq!(
+            creator_label(&world, me, me),
+            Some(aurora_i18n::tr!("inventory-owner-you").to_owned()),
+            "never oneself"
+        );
     }
 
     #[test]
