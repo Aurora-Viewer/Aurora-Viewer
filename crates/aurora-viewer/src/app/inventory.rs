@@ -1117,7 +1117,19 @@ impl App {
         );
         // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
         self.world.rlva_note_wear_request(&action);
-        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        let mut attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: rez_attachment takes the point the names give while a point
+        // is locked (Wear, Add, a drop on the avatar; not an outfit)
+        if matches!(
+            action,
+            crate::world::appearance::Action::WearItem { .. }
+                | crate::world::appearance::Action::WearItems { .. }
+                | crate::world::appearance::Action::Add(_)
+        ) {
+            for attachment in &mut attachments {
+                attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
+            }
+        }
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();

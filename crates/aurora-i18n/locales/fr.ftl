@@ -14308,6 +14308,8 @@ rlva-hide-layers-hint = Indiquer une couche absente lorsqu’elle ne peut pas ê
 rlva-add-prefix = Préfixe de dossier pour ajouter
 rlva-replace-prefix = Préfixe de dossier pour remplacer
 rlva-prefix-hint = Imposer ce mode de port aux dossiers commençant par ce texte. Vide le désactive ; les préfixes de dossiers cachés comme .nom sont ignorés.
+rlva-debug-explicit-point = Ignorer les noms de points d'attache des objets et dossiers d'inventaire
+rlva-debug-explicit-point-hint = Tant qu'un point d'attache est verrouillé, Porter et Ajouter envoient un objet sur son point par défaut au lieu du point donné par son nom ou celui de son dossier (incomplet).
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }

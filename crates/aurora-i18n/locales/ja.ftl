@@ -14193,6 +14193,8 @@ rlva-hide-layers-hint = 外せない衣類のレイヤーを存在しないも�
 rlva-add-prefix = 追加用のフォルダの接頭辞
 rlva-replace-prefix = 置き換え用のフォルダの接頭辞
 rlva-prefix-hint = このテキストで始まるフォルダのスクリプトによる着用モードを上書きします。空欄で無効。.name のような隠しフォルダの接頭辞は無視されます。
+rlva-debug-explicit-point = インベントリのアイテムとフォルダのアタッチポイント名を無視する
+rlva-debug-explicit-point-hint = アタッチポイントがロックされている間、「着用」と「追加」はオブジェクトを、その名前やフォルダ名が示すポイントではなく既定のポイントに送ります（未完成）。
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = 優先度{ $total }中{ $rank }

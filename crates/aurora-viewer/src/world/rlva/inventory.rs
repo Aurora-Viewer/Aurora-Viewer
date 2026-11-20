@@ -1224,6 +1224,23 @@ impl World {
         self.rlva_folder_allowed_in(locks, self.rlva_wear_folder(item).unwrap_or(it.parent), true, actor)
     }
 
+    /// The point a Wear or an Add from the inventory asks for
+    /// (rez_attachment, llinventorybridge.cpp): with RLVa on, no point chosen
+    /// and a point locked in any way (RlvAttachmentLocks::
+    /// hasLockedAttachmentPoint(RLV_LOCK_ANY), rlvlocks.h), the point the
+    /// item or its folder names (RlvAttachPtLookup::getAttachPoint), else
+    /// the default point. RLVaDebugDeprecateExplicitPoint skips the lookup.
+    pub fn rlva_rez_point(&self, item: Uuid, point: u8) -> u8 {
+        if point != 0 || !self.rlva.enabled() || self.rlva.preferences.debug_deprecate_explicit_point {
+            return point;
+        }
+        let any_lock = self.rlva_has_locked_attachment() || self.rlva.rules_for("addattach", Uuid::nil()).next().is_some();
+        if !any_lock {
+            return point;
+        }
+        super::collection::attachment_point(&self.inventory, item, self.rlva.preferences.legacy_naming).unwrap_or(0)
+    }
+
     /// The folder of the entry an item was last asked to be worn from, while
     /// that request stands (`WEAR_ENTRY_TIME`).
     fn rlva_wear_folder(&self, item: Uuid) -> Option<Uuid> {

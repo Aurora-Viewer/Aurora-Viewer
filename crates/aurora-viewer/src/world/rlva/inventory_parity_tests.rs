@@ -737,6 +737,28 @@ fn a_group_force_does_not_wait_for_the_shared_folders() {
     assert_eq!(batch(&l).0, vec![collar]);
 }
 
+/// rez_attachment (llinventorybridge.cpp): a Wear with no point chosen goes
+/// to the point the item names while a point is locked, and to the default
+/// point with RLVaDebugDeprecateExplicitPoint on (off by default).
+#[test]
+fn a_wear_takes_the_named_point_while_a_point_is_locked() {
+    let mut l = linked();
+    let (issuer, clothes) = (l.issuer, l.clothes);
+    let ring = Uuid::from_u128(0xE301);
+    l.world.inventory.add_items(vec![item(0xE301, clothes, "Ring (left hand)", 6, 0)]);
+    assert!(!l.world.rlva.preferences.debug_deprecate_explicit_point, "off by default");
+    assert_eq!(l.world.rlva_rez_point(ring, 0), 0, "no point locked");
+    say(&mut l.world, issuer, "@remattach:chest=n");
+    assert_eq!(l.world.rlva_rez_point(ring, 0), 5, "the named point");
+    assert_eq!(l.world.rlva_rez_point(ring, 2), 2, "a chosen point stays");
+    l.world.rlva.preferences.debug_deprecate_explicit_point = true;
+    assert_eq!(l.world.rlva_rez_point(ring, 0), 0, "the lookup is skipped");
+    l.world.rlva.preferences.debug_deprecate_explicit_point = false;
+    say(&mut l.world, issuer, "@remattach:chest=y");
+    say(&mut l.world, issuer, "@addattach:skull=n");
+    assert_eq!(l.world.rlva_rez_point(ring, 0), 5, "an add lock counts too");
+}
+
 /// RlvAttachmentLocks::canAttach(const LLInventoryItem*) (rlvlocks.h): an
 /// object whose names give no point is RLV_WEAR, whatever point is saved on
 /// it or where it was last worn; a named point is checked.

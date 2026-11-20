@@ -14303,6 +14303,8 @@ rlva-hide-layers-hint = Report a clothing layer as absent when it cannot be remo
 rlva-add-prefix = Folder prefix for adding
 rlva-replace-prefix = Folder prefix for replacing
 rlva-prefix-hint = Override scripted wear mode for folders starting with this text. Empty disables it; hidden-folder prefixes such as .name are ignored.
+rlva-debug-explicit-point = Ignore attachment point names on inventory items and folders
+rlva-debug-explicit-point-hint = While an attachment point is locked, Wear and Add send an object to its default point instead of the point its name or its folder's name gives (incomplete).
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priority { $rank } of { $total }
