@@ -753,6 +753,11 @@ pub struct App {
     layout_autosave: ui::layout::Autosave,
     loading_stage: String,
     move_complete_at: Option<Instant>,
+    /// Where a teleport that keeps the camera's direction goes (the RLVa
+    /// @standtp return, LLAgent::doTeleportViaLocationLookAt with no
+    /// look-at, which sets mbTeleportKeepsLookAt): on arrival there the
+    /// avatar turns to where the camera looks.
+    tp_keeps_look_at: Option<glam::Vec3>,
     /// Teleport diagnostics still to log (seconds after the arrival).
     tp_checks: Vec<f32>,
     /// Debug: culling view kept while "Freeze culling" is on.
@@ -2023,6 +2028,7 @@ impl App {
             layout_autosave: Default::default(),
             loading_stage: String::new(),
             move_complete_at: None,
+            tp_keeps_look_at: None,
             tp_checks: Vec::new(),
             frozen_cull: None,
             texture_motion: Default::default(),
@@ -4554,6 +4560,7 @@ impl App {
                 if !self.world.arrived_by_crossing {
                     self.vr_rebase_after_travel();
                     let local = self.world.arrived_by_local_teleport;
+                    self.keep_look_at_on_arrival();
                     self.camera.on_teleport_arrival(&self.settings.camera, local);
                     log::info!(
                         "camera: teleport arrival (inside the region {local}, return after teleport {}), on the avatar {}",
