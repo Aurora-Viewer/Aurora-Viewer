@@ -2792,14 +2792,10 @@ LUT_3D_SIZE {n}
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The sun's shadows the frame is drawn with: the photo's, else
-    /// Preferences' (softness, intensity).
+    /// The sun's shadows the frame is drawn with (softness, intensity): the
+    /// photo's while its window is open, else Preferences'.
     pub(super) fn photo_shadows(&self) -> (f32, f32) {
-        let l = &self.snapshots.ui.light;
-        (
-            l.shadow_softness.unwrap_or(self.settings.shadow_softness),
-            l.shadow_intensity.unwrap_or(self.settings.shadow_intensity),
-        )
+        snapshot::light::drawn_shadows(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
     }
 
     /// Preferences' shadow values and the soft shadows' state, for the

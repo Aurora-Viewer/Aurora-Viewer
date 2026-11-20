@@ -88,6 +88,19 @@ pub fn drawn_levels(settings: &crate::settings::Settings, light: &PhotoLight, op
     )
 }
 
+/// The softness and the intensity of the sun's shadows the world is drawn
+/// with: the photo's while its window is `open`, else Preferences'. The
+/// photo's light is reset as the window closes, but not while the Director
+/// gives the sun (`App::photo_light`): closed, the photo's values would stay
+/// on the world until its track ended.
+pub fn drawn_shadows(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> (f32, f32) {
+    let chosen = |value: Option<f32>| value.filter(|_| open);
+    (
+        chosen(light.shadow_softness).unwrap_or(settings.shadow_softness),
+        chosen(light.shadow_intensity).unwrap_or(settings.shadow_intensity),
+    )
+}
+
 /// Preferences' render settings with the photo's shadow quality and
 /// ambient occlusion over them. Every `apply_settings` goes through it: a
 /// change made elsewhere while the photo window is open (Preferences, a
@@ -114,6 +127,29 @@ mod tests {
         assert_eq!(photo_level(true, Some(4), 1, false), 4);
         // the window closed: the user's again
         assert_eq!(photo_level(false, Some(0), 3, false), 3);
+    }
+
+    #[test]
+    fn the_photo_shadow_sliders_hold_while_the_window_is_open() {
+        let settings = crate::settings::Settings {
+            shadow_softness: 0.25,
+            shadow_intensity: 1.0,
+            ..Default::default()
+        };
+        let light = PhotoLight {
+            shadow_softness: Some(2.0),
+            shadow_intensity: Some(0.3),
+            ..Default::default()
+        };
+        assert_eq!(drawn_shadows(&settings, &light, true), (2.0, 0.3));
+        // closed with the light not reset yet (the Director gives the sun)
+        assert_eq!(drawn_shadows(&settings, &light, false), (0.25, 1.0));
+        // one chosen, the other Preferences'
+        let light = PhotoLight {
+            shadow_intensity: Some(0.5),
+            ..Default::default()
+        };
+        assert_eq!(drawn_shadows(&settings, &light, true), (0.25, 0.5));
     }
 
     #[test]
