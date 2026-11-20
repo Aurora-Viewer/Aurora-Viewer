@@ -53,7 +53,7 @@ fn hemisphere(lit: HitLight, n: vec3<f32>) -> vec3<f32> {
 // the scene's faces, then the posed ones when `posed` (the alpha-masked
 // faces tested at each candidate, rt_common.wgsl `stops`).
 fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool {
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, reach, origin, dir);
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, 0xFFu, 0.0, reach, origin, dir);
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
@@ -108,7 +108,7 @@ fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool, curved
         }
         return -1.0;
     }
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, reach, origin, dir);
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, 0xFFu, 0.0, reach, origin, dir);
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
         if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {

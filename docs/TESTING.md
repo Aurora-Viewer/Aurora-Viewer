@@ -12569,7 +12569,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
-| `AURORA_RT_SHADOWS=1`, `0`, `front` or `back` | Ray-traced sun shadows forced on or off for this launch |
+| `AURORA_RT_SHADOWS=1`, `0`, `both` or `back` | Ray-traced sun shadows forced on or off for this launch |
 | `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
 | `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
 | `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
@@ -13078,7 +13078,7 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
-- **`AURORA_RT_SHADOWS=1|0|front|back`**, **`AURORA_RT_LIGHTS=1|0`**,
+- **`AURORA_RT_SHADOWS=1|0|both|back`**, **`AURORA_RT_LIGHTS=1|0`**,
   **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
   options of Preferences › Graphics › Ray tracing (experimental, off by
   default; `rt_shadows.rs`) for this launch, without changing the saved
@@ -13086,8 +13086,14 @@ What the inventory must show with these scenarios:
   leaves it to its setting. They need a graphics card with ray queries,
   and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
   sun's and the moon's shadows of the main view in the shadow maps' place
-  (the Shadows setting must be on); `front` and `back` also make the rays
-  pass the faces they meet from the front or from behind, to compare. The
+  (the Shadows setting must be on). A shadow ray passes the faces it meets
+  from their front, so that a one-sided face casts only from its side turned
+  to the light, as the Legacy Viewer's shadow maps draw it (#3895: a
+  one-sided wall seen from behind lets the light through); a face drawn on
+  both sides casts from both, a mirrored face keeps its front, and an
+  avatar's faces cast from both sides. `both` stops the rays at every face
+  and `back` at those met from their front, to compare (the lamps' rays
+  too). The
   three others trace the scene the sun's shadows build, so they do nothing
   without them: the point lights' shadows, the indirect light (in the
   screen-space one's place, at the Indirect light intensity) and the

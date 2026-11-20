@@ -75,7 +75,10 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // a triangle turned from the sun on a rounded mesh: rt_common.wgsl `shadows`
     let curved = dot(n, dir) <= 0.0;
-    let flags = u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
+    // the faces turned from the sun let it through (#3895, rt_common.wgsl
+    // `SHADOW_CULL`), but on a curved pixel, whose own mesh `shadows` sorts
+    let flags = select(SHADOW_CULL, RAY_FLAG_NONE, curved) | RAY_FLAG_TERMINATE_ON_FIRST_HIT
+        | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
     let ray = RayDesc(flags, 0xFFu, 0.0, params.mode.z, origin, dir);
     var shadow = 0.0;
     // (one query for both levels: a pass pays for each query it holds)

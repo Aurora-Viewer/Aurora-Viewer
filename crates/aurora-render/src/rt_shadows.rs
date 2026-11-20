@@ -35,12 +35,16 @@ use crate::types::{DrawRecord, flags};
 /// The device feature ray tracing needs.
 pub const FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY;
 
-/// Which faces a ray passes (`AURORA_RT_SHADOWS=front` or `back`): none,
-/// those it meets from their front, those it meets from behind.
+/// Which faces a shadow ray passes: those it meets from their front, by
+/// default, as the Legacy Viewer's shadow maps draw the faces with their
+/// backs culled (#3895: a one-sided face casts only from its side turned
+/// to the light; a face drawn on both sides, from both, `facing`).
+/// `AURORA_RT_SHADOWS=both` stops the rays at every face, `back` at those
+/// met from their front, for a comparison.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Cull {
-    #[default]
     None,
+    #[default]
     Front,
     Back,
 }
@@ -71,8 +75,8 @@ pub(crate) struct Override {
 
 impl Override {
     /// From the four variables' values: `0` or `off` forces an option off,
-    /// anything else on (`front` and `back`, the sun shadows with that
-    /// culling); unset or empty leaves it to the settings.
+    /// anything else on (`both` and `back`, the shadow rays with that
+    /// culling, [`Cull`]); unset or empty leaves it to the settings.
     fn parse(shadows: Option<&str>, lights: Option<&str>, indirect: Option<&str>, reflections: Option<&str>) -> Self {
         let forced = |value: Option<&str>| match value?.trim() {
             "" => None,
@@ -85,9 +89,9 @@ impl Override {
             indirect: forced(indirect),
             reflections: forced(reflections),
             cull: match shadows.map(str::trim) {
-                Some("front") => Cull::Front,
+                Some("both") => Cull::None,
                 Some("back") => Cull::Back,
-                _ => Cull::None,
+                _ => Cull::Front,
             },
         }
     }
@@ -148,7 +152,8 @@ pub(crate) fn traced(device: &wgpu::Device, external: bool, asked: crate::RayTra
 }
 
 /// A face to trace: its record, its geometry in the arena, where it stands,
-/// and whether it is opaque (an alpha-masked face is tested at each hit).
+/// whether it is opaque (an alpha-masked face is tested at each hit), and
+/// its instance's flags ([`facing`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub record: u32,
@@ -157,6 +162,7 @@ pub struct Instance {
     pub index_count: u32,
     pub opaque: bool,
     pub model: [[f32; 4]; 4],
+    pub flags: wgpu::TlasInstanceFlags,
 }
 
 /// A rigged or worn face: its world positions exist only once posed, so the
@@ -199,6 +205,11 @@ pub struct Cell {
     pub faces: Arc<Vec<Posed>>,
     /// Posed vertices of all its faces (one per index).
     pub vertices: u32,
+    /// Its faces are drawn on both sides: a ray meets them from both
+    /// ([`facing`]). A cell's other faces are one-sided; a mirrored small
+    /// face is placed alone ([`gather`]): the cell's level is posed in the
+    /// world, where its winding shows the mirror.
+    pub double: bool,
 }
 
 /// What the frame traces: faces placed by their model matrix, and the
@@ -369,11 +380,15 @@ struct Track {
 }
 
 /// A face's kinds ([`Track::kind`]): not traced, a placed face (opaque or
-/// alpha-masked), a skeleton's.
+/// alpha-masked), a skeleton's. A placed face's sides ([`sides_of`]) are
+/// kept in the bits above ([`SIDES_SHIFT`]): a change of them is a change
+/// of what it is.
 const NOT_TRACED: u8 = 0;
 const PLACED_OPAQUE: u8 = 1;
 const PLACED_MASKED: u8 = 2;
 const POSED: u8 = 3;
+const KIND_BITS: u8 = 0x0f;
+const SIDES_SHIFT: u8 = 4;
 
 impl Track {
     /// Whether it kept its place long enough to count as still.
@@ -382,7 +397,7 @@ impl Track {
     }
 
     fn placed(&self) -> bool {
-        matches!(self.kind, PLACED_OPAQUE | PLACED_MASKED)
+        matches!(self.kind & KIND_BITS, PLACED_OPAQUE | PLACED_MASKED)
     }
 
     /// Whether it is traced with the moving faces: the still set does not
@@ -619,14 +634,15 @@ impl StillTracker {
     }
 
     /// Notes placed face `id` on `frame`, at `place` (in `cell`) and of
-    /// `shape`, opaque or not, traced or not (`kept`), near or not.
+    /// `shape`, opaque or not, with its `sides`, traced or not (`kept`),
+    /// near or not.
     #[allow(clippy::too_many_arguments)]
-    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, cell: u64, kept: bool, near: bool, opaque: bool) {
+    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, cell: u64, kept: bool, near: bool, opaque: bool, sides: u8) {
         let Some(t) = self.tracks.get_mut(id) else {
             return;
         };
         self.tally.uncount(t);
-        let kind = if opaque { PLACED_OPAQUE } else { PLACED_MASKED };
+        let kind = if opaque { PLACED_OPAQUE } else { PLACED_MASKED } | sides << SIDES_SHIFT;
         let rebased = t.rebase && t.place != place && frame < self.rebased_at + REBASE_FRAMES;
         if rebased && t.present && t.placed() {
             // written relative to the new origin: it arrives there
@@ -819,12 +835,17 @@ impl StillTracker {
     }
 
     /// Face `id` of the still set: its cell, its place and geometry in one
-    /// number (for its cell's version), and whether it is opaque.
-    fn held(&self, id: usize) -> Option<(u64, u64, bool)> {
-        self.tracks
-            .get(id)
-            .filter(|t| t.in_still)
-            .map(|t| (t.cell, t.place ^ ((t.shape as u64) << 32 | t.kind as u64), t.kind == PLACED_OPAQUE))
+    /// number (for its cell's version), whether it is opaque, and its
+    /// sides ([`sides_of`]).
+    fn held(&self, id: usize) -> Option<(u64, u64, bool, u8)> {
+        self.tracks.get(id).filter(|t| t.in_still).map(|t| {
+            (
+                t.cell,
+                t.place ^ ((t.shape as u64) << 32 | t.kind as u64),
+                t.kind & KIND_BITS == PLACED_OPAQUE,
+                t.kind >> SIDES_SHIFT,
+            )
+        })
     }
 
     #[cfg(test)]
@@ -917,24 +938,28 @@ struct Small {
     cell: u64,
     /// Its place and geometry ([`StillTracker::mark`]).
     mark: u64,
+    /// Drawn on both sides: in a part of its cell with the others that are
+    /// ([`Cell::double`]).
+    double: bool,
     face: Posed,
 }
 
 /// The cells of a still set's small faces, by key. A cell with the faces
 /// `before` had keeps its list (and its version, so its level stands).
 fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
-    small.sort_unstable_by_key(|s| (s.cell, s.face.record));
+    small.sort_unstable_by_key(|s| (s.cell, s.double, s.face.record));
     let mut cells = Vec::new();
     let mut start = 0;
     let mut part = 0u64;
     while start < small.len() {
-        let cell = small[start].cell;
-        // a part: the cell's faces until it is full
+        let (cell, double) = (small[start].cell, small[start].double);
+        // a part: the cell's faces of one kind of sides until it is full
         let mut end = start;
         let mut vertices = 0u32;
         let mut version = 0x9e37_79b9_7f4a_7c15u64;
         while end < small.len()
             && small[end].cell == cell
+            && small[end].double == double
             && end - start < PART_FACES
             && (end == start || vertices + small[end].face.index_count <= PART_VERTICES)
         {
@@ -943,7 +968,7 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
                 small[end].mark,
                 (f.record as u64) << 32 | f.base_vertex as u64,
                 (f.first_index as u64) << 32 | f.index_count as u64,
-                f.opaque as u64,
+                f.opaque as u64 | (double as u64) << 1,
             ] {
                 version = (version ^ word).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(23);
             }
@@ -966,6 +991,7 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
             version,
             faces,
             vertices,
+            double,
         });
         part = if small.get(end).is_some_and(|s| s.cell == cell) {
             part + 1
@@ -1193,7 +1219,38 @@ fn instance_of(id: usize, face: &CullFace, record: &DrawRecord) -> Instance {
         index_count: face.index_count - face.index_count % 3,
         opaque: record.flags[0] & flags::ALPHA_MASK == 0,
         model: record.model,
+        flags: facing(sides_of(face, record)),
     }
+}
+
+/// A face's sides as the rasterizer draws them ([`SIDE_DOUBLE`],
+/// [`SIDE_MIRRORED`]): the passes and the glTF flag that turn its back-face
+/// culling off, and a model that mirrors it (the rasterizer then sees its
+/// winding turned).
+fn sides_of(face: &CullFace, record: &DrawRecord) -> u8 {
+    let double = matches!(face.bits & pass::BITS, pass::OPAQUE_2S | pass::MASK_2S) || record.flags[0] & flags::DOUBLE_SIDED != 0;
+    let mirrored = glam::Mat4::from_cols_array_2d(&record.model).determinant() < 0.0;
+    (if double { SIDE_DOUBLE } else { 0 }) | if mirrored { SIDE_MIRRORED } else { 0 }
+}
+
+/// A face drawn on both sides, and a face its model mirrors.
+const SIDE_DOUBLE: u8 = 1;
+const SIDE_MIRRORED: u8 = 2;
+
+/// The instance flags that make a ray see a face's sides as the rasterizer
+/// does, for the shadow rays' culling ([`Cull`]): a face drawn on both sides
+/// is met from both, and a mirrored one keeps its front. A ray decides the
+/// facing in the instance's own space, where the winding is the mesh's, so
+/// a mirroring model needs the flip (the rt flags test, rt_flags_tests.rs).
+fn facing(sides: u8) -> wgpu::TlasInstanceFlags {
+    let mut f = wgpu::TlasInstanceFlags::empty();
+    if sides & SIDE_DOUBLE != 0 {
+        f |= wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE;
+    }
+    if sides & SIDE_MIRRORED != 0 {
+        f |= wgpu::TlasInstanceFlags::TRIANGLE_FLIP_FACING;
+    }
+    f
 }
 
 /// Whether a face is a skeleton's (an avatar's, what it wears, an animated
@@ -1319,8 +1376,9 @@ impl PoseTracker {
         self.leave(was, id);
         let cell = cell_of(&record.model);
         let (kept, near) = weigh(object, face.index_count / 3, cell, w.camera, w.far, self.placed.kept(id));
+        let sides = sides_of(face, record);
         self.placed
-            .visit(id, w.frame, place, shape, cell, kept, near, rf & flags::ALPHA_MASK == 0);
+            .visit(id, w.frame, place, shape, cell, kept, near, rf & flags::ALPHA_MASK == 0, sides);
     }
 
     /// Face `id` is no longer `skeleton`'s.
@@ -1442,10 +1500,12 @@ pub(crate) fn gather(
         let mut large = Vec::new();
         tracker.small.clear();
         for id in 0..faces {
-            let (Some((cell, mark, opaque)), Some(face)) = (placed.held(id), records.faces.get(id)) else {
+            let (Some((cell, mark, opaque, sides)), Some(face)) = (placed.held(id), records.faces.get(id)) else {
                 continue;
             };
-            if face.index_count / 3 > MERGED_TRIANGLES {
+            // (a mirrored face is rare: it keeps its own instance, whose
+            // flag keeps its front, [`Cell::double`])
+            if face.index_count / 3 > MERGED_TRIANGLES || sides & SIDE_MIRRORED != 0 {
                 if let Some(record) = records.get(id as u32) {
                     large.push(instance_of(id, face, record));
                 }
@@ -1456,6 +1516,7 @@ pub(crate) fn gather(
             tracker.small.push(Small {
                 cell,
                 mark,
+                double: sides & SIDE_DOUBLE != 0,
                 face: Posed {
                     record: id as u32,
                     base_vertex: face.base_vertex as u32,
@@ -1920,6 +1981,7 @@ struct Mover<'a> {
     blas: &'a wgpu::Blas,
     transform: [f32; 12],
     record: u32,
+    flags: wgpu::TlasInstanceFlags,
 }
 
 /// The mask the shading reads in place of the contact shadows', and the
@@ -2312,7 +2374,6 @@ pub(crate) struct RtShadows {
     warned: bool,
     pipeline: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
-    cull: Cull,
     bottoms: HashMap<Key, Bottom>,
     /// The bottom levels nothing uses any more, with the frame each was
     /// retired on, the oldest first ([`RETIRE_FRAMES`]).
@@ -2611,7 +2672,6 @@ impl RtShadows {
             layout,
             pipeline,
             buffer,
-            cull,
             bottoms: HashMap::new(),
             retired: VecDeque::new(),
             arena: None,
@@ -2942,10 +3002,19 @@ impl Poser {
                     None => self
                         .levels
                         .get(&placed[n])
-                        .map(|l| wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, 0xFF)),
-                    Some(m) => movers
-                        .get(m)
-                        .map(|mover| wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, 0xFF)),
+                        // a skeleton's faces are met from both sides: its
+                        // level is posed in the world, all its faces
+                        // together (an Aurora difference: the Legacy
+                        // Viewer's maps cull an avatar's backs too, which a
+                        // closed body does not show)
+                        .map(|l| {
+                            wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, 0xFF)
+                                .with_flags(wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE)
+                        }),
+                    Some(m) => movers.get(m).map(|mover| {
+                        wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, 0xFF)
+                            .with_flags(mover.flags)
+                    }),
                 };
             }
         }
@@ -3027,7 +3096,8 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 /// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
 fn source(parts: &[&str]) -> String {
     let mut src = format!(
-        "enable wgpu_ray_query;\nenable wgpu_binding_array;\n{}\n",
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\n{}\n",
+        Override::from_env().cull.ray_flags(),
         include_str!("shaders/rt_common.wgsl")
     );
     for part in parts {
@@ -3306,7 +3376,7 @@ impl RtShadows {
                 .extend(if light_up { 1.0 } else { 0.0 })
                 .to_array(),
             screen: [w, h, 1.0 / w, 1.0 / h],
-            mode: [self.cull.ray_flags() as f32, if contact { 1.0 } else { 0.0 }, REACH, 0.0],
+            mode: [0.0, if contact { 1.0 } else { 0.0 }, REACH, 0.0],
             // soft where the lights' passes average and filter it
             soft: match (&self.lights, &t.lights) {
                 (Some(l), Some(_)) => [SUN_DISC_TAN, (l.frame % (1 << 20)) as f32, 0.0, 0.0],
@@ -3644,7 +3714,7 @@ impl RtShadows {
                         None => continue,
                     },
                 };
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, 0xFF));
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, 0xFF).with_flags(i.flags));
                 placed += 1;
             }
             // the cells' levels after them: this frame's, or the one an
@@ -3671,7 +3741,8 @@ impl RtShadows {
                     None => self.merged_list.extend(cell_table(&cell.faces)),
                 }
                 self.merged_faces += (self.merged_list.len() - from).saturating_sub(2) / 2;
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, 0xFF));
+                let sides = if cell.double { SIDE_DOUBLE } else { 0 };
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, 0xFF).with_flags(facing(sides)));
                 placed += 1;
             }
             for slot in &mut slots[placed..] {
@@ -3775,6 +3846,7 @@ impl RtShadows {
                     blas: &b.blas,
                     transform: row_major(&i.model),
                     record: i.record,
+                    flags: i.flags,
                 })
             })
             .collect();
@@ -5486,10 +5558,12 @@ mod tests {
     /// structs are common.wgsl's.
     #[test]
     fn rt_probes_structs_are_the_shadings() {
+        // (a checkout with Windows line endings: compared as Unix ones)
         let block = |src: &str, from: &str, to: &str| {
+            let src = src.replace("\r\n", "\n");
             let start = src.find(from).expect("the block's first line");
             let end = start + src[start..].find(to).expect("the block's last line") + to.len();
-            src[start..end].replace("\r\n", "\n")
+            src[start..end].to_string()
         };
         let (from, to) = ("const MAX_PROBES: u32", "    probes: array<Probe, MAX_PROBES>,\n};");
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
@@ -5739,7 +5813,7 @@ mod tests {
         t.begin(t.tracks.len().max(8));
         for id in 0..t.tracks.len() {
             match faces.iter().find(|f| f.0 == id) {
-                Some(&F(id, place, shape, kept, near)) => t.visit(id, *n, place, shape, 0, kept, near, true),
+                Some(&F(id, place, shape, kept, near)) => t.visit(id, *n, place, shape, 0, kept, near, true, 0),
                 None if t.tracks[id].present => t.absent(id, *n, SLOT_FREED),
                 None => {}
             }
@@ -6076,6 +6150,7 @@ mod tests {
             .map(|(record, triangles, opaque)| Small {
                 cell: 1,
                 mark: record as u64,
+                double: false,
                 face: face(record, triangles, opaque),
             })
             .collect();
@@ -6268,6 +6343,7 @@ mod tests {
         Small {
             cell: cell_of(&model),
             mark,
+            double: false,
             face: Posed {
                 record,
                 base_vertex: 0,
@@ -6299,6 +6375,69 @@ mod tests {
         assert_eq!(cell_centre(of(1).key >> 16), glam::Vec3::splat(8.0));
         assert_eq!(cell_centre(of(7).key >> 16), glam::Vec3::new(-8.0, 8.0, 8.0));
         assert_eq!(cell_centre(of(4).key >> 16), glam::Vec3::new(40.0, 8.0, 24.0));
+    }
+
+    #[test]
+    fn rt_shadows_double_sided_faces_have_parts_of_their_own() {
+        // one cell: two one-sided faces and a double-sided one between them
+        let mut faces = [small(1, [1.0; 3], 1), small(2, [2.0; 3], 1), small(3, [3.0; 3], 1)];
+        faces[1].double = true;
+        let cells = cells_of(&mut faces, &[]);
+        let records = |c: &Cell| c.faces.iter().map(|f| f.record).collect::<Vec<_>>();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].key >> 16, cells[1].key >> 16, "the same cell");
+        assert_ne!(cells[0].key, cells[1].key, "two parts");
+        assert_eq!((records(&cells[0]), cells[0].double), (vec![1, 3], false));
+        assert_eq!((records(&cells[1]), cells[1].double), (vec![2], true));
+        // the same faces one-sided: another version of the part
+        let mut again = [small(1, [1.0; 3], 1), small(2, [2.0; 3], 1), small(3, [3.0; 3], 1)];
+        let one = cells_of(&mut again, &cells);
+        assert_eq!(one.len(), 1);
+        assert_ne!(one[0].version, cells[0].version);
+    }
+
+    #[test]
+    fn rt_shadows_faces_keep_their_sides() {
+        let one_sided = CullFace {
+            bits: pass::OPAQUE,
+            ..CullFace::NONE
+        };
+        let two_sided = CullFace {
+            bits: pass::MASK_2S,
+            ..CullFace::NONE
+        };
+        let plain = DrawRecord::default();
+        assert_eq!(sides_of(&one_sided, &plain), 0);
+        assert_eq!(sides_of(&two_sided, &plain), SIDE_DOUBLE);
+        // a glTF material drawn on both sides
+        let mut gltf = DrawRecord::default();
+        gltf.flags[0] |= flags::DOUBLE_SIDED;
+        assert_eq!(sides_of(&one_sided, &gltf), SIDE_DOUBLE);
+        // a model that mirrors the face (one axis scaled by -1), and one
+        // that turns it half round (no mirror)
+        let mirrored = DrawRecord {
+            model: glam::Mat4::from_scale(glam::Vec3::new(-1.0, 1.0, 1.0)).to_cols_array_2d(),
+            ..DrawRecord::default()
+        };
+        assert_eq!(sides_of(&one_sided, &mirrored), SIDE_MIRRORED);
+        assert_eq!(sides_of(&two_sided, &mirrored), SIDE_DOUBLE | SIDE_MIRRORED);
+        let turned = DrawRecord {
+            model: glam::Mat4::from_scale(glam::Vec3::new(-1.0, -1.0, 1.0)).to_cols_array_2d(),
+            ..DrawRecord::default()
+        };
+        assert_eq!(sides_of(&one_sided, &turned), 0);
+        // the instance flags
+        use wgpu::TlasInstanceFlags as F;
+        assert_eq!(facing(0), F::empty());
+        assert_eq!(facing(SIDE_DOUBLE), F::TRIANGLE_FACING_CULL_DISABLE);
+        assert_eq!(facing(SIDE_MIRRORED), F::TRIANGLE_FLIP_FACING);
+        assert_eq!(
+            instance_of(5, &two_sided, &mirrored).flags,
+            F::TRIANGLE_FACING_CULL_DISABLE | F::TRIANGLE_FLIP_FACING
+        );
+        // the shadow rays cull the faces met from their front: the ray goes
+        // from the surface to the light (Vulkan's gl_RayFlagsCullFrontFacingTrianglesEXT)
+        assert_eq!(Cull::default().ray_flags(), 0x20);
     }
 
     #[test]
@@ -6406,10 +6545,12 @@ mod tests {
             RayTracing::default()
         );
         assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0")).applied(all), sun);
-        // the culling comes with the sun's shadows
-        assert_eq!(Override::parse(Some("1"), None, None, None).cull, Cull::None);
-        let front = Override::parse(Some("front"), None, None, None);
-        assert_eq!((front.cull, front.applied(RayTracing::default())), (Cull::Front, sun));
+        // the culling comes with the sun's shadows: #3895's rule unless
+        // asked otherwise
+        assert_eq!(Override::parse(None, None, None, None).cull, Cull::Front);
+        assert_eq!(Override::parse(Some("1"), None, None, None).cull, Cull::Front);
+        let both = Override::parse(Some("both"), None, None, None);
+        assert_eq!((both.cull, both.applied(RayTracing::default())), (Cull::None, sun));
         assert_eq!(Override::parse(Some(" back "), None, None, None).cull, Cull::Back);
     }
 

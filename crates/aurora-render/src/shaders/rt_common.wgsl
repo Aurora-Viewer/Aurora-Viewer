@@ -6,6 +6,12 @@
 // coordinates and base colour). Prepended to each ray-traced shader.
 //
 // Group 1 is the scene, group 2 the renderer's bindless textures.
+//
+// `SHADOW_CULL`, put before this file (rt_shadows.rs `source`): the ray
+// flag of the shadow rays' culling (rt_shadows.rs `Cull`), by default the
+// faces met from their front, so that a one-sided face casts only from its
+// side turned to the light (#3895). The instances' flags (rt_shadows.rs
+// `facing`) keep a face drawn on both sides and a mirrored one right.
 
 const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_ALPHA_MASK: u32 = 2u;
