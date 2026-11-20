@@ -64,8 +64,15 @@ pub(crate) fn grid_time(computer: std::time::SystemTime) -> std::time::SystemTim
 }
 
 /// `computer` moved by `correction` seconds, unchanged where it would leave
-/// the clock's range.
+/// the clock's range or does not fit in an `i32` (the Legacy Viewer's
+/// `S32 gUTCOffset`, as `grid_correction` gives it). The range of a
+/// `SystemTime` is the system's: Windows' stops at 1601, while macOS and
+/// Linux reach far enough back that only the `i32` bound refuses an absurd
+/// correction there.
 fn corrected(computer: std::time::SystemTime, correction: i64) -> std::time::SystemTime {
+    if i32::try_from(correction).is_err() {
+        return computer;
+    }
     let by = std::time::Duration::from_secs(correction.unsigned_abs());
     let moved = if correction >= 0 {
         computer.checked_add(by)
@@ -581,7 +588,12 @@ mod tests {
         assert_eq!(corrected(computer, 133), computer + Duration::from_secs(133));
         assert_eq!(corrected(computer, -3600), computer - Duration::from_secs(3600));
         assert_eq!(corrected(computer, 0), computer);
-        // far beyond any clock's range
+        // the bounds of an i32 still move it
+        let bound = Duration::from_secs(i32::MAX.unsigned_abs().into());
+        assert_eq!(corrected(computer, i32::MAX.into()), computer + bound);
+        // beyond an i32, on every system (macOS and Linux reach i64::MIN s)
+        assert_eq!(corrected(computer, i64::from(i32::MAX) + 1), computer);
+        assert_eq!(corrected(computer, i64::from(i32::MIN) - 1), computer);
         assert_eq!(corrected(computer, i64::MIN), computer);
         assert_eq!(corrected(computer, i64::MAX), computer);
     }
