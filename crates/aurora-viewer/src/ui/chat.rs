@@ -3444,7 +3444,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             });
         ui.add_space(2.0);
     }
-    let (text, italics) = line_body(line, &name);
+    // an emote of ours starts with "(You)" too, as the Legacy Viewer's plain
+    // text history writes it (FSChatHistory::appendMessage)
+    let (text, italics) = line_body(line, shown_name(line, &name));
     let visible = previews::text(env.previews.as_deref(), line, &text, ui.available_width() - 8.0);
     egui::Frame::new()
         .inner_margin(egui::Margin {

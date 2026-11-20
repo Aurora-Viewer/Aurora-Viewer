@@ -65,9 +65,7 @@ impl Portals {
         for entry in world.portals.visible(world) {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
-            let allowed = entry.allowed(world);
             let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
-            let accent = |color| rgba(if allowed { color } else { palette.muted });
             let record = DrawRecord {
                 model: Mat4::from_scale_rotation_translation(
                     Vec3::new(
@@ -79,11 +77,11 @@ impl Portals {
                     center,
                 )
                 .to_cols_array_2d(),
-                base_color: accent(palette.violet),
-                emissive: accent(palette.teal),
-                spec_color: accent(palette.indigo_light),
+                base_color: rgba(palette.violet),
+                emissive: rgba(palette.teal),
+                spec_color: rgba(palette.indigo_light),
                 legacy: rgba(palette.navy),
-                params: [0.0, if animate { 1.0 } else { 0.0 }, if allowed { 1.0 } else { 0.35 }, 0.5],
+                params: [0.0, if animate { 1.0 } else { 0.0 }, 1.0, 0.5],
                 flags: [
                     flags::FULLBRIGHT | flags::ALPHA_BLEND | flags::DOUBLE_SIDED | flags::PORTAL_EFFECT,
                     0,
@@ -144,12 +142,12 @@ impl super::Scene {
             self.portals.clipping.clear();
             self.portals.planes.clear();
         } else {
-            // A portal the setting hides cuts no body either.
             let portals: Vec<_> = world
                 .portals
-                .shown(world)
+                .entries
+                .iter()
                 .map(|entry| clipping::Aperture {
-                    key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
+                    key: clipping::Key(world.agent_id, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),
                     normal: Vec3::new(entry.portal.yaw.cos(), entry.portal.yaw.sin(), 0.0),
                 })
