@@ -64,6 +64,10 @@ const HANDOVER: Duration = Duration::from_secs(5);
 /// at most each time.
 const CAPTURE_EVERY: Duration = Duration::from_secs(15);
 const CAPTURES_PER_PASS: usize = 8;
+/// An avatar written is not written again before this: what changes all
+/// the time (a prim updated by its script) would otherwise be written at
+/// each pass.
+const REWRITE_AFTER: Duration = Duration::from_secs(120);
 /// A file older than this is not used (what was worn a month ago).
 const MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
 
@@ -150,8 +154,9 @@ pub struct AvatarCache {
     /// The kept looks drawn for avatars no appearance came for yet, with
     /// their generation (`World::appearance_generation`).
     looks: HashMap<Uuid, (AvatarAppearance, u64)>,
-    /// What was last written for each avatar ([`capture::signature`]).
-    saved: HashMap<Uuid, u64>,
+    /// What was last written for each avatar ([`capture::signature`]), and
+    /// when.
+    saved: HashMap<Uuid, (u64, Instant)>,
     next_local: u32,
     last_capture: Option<Instant>,
     /// Counts for the log line at the end of a login's restore.
@@ -624,15 +629,23 @@ impl World {
             if self.avatar_cache.copies.contains_key(&id) || !self.worn_set_whole(idx, id) {
                 continue;
             }
+            if self
+                .avatar_cache
+                .saved
+                .get(&id)
+                .is_some_and(|(_, at)| now.saturating_duration_since(*at) < REWRITE_AFTER)
+            {
+                continue;
+            }
             let signature = capture::signature(self, idx);
-            if self.avatar_cache.saved.get(&id) == Some(&signature) {
+            if self.avatar_cache.saved.get(&id).is_some_and(|(s, _)| *s == signature) {
                 continue;
             }
             let set = capture::capture(self, idx, today);
             let bytes = file::encode(&set);
             let Some(io) = &self.avatar_cache.io else { return };
             if io.jobs.send(Job::Write(io.path(&id), bytes)).is_ok() {
-                self.avatar_cache.saved.insert(id, signature);
+                self.avatar_cache.saved.insert(id, (signature, now));
                 // what a return to this avatar later in the session draws
                 self.avatar_cache.sets.insert(id, Some(Arc::new(set)));
                 written += 1;
