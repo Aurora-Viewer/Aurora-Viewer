@@ -82,7 +82,7 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
         };
         let rotation = Quat::from_euler(EulerRot::XYZ, roll, pitch, yaw);
         // a whole pelvis position is an offset from the Legacy Viewer's rest
-        // at zero (LLAvatarAppearance::buildSkeleton), which
+        // at zero (LLAvatarAppearance::buildCharacter), which
         // `Document::apply` adds on the subject's own
         let rest_position = if bone == rig.pelvis { Vec3::ZERO } else { rig.local_pos[bone] };
         let (translation, scale) = match channels {
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn a_whole_pelvis_position_is_an_offset_from_the_subject_rest() {
-        // LLAvatarAppearance::buildSkeleton puts the pelvis at zero: an
+        // LLAvatarAppearance::buildCharacter puts the pelvis at zero: an
         // Alchemy pose must not sink the avatar into the ground
         let rig = rig();
         let mut session = session(&rig);

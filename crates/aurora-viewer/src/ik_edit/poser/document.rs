@@ -60,7 +60,7 @@ impl Joint {
 /// (FSPoserAnimator::loadJointPosition and loadJointScale without
 /// `loadPositionAsDelta`, indra/newview/fsposeranimator.cpp), the pelvis's
 /// excepted: its whole position is measured from the Legacy Viewer's rest at
-/// zero (LLAvatarAppearance::buildSkeleton), so it is added like a change.
+/// zero (LLAvatarAppearance::buildCharacter), so it is added like a change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Channels {
