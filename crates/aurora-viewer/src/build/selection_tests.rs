@@ -1993,6 +1993,8 @@ fn creator_navigation_shift_skips_selected_neighbors_in_both_directions() {
         tool.select_next_link(&mut world, &mut settings, next, true);
         assert_eq!(tool.selection, full);
     }
+}
+
 /// LLToolSelectRect::handleRectangleSelection (llglsandbox.cpp): under
 /// @fartouch its distance stands for MaxSelectDistance, limit or no limit,
 /// and under @interact no rectangle selects anything.

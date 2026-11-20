@@ -806,7 +806,7 @@ impl Rlva {
             .iter()
             .flat_map(|b| {
                 self.rules_for(b, Uuid::nil())
-                    .filter(|(_, option)| Uuid::parse_str(option).is_ok())
+                    .filter(|(_, option)| numeric::uuid_set(option).is_some_and(|id| !id.is_nil()))
                     .map(move |(_, option)| format!("{b}:{option}"))
             })
             .collect();
@@ -1599,11 +1599,11 @@ mod outfit_swap_tests;
 #[path = "rlva/core_parity_tests.rs"]
 mod core_parity_tests;
 #[cfg(test)]
-#[path = "rlva/privacy_map_tests.rs"]
-mod privacy_map_tests;
+#[path = "rlva/inventory_parity_tests.rs"]
+mod inventory_parity_tests;
 #[cfg(test)]
 #[path = "rlva/movement_tests.rs"]
 mod movement_tests;
 #[cfg(test)]
-#[path = "rlva/inventory_parity_tests.rs"]
-mod inventory_parity_tests;
+#[path = "rlva/privacy_map_tests.rs"]
+mod privacy_map_tests;

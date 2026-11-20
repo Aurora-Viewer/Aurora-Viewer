@@ -27,13 +27,13 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod cases;
-mod cases_core;
-mod cases_chat;
-mod cases_privacy;
-mod cases_move;
-mod cases_int;
 mod cases_cam;
+mod cases_chat;
+mod cases_core;
+mod cases_int;
 mod cases_inv;
+mod cases_move;
+mod cases_privacy;
 mod cases_world;
 mod factory;
 mod guard;

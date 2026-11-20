@@ -904,8 +904,10 @@ impl World {
         // (rlvhelper.cpp) reads a wearable type, then a point, then a UUID,
         // then a shared folder, then a point group: a folder only counts
         // when the option is none of the first three.
-        let folder_option =
-            !c.option.is_empty() && layer(&c.option).is_none() && point(&c.option).is_none() && Uuid::parse_str(&c.option).is_err();
+        let folder_option = !c.option.is_empty()
+            && layer(&c.option).is_none()
+            && point(&c.option).is_none()
+            && super::numeric::uuid_set(&c.option).is_none();
         if !context && folder_option {
             self.rlva_shared_fetch();
         }
