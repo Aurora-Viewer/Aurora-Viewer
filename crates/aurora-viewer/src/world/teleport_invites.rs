@@ -12,6 +12,7 @@
 //! (`World::answer_teleport_invite`).
 
 use super::notifications::{Data, Kind, im};
+use super::rlva::legacy_strings::{Remote, remote};
 use super::{ChatKind, ChatLine, Origin, UiSound, World};
 use aurora_net::{InstantMessage, NetCommand};
 use glam::Vec3;
@@ -238,7 +239,7 @@ impl World {
     /// IM_LURE_DECLINED (send_simple_im, as Firestorm sends them).
     fn on_lure(&mut self, im: &InstantMessage, from: &str, godlike: bool) {
         if !godlike && !self.rlva_can_accept_teleport(im.from_agent_id, false) {
-            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), remote(Remote::BlockedTeleport));
             self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
@@ -319,6 +320,9 @@ impl World {
                 (0, aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit").to_owned()),
                 (im::LURE_DECLINED, String::new()),
             ] {
+                // send_simple_im (llviewermessage.cpp) sends both raw: no
+                // @sendim replacement for an automatic answer
+                self.rlva_send_as_decided(to, dialog, &message);
                 self.teleport_invites.out.push(NetCommand::SendImDialog {
                     to,
                     dialog,
@@ -347,7 +351,7 @@ impl World {
     /// the same sound and log as an offer.
     pub(super) fn on_teleport_request(&mut self, im: &InstantMessage, from: &str) {
         if !self.rlva_can_accept_teleport(im.from_agent_id, true) {
-            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), remote(Remote::BlockedTeleport));
             self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
@@ -1233,6 +1237,38 @@ mod tests {
         let body = &w.notifications.list[0].body;
         assert!(!body.starts_with('\n'), "{body:?}");
         assert_eq!(body.as_str(), rating_note(w.teleport_invites.list[0].rating).unwrap());
+        clean(&w, &root);
+    }
+
+    /// send_simple_im (llviewermessage.cpp): the automatic answers to a
+    /// region out of reach leave as written, past @sendim.
+    #[test]
+    fn rlva_sendim_leaves_the_automatic_out_of_reach_answers_alone() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "M", "M");
+        w.rlva.configure(true);
+        w.rlva_console_input("@sendim=n");
+        w.on_im(im(im::LURE_USER, "Join me", ADULT_REGION));
+        let sent = w.teleport_invites.take_commands();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        for mut command in sent {
+            let before = format!("{command:?}");
+            assert_eq!(w.rlva_send_boundary(&mut command, Uuid::nil()), crate::world::rlva::Boundary::Send);
+            assert_eq!(format!("{command:?}"), before, "sent as written");
+        }
+        // and only once: the same text written by the user is replaced
+        let mut again = NetCommand::SendImDialog {
+            to: JANE,
+            dialog: 0,
+            id: LURE,
+            message: aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit").to_owned(),
+            bucket: Vec::new(),
+        };
+        assert_eq!(w.rlva_send_boundary(&mut again, Uuid::nil()), crate::world::rlva::Boundary::Send);
+        assert!(
+            matches!(&again, NetCommand::SendImDialog { message, .. } if message != aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit"))
+        );
         clean(&w, &root);
     }
 }

@@ -307,13 +307,9 @@ mod tests {
         world.agent_id = agent;
         world.rlva.configure(true);
         world.rlva.process(controller, Command::parse("redirchat:123=n").unwrap());
-        let typing = aurora_net::NetCommand::AgentAnimation {
-            anim: crate::world::radar::ANIM_AGENT_TYPE,
-            start: true,
-        };
-        assert!(!world.rlva_allows_command(&typing, Uuid::nil()));
+        assert!(!world.rlva.can_send_typing_start());
         world.rlva.preferences.show_redirect_typing = true;
-        assert!(world.rlva_allows_command(&typing, Uuid::nil()));
+        assert!(world.rlva.can_send_typing_start());
         world.rlva.process(controller, Command::parse("jump=n").unwrap());
         world.rlva_console_input(" @fly=n,version=0 ");
         assert!(world.rlva.has("fly") && world.rlva.has("jump"));

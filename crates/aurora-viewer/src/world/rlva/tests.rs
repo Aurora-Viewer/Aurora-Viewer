@@ -1067,13 +1067,16 @@ fn sent(commands: Vec<NetCommand>) -> Vec<(String, i32, ChatType)> {
 }
 
 #[test]
-fn rlva_redirection_is_deduplicated_and_never_leaks_to_public_chat() {
+fn rlva_redirection_goes_once_per_object_rule_and_never_leaks_to_public_chat() {
     let mut r = enabled();
     command(&mut r, A, "@sendchat=n,redirchat:456=n");
     command(&mut r, B, "@redirchat:456=n,redirchat:789=n");
+    // RlvHandler::redirectChatOrEmote: one copy per object's rule, in the
+    // order they were stored
     assert_eq!(
         sent(r.outgoing_chat("hello", 0, ChatType::Normal)),
         vec![
+            ("hello".to_owned(), 456, ChatType::Shout),
             ("hello".to_owned(), 456, ChatType::Shout),
             ("hello".to_owned(), 789, ChatType::Shout)
         ]
@@ -1094,7 +1097,9 @@ fn rlva_chat_filter_is_utf8_safe_and_preserves_ooc_and_short_commands() {
     );
     let text = "/me éééééééééééééééééééééééé";
     let result = sent(r.outgoing_chat(text, 0, ChatType::Normal));
-    assert_eq!(result[0].0.chars().count(), 20);
+    // 20 characters, the last one a multibyte character the Legacy Viewer
+    // cuts in two: dropped instead
+    assert_eq!(result[0].0.chars().count(), 19);
     assert_eq!(sent(r.outgoing_chat("/test", 0, ChatType::Normal))[0].0, "/test");
     assert_eq!(sent(r.outgoing_chat("/me says (hello)", 0, ChatType::Normal))[0].0, "...");
 }
@@ -4561,4 +4566,33 @@ fn the_second_camera_pauses_while_rlva_holds_the_view() {
     let mut r = enabled();
     command(&mut r, A, "@tplm=n");
     assert!(!r.second_camera_blocked());
+}
+
+/// RlvHandler::isException (rlvhandler.cpp) for @recvimfrom, @sendimto,
+/// @startimto, @recvchatfrom and @recvemotefrom: once strict (@permissive=n
+/// or a `_sec` rule), an object holding the bare rule (the null key) must
+/// name the resident too, or the resident is no longer targeted.
+#[test]
+fn rlva_strict_from_rules_need_every_bare_holder_to_name_the_resident() {
+    let person = TARGET.to_string();
+    for behaviour in ["recvimfrom", "sendimto", "startimto", "recvchatfrom", "recvemotefrom"] {
+        let mut r = enabled();
+        command(&mut r, A, &format!("@{behaviour}:{person}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}");
+        command(&mut r, B, &format!("@{behaviour}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}: not strict yet");
+        command(&mut r, B, "@permissive=n");
+        assert!(!r.targets_strictly(behaviour, &person), "{behaviour}: B names no one");
+        command(&mut r, B, &format!("@{behaviour}:{person}=n"));
+        assert!(r.targets_strictly(behaviour, &person), "{behaviour}: both name the resident");
+        // a `_sec` bare rule is strict on its own, a plain one is then ignored
+        let mut r = enabled();
+        command(&mut r, A, &format!("@{behaviour}:{person}=n,{behaviour}=n"));
+        command(&mut r, B, &format!("@{behaviour}_sec=n"));
+        assert!(!r.targets_strictly(behaviour, &person), "{behaviour}: B's secure rule");
+    }
+    let mut r = enabled();
+    command(&mut r, A, &format!("@recvimfrom:{person}=n"));
+    command(&mut r, B, "@recvimfrom=n,permissive=n");
+    assert!(r.allows_im("recvim", TARGET), "@recvimfrom no longer applies");
 }

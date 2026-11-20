@@ -6569,14 +6569,10 @@ impl App {
                 );
             }
         }
-        // FSCommon::send_message_to_script_channel: a whisper
-        if a.stream_title_announce && a.stream_title_channel != 0 {
+        // FSCommon::send_message_to_script_channel: a whisper, past RLVa
+        if a.stream_title_announce {
             let channel = a.stream_title_channel;
-            self.send(NetCommand::Chat {
-                message: title.to_owned(),
-                channel,
-                chat_type: aurora_net::ChatType::Whisper,
-            });
+            self.send_to_script_channel(title, channel);
         }
     }
 
@@ -15901,8 +15897,13 @@ impl App {
     fn update_local_typing(&mut self) {
         self.chat_ui.type_during_emote = self.settings.type_during_emote;
         self.chat_ui.colon_emote = self.settings.colon_emote;
+        // LLAgent::startTyping (indra/newview/llagent.cpp): @redirchat and
+        // @rediremote hold back the start only; a typing begun before runs
+        // out on its own
         if !self.world.rlva.can_send_typing_start() {
-            self.stop_local_typing();
+            if let Some(typing) = self.chat_ui.local_typing_update_held(Instant::now()) {
+                self.send_local_typing(typing);
+            }
             return;
         }
         // AURORA_DEMO_TYPING: we type from our arrival on, no key needed

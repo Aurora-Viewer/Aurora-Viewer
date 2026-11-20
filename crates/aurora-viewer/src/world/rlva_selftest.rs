@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 mod cases;
 mod cases_core;
+mod cases_chat;
 mod cases_world;
 mod factory;
 mod guard;

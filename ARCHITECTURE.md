@@ -1675,6 +1675,10 @@ check the group UUID; conference invitations censor the initiating sender.
 Existing multi-agent session traffic follows the separate native receive path.
 Teleport text obeys receive/location privacy; forced acceptance overrides
 status rejection while preserving lock checks and do-not-disturb replies.
+`rlva/legacy_strings.rs` holds the texts RLVa sends to the other party (busy
+replies, @stopim and @list answers, hidden teleport text) word for word from
+the Legacy Viewer's rlva_strings.xml, per interface language with English
+for a missing key, since the other side's scripts may compare them.
 `rlva/rename.rs` observes confirmed new attachment arrivals in legacy shared-wear
 mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
@@ -1774,6 +1778,8 @@ send: commands that name the test's own items or, in phase 2, the prims the
 run rezzed itself and still owns; what changes an object passes only as a
 probe that the boundary refuses. `rlva_selftest/cases.rs` holds the phase 1 cases
 (rules checked at the boundary, replies, wear round trips),
+`rlva_selftest/cases_chat.rs` the phase 1 chat and IM cases (volumes,
+redirection, emote cuts, typing, hidden teleport requests, strict @*from),
 `rlva_selftest/cases_world.rs` the in-world ones of phase 2 (rez, edit,
 touch, sit, fly on its own prims), chosen apart in the dialog. Whatever ends
 a run (failure, timeout, Stop, RLVa switched off, a teleport, a logout), the

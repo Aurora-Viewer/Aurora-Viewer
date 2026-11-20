@@ -2,7 +2,6 @@
 //! (rlvhandler.cpp, llviewermessage.cpp, LGPL 2.1).
 use super::{Rlva, is_emote};
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand};
-use std::collections::BTreeSet;
 use uuid::Uuid;
 impl Rlva {
     /// RlvActions::canSendTypingStart: gates animation, agent state and chat.
@@ -24,7 +23,7 @@ impl Rlva {
             ("recvchat", "recvchatfrom")
         };
         let id = chat.source_id.to_string();
-        if !self.allows(all, &id) || self.targets(specific, &id) {
+        if !self.allows(all, &id) || self.targets_strictly(specific, &id) {
             if emote {
                 if !self.preferences.show_ellipsis {
                     return false;
@@ -85,12 +84,15 @@ impl Rlva {
         if self.has_options(redirect)
             && (emote || filtered_chat(message, false, false, self.preferences.allow_ooc, self.preferences.show_ellipsis).1)
         {
-            let channels: BTreeSet<_> = self
-                .rules
-                .values()
-                .flat_map(|rs| rs.iter())
-                .filter(|r| r.behaviour == redirect)
-                .filter_map(|r| super::numeric::convert_to_s32(&r.option))
+            // RlvHandler::redirectChatOrEmote (rlvhandler.cpp) walks
+            // m_Exceptions: one entry per object and option, in the order
+            // they were stored, so two objects redirecting to one channel
+            // hear the line twice.
+            let channels: Vec<i32> = self
+                .issued_order
+                .iter()
+                .filter(|(_, r)| r.behaviour == redirect)
+                .filter_map(|(_, r)| super::numeric::convert_to_s32(&r.option))
                 .filter(|c| self.allows_channel(*c))
                 .collect();
             let parts = if self.preferences.split_redirect_chat {
@@ -120,11 +122,13 @@ impl Rlva {
         } else {
             message.to_owned()
         };
-        if text.is_empty() {
-            Vec::new()
-        } else {
-            vec![make(text, 0, self.chat_volume(kind))]
-        }
+        // send_chat_from_viewer (fsnearbychathub.cpp) applies the volume
+        // rules a second time to what FSNearbyChat::sendChatFromViewer
+        // already adjusted ("We already did this before"): under @chatnormal
+        // with @chatwhisper, a whisper or a shout leaves as a normal line.
+        // A line @sendchat empties still leaves ("Don't break null
+        // messages").
+        vec![make(text, 0, self.chat_volume(self.chat_volume(kind)))]
     }
 
     /// The volume our chat animation follows for a line on channel 0, or
@@ -157,7 +161,14 @@ impl Rlva {
     }
 }
 
-fn chunks(mut text: &str) -> Vec<&str> {
+fn chunks(text: &str) -> Vec<&str> {
+    utf8_split(text, b' ')
+}
+
+/// utf8str_split (indra/llcommon/llstring.cpp) at MAX_MSG_STR_LEN: parts of
+/// at most 1023 bytes, cut at the last `token` that leaves one (the token
+/// itself dropped), else at a character boundary.
+pub(super) fn utf8_split(mut text: &str, token: u8) -> Vec<&str> {
     let mut parts = Vec::new();
     while !text.is_empty() {
         let mut cut = text.len().min(1023);
@@ -165,18 +176,32 @@ fn chunks(mut text: &str) -> Vec<&str> {
             cut -= 1;
         }
         if cut < text.len()
-            && text.as_bytes().get(cut) != Some(&b' ')
-            && let Some(space) = text[..cut].rfind(' ').filter(|index| *index > 0)
+            && text.as_bytes().get(cut) != Some(&token)
+            && let Some(at) = text.as_bytes()[..cut].iter().rposition(|b| *b == token).filter(|index| *index > 0)
         {
-            cut = space;
+            cut = at;
         }
         parts.push(&text[..cut]);
         text = &text[cut..];
-        if let Some(rest) = text.strip_prefix(' ') {
-            text = rest;
+        if text.as_bytes().first() == Some(&token) {
+            text = &text[1..];
         }
     }
     parts
+}
+
+/// RlvHandler::filterChat (rlvhandler.cpp): `utf8str_chtruncate` keeps as
+/// many characters as the byte index of the first '.' plus one (20 without
+/// a '.' within the first 20 bytes). Its loop stops after the lead byte of
+/// the last character, which leaves a multibyte one cut in two; that
+/// character is dropped here instead, so the line stays valid UTF-8.
+fn emote_cut(text: &str) -> &str {
+    let count = text.find('.').filter(|i| *i > 0 && *i < 20).map_or(20, |i| i + 1);
+    match text.char_indices().nth(count - 1) {
+        Some((at, c)) if c.len_utf8() == 1 => &text[..=at],
+        Some((at, _)) => &text[..at],
+        None => text,
+    }
 }
 
 fn filtered_chat(text: &str, filter_emote: bool, allow_long_emote: bool, allow_ooc: bool, show_ellipsis: bool) -> (String, bool) {
@@ -193,17 +218,7 @@ fn filtered_chat(text: &str, filter_emote: bool, allow_long_emote: bool, allow_o
             return filtered();
         }
         if !allow_long_emote {
-            return (
-                text.chars()
-                    .take(
-                        text.chars()
-                            .position(|c| c == '.')
-                            .filter(|i| *i > 0 && *i < 20)
-                            .map_or(20, |i| i + 1),
-                    )
-                    .collect(),
-                false,
-            );
+            return (emote_cut(text).to_owned(), false);
         }
         return (text.to_owned(), false);
     }
@@ -356,8 +371,12 @@ mod tests {
         ));
         let mut r = restricted("@sendchat=n");
         r.preferences.show_ellipsis = false;
-        assert!(r.outgoing_chat("ordinary chat", 0, ChatType::Normal).is_empty());
-        assert!(r.outgoing_chat("", 0, ChatType::Normal).is_empty());
+        for text in ["ordinary chat", ""] {
+            assert!(
+                matches!(&r.outgoing_chat(text, 0, ChatType::Normal)[..], [NetCommand::Chat { message, channel: 0, .. }] if message.is_empty()),
+                "an emptied line still leaves: {text:?}"
+            );
+        }
     }
 
     #[test]
@@ -367,15 +386,16 @@ mod tests {
             [NetCommand::Chat { chat_type, .. }] => *chat_type,
             other => panic!("one chat line expected, got {other:?}"),
         };
-        // RlvActions::checkChatVolume: input × restrictions → sent volume
+        // RlvActions::checkChatVolume, then send_chat_from_viewer's second
+        // pass of the same rules: input × restrictions → sent volume
         for (restrictions, whisper, normal, shout) in [
             ("@chatwhisper=n", Normal, Normal, Shout),
             ("@chatnormal=n", Whisper, Whisper, Whisper),
             ("@chatshout=n", Whisper, Normal, Normal),
-            ("@chatnormal=n,chatwhisper=n", Normal, Whisper, Whisper),
+            ("@chatnormal=n,chatwhisper=n", Whisper, Normal, Normal),
             ("@chatnormal=n,chatshout=n", Whisper, Whisper, Whisper),
             ("@chatshout=n,chatwhisper=n", Normal, Normal, Normal),
-            ("@chatshout=n,chatnormal=n,chatwhisper=n", Normal, Whisper, Whisper),
+            ("@chatshout=n,chatnormal=n,chatwhisper=n", Whisper, Normal, Normal),
         ] {
             let r = restricted(restrictions);
             assert_eq!(
@@ -466,5 +486,92 @@ mod tests {
         message.message = "directed object chat".into();
         world.apply(aurora_net::NetEvent::Chat(message));
         assert_eq!(world.chat.back().unwrap().text, "directed object chat");
+    }
+
+    /// FSNearbyChat::sendChatFromViewer plays the first pass of the volume
+    /// rules, send_chat_from_viewer sends the second: under @chatnormal with
+    /// @chatwhisper the avatar whispers while a normal line leaves.
+    #[test]
+    fn rlva_chat_animation_keeps_the_first_volume_pass_while_the_wire_takes_two() {
+        use ChatType::{Normal, Shout, Whisper};
+        for restrictions in ["@chatnormal=n,chatwhisper=n", "@chatshout=n,chatnormal=n,chatwhisper=n"] {
+            let r = restricted(restrictions);
+            for (kind, animation, sent) in [(Whisper, Normal, Whisper), (Normal, Whisper, Normal), (Shout, Whisper, Normal)] {
+                assert_eq!(r.chat_animation_volume("hello", kind), Some(animation), "{restrictions} {kind:?}");
+                assert!(
+                    matches!(&r.outgoing_chat("hello", 0, kind)[..], [NetCommand::Chat { chat_type, .. }] if *chat_type == sent),
+                    "{restrictions} {kind:?}"
+                );
+            }
+        }
+    }
+
+    /// RlvHandler::redirectChatOrEmote walks m_Exceptions: each object's
+    /// @redirchat to a channel is one more copy, in the order stored.
+    #[test]
+    fn rlva_redirection_sends_one_copy_per_object_rule_in_the_order_stored() {
+        let mut r = restricted("@redirchat:7=n");
+        let mut second = chat("@redirchat:3=n,redirchat:7=n");
+        second.source_type = ChatSourceType::Object;
+        second.chat_type = ChatType::OwnerSay;
+        second.source_id = Uuid::from_u128(0x0f);
+        r.receive(&second);
+        let channels = |r: &Rlva| {
+            r.outgoing_chat("hello", 0, ChatType::Normal)
+                .iter()
+                .map(|c| match c {
+                    NetCommand::ChatReply { channel, .. } => *channel,
+                    other => panic!("a redirection expected, got {other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(channels(&r), [7, 3, 7]);
+        // released and stored again: last
+        r.receive(&chat_from(1, "@redirchat:7=y"));
+        r.receive(&chat_from(1, "@redirchat:7=n"));
+        assert_eq!(channels(&r), [3, 7, 7]);
+        r.receive(&chat_from(0x0f, "@clear"));
+        assert_eq!(channels(&r), [7]);
+    }
+
+    fn chat_from(source: u128, text: &str) -> ChatMessage {
+        let mut command = chat(text);
+        command.source_type = ChatSourceType::Object;
+        command.chat_type = ChatType::OwnerSay;
+        command.source_id = Uuid::from_u128(source);
+        command
+    }
+
+    /// RlvUtil::isEmote needs more than four bytes: "/me " alone is a short
+    /// "/" line, which @rediremote leaves alone.
+    #[test]
+    fn rlva_bare_me_is_not_an_emote() {
+        assert!(!is_emote("/me "));
+        assert!(is_emote("/me w"));
+        let r = restricted("@rediremote:5=n");
+        assert!(
+            matches!(&r.outgoing_chat("/me ", 0, ChatType::Normal)[..], [NetCommand::Chat { channel: 0, message, .. }] if message == "/me ")
+        );
+        let r = restricted("@recvemote=n");
+        let mut line = chat("/me ");
+        assert!(r.receive_chat(&mut line, Uuid::nil()));
+        assert_eq!(line.message, "/me ", "@recvemote does not hide it");
+    }
+
+    /// RlvHandler::filterChat cuts an emote at as many characters as the
+    /// byte index of its '.' plus one, or 20; a multibyte character the
+    /// Legacy Viewer would cut in two is dropped.
+    #[test]
+    fn rlva_emote_cut_counts_the_dot_in_bytes_and_keeps_valid_utf8() {
+        let r = restricted("@sendchat=n");
+        let sent = |text: &str| match &r.outgoing_chat(text, 0, ChatType::Normal)[..] {
+            [NetCommand::Chat { message, .. }] => message.clone(),
+            other => panic!("one line expected, got {other:?}"),
+        };
+        assert_eq!(sent("/me waves. and leaves"), "/me waves.");
+        assert_eq!(sent("/me ééé. waves"), "/me ééé. wa");
+        assert_eq!(sent(&format!("/me {}", "é".repeat(30))), format!("/me {}", "é".repeat(15)));
+        assert_eq!(sent(&format!("/me {}", "a".repeat(30))), format!("/me {}", "a".repeat(16)));
+        assert_eq!(sent("/me hi"), "/me hi");
     }
 }

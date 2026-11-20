@@ -2,6 +2,7 @@
 //! LLViewerChatterBoxInvitation::post and LLFloaterIMSession::sendMsg
 //! (llimprocessing.cpp, llimview.cpp, llfloaterimsession.cpp, LGPL 2.1).
 use super::super::World;
+use super::legacy_strings::{Remote, remote};
 use aurora_net::{InstantMessage, NetCommand};
 use std::borrow::Cow;
 use uuid::Uuid;
@@ -23,15 +24,29 @@ impl World {
     }
 
     pub(crate) fn rlva_start_ims(&mut self, recipients: &[Uuid]) -> bool {
-        if recipients.iter().all(|recipient| self.rlva_can_start_im(*recipient)) {
-            true
+        let Some(blocked) = recipients.iter().copied().find(|recipient| !self.rlva_can_start_im(*recipient)) else {
+            return true;
+        };
+        // LLAvatarActions::startIM / startCall / startConference /
+        // startAdhocCall and LLGroupActions::startIM / startCall
+        // (llavataractions.cpp, llgroupactions.cpp): UISndInvalidOp and
+        // RlvUtil::notifyBlocked with blocked_startim, the resident's or the
+        // group's link as [RECIPIENT], or blocked_startconf, which is given
+        // no [RECIPIENT] and shows it as written.
+        self.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
+        // (one resident is an ordinary conversation or call: startIM, startCall)
+        let text = if recipients.len() > 1 {
+            aurora_i18n::tr!("rlva-blocked-start-conference").to_owned()
         } else {
-            // LLAvatarActions::startIM / startCall / startConference and
-            // LLGroupActions::startIM / startCall: UISndInvalidOp
-            self.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
-            self.system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            false
-        }
+            let link = if self.groups.is_member(&blocked) || self.groups.sessions.get(&blocked).is_some_and(|s| s.group) {
+                format!("secondlife:///app/group/{blocked}/about")
+            } else {
+                format!("secondlife:///app/agent/{blocked}/completename")
+            };
+            aurora_i18n::tr!("rlva-blocked-start-im", recipient = link)
+        };
+        self.system_notice(text, crate::world::notice_topics::Topic::Warning);
+        false
     }
 
     /// A refusal is an IM_BUSY_AUTO_RESPONSE with the supplied conversation
@@ -53,15 +68,14 @@ impl World {
             return Received::Original;
         }
         match message.dialog {
+            // LLIMProcessing::processNewMessage (llimprocessing.cpp): a null
+            // sender is a system message, shown before canReceiveIM is asked
             0 if !message.offline
+                && !message.from_agent_id.is_nil()
                 && !crate::world::mutes::is_linden(&message.from_name)
                 && !self.rlva_allows_im("recvim", message.from_agent_id) =>
             {
-                self.rlva_busy_reply(
-                    message.from_agent_id,
-                    message.session_id,
-                    aurora_i18n::tr!("rlva-im-blocked-receive-remote"),
-                );
+                self.rlva_busy_reply(message.from_agent_id, message.session_id, remote(Remote::BlockedReceiveIm));
                 message.message = aurora_i18n::tr!("rlva-im-blocked-receive").into();
                 Received::Masked
             }
@@ -98,7 +112,7 @@ impl World {
         if allowed {
             Cow::Borrowed(message)
         } else {
-            Cow::Borrowed(aurora_i18n::tr!("rlva-im-blocked-send"))
+            Cow::Borrowed(remote(Remote::BlockedSendIm))
         }
     }
 
@@ -116,22 +130,61 @@ impl World {
             self.rlva_allows_im("sendim", to)
         };
         if !allowed {
-            *message = aurora_i18n::tr!("rlva-im-blocked-send").into();
+            *message = remote(Remote::BlockedSendIm).into();
         }
         !allowed
     }
 
+    /// An IM whose text was settled when it was written: it leaves as it is,
+    /// once. The Legacy Viewer sends these past every RLVa check: the lines
+    /// FSFloaterIM::sendMsg queued for a session not started yet
+    /// (mQueuedMsgsForInit, fsfloaterim.cpp, sent by
+    /// sessionInitReplyReceived as they were decided), and send_simple_im's
+    /// automatic answers (llviewermessage.cpp).
+    pub(crate) fn rlva_send_as_decided(&mut self, to: Uuid, dialog: u8, message: &str) {
+        if self.rlva.enabled() && self.rlva.im.decided.len() < 256 {
+            self.rlva.im.decided.push((to, dialog, message.to_owned()));
+        }
+    }
+
+    /// `command` is one `rlva_send_as_decided` settled: it is no longer.
+    pub(crate) fn rlva_take_decided(&mut self, command: &NetCommand) -> bool {
+        let NetCommand::SendImDialog { to, dialog, message, .. } = command else {
+            return false;
+        };
+        let decided = &mut self.rlva.im.decided;
+        match decided.iter().position(|(t, d, m)| t == to && d == dialog && m == message) {
+            Some(at) => {
+                decided.remove(at);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// send_lures (llviewermessage.cpp): a teleport offer to anyone we may not
     /// start or send an IM to goes with the generic hidden text instead of
-    /// the invitation and our SLURL. The offer itself still goes.
+    /// the invitation and our SLURL. The offer itself still goes. So does a
+    /// teleport request (LLAvatarActions::teleport_request_callback,
+    /// llavataractions.cpp), its message hidden the same way.
     pub(crate) fn rlva_filter_lure(&self, command: &mut NetCommand) {
-        if let NetCommand::OfferTeleport { to, message } = command
-            && self.rlva.enabled()
-            && to
-                .iter()
-                .any(|id| !self.rlva_can_start_im(*id) || !self.rlva_allows_im("sendim", *id))
-        {
-            *message = aurora_i18n::tr!("rlva-hidden-generic").into();
+        if !self.rlva.enabled() {
+            return;
+        }
+        let blocked = |id: &Uuid| !self.rlva_can_start_im(*id) || !self.rlva_allows_im("sendim", *id);
+        match command {
+            NetCommand::OfferTeleport { to, message } if to.iter().any(blocked) => {
+                *message = remote(Remote::HiddenGeneric).into();
+            }
+            NetCommand::SendImDialog {
+                to,
+                dialog: super::super::notifications::im::TELEPORT_REQUEST,
+                message,
+                ..
+            } if blocked(to) => {
+                *message = remote(Remote::HiddenGeneric).into();
+            }
+            _ => {}
         }
     }
 
@@ -154,6 +207,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::rlva::Boundary;
     use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent, SessionInvite};
     const PERSON: Uuid = Uuid::from_u128(0x726c766170657273);
     const ISSUER: Uuid = Uuid::from_u128(0x726c766169737375);
@@ -211,7 +265,7 @@ mod tests {
         world.apply(NetEvent::InstantMessage(im(&world, 0)));
         assert_eq!(last(&world, PERSON), aurora_i18n::tr!("rlva-im-blocked-receive"));
         assert!(
-            matches!(&world.rlva.out[..], [NetCommand::SendImDialog { to: PERSON, dialog: 20, id: SESSION, message, bucket }] if message == aurora_i18n::tr!("rlva-im-blocked-receive-remote") && bucket == &[0])
+            matches!(&world.rlva.out[..], [NetCommand::SendImDialog { to: PERSON, dialog: 20, id: SESSION, message, bucket }] if message == remote(Remote::BlockedReceiveIm) && bucket == &[0])
         );
         world.rlva.out.clear();
         let mut offline = im(&world, 0);
@@ -237,13 +291,13 @@ mod tests {
         let mut world = world();
         restrict(&mut world, "@sendim=n");
         world.own_im(PERSON, "Do not disclose");
-        assert_eq!(last(&world, PERSON), aurora_i18n::tr!("rlva-im-blocked-send"));
+        assert_eq!(last(&world, PERSON), remote(Remote::BlockedSendIm));
         let mut command = NetCommand::SendIm {
             to: PERSON,
             message: "Do not disclose".into(),
         };
         assert!(world.rlva_prepare_outgoing_im(&mut command));
-        assert!(matches!(&command, NetCommand::SendIm { message, .. } if message == aurora_i18n::tr!("rlva-im-blocked-send")));
+        assert!(matches!(&command, NetCommand::SendIm { message, .. } if message == remote(Remote::BlockedSendIm)));
         assert!(
             !world.rlva_allows_command(&command, Uuid::nil()),
             "the narrow replacement route never grants general send permission"
@@ -268,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn rlva_rechecks_pending_conference_text_for_invitees_and_actual_participants() {
+    fn rlva_never_filters_conference_text_queued_before_the_start_reply() {
         let other = Uuid::from_u128(77);
         let unexpected = Uuid::from_u128(78);
         for when in ["before typing", "at ack", "on new participant", "at dispatch"] {
@@ -314,10 +368,14 @@ mod tests {
                 .into_iter()
                 .filter(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }));
             let mut command = delivered.next().unwrap();
-            w.rlva_prepare_outgoing_im(&mut command);
+            // FSFloaterIM::sendMsg decides the text when the line is queued,
+            // against a speaker list still empty before init (even with an
+            // invitee already refused); sessionInitReplyReceived sends it
+            // with no check again
+            assert_eq!(w.rlva_send_boundary(&mut command, Uuid::nil()), Boundary::Send, "{when}");
             assert!(
-                matches!(command, NetCommand::SendImDialog { to, id, message, .. } if to == SESSION && id == SESSION && message == aurora_i18n::tr!("rlva-im-blocked-send")),
-                "{when}"
+                matches!(&command, NetCommand::SendImDialog { to, id, message, .. } if *to == SESSION && *id == SESSION && message == "private draft"),
+                "{when}: {command:?}"
             );
             assert!(delivered.next().is_none());
         }
@@ -355,9 +413,9 @@ mod tests {
             .insert(Uuid::from_u128(123));
         assert!(!world.rlva_can_send_session(SESSION));
         world.send_session_im(SESSION, "Do not disclose");
-        assert_eq!(last(&world, SESSION), aurora_i18n::tr!("rlva-im-blocked-send"));
+        assert_eq!(last(&world, SESSION), remote(Remote::BlockedSendIm));
         assert!(
-            matches!(world.groups.out.last(), Some(NetCommand::SendImDialog { dialog: 17, message, .. }) if message == aurora_i18n::tr!("rlva-im-blocked-send"))
+            matches!(world.groups.out.last(), Some(NetCommand::SendImDialog { dialog: 17, message, .. }) if message == remote(Remote::BlockedSendIm))
         );
         let group = Uuid::from_u128(55);
         world.groups.groups.push(aurora_net::GroupMembership {
@@ -392,7 +450,7 @@ mod tests {
         world.apply(NetEvent::InstantMessage(im(&world, 26)));
         assert!(world.teleport_invites.list.is_empty());
         assert_eq!(world.rlva.out.len(), 2);
-        assert!(world.rlva.out.iter().all(|command| matches!(command, NetCommand::SendImDialog { dialog: 20, id, message, .. } if id.is_nil() && message == aurora_i18n::tr!("rlva-im-blocked-teleport-remote"))));
+        assert!(world.rlva.out.iter().all(|command| matches!(command, NetCommand::SendImDialog { dialog: 20, id, message, .. } if id.is_nil() && message == remote(Remote::BlockedTeleport))));
         assert!(
             world.teleport_invites.take_commands().is_empty(),
             "RLVa refusal is not a native user decline"
@@ -462,7 +520,6 @@ mod tests {
         world.groups.out.clear();
         world.start_conference(vec![PERSON, other]);
         world.start_text_conference(vec![PERSON, other]);
-        world.convert_to_conference(PERSON, vec![other]);
         world.start_call(group);
         assert_eq!(world.calls.active.as_ref().unwrap().conversation(), PERSON);
         assert!(world.calls.conferences.is_empty() && world.groups.out.is_empty());
@@ -518,7 +575,7 @@ mod tests {
             world.rlva_filter_lure(&mut command);
             text(command)
         };
-        let hidden = aurora_i18n::tr!("rlva-hidden-generic");
+        let hidden = remote(Remote::HiddenGeneric);
         assert_eq!(filtered(&world, vec![PERSON, other]), text(offer(vec![])));
         restrict(&mut world, &format!("@startim=n,startim:{PERSON}=n"));
         assert_eq!(filtered(&world, vec![PERSON]), text(offer(vec![])));
@@ -595,5 +652,118 @@ mod tests {
         assert_eq!(world.teleport_invites.list.len(), count);
         assert_eq!(world.rlva.out.len(), 2);
         assert!(world.teleport_invites.take_commands().is_empty());
+    }
+
+    /// LLAvatarActions::teleport_request_callback (llavataractions.cpp): a
+    /// teleport request to a resident we may not start or send an IM to
+    /// keeps going, its message hidden.
+    #[test]
+    fn rlva_teleport_request_message_is_hidden_from_an_im_blocked_resident() {
+        let mut world = world();
+        let filtered = |world: &World| {
+            let mut command = NetCommand::SendImDialog {
+                to: PERSON,
+                dialog: crate::world::notifications::im::TELEPORT_REQUEST,
+                id: Uuid::nil(),
+                message: "Let me in".into(),
+                bucket: vec![],
+            };
+            world.rlva_filter_lure(&mut command);
+            match command {
+                NetCommand::SendImDialog { message, .. } => message,
+                _ => unreachable!(),
+            }
+        };
+        assert_eq!(filtered(&world), "Let me in");
+        restrict(&mut world, "@sendim=n");
+        assert_eq!(filtered(&world), remote(Remote::HiddenGeneric));
+        restrict(&mut world, "@clear,startim=n");
+        assert_eq!(filtered(&world), remote(Remote::HiddenGeneric));
+        world.own_im(PERSON, "hello");
+        assert_eq!(filtered(&world), "Let me in", "an open conversation lets @startim through");
+    }
+
+    /// FSFloaterIM::addP2PSessionParticipants (fsfloaterim.cpp) closes the
+    /// conversation before LLAvatarActions::startConference checks
+    /// canStartIM: the open conversation no longer excepts the resident,
+    /// and a refused conference leaves it closed.
+    #[test]
+    fn rlva_refused_conversion_to_a_conference_leaves_the_conversation_closed() {
+        let mut world = world();
+        let other = Uuid::from_u128(123);
+        world.own_im(PERSON, "hello");
+        restrict(&mut world, &format!("@startim=n,startim:{other}=n"));
+        assert!(world.rlva_can_start_im(PERSON), "open for now");
+        world.convert_to_conference(PERSON, vec![other]);
+        assert!(!world.social.has_session(&PERSON));
+        assert!(world.calls.conferences.is_empty());
+        assert_eq!(world.chat.back().unwrap().text, aurora_i18n::tr!("rlva-blocked-start-conference"));
+    }
+
+    /// LLIMProcessing::processNewMessage (llimprocessing.cpp): an IM with a
+    /// null sender is a system message, never masked by @recvim.
+    #[test]
+    fn rlva_recvim_leaves_system_messages_alone() {
+        let mut world = world();
+        restrict(&mut world, "@recvim=n");
+        let mut system = im(&world, 0);
+        system.from_agent_id = Uuid::nil();
+        system.from_name = "Second Life".into();
+        assert!(matches!(world.rlva_receive_im(&mut system), Received::Original));
+        assert_eq!(system.message, "Private payload");
+        assert!(world.rlva.out.is_empty(), "no busy reply either");
+    }
+
+    /// LLAvatarActions::startIM / startConference and LLGroupActions::
+    /// startIM: blocked_startim with the resident's or group's link, or
+    /// blocked_startconf as written.
+    #[test]
+    fn rlva_startim_refusal_names_the_resident_the_group_or_the_conference() {
+        let mut world = world();
+        let other = Uuid::from_u128(123);
+        let group = Uuid::from_u128(55);
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Test group".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: false,
+            list_in_profile: false,
+            contribution: 0,
+        });
+        restrict(&mut world, "@startim=n");
+        assert!(!world.rlva_start_ims(&[PERSON]));
+        let resident = format!("secondlife:///app/agent/{PERSON}/completename");
+        assert_eq!(
+            world.chat.back().unwrap().text,
+            aurora_i18n::tr!("rlva-blocked-start-im", recipient = resident)
+        );
+        assert!(!world.rlva_start_ims(&[group]));
+        let link = format!("secondlife:///app/group/{group}/about");
+        assert_eq!(
+            world.chat.back().unwrap().text,
+            aurora_i18n::tr!("rlva-blocked-start-im", recipient = link)
+        );
+        assert!(!world.rlva_start_ims(&[PERSON, other]));
+        assert_eq!(world.chat.back().unwrap().text, aurora_i18n::tr!("rlva-blocked-start-conference"));
+    }
+
+    /// callback_script_dialog (llviewermessage.cpp): under @sendchat the
+    /// answer of a channel 0 dialog is dropped with no notice.
+    #[test]
+    fn rlva_sendchat_drops_a_channel_zero_dialog_answer_silently() {
+        let mut world = world();
+        let reply = |channel| NetCommand::ScriptDialogReply {
+            sender: None,
+            object_id: ISSUER,
+            channel,
+            index: 0,
+            label: "Yes".into(),
+        };
+        restrict(&mut world, "@sendchat=n");
+        assert_eq!(world.rlva_send_boundary(&mut reply(0), Uuid::nil()), Boundary::Dropped);
+        assert_eq!(world.rlva_send_boundary(&mut reply(-7), Uuid::nil()), Boundary::Send);
+        restrict(&mut world, "@clear");
+        assert_eq!(world.rlva_send_boundary(&mut reply(0), Uuid::nil()), Boundary::Send);
     }
 }

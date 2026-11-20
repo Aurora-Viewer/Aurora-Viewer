@@ -16,11 +16,21 @@ impl World {
         if !self.rlva.enabled() {
             return true;
         }
+        // LLWorld::getAvatar (indra/newview/llworld.cpp), for
+        // rlvCheckAvatarIMDistance (indra/newview/rlvactions.cpp): a loaded
+        // avatar, else the coarse map location of any region we see
         let distance = self
             .objects
             .index_of_uuid(&target)
             .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, std::time::Instant::now()))
-            .map(|(p, _, _)| p.distance(self.agent.position));
+            .map(|(p, _, _)| p)
+            .or_else(|| {
+                self.coarse
+                    .keys()
+                    .find_map(|region| super::super::radar::coarse_in(self, *region).find(|(id, ..)| *id == target))
+                    .map(|(_, position, _)| position)
+            })
+            .map(|p| p.distance(self.agent.position));
         distance.map_or_else(
             || self.rlva.allows_im(behaviour, target),
             |d| self.rlva.allows_im_at(behaviour, target, Some(d)),
@@ -201,7 +211,6 @@ impl World {
         }
         let blocked = |name| r.has_except(name, actor);
         match command {
-            NetCommand::AgentAnimation { anim, start: true } if *anim == super::super::radar::ANIM_AGENT_TYPE => r.can_send_typing_start(),
             NetCommand::CreateInventoryItem {
                 kind: aurora_net::inventory::operations::NewItem::Landmark,
                 ..
@@ -794,5 +803,43 @@ mod teleport_tests {
         ] {
             assert!(teleport(invalid).is_none(), "{invalid}");
         }
+    }
+
+    /// rlvCheckAvatarIMDistance (rlvactions.cpp) measures with
+    /// LLWorld::getAvatar (llworld.cpp): a resident not loaded yet is found
+    /// by their map location, in our region or a neighbour.
+    #[test]
+    fn rlva_im_range_measures_residents_known_only_by_their_map_location() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        let main = aurora_net::origin_to_handle(256000, 256000);
+        let east = aurora_net::origin_to_handle(256256, 256000);
+        w.main_region = Some(main);
+        w.agent.position = Vec3::new(200.0, 100.0, 20.0);
+        w.rlva_configure(true);
+        w.rlva_console_input("@recvim:50=n");
+        let (near, far) = (Uuid::from_u128(5), Uuid::from_u128(6));
+        assert!(w.rlva_allows_im("recvim", near), "nowhere to be found: beyond any range");
+        w.coarse.insert(main, vec![(near, Vec3::new(220.0, 100.0, 20.0))]);
+        w.coarse.insert(east, vec![(far, Vec3::new(10.0, 100.0, 20.0))]);
+        assert!(!w.rlva_allows_im("recvim", near), "20 m away, inside the 50 m");
+        assert!(w.rlva_allows_im("recvim", far), "66 m away in the next region");
+    }
+
+    /// LLAgent::startTyping (llagent.cpp) is the only place @redirchat
+    /// holds the typing animation back: a gesture or a manual play of it
+    /// still goes.
+    #[test]
+    fn rlva_redirchat_leaves_a_typing_animation_played_by_other_means() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        w.rlva_configure(true);
+        w.rlva_console_input("@redirchat:5=n");
+        assert!(!w.rlva.can_send_typing_start());
+        let typing = NetCommand::AgentAnimation {
+            anim: crate::world::radar::ANIM_AGENT_TYPE,
+            start: true,
+        };
+        assert!(w.rlva_allows_command(&typing, Uuid::nil()));
     }
 }

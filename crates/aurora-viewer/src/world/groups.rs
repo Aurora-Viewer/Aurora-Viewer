@@ -479,7 +479,25 @@ impl World {
             self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
             return;
         }
-        let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        // A conference we started and whose start reply has not come yet has
+        // no speaker yet in the Legacy Viewer: LLIMModel::LLIMSession starts
+        // with an empty LLIMSpeakerMgr (llimview.cpp, llspeakers.cpp) that
+        // only sessionInitReplyReceived, agent list updates and arriving
+        // chatters fill. FSFloaterIM::sendMsg (fsfloaterim.cpp) checks
+        // @sendim against that list for an ad-hoc session, so a line queued
+        // before init finds no one to refuse and leaves unchanged.
+        let text = if self.calls.conferences.contains_key(&session) {
+            text.to_owned()
+        } else {
+            self.rlva_outgoing_im_text(session, true, text).into_owned()
+        };
+        self.send_session_text(session, text, false);
+    }
+
+    /// A line of a session, its RLVa text already chosen; `decided`: it was
+    /// queued before the conference started and leaves as it was decided
+    /// then (`rlva_send_as_decided`).
+    pub(super) fn send_session_text(&mut self, session: Uuid, text: String, decided: bool) {
         if self.calls.conferences.contains_key(&session) {
             if let Some(info) = self.groups.sessions.get_mut(&session) {
                 info.pending_messages.push(text);
@@ -489,6 +507,9 @@ impl World {
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
+            if decided {
+                self.rlva_send_as_decided(session, dialog::SESSION_SEND, part);
+            }
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
         let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());

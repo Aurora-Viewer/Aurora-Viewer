@@ -6,6 +6,7 @@ use super::{
         notifications::{Data, Kind, NameTarget, Response},
     },
     VERSION,
+    legacy_strings::{Remote, remote},
 };
 use aurora_net::{InstantMessage, NetCommand};
 use uuid::Uuid;
@@ -14,6 +15,9 @@ use uuid::Uuid;
 pub struct Queries {
     pub close: Vec<Uuid>,
     pub remember: bool,
+    /// IMs whose text was settled when written (`rlva_send_as_decided`):
+    /// recipient, dialog, text.
+    pub(crate) decided: Vec<(Uuid, u8, String)>,
 }
 
 fn exception(name: &str) -> bool {
@@ -33,28 +37,11 @@ fn exception(name: &str) -> bool {
     )
 }
 
-fn chunks(mut text: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    while !text.is_empty() {
-        let mut cut = text.len().min(1023);
-        while !text.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        if cut < text.len()
-            && let Some(newline) = text[..cut].rfind('\n').filter(|index| *index > 0)
-        {
-            cut = newline + 1;
-        }
-        result.push(&text[..cut]);
-        text = &text[cut..];
-    }
-    result
-}
-
 impl World {
     fn rlva_im_reply(&mut self, to: Uuid, message: &str, busy: bool) {
         let offline = self.social.friends.iter().any(|friend| friend.id == to && !friend.online);
-        for chunk in chunks(message) {
+        // RlvUtil::sendIMMessage (rlvcommon.cpp): utf8str_split on '\n'
+        for chunk in super::chat::utf8_split(message, b'\n') {
             if self.rlva.out.len() >= 256 {
                 break;
             }
@@ -76,24 +63,22 @@ impl World {
         let from = im.from_agent_id;
         if im.message == "@stopim" {
             if !self.rlva_allows_im("startim", from) {
-                self.rlva_im_reply(from, aurora_i18n::tr!("rlva-im-ended-remote"), true);
+                self.rlva_im_reply(from, remote(Remote::StopImEndSession), true);
                 if self.social.has_session(&from) {
                     self.conversation_closed(&from);
                     self.leave_session(from);
                     self.rlva.im.close.push(from);
-                    let name = if self.rlva_can_name(from) {
-                        im.from_name.as_str()
-                    } else {
-                        self.rlva_anonymous(from).display_name.as_str()
-                    };
-                    self.system_message(aurora_i18n::tr!("rlva-im-ended-local", name = name));
+                    // RlvUtil::notifyBlocked(StopIm::EndSessionLocal) with the
+                    // resident's "about" link as [NAME], logged to chat
+                    let link = format!("secondlife:///app/agent/{from}/about");
+                    self.system_message(aurora_i18n::tr!("rlva-im-ended-local", name = link));
                 }
                 return true;
             }
             if !self.rlva.preferences.im_queries {
                 return false;
             }
-            self.rlva_im_reply(from, aurora_i18n::tr!("rlva-im-no-restriction"), true);
+            self.rlva_im_reply(from, remote(Remote::StopImNoSession), true);
             return true;
         }
         if !self.rlva.preferences.im_queries {
@@ -108,25 +93,11 @@ impl World {
             "@except" => true,
             _ => return false,
         };
+        // RlvHandler::processIMQuery: one RLVaListRequested notification per
+        // query, however many are already waiting
         if self.rlva.preferences.im_queries_auto_share {
             self.rlva_im_list(from, exceptions);
-        } else if !self
-            .notifications
-            .list
-            .iter()
-            .any(|n| matches!(n.data, Data::RlvaQuery { from: sender, exceptions: kind } if sender == from && kind == exceptions))
-        {
-            if self
-                .notifications
-                .list
-                .iter()
-                .filter(|n| matches!(n.data, Data::RlvaQuery { .. }))
-                .count()
-                >= 32
-            {
-                self.rlva_im_reply(from, aurora_i18n::tr!("rlva-im-denied"), true);
-                return true;
-            }
+        } else {
             let name = if self.rlva_can_name(from) {
                 im.from_name.as_str()
             } else {
@@ -143,45 +114,94 @@ impl World {
         true
     }
 
+    /// RlvFloaterBehaviours::getFormattedBehaviourString (rlvfloaters.cpp):
+    /// the objects in the order of their keys, each one's rules in the order
+    /// it issued them; then, for @list, a blank line and the suffix
+    /// (RlvHandler::onIMQueryListResponse).
     fn rlva_im_list(&mut self, to: Uuid, exceptions: bool) {
         let mut message = format!("{VERSION}\n");
-        'issuers: for (source, rules) in &self.rlva.rules {
-            let name = self
-                .rlva_attachment_item(*source)
-                .and_then(|id| self.inventory.items.get(&id))
-                .map(|item| item.name.clone())
-                .unwrap_or_else(|| source.to_string());
-            message.push_str(&format!("\n{name}:\n"));
+        for (source, rules) in &self.rlva.issued {
+            message.push_str(&format!("\n{}:\n", self.rlva_object_label(*source)));
             for rule in rules {
                 if (!rule.option.is_empty() && exception(&rule.behaviour)) != exceptions {
                     continue;
                 }
-                if message.len() + rule.behaviour.len() + rule.option.len() + 16 > 250_000 {
-                    break 'issuers;
-                }
                 message.push_str(&format!("  -> {}", super::rule_text(rule)));
-                if let Some(id) = super::numeric::uuid_set(&rule.option).filter(|id| !id.is_nil()) {
-                    let name = self
-                        .rlva_attachment_item(id)
-                        .and_then(|item| self.inventory.items.get(&item))
-                        .map(|item| item.name.clone())
-                        .or_else(|| self.social.avatar_names.complete(&id))
-                        .or_else(|| self.search.groups.get(&id).map(|group| group.name.clone()));
-                    if let Some(name) = name.filter(|name| name != &rule.option) {
-                        message.push_str(&format!("  [{name}]"));
-                    }
+                if let Some(name) = self.rlva_option_label(&rule.option).filter(|name| *name != rule.option) {
+                    message.push_str(&format!("  [{name}]"));
                 }
                 message.push('\n');
             }
         }
         if !exceptions {
-            message.push_str(aurora_i18n::tr!("rlva-im-list-suffix"));
+            message.push('\n');
+            message.push_str(remote(Remote::ListSuffix));
         }
         self.rlva_im_reply(to, &message, false);
     }
 
+    /// rlvGetItemNameFromObjID (rlvfloaters.cpp): an avatar's complete name;
+    /// an attachment's item name with its point, and ", child" for a child
+    /// prim; anything else its key.
+    fn rlva_object_label(&self, id: Uuid) -> String {
+        let Some((index, object)) = self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i).map(|o| (i, o))) else {
+            return id.to_string();
+        };
+        if object.is_avatar() {
+            return self
+                .social
+                .avatar_names
+                .raw(&id)
+                .map(|name| name.complete(&self.social.avatar_names.options))
+                .or_else(|| object.display_name())
+                .unwrap_or_else(|| id.to_string());
+        }
+        let root_index = self.objects.linkset_root(index);
+        let root = self.objects.get(root_index).unwrap_or(object);
+        let point = root.attachment_point();
+        let worn = point != 0
+            && self
+                .objects
+                .parent_of(root)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|p| p.is_avatar());
+        if !worn {
+            return id.to_string();
+        }
+        let name = root
+            .attachment_item_id()
+            .and_then(|item| self.inventory.items.get(&item))
+            .map_or_else(|| id.to_string(), |item| item.name.clone());
+        let point_name = self.avatar_lib.attach_names.get(&point).map_or("Unknown", String::as_str);
+        format!("{name} ({point_name}{})", if root_index == index { "" } else { ", child" })
+    }
+
+    /// The name RlvFloaterBehaviours::getFormattedBehaviourString gives a
+    /// rule's key: an object in view as `rlva_object_label`, a resident's
+    /// account name (their display name without one), a group's name.
+    fn rlva_option_label(&self, option: &str) -> Option<String> {
+        let id = super::numeric::uuid_set(option).filter(|id| !id.is_nil())?;
+        if self.objects.index_of_uuid(&id).is_some() {
+            return Some(self.rlva_object_label(id));
+        }
+        if let Some(name) = self.social.avatar_names.raw(&id) {
+            return Some(if name.username.is_empty() {
+                name.display_name.clone()
+            } else {
+                name.username.clone()
+            });
+        }
+        self.groups
+            .group(&id)
+            .map(|group| group.name.clone())
+            .or_else(|| self.search.groups.get(&id).map(|group| group.name.clone()))
+    }
+
+    /// RlvHandler::onIMQueryListResponse answers whatever the IM query
+    /// setting became since the question; RLVa turned off in the session
+    /// (Aurora only) leaves nothing to list.
     pub(crate) fn rlva_answer_im_query(&mut self, from: Uuid, exceptions: bool, response: &Response) {
-        if !self.rlva.enabled() || !self.rlva.preferences.im_queries {
+        if !self.rlva.enabled() {
             return;
         }
         match response {
@@ -192,7 +212,7 @@ impl World {
                 }
                 self.rlva_im_list(from, exceptions);
             }
-            _ => self.rlva_im_reply(from, aurora_i18n::tr!("rlva-im-denied"), true),
+            _ => self.rlva_im_reply(from, remote(Remote::ListDeny), true),
         }
     }
 }
@@ -285,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn rlva_im_list_requires_consent_deduplicates_prompts_and_separates_exceptions() {
+    fn rlva_im_list_requires_consent_and_separates_exceptions() {
         let mut world = world();
         let target = Uuid::from_u128(3);
         world.social.avatar_names.on_legacy(target, "Test", "Resident");
@@ -293,24 +313,21 @@ mod tests {
         query(&mut world, "@list", false);
         query(&mut world, "@list", false);
         assert!(world.rlva.out.is_empty());
-        assert_eq!(
-            world
-                .notifications
-                .list
-                .iter()
-                .filter(|n| matches!(n.data, Data::RlvaQuery { .. }))
-                .count(),
-            1
-        );
-        let id = world
+        // RlvHandler::processIMQuery: one question per query
+        let ids: Vec<_> = world
             .notifications
             .list
             .iter()
-            .find(|n| matches!(n.data, Data::RlvaQuery { .. }))
-            .unwrap()
-            .id;
-        world.respond_notification(id, Response::Decline);
-        assert!(matches!(world.rlva.out.pop(), Some(NetCommand::ImReply { busy: true, .. })));
+            .filter(|n| matches!(n.data, Data::RlvaQuery { .. }))
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        for id in ids {
+            world.respond_notification(id, Response::Decline);
+            assert!(
+                matches!(world.rlva.out.pop(), Some(NetCommand::ImReply { busy: true, message, .. }) if message == remote(Remote::ListDeny))
+            );
+        }
         query(&mut world, "@list", false);
         let id = world
             .notifications
@@ -413,10 +430,72 @@ mod tests {
 
     #[test]
     fn rlva_im_response_chunks_keep_unicode_and_line_boundaries_without_oversized_packets() {
+        // utf8str_split (rlvcommon.cpp): a cut at a line end drops that '\n'
         let text = format!("{}\n{}\n{}", "a".repeat(800), "é".repeat(800), "z".repeat(800));
-        let split = chunks(&text);
-        assert_eq!(split.concat(), text);
-        assert!(split.iter().all(|part| part.len() <= 1023 && !part.is_empty()));
-        assert!(split[0].ends_with('\n'));
+        let split = super::super::chat::utf8_split(&text, b'\n');
+        assert!(
+            split
+                .iter()
+                .all(|part| part.len() <= 1023 && !part.is_empty() && !part.ends_with('\n'))
+        );
+        assert_eq!(split, ["a".repeat(800), "é".repeat(511), "é".repeat(289), "z".repeat(800)]);
+    }
+
+    fn replies(world: &World) -> String {
+        world
+            .rlva
+            .out
+            .iter()
+            .filter_map(|command| match command {
+                NetCommand::ImReply { message, busy: false, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// RlvFloaterBehaviours::getFormattedBehaviourString (rlvfloaters.cpp):
+    /// each object's rules in the order it issued them, a resident key named
+    /// by its account name, a blank line before the @list suffix.
+    #[test]
+    fn rlva_im_list_follows_the_legacy_layout() {
+        let mut world = world();
+        let target = Uuid::from_u128(3);
+        world.social.avatar_names.on_legacy(target, "Test", "Smith");
+        world.rlva.preferences.im_queries_auto_share = true;
+        command(&mut world, &format!("@sendim=n,fly=n,recvchat:{target}=n"));
+        query(&mut world, "@list", false);
+        assert_eq!(
+            replies(&world),
+            format!("{VERSION}\n\n{ISSUER}:\n  -> sendim\n  -> fly\n\n{}", remote(Remote::ListSuffix))
+        );
+        world.rlva.out.clear();
+        query(&mut world, "@except", false);
+        assert_eq!(
+            replies(&world),
+            format!("{VERSION}\n\n{ISSUER}:\n  -> recvchat:{target}  [test.smith]\n")
+        );
+    }
+
+    /// RlvHandler::processIMQuery asks once per query, however many wait,
+    /// and onIMQueryListResponse answers even once the IM query setting is
+    /// off.
+    #[test]
+    fn rlva_im_list_questions_are_never_merged_capped_or_cancelled_by_the_setting() {
+        let mut world = world();
+        for _ in 0..40 {
+            query(&mut world, "@list", false);
+        }
+        let ids: Vec<_> = world
+            .notifications
+            .list
+            .iter()
+            .filter(|n| matches!(n.data, Data::RlvaQuery { .. }))
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(ids.len(), 40);
+        assert!(world.rlva.out.is_empty(), "no automatic refusal");
+        world.rlva.preferences.im_queries = false;
+        world.respond_notification(ids[0], Response::Accept);
+        assert!(replies(&world).starts_with(VERSION));
     }
 }

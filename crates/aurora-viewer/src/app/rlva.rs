@@ -777,7 +777,9 @@ impl App {
             });
             let blocked = self.world.social.ims.iter().find(|im| im.other == from).is_some_and(|im| {
                 im.lines.iter().rev().take(2).all(|line| {
-                    line.text == aurora_i18n::tr!("rlva-im-blocked-receive") || line.text == aurora_i18n::tr!("rlva-im-blocked-send")
+                    line.text == aurora_i18n::tr!("rlva-im-blocked-receive")
+                        || line.text
+                            == crate::world::rlva::legacy_strings::remote(crate::world::rlva::legacy_strings::Remote::BlockedSendIm)
                 })
             });
             log::info!(

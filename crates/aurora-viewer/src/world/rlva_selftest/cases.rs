@@ -1127,5 +1127,6 @@ pub(super) fn phase1() -> Vec<Case> {
     cases.extend(replies());
     cases.extend(round_trips());
     cases.extend(super::cases_core::cases());
+    cases.extend(super::cases_chat::cases());
     cases
 }
