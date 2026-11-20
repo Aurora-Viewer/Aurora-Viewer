@@ -428,7 +428,7 @@ pub(super) fn target(
 /// What a drop does: a move as before, a copy or links by Paste's routes
 /// (the Marketplace's paste, the outfit folders' rules).
 #[allow(clippy::too_many_arguments)]
-fn drop_cargo(
+pub(super) fn drop_cargo(
     inv: &Inventory,
     ids: &[Uuid],
     to: Uuid,

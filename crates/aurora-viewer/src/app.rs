@@ -23492,6 +23492,8 @@ impl ApplicationHandler for App {
                         | "aurora-explorer-menu"
                         | "aurora-explorer-medium"
                         | "aurora-explorer-undo"
+                        | "aurora-explorer-tabs"
+                        | "aurora-explorer-split"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -23608,6 +23610,11 @@ impl ApplicationHandler for App {
                             if view == "aurora-explorer-undo" {
                                 // a Delete to undo, a rename to redo
                                 self.world.inventory.demo_history(self.world.agent_id);
+                            }
+                            if view == "aurora-explorer-split" {
+                                // the split view: two explorers side by side
+                                self.panels.inventory_dual = true;
+                                self.dual_inventory_ui.demo_explorer("aurora-explorer-split-right");
                             }
                             // the column lists a pin once its folder is there
                             self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];

@@ -719,6 +719,12 @@ pub struct InventoryUi {
     side: aurora::Sidebar,
     /// Where the explorer has been: Back, Forward (`aurora::history`).
     history: aurora::History,
+    /// The explorer's tabs (`aurora::tabs`).
+    tabs: aurora::Tabs,
+    /// In the split view (the dual-panel layout), the folder the other
+    /// pane's explorer shows: each pane is an explorer at any width, and
+    /// the menus offer Copy / Move to it.
+    other_pane: Option<Uuid>,
     /// The breadcrumb while a path is typed in it (`aurora::breadcrumb`).
     path_edit: Option<aurora::PathEdit>,
     counts: aurora::Counts,
@@ -896,10 +902,12 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
-    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu|-undo]`):
-    /// the explorer in the demo folder, come from the root (Back and Up
-    /// lit), with the path being typed or the menu of its empty space open
-    /// (`-undo`: with its Undo and Redo entries, `world::inventory::undo`).
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu|-undo|-tabs|
+    /// -split]`): the explorer in the demo folder, come from the root (Back
+    /// and Up lit), with the path being typed or the menu of its empty space
+    /// open (`-undo`: with its Undo and Redo entries,
+    /// `world::inventory::undo`), three tabs behind (`-tabs`), or the split
+    /// view with an item's menu (`-split`; the right pane in the subfolder).
     pub fn demo_explorer(&mut self, mode: &str) {
         // applied once the demo folder has arrived (`demo_explorer_now`)
         self.demo_explorer = Some(mode.to_owned());
@@ -920,6 +928,29 @@ impl InventoryUi {
                 let mut text = aurora::path_text(inv, base, base);
                 text.push(aurora::PATH_SEPARATOR);
                 self.path_edit = Some(aurora::PathEdit::new(text));
+            }
+            "aurora-explorer-tabs" => {
+                // three tabs behind the one shown
+                let prefs = InventoryPreferences::default();
+                for folder in [Uuid::from_u128(8001), inv.root, Uuid::from_u128(8200)] {
+                    aurora::tabs::open(self, &prefs, folder, false);
+                }
+            }
+            "aurora-explorer-split" => {
+                // the left pane's menu on an item: Copy / Move to the other
+                // pane
+                let item = Uuid::from_u128(8100);
+                self.selection = [item].into();
+                self.selected = Some(item);
+                self.row_menu = Some((item, egui::pos2(300.0, 300.0)));
+                self.background_menu = false;
+            }
+            "aurora-explorer-split-right" => {
+                let sub = Uuid::from_u128(8001);
+                if inv.folders.contains_key(&sub) {
+                    self.history.observe(aurora::Place { tab: 0, folder: sub });
+                    self.browse = sub;
+                }
             }
             "aurora-explorer-menu" | "aurora-explorer-undo" => {
                 self.selection.clear();
@@ -2651,7 +2682,10 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
+    // the split view: each pane knows the other's folder (`other_pane`)
+    st.other_pane = dual.as_deref().filter(|_| !classic).map(|dual| dual.browse);
     if let Some(dual) = dual.as_deref_mut() {
+        dual.other_pane = (!classic).then_some(st.browse);
         if !*open {
             dual.pending_delete = None;
         }

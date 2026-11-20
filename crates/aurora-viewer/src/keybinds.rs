@@ -590,6 +590,12 @@ pub enum Action {
     /// (`world::inventory::undo`); Ctrl+Shift+Z redoes too, as Dolphin's.
     InvUndo,
     InvRedo,
+    /// The explorer's tabs (`ui::inventory::aurora::tabs`), as Explorer's
+    /// and Dolphin's: Ctrl+T, Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab.
+    InvNewTab,
+    InvCloseTab,
+    InvNextTab,
+    InvPreviousTab,
 }
 
 /// The inventory lists' shortcuts: matched on the list's key events and
@@ -615,6 +621,10 @@ pub fn is_inventory(a: Action) -> bool {
             | Action::InvPurge
             | Action::InvUndo
             | Action::InvRedo
+            | Action::InvNewTab
+            | Action::InvCloseTab
+            | Action::InvNextTab
+            | Action::InvPreviousTab
     )
 }
 
@@ -893,6 +903,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::InvPurge, aurora_i18n::tr!("keybinds-inventory-purge")),
                     (Action::InvUndo, aurora_i18n::tr!("inventory-undo")),
                     (Action::InvRedo, aurora_i18n::tr!("inventory-redo")),
+                    (Action::InvNewTab, aurora_i18n::tr!("inventory-new-tab")),
+                    (Action::InvCloseTab, aurora_i18n::tr!("inventory-close-tab")),
+                    (Action::InvNextTab, aurora_i18n::tr!("inventory-next-tab")),
+                    (Action::InvPreviousTab, aurora_i18n::tr!("inventory-previous-tab")),
                 ],
             ),
             (
@@ -1105,6 +1119,33 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
             } else {
                 [kmod(K::KeyY, true, false), kmod(K::KeyZ, true, true)]
             },
+        ),
+        // Explorer's, Dolphin's and Finder's (Cmd+T, Cmd+W; Finder and
+        // Safari go from tab to tab with Cmd+Shift+] / [, as Ctrl+Tab
+        // elsewhere)
+        (Action::InvNewTab, [kmod(K::KeyT, true, false), None]),
+        (Action::InvCloseTab, [kmod(K::KeyW, true, false), None]),
+        (
+            Action::InvNextTab,
+            [
+                if mac {
+                    kmod(K::BracketRight, true, true)
+                } else {
+                    kmod(K::Tab, true, false)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvPreviousTab,
+            [
+                if mac {
+                    kmod(K::BracketLeft, true, true)
+                } else {
+                    kmod(K::Tab, true, true)
+                },
+                None,
+            ],
         ),
     ]
 }
@@ -1840,15 +1881,47 @@ impl KeyBindings {
     fn follow_letters_of(&mut self, layout: &layout::KeyboardLayout) {
         let before = Self::us_places(layout.movement_keys());
         let after = Self::for_layout(layout);
+        // the defaults still in place that move: (action, slot, old, new)
+        let mut moves: Vec<(Action, usize, Binding, Binding)> = Vec::new();
         for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
             for slot in 0..2 {
-                let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
-                    continue;
-                };
-                if old == new || self.get(*action)[slot].as_ref() != Some(old) || !self.rivals(*action, new).is_empty() {
-                    continue;
+                if let (Some(old), Some(new)) = (&old[slot], &new[slot])
+                    && old != new
+                    && self.get(*action)[slot].as_ref() == Some(old)
+                {
+                    moves.push((*action, slot, old.clone(), new.clone()));
                 }
-                self.set(*action, slot, Some(new.clone()));
+            }
+        }
+        // A move is refused while its new key is someone else's, unless that
+        // someone moves away from it too: two defaults that swap letters
+        // (AZERTY's Z and W: the inventory's Undo and Close tab) move
+        // together. Refused moves keep their key, which may refuse others.
+        let rivals: Vec<Vec<Action>> = moves.iter().map(|(action, _, _, new)| self.rivals(*action, new)).collect();
+        let mut allowed = vec![true; moves.len()];
+        loop {
+            let next: Vec<bool> = rivals
+                .iter()
+                .zip(&moves)
+                .enumerate()
+                .map(|(n, (rivals, (_, _, _, new)))| {
+                    allowed[n]
+                        && rivals.iter().all(|rival| {
+                            moves
+                                .iter()
+                                .zip(&allowed)
+                                .any(|((action, _, old, _), ok)| *ok && action == rival && old == new)
+                        })
+                })
+                .collect();
+            if next == allowed {
+                break;
+            }
+            allowed = next;
+        }
+        for ((action, slot, _, new), ok) in moves.into_iter().zip(allowed) {
+            if ok {
+                self.set(action, slot, Some(new));
             }
         }
     }

@@ -687,6 +687,9 @@ pub(in super::super) fn folder(
             st.browse = id;
             st.selection.clear();
             st.selected = None;
+        } else if r.middle_clicked() {
+            // Explorer's and Dolphin's middle click: a tab behind
+            super::tabs::open(st, prefs, id, false);
         }
         *open = false;
     } else if r.double_clicked() {

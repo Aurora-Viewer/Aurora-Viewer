@@ -3,7 +3,10 @@
 //! explorer's empty space (Windows Explorer's and Dolphin's background
 //! menu): View, Sort by, Select all, Invert selection, Undo and Redo
 //! (`world::inventory::undo`), with the folder's own New, Paste, Paste as
-//! link, Reload and Properties. Aurora difference:
+//! link, Reload and Properties. On a folder, "Open in new tab"
+//! (`aurora::tabs`); in the split view, Copy and Move to the other pane, as
+//! Dolphin's "Copy to Other View" and "Move to Other View". Aurora
+//! difference:
 //! the Legacy Viewer's single folder mode has no menu on its empty space
 //! and no path to copy.
 
@@ -21,6 +24,10 @@ pub(in super::super) enum ExplorerCommand {
     ShowInFolder(Uuid),
     /// A folder in or out of the column's Quick access.
     Pin(Uuid, bool),
+    /// A folder in a new tab, shown.
+    OpenTab(Uuid),
+    /// The selection to the other pane's folder: copied (true) or moved.
+    ToOtherPane(Vec<Uuid>, bool),
 }
 
 /// The entries of the folder's menu that its empty space keeps (with the
@@ -95,6 +102,46 @@ pub(super) fn build(
                 },
                 single && id != inv.root,
                 Command::Explorer(ExplorerCommand::Pin(id, !pinned)),
+            );
+        }
+        // the explorer's tabs, where it shows them
+        if all
+            || (single
+                && inv.folders.contains_key(&id)
+                && st
+                    .aurora
+                    .is_some_and(|f| f.layout != super::super::aurora::Layout::Compact || st.other_pane.is_some()))
+        {
+            c.add(
+                "open-tab",
+                TEXT,
+                "app-window-filled",
+                aurora_i18n::tr!("inventory-open-in-new-tab"),
+                single && st.tabs.len() < super::super::aurora::tabs::LIMIT,
+                Command::Explorer(ExplorerCommand::OpenTab(id)),
+            );
+        }
+        // the split view: the other pane's folder, as a drop there would
+        let other = st.other_pane.filter(|folder| inv.folders.contains_key(folder));
+        if all || other.is_some() {
+            let ids = st.selected_ids(id);
+            let to = other.unwrap_or_default();
+            let allowed = other.is_some() && !ids.contains(&to) && ids.iter().all(|id| rules::parent(inv, *id) != Some(to));
+            c.add(
+                "copy-to-pane",
+                TEXT,
+                "copy-filled",
+                aurora_i18n::tr!("inventory-copy-to-other-pane"),
+                allowed,
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids.clone(), true)),
+            );
+            c.add(
+                "move-to-pane",
+                TEXT,
+                "arrow-right",
+                aurora_i18n::tr!("inventory-move-to-other-pane"),
+                allowed,
+                Command::Explorer(ExplorerCommand::ToOtherPane(ids, false)),
             );
         }
     }
@@ -222,7 +269,15 @@ pub(super) fn build(
     }
 }
 
-pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+pub(super) fn execute(
+    command: ExplorerCommand,
+    ui: &egui::Ui,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     match command {
         ExplorerCommand::View(view) => prefs.explorer.view = view,
         ExplorerCommand::ByDate(by_date) => prefs.sort.by_date = by_date,
@@ -251,6 +306,19 @@ pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, 
             prefs.pinned.retain(|pinned| *pinned != id);
             if pin {
                 prefs.pinned.push(id);
+            }
+        }
+        ExplorerCommand::OpenTab(id) => {
+            super::super::aurora::tabs::open(st, prefs, id, true);
+        }
+        ExplorerCommand::ToOtherPane(ids, copy) => {
+            if let Some(to) = st.other_pane.filter(|folder| inv.folders.contains_key(folder)) {
+                let mode = if copy {
+                    super::super::drag::DropMode::Copy
+                } else {
+                    super::super::drag::DropMode::Move
+                };
+                super::super::drag::drop_cargo(inv, &ids, to, mode, st, prefs, facts, actions);
             }
         }
     }

@@ -51,6 +51,11 @@ pub(crate) enum Command {
     /// Ctrl+Z / Ctrl+Y: the inventory's history (`world::inventory::undo`).
     Undo,
     Redo,
+    /// The explorer's tabs (`aurora::tabs`).
+    NewTab,
+    CloseTab,
+    NextTab,
+    PreviousTab,
     // Named in the menus only: the list keeps these keys fixed and handles
     // them itself (keyboard::open_shortcut, the rename, delete::shortcut,
     // egui's clipboard events).
@@ -83,6 +88,10 @@ impl Command {
             Command::Search => Action::InvSearch,
             Command::Undo => Action::InvUndo,
             Command::Redo => Action::InvRedo,
+            Command::NewTab => Action::InvNewTab,
+            Command::CloseTab => Action::InvCloseTab,
+            Command::NextTab => Action::InvNextTab,
+            Command::PreviousTab => Action::InvPreviousTab,
             Command::Open | Command::Rename | Command::Delete | Command::Cut | Command::Copy | Command::Paste => return None,
         })
     }
@@ -103,7 +112,7 @@ impl Command {
 }
 
 /// Every rebindable command, in the Shortcuts page's order.
-pub(crate) const REBINDABLE: [Command; 16] = [
+pub(crate) const REBINDABLE: [Command; 20] = [
     Command::Back,
     Command::Forward,
     Command::Up,
@@ -120,6 +129,10 @@ pub(crate) const REBINDABLE: [Command; 16] = [
     Command::Purge,
     Command::Undo,
     Command::Redo,
+    Command::NewTab,
+    Command::CloseTab,
+    Command::NextTab,
+    Command::PreviousTab,
 ];
 
 /// The inventory actions' bindings, as the user set them.
@@ -370,9 +383,15 @@ mod tests {
             assert!(keys.keeps(&key(KeyCode::Space), true, false, false));
             assert!(keys.keeps(&key(KeyCode::Enter), false, false, true));
         }
+        // Conversations' Ctrl+T and the chat's Ctrl+Tab are the explorer's
+        // tabs while the list has the keyboard
+        assert!(keys.keeps(&key(KeyCode::KeyT), true, false, false));
+        if !cfg!(target_os = "macos") {
+            assert!(keys.keeps(&key(KeyCode::Tab), true, false, false));
+        }
         // the viewer's own stay with it
-        assert!(!keys.keeps(&key(KeyCode::KeyT), true, false, false));
         assert!(!keys.keeps(&key(KeyCode::KeyI), true, true, false));
+        assert!(!keys.keeps(&key(KeyCode::KeyT), true, true, false));
         // a chord the user unbinds goes back to the viewer
         let mut kb = KeyBindings::default();
         kb.set(Action::InvInvertSelection, 0, None);

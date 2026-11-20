@@ -1362,7 +1362,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
-        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs, facts, actions),
     }
 }
 

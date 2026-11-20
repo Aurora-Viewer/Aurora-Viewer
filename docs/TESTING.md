@@ -7463,6 +7463,17 @@ failure. Grid validation and any paid upload are performed by the human.
   for one whose folder is gone; the Purge and Empty Trash confirmations say
   Undo cannot bring them back. Wearing an item then undoing the change that
   made it is refused with the reason, the step kept.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer-tabs|aurora-explorer-split`**:
+  `-tabs` opens the explorer in the right-click tests folder with three
+  tabs behind it (its subfolder, the top, a personal folder), the strip
+  above the toolbar. By hand: a click on a tab, Ctrl+Tab / Ctrl+Shift+Tab,
+  Ctrl+T, Ctrl+W, a middle click on a tab or its cross; a middle click on a
+  folder (a tab at the end, behind) and its menu's Open in new tab; each tab
+  keeps its own Back / Forward and selection; an item dragged onto a tab
+  goes into its folder, held there the tab shows. `-split` opens the
+  dual-panel layout with two explorers (the right one in the subfolder)
+  and an item's menu with Copy / Move to the other pane; check the Undo of
+  such a move, and that the narrow panes keep their breadcrumb and columns.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a
