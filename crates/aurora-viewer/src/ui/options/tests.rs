@@ -267,6 +267,7 @@ const BEFORE: &[&str] = &[
     "invert_mouse",
     "world_mouse_walk",
     "mmo_mouse_buttons",
+    "avatar_drag_orbits",
     "arrows_strafe",
     "arrow_keys_always_move",
     "letter_keys_move",

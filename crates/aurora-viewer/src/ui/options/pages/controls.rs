@@ -20,6 +20,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-mmo-mouse-buttons-help"),
             &field!(mmo_mouse_buttons),
         );
+        cx.toggle(
+            tr!("ui-options-avatar-drag-orbits"),
+            tr!("ui-options-avatar-drag-orbits-help"),
+            &field!(avatar_drag_orbits),
+        );
         // "Double-click on land" (double_click_action_combo)
         let choices: Vec<(crate::autopilot::DoubleClick, &str)> =
             crate::autopilot::DoubleClick::ALL.iter().map(|a| (*a, a.label())).collect();
