@@ -5980,7 +5980,6 @@ ui-chat-today-at = heute um { $time }
 ui-chat-yesterday-at = gestern um { $time }
 ui-chat-date-at = { $date } um { $time }
 ui-chat-new-messages = Neu
-ui-chat-latest = Zu den neuesten Nachrichten springen
 ui-chat-latest-new =
     { $count ->
         [one] { $count } neue Nachricht
