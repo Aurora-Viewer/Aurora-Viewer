@@ -117,10 +117,9 @@ fn feedback_id() -> egui::Id {
 }
 
 /// How many entries a drag of inventory carries while one is in progress (a
-/// folder counts as one): a conversation says what a drop would do before
-/// the pointer reaches it.
+/// folder counts as one). Used by drop targets that take inventory cargo.
 pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
-    give_ids(ctx).map(|ids| ids.len())
+    Cargo::carried(ctx).map(|cargo| cargo.ids().len())
 }
 
 /// What a drop that gives inventory away would hand over: the inventory
@@ -129,10 +128,15 @@ pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
 /// Places, indra/llui/llfolderview.cpp). Only the give drops read it: a
 /// place list reordering keeps its own cargo.
 pub(crate) fn give_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
-    carried_ids(ctx).or_else(|| {
-        let cargo = egui::DragAndDrop::payload::<crate::ui::places::drag::PlaceDrag>(ctx)?;
-        cargo.target.item().map(|item| vec![item])
-    })
+    carried_ids(ctx).or_else(|| carried_landmark(ctx).map(|item| vec![item]))
+}
+
+pub(crate) fn give_count(ctx: &egui::Context) -> Option<usize> {
+    carried_count(ctx).or_else(|| carried_landmark(ctx).map(|_| 1))
+}
+
+fn carried_landmark(ctx: &egui::Context) -> Option<Uuid> {
+    egui::DragAndDrop::payload::<crate::ui::places::drag::PlaceDrag>(ctx)?.target.item()
 }
 
 /// The entries a drag of inventory carries (an item, a folder or a

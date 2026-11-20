@@ -2263,6 +2263,8 @@ fn a_landmark_dragged_from_places_gives_to_the_resident() {
             h.take();
             h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
             egui::DragAndDrop::set_payload(&h.frames.ctx, place(target));
+            assert_eq!(crate::ui::inventory::drag::give_count(&h.frames.ctx), gives.then_some(1));
+            assert_eq!(crate::ui::inventory::drag::carried_count(&h.frames.ctx), None);
             h.frame(vec![egui::Event::PointerMoved(over)]);
             h.frame(vec![button(over, false)]);
             h.settle();
