@@ -414,30 +414,24 @@ pub(crate) fn shared_folder_exists(inv: &Inventory, path: &str) -> bool {
 }
 
 impl World {
-    fn rlva_collect(&mut self, base: Uuid, all: bool, attach: bool, replace: bool) -> Option<Vec<super::collection::Entry>> {
+    /// The entries of a folder force, with what is loaded: RlvForceWear::
+    /// forceFolder collects from gInventory at once (rlvhelper.cpp). What is
+    /// missing is fetched for the next command, as RlvInventory::
+    /// fetchSharedInventory and fetchSharedLinks do at login.
+    fn rlva_collect(&mut self, base: Uuid, all: bool, attach: bool, replace: bool) -> Vec<super::collection::Entry> {
         let collection = super::collection::collect(&self.inventory, base, all, attach, replace, &self.rlva.preferences);
-        let mut ready = true;
         for id in collection.missing {
             if self.inventory.folders.contains_key(&id) {
                 self.inventory.request(id);
-                ready = false;
-            } else {
-                if self.rlva_inventory_fetch_waiting(id) {
-                    ready = false;
-                }
-                if self.rlva_inventory_fetch_due(id) {
-                    self.rlva.out.push(aurora_net::NetCommand::FetchInventory {
-                        folders: vec![id],
-                        owner: self.agent_id,
-                        library: false,
-                    });
-                }
+            } else if self.rlva_inventory_fetch_due(id) {
+                self.rlva.out.push(aurora_net::NetCommand::FetchInventory {
+                    folders: vec![id],
+                    owner: self.agent_id,
+                    library: false,
+                });
             }
         }
         for id in collection.missing_items {
-            if self.rlva_inventory_fetch_waiting(id) {
-                ready = false;
-            }
             if self.rlva_inventory_fetch_due(id) {
                 self.rlva.out.push(aurora_net::NetCommand::FetchItems {
                     items: vec![id],
@@ -445,14 +439,7 @@ impl World {
                 });
             }
         }
-        ready.then_some(collection.items)
-    }
-
-    fn rlva_inventory_fetch_waiting(&self, id: Uuid) -> bool {
-        self.rlva
-            .inventory_fetches
-            .get(&id)
-            .is_none_or(|(at, tries)| *tries < 3 || at.elapsed().as_secs() < 10)
+        collection.items
     }
 
     pub(super) fn rlva_inventory_fetch_due(&mut self, id: Uuid) -> bool {
@@ -840,17 +827,21 @@ impl World {
             })
     }
 
-    fn rlva_shared_ready(&mut self) -> bool {
+    /// Asks for what is not loaded yet under #RLV, the folders and the
+    /// originals of their links, as RlvInventory::fetchSharedInventory and
+    /// fetchSharedLinks do once logged in (rlvinventory.cpp). Nothing waits
+    /// for it: RlvHandler runs every command at once once the login is
+    /// complete (processCommand, onLoginComplete; rlvhandler.cpp), with what
+    /// the inventory holds.
+    fn rlva_shared_fetch(&mut self) {
         let Some(root) = shared_root(&self.inventory) else {
-            let loaded = appearance::loaded(&self.inventory, self.inventory.root);
-            if !loaded {
+            if !appearance::loaded(&self.inventory, self.inventory.root) {
                 self.inventory.request(self.inventory.root);
             }
-            return loaded;
+            return;
         };
         let mut stack = vec![root];
         let mut seen = HashSet::new();
-        let mut ready = true;
         let mut missing = HashSet::new();
         while let Some(id) = stack.pop() {
             if !seen.insert(id) {
@@ -858,7 +849,6 @@ impl World {
             }
             if !appearance::loaded(&self.inventory, id) {
                 self.inventory.request(id);
-                ready = false;
             }
             if let Some(f) = self.inventory.folders.get(&id) {
                 stack.extend(f.children.iter().copied());
@@ -872,27 +862,18 @@ impl World {
                 }
             }
         }
-        if !missing.is_empty() {
-            let mut request = Vec::new();
-            for id in missing {
-                if self.rlva_inventory_fetch_waiting(id) {
-                    ready = false;
-                }
-                if self.rlva_inventory_fetch_due(id) {
-                    request.push(id);
-                }
-            }
-            if !request.is_empty() {
-                self.rlva.out.push(aurora_net::NetCommand::FetchItems {
-                    items: request,
-                    owner: self.agent_id,
-                });
-            }
+        let request: Vec<Uuid> = missing.into_iter().filter(|id| self.rlva_inventory_fetch_due(*id)).collect();
+        if !request.is_empty() {
+            self.rlva.out.push(aurora_net::NetCommand::FetchItems {
+                items: request,
+                owner: self.agent_id,
+            });
         }
-        ready
     }
     /// Resolve forced wear through the same COF planner as the native UI.
-    /// Requests remain queued while folders or originals are still loading.
+    /// A request waits only for the outfit (COF) to be known, which the
+    /// reference has once logged in; a folder force runs at once with what
+    /// is loaded under #RLV.
     /// The removals and wears join the source's open `Action::Force` batch
     /// (`force_wear`), applied as one COF update.
     pub fn rlva_inventory_force(&mut self, source: Uuid, c: &Command) -> bool {
@@ -925,8 +906,8 @@ impl World {
         // when the option is none of the first three.
         let folder_option =
             !c.option.is_empty() && layer(&c.option).is_none() && point(&c.option).is_none() && Uuid::parse_str(&c.option).is_err();
-        if !context && folder_option && !self.rlva_shared_ready() {
-            return false;
+        if !context && folder_option {
+            self.rlva_shared_fetch();
         }
         let folder = if folder_option { resolve(&self.inventory, &c.option) } else { None };
         let group = folder.is_none() && GROUPS.contains(&c.option.as_str());
@@ -978,9 +959,7 @@ impl World {
             };
             Some(ids)
         } else {
-            if !self.rlva_shared_ready() {
-                return false;
-            }
+            self.rlva_shared_fetch();
             let bases = if context {
                 self.rlva_path_folders(source, &c.option)
             } else {
@@ -997,10 +976,7 @@ impl World {
                 if Some(base) == shared {
                     continue;
                 }
-                let Some(entries) = self.rlva_collect(base, all, attach, replace) else {
-                    return false;
-                };
-                collected.push(entries);
+                collected.push(self.rlva_collect(base, all, attach, replace));
             }
             if !attach {
                 // RlvForceWear::forceFolder, ACTION_DETACH: the worn clothing
@@ -1580,9 +1556,7 @@ impl World {
                 );
             }
             "getpath" | "getpathnew" => {
-                if !self.rlva_shared_ready() {
-                    return None;
-                }
+                self.rlva_shared_fetch();
                 let paths: Vec<_> = self
                     .rlva_path_folders(source, &c.option)
                     .into_iter()
@@ -1596,34 +1570,13 @@ impl World {
             }
             _ => {}
         }
-        if !self.rlva_shared_ready() {
-            return None;
-        }
+        // The shared-tree queries answer at once with what is loaded
+        // (RlvHandler::onGetInv, onGetInvWorn, onFindFolder): what is not
+        // loaded yet is asked for, under #RLV only.
+        self.rlva_shared_fetch();
         let Some(root) = shared_root(&self.inventory) else {
-            let loaded = appearance::loaded(&self.inventory, self.inventory.root);
-            self.inventory.request(self.inventory.root);
-            return loaded.then(String::new);
+            return Some(String::new());
         };
-        // A shared-tree query cannot treat unloaded descendants as empty.
-        // Request only #RLV, never unrelated inventory or the Library.
-        let mut stack = vec![root];
-        let mut seen = HashSet::new();
-        let mut ready = true;
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            if !appearance::loaded(&self.inventory, id) {
-                self.inventory.request(id);
-                ready = false;
-            }
-            if let Some(f) = self.inventory.folders.get(&id) {
-                stack.extend(f.children.iter().copied());
-            }
-        }
-        if !ready {
-            return None;
-        }
         if matches!(c.behaviour.as_str(), "findfolder" | "findfolders") {
             let terms: Vec<_> = c
                 .option
@@ -1684,12 +1637,8 @@ impl World {
         let Some(folder) = resolve(&self.inventory, &c.option) else {
             return Some(String::new());
         };
-        if !appearance::loaded(&self.inventory, folder) {
-            self.inventory.request(folder);
-            return None;
-        }
         let collected = if c.behaviour == "getinvworn" {
-            self.rlva_collect(folder, true, true, true)?
+            self.rlva_collect(folder, true, true, true)
         } else {
             Vec::new()
         };

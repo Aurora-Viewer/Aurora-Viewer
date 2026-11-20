@@ -165,9 +165,10 @@ pub(super) fn collect(inv: &Inventory, base: Uuid, all: bool, attach: bool, repl
                 // onCollectFolder
                 if (is_linked || wearable.contains(&folder.info.parent)) && !name.is_empty() {
                     if !is_linked && naming::folded(name, prefs.legacy_naming) {
+                        // with what is loaded (collectDescendentsIf reads
+                        // gInventory as it is); the rest is fetched
                         if !crate::world::appearance::loaded(inv, id) {
                             result.missing.push(id);
-                            continue;
                         }
                         let objects = folder
                             .items
@@ -198,7 +199,6 @@ pub(super) fn collect(inv: &Inventory, base: Uuid, all: bool, attach: bool, repl
                 };
                 if !crate::world::appearance::loaded(inv, id) {
                     result.missing.push(id);
-                    continue;
                 }
                 if follow {
                     stack.push(Step::Links(id));

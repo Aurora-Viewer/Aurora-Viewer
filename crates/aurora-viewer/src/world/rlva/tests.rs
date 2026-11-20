@@ -263,25 +263,8 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
         Some(""),
         "queries do not waive their issuer's lock"
     );
-    // RlvCommandOptionHelper::parseOption (rlvhelper.cpp) tries a shared
-    // folder before a group: a group waits for the inventory to tell
     command(&mut world.rlva, head, "@remattach:head=force");
     world.rlva_pending();
-    assert_eq!(world.rlva.pending.len(), 1, "waits for the inventory");
-    let root = world.inventory.root;
-    world.inventory.folders.entry(root).or_insert_with(|| Folder {
-        info: InvFolder {
-            id: root,
-            ..Default::default()
-        },
-        children: Vec::new(),
-        items: Vec::new(),
-        state: FetchState::Fetched,
-        library: false,
-    });
-    world.inventory.folders.get_mut(&root).unwrap().state = FetchState::Fetched;
-    world.rlva_pending();
-    assert!(world.rlva.pending.is_empty());
     assert!(world.rlva.appearance.is_empty(), "nothing removable, no outfit change");
     command(&mut world.rlva, head, "@detach=y,remattach:head=force");
     world.rlva_pending();
@@ -1412,8 +1395,10 @@ fn rlva_inventory_queries_keep_the_shared_root_and_report_descendants() {
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some(""));
     query = Command::parse("getinvworn=123").expect("query");
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
+    // RlvHandler::onGetInvWorn answers at once with what gInventory holds
+    // (rlvhandler.cpp): a folder still being fetched gives what it has
     w.inventory.folders.get_mut(&child).expect("folder").state = FetchState::Unknown;
-    assert!(w.rlva_inventory_query(&query, A).is_none(), "unloaded is not empty");
+    assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
 }
 
 #[test]

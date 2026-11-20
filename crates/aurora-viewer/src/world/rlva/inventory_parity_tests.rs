@@ -687,3 +687,52 @@ fn folder_names_fold_the_ascii_case_only() {
     assert_eq!(query(&mut l.world, issuer, "getinv:é wear=1").as_deref(), Some(""));
     assert_eq!(query(&mut l.world, issuer, "getinv:É wear=1").as_deref(), Some("Sub"));
 }
+
+/// RlvHandler::processCommand (rlvhandler.cpp) retains commands only until
+/// the login completes; after it every query answers at once with what
+/// gInventory holds, while RlvInventory::fetchSharedInventory goes on.
+#[test]
+fn queries_answer_at_once_while_the_shared_folders_load() {
+    use crate::world::inventory::FetchState;
+    let mut l = linked();
+    let issuer = l.issuer;
+    let cuffs = outfit(&mut l, 0xE201, "Cuffs");
+    folder(&mut l.world, 0xE202, cuffs, "Left", -1);
+    l.world.inventory.folders.get_mut(&cuffs).expect("Cuffs").state = FetchState::Unknown;
+    let rlv = shared(&l);
+    l.world.inventory.folders.get_mut(&rlv).expect("#RLV").state = FetchState::Unknown;
+    assert_eq!(query(&mut l.world, issuer, "getinv:Cuffs=1").as_deref(), Some("Left"));
+    assert_eq!(query(&mut l.world, issuer, "findfolder:left=1").as_deref(), Some("Cuffs/Left"));
+    assert_eq!(query(&mut l.world, issuer, "getpath=1").as_deref(), Some("Collar"));
+}
+
+/// RlvHandler::onForceWear runs RlvForceWear::forceFolder at once
+/// (rlvhandler.cpp, rlvhelper.cpp): a folder force wears what is loaded and
+/// does not wait for a subfolder still being fetched.
+#[test]
+fn a_folder_force_runs_at_once_with_what_is_loaded() {
+    use crate::world::inventory::FetchState;
+    let mut l = linked();
+    let issuer = l.issuer;
+    let base = outfit(&mut l, 0xE211, "Mittens");
+    let glove = Uuid::from_u128(0xE212);
+    l.world.inventory.add_items(vec![item(0xE212, base, "Glove", 5, 9)]);
+    let later = folder(&mut l.world, 0xE213, base, "Later", -1);
+    l.world.inventory.folders.get_mut(&later).expect("Later").state = FetchState::Unknown;
+    force(&mut l, issuer, "attachall:Mittens=force");
+    assert_eq!(worn_items(&l), vec![glove]);
+}
+
+/// RlvCommandOptionHelper::parseOption (rlvhelper.cpp) looks for a shared
+/// folder in what is loaded, then for a group: a group force does not wait
+/// for #RLV.
+#[test]
+fn a_group_force_does_not_wait_for_the_shared_folders() {
+    use crate::world::inventory::FetchState;
+    let mut l = linked();
+    let (issuer, collar) = (l.issuer, l.collar);
+    let rlv = shared(&l);
+    l.world.inventory.folders.get_mut(&rlv).expect("#RLV").state = FetchState::Unknown;
+    force(&mut l, issuer, "remattach:head=force");
+    assert_eq!(batch(&l).0, vec![collar]);
+}
