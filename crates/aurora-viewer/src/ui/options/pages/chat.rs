@@ -927,6 +927,12 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friends-online-in-chat-hint"),
             &field!(friends_online_in_chat),
         );
+        // Aurora-only: notification when someone ends a friendship
+        cx.toggle(
+            tr!("ui-options-notify-friendship-ended"),
+            tr!("ui-options-notify-friendship-ended-hint"),
+            &field!(notify_friendship_ended),
+        );
         // PaymentReceived's toast (NotifyMoneyReceived, #2675): a direct
         // payment on by default, the others off, each with its limit
         cx.toggle(

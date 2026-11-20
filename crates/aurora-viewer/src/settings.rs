@@ -1187,6 +1187,9 @@ pub struct Settings {
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
     /// off here, on in the Legacy Viewer's own settings).
     pub friends_online_in_chat: bool,
+    /// Show a notification when someone ends a friendship with us, live or
+    /// since our previous login (Aurora addition, off by default).
+    pub notify_friendship_ended: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,
     /// A friendship offer shows as a card in the middle of the screen
@@ -2601,6 +2604,7 @@ impl Default for Settings {
             chat_console_max_lines: 40,
             toast_friends_online: true,
             friends_online_in_chat: false,
+            notify_friendship_ended: false,
             presence_position: PresencePosition::TopRight,
             friend_request_prompt: true,
             region_message_prompt: true,
