@@ -665,9 +665,11 @@ pub struct Effects {
     pub contact_shadows: bool,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
-    /// Ray tracing, experimental: off in every level, so the safe graphics
-    /// turn it off (a backup or a saved preset written before it holds
-    /// none: off).
+    /// Ray tracing: the shadows traced in the levels with shadows (High and
+    /// Deluxe), where the card can; off in the others, so the safe graphics
+    /// turn it off. The indirect light and the reflections, experimental,
+    /// in none. A backup or a saved preset written before it holds none:
+    /// off, as it drew.
     #[serde(default)]
     pub ray_tracing: crate::settings::RayTracingSettings,
 }
@@ -682,16 +684,18 @@ impl Effects {
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
         ray_tracing: crate::settings::RayTracingSettings::OFF,
     };
-    /// High's: the contact shadows.
+    /// High's: the contact shadows, and the shadows traced.
     pub const HIGH: Effects = Effects {
         contact_shadows: true,
+        ray_tracing: crate::settings::RayTracingSettings::SHADOWS,
         ..Effects::OFF
     };
-    /// Deluxe's: the contact shadows and the indirect light at its default
-    /// intensity; the bloom, experimental, stays off.
+    /// Deluxe's: the contact shadows, the indirect light at its default
+    /// intensity and the shadows traced; the bloom, experimental, stays off.
     pub const DELUXE: Effects = Effects {
         contact_shadows: true,
         screen_indirect_light: true,
+        ray_tracing: crate::settings::RayTracingSettings::SHADOWS,
         ..Effects::OFF
     };
 }
@@ -1426,14 +1430,14 @@ mod tests {
             assert_eq!(p.values().effects, Effects::OFF, "{p:?}");
             assert!(!s.bloom && !s.contact_shadows && !s.screen_indirect_light, "{p:?}");
         }
-        // outside the levels, all off
+        // outside the levels, all off but the traced shadows
         let d = Settings::default();
         assert!(!d.bloom && !d.contact_shadows && !d.screen_indirect_light);
-        assert_eq!(d.ray_tracing, crate::settings::RayTracingSettings::OFF);
+        assert_eq!(d.ray_tracing, crate::settings::RayTracingSettings::SHADOWS);
     }
 
     #[test]
-    fn every_level_turns_ray_tracing_off_and_it_counts_only_with_what_it_needs() {
+    fn the_levels_with_shadows_trace_them_and_ray_tracing_counts_only_with_what_it_needs() {
         use crate::settings::RayTracingSettings;
         let all = RayTracingSettings {
             enabled: true,
@@ -1441,26 +1445,43 @@ mod tests {
             indirect: true,
             reflections: true,
         };
-        // experimental: no level has it, the safe graphics' Potato included
-        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+        // the levels with shadows trace them, the sun's and the local
+        // lights'; the others none, the safe graphics' Potato included; the
+        // indirect light and the reflections, experimental, in none
+        for (p, traced) in [
+            (Preset::Potato, RayTracingSettings::OFF),
+            (Preset::Low, RayTracingSettings::OFF),
+            (Preset::Medium, RayTracingSettings::OFF),
+            (Preset::High, RayTracingSettings::SHADOWS),
+            (Preset::Deluxe, RayTracingSettings::SHADOWS),
+        ] {
             let mut s = Settings {
                 ray_tracing: all,
                 ..Default::default()
             };
             p.apply(&mut s);
-            assert_eq!(s.ray_tracing, RayTracingSettings::OFF, "{p:?}");
+            assert_eq!(s.ray_tracing, traced, "{p:?}");
+            assert_eq!(traced.enabled, p.values().shadow_quality > 0, "{p:?}");
         }
         // Low has no shadows: what is left on traces nothing, the level stays
         let mut s = Settings::default();
         Preset::Low.apply(&mut s);
         s.ray_tracing = all;
         assert_eq!(Preset::matching(&s), Some(Preset::Low));
-        // High has them: on is custom, and its options alone are not
+        // High has them: back to the shadow maps is custom, and so are the
+        // experimental options; the local lights alone off is custom too
         Preset::High.apply(&mut s);
-        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
         assert_eq!(Preset::matching(&s), Some(Preset::High));
-        s.ray_tracing.enabled = true;
+        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
         assert_eq!(Preset::matching(&s), None);
+        s.ray_tracing = all;
+        assert_eq!(Preset::matching(&s), None);
+        s.ray_tracing = RayTracingSettings {
+            lights: false,
+            ..RayTracingSettings::SHADOWS
+        };
+        assert_eq!(Preset::matching(&s), None);
+        s.ray_tracing = all;
         // a saved profile and the safe graphics' backup keep it, and one
         // written before it reads as off
         let kept = Values::read(&s);

@@ -1773,13 +1773,13 @@ fn the_ray_tracing_group_says_why_the_card_cannot_trace() {
         for text in [&unsupported, &vr] {
             assert_eq!(shows(text), shown == Some(text), "{text} with {support:?}");
         }
-        // off by default, and nothing here turns it on
-        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::OFF);
+        // the shadows traced by default, and nothing here changes it
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::SHADOWS);
     }
     // found by the words people type, its options behind the cog too
     let mut s = Settings::default();
     assert!(counts(&mut s, "raytracing").hits(Page::Graphics) >= 1);
-    s.ray_tracing.lights = true;
+    s.ray_tracing.reflections = true;
     assert_eq!(counts(&mut s, "").modified(Page::Graphics), 1);
 }
 

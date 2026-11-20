@@ -194,7 +194,8 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene, cases: &[Cas
         label: Some("rt flags shader"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    use crate::pipeline_cache::CachedPipelines;
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
         label: Some("rt flags pipeline"),
         layout: None,
         module: &module,
@@ -216,7 +217,7 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene, cases: &[Cas
     });
     let read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("rt flags read"),
-        size: bytes,
+        size: crate::readback::readback_size(bytes),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -247,9 +248,9 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene, cases: &[Cas
     }
     encoder.copy_buffer_to_buffer(&output, 0, &read, 0, bytes);
     queue.submit([encoder.finish()]);
-    read.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+    read.slice(..bytes).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
     device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-    let data = read.slice(..).get_mapped_range().expect("mapped");
+    let data = read.slice(..bytes).get_mapped_range().expect("mapped");
     bytemuck::cast_slice::<u8, [u32; 4]>(&data)
         .iter()
         .map(|r| Seen {

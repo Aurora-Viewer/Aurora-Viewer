@@ -185,7 +185,9 @@ fn ray_tracing(cx: &mut Cx) {
             cx.note(why);
         }
         let blocked = card.or((cx.s.shadow_quality == 0).then(|| tr!("ui-options-ray-tracing-needs-shadows")));
-        cx.experimental().keywords("RT raytracing").row(
+        // (on by default where the card can, in the shadow maps' place: no
+        // experimental mark; the indirect light and the reflections keep it)
+        cx.keywords("RT raytracing").row(
             tr!("ui-options-ray-traced-shadows"),
             tr!("ui-options-ray-traced-shadows-help"),
             &field!(ray_tracing.enabled),
@@ -204,13 +206,13 @@ fn ray_tracing(cx: &mut Cx) {
                 tr!("ui-options-ray-traced-lights-help"),
                 &field!(ray_tracing.lights),
             );
-            cx.toggle(
+            cx.experimental().toggle(
                 tr!("ui-options-ray-traced-indirect"),
                 tr!("ui-options-ray-traced-indirect-help"),
                 &field!(ray_tracing.indirect),
             );
             let ssr = cx.s.ssr;
-            cx.row(
+            cx.experimental().row(
                 tr!("ui-options-ray-traced-reflections"),
                 tr!("ui-options-ray-traced-reflections-help"),
                 &field!(ray_tracing.reflections),

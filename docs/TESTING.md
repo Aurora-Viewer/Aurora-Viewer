@@ -13080,8 +13080,10 @@ What the inventory must show with these scenarios:
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
 - **`AURORA_RT_SHADOWS=1|0|both|back`**, **`AURORA_RT_LIGHTS=1|0`**,
   **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
-  options of Preferences › Graphics › Ray tracing (experimental, off by
-  default; `rt_shadows.rs`) for this launch, without changing the saved
+  options of Preferences › Graphics › Ray tracing (the sun's and the local
+  lights' shadows on by default, in High and Deluxe, on a card with ray
+  queries; the indirect light and the reflections experimental and off;
+  `rt_shadows.rs`) for this launch, without changing the saved
   settings: `1` forces one on, `0` (or `off`) off, and an unset variable
   leaves it to its setting. They need a graphics card with ray queries,
   and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
