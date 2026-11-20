@@ -209,6 +209,8 @@ pub(super) struct Snapshots {
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
+    /// The World filters window's state (`ui/world_look.rs`).
+    pub world_ui: crate::ui::world_look::WorldLookUi,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// A photo to disk asked while the renderer draws the frame (the
@@ -278,6 +280,9 @@ pub(super) struct Snapshots {
     /// levelled meanwhile, the next opening takes it back (feedback 585:
     /// leaving the photo mode to change a setting lost the angle).
     pub(super) roll_kept: f32,
+    /// The viewfinder's view while it shows, then when it last closed: the
+    /// next opening takes it back with the tilt (`app::viewfinder`).
+    pub(super) view_kept: Option<crate::snapshot::viewfinder::KeptView>,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -459,6 +464,7 @@ impl Default for Snapshots {
             luts: None,
             lut_import: None,
             look_focus: None,
+            world_ui: Default::default(),
             quiet: false,
             to_disk: false,
             confirm: None,
@@ -489,6 +495,7 @@ impl Default for Snapshots {
             fov_before: None,
             quality_drawn: None,
             roll_kept: 0.0,
+            view_kept: None,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
@@ -1680,6 +1687,7 @@ impl App {
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.world_look_demo();
         self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
@@ -2038,6 +2046,7 @@ impl App {
                 }
                 let id = format!("{}{name}", looks::LUT);
                 self.settings.snapshot.looks.retain(|l| l.id != id);
+                self.settings.world_look.looks.retain(|l| l.id != id);
                 self.settings.save();
             }
             Action::OpenLutFolder => {
@@ -2052,7 +2061,8 @@ impl App {
     /// The tables' list for the interface, and an import that came back:
     /// the table chosen and said.
     fn photo_luts_update(&mut self) {
-        if !self.panels.snapshot && !self.panels.director {
+        // (the world's filters read a table of the library too)
+        if !(self.panels.snapshot || self.panels.director || self.panels.world_look || self.settings.world_look.on) {
             return;
         }
         self.photo_luts().poll();
@@ -2068,6 +2078,7 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
+        let to_world = std::mem::take(&mut self.snapshots.world_ui.importing);
         let Some(results) = result else { return };
         // the tables kept, the first one chosen; the failures said together
         let mut first = None;
@@ -2093,7 +2104,19 @@ impl App {
                 aurora_i18n::tr!("photo-lut-imported-many", count = count)
             };
             let id = format!("{}{name}", looks::LUT);
-            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            if to_world {
+                let world = &mut self.settings.world_look;
+                self.snapshots
+                    .world_ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::world(world), &id);
+                world.on = true;
+            } else {
+                self.snapshots
+                    .ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
+            }
             self.settings.save();
             self.snapshots.message = Some((text.clone(), false));
             let now = self.egui_ctx.input(|i| i.time);

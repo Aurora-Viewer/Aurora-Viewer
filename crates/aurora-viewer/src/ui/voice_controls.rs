@@ -479,6 +479,13 @@ impl VoiceControlsUi {
                     if resp.clicked() || resp.secondary_clicked() {
                         clicked = Some(e.id);
                     }
+                    // LLAvatarList::handleRightMouseDown: the list of the
+                    // nearby voice (`setRlvCheckShowNames(is_local_chat)`,
+                    // fsfloatervoicecontrols.cpp) opens no menu while RLVa's
+                    // `@shownames` is set, on an exception's row either
+                    if g.channel.names() == NameScope::World && f.world.rlva.has("shownames") {
+                        continue;
+                    }
                     menu::context_menu(&resp, p, |ui| {
                         // menu_participant_list.xml: the sort, when there is
                         // something to sort

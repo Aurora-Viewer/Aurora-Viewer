@@ -117,7 +117,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .map(|x| {
             let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
             if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
-                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy(env, &x.te)));
+                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy_for_face(env, world, x)));
             }
             material
         })

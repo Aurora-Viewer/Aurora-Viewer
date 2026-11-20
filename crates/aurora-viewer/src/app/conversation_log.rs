@@ -5,6 +5,17 @@ use super::*;
 use crate::world::notifications::{Data, Kind};
 
 impl App {
+    /// The History window on a conversation: a direct one under the Chat
+    /// Service shows its stitched history and puts its resident first in
+    /// the queue (LLFloaterConversationPreview, LL viewer 26.5); any other
+    /// its transcript file.
+    pub(super) fn open_history(&mut self, resident: Option<uuid::Uuid>, title: String, file: Option<std::path::PathBuf>) {
+        match resident {
+            Some(id) if self.world.open_direct_preview(id) => self.history_ui.show_stitched(title, id, file),
+            _ => self.history_ui.show_file(title, file),
+        }
+    }
+
     /// Each frame, with the other windows.
     pub(super) fn conversation_log_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         if self.demo {
@@ -28,7 +39,8 @@ impl App {
         match action {
             Some(ui::conversation_log::Action::Transcript(c)) => {
                 let (title, file) = self.world.logged_transcript(&c);
-                self.history_ui.show_file(title, file);
+                let resident = (c.kind == crate::world::chat_log::conversations::Kind::Private).then_some(c.participant);
+                self.open_history(resident, title, file);
             }
             Some(ui::conversation_log::Action::TranscriptExternally(c)) => {
                 // chat_history_external: the file, else ChatHistoryIsMissing

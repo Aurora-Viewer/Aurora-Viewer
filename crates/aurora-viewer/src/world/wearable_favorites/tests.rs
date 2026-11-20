@@ -331,6 +331,63 @@ fn the_import_links_what_ours_lacks_at_the_same_place() {
 }
 
 #[test]
+fn a_large_import_is_sent_in_requests_of_a_hundred_links() {
+    let (mut inv, root) = with_legacy();
+    let legacy = legacy_folder(&inv).expect("legacy");
+    let home = inv.root;
+    // 250 more favorites in the Legacy folder, each a link to its own shirt
+    for n in 0..250u128 {
+        let (original, link) = (id(100_000 + n), id(200_000 + n));
+        for (item, parent, asset_type, asset_id) in [(original, home, 5, Uuid::nil()), (link, legacy, 24, original)] {
+            inv.items.insert(
+                item,
+                InvItem {
+                    id: item,
+                    parent,
+                    name: format!("Shirt {n}"),
+                    asset_type,
+                    asset_id,
+                    inv_type: 18,
+                    owner: AGENT,
+                    creator: AGENT,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    ..Default::default()
+                },
+            );
+            inv.folders.get_mut(&parent).expect("folder").items.push(item);
+        }
+    }
+    let plan = import_plan(&inv, root).expect("something to import");
+    // the top folder: 713 and the 250 shirts, in three requests, in order
+    let top: Vec<usize> = plan
+        .change
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Links { parent, links } if *parent == root => Some(links.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(top, [100, 100, 51]);
+    assert!(plan.change.operations.iter().all(|op| match op {
+        Operation::Links { links, .. } => links.len() <= LINKS_PER_REQUEST,
+        _ => true,
+    }));
+    assert_eq!(plan.links, 4 + 250);
+    demo_mutate(&mut inv, AGENT, plan.change).expect("imported");
+    let linked = link_targets(&inv, root);
+    assert!((0..250u128).all(|n| linked.contains(&(100_000 + n))));
+    // a run cut short is resumed by importing again: nothing is left here
+    assert!(import_plan(&inv, root).is_none());
+    // a drop of as many is cut the same way
+    let shirts: Vec<Uuid> = (0..250u128).map(|n| id(100_000 + n)).collect();
+    let (evening, _) = subfolders(&inv, root)[0].clone();
+    let change = link(&inv, &shirts, evening).expect("drop");
+    assert_eq!(change.operations.len(), 3);
+}
+
+#[test]
 fn the_import_starts_from_an_empty_favorites_folder() {
     let (mut inv, root) = with_legacy();
     let rows: Vec<Uuid> = inv.folders[&root].items.clone();

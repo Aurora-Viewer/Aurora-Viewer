@@ -1045,7 +1045,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
                         super::context::request(ui.ctx(), super::context::CtxAction::RosterProfile(id));
                     }
                     super::menu::context_menu(&resp, p, |ui| {
-                        super::context::avatar_roster_menu(ui, p, c.world, id, super::context::AvatarList::Name)
+                        super::context::avatar_roster_menu(ui, p, c.world, id, super::context::AvatarList::Search)
                     });
                 }
             }

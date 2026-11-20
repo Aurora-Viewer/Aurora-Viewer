@@ -293,7 +293,8 @@ fn folder_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Appearan
             aurora_i18n::tr!("wearable-favorites-new-folder-tip"),
             root.is_some(),
         ) {
-            fav.dialog = Some(Dialog::New(aurora_i18n::tr!("wearable-favorites-new-folder-default").into()));
+            let name = crate::text_validation::default_name("wearable-favorites-new-folder-default");
+            fav.dialog = Some(Dialog::New(name.into()));
             fav.focus = true;
         }
         // folder_action_enabled: a subfolder, never All Favorites
@@ -540,7 +541,7 @@ fn list_area(
                 let at = layout.rect(i, response.rect);
                 if layout.lifted == Some(i) {
                     reorder::lifted_card(ui, p, id, at, |card| {
-                        paint_row(card, p, at, it, texture, is_worn, point.as_deref(), None);
+                        paint_row(card, p, at, it, texture, is_worn, is_worn, point.as_deref(), None);
                     });
                     continue;
                 }
@@ -559,7 +560,7 @@ fn list_area(
                 let toggle = (!layout.busy() && ui.rect_contains_pointer(at))
                     .then(|| items::wear_toggle(world, it, is_worn))
                     .flatten();
-                paint_row(ui, p, at, it, texture, is_worn && toggle.is_none(), point.as_deref(), face);
+                paint_row(ui, p, at, it, texture, is_worn, is_worn && toggle.is_none(), point.as_deref(), face);
                 if response.clicked() || response.secondary_clicked() {
                     let modifiers = ui.input(|i| i.modifiers);
                     st.wearable_favorites
@@ -764,9 +765,9 @@ fn status_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
 }
 
 /// One picture row at `rect`: its face (selected, hovered, worn, none),
-/// the picture (or the type icon), the name, the attachment point below it
-/// when there is one, and a check at the right end when `check` (a worn
-/// row, unless its Wear button is shown there).
+/// the picture (or the type icon), the name (bold when `worn`), the
+/// attachment point below it when there is one, and a check at the right
+/// end when `check` (a worn row, unless its Wear button is shown there).
 #[allow(clippy::too_many_arguments)]
 fn paint_row(
     ui: &egui::Ui,
@@ -774,6 +775,7 @@ fn paint_row(
     rect: Rect,
     it: &InvItem,
     texture: Option<&egui::TextureHandle>,
+    worn: bool,
     check: bool,
     point: Option<&str>,
     face: Option<egui::Color32>,
@@ -798,11 +800,16 @@ fn paint_row(
     }
     let left = pic.right() + 10.0;
     let width = (rect.right() - left - WEAR_BUTTON - 10.0).max(20.0);
-    let name_font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-    let name = one_line(ui, &it.name, name_font, p.ink, width);
-    let sub = point.map(|point| one_line(ui, point, FontId::proportional(11.0), p.muted, width));
+    let name = one_line(ui, &it.name, name_format(ui, worn, p.ink), width);
+    let sub = point.map(|point| {
+        let format = egui::TextFormat::simple(FontId::proportional(11.0), p.muted);
+        one_line(ui, point, format, width)
+    });
     let height = name.size().y + sub.as_ref().map_or(0.0, |sub| sub.size().y + 2.0);
     let top = rect.center().y - height / 2.0;
+    if worn && let Some(offset) = widgets::faux_bold_offset(ui) {
+        ui.painter().galley(egui::pos2(left, top) + offset, name.clone(), p.ink);
+    }
     ui.painter().galley(egui::pos2(left, top), name.clone(), p.ink);
     if let Some(sub) = sub {
         ui.painter().galley(egui::pos2(left, top + name.size().y + 2.0), sub, p.muted);
@@ -815,8 +822,22 @@ fn paint_row(
     }
 }
 
-fn one_line(ui: &egui::Ui, text: &str, font: FontId, color: egui::Color32, width: f32) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font, color));
+/// A row's name: bold for a worn item, the regular face for the rest, as
+/// the Legacy Viewer's wearable lists mark what is worn (`IS_WORN` draws
+/// `worn_style`, `font.style="BOLD"` in `wearable_outfit_list_item.xml`).
+/// A static system font has no bold face: `paint_row` then paints a worn
+/// name twice.
+fn name_format(ui: &egui::Ui, worn: bool, color: egui::Color32) -> egui::TextFormat {
+    let font = FontId::proportional(12.5);
+    if worn {
+        widgets::bold_format(ui, font, color)
+    } else {
+        egui::TextFormat::simple(font, color)
+    }
+}
+
+fn one_line(ui: &egui::Ui, text: &str, format: egui::TextFormat, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     ui.painter().layout_job(job)
 }
@@ -1005,6 +1026,222 @@ mod tests {
                 show(ctx, p, world, st, &mut open, sort, true, &HashMap::new(), None);
             },
         );
+    }
+
+    /// Where the pointer is while the window is painted: away from it, over
+    /// the worn row (its Wear button takes the check's place), or carrying
+    /// that row down a Custom-order list (painted as the lifted card).
+    #[derive(Clone, Copy, PartialEq)]
+    enum Pointer {
+        Away,
+        Over,
+        Carrying,
+    }
+
+    /// The window as painted under the interface font `font` (`None`: no
+    /// font set up, egui's own, which has no heavier face): does that font
+    /// have one, each text's format and position every time it is painted,
+    /// and the filled rectangles.
+    struct Painted {
+        has_semibold: bool,
+        semibold: egui::FontFamily,
+        ink: egui::Color32,
+        raised: egui::Color32,
+        texts: HashMap<String, Vec<(egui::TextFormat, egui::Pos2)>>,
+        fills: Vec<(Rect, egui::Color32)>,
+    }
+
+    impl Painted {
+        /// Where the worn name is first painted.
+        fn worn_at(&self) -> egui::Pos2 {
+            let worn = aurora_i18n::tr!("world-appearance-leather-jacket-2").to_string();
+            self.texts[&worn][0].1
+        }
+    }
+
+    fn painted(font: Option<&str>, pointer: Pointer) -> Painted {
+        let agent = Uuid::from_u128(2);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = agent;
+        // the root folder a login brings, which the favorites hang from
+        let root = world.inventory.root;
+        world.inventory.folders.insert(
+            root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: root,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+        crate::world::appearance::seed_demo(&mut world.inventory, agent);
+        model::seed_demo(&mut world.inventory, agent);
+        let mut st = AppearanceUi::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+        if let Some(font) = font {
+            crate::ui::fonts::apply(&frames.ctx, font);
+        }
+        crate::ui::widgets::place_floater(&frames.ctx, WINDOW, egui::pos2(40.0, 40.0), Vec2::new(360.0, 640.0));
+        let mut sort = SortOrder::Custom;
+        let mut frame = |events: Vec<egui::Event>| {
+            frames.shapes(events, |ui| {
+                let mut open = true;
+                show(ui.ctx(), &p, &world, &mut st, &mut open, &mut sort, true, &HashMap::new(), None);
+            })
+        };
+        let mut shapes = Vec::new();
+        for _ in 0..5 {
+            shapes = frame(Vec::new());
+        }
+        if pointer != Pointer::Away {
+            let worn = aurora_i18n::tr!("world-appearance-leather-jacket-2").to_string();
+            let name = shapes
+                .iter()
+                .find_map(|s| match s {
+                    egui::Shape::Text(t) if t.galley.text() == worn => Some(t.pos),
+                    _ => None,
+                })
+                .expect("the worn row is painted");
+            let at = name + Vec2::new(4.0, 6.0);
+            match pointer {
+                Pointer::Over => {
+                    for _ in 0..3 {
+                        shapes = frame(vec![egui::Event::PointerMoved(at)]);
+                    }
+                }
+                _ => {
+                    let press = egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    };
+                    shapes = frame(vec![egui::Event::PointerMoved(at), press]);
+                    for step in 1..=4 {
+                        shapes = frame(vec![egui::Event::PointerMoved(at + Vec2::new(0.0, 8.0 * step as f32))]);
+                    }
+                }
+            }
+        }
+        let mut texts: HashMap<String, Vec<_>> = HashMap::new();
+        let mut fills = Vec::new();
+        for shape in shapes {
+            match shape {
+                egui::Shape::Text(t) => {
+                    if let Some(section) = t.galley.job.sections.first() {
+                        texts
+                            .entry(t.galley.text().to_owned())
+                            .or_default()
+                            .push((section.format.clone(), t.pos));
+                    }
+                }
+                egui::Shape::Rect(r) => fills.push((r.rect, r.fill)),
+                _ => {}
+            }
+        }
+        Painted {
+            has_semibold: crate::ui::fonts::has_semibold(&frames.ctx),
+            semibold: crate::ui::fonts::semibold(&frames.ctx),
+            ink: p.ink,
+            raised: p.raised,
+            texts,
+            fills,
+        }
+    }
+
+    /// The leather jacket is worn, the spare shirt is not (`model::seed_demo`,
+    /// both clothing, worn by the current outfit): only the worn name is
+    /// drawn heavier, in the face `font` has for it.
+    fn assert_only_the_worn_name_is_bold(w: &Painted, font: &str) {
+        let worn = aurora_i18n::tr!("world-appearance-leather-jacket-2").to_string();
+        let spare = aurora_i18n::tr!("world-appearance-spare-shirt").to_string();
+        let regular = egui::TextFormat::simple(FontId::proportional(12.5), w.ink);
+        let spare_paints = &w.texts[&spare];
+        assert_eq!(spare_paints.len(), 1, "{font}: {spare:?} is painted once");
+        assert_eq!(spare_paints[0].0, regular, "{font}: {spare:?} is in the regular face");
+        let worn_paints = &w.texts[&worn];
+        let bold = worn_paints[0].0.clone();
+        assert_eq!(bold.font_id.family, w.semibold, "{font}: {worn:?} is in the semi-bold family");
+        assert_ne!(bold.coords, regular.coords, "{font}: {worn:?} asks a variable font for its weight");
+        if w.has_semibold {
+            assert_eq!(worn_paints.len(), 1, "{font}: {worn:?} is painted once, in its heavier face");
+        } else {
+            // no heavier face: a copy a pixel to the right is painted
+            // first, then the name itself
+            assert_eq!(worn_paints.len(), 2, "{font}: {worn:?} is painted twice");
+            let shift = worn_paints[0].1 - worn_paints[1].1;
+            assert!(shift.y == 0.0 && shift.x > 0.0, "{font}: the copy is to the right, by {shift:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_worn_favorite_has_a_bold_name() {
+        let w = painted(Some(crate::ui::fonts::DEFAULT), Pointer::Away);
+        assert!(w.has_semibold, "the default font has a bold face");
+        assert_only_the_worn_name_is_bold(&w, crate::ui::fonts::DEFAULT);
+    }
+
+    /// A font without a heavier face, on every machine: the worn name is
+    /// painted twice (`faux_bold_offset`).
+    #[test]
+    fn a_worn_favorite_is_bold_in_a_font_without_a_bold_face() {
+        let w = painted(None, Pointer::Away);
+        assert!(!w.has_semibold, "egui's own font has no bold face");
+        assert_only_the_worn_name_is_bold(&w, "egui's font");
+    }
+
+    /// The hovered worn row shows its Take off button where the check was;
+    /// its name stays bold.
+    #[test]
+    fn a_hovered_worn_favorite_keeps_its_bold_name() {
+        let w = painted(Some(crate::ui::fonts::DEFAULT), Pointer::Over);
+        let name = w.worn_at();
+        assert!(
+            w.fills
+                .iter()
+                .any(|(rect, fill)| *fill == w.raised && rect.contains(name + Vec2::new(4.0, 6.0))),
+            "the worn row is hovered"
+        );
+        assert_only_the_worn_name_is_bold(&w, "hovered");
+    }
+
+    /// The worn row carried in a Custom-order drag, as the lifted card: its
+    /// name stays bold.
+    #[test]
+    fn a_carried_worn_favorite_keeps_its_bold_name() {
+        let still = painted(Some(crate::ui::fonts::DEFAULT), Pointer::Away).worn_at();
+        let w = painted(Some(crate::ui::fonts::DEFAULT), Pointer::Carrying);
+        assert!(
+            w.worn_at().y > still.y + 8.0,
+            "the worn row is carried down: {still:?} → {:?}",
+            w.worn_at()
+        );
+        assert_only_the_worn_name_is_bold(&w, "carried");
+    }
+
+    /// A system font as the interface font: a variable one draws a worn
+    /// name at its semi-bold weight, a static one twice. Which kinds this
+    /// machine has varies; a few of its fonts are enough.
+    #[test]
+    fn a_worn_favorite_stays_bold_with_a_system_font() {
+        let (mut variable, mut fixed) = (false, false);
+        for font in crate::ui::fonts::system_fonts().into_iter().take(8) {
+            let font = format!("system:{}", font.path.display());
+            let w = painted(Some(&font), Pointer::Away);
+            assert_only_the_worn_name_is_bold(&w, &font);
+            variable |= w.has_semibold;
+            fixed |= !w.has_semibold;
+            if variable && fixed {
+                return;
+            }
+        }
+        eprintln!("system fonts checked: variable {variable}, static {fixed}");
     }
 
     #[test]

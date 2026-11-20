@@ -60,6 +60,10 @@ pub mod auto_hover;
 /// Face nearest avatar and the Compass (AURORA_DEMO_AVATAR_ALIGN).
 #[path = "demo_avatar_align.rs"]
 pub mod avatar_align;
+/// AURORA_DEMO_AVATAR_CACHE: worn objects drawn from the cache while the
+/// region sends them.
+#[path = "demo_avatar_cache.rs"]
+pub mod avatar_cache;
 /// Blended panes standing in the sun, for their shadows
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
@@ -158,8 +162,6 @@ pub mod group;
 /// (AURORA_DEMO_GROUP_REGION).
 #[path = "demo_group_region.rs"]
 pub mod group_region;
-#[path = "demo_hand_ik.rs"]
-pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
@@ -501,6 +503,49 @@ fn shape(path: u8, profile: u8, sy: u8, hollow: u16, cut_end: u16) -> aurora_pri
     .to_params()
 }
 
+/// Violet Wolf (local id 9001) wears a hat (skull) and holds a glowing orb
+/// (right hand): non-rigged attachments that must follow the animated
+/// bones. `kept`: as AURORA_DEMO_AVATAR_CACHE's cache kept them, before the
+/// hat went from pink to violet.
+pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
+    let cyl = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0);
+    let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
+    let hat = if kept {
+        [0.957, 0.447, 0.714, 1.0]
+    } else {
+        [0.545, 0.361, 0.965, 1.0]
+    };
+    let teal = [0.369, 0.918, 0.831, 1.0];
+    // (AURORA_DEMO_AVATAR_CACHE gives the wolf the classic look, whose big
+    // hair hides the hat: a taller one, and a larger orb, for that scenario)
+    let (hat_at, hat_size, orb) = if avatar_cache::enabled() {
+        (Vec3::new(0.0, 0.0, 0.3), Vec3::new(0.36, 0.36, 0.34), 0.2)
+    } else {
+        (Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), 0.12)
+    };
+    [
+        (9100u32, 2u8, hat_at, hat_size, cyl, hat),
+        (9101, 6, Vec3::new(0.0, 0.0, -0.06), Vec3::splat(orb), sphere, teal),
+    ]
+    .into_iter()
+    .map(|(id, point, pos, scale, volume, color)| {
+        let mut o = prim(
+            id,
+            pos,
+            Quat::IDENTITY,
+            scale,
+            volume,
+            te(color, 0, point == 6, if point == 6 { 0.4 } else { 0.0 }),
+            ExtraParams::default(),
+            "",
+        );
+        o.parent_id = 9001;
+        o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+        o
+    })
+    .collect()
+}
+
 /// The hat Violet Wolf wears (AURORA_DEMO_DERENDER=hat): `prim`'s id of
 /// local id 9100.
 pub fn wolf_hat() -> Uuid {
@@ -783,6 +828,23 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     };
     o.state = point.rotate_right(4);
     o.name_values = format!("AttachItemID STRING RW SV {}", item.item_id);
+    // AURORA_DEMO_AVATAR_CACHE: the hair, earrings and boots it keeps are
+    // drawn, so that their copies and the region's objects can be seen
+    if avatar_cache::enabled() {
+        let round = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
+        let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+        let look = match item.item_id.as_u128() {
+            717 => Some((Vec3::new(0.24, 0.24, 0.14), round, [0.957, 0.447, 0.714, 1.0])),
+            718 => Some((Vec3::splat(0.05), round, [0.98, 0.85, 0.35, 1.0])),
+            720 => Some((Vec3::new(0.14, 0.14, 0.3), boxp, [0.30, 0.22, 0.18, 1.0])),
+            _ => None,
+        };
+        if let Some((scale, volume, color)) = look {
+            o.scale = scale;
+            o.volume = volume;
+            o.texture_entry = Some(te(color, 0, false, 0.0));
+        }
+    }
     o
 }
 
@@ -987,6 +1049,11 @@ fn demo_raw() -> Llsd {
     // Exercise the login clock correction on the normal LoggedIn path.
     if std::env::var("AURORA_DEMO_EVENT_TIMES").as_deref() == Ok("grid-behind") {
         let seconds = crate::ui::bars::clock::now_unix().saturating_sub(3600);
+        raw.insert("seconds_since_epoch", seconds.to_string());
+    }
+    // AURORA_DEMO_CHATLOG=service:skew: the computer behind the grid (#4233)
+    if chatlog::service_skew() {
+        let seconds = crate::ui::bars::clock::now_unix().saturating_add(chatlog::SKEW_SECS);
         raw.insert("seconds_since_epoch", seconds.to_string());
     }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
@@ -1525,6 +1592,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1764,6 +1832,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1787,6 +1856,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             origin: crate::world::Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1950,6 +2020,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -3683,8 +3754,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::Call { method, session, .. } => calls::reply(method.clone(), *session),
         // the request made once after login: what the grid kept while we
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
+        // AURORA_DEMO_CHATLOG=service: the Chat Service's list and pages
+        aurora_net::NetCommand::ChatServiceRequest { id, url, body } => {
+            vec![chatlog::service_reply(DEMO_AGENT, *id, url, body.as_ref())]
+        }
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
-            Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            Some(chatlog::Mode::Offline | chatlog::Mode::Service) => chatlog::offline_messages(DEMO_AGENT),
             // AURORA_DEMO_CONV_OPTIONS: Orion's and a group's
             _ if conv_options::scene().is_some() => conv_options::offline_messages(DEMO_AGENT),
             _ => Vec::new(),
@@ -4741,6 +4816,7 @@ fn caps() -> std::collections::HashMap<String, String> {
         .chain(sim_extras::caps())
         .chain(crate::build::demo_sim::caps())
         .chain(region::open_settings_caps())
+        .chain(chatlog::service_caps())
         .collect();
     if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
         for (name, url) in [
@@ -4792,7 +4868,12 @@ pub fn events() -> Vec<NetEvent> {
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
             name: aurora_i18n::tr!("common-aurora-demo").into(),
-            region_id: Uuid::nil(),
+            // the Chat Service's context needs the region's id
+            region_id: if chatlog::mode() == Some(chatlog::Mode::Service) {
+                chatlog::SERVICE_REGION
+            } else {
+                Uuid::nil()
+            },
             water_height: 20.0,
             sim_access: 13,
             region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),
@@ -6392,25 +6473,9 @@ pub fn events() -> Vec<NetEvent> {
         o.name_values = format!("FirstName STRING RW SV {first}\nLastName STRING RW SV {last}\nTitle STRING RW SV Aurora");
         avatars.push(o);
     }
-    // Violet Wolf wears a hat (skull) and holds a glowing orb (right hand):
-    // non-rigged attachments that must follow the animated bones
-    for (id, point, pos, scale, volume, color) in [
-        (9100u32, 2u8, Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), cyl, violet),
-        (9101, 6, Vec3::new(0.0, 0.0, -0.06), Vec3::splat(0.12), sphere, teal),
-    ] {
-        let mut o = prim(
-            id,
-            pos,
-            Quat::IDENTITY,
-            scale,
-            volume,
-            te(color, 0, point == 6, if point == 6 { 0.4 } else { 0.0 }),
-            ExtraParams::default(),
-            "",
-        );
-        o.parent_id = 9001;
-        o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
-        avatars.push(o);
+    // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
+    if !avatar_cache::enabled() {
+        avatars.extend(wolf_attachments(false));
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
     // AURORA_DEMO_POS="x,y" moves the start position (captures)

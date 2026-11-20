@@ -82,9 +82,12 @@ Show-Triage $report $frames $signature $section
 
 # Only the issues this triage signed: the label, which a reporter cannot set,
 # is checked again with the section in Find-DuplicateIssue.
-$open = @(Invoke-Gh api "repos/$repo/issues?state=open&labels=$TriagedLabel&per_page=100" --paginate --jq '.[] | select(.pull_request == null) | {Number: .number, Body: .body, Labels: [.labels[].name]} | tojson' |
-    ForEach-Object { $_ | ConvertFrom-Json })
-$duplicate = Find-DuplicateIssue $open $signature.Id $Issue
+$duplicate = $null
+if (-not $signature.UnidentifiedModule) {
+    $open = @(Invoke-Gh api "repos/$repo/issues?state=open&labels=$TriagedLabel&per_page=100" --paginate --jq '.[] | select(.pull_request == null) | {Number: .number, Body: .body, Labels: [.labels[].name]} | tojson' |
+        ForEach-Object { $_ | ConvertFrom-Json })
+    $duplicate = Find-DuplicateIssue $open $signature.Id $Issue
+}
 
 # Every report gets its symbolized stack, the duplicates too.
 $patch = @{ body = (Merge-TriageSection $data.body $section) }

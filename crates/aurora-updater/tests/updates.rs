@@ -1,5 +1,6 @@
 //! Disposable packages and a real local HTTP server exercise release filtering,
-//! byte integrity, cancellation, ZIP validation and transactional rollback.
+//! byte integrity, cancellation, archive validation (ZIP and tar.gz) and
+//! transactional rollback.
 
 use aurora_updater::{
     Cancel, Failure,
@@ -134,11 +135,98 @@ fn valid_zip() -> Vec<u8> {
     ])
 }
 
+/// One member of a tar.gz fixture: a file, a folder, or a link of the kinds
+/// a package must never hold.
+struct Member {
+    name: String,
+    data: Vec<u8>,
+    mode: u32,
+    kind: tar::EntryType,
+    link: String,
+}
+
+impl Member {
+    fn file(name: impl Into<String>, data: impl Into<Vec<u8>>, mode: u32) -> Self {
+        Self {
+            name: name.into(),
+            data: data.into(),
+            mode,
+            kind: tar::EntryType::Regular,
+            link: String::new(),
+        }
+    }
+    fn dir(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            data: Vec::new(),
+            mode: 0o755,
+            kind: tar::EntryType::Directory,
+            link: String::new(),
+        }
+    }
+    fn symlink(name: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            data: Vec::new(),
+            mode: 0o777,
+            kind: tar::EntryType::Symlink,
+            link: target.into(),
+        }
+    }
+    fn hardlink(name: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            data: Vec::new(),
+            mode: 0o644,
+            kind: tar::EntryType::Link,
+            link: target.into(),
+        }
+    }
+}
+
+fn tar_gz(members: &[Member]) -> Vec<u8> {
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut builder = tar::Builder::new(encoder);
+    for member in members {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(member.kind);
+        header.set_size(member.data.len() as u64);
+        header.set_mode(member.mode);
+        if !member.link.is_empty() {
+            header.set_link_name(&member.link).expect("link name");
+        }
+        // tar-rs refuses to write `..` or an absolute name: write them as a
+        // hostile archive would, then seal the header
+        assert!(member.name.len() <= 100, "test member name");
+        header.as_mut_bytes()[..100].fill(0);
+        header.as_mut_bytes()[..member.name.len()].copy_from_slice(member.name.as_bytes());
+        header.set_cksum();
+        builder.append(&header, member.data.as_slice()).expect("tar member");
+    }
+    builder.into_inner().expect("tar").finish().expect("gzip")
+}
+
+fn valid_tar_gz() -> Vec<u8> {
+    tar_gz(&[
+        Member::dir("Aurora-Viewer-v0.3.0-linux-x64/"),
+        Member::file("Aurora-Viewer-v0.3.0-linux-x64/aurora-viewer", b"new viewer", 0o755),
+        Member::dir("Aurora-Viewer-v0.3.0-linux-x64/assets/"),
+        Member::file("Aurora-Viewer-v0.3.0-linux-x64/assets/character/avatar.llm", b"avatar", 0o644),
+        Member::file("Aurora-Viewer-v0.3.0-linux-x64/LICENSE", b"license", 0o644),
+        Member::file(
+            "Aurora-Viewer-v0.3.0-linux-x64/aurora-install.json",
+            br#"{"schema":1,"version":"0.3.0"}"#,
+            0o644,
+        ),
+    ])
+}
+
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn release(server: &Server, size: usize) -> Release {
+/// A release offering the archive `name`, served at `path`.
+fn release(server: &Server, size: usize, name: &str, path: &str) -> Release {
     Release {
         tag: "v0.3.0".into(),
         version: "0.3.0".into(),
@@ -149,12 +237,12 @@ fn release(server: &Server, size: usize) -> Release {
         grace: aurora_updater::feed::DEFAULT_GRACE,
         maintenance: Default::default(),
         archive: Some(Asset {
-            name: "package.zip".into(),
+            name: name.into(),
             size: size as u64,
-            browser_download_url: format!("{}/package.zip", server.base),
+            browser_download_url: format!("{}{path}", server.base),
         }),
         checksum: Some(Asset {
-            name: "package.zip.sha256".into(),
+            name: format!("{name}.sha256"),
             size: 80,
             browser_download_url: format!("{}/hash", server.base),
         }),
@@ -172,13 +260,35 @@ fn verifies_and_extracts_real_download() {
     let temp = Temp::new();
     let root = run(package::download(
         &server.source(),
-        &release(&server, bytes.len()),
+        &release(&server, bytes.len(), "package.zip", "/package.zip"),
         &temp.0,
         &Cancel::default(),
         |_| {},
     ))
     .expect("verified download");
     assert_eq!(fs::read(root.join("aurora-viewer.exe")).expect("viewer"), b"new viewer");
+}
+
+#[test]
+fn verifies_and_extracts_a_linux_tarball() {
+    let bytes = valid_tar_gz();
+    let name = "Aurora-Viewer-v0.3.0-linux-x64.tar.gz";
+    let hash = format!("{}  {name}\n", digest(&bytes));
+    let server = Server::new(HashMap::from([
+        ("/package.tar.gz".into(), bytes.clone()),
+        ("/hash".into(), hash.into_bytes()),
+    ]));
+    let temp = Temp::new();
+    let root = run(package::download(
+        &server.source(),
+        &release(&server, bytes.len(), name, "/package.tar.gz"),
+        &temp.0,
+        &Cancel::default(),
+        |_| {},
+    ))
+    .expect("verified download");
+    assert_eq!(fs::read(root.join("aurora-viewer")).expect("viewer"), b"new viewer");
+    assert_eq!(fs::read(root.join("assets/character/avatar.llm")).expect("asset"), b"avatar");
 }
 
 #[test]
@@ -192,7 +302,7 @@ fn rejects_hash_mismatch_and_truncated_transfer_before_extraction() {
         let temp = Temp::new();
         let outcome = run(package::download(
             &server.source(),
-            &release(&server, size),
+            &release(&server, size, "package.zip", "/package.zip"),
             &temp.0,
             &Cancel::default(),
             |_| {},
@@ -215,7 +325,7 @@ fn cancellation_never_extracts_or_changes_installation() {
     assert!(
         run(package::download(
             &server.source(),
-            &release(&server, bytes.len()),
+            &release(&server, bytes.len(), "package.zip", "/package.zip"),
             &temp.0,
             &cancel,
             |_| {}
@@ -243,12 +353,65 @@ fn invalid_zip_paths_and_case_aliases_do_not_escape_staging() {
     }
 }
 
+#[test]
+fn tarballs_with_links_traversal_or_case_aliases_never_escape_staging() {
+    let root = "Aurora-Viewer-v0.3.0-linux-x64";
+    for members in [
+        // a valid entry first: nothing is extracted before the last is known
+        vec![
+            Member::file(format!("{root}/LICENSE"), b"license", 0o644),
+            Member::file("../escape.txt", b"bad", 0o644),
+        ],
+        vec![Member::symlink(format!("{root}/passwd"), "/etc/passwd")],
+        vec![Member::hardlink(format!("{root}/hard"), "LICENSE")],
+        vec![
+            Member::file(format!("{root}/FILE"), b"a", 0o644),
+            Member::file(format!("{root}/file"), b"b", 0o644),
+        ],
+        // the same entry twice
+        vec![
+            Member::file(format!("{root}/LICENSE"), b"a", 0o644),
+            Member::file(format!("{root}/LICENSE"), b"b", 0o644),
+        ],
+        // a package wrapped in another folder
+        vec![Member::file(format!("other/{root}/LICENSE"), b"a", 0o644)],
+        vec![],
+    ] {
+        let temp = Temp::new();
+        let archive = temp.0.join("test.tar.gz");
+        fs::write(&archive, tar_gz(&members)).expect("tar.gz file");
+        assert!(package::extract(&archive, &temp.0.join("prepared"), "v0.3.0", &Cancel::default()).is_err());
+        assert!(!temp.0.join("escape.txt").exists());
+        assert!(!temp.0.join("prepared").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linux_tarball_keeps_its_executable_bit_and_never_setuid() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = Temp::new();
+    let archive = temp.0.join("package.tar.gz");
+    fs::write(&archive, valid_tar_gz()).expect("tar.gz file");
+    let root = package::extract(&archive, &temp.0.join("prepared"), "v0.3.0", &Cancel::default()).expect("extracted");
+    let mode = |path: &str| fs::metadata(root.join(path)).expect("file").permissions().mode() & 0o7777;
+    assert_eq!(fs::read(root.join("aurora-viewer")).expect("viewer"), b"new viewer");
+    assert_eq!(mode("aurora-viewer"), 0o755);
+    assert_eq!(mode("LICENSE"), 0o644);
+}
+
 fn installation(path: &Path, version: &[u8]) {
     fs::create_dir_all(path.join("assets")).expect("assets");
+    fs::write(path.join(exe()), version).expect("viewer");
     fs::write(path.join("assets/dictionary.dic"), version).expect("asset");
-    fs::write(path.join("aurora-viewer.exe"), version).expect("viewer");
     fs::write(path.join("LICENSE"), b"license").expect("license");
     fs::write(path.join("aurora-install.json"), version).expect("manifest");
+    // the package kept the executable bit, and so does the swap
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path.join(exe()), fs::Permissions::from_mode(0o755)).expect("executable");
+    }
 }
 
 /// What a user may keep beside the viewer: a file, a folder with a file.
@@ -279,7 +442,7 @@ fn an_update_keeps_the_users_own_files_beside_the_viewer() {
         Ok(())
     })
     .expect("swap committed");
-    assert_eq!(fs::read(path.join("aurora-viewer.exe")).expect("new viewer"), b"new");
+    assert_eq!(fs::read(path.join(exe())).expect("new viewer"), b"new");
     assert_eq!(fs::read(path.join("assets/dictionary.dic")).expect("new assets"), b"new");
     assert_personal_files(&path);
     assert!(!work.root.join("backup").exists());
@@ -294,7 +457,7 @@ fn a_rollback_keeps_the_users_own_files_too() {
     let work = install::Workspace::new(&path).expect("workspace");
     installation(&work.root.join("prepared"), b"new");
     assert!(install::apply(&path, &work.root, || anyhow::bail!("no frame")).is_err());
-    assert_eq!(fs::read(path.join("aurora-viewer.exe")).expect("restored"), b"old");
+    assert_eq!(fs::read(path.join(exe())).expect("restored"), b"old");
     assert_eq!(fs::read(path.join("assets/dictionary.dic")).expect("restored assets"), b"old");
     assert_personal_files(&path);
     assert!(!work.root.join("backup").exists(), "an empty backup tells the restoration worked");
@@ -311,13 +474,19 @@ fn a_viewer_copied_alone_updates_only_itself() {
     fs::write(desktop.join("assets/photo.png"), b"mine").expect("the user's file");
     fs::write(desktop.join("LICENSE"), b"my licence").expect("the user's licence");
     fs::write(desktop.join("README.md"), b"my notes").expect("the user's readme");
-    fs::write(desktop.join("aurora-viewer.exe"), b"old").expect("viewer");
+    fs::write(desktop.join(exe()), b"old").expect("viewer");
+    // a viewer copied alone does run, so it kept its executable bit
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(desktop.join(exe()), fs::Permissions::from_mode(0o755)).expect("executable");
+    }
     personal_files(&desktop);
     let work = install::Workspace::new(&desktop).expect("a viewer alone updates");
     installation(&work.root.join("prepared"), b"new");
     fs::write(work.root.join("prepared/README.md"), b"package readme").expect("package readme");
     install::apply(&desktop, &work.root, || Ok(())).expect("swap committed");
-    assert_eq!(fs::read(desktop.join("aurora-viewer.exe")).expect("new viewer"), b"new");
+    assert_eq!(fs::read(desktop.join(exe())).expect("new viewer"), b"new");
     assert_eq!(fs::read(desktop.join("assets/photo.png")).expect("assets kept"), b"mine");
     assert!(!desktop.join("assets/dictionary.dic").exists(), "no package asset added");
     assert_eq!(fs::read(desktop.join("LICENSE")).expect("licence kept"), b"my licence");
@@ -338,8 +507,14 @@ fn a_folder_without_the_viewer_or_an_update_with_foreign_files_is_refused() {
     installation(&work.root.join("prepared"), b"new");
     fs::write(work.root.join("prepared/extra.dll"), b"x").expect("foreign file in the update");
     assert!(install::apply(&path, &work.root, || Ok(())).is_err());
-    assert_eq!(fs::read(path.join("aurora-viewer.exe")).expect("untouched"), b"old");
+    assert_eq!(fs::read(path.join(exe())).expect("untouched"), b"old");
 }
+
+/// The viewer's executable, as this system's package names it.
+fn exe() -> &'static str {
+    if cfg!(windows) { "aurora-viewer.exe" } else { "aurora-viewer" }
+}
+
 #[test]
 fn new_viewer_failure_restores_old_files_and_preserves_profile() {
     let temp = Temp::new();
@@ -350,15 +525,15 @@ fn new_viewer_failure_restores_old_files_and_preserves_profile() {
     installation(&work.root.join("prepared"), b"new");
     assert!(
         install::apply(&install, &work.root, || {
-            assert_eq!(fs::read(install.join("aurora-viewer.exe"))?, b"new");
-            assert_eq!(fs::read(work.root.join("backup/aurora-viewer.exe"))?, b"old");
+            assert_eq!(fs::read(install.join(exe()))?, b"new");
+            assert_eq!(fs::read(work.root.join("backup").join(exe()))?, b"old");
             anyhow::bail!("new process exited without a frame")
         })
         .is_err()
     );
-    assert_eq!(fs::read(install.join("aurora-viewer.exe")).expect("restored"), b"old");
+    assert_eq!(fs::read(install.join(exe())).expect("restored"), b"old");
     assert!(
-        work.root.join("failed/aurora-viewer.exe").is_file(),
+        work.root.join("failed").join(exe()).is_file(),
         "the new package was actually launched then rolled back"
     );
     assert_eq!(fs::read(temp.0.join("settings.json")).expect("profile intact"), b"preferences");
@@ -373,11 +548,11 @@ fn success_removes_backup_only_after_launch_and_refuses_concurrency() {
     assert!(install::Workspace::new(&path).is_err());
     installation(&work.root.join("prepared"), b"new");
     install::apply(&path, &work.root, || {
-        assert!(work.root.join("backup/aurora-viewer.exe").is_file());
+        assert!(work.root.join("backup").join(exe()).is_file());
         Ok(())
     })
     .expect("swap committed");
-    assert_eq!(fs::read(path.join("aurora-viewer.exe")).expect("new viewer"), b"new");
+    assert_eq!(fs::read(path.join(exe())).expect("new viewer"), b"new");
     assert!(!work.root.join("backup").exists());
 }
 

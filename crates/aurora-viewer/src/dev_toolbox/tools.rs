@@ -82,8 +82,8 @@ const TOOLS: &[Tool] = &[
     t("J5", K::Copy, "file-export", G::Reports),
     t("J6", K::Window, "folder-open-filled", G::Reports),
     t("J7", K::Window, "terminal-2", G::Reports),
-    t("J8", K::Copy, "bone-filled", G::Reports),
     t("J9", K::Copy, "bone-filled", G::Reports),
+    t("J10", K::Copy, "users", G::Reports),
     t("L1", K::Live, "crosshair", G::Live),
     t("L2", K::Live, "stack-2-filled", G::Live),
     t("L3", K::Live, "alert-triangle-filled", G::Live),
@@ -153,8 +153,8 @@ pub fn label(id: &str) -> &'static str {
         "J5" => tr!("dev-toolbox-j5"),
         "J6" => tr!("dev-toolbox-j6"),
         "J7" => tr!("dev-toolbox-j7"),
-        "J8" => tr!("dev-toolbox-j8"),
         "J9" => tr!("dev-toolbox-j9"),
+        "J10" => tr!("dev-toolbox-j10"),
         "L1" => tr!("dev-toolbox-l1"),
         "L2" => tr!("dev-toolbox-l2"),
         "L3" => tr!("dev-toolbox-l3"),
@@ -223,6 +223,87 @@ pub fn group_title(g: Group) -> (&'static str, &'static str) {
 pub fn matches(id: &str, label: &str, query: &str) -> bool {
     let q = query.trim().to_lowercase();
     q.is_empty() || id.to_lowercase().contains(&q) || label.to_lowercase().contains(&q)
+}
+
+/// J10: the state of the Contacts tab of Conversations, for a report where
+/// the friends list does not show: each gate that hides it, on its own line.
+/// The app fills it from the settings and the window.
+#[derive(Debug, Clone, Copy)]
+pub struct ContactsReport<'a> {
+    /// Preferences › Chat › Show the Contacts tab.
+    pub shown: bool,
+    /// ContactsTornOff: its own window instead of the first tab.
+    pub torn_off: bool,
+    /// The window the pane belongs to is open.
+    pub window_open: bool,
+    /// The pane is the one shown (the Contacts tab or window selected).
+    pub pane: bool,
+    /// The conversations window's appearance and column.
+    pub workspace: bool,
+    pub column_collapsed: bool,
+    /// ContactsSettings::tab.
+    pub tab: u8,
+    /// The column's search, which hides the pinned entry when it does not
+    /// match.
+    pub filter: &'a str,
+    pub friends: usize,
+    pub friends_online: usize,
+    pub groups: usize,
+    pub sets: usize,
+}
+
+impl ContactsReport<'_> {
+    pub fn text(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "contacts tab: {}",
+            if self.shown {
+                "shown by Preferences"
+            } else {
+                "hidden by Preferences › Chat › Show the Contacts tab"
+            }
+        );
+        let (placement, window) = if self.torn_off {
+            ("torn off, its own window", "Contacts")
+        } else {
+            ("the first tab of Conversations", "Conversations")
+        };
+        let _ = writeln!(out, "placement: {placement}");
+        let _ = writeln!(out, "window: {window} {}", if self.window_open { "open" } else { "closed" });
+        let _ = writeln!(out, "contacts pane: {}", if self.pane { "shown" } else { "not shown" });
+        let _ = writeln!(
+            out,
+            "appearance: {}, column {}",
+            if self.workspace { "Aurora workspace" } else { "Legacy" },
+            if self.column_collapsed { "collapsed" } else { "expanded" }
+        );
+        let _ = writeln!(
+            out,
+            "tab: {}",
+            match self.tab {
+                1 => "Groups",
+                2 => "Contact sets",
+                _ => "Friends",
+            }
+        );
+        let _ = writeln!(
+            out,
+            "column search: {}",
+            if self.filter.is_empty() {
+                "none".to_string()
+            } else {
+                format!("\"{}\" (the entry shows only if it matches)", self.filter)
+            }
+        );
+        let _ = writeln!(
+            out,
+            "friends: {} ({} online) · groups: {} · contact sets: {}",
+            self.friends, self.friends_online, self.groups, self.sets
+        );
+        out
+    }
 }
 
 /// One group of the layout.
@@ -434,6 +515,52 @@ mod tests {
             assert!(seen.insert(t.id), "{} twice", t.id);
             assert_ne!(label(t.id), "?", "{} has no label", t.id);
         }
+    }
+
+    #[test]
+    fn contacts_report_names_every_gate_that_hides_the_tab() {
+        let hidden = ContactsReport {
+            shown: false,
+            torn_off: true,
+            window_open: false,
+            pane: false,
+            workspace: true,
+            column_collapsed: true,
+            tab: 1,
+            filter: "bob",
+            friends: 12,
+            friends_online: 3,
+            groups: 5,
+            sets: 2,
+        };
+        let text = hidden.text();
+        for expected in [
+            "contacts tab: hidden by Preferences",
+            "placement: torn off, its own window",
+            "window: Contacts closed",
+            "contacts pane: not shown",
+            "appearance: Aurora workspace, column collapsed",
+            "tab: Groups",
+            "column search: \"bob\"",
+            "friends: 12 (3 online) · groups: 5 · contact sets: 2",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        let shown = ContactsReport {
+            shown: true,
+            torn_off: false,
+            window_open: true,
+            pane: true,
+            filter: "",
+            tab: 0,
+            ..hidden
+        };
+        let text = shown.text();
+        assert!(text.contains("contacts tab: shown by Preferences"), "{text}");
+        assert!(text.contains("placement: the first tab of Conversations"), "{text}");
+        assert!(text.contains("window: Conversations open"), "{text}");
+        assert!(text.contains("contacts pane: shown"), "{text}");
+        assert!(text.contains("column search: none"), "{text}");
     }
 
     #[test]

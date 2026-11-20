@@ -225,6 +225,7 @@ impl BuildTool {
         };
         self.manip.cancel();
         self.rect = None;
+        self.press = None;
         self.replacement.job = None;
         self.replacement.message.clear();
         self.replacement.draft = Some(Draft {
