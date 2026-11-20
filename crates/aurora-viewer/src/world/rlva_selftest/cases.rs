@@ -1126,5 +1126,6 @@ pub(super) fn phase1() -> Vec<Case> {
     cases.sort_by_key(|c| c.id);
     cases.extend(replies());
     cases.extend(round_trips());
+    cases.extend(super::cases_move::phase1());
     cases
 }

@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod cases;
+mod cases_move;
 mod cases_world;
 mod factory;
 mod guard;

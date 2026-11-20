@@ -816,3 +816,18 @@ fn selftest_logout_ends_the_run_at_once() {
     assert_eq!(host.sent.len(), before, "nothing is sent once the session is gone");
     assert!(report.notes.iter().any(|n| n.contains("logged out")), "{}", report.text());
 }
+
+#[test]
+fn selftest_movement_cases_run_and_pass_on_the_demo_world() {
+    let mut host = Host::new();
+    host.start(Mode::Simulated, false);
+    let report = host.run();
+    for id in [
+        "move-G1-tplocal-own-value",
+        "move-G9-place-buttons",
+        "move-G12-region-by-name",
+        "move-G16-godlike-lure",
+    ] {
+        assert_eq!(verdict_of(&report, id), &Verdict::Pass, "{id}: {}", report.text());
+    }
+}
