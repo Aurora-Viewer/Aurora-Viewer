@@ -1726,7 +1726,7 @@ impl App {
         // (an adapter known to drop under many downloads keeps them
         // limited: #1545, net_adapters.rs)
         let net = NetClient::new(crate::net_adapters::startup_mode(settings.download_connections))?;
-        net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
+        net.set_agent_language(aurora_i18n::grid_language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
@@ -11808,7 +11808,7 @@ impl App {
                     gaming_mode: self.gaming_mode.on,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
-                    language: aurora_i18n::language(),
+                    language: aurora_i18n::grid_language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
                 for url in std::mem::take(&mut self.media.links) {
@@ -13320,7 +13320,7 @@ impl App {
             crate::language_file::select(&self.settings.language, self.settings.custom_language);
             crate::crash::update(&self.skin.theme, &self.settings);
             self.net
-                .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
+                .set_agent_language(aurora_i18n::grid_language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
@@ -16897,7 +16897,7 @@ impl App {
                 self.world.opensim_extras(),
                 login_search,
                 self.search_ui.web_query(self.settings.classic_search),
-                aurora_i18n::language(),
+                aurora_i18n::grid_language(),
                 self.world.agent_access().preferred,
             )
             .map(|url| crate::world::search::WebHome { url, identified: false });
@@ -16906,7 +16906,7 @@ impl App {
             self.search_grid(),
             self.search_ui.web_query(self.settings.classic_search),
             self.world.agent_access(),
-            aurora_i18n::language(),
+            aurora_i18n::grid_language(),
             self.search_session(),
         )
     }
@@ -16978,7 +16978,7 @@ impl App {
     /// (compact, wide, legacy, empty) have the Second Life guide's.
     fn destination_guide(&self) -> Option<String> {
         use ui::destinations::{GuideGrid, guide_url};
-        let language = aurora_i18n::language();
+        let language = aurora_i18n::grid_language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
             if page.trim() == "sl" || crate::demo::destinations::mode().is_some() {
@@ -17017,7 +17017,7 @@ impl App {
     /// demo, "sl" for the Second Life page's address.
     fn avatar_welcome_page(&self) -> Option<String> {
         use ui::avatar_welcome::{PackGrid, pack_url};
-        let language = aurora_i18n::language();
+        let language = aurora_i18n::grid_language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_AVATAR_WELCOME").ok().filter(|u| !u.trim().is_empty())?;
             return match page.trim() {
@@ -17086,7 +17086,7 @@ impl App {
             return;
         }
         let paths = self.media.plugins(&self.settings.media).cloned();
-        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
         let env = ui::signup::SignupWeb {
             paths: paths.as_ref(),
             browser: &browser,
@@ -19297,7 +19297,11 @@ impl App {
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
-                    browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media),
+                    browser: crate::media::browser_settings(
+                        &crate::settings::cache_dir(),
+                        aurora_i18n::grid_language(),
+                        &self.settings.media,
+                    ),
                     volume,
                 });
                 // who hears the nearby chat, and who of them types (the
@@ -20413,7 +20417,8 @@ impl App {
                 }
                 // the "Feed" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();
-                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+                let browser =
+                    crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
                 let cookie = self.media.openid.cookie();
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
