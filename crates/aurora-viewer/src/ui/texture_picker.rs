@@ -105,6 +105,7 @@ pub struct TexturePicker {
     tree: tree::Tree,
     local_open: [bool; 2],
     source: usize,
+    restore_source: bool,
     library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     uuid_error: bool,
     footer_height: f32,
@@ -276,6 +277,7 @@ impl TexturePicker {
         self.selected_item = None;
         self.selected_lookup = None;
         self.source = 0;
+        self.restore_source = true;
         self.reveal_selection = true;
         self.tree.opened(current);
         self.local_open = [true; 2];
@@ -525,10 +527,16 @@ impl TexturePicker {
                 });
             }
         }
-        // LLFloaterTexturePicker::setImageID reveals the current inventory
-        // item. A previous Local/Library tab and a virtualized, scrolled list
-        // must not hide that selection when another control is opened (#2362).
-        if self.reveal_selection && self.source == 0 {
+        // Keep an explicit source choice between controls. Without a preference,
+        // reveal the current asset as LLFloaterTexturePicker::setImageID does;
+        // inventory scrolling still reveals the selected item (#2362).
+        let remembered_source = ctx.data_mut(|data| data.get_persisted::<usize>(egui::Id::unique("texture_picker_source")));
+        if std::mem::take(&mut self.restore_source)
+            && let Some(source) = remembered_source
+        {
+            self.source = if source == 1 && !self.allow_local { 0 } else { source.min(2) };
+        }
+        if remembered_source.is_none() && self.reveal_selection && self.source == 0 {
             if self.allow_local && self.selected.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
                 self.source = 1;
             } else if self
@@ -674,6 +682,7 @@ impl TexturePicker {
                 });
             });
             ui.add_space(8.0);
+            let before_source = self.source;
             widgets::tabs(
                 ui,
                 p,
@@ -684,11 +693,26 @@ impl TexturePicker {
                     (aurora_i18n::tr!("picker-aurora-tab"), true),
                 ],
             );
+            if self.source != before_source {
+                ctx.data_mut(|data| data.insert_persisted(egui::Id::unique("texture_picker_source"), self.source));
+            }
             if self.source == 1 && !self.allow_local {
                 self.source = 0;
             }
             if self.source != 0 {
                 self.stop_pipette(ctx);
+            }
+            let sort_key = egui::Id::unique("texture_picker_local_newest");
+            let mut newest = ctx.data_mut(|data| data.get_persisted::<bool>(sort_key).unwrap_or(true));
+            if self.source == 1 {
+                let before = newest;
+                ui.horizontal(|ui| {
+                    widgets::radio_value(ui, p, &mut newest, true, aurora_i18n::tr!("picker-local-newest"));
+                    widgets::radio_value(ui, p, &mut newest, false, aurora_i18n::tr!("picker-local-name"));
+                });
+                if newest != before {
+                    ctx.data_mut(|data| data.insert_persisted(sort_key, newest));
+                }
             }
             let inv = &world.inventory;
             if self.library_lookup.map(|(generation, root, _)| (generation, root)) != Some((inv.generation, inv.root)) {
@@ -783,7 +807,16 @@ impl TexturePicker {
                     self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
                 })
                 .collect();
-            locals.sort_by(|a, b| super::inventory::view::picker_name_cmp(&a.1.0, &b.1.0).then_with(|| a.0.cmp(b.0)));
+            locals.sort_by(|a, b| {
+                let order = if newest {
+                    world.local_asset_order.get(b.0).cmp(&world.local_asset_order.get(a.0))
+                } else {
+                    std::cmp::Ordering::Equal
+                };
+                order
+                    .then_with(|| super::inventory::view::picker_name_cmp(&a.1.0, &b.1.0))
+                    .then_with(|| a.0.cmp(b.0))
+            });
             let tab = usize::from(!self.filter.trim().is_empty());
             let local_count = if self.allow_local && self.source == 1 {
                 1 + if self.local_open[tab] { locals.len() } else { 0 }
@@ -2817,5 +2850,59 @@ pub(crate) mod tests {
                 "resized height lost: {reopened:?}"
             );
         }
+    }
+
+    #[test]
+    fn creator_picker_remembers_local_across_instances_and_respects_disallowed_local() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+        picker.allow_local = true;
+        let mut labels = HashMap::new();
+        for i in 0..5 {
+            labels = frame(&ctx, &mut picker, &mut world, i as f64 / 60.0, vec![]);
+        }
+        click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-local-tab")]);
+        assert_eq!(picker.source, 1);
+        for (materials, allowed, expected) in [(false, true, 1), (false, false, 0), (true, true, 1)] {
+            let mut reopened = TexturePicker::default();
+            if materials {
+                reopened.open_materials("Material", Uuid::nil());
+            } else {
+                reopened.open("Texture", Uuid::nil());
+            }
+            reopened.allow_local = allowed;
+            for i in 0..4 {
+                frame(&ctx, &mut reopened, &mut world, 2.0 + i as f64 / 60.0, vec![]);
+            }
+            assert_eq!(reopened.source, expected);
+            assert!(reopened.take_preview().is_none());
+        }
+    }
+
+    #[test]
+    fn creator_picker_newest_sort_is_independent_of_names_and_can_switch_to_name() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for (n, name) in [(1, "A old"), (2, "Z new")] {
+            let id = Uuid::from_u128(n);
+            world.local_assets.insert(id, (name.into(), false));
+            world.local_asset_order.insert(id, n as usize);
+        }
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+        picker.allow_local = true;
+        picker.source = 1;
+        let mut labels = HashMap::new();
+        for i in 0..5 {
+            labels = frame(&ctx, &mut picker, &mut world, i as f64 / 60.0, vec![]);
+        }
+        assert!(labels["Z new"].y < labels["A old"].y);
+        click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-local-name")]);
+        labels = frame(&ctx, &mut picker, &mut world, 1.2, vec![]);
+        assert!(labels["A old"].y < labels["Z new"].y);
     }
 }

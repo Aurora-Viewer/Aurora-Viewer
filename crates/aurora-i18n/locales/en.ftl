@@ -15868,3 +15868,6 @@ game-control-action-truck-right = Truck →
 game-control-action-boom-up = Boom ↑
 game-control-action-boom-down = Boom ↓
 game-control-action-escape = ESC
+
+picker-local-newest = Newest first
+picker-local-name = Name A–Z

@@ -660,6 +660,8 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// Insertion order in the persisted local library, independent of GPU upload completion.
+    pub local_asset_order: HashMap<Uuid, usize>,
     /// The texture picker's Local tab buttons (drained by the app's importer).
     pub local_asset_requests: Vec<LocalAssetRequest>,
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
@@ -1139,6 +1141,7 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            local_asset_order: HashMap::new(),
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
