@@ -120,10 +120,13 @@ impl Step {
                     if rules::parent(inv, m.id) != Some(at) {
                         continue;
                     }
-                    let back = if inv.folders.contains_key(&back) {
+                    // a folder that still takes entries, or the Trash a
+                    // delete goes to again
+                    let takes = rules::destination(inv, back) || (*trash && !undo && rules::system(inv, 14) == Some(back));
+                    let back = if takes {
                         back
                     } else if undo && *trash {
-                        // its folder is gone: Restore's place
+                        // its folder is gone or in the Trash itself: Restore's place
                         // (LLItemBridge::restoreItem, the type's folder)
                         match rules::default_folder(inv, m.id) {
                             Some(folder) => folder,
@@ -184,6 +187,10 @@ impl Step {
                 if kept.is_empty() {
                     return Err(Refusal::Gone);
                 }
+                // done again only into a folder that still takes entries
+                if !undo && !rules::destination(inv, *parent) {
+                    return Err(Refusal::Gone);
+                }
                 let to = if undo { trash } else { *parent };
                 let change = rules::move_selection(inv, &kept, to, rules_of.protected, rules_of.worn).map_err(Refusal::Refused)?;
                 Ok((
@@ -229,21 +236,27 @@ pub enum Draft {
     },
 }
 
+/// Whether `change` touches the current outfit or the Marketplace listings,
+/// which keep their own rules (the outfit's links, the merchant's
+/// questions, `listings::guard_inventory_change`): never recorded, and
+/// never undone there either when the entries went there since.
+fn kept_out(inv: &Inventory, change: &Mutation) -> bool {
+    let cof = super::super::appearance::cof(inv);
+    let market = super::super::marketplace::root(inv);
+    let touched = |id: Uuid| Some(id) == cof || market.is_some_and(|root| id == root || rules::under(inv, id, root));
+    change.refresh.iter().any(|id| touched(*id))
+        || change.operations.iter().any(|op| match op {
+            Operation::Patch { id, .. } => rules::parent(inv, *id).is_some_and(touched) || touched(*id),
+            _ => false,
+        })
+}
+
 /// The step a change will be, when the history keeps it: moves, a rename,
 /// or a change that only makes folders, links and copies in one folder.
 /// None for anything else, and for what touches the current outfit or the
 /// Marketplace.
 pub fn draft(inv: &Inventory, change: &Mutation) -> Option<Draft> {
-    if change.operations.is_empty() && change.copies.is_empty() {
-        return None;
-    }
-    let cof = super::super::appearance::cof(inv);
-    let market = super::super::marketplace::root(inv);
-    if change
-        .refresh
-        .iter()
-        .any(|id| Some(*id) == cof || market.is_some_and(|root| rules::under(inv, *id, root)))
-    {
+    if change.operations.is_empty() && change.copies.is_empty() || kept_out(inv, change) {
         return None;
     }
     if change.move_only() {
@@ -319,6 +332,11 @@ pub fn draft(inv: &Inventory, change: &Mutation) -> Option<Draft> {
         });
     }
     let parent = parent?;
+    // links and copies are found among the folder's new entries: a folder
+    // not read yet has no "before" to tell them from what it held
+    if (!links.is_empty() || !copies.is_empty()) && inv.folders.get(&parent).is_none_or(|f| f.state != super::FetchState::Fetched) {
+        return None;
+    }
     let made = if change.operations.len() == 1 && folders.len() == 1 && copies.is_empty() {
         Made::Folder
     } else if folders.is_empty() && copies.is_empty() {
@@ -345,7 +363,7 @@ pub fn draft(inv: &Inventory, change: &Mutation) -> Option<Draft> {
 impl Draft {
     /// The step, once the server accepted the change and the inventory
     /// holds what it made; None when nothing it made is found.
-    pub fn finish(self, inv: &Inventory, created: &HashMap<Uuid, Uuid>) -> Option<Step> {
+    pub fn finish(self, inv: &Inventory, created: &HashMap<Uuid, Uuid>, claimed: &HashSet<Uuid>) -> Option<Step> {
         match self {
             Draft::Ready(step) => Some(step),
             Draft::Made {
@@ -360,7 +378,9 @@ impl Draft {
                 let at = |id: &Uuid| created.get(id).or_else(|| first.get(id)).copied().unwrap_or(*id);
                 let mut ids: Vec<Uuid> = folders.iter().map(at).filter(|id| inv.folders.contains_key(id)).collect();
                 if let Some(folder) = inv.folders.get(&parent) {
-                    for id in folder.items.iter().filter(|id| !before.contains(id)) {
+                    // not what another step already named: two pastes of
+                    // the same name into one folder each get their copy
+                    for id in folder.items.iter().filter(|id| !before.contains(id) && !claimed.contains(id)) {
                         let Some(it) = inv.items.get(id) else { continue };
                         let found = if matches!(it.asset_type, 24 | 25) {
                             links.iter().position(|target| *target == it.asset_id).map(|i| links.swap_remove(i))
@@ -399,12 +419,14 @@ pub struct History {
 }
 
 impl History {
-    /// The step Undo takes back.
+    /// The step at the top of Undo (the menu names `shown`'s).
+    #[cfg(test)]
     pub fn next_undo(&self) -> Option<&Step> {
         self.undo.back()
     }
 
-    /// The step Redo does again.
+    /// The step at the top of Redo.
+    #[cfg(test)]
     pub fn next_redo(&self) -> Option<&Step> {
         self.redo.last()
     }
@@ -433,20 +455,28 @@ impl History {
     /// one undone again. The steps with nothing left are dropped on the way;
     /// a step a rule refuses stays, with the rule's message.
     pub fn plan(&mut self, inv: &Inventory, undo: bool, rules_of: &Rules<'_>) -> Result<(Mutation, Step), String> {
+        let mut dropped = false;
         loop {
             let next = if undo { self.undo.back() } else { self.redo.last() };
             let Some(step) = next else {
-                return Err(if undo {
-                    aurora_i18n::tr!("inventory-undo-nothing")
-                } else {
-                    aurora_i18n::tr!("inventory-redo-nothing")
+                return Err(match (undo, dropped) {
+                    (true, true) => aurora_i18n::tr!("inventory-undo-nothing"),
+                    (false, true) => aurora_i18n::tr!("inventory-redo-nothing"),
+                    (true, false) => aurora_i18n::tr!("inventory-undo-empty"),
+                    (false, false) => aurora_i18n::tr!("inventory-redo-empty"),
                 }
                 .into());
             };
             match step.plan(inv, undo, rules_of) {
+                // what went to the outfit or the Marketplace since keeps
+                // their rules
+                Ok((change, _)) if kept_out(inv, &change) => {
+                    return Err(aurora_i18n::tr!("inventory-undo-kept-out").into());
+                }
                 Ok(plan) => return Ok(plan),
                 Err(Refusal::Refused(reason)) => return Err(reason),
                 Err(Refusal::Gone) => {
+                    dropped = true;
                     if undo {
                         self.undo.pop_back();
                     } else {
@@ -455,6 +485,37 @@ impl History {
                 }
             }
         }
+    }
+
+    /// The step an Undo (or Redo) would take now, for its menu entry: the
+    /// newest whose entries are still where it left them (`plan` drops the
+    /// others first).
+    pub fn shown(&self, inv: &Inventory, undo: bool) -> Option<&Step> {
+        let none = HashSet::new();
+        let rules_of = Rules {
+            protected: &none,
+            worn: &none,
+        };
+        let mut steps: Box<dyn Iterator<Item = &Step>> = if undo {
+            Box::new(self.undo.iter().rev())
+        } else {
+            Box::new(self.redo.iter().rev())
+        };
+        steps.find(|step| !matches!(step.plan(inv, undo, &rules_of), Err(Refusal::Gone)))
+    }
+
+    /// The entries the steps made: a copy found for one is not another's.
+    fn claimed(&self) -> HashSet<Uuid> {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .filter_map(|step| match step {
+                Step::Created { ids, .. } => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect()
     }
 
     /// The undo or redo `request` left with the change `plan` gave: the
@@ -483,7 +544,7 @@ impl History {
         let Some(flight) = self.flights.remove(&request) else { return };
         match (flight, accepted) {
             (Flight::Record(draft), true) => {
-                if let Some(step) = draft.finish(inv, created) {
+                if let Some(step) = draft.finish(inv, created, &self.claimed()) {
                     self.push(step);
                 }
             }

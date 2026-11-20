@@ -264,8 +264,8 @@ pub(super) fn build(
     c.divider("explorer-history", TEXT);
     let busy = inv.undo.busy() || st.pending.is_some();
     for (key, icon, undo, step) in [
-        ("undo", "arrow-back-up", true, inv.undo.next_undo()),
-        ("redo", "arrow-forward-up", false, inv.undo.next_redo()),
+        ("undo", "arrow-back-up", true, inv.undo.shown(inv, true)),
+        ("redo", "arrow-forward-up", false, inv.undo.shown(inv, false)),
     ] {
         let label = match (step, c.editing) {
             (Some(step), false) if undo => aurora_i18n::tr!("inventory-undo-step", what = step.what()),

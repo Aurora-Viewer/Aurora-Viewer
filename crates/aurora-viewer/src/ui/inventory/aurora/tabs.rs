@@ -334,6 +334,13 @@ pub(crate) fn close(st: &mut InventoryUi, prefs: &InventoryPreferences, index: u
     }
 }
 
+/// Ctrl+W: the tab shown closes (`close_key` keeps the key for the
+/// window when it is the last).
+pub(crate) fn close_shown(st: &mut InventoryUi, prefs: &InventoryPreferences) {
+    let active = st.tabs.active;
+    close(st, prefs, active);
+}
+
 /// The next tab (`forward`) or the one before, wrapping.
 pub(crate) fn cycle(st: &mut InventoryUi, prefs: &InventoryPreferences, forward: bool) {
     let count = st.tabs.list.len();
@@ -482,7 +489,7 @@ pub(crate) fn strip(
         }
         // the tab itself dragged: along the strip, to another window's, or
         // away to a window of its own (`settle`)
-        if response.drag_started() && open_to_tabs(st) {
+        if response.drag_started() {
             egui::DragAndDrop::set_payload(ui.ctx(), TabCargo { pane: st.ui_id, index });
         }
         if moving {
@@ -504,21 +511,23 @@ pub(crate) fn strip(
         // cargo dropped on a tab goes into its folder; held there, the tab
         // shows
         if dragged_tab.is_none() && place.tab == 0 && inv.folders.contains_key(&place.folder) {
-            if !shown && response.contains_pointer() && egui::DragAndDrop::has_any_payload(ui.ctx()) {
+            if !shown && response.contains_pointer() && drag::carried_ids(ui.ctx()).is_some() {
                 held = Some(index);
             }
             drag::target(ui, p, &response, inv, place.folder, st, prefs, facts, actions);
         }
     }
-    // a tab let go over this strip lands before the tab under it
-    if dragged_tab.is_some()
-        && open_to_tabs(st)
+    // a tab let go over this strip lands before the tab under it; a folder
+    // window's strip takes only its own (`settle` refuses the others)
+    if let Some(cargo) = dragged_tab
         && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
         && rect.expand2(Vec2::new(0.0, 6.0)).contains(pointer)
     {
         let at = (((pointer.x - rect.left()) / (width + 2.0)) + 0.5).floor().clamp(0.0, count as f32) as usize;
-        let x = (rect.left() + at as f32 * (width + 2.0) - 1.0).min(plus.left() - 2.0);
-        ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, p.violet));
+        if cargo.pane == st.ui_id || open_to_tabs(st) {
+            let x = (rect.left() + at as f32 * (width + 2.0) - 1.0).min(plus.left() - 2.0);
+            ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, p.violet));
+        }
         if ui.input(|i| i.pointer.primary_released()) {
             ui.ctx().data_mut(|d| d.insert_temp(landing_id(), Landing { pane: st.ui_id, at }));
         }

@@ -890,7 +890,8 @@ impl InventoryUi {
     /// RLVa's @showinv closes the additional window with the main one
     /// (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>, rlvhandler.cpp).
     pub fn close_additional_window(&mut self) {
-        for w in self.windows.iter_mut().filter(|w| w.additional) {
+        // and the windows made from tabs, which show the whole inventory too
+        for w in self.windows.iter_mut().filter(|w| w.additional || w.state.torn_off) {
             w.open = false;
         }
     }
@@ -2693,9 +2694,15 @@ pub fn show(
     }
     let inv = &mut world.inventory;
     // the split view: each pane knows the other's folder (`other_pane`)
-    st.other_pane = dual.as_deref().filter(|_| !classic).map(|dual| dual.browse);
+    // (None while it lists Recent, Worn, Favorites or results: no folder
+    // to copy into there)
+    let shows_folder = |pane: &InventoryUi| pane.tab == 0 && !pane.result_view();
+    st.other_pane = dual
+        .as_deref()
+        .filter(|dual| !classic && shows_folder(dual))
+        .map(|dual| dual.browse);
     if let Some(dual) = dual.as_deref_mut() {
-        dual.other_pane = (!classic).then_some(st.browse);
+        dual.other_pane = (!classic && shows_folder(st)).then_some(st.browse);
         if !classic {
             clipboard::split_tab(ctx, st, dual);
         }
@@ -2785,6 +2792,21 @@ pub fn show(
         }
         if layout == aurora::Layout::Compact {
             floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
+        }
+    }
+    // Ctrl+W closes the focused pane's tab while it has others, the window
+    // with its last (Explorer's; `close_key` gives the key to the frontmost
+    // window before the lists read their keys)
+    if !classic && !super::close_key::closes_every_window(ctx) {
+        let right = dual
+            .as_deref()
+            .is_some_and(|dual| ctx.memory(|m| m.has_focus(clipboard::focus_id(dual))));
+        let pane = match dual.as_deref_mut() {
+            Some(dual) if right => dual,
+            _ => &mut *st,
+        };
+        if pane.tabs.len() > 1 && super::close_key::take(ctx, egui::Id::unique("inventory")) {
+            aurora::tabs::close_shown(pane, prefs);
         }
     }
     floater.show(ctx, p, open, |ui| {
@@ -3028,6 +3050,14 @@ pub fn show(
             }
             if layout == aurora::Layout::Compact {
                 floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
+            }
+            // Ctrl+W closes the tab shown while there are others, the
+            // window with its last (Explorer's)
+            if w.state.tabs.len() > 1
+                && !super::close_key::closes_every_window(ctx)
+                && super::close_key::take(ctx, egui::Id::unique(window_id.as_str()))
+            {
+                aurora::tabs::close_shown(&mut w.state, prefs);
             }
             floater.show(ctx, p, &mut w.open, |ui| {
                 aurora::contents(

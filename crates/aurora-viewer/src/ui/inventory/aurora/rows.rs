@@ -37,18 +37,17 @@ fn row_rects(ui: &egui::Ui) -> (Rect, Rect) {
     (rect, Rect::from_x_y_ranges(left..=rect.right(), rect.y_range()))
 }
 
-/// In the explorer's list a row is dragged by its icon and name only, as
-/// in Windows Explorer's Details view: a click anywhere on it selects it,
-/// and a drag from its other columns draws the rubber band
-/// (`marquee`). Elsewhere (the tree) the whole row drags, as before.
-/// Whether a row drags by its icon and name only, its other columns
-/// drawing the rubber band: the explorer's folder, and its lists of Recent,
-/// Worn, Favorites and the results at the medium and wide widths (the
-/// narrow window's tree drags by the whole row).
+/// Whether a row drags by its icon and name only, as in Windows Explorer's
+/// Details view, a click anywhere on it selecting it and a drag from its
+/// other columns drawing the rubber band (`marquee`): the explorer's
+/// folder, and its lists of Recent, Worn, Favorites and the results at the
+/// medium and wide widths. The narrow window's tree drags by the whole row.
 fn by_name(frame: Frame) -> bool {
     frame.explorer || frame.layout != Layout::Compact
 }
 
+/// A row's own sense: a click only where its name handle drags it
+/// (`by_name`), a click and a drag otherwise.
 fn row_sense(frame: Frame, draggable: bool) -> Sense {
     if by_name(frame) || !draggable {
         Sense::click()

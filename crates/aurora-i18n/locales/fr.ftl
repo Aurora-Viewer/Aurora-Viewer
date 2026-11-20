@@ -1483,6 +1483,9 @@ inventory-history-link = { $count ->
     }
 inventory-undo-nothing = Plus rien à annuler : ces éléments ont été déplacés ou n’existent plus.
 inventory-redo-nothing = Plus rien à rétablir : ces éléments ont été déplacés ou n’existent plus.
+inventory-undo-empty = Rien à annuler.
+inventory-redo-empty = Rien à rétablir.
+inventory-undo-kept-out = Ces éléments sont maintenant dans la tenue actuelle ou les annonces de la Place du marché : modifiez-les là-bas.
 inventory-restore-to = { "Restaurer dans « " }{ $folder }{ " »" }
 inventory-restore-to-origins = Restaurer dans leurs dossiers
 inventory-purge-no-undo = Annuler ne pourra pas les récupérer.

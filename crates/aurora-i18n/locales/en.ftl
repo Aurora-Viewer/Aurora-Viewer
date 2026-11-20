@@ -1480,6 +1480,9 @@ inventory-history-link = { $count ->
     }
 inventory-undo-nothing = Nothing left to undo: those items have moved or are gone.
 inventory-redo-nothing = Nothing left to redo: those items have moved or are gone.
+inventory-undo-empty = Nothing to undo.
+inventory-redo-empty = Nothing to redo.
+inventory-undo-kept-out = Those items are in the current outfit or the Marketplace listings now: change them there.
 inventory-restore-to = Restore to “{ $folder }”
 inventory-restore-to-origins = Restore to their folders
 inventory-purge-no-undo = Undo cannot bring them back.

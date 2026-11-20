@@ -262,3 +262,86 @@ fn purges_and_other_changes_are_no_step() {
     let description = patch(&inv, ids.hat, llsd_map! { "desc" => "A hat" }).expect("desc");
     assert!(draft(&inv, &description).is_none());
 }
+
+#[test]
+fn an_empty_history_says_so_and_a_gone_step_says_why() {
+    let (mut inv, ids) = fixture();
+    let mut history = History::default();
+    let protected = none();
+    let rules_of = Rules {
+        protected: &protected,
+        worn: &protected,
+    };
+    assert_eq!(
+        history.plan(&inv, true, &rules_of).unwrap_err(),
+        aurora_i18n::tr!("inventory-undo-empty")
+    );
+    let change = move_selection(&inv, &[ids.hat], ids.objects, &none(), &none()).expect("move");
+    user(&mut history, &mut inv, &ids, change);
+    inv.items.get_mut(&ids.hat).expect("hat").parent = ids.clothes;
+    assert!(history.shown(&inv, true).is_none(), "the menu names no step that is gone");
+    assert_eq!(
+        history.plan(&inv, true, &rules_of).unwrap_err(),
+        aurora_i18n::tr!("inventory-undo-nothing")
+    );
+}
+
+#[test]
+fn links_into_a_folder_not_read_yet_are_no_step_and_a_copy_is_claimed_once() {
+    let (mut inv, ids) = fixture();
+    inv.folders.get_mut(&ids.objects).expect("objects").state = crate::world::inventory::FetchState::Unknown;
+    let links = paste(&inv, &[ids.shirt], ids.objects, false, true, &none(), &none()).expect("links");
+    assert!(draft(&inv, &links).is_none(), "its new entries cannot be told from the old");
+    inv.folders.get_mut(&ids.objects).expect("objects").state = crate::world::inventory::FetchState::Fetched;
+
+    // two copies of the same name, finished after both arrived
+    let mut history = History::default();
+    let copy = paste(&inv, &[ids.hat], ids.objects, false, false, &none(), &none()).expect("copy");
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    history.record(first, draft(&inv, &copy).expect("draft"));
+    history.record(second, draft(&inv, &copy).expect("draft"));
+    let mut made = Vec::new();
+    for n in [77, 78] {
+        let mut it = inv.items.get(&ids.hat).cloned().expect("hat");
+        it.id = Uuid::from_u128(n);
+        it.parent = ids.objects;
+        made.push(it);
+    }
+    inv.add_items(made);
+    history.finish(first, &inv, true, &HashMap::new());
+    history.finish(second, &inv, true, &HashMap::new());
+    let named: Vec<Uuid> = history
+        .undo
+        .iter()
+        .filter_map(|step| match step {
+            Step::Created { ids, .. } => Some(ids.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(named.len(), 2, "each copy once: {named:?}");
+    assert_ne!(named[0], named[1]);
+}
+
+#[test]
+fn an_undo_whose_folder_went_to_the_trash_falls_back_to_restores_place() {
+    let (mut inv, ids) = fixture();
+    let mut history = History::default();
+    let protected = none();
+    let rules_of = Rules {
+        protected: &protected,
+        worn: &protected,
+    };
+    // the shirt deleted, then its folder deleted too: the undo takes it to
+    // Restore's place, not into the Trash's folder
+    let change = move_selection(&inv, &[ids.shirt], ids.trash, &none(), &none()).expect("delete");
+    user(&mut history, &mut inv, &ids, change);
+    let folder = move_selection(&inv, &[ids.clothes], ids.trash, &none(), &none()).expect("folder");
+    demo_mutate(&mut inv, ids.agent, folder).expect("moved");
+    let (change, _) = history.plan(&inv, true, &rules_of).expect("plan");
+    let Operation::Patch { body, .. } = &change.operations[0] else {
+        panic!("a move");
+    };
+    assert_ne!(body["parent_id"].as_uuid(), ids.clothes);
+    assert!(rules::destination(&inv, body["parent_id"].as_uuid()));
+}
