@@ -26464,6 +26464,10 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
     if let Some(language) = &cli.language {
         command.arg("--language").arg(language);
     }
+    // a viewer a link started has the package's word only on its arguments
+    if crate::updater::packaged() {
+        command.arg("--packaged");
+    }
     let mode = match mode {
         crate::camera::VrView::FirstPerson => "first-person",
         crate::camera::VrView::Avatar => "avatar",

@@ -33,6 +33,11 @@ pub struct Cli {
     /// `--uninstall`: remove what the viewer registered on this computer,
     /// print what it did and exit, without a window (`uninstall.rs`).
     pub uninstall: bool,
+    /// `--packaged`: what `AURORA_PACKAGED=1` says (`updater::packaged`),
+    /// for the link entry a packaged viewer registers (`url_scheme.rs`): a
+    /// link opened while Aurora is closed starts the executable, not the
+    /// package's launcher that sets the variable.
+    pub packaged: bool,
     help: bool,
     version: bool,
 }
@@ -116,6 +121,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = args.next();
         } else if a == "--vr" {
             cli.vr = true;
+        } else if a == "--packaged" {
+            cli.packaged = true;
         } else if let Some(mode) = a.strip_prefix("--vr-mode=") {
             cli.vr_mode = match mode {
                 "avatar" => crate::camera::VrView::Avatar,
@@ -284,6 +291,14 @@ mod tests {
         let cli = parse(["-url", "secondlife://Region/1/2/3", "--uninstall"].into_iter().map(String::from));
         assert!(!cli.uninstall);
         assert!(!parse(std::iter::empty()).uninstall);
+    }
+
+    #[test]
+    fn packaged_is_a_flag_and_a_link_cannot_carry_it() {
+        assert!(parse(["--packaged", "-url", "secondlife://Region/1/2/3"].into_iter().map(String::from)).packaged);
+        let cli = parse(["-url", "secondlife://Region/1/2/3", "--packaged"].into_iter().map(String::from));
+        assert!(!cli.packaged);
+        assert!(!parse(std::iter::empty()).packaged);
     }
 
     #[test]

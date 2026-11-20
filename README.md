@@ -1183,6 +1183,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
+| `--packaged` | A package manager installs Aurora's updates, as `AURORA_PACKAGED=1` (`docs/LINUX.md`, *Updates*); the link entry Aurora registers passes it, before the link |
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |
