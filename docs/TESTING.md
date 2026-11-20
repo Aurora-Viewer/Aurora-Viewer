@@ -5215,7 +5215,11 @@ both open states and the selection count. Capture at frame 620.
   a clear sky with green northern lights (their preview shows the curtain
   a little east of north). Click or drag on the wind's compass: the dot
   goes where the pointer is, the arrow the other way, and "Wind from"
-  follows in steps of 5°. Capture after frame 300 at `AURORA_TEXT_SIZE=1`
+  follows in steps of 5°. Its switches are on (Precipitation off in
+  `night`): turn the main switch on the summary's right off and every card
+  greys, the summary says "Weather off" and only Clean up stays usable;
+  the Precipitation or Wind switch greys its own card (Precipitation
+  greys On the ground and Thunder too). Capture after frame 300 at `AURORA_TEXT_SIZE=1`
   and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
   switch or value.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
