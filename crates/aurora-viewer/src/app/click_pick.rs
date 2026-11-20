@@ -547,7 +547,13 @@ impl App {
                     None
                 }
             });
-        if picked.tag.is_some() || picked.particles.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
+        let hud = object.map(|idx| self.world.hud_root(idx).is_some());
+        if overlay_drops_pick(
+            picked.tag.is_some(),
+            picked.particles.is_some(),
+            hud,
+            picked.visible_point().is_some(),
+        ) {
             None
         } else {
             Some(picked)
@@ -1110,6 +1116,18 @@ impl DemoClicks {
     }
 }
 
+/// LLPickInfo::fetchResults (indra/newview/llviewerwindow.cpp) under an
+/// overlay that blocks the touch: whatever the ray hit that is not a HUD
+/// attachment is dropped, the ground included (the land is a surface patch
+/// object there), and with it the click; `hud` is None when no object was
+/// hit, `surface` whether something was (the ground, the water).
+fn overlay_drops_pick(tag: bool, particles: bool, hud: Option<bool>, surface: bool) -> bool {
+    match hud {
+        Some(hud) => tag || particles || !hud,
+        None => tag || particles || surface,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1417,5 +1435,17 @@ mod tests {
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));
         let cells: std::collections::HashSet<(u32, u32)> = places.iter().map(|(u, v)| ((u * 8.0) as u32, (v * 8.0) as u32)).collect();
         assert!(cells.len() > 56, "{} of 64 cells", cells.len());
+    }
+
+    /// LLPickInfo::fetchResults: under a blocking overlay a HUD is still
+    /// touched; objects and the ground are not; a click on the sky hit
+    /// nothing to drop.
+    #[test]
+    fn rlva_overlay_drops_ground_and_world_picks_but_not_huds() {
+        assert!(!overlay_drops_pick(false, false, Some(true), true), "a HUD");
+        assert!(overlay_drops_pick(false, false, Some(false), true), "an object");
+        assert!(overlay_drops_pick(false, false, None, true), "the ground");
+        assert!(!overlay_drops_pick(false, false, None, false), "the sky");
+        assert!(overlay_drops_pick(true, false, None, false), "a name tag");
     }
 }
