@@ -38,8 +38,10 @@ preferences, following the Legacy Viewer's `LLAgentLanguage::update`. The
 grid gets the Legacy Viewer's code, the first part of the catalogue's
 (`aurora_i18n::grid_language`: `zh-Hans` and `zh-Hant` send `zh`, `pt-BR`
 sends `pt`), since scripts compare `llGetAgentLanguage` with those codes; the
-currency and land XML-RPC calls, the viewer statistics, the abuse categories
-and the People API use the same code.
+currency and land XML-RPC calls, the viewer statistics, the abuse categories,
+the People API, the `[LANGUAGE]` of the search, Destination Guide and
+avatar welcome pages, and the web browser's language (LLUI::getLanguage)
+use the same code.
 
 A new text uses an explicit key and its English, French and Japanese versions
 in the same PR, at the same place as in `en.ftl`. The other catalogues (the

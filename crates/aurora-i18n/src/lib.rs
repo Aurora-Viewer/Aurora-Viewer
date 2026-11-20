@@ -329,7 +329,8 @@ pub fn language() -> &'static str {
 
 /// The language code sent to the grid (`UpdateAgentLanguage`, the currency
 /// and land XML-RPC calls, the viewer statistics, the abuse categories, the
-/// People API): the Legacy Viewer sends its `Language` setting
+/// People API, the `[LANGUAGE]` of web pages, the browser's language): the
+/// Legacy Viewer sends its `Language` setting
 /// (LLUI::getUILanguage, indra/llui/llui.cpp), whose values are its
 /// interface folders, such as `zh` and `pt`. Scripts read it through
 /// `llGetAgentLanguage`.
