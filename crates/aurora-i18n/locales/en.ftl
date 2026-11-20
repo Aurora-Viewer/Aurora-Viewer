@@ -15428,6 +15428,11 @@ ui-weather-northern-lights-display = Great display
 ui-weather-northern-lights-night = Seen only after sunset.
 ui-weather-clean-up = Clean up
 ui-weather-snow-fill = Fill with snow
+ui-weather-enabled-tip = Aurora Weather on: rain or snow, wind, thunder and the northern lights as set below. Off, none of it is drawn; the settings are kept
+ui-weather-now-off = Weather off
+ui-weather-precipitation-on-tip = Rain or snow falls as set below; off, nothing falls and there is no thunder
+ui-weather-wind-on-tip = The weather's wind blows the rain and snow and is heard outdoors; off, the air is calm
+ui-weather-wind-follow-region = Region's wind
 
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 

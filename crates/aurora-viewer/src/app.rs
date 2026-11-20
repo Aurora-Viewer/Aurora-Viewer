@@ -6639,7 +6639,8 @@ impl App {
     /// low bits of a sky's numbers were taken out (Second Life's shared
     /// experience policy; AGENTS.md, "No data of our own in shared places").
     fn update_weather_now(&mut self) {
-        self.weather_now.clone_from(&self.settings.weather);
+        // what the window's switches turn off is not drawn
+        self.weather_now = self.settings.weather.in_effect();
     }
 
     /// Where the footprints' map is centred: my avatar (zooming the camera

@@ -15308,6 +15308,11 @@ ui-weather-northern-lights-display = 壮大な光景
 ui-weather-northern-lights-night = 日没後にだけ見えます。
 ui-weather-clean-up = 消去
 ui-weather-snow-fill = 雪で覆う
+ui-weather-enabled-tip = Aurora Weatherをオンにすると、下の設定どおりに雨や雪、風、雷、オーロラを表示します。オフにすると何も表示しません。設定はそのまま残ります
+ui-weather-now-off = 天気オフ
+ui-weather-precipitation-on-tip = 下の設定どおりに雨や雪が降ります。オフにすると何も降らず、雷も鳴りません
+ui-weather-wind-on-tip = 天気の風が雨や雪を流し、屋外で音が聞こえます。オフにすると無風になります
+ui-weather-wind-follow-region = リージョンの風
 
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 

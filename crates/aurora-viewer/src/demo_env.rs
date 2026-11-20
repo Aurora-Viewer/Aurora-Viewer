@@ -73,6 +73,10 @@ pub fn weather_window() -> Option<&'static str> {
 pub fn weather_scene(mode: &str, w: &mut crate::weather::WeatherSettings) {
     use crate::weather::{AuroraColours, Precipitation};
     w.touched = true;
+    // its switches on: the night's sky is clear
+    w.enabled = true;
+    w.precipitation_on = mode != "night";
+    w.wind_on = true;
     match mode {
         "snow" => {
             w.precipitation = Precipitation::Snow;
