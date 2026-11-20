@@ -24,6 +24,12 @@ struct Light {
     // how far it moved since last frame (m), w: that prim's object index
     // plus one, 0 for none (rt_common.wgsl `shadows_but`).
     source: vec4<f32>,
+    // A projector's: world to its texture (common.wgsl `projector_at`:
+    // inside its frustum where z >= 0 and x / w, y / w are in 0..1), and
+    // the apex of its frustum (xyz), which its rays aim at. Zero for a
+    // point light.
+    beam: mat4x4<f32>,
+    apex: vec4<f32>,
 };
 
 // The point lights at a hit.

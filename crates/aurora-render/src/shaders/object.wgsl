@@ -1285,7 +1285,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        let at = projector_at(i, world_pos, n);
+        let at = projector_at(i, world_pos, n, frag);
         if (at.atten <= 0.0) {
             continue;
         }

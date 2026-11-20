@@ -13098,7 +13098,7 @@ What the inventory must show with these scenarios:
   and `back` at those met from their front, to compare (the lamps' rays
   too). The
   three others trace the scene the sun's shadows build, so they do nothing
-  without them: the point lights' shadows, the indirect light (in the
+  without them: the point lights' and the projectors' shadows (every projector of the list, at any distance, in its shadow map's place on the faces the view's prepass draws; the blended faces and the reflections keep the maps), the indirect light (in the
   screen-space one's place, at the Indirect light intensity) and the
   reflections (in the screen-space ones' place, which must be on). The
   GPU device has its ray queries from the start on a card that has them,

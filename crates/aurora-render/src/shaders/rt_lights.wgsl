@@ -57,8 +57,16 @@
 // face but those of its prim (`source.w`, rt_common.wgsl `shadows_but`),
 // so what stands inside that sphere beside the prim still casts. With
 // `EMITTER_SPHERE` (`AURORA_RT_EMITTER=sphere`, rt_shadows.rs `source`)
-// the rays stop at the sphere, for a comparison. Projectors keep their
-// shadow maps.
+// the rays stop at the sphere, for a comparison.
+//
+// A projector is one of the lights drawn and shared like the others, over
+// its frustum, weighed by its colour without its texture, its rays aimed
+// at the apex of its frustum (`light_target`, `light_aim`): the tint then
+// shadows its beam (common.wgsl `projector_at`) in its shadow map's place,
+// which the faces this pass does not see (the blended ones, the
+// reflections) still read. The Legacy Viewer shadows two projectors, by
+// maps (spotLightF.glsl, pipeline.cpp RenderShadowDetail); traced, every
+// projector of the list casts, at any distance.
 
 // After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
 // wgpu_ray_query's enable (rt_shadows.rs `source`).
@@ -177,20 +185,38 @@ fn light_atten(d: f32, falloff: f32) -> f32 {
     return x * x * 2.0;
 }
 
-// The diffuse light point light `i` gives `world` facing `n`, unshadowed
-// (its luminance): what a choice is weighed by. 0 for a projector.
+// Where light `i`'s rays aim: a point light's centre, a projector's apex.
+fn light_aim(i: u32) -> vec3<f32> {
+    let lt = lights[i];
+    return select(lt.pos_radius.xyz, lt.apex.xyz, lt.source.y > 0.5);
+}
+
+// The diffuse light light `i` gives `world` facing `n`, unshadowed (its
+// luminance): what a choice is weighed by. A projector's within its
+// frustum only, from its apex, without its texture (common.wgsl
+// `projector_at`: the reach from the light's centre, the direction from
+// the apex).
 fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let lt = lights[i];
-    if (lt.source.y > 0.5) {
-        return 0.0;
-    }
     let to_l = lt.pos_radius.xyz - world;
     let dist = length(to_l);
     let radius = lt.pos_radius.w;
     if (dist >= radius) {
         return 0.0;
     }
-    let nl = dot(n, to_l / max(dist, 1e-4));
+    var l = to_l / max(dist, 1e-4);
+    if (lt.source.y > 0.5) {
+        let tc = lt.beam * vec4<f32>(world, 1.0);
+        if (tc.z < 0.0 || tc.w <= 0.0) {
+            return 0.0;
+        }
+        let uv = tc.xy / tc.w;
+        if (any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) {
+            return 0.0;
+        }
+        l = normalize(lt.apex.xyz - world);
+    }
+    let nl = dot(n, l);
     if (nl <= 0.0) {
         return 0.0;
     }
@@ -329,13 +355,16 @@ fn light_fresh(i: u32) -> f32 {
 fn light_blocked(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> f32 {
     let lt = lights[i];
     let size = light_size(i);
+    // the sphere about the light's prim, and the disc the rays aim at (a
+    // projector's about its apex)
     let centre = lt.pos_radius.xyz - origin;
-    let axis = centre / max(length(centre), 1e-6);
+    let aim = light_aim(i) - origin;
+    let axis = aim / max(length(aim), 1e-6);
     let side = normalize(cross(axis, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(axis.z) > 0.9)));
     let up = cross(axis, side);
     let r = size * sqrt(u.x);
     let phi = 2.0 * PI * u.y;
-    let toward = centre + (side * cos(phi) + up * sin(phi)) * r;
+    let toward = aim + (side * cos(phi) + up * sin(phi)) * r;
     let span = length(toward);
     let dir = toward / max(span, 1e-6);
     // up to where the ray enters the sphere that holds the light's own
@@ -344,7 +373,9 @@ fn light_blocked(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> f3
     let body = max(lt.source.x, max(size, 0.05));
     let along = dot(centre, dir);
     let beside = dot(centre, centre) - along * along;
-    let reach = min(along - sqrt(max(body * body - beside, 0.0)), span);
+    let inside = body * body - beside;
+    // (a projector's ray may pass beside its prim's sphere)
+    let reach = select(span, min(along - sqrt(max(inside, 0.0)), span), inside > 0.0);
     let posed = params.mode.y > 0.5;
     let curved = dot(flat, dir) <= 0.0;
     var t = -1.0;

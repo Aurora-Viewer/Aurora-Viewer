@@ -1534,12 +1534,12 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     return 1.0 - textureLoad(contact_tex, p, 0).r;
 }
 
-// What arrives of the point lights' red, green and blue at a pixel of the
-// main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
+// What arrives of the point lights' and the projectors' red, green and
+// blue at a pixel of the main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
 // mask). 1 elsewhere: other views, blended faces, without the traced
 // lights.
 fn local_share(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & LOCAL_TRACED) == 0u || !contact_surface || in_reflection_pass()) {
+    if (!local_traced(frag)) {
         return vec3<f32>(1.0);
     }
     let p = vec2<i32>(frag);
@@ -1548,6 +1548,12 @@ fn local_share(frag: vec2<f32>) -> vec3<f32> {
         return vec3<f32>(1.0);
     }
     return textureLoad(contact_tex, p, 0).gba;
+}
+
+// Whether `local_share` is traced at this pixel, the projectors' beams'
+// shadows with it (`projector_at`).
+fn local_traced(frag: vec2<f32>) -> bool {
+    return (frame.light_mode.z & LOCAL_TRACED) != 0u && contact_surface && !in_reflection_pass();
 }
 
 // Point light `i` of the frame with its colour times `share` (local_share).
@@ -1868,7 +1874,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        col += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
+        col += pbr_local_light(projector_at(i, world_pos, n, frag), n, v, f0, a, nv, diffuse_color);
     }
     // ambient: hemisphere diffuse + sky reflection
     let up = n.z * 0.5 + 0.5;
@@ -2231,8 +2237,9 @@ struct LightAt {
     shadow: f32,
 };
 
-// Projector `i` of the frame's list on a point of normal `n`.
-fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
+// Projector `i` of the frame's list on a point of normal `n`, seen at
+// pixel `frag`.
+fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>, frag: vec2<f32>) -> LightAt {
     let lt = frame.lights[i];
     var at: LightAt;
     at.shadow = 1.0;
@@ -2267,9 +2274,18 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let slot = pj.tex.x;
     let l_dist = -dot(to_l, pj.dir.xyz);
     let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
-    // the beam is shadowed, the ambiance is not (spotLightF)
-    at.shadow = projector_shadow(i, world_pos, n);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
+    // the beam is shadowed, the ambiance is not (spotLightF): by the traced
+    // lights' tint where it is traced (rt_lights.wgsl, which draws the
+    // projectors with the point lights), by its shadow map elsewhere
+    var beam = vec3<f32>(1.0);
+    if (local_traced(frag)) {
+        beam = local_share(frag);
+        at.shadow = dot(beam, vec3<f32>(0.2126, 0.7152, 0.0722));
+    } else {
+        at.shadow = projector_shadow(i, world_pos, n);
+        beam = vec3<f32>(at.shadow);
+    }
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * beam;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
@@ -2542,7 +2558,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += ll_diffuse_light(projector_at(i, world_pos, n), n, base);
+        local += ll_diffuse_light(projector_at(i, world_pos, n, frag), n, base);
     }
     return local * ll_local_scale();
 }
@@ -2637,7 +2653,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        col += ll_pbr_light(projector_at(i, world_pos, n), n, v, f0, ra, nv, diffuse_color);
+        col += ll_pbr_light(projector_at(i, world_pos, n, frag), n, v, f0, ra, nv, diffuse_color);
     }
     return col * ll_local_scale();
 }

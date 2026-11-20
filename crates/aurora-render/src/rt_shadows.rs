@@ -2081,6 +2081,11 @@ struct TracedLightU {
     pos_radius: [f32; 4],
     color_falloff: [f32; 4],
     source: [f32; 4],
+    /// A projector's world to texture and its frustum's apex, which its
+    /// rays aim at (rt_lights.wgsl `light_target`, `light_aim`); zero for a
+    /// point light.
+    beam: [[f32; 4]; 4],
+    apex: [f32; 4],
 }
 
 /// The most lights of the frame's list (the frame uniform's).
@@ -4605,6 +4610,8 @@ fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, 
                     if moved.is_finite() { moved } else { 0.0 },
                     emitter_key(l.source_id),
                 ],
+                beam: l.projector.map_or([[0.0; 4]; 4], |p| p.matrix.to_cols_array_2d()),
+                apex: l.projector.map_or([0.0; 4], |p| p.origin.extend(0.0).to_array()),
             }
         })
         .collect()
@@ -6622,6 +6629,46 @@ mod tests {
         assert_eq!([first[0].source[3], first[1].source[3]], [7.0, 0.0]);
         assert_eq!(emitter_key((1 << 24) - 1), 16_777_215.0);
         assert_eq!(emitter_key(1 << 24), 0.0);
+    }
+
+    #[test]
+    fn rt_shadows_a_projector_gives_its_beam_and_apex_to_its_rays() {
+        use crate::types::{PointLight, Projector};
+        let at = glam::Vec3::new(3.0, 4.0, 5.0);
+        let beam = Projector::new(
+            at,
+            glam::Quat::IDENTITY,
+            glam::Vec3::splat(0.5),
+            10.0,
+            glam::Vec3::new(1.0, 0.0, 0.0),
+            0,
+        );
+        let light = |projector: Option<Projector>| PointLight {
+            position: at,
+            radius: 10.0,
+            color: glam::Vec3::ONE,
+            falloff: 0.5,
+            projector,
+            source_radius: 0.4,
+            source_id: 3,
+        };
+        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new());
+        // the projector: flagged, its frustum's matrix and apex as the
+        // shading's (common.wgsl `projector_at`)
+        assert_eq!(listed[0].source[1], 1.0);
+        assert_eq!(listed[0].beam, beam.matrix.to_cols_array_2d());
+        assert_eq!(listed[0].apex, beam.origin.extend(0.0).to_array());
+        // a point below the apex, along the beam, is inside its frustum
+        let below = beam.origin + beam.direction * (beam.near + 1.0);
+        let tc = beam.matrix * below.extend(1.0);
+        let uv = glam::Vec2::new(tc.x, tc.y) / tc.w;
+        assert!(
+            tc.z >= 0.0 && uv.cmpgt(glam::Vec2::ZERO).all() && uv.cmplt(glam::Vec2::ONE).all(),
+            "{tc}"
+        );
+        // a point light: none of them
+        assert_eq!(listed[1].source[1], 0.0);
+        assert_eq!((listed[1].beam, listed[1].apex), ([[0.0; 4]; 4], [0.0; 4]));
     }
 
     #[test]
