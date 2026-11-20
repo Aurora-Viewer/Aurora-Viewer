@@ -16,6 +16,11 @@ impl App {
     /// "new" editors start from what is shown (onOpen without an item),
     /// with the rights of the settings shown (`Rights::of_source`).
     pub(super) fn open_env_editor_snapshot(&mut self, kind: SettingsKind) {
+        // env_fixed_environmentent_sky / _water are filtered under @setenv
+        // (RlvBehaviourToggleHandler<RLV_BHVR_SETENV>, rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         let (sky, water) = self.world.eep.current();
         // an open editor of the same kind shows its own settings
         let source = match &self.env_editor.doc {
@@ -75,6 +80,9 @@ impl App {
 
     /// loadInventoryItem: the item's asset is fetched, then edited.
     pub(super) fn env_editor_load(&mut self, item: Uuid) {
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         let Some(it) = self.world.inventory.items.get(&item).cloned() else {
             self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-item-not-found").into(), true));
             return;

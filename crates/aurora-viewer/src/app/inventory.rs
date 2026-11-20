@@ -625,7 +625,7 @@ impl App {
             }
             InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local(asset, kind);
+                    self.world.eep.request_local_item(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
