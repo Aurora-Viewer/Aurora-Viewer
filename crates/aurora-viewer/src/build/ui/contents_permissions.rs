@@ -197,7 +197,17 @@ pub(crate) fn controls(
     egui::ScrollArea::vertical()
         .id_salt("bulk_permission_options")
         .show(&mut body, |ui| {
-            ui.horizontal_top(|ui| {
+            let filter_width = [aurora_i18n::tr!("common-all"), aurora_i18n::tr!("common-clear")]
+                .into_iter()
+                .map(|text| {
+                    ui.painter()
+                        .layout_no_wrap(text.to_owned(), egui::TextStyle::Button.resolve(ui.style()), p.ink)
+                        .size()
+                        .x
+                        + 2.0 * ui.spacing().button_padding.x
+                })
+                .fold(98.0, f32::max);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
                 egui::Grid::new("content_permission_types")
                     .spacing(Vec2::new(12.0, 3.0))
                     .show(ui, |ui| {
@@ -226,10 +236,10 @@ pub(crate) fn controls(
                             ui.end_row();
                         }
                     });
-                ui.vertical(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(filter_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     if ui
                         .add_sized(
-                            [98.0, 25.0],
+                            [filter_width, 25.0],
                             egui::Button::new(aurora_i18n::tr!("common-all")).wrap_mode(egui::TextWrapMode::Extend),
                         )
                         .clicked()
@@ -238,7 +248,7 @@ pub(crate) fn controls(
                     }
                     if ui
                         .add_sized(
-                            [98.0, 25.0],
+                            [filter_width, 25.0],
                             egui::Button::new(aurora_i18n::tr!("common-clear")).wrap_mode(egui::TextWrapMode::Extend),
                         )
                         .clicked()

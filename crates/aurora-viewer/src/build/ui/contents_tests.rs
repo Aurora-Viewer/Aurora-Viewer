@@ -448,7 +448,12 @@ fn bulk_permissions_keep_actions_reachable_with_long_nested_details() {
                     );
                     assert!(window.contains_rect(next.rect), "{case}: the last column stays inside the window");
                 }
-                for label in [action, aurora_i18n::tr!("common-cancel")] {
+                for label in [
+                    action,
+                    aurora_i18n::tr!("common-cancel"),
+                    aurora_i18n::tr!("common-all"),
+                    aurora_i18n::tr!("common-clear"),
+                ] {
                     let text = crate::ui::widgets::elide_tests::painted(texts, label);
                     assert!(window.contains_rect(text.rect), "{case}: {label} stays inside the window");
                 }
