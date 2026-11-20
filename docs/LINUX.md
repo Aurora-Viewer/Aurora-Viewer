@@ -131,6 +131,30 @@ page, for the package manager or the bundle to update. The Automatic mode
 downloads nothing there. Aurora asks for no elevation, and an installation
 updated by such a tool keeps working: the viewer only offers the new version.
 
+**For packagers.** A distribution package whose package manager installs
+Aurora's updates can say so: its launcher sets `AURORA_PACKAGED=1`. Aurora
+then opens no update window for an ordinary release and checks no more while
+it runs, except once when the user changes the update channel; the sign-in screen still shows that a newer version exists. At
+launch it still checks for a release it needs to sign in (below the minimum
+supported version); the update window then says to update through the
+package manager, without a link to the release download. Once the release's
+grace period to sign in anyway is over, it offers only Quit until the
+package is updated. A **Check for updates** the user asks for still opens the
+window, with the same advice. The update channel stays in the Preferences:
+the launch check reads the minimum version from that channel's latest
+release. A link opened while Aurora is closed keeps the setting, when the
+user lets Aurora open them: the entry it registers passes `--packaged` to
+the viewer (on Windows, the link command too), an entry registered before
+the launcher set the variable gets it at the next launch, the rest of its
+line kept, and Restart in VR keeps it. A launch without the variable never
+removes it: turning the links off and on again in the Preferences does.
+
+These checks need the release's own version number: build with
+`--release` from the release's Git tag (`vX.Y.Z`), or, from a source archive
+without Git, set `AURORA_VERSION_TAG=vX.Y.Z` at build time. A build that
+identifies itself otherwise (`0.0.0+0.gunknown`, or a number with commits
+after the tag) checks nothing.
+
 ## Saved passwords
 
 "Remember password" and the 30-day two-factor choice keep what they save in

@@ -33,6 +33,8 @@ pub struct UpdateDemo {
     grace_hours: Option<u64>,
     /// `protected`: an installation that cannot replace itself (#4290).
     blocked: Option<aurora_updater::Failure>,
+    /// `packaged`: one whose package manager installs the updates.
+    packaged: bool,
 }
 
 impl UpdateDemo {
@@ -64,7 +66,8 @@ impl UpdateDemo {
             maintenance: demo_maintenance(),
             versions,
             grace_hours: (mode == "grace").then_some(12),
-            blocked: (mode == "protected").then_some(aurora_updater::Failure::Protected),
+            blocked: matches!(mode.as_str(), "protected" | "packaged").then_some(aurora_updater::Failure::Protected),
+            packaged: mode == "packaged",
         })
     }
 
@@ -149,7 +152,9 @@ impl UpdateDemo {
                                 ui.label(RichText::new(aurora_i18n::tr!("update-demo-notes")).size(13.0).color(p.muted));
                             });
                         });
-                        if let Some(problem) = self.blocked {
+                        if self.packaged {
+                            ui.label(RichText::new(aurora_i18n::tr!("update-packaged")).color(p.amber));
+                        } else if let Some(problem) = self.blocked {
                             ui.label(RichText::new(failure_text(problem)).color(p.danger));
                         }
                     }
@@ -189,7 +194,7 @@ impl UpdateDemo {
                 ui.add_space(BEFORE_BUTTONS);
                 match self.phase {
                     Phase::Available => {
-                        if self.blocked.is_some() && self.grace_hours.is_none() {
+                        if self.blocked.is_some() && !self.packaged && self.grace_hours.is_none() {
                             // offline preview: the real window opens the release page
                             if flat_button_sized(ui, p, aurora_i18n::tr!("update-open-release"), Vec2::new(width, 34.0)).clicked() {
                                 self.open = false;
@@ -376,7 +381,9 @@ pub fn show_real(
                         });
                     });
                     // known before the click: no Update that can only fail (#4290)
-                    if let Some(problem) = updater.blocked {
+                    if updater.packaged {
+                        ui.label(RichText::new(aurora_i18n::tr!("update-packaged")).color(p.amber));
+                    } else if let Some(problem) = updater.blocked {
                         ui.label(RichText::new(failure_text(problem)).color(p.danger));
                     }
                 }
@@ -443,8 +450,8 @@ pub fn show_real(
                 State::Offer => {
                     // an installation that cannot update itself: the release
                     // page on its own row (its label does not fit a third of
-                    // one)
-                    if updater.blocked.is_some() {
+                    // one), none for the package manager's
+                    if updater.blocked.is_some() && !updater.packaged {
                         if flat_button_sized(ui, p, aurora_i18n::tr!("update-open-release"), Vec2::new(width, 34.0)).clicked() {
                             let url = updater
                                 .release
@@ -504,7 +511,10 @@ pub fn show_real(
                         .release
                         .as_ref()
                         .map_or(aurora_updater::feed::RELEASE_PAGE, |r| r.url.as_str());
-                    if flat_button_sized(ui, p, aurora_i18n::tr!("update-open-release"), Vec2::new(width, 34.0)).clicked() {
+                    // the package manager's installation links no download
+                    if !updater.packaged
+                        && flat_button_sized(ui, p, aurora_i18n::tr!("update-open-release"), Vec2::new(width, 34.0)).clicked()
+                    {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                     if flat_button_sized(
@@ -750,7 +760,7 @@ mod tests {
     #[test]
     fn an_installation_that_cannot_replace_itself_is_offered_no_update_button() {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        for required in [false, true] {
+        for (required, packaged) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut updater = crate::updater::Updater::new(runtime.handle(), aurora_updater::feed::Channel::Stable);
             updater.release = Some(aurora_updater::feed::Release {
                 tag: "v0.3.0".into(),
@@ -765,6 +775,7 @@ mod tests {
                 maintenance: Default::default(),
             });
             updater.blocked = Some(aurora_updater::Failure::Protected);
+            updater.packaged = packaged;
             updater.state = crate::updater::State::Offer;
             updater.open = true;
             let ctx = egui::Context::default();
@@ -787,7 +798,9 @@ mod tests {
             output.textures_delta.clear();
             let shown = |label: &str| output.shapes.iter().any(|s| label_position(&s.shape, label).is_some());
             assert!(!shown(aurora_i18n::tr!("update-install")), "an Update that can only fail");
-            assert!(shown(aurora_i18n::tr!("update-open-release")), "required: {required}");
+            // a package manager's installation links no download
+            assert_eq!(shown(aurora_i18n::tr!("update-open-release")), !packaged, "required: {required}");
+            assert_eq!(shown(aurora_i18n::tr!("update-packaged")), packaged, "required: {required}");
             let (expected, absent) = if required {
                 (aurora_i18n::tr!("common-quit"), aurora_i18n::tr!("update-later"))
             } else {
@@ -795,6 +808,55 @@ mod tests {
             };
             assert!(shown(expected) && !shown(absent), "required: {required}");
         }
+    }
+
+    #[test]
+    fn a_packaged_installation_may_still_sign_in_during_a_required_updates_grace() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = crate::updater::Updater::new(runtime.handle(), aurora_updater::feed::Channel::Stable);
+        updater.release = Some(aurora_updater::feed::Release {
+            tag: "v0.3.0".into(),
+            version: "0.3.0".into(),
+            notes: "Synthetic notes".into(),
+            url: aurora_updater::feed::RELEASE_PAGE.into(),
+            archive: None,
+            checksum: None,
+            required: true,
+            minimum: Some("0.3.0".into()),
+            grace: std::time::Duration::from_secs(12 * 3600),
+            maintenance: Default::default(),
+        });
+        updater.start_grace_for_test(std::time::Duration::from_secs(12 * 3600));
+        updater.blocked = Some(aurora_updater::Failure::Protected);
+        updater.packaged = true;
+        updater.state = crate::updater::State::Offer;
+        updater.open = true;
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut settings = Settings::default();
+        let mut warmup = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+        });
+        warmup.textures_delta.clear();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+            },
+        );
+        output.textures_delta.clear();
+        let shown = |label: &str| output.shapes.iter().any(|s| label_position(&s.shape, label).is_some());
+        assert!(
+            shown(&aurora_i18n::tr!("update-grace-later", hours = 12)),
+            "sign in anyway, while the grace lasts"
+        );
+        assert!(!shown(aurora_i18n::tr!("common-quit")));
+        assert!(!shown(aurora_i18n::tr!("update-install")) && !shown(aurora_i18n::tr!("update-open-release")));
+        assert!(shown(aurora_i18n::tr!("update-packaged")));
     }
 
     #[test]
@@ -866,6 +928,7 @@ mod tests {
                 maintenance: Default::default(),
                 grace_hours: None,
                 blocked: None,
+                packaged: false,
             };
             draw(&ctx, &mut demo, width, vec![]);
             click(&ctx, &mut demo, width, aurora_i18n::tr!("update-skip"));

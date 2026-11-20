@@ -156,6 +156,11 @@ def main():
         action="store_true",
         help="the folder above the installation is read-only, as a system package's",
     )
+    parser.add_argument(
+        "--packaged",
+        action="store_true",
+        help="AURORA_PACKAGED=1, as a distribution package's launcher sets it",
+    )
     options = parser.parse_args()
 
     repo = Path(
@@ -258,6 +263,9 @@ def main():
 
     environment = os.environ | {"AURORA_UPDATE_TEST_ROOT": str(root)}
     environment.pop("AURORA_DEMO", None)
+    environment.pop("AURORA_PACKAGED", None)
+    if options.packaged:
+        environment["AURORA_PACKAGED"] = "1"
     if options.protected:
         # what the viewer writes under the test's root exists beforehand;
         # nothing new can be made beside the installation
