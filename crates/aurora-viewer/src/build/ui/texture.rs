@@ -35,27 +35,30 @@ pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_96779
 /// Default specular map.
 pub const DEFAULT_SPECULAR: Uuid = Uuid::from_u128(0x87e0e8f7_8729_1ea8_cfc9_8915773009db);
 
-/// "Bumpiness" (bump codes 0..17).
+/// "Bumpiness" (bump codes 0..17), the items of the Legacy Viewer's
+/// "combobox bumpiness" (panel_tools_texture.xml): Brightness, Darkness,
+/// woodgrain, bark, bricks, checker, concrete, crustytile, cutstone, discs,
+/// gravel, petridish, siding, stonetile, stucco, suction, weave.
 fn bumps() -> [&'static str; 18] {
     [
         aurora_i18n::tr!("common-none"),
-        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("build-ui-texture-brightness"),
         aurora_i18n::tr!("build-ui-texture-darkness"),
         aurora_i18n::tr!("build-ui-texture-wood-grain"),
         aurora_i18n::tr!("build-ui-texture-bark"),
-        "briques",
-        "damier",
+        aurora_i18n::tr!("build-ui-texture-bricks"),
+        aurora_i18n::tr!("build-ui-texture-checker"),
         aurora_i18n::tr!("build-ui-texture-concrete"),
         aurora_i18n::tr!("build-ui-texture-crusty"),
         aurora_i18n::tr!("build-ui-texture-cut-stone"),
-        "disques",
-        "gravier",
-        aurora_i18n::tr!("build-ui-texture-trouble"),
-        "bardage",
+        aurora_i18n::tr!("build-ui-texture-discs"),
+        aurora_i18n::tr!("build-ui-texture-gravel"),
+        aurora_i18n::tr!("build-ui-texture-petri-dish"),
+        aurora_i18n::tr!("build-ui-texture-siding"),
         aurora_i18n::tr!("build-ui-texture-stone-tiles"),
-        "stuc",
-        "aspiration",
-        "trame",
+        aurora_i18n::tr!("build-ui-texture-stucco"),
+        aurora_i18n::tr!("build-ui-texture-suction"),
+        aurora_i18n::tr!("build-ui-texture-weave"),
     ]
 }
 /// Index of "Use texture" (BUMPY_TEXTURE / SHINY_TEXTURE).
