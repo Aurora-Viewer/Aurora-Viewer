@@ -671,8 +671,6 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
-    /// Swimming in prims named as water (#2008), for every account.
-    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -1432,9 +1430,6 @@ pub struct Settings {
     /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
     /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
     pub use_bridge: bool,
-    /// Preferences › Aurora › Behavior: whose portals the bridge shows. Friends
-    /// by default; our own portals and returns are always shown.
-    pub portal_sources: crate::world::portals::Sources,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -2509,7 +2504,6 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
-            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
@@ -2676,7 +2670,6 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             use_bridge: true,
-            portal_sources: Default::default(),
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,

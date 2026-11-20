@@ -1,5 +1,18 @@
 # Aurora Viewer architecture
 
+`imports/ui/inspector.rs` owns the draggable queue divider. Its preferred width
+is stored under each import window in the shared persisted UI layout; fitting
+a smaller window only clamps the displayed width. Double-click restores the
+automatic width.
+
+`import_gltf::Document` shares material and mesh file acceptance: no aggregate
+byte, material-count or buffer-count cap; each external resource follows
+TinyGLTF's `i32::MAX` byte limit. `imports/files.rs::load_paths` is the ordinary
+worker admission path, with no file, draft-count or decoded-pixel quota.
+Folder loading, staging local previews and restoring them follow the same
+acceptance. Resource-size errors report measured and allowed bytes; filesystem
+reads check external sizes before allocating and again after reading.
+
 `aurora-assets/src/import_mesh/process/adaptive.rs` simplifies default collision
 hulls by adding their worst-approximated point until the extra distance error
 is within 0.25% of the hull diagonal. Support-plane extremes remain, instance
@@ -526,8 +539,8 @@ key (including a previously acknowledged upload).
 `imports/stage.rs` snapshots checked local previews into fresh upload drafts,
 retaining decoded sources and user edits without disk reads or image rescans.
 It preserves local identities/attachments, isolates mesh job controls and fee
-state, resolves local texture UUIDs into upload dependencies, enforces queue/input
-budgets atomically and applies the shared destination policy. The local footer action opens Files on the first new draft; paid transfers
+state, resolves local texture UUIDs into upload dependencies and applies the
+shared destination policy without duplicating shared source pixels. The local footer action opens Files on the first new draft; paid transfers
 still require ordinary fee calculation and confirmation.
 `files/folder.rs` scans supported files on the import worker, retaining the selected
 source directory and its nested paths without following reparse points.
@@ -1076,65 +1089,39 @@ applies stop, stop-and-revoke and blacklist. Animation entries of
 `world/derender.rs` (AT_ANIMATION) drop the motion from every avatar's
 signals and ask the simulator to stop it on ours.
 
-`world/portals.rs` owns bounded, immutable two-minute portal invitations and
-per-observer crossing gates. Opening our portal needs the right to build
-where it stands (`world/land.rs::agent_can_build`, allowAgentBuild); an
-unknown parcel refuses and is asked for (`app/land_rights.rs`). A traveler's return
-is announced only where they may build; elsewhere, or while that land is
-unknown, it stays theirs alone: shown and crossable, announced to nobody.
-One kept private only because its land was unknown is announced once that
-land is known and open to them, while it lives; a shared return never
-becomes private again. `aurora-net/src/bridge/portal.rs` validates their
-bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
-region-local relay to the independent query script; late arrivals discover
-existing portals once, with targeted replies and bounded traffic. The bridge
-never teleports anyone. Each recipient checks friendship or their own group
-membership at crossing, then `app/portals.rs` uses the ordinary user location
-teleport boundary, retaining RLVa and simulator destination access checks.
-Near-spawn observers must first leave a 3.5 m clearance; standing inside,
-involuntary motion, position jumps and replayed announcements never trigger.
-After that initial clearance, observer retries use the ordinary 1 m clearance,
-including after a private grant arrived too late for the first crossing.
-Traversal uses the movement controls already filtered by `update_move_input`;
-nearby-chat focus can pass movement arrows and does not independently veto them.
+`world/portals.rs` owns this viewer's own walk-through portals: our portal
+and the returns of our journeys, immutable for their two minutes, each with
+its crossing gate. Nothing is sent to the region or read from it, and no
+bridge is needed: portals were once announced to other Aurora viewers over
+region chat, taken out under Second Life's shared experience policy
+(AGENTS.md, "No data of our own in shared places"). Opening our portal needs
+the right to build where it stands (`world/land.rs::agent_can_build`,
+allowAgentBuild); an unknown parcel refuses and is asked for
+(`app/land_rights.rs`). A return needs no land right: nothing is placed in
+the world. Crossing is a voluntary plane crossing after a 1 m clearance:
+standing inside, involuntary motion, position jumps and the arrival of a
+teleport never trigger. Traversal uses the movement controls already
+filtered by `update_move_input`; nearby-chat focus can pass movement arrows
+and does not independently veto them. `app/portals.rs` then uses the
+ordinary user location teleport boundary, retaining RLVa and simulator
+destination access checks.
 `scene/portals.rs` shares one GPU quad with an analytic Aurora surface,
 depth-tested and sorted with world transparency/glow. Theme violet, indigo,
 teal and navy drive its flowing depth, fine rim and soft corona; the GPU
 animation clock runs it, with a static reduced-motion variant. No texture or
 particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
-World > Portals and depth-occluded destination/creator/access labels. This is
-an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
-and teleportRequest (`indra/newview/llagent.cpp`).
+World > Portals and depth-occluded destination labels with the remaining
+lifetime. This is an Aurora feature; ordinary teleport behavior follows
+LLAgent::teleportViaLocation and teleportRequest (`indra/newview/llagent.cpp`).
 Photo isolation hides portal surfaces and their world labels while preserving
-invitations, clearance guards and the posed body cut; choosing subjects or leaving
-photo mode restores live surfaces without replaying invitations.
-
-Portal wire v2 separates a public `Announcement` from targeted `Details`.
-Restricted announcements contain no destination, landmark asset/title or group
-identity. An observer makes one nonce-bound request with at most one retry;
-the creator checks their own friends or a fresh, complete server member list
-shared through `world/group_data.rs` before sending any details. Unsent grants
-are checked again at the bounded send cadence; unknown/denied requests remain
-silent. Responses cannot use regional broadcast, in both Rust and the bridge.
-Unauthorized labels omit creator names as well as destination/access details.
-Private details remain in session memory, bound to creator, portal and request;
-discovery is redacted and close/expiry/session changes retire pending exchanges.
-Starting a teleport preserves source-region invitations and pending grants until
-the actual region/session change. Traversal is disarmed during the transition;
-the arrival segment cannot trigger a portal. This lets the creator's still-local
-bridge finish authenticating visitors while departure is in progress.
-Locally created portals and personal returns use a 1 m clearance without startup suppression; other observers retain the initial 3.5 m anti-drop guard and 600 ms appearance delay.
-`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
-HTTP-in renewal within the same region preserves invitations and clearance gates.
-The query endpoint is invalidated on region changes or a dead-URL response;
-announcement/close delivery retries the same immutable action at most twice,
-with one- and two-second backoff. Only exhausted failures remove the
-local aperture. Replacement, expiry and region/session changes retire retries.
+the portals, clearance guards and the posed body cut; choosing subjects or
+leaving photo mode restores live surfaces.
+`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete opens the return; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it) and keeps its expiry; within one region, the portal crossed is itself the way back.
 
 `ui/places/drag.rs` shares landmark/history cargo and a floating icon/thumbnail preview
 between all Favorites access modes and both Places layouts. Favorite reordering
 consumes only releases inside its visible list; scene releases reuse the inventory
-portal path. `ui/portals.rs` includes the actual remaining lifetime in world labels.
+portal path.
 History drags snapshot the exact arrival, including visits without a landmark;
 the map resolves their region asynchronously without inventory creation or asset
 requests. Only Favorites rows reserve a reorder grip. Landmarks and History retain
@@ -1146,11 +1133,11 @@ changes; a missing arrival uses one ordinary ParcelInfoRequest on drop, then
 freezes ParcelInfoReply's coordinates before the asynchronous region-map lookup.
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
-opens a Friends portal at the selected support; Shift at release makes it public.
-The shared overlay previews the selected access. Inventory items are never consumed;
+opens our portal at the selected support, with a shared overlay hint.
+Inventory items are never consumed;
 Ctrl insertion retains its existing behavior. Pending drops expire and cancel on
 region/session change, teleport or item replacement. `app/portals/demo.rs` drives
-actual world-drop input and authenticated in-memory peers for offline coverage.
+actual world-drop input and a walk through our portal for offline coverage.
 Successful landmark scene drops release inventory keyboard focus, including its
 short-lived list-focus restoration, while keeping inventory windows open.
 
@@ -1477,8 +1464,8 @@ hidden meanwhile. Inject creates the script item in #Aurora, uploads it with
 UpdateScriptAgent and puts it into the prim with RezScript.
 `ik_edit/poser.rs` adds Build > Poser over the same shaped Bento skeleton
 as the IK editor. `poser/overlay.rs` owns joint selection and manipulation,
-sharing skeleton geometry and transform gizmos. It bypasses IK projects,
-bone-to-prim/bone bindings, virtual controls, poles and object requests.
+sharing skeleton geometry and transform gizmos. It bypasses IK Edit's
+goals and poles.
 `poser/kinematics.rs` uses the numerical chain solver for positional edits
 and world pins, retaining every shaped parent offset. Unreachable targets
 yield at the chain's reach. Imports retarget non-root translations through
@@ -1990,7 +1977,7 @@ one-line command (`scripts/setup.ps1`, then the tools):
 | `aurora-prim` | Prim model: volume parameters, faces, extended parameters, geometry generation (port of `llvolume`), Linden trees and grass (`tree.rs`, `grass.rs`: species tables and meshes) and the lattice noise they share with the terrain (`noise.rs`) |
 | `aurora-assets` | Asset decoders: JPEG2000, mesh, animations, materials, `.llm` avatar meshes, skeleton; `sealed.rs`: the file format of the disk cache store (AES-256-GCM in 64 KiB chunks, a key per file derived from the installation key; the file names, an HMAC of the asset id under a key derived from it too) |
 | `aurora-render` | wgpu rendering engine (Vulkan; Metal on macOS): the volumetric clouds' noise textures are data (`clouds_noise.rs`: CPU port of the shader's generators, the file `assets/clouds/cloud_noise.bin` with its reader, rebuilt by `cargo run -p aurora-render --example generate_cloud_noise`; the shader's generators remain as the fallback); bindless textures grouped into pages (texture arrays), sub-allocated geometry, multi-draw-indirect, shadows, reflections, post-processing; adjustable projector shadow atlas (`projector_shadows.rs`: up to 16 maps, half-cascade resolution preserved as the atlas grows); texture animations (`tex_anim.rs`: CPU reference and parameters of the records, evaluated by the vertex shaders); GPU-driven draw lists (`gpu_cull.rs`, `shaders/cull.wgsl`: 30 bins including 16 projector shadow slots, face and object tables maintained by the scene, culling and compaction in compute for each view, drawing through `multi_draw_indexed_indirect_count`); local lights sorted by screen tile and by depth (`light_tiles.rs`: for each column, row and depth slice of the main view, the set of lights that cover it, computed every frame on the render thread; a fragment only walks the lights common to the three, `light_walk` in `shaders/common.wgsl`, instead of the 64 of the list; the reflection probes of a fragment are found the same way, in sets of their own, `probes::tiles` and `probe_tiles`); two-phase Hi-Z occlusion (`occlusion.rs`, `shaders/occlusion.wgsl`, shared test `shaders/hiz_test.wgsl`); order-independent transparency by depth-based stochastic transparency (`oit_stochastic.rs`, `shaders/oit_stochastic.wgsl`, the `fs_st_*` passes of `shaders/object.wgsl`; Enderton et al., I3D 2010, section 3.4: the total alpha of every sample, each blended fragment covering a stratified random subset of its samples into a copy of the opaque depth (its coverage written through `sample_mask` by `spirv_fix.rs`, one invocation per sample when that module or its pipelines cannot be made), the accumulation of the fragments at or in front of it (the glowing faces' glow too, `fs_st_glow`), the composite per sample with the alpha correction, the glow added to the scene alpha; the two stochastic passes at their own sample count, the most the device takes up to 8, their depth started from the opaque depth spread over those samples (`shaders/oit_stochastic_expand.wgsl`); the masks seeded by the pixel, the face's identity (`types::oit_tie`, `DrawRecord::identity`) and the triangle, the number of masks per fragment dithered by a 64 x 64 blue-noise tile (`oit_stochastic_tile.bin`, appended to the masks buffer, with a golden-ratio step per frame; its generator is a test); every anti-aliasing mode: the total alpha and the composite at the scene's samples (per sample with MSAA, per pixel without), the scene's SMAA, FXAA, TAA or FSR running after it (under FSR at the render size, before the upscale); a compute step that lists the 8 x 8 tiles with a blended face from the total alpha (`cs_tiles`), the depth spread, the resolve, the composite and the quads that draw them running on those through indirect arguments; the resolve in three compute steps (`cs_resolve`: the samples averaged, the alpha correction and the colour's standard error from the spread of the samples' colours; `cs_temporal`: the blend with the previous frame's colour, reprojected, as much as that error asks for, none where one layer covers the pixel, the previous colour left out where its total alpha is another's or the camera slid the layers past one another, off under TAA, `temporal_weight`; `cs_smooth`: the grain left averaged with the neighbours whose colour is within it, drawn and not kept); the "Stochastic" choice of `Settings::blend_order`; made the first frame the method is on, its shaders a module of their own, its targets freed with the method, a photo or a snapshot); ambient occlusion, the Legacy Viewer's (`shaders/ssao.wgsl`) or GTAO after Intel's XeGTAO (`gtao.rs`, `shaders/gtao.wgsl`: depth levels, horizon search, accumulation over the frames (reprojected history with depth rejection) and edge-aware blur in compute, at half resolution in low quality or for a scene of 1.8 MP and more (a 1080p screen, maximised too, and anything larger), then taken back to the scene's size by a depth-aware upsample (`upsample`), its result where the Legacy one goes, with its bent normal for the specular occlusion; optionally the visibility bitmask with one bounce of the previous frame's lit colour, the screen-space indirect light, `main_bitmask`); screen motion vectors (the depth prepass writes each pixel's motion since the last frame beside GTAO's normals, or into TAA's own target when GTAO has none, which TAA's history follows (`shaders/taa.wgsl`), from the last frame's model matrices and joint palettes that `motion_history.rs` and `shaders/motion_history.wgsl` keep on the GPU; `motion_debug.rs`, `shaders/motion_debug.wgsl` show them, `AURORA_DEBUG_MOTION`); AMD FSR 3.1, the anti-aliasing that can draw the world smaller than the window (`fsr.rs`, `shaders/fsr/`: the FidelityFX SDK's upscaler passes ported to full-screen fragment passes, with TAA's inputs, a reactive mask generated from the scene before and after the blended faces and RCAS; the passes after it run at the window's size on a depth upsampled from the render's, `display_depth`); contact shadows of the sun after Bend Studio's screen space shadows (`contact_shadows.rs`, `shaders/contact_shadows.wgsl`: wavefronts of 64 pixels along rays towards the light's point on screen, from a copy of the depth prepass into which the blended faces opaque enough and the impostor cards are drawn, the mask softened over each surface by `shaders/contact_shadows_filter.wgsl`, the darker of them and the shadow map taken by the shading); volumetric clouds, an Aurora choice beside the Legacy Viewer's flat cloud layer (`clouds.rs`, `shaders/clouds.wgsl`: a sky-attached layer at real cloud heights above the camera, shaped by the sky's cloud parameters through a weather map drawn by `fs_cloud_weather` (env.wgsl, which holds the cloud texture) only when they change, a Perlin-Worley noise made in slices over the first frames, a compute raymarch of the sky pixels at half resolution, a quarter of them a frame, rebuilt with a reprojected history, and a full-screen blend after the sky in scene pass A; a photo or a tile of one is traced once in full, with no history (`trace_still`); nothing runs with the setting off); geometric specular anti-aliasing of the objects' highlights (`specular_aa_roughness` in `shaders/common.wgsl`, its math mirrored and tested in `specular_aa.rs`); Aurora's bloom beside the Legacy glow (`bloom.rs`, `shaders/bloom.wgsl`: levels of the light over a threshold, extracted in `shaders/post.wgsl`, downsampled and added back up, spread by the post pass); the photo's looks (`looks.rs`, `shaders/looks.wgsl`: stacked layers, each drawn over the image the layers before left at its own intensity, the comparison line and the coverage from the scene before the first; the Legacy Viewer's photo filters, read from their unchanged files in `looks/legacy/` by `looks/parse.rs`, and Aurora's looks of `looks/aurora/` in the same form with operations of their own (grain, lens, toning, creative gathers, three that read the scene's depth from the frame's focus distance, and a 3D table read by `looks/cube.rs`), run after the tone mapping and SMAA on the 8-bit gamma-encoded image as LLImageFilter does on the snapshot, in passes split at each 3 x 3 convolution, the histogram curves from a compute count and look-up tables without a read back; in the photo's own pixels, so that the live view of a larger photo, its tiles and its supersampling show the same; `looks/tests.rs` holds a literal CPU port of LLImageFilter that the GPU's output of the 30 filters is compared with); cut-out photos (`cutout.rs`, `shaders/cutout.wgsl`: no sky, terrain or water, the scene's alpha holding what shows through each sample once the opaque faces are drawn, multiplied by the blended faces, then turned into the coverage by the post pass, carried by SMAA and the depth of field and kept by the snapshot's read back); the automatic exposure of skies that are not classic (`exposure.rs`, `shaders/exposure.wgsl`: one compute workgroup averages the luminance of the middle of the scene and eases the exposure towards its target, copied into the post pass's uniforms without a read back); shadows drawn, in each cascade, with only the objects whose shadow can fall on what the view reads there (`shadow_cull.rs`: volume of the pixels that read the cascade, stretched towards the light, tested by the GPU culling and the CPU lists; opaque faces without a fragment shader), and an opaque object drawn in one cascade only, the next cascade taking that part of its map from the finer one (`shadow_merge.rs`, `shaders/shadow_merge.wgsl`); streaming uploads with no copy on the main thread (`upload.rs`: mapped staging memory that the background tasks write into, GPU copies recorded in an encoder submitted at the head of the frame); textures compressed to BC7 when they support it without damage (`bc7.rs`: Intel ISPC encoder and quality check of each level; pages are in RGBA8 or in BC7 depending on the format of the chain, `TexelFormat`); nothing that grows or is freed all at once within a frame (`arena.rs`: geometry ranges allocated best-fit through an index of sizes, draw records kept in blocks and GPU buffer grown by a GPU copy; `textures.rs`: shrinking a texture by copying its levels to a smaller layer, grey substitute shared by the pending textures, emptied pages destroyed a few per frame by a separate thread); allocations that can fail when video memory is full (`gpu_alloc.rs`: a growth that the driver cannot make keeps the buffer it had and is tried smaller or later, never installed invalid; repeated wgpu errors written once with a count); texture pages in video memory of their own (`dedicated.rs`, Vulkan only: one Vulkan allocation per page, made with ash and handed to wgpu, so that a destroyed page gives its memory back to the driver at once instead of leaving room in a block of wgpu's allocator); presentation mode of the swapchain (`present.rs`: a single rule at the creation of the surface and at every toggle of vertical sync, mode forced by `AURORA_PRESENT_MODE`; every surface configuration goes through `present::configure`, which counts the swapchain recreations for the crash reports); Aurora's own pipeline cache on disk (`pipeline_cache.rs`: a Vulkan `VkPipelineCache` through wgpu's `PipelineCache`, one file per GPU in `<cache>/pipelines/`, its header naming the driver and the build that wrote it with a checksum of the data, saved by a thread of its own once the start's pipelines are made and at exit; every render and compute pipeline goes through its `CachedPipelines` trait, which a test checks; `AURORA_PIPELINE_CACHE=0` turns it off); the scene's pipelines compiled together (`pipeline_batch.rs`: `Backend::make_pipelines` describes them into a batch, run on up to 12 worker threads, each slot then taken by its field; the workers report their error scopes to the making thread's `gpu_alloc::scoped_apart`, `gpu_alloc::on_worker`); naga's `sample_mask` built-in on Vulkan (`spirv_fix.rs`: naga 30.0.1 writes it as a scalar where Vulkan wants an array of 32-bit integers, VUID-SampleMask-SampleMask-04359; the shaders that use it go through `SampleMaskShaders::create_shader_module`, which writes the SPIR-V with wgpu-hal's options, retypes the variable as an array of one with its loads and stores through an access chain, and hands the words to `create_shader_module_passthrough`, `PASSTHROUGH_SHADERS`; other backends and a device without the feature take the plain `create_shader_module`; `try_create_shader_module_mapped` instead gives nothing on a Vulkan device it cannot fix, for a caller with another route; the module retires itself when naga writes the array, with an info line); the start's progress (`start_progress.rs`: the renderer's phase and the pipelines made against the last start's count, in atomics any thread reads); two halves, see "Threads and data ownership": `main_thread.rs` (the `Renderer` as seen by the scene: its stores, the closing of the frame), `writes.rs` (log of the frame's GPU writes), `write_staging.rs` (its buffer writes replayed through one staging buffer per frame), `packet.rs` (frame packet and result), `ui_frame.rs` (egui shapes handed to the render thread, which tessellates them like `egui::Context::tessellate`), `thread_cpu.rs` (CPU time of a thread, for the profile), `device_lost.rs` (the device lost for good: set by the device-lost callback, no wait on the GPU and no frame built after it; every wait goes through `poll_guarded`, which takes wgpu's panic for a loss found during the wait as the loss; the demo's simulated loss and real hang, `AURORA_DEMO_GPU_LOST`, `AURORA_DEMO_GPU_HANG`), `render_thread.rs` (render thread, rendezvous handoff of the packets), `renderer.rs` (`Backend`: surface, pipelines, targets, passes), `helpers.rs` (helper threads of `finish`), `readback.rs` (GPU read-backs decoded by copy, with no alignment assumed on the driver's mapping; read-back sizes rounded to 8 bytes, checked by a test) |
-| `aurora-audio` | Audio output: mixer with the SL volume channels, music streams, world sounds, wind noise; HTTPS radio uses rustls with platform certificate verification (`http.rs`), including intermediate-chain completion on Windows/macOS (#1628). `playlist.rs` resolves bounded PLS/M3U documents and the playlist exported by an AzuraCast public player before decoding, with discovered links and their redirects restricted to the same HTTP(S) origin. Stream failures are typed (`StreamError`: web page, playlist, HTTP status, TLS, connection, address, audio format, interruption), and a retry keeps the last error until audio returns (#2582). |
+| `aurora-audio` | Audio output: mixer with the SL volume channels, music streams, world sounds, wind noise; HTTPS radio uses rustls with platform certificate verification (`http.rs`), including intermediate-chain completion on Windows/macOS (#1628); `tls.rs` turns a failed certificate (expired, self-signed, another name…) into a `CertificateIssue` carried by `StreamStatus::Playing`, so the station plays and the viewer warns in red, the handshake signatures still checked. `playlist.rs` resolves bounded PLS/M3U documents and the playlist exported by an AzuraCast public player before decoding, with discovered links and their redirects restricted to the same HTTP(S) origin. Stream failures are typed (`StreamError`: web page, playlist, HTTP status, TLS, connection, address, audio format, interruption), and a retry keeps the last error until audio returns (#2582). |
 | `aurora-voice` | SL voice over WebRTC (receiving and sending). `link_stats.rs`: one `voice stats:` log line every 5 s during a call (what waits in the receive and send queues, the arrival lag, the RTCP jitter and loss of both streams), to tell a delay built in the viewer from one on the network or the server. `receive_gain.rs`: the viewer's own gain on the received voice, for a private call, where the server ignores the per-resident volume |
 | `aurora-media` | Host of the SLPlugin media plugins (CEF for the web, LibVLC for video, GStreamer instead on Linux), taken from Aurora's media plugins pack or from a folder chosen in the preferences; pixels in Win32 or POSIX shared memory. On macOS the plugins live in `SLPlugin.app/Contents/Frameworks` (`PluginPaths::bundle_in`: the pack's `llplugin/`, a folder, or a Legacy Viewer's application), are `.dylib` files, and SLPlugin runs in that folder; the viewer's `media/keys.rs` sends CEF the Cocoa key data of the Legacy Viewer's window, and `Modifiers::command` carries the Command key. On Linux, `stream_volume.rs` sets a web page's volume on the sound server, which the Linux CEF plugin does not do |
 | `aurora-build-gate` | Development tool, not a part of the viewer: the compiler wrapper the scripts give Cargo (`rustc-wrapper` of `<project folder>\.cargo\config.toml`, written by `Sync-BuildCache` of `scripts/common.ps1`). Every compile of the viewer crate waits there for one of `AURORA_BUILD_SLOTS` build slots (a locked file of `.cargo\build-slots\`, freed by the system when the process ends), whatever the Cargo command; the other crates go straight through, and the compiler is handed over to sccache when it is installed. One file and the standard library only: the scripts build it with `rustc` alone, before Cargo can run. |
@@ -2176,207 +2163,56 @@ jumping/falling, missing/invalid contact data or old objects veto this fallback.
 Existing flight survives the local reply. This does not change Fly After
 Teleport or the flags of later teleports/invitations.
 
-`world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
-roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
-`world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or
-periodic timer. On an authenticated arrival handshake it asks, once, the
-roots avatars sit on and the wearer's own attachments (llRegionSayTo, never a
-region-wide discovery; others' worn publishers show at their next announcement)
-and forwards negative-channel events using private owner chat. Since bridge
-1.41 the viewer's hello goes on a channel derived from the worn root's key
-(new at each rez) and its relay commands on one derived from the relay's random
-session (`bridge::private_channel`); a worn bridge still at 1.40 is also asked
-on the old fixed channel after 10 s of silence while its version is unverified,
-answers with its old version and is updated.
-`world/hand_ik/relay.rs` authenticates relay envelopes, admits announced live
-seat/wearer sources, routes bounded definition requests and applies regional
-state events through the existing atomic revision/profile decoder.
-Only a complete definition matching the advertised bundle acknowledges initial
-loading. An early off event still releases contacts without silencing finite
-retries; a new bundle retires the old acknowledgement and partial transfer.
-Late old-bundle messages cannot acknowledge its replacement.
-`world/hand_ik/diagnostics.rs` builds the on-demand J8 local IK report from
-bounded counters and current sessions: relay validation, latched decoder failure,
-completed definitions, accepted activations, editor suppression and link-name
-resolution. It retains no packet bodies, authentication IDs or resident identities,
-and the report issues no network/property requests.
-`world/hand_ik/relay/declarations.rs` bounds identity-only regional declarations
-to 16 KiB and retries their authorization only after full simulator object events,
-covering late parentage and source reappearance without polling or rig preloads.
-`world/hand_ik/observers.rs` retains independent avatar/source sessions, verifies
-simulator parentage and shares a bounded request budget. Live sessions require
-the relay and never fall back to periodic candidate scans or lease renewals;
-offline protocol fixtures can still supply direct simulator snapshots.
-`world/hand_ik/reload.rs` normalizes a selected world/attachment root and queues
-one explicit authoring snapshot with a fresh nonce and zero cache hint. This
-separate session shares request/byte budgets but never enters runtime graphs.
-Tickets complete only on validated full definitions and cancel on source/region
-changes, explicit cancellation or a 45-second deadline. `ik_edit/object_data.rs`
-handles scene designation and imports the declaration as a fresh named project,
-rebasing source-relative virtual parents to that root. The existing project is
-saved before switching; imported runtime data carries no editor animation stack.
-The bridge's targeted edit command can query an unused publisher without an
-automatic announcement or any IK activation.
-`world/hand_ik/sources.rs` keeps independent source sessions, merges bone conflicts
-deterministically and prioritizes established sources. It discovers seat/worn
-sources without requiring the optional full-update OwnerID. Reception uses
-simulator-authenticated chat ownership, live root
-parentage and fresh session nonces, rejecting known ownership conflicts and
-requiring a worn publisher's owner to match its wearer. Full updates may omit
-OwnerID without sound/particles, as in Legacy LLViewerObject::processUpdateMessage.
-It bounds discovery, validates nonce/revision snapshots and
-expires a silent script; target parentage is checked from live objects.
-`world/hand_ik/limits.rs` admits only tracked live seat/wearer sources before
-JSON parsing, rate-limits regional and per-session ingress, and bounds serialized
-definitions plus incomplete replacements to 32 KiB per avatar and 128 KiB total.
-Each definition remains bounded to 8 KiB. Unused/invalid protocol messages never
-enter chat history or create sessions. Source loss and partial
-transfer timeouts drop data; explicit editor snapshots expire as well. There is
-no persistent rig catalog or disk cache.
-`world/hand_ik/profiles.rs` validates explicit named selections over shared
-binding declarations. Profiles contain bone names, never animation conditions.
-The selected keyword and per-binding source generations travel atomically with
-the cached rig. Shared contacts retain their clocks through mode switches;
-returning contacts reset even when an observer missed their release. Selection
-remains source-scoped; it never reads or controls avatar animation playback.
-`scene/hand_ik.rs` resolves the linked targets with this frame's interpolated
-transforms and rebuilt shape height, then analytically solves the two arm
-segments after animation blending. A configurable wrist-local contact point
-follows actual hand scale. Without an orientation target, the virtual
-elbow-to-palm segment reaches that point while preserving wrist articulation;
-with an authored orientation, the rotated palm offset determines the wrist
-goal. Zero/missing contact retains wrist-pivot behavior. An omitted target orientation preserves
-the animated local wrist articulation; an explicit quaternion follows the
-authored prim axes. `scene/anim.rs` keeps the corrected
-rotations separate from its held animation pose, so releasing contacts
-restores that pose. The ordinary parallel pose jobs and attachment palettes
-consume the final matrices. `demo_hand_ik.rs` drives the same protocol and
-render path on a tilted synthetic vehicle. See [HAND_CONTACTS.md](docs/HAND_CONTACTS.md)
-for motorcycle setup and creator offsets; [IK_EDIT.md](docs/IK_EDIT.md)
-documents the current multi-observer export and its wire contract.
+`scene/hand_ik.rs` holds the analytic two-segment solver shared by the IK
+chains, the Poser and foot grounding: a configurable bone-local contact point
+follows the actual joint scale, and an omitted orientation preserves the
+animated local articulation of the end joint.
 
-Bindings retain their own source contact, target offset and activation settings,
-including multiple slots for one bone. `ik_edit/graph.rs` selects and captures
-the association slot; row pencils replace that slot and link actions append.
-The avatar-frame numeric inspector starts collapsed, while every association
-owns its calibration disclosure. Runtime selection and fades use source/slot
-identity and the existing per-slot wire mask/cycles. `scene/ik/multiple.rs`
-combines same-bone targets by effective weight after their dependencies have
-resolved, using shaped material contacts and one capped joint influence.
+`scene/ik.rs` applies IK Edit's temporary goals to the own avatar's pose:
+analytic two-segment chains reuse that solver, longer ancestor paths use
+bounded CCD, and explicit direct mode (`Mode::Direct`) converts a target into
+the bone's local transform. `order()` solves a goal whose chain starts below
+another goal's joint after it. Its frozen editor snapshot and corrections
+never feed back into the controller's animation pose; the frozen base is
+captured before any IK. `scene/ik/body.rs` reconciles extended limbs that
+share body joints with numerical contact tolerances, avoiding a visible
+millimetre reach threshold that can snap almost-straight arms. A small
+secondary pose objective regularizes redundant body rotations in both the
+damped update and candidate scoring; partial influences keep their single
+local-transform blend. Fully influenced oriented parent goals protect their
+frames from later child chains; position-only and partial parents keep their
+freedom. Three-joint non-limb chains keep their animated bend plane,
+transported with the goal direction; finger goals never inherit an
+avatar-space elbow pole. `scene/ik/multiple.rs` combines same-bone goals by
+weight after their dependencies have resolved, with one capped joint
+influence.
 
-`scene/ik.rs` extends the same source protocol to named bones: analytic
-two-segment chains reuse the contact solver, longer ancestor paths use
-bounded CCD, and explicit direct mode converts a target into the bone's
-local transform. Its frozen editor snapshot and runtime corrections never
-feed back into the controller's animation pose. `ik_edit.rs` draws the own
-avatar's rendered skeleton, edits temporary goals, reads target prims and
-exports measured metric offsets/quaternions. The shared Build menu toggles
-the editor; exiting resumes the existing animation pause clock. See
-[IK_EDIT.md](docs/IK_EDIT.md) and `scripts/lsl/rig-contacts.lsl`.
+`ik_edit.rs` draws the own avatar's rendered skeleton, edits temporary goals
+and offers the Pose, Animations and Display tabs with a shared Options footer.
+The shared Build menu toggles the editor; exiting resumes the existing
+animation pause clock. Nothing it edits leaves the viewer. See
+[IK_EDIT.md](docs/IK_EDIT.md).
 `ik_edit/gizmo.rs` provides local-only bone axis/plane translation and ring
 rotation in world or bone axes, reusing the build tools' geometry and drawing.
-Pointer ownership checks window layers before starting a drag; rotation
-holds the authored contact target and never writes a simulator transform.
+Pointer ownership checks window layers before starting a drag; rotation never
+writes a simulator transform.
 `ik_edit/rig_controls.rs` maps the four shoulder/hip chains to hand/ankle
 effectors and elbow/knee pole controls, and mirrors paired edits through
-their canonical rest frames. Optional protocol pole points use the same
-metric target-prim frame as contacts and enter the analytic two-link solver.
-`ik_edit/bindings.rs` retains independent prim-relative definitions and
-resolves them to avatar-frame goals each frame. Four limb switches and
-per-bone enable state suppress both editor and corresponding runtime goals;
-new associations follow position/orientation, and bone edits recapture their
-prim-relative offsets. Two clipboard exports provide the configured companion
-or its escaped `string RIG = "…";` declaration, preserving disabled states,
-authored weights and offsets;
-the frozen base is captured before any IK, so disabling cannot bake contacts.
-Authored strength blends local transforms independently of runtime fades.
-Existing pins retain their chain roots across activation changes. Extended
-limb reconciliation uses numerical contact tolerances, avoiding a visible
-millimetre reach threshold that can snap almost-straight arms during motion.
-A small secondary pose objective regularizes redundant body rotations in both
-the damped update and candidate scoring. Complete full-strength contact groups
-retain only their preceding body corrections as a seed over the new animation
-frame. Those corrections recover exponentially toward the current animation
-with a 0.25-second time constant; contact reprojection retains required reach
-assistance instead of permanently carrying an earlier posture across animation
-changes and restarts. Limb reprojection respects the selected roots; partial influences keep
-their single blend. Changes of chains, editing context or contact lifetime
-discard the seed. Animation inputs and the editor's frozen base remain intact.
-`scene/ik/activation.rs` owns per-binding proximity gates and independent
-smoothstep entry/release durations. A waiting contact may enter range after
-another contact solves, while its own correction never opens its gate.
-Fully influenced oriented parent contacts protect their frames from later
-child chains in both live and authored poses; position-only and partial
-parents retain their freedom. Three-joint non-limb chains retain their animated
-bend plane, transported with the contact direction; straight chains use a
-joint-local fallback. Finger contacts never inherit an avatar-space elbow pole.
-Explicit poles and the default arm/leg directions remain authoritative.
-Release crossfades
-the last controlled local rotations and direct translations toward the current
-animation, avoiding a jump when an Idle clip cuts in. IK segment positions keep
-following the current shaped/animated skeleton. Shared joints use a single
-sample and active contacts retain precedence. A script activation
-epoch, source session, definition bundle and per-bone mask cycle identify each
-lifetime. A new lifetime discards old envelopes, release deltas and body seeds,
-including off/on packets processed between rendered frames. Rig definitions
-stay cached across phase changes. Authoring previews stay immediate; the four
-parameters live in the selected binding card and both clipboard exports.
+their canonical rest frames. `ik_edit/enable.rs` turns a joint's goal on and
+off and owns the four limb switches, which keep their chain roots across
+activation changes.
 `ik_edit/visibility.rs` classifies canonical Bento names into independent
 visual sets; its mask affects skeleton lines, handles, poles, highlights,
 gizmos and the picker list without removing any skeletal constraints.
 The initial Human preset excludes extended spines/appendages and ancillary
-groin joints; explicit association-row selection reveals the selected group.
-`ik_edit/profiles.rs` scopes authoring bindings and smoothing by named runtime
-profile, retaining each profile's independent animation snapshot. Explicit
-slot membership permits different calibrations for the same bone in different
-profiles; clipboard data duplicates only the referenced virtual ancestors.
-`ik_edit/project.rs` versions and bounds complete editor documents, schedules
-atomic account-local drafts and file dialogs on Jobs, and correlates explicit
-inventory notecard saves/loads. `ik_edit/project/library.rs` adds named,
-account-local project sets above the profile editor. UUID filenames are
-independent of editable titles. Transitions save the previous project before
-loading or creating the next one, with a brief input gate while Jobs owns the
-transition. Explicit saves/reloads and per-project autosaves share atomic IO;
-file/notecard exchange includes optional project identity, while runtime RIG
-exports remain profile definitions only.
-Its new-project menu centralizes blank creation, explicit object/attachment
-snapshots and local-file/notecard imports. Imports receive fresh identities so
-an imported copy cannot overwrite an existing library project.
-`ik_edit/project/library/browser.rs` presents the Projects tab, direct selection,
-search and per-row rename/duplicate/file-export/notecard/delete actions beside left-aligned
-names. Name selection opens Bindings after a successful load; row actions stay
-in Projects and preserve the working pose. `library/management.rs` resolves
-each action's own UUID document on Jobs, owns the local export dialog/atomic
-write and applies only catalogue changes
-unless that document is the active project. The compact header centers the
-read-only current title. Selection, creation, save/reload, target
-object designation, file/notecard exchange and draft recovery live inside Projects;
-the shared footer retains IK controls and runtime clipboard exports. Confirmed deletion
-validates one UUID-named document on Jobs before removing it, then clears the
-active editor without saving it again; empty-project cleanup needs no avatar pose.
-Project documents permit a genuinely empty set before first-profile creation;
-the initial UI gates authoring behind explicit project and profile naming.
-Import normalization creates groups only for existing authored data, never
-for an untouched empty editor. The network content-create callback validates
-the exact new item before uploading; notecards retain private permissions.
-`ik_edit/project/target.rs` designates a project's linkset independently of
-seat/script state. It normalizes child clicks to world/attachment roots,
-retargets all named anchors by unique in-linkset property names, releases
-unresolved anchors and preserves every calibration. Property discovery uses
-bounded child traversal and the existing read-only prim-property queue,
-limited to four requests per 250 ms. Project documents retain source identity
-and display name; preview contexts use the selected source frame. Project
-switches cancel any pending seated-object import.
+groin joints.
 `ik_edit/animations.rs` manages inventory-backed authoring layers and independent
-30 Hz frame controls. The authoring tabs share the manipulation toolbar
-and export footer. Assets use the ordinary background `AnimStreamer`.
+30 Hz frame controls. Assets use the ordinary background `AnimStreamer`.
 `scene/ik/animations.rs` samples native tracks at fixed times, honoring native
 per-joint priority and upper-row precedence among equals. It works on a copy
 of the frozen base before IK. Optional live-input suppression uses the shaped
 rest positions supplied by the controller, compensating the live pelvis
 offset without changing animation signals, controller state or the pause clock.
-The companion accepts uniform legacy nine-/ten-field or new eleven-field
-rows; the new final percentage becomes a bounded `0..1` wire weight.
 The rig keeps one canonical skeleton name per joint index for authoring;
 animation and skin binding still accept the original alias map.
 
@@ -3253,7 +3089,6 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/surface_opacity.rs` | Opacity of what lies over the world (Preferences › Appearance › Skin): the focused, unfocused and Conversations window rules (`level`, simpler than the Legacy Viewer's), plus bars, menus, the chat over the world, name tags, the mini-map and the pie menu. `fade_after` fades a layer's surfaces by their palette colour, leaving text and pictures; nothing is walked at 1. Ignored in high contrast and when Disable glass is on |
 | `stream_title.rs`, `ui/stream_title.rs` | World › Stream title (FSFloaterStreamTitle, FSStreamTitleManager): the parcel radio's title now and the titles played before, a new one kept when it differs from the last, at most `audio.stream_title_history` (`stream_title.rs`, fed by `App::update_audio`); the window with the sliding title and its History button, Aurora's text-only look laid over the world and dragged anywhere, and the history window with its selection, copy, Clear and maximum (`ui/stream_title.rs`) |
 | `movement/crouch_toggle.rs` | Crouch as a toggle (FSCrouchToggle): the Down key's latch, let go by a jump or flying |
-| `movement/water_volume.rs`, `app/water_volumes.rs`, `demo_prim_water.rs` | Swimming in prim water (#2008): the settings, the water words and their whole-word match, the upright box of a volume and the water it gives an avatar (`movement/water_volume.rs`, pure); the 2 s sweep of nearby phantom prims through `Scene::water_candidates`, the name requests (only for the prims the avatar is in or within 4 m of, a few a sweep, asked again after 30 s for a rename), the floor probe (`Scene::water_floor`) and the volume around the avatar each frame (`app/water_volumes.rs`); the raised demo pool (`AURORA_DEMO_PRIM_WATER`); the volumes near our avatar also reach `scene/water_effects.rs` (`Scene::set_water_volumes`), whose bubbles, splashes and sprays then rise from a volume's top for every avatar in it (`water_volume::surface_at`; only while our own prim water and swimming are on, the volumes being found around our avatar), particles only, flat (the particle shader's swell is the region water's): ripples, wakes and contact foam stir the region water's wave field and stay off in a volume |
 | `world/chat_log.rs`, `world/chat_log/`, `world/transcripts.rs` | Conversation history on disk, like the Legacy Viewer (LLLogChat, LLIMModel::logToFile). `chat_log/format.rs`: text of a line (`[YYYY/MM/DD HH:MM]  Name: text`, SLT time, following lines preceded by a space, `:` of a name written `%3A`) and its reading back; `names.rs`: file of each conversation (`chat`, legacy name of the resident, `<group> (group)`, dated conference), forbidden characters, reserved names of Windows, date in the names; `store.rs`: folder of an account on a grid (`accounts/<uuid>/chat_logs/<grid>`), `aurora-chatlog` thread that appends the lines (file opened, written and closed again for each batch, each task carrying its full path) and reads back the end of a file (LOG_RECALL_SIZE); `transcript.rs`: whole file for the History window, in pages of 100 messages, without keeping it in memory (index of the pages, page-by-page search); `import.rs`: a Legacy Viewer's transcripts brought in one way (its folders on each system, InstantMessageLogPath, merge by time without what the Aurora file already has, one file at a time on the transcript thread, the Legacy Viewer's `conversation.log` with the instant messages); `conversations.rs`: the conversation log (LLConversationLog): its entries, the `conversation.log` file in the Legacy Viewer's format (read at login and written whole after a change, on the transcript thread; entries older than 120 days dropped), its merge, sort and filter; `chat_log.rs`: facade opened at login and closed at logout, settings. `transcripts.rs` links the conversations to the files: file name of a session, lines waiting for a name, history requested before the first write, history lines (`Origin::Log`, `Origin::ServerLog`) placed before the new ones, merge with the history of the group chat server, stable numbering of the lines for the view (`LineClock`) |
 | `world/chat_service/`, `world/chat_log/service/`, `world/direct_history.rs`, `world/direct_history/` | The Chat Service's direct (one-to-one) IM history, port of the LL viewer 26.5 (LLChatServiceHistory, LLChatServiceHistoryCore; the Legacy Viewer has no such service yet). `chat_log/service/`: the archive's CSV rows (`csv.rs`), a message captured or read back (`message.rs`), the merge with the live session without duplicates (`merge.rs`, replace_history). `chat_service/`: the sans-I/O manager (`manager.rs`: lifecycle, gates, residents, actions with tickets; `sync.rs`: the conversation list and the history pages; `delete.rs`: Delete Transcripts in steps), `storage.rs`: its files (`accounts/<uuid>/chat_service/<grid>`, beside `chat_logs`: one `chat_service_<resident uuid>.csv` archive per resident, `chat_service_index.csv`, `chat_service_state.xml`; `.tmp` then rename, durable state, torn tail truncated, corrupt archive set aside), `stitch.rs`: the read that stitches a resident's transcript and archive (200 rows for a conversation, 10 000 for the History window). `direct_history.rs`: the World's side: starts the manager at login, feeds it the region, the mute list and the names, runs its storage on the `aurora-chatlog` thread (`ChatLog::run_job`), sends its requests as `NetCommand::ChatServiceRequest`, places the stitched history in a private conversation (`Origin::Log`, never unread) and captures the live messages; setting `chat_service_history` |
 | `ui/notifications.rs`, `ui/notification_center.rs`, `ui/notification_center/presence.rs`, `ui/notification_center/aurora.rs`, `ui/friend_prompt.rs`, `world/notifications.rs`, `world/notification_history.rs`, `world/script_dialog_limit.rs` | Notifications: the list and its answers (`world/notifications.rs`, what leaves it recorded with its outcome; `world/script_dialog_limit.rs`: which older script dialog a new one of the same object replaces, the Legacy Viewer's ScriptDialogLimitations), the Legacy Viewer's toasts and bell next to the wolf and the shared cards (`ui/notifications.rs`), Aurora's center (`ui/notification_center.rs`: cards unrolling from the bell at the right end of the top bar and folding back into it (with the islands exactly under the system and bell islands, `NotifUi::column`), "To do" and "History" tabs, paused bell in do not disturb; `presence.rs`: the friends' online / offline toasts at the place chosen in Preferences › Chat, laid out in the room the bars leave (`ui::layout::bars_room`) above the nearby chat lines, waiting at the top right while the cards or the list are out), chosen by Preferences › Aurora › Notifications; the history kept per account (`notification_history.json`, 30 days or 500 entries, written on a worker thread, read with the tolerant reader); `ui/friend_prompt.rs`: a friendship offer as a card in the middle of the screen instead of its toast (#465, Preferences › Chat › Toasts, on), answered through the same list; `ui/region_message_prompt.rs`: a message to the whole region there too (#1404, same page, on), shown before the friendship offers; `aurora.rs`: the aurora's edge, halo and title of the new version's card in Aurora's center |
@@ -4713,25 +4548,8 @@ contains the Avatar dependencies/read-only position tables and Journal view;
 around the scrollable five-tab body. Geometry processing and fee protocol
 remain on their existing worker/session paths.
 
-Rig graph authoring (`ik_edit/graph.rs`, `graph/motion.rs`) shares bounded
-`world/rig_graph.rs` definitions with runtime. Parent-local helper transforms,
-keyed quaternion/translation curves and procedural motion remain independent
-of the skinned rig. `scene/ik/graph.rs` resolves own-bone/attachment anchors
-from the current working pose, orders dependencies and omits cycles. Remote
-avatars remain independent parallel pose jobs; a bounded second pass for
-cross-avatar targets refreshes their current frames. `world/hand_ik/graph_wire.rs` atomically
-reassembles bounded authenticated multipart graphs, caches bundles and phase
-clocks, and applies immediate releases. `scripts/lsl/rig-contacts.lsl` is the
-complete shared export, with named-link rebinding, independent observer
-subscriptions, cached heartbeats and rate-limited UTF-8-bounded fragments
-from seated creations or owned worn roots. Adjacent fragments share a packet
-only when the sampled header leaves room within the existing 880-byte relay
-limit; cadence, atomic parsing and byte/ingress budgets remain unchanged.
-Driver and observers use the same protocol-5 contract; obsolete prototype wire
-formats are unsupported.
-
 Native animation creation (`ik_edit/clip.rs`) is a separate mode of the same
-pose editor. It retains contact definitions while keyed samples and staged
+pose editor. It keeps IK Edit's goals while keyed samples and staged
 pose goals drive the own avatar. `clip/document.rs` captures LL-local
 rotations and scaled-parent positions, records pelvis translations by default
 and other directly edited position channels, trims/rebases native tracks and
@@ -4757,7 +4575,7 @@ are retained. Immutable draft snapshots and a bounded session draft selector
 keep concurrent worker results separate. Generated native bytes enter the
 ordinary `Imports::authored_animation` inspector with normal folder selection;
 no upload/payment command is created by this handoff. Real skeletal keys
-include captured IK results; virtual control definitions remain in rig LSL.
+include captured IK results.
 Auto-key records on pose release, waits for the rebuilt preview to replace the
 temporary edit, then advances by a saved, adjustable time step (0.5 seconds by
 default); the visible timeline range extends when needed. Timeline preview
@@ -4765,95 +4583,29 @@ looping can use the full timeline or end at the last key of an enabled authored
 track, independently of exported loop metadata. The timeline's resize container
 keeps the track list scrollable within the user's chosen panel height.
 
-`ik_edit/prim_targets.rs` keeps read-only scene designation separate from the
-object Edit selection. A single edited prim proposes a draft target; an
-explicit pick overrides that proposal until the selection changes. Bone
-binding drafts and virtual parents have distinct picker destinations. Saved
-contacts change on an explicit guided target choice. Both floaters remain
-independent, with object manipulator geometry/permission checks arbitrating
-overlapping world handles.
-The editor fetches missing target names with bounded, deduplicated
-individual property requests; concrete picks acquire their root/link identity once
-the properties arrive. A target-name action explicitly opens object Edit and
-selects the exact linked part. After drawing IK, the app queues property
-requests on the existing build command path and applies edit actions before
-drawing object tools.
-
-`world/rig_targets.rs` resolves per-association `link` targets by object root
-and unique member name. `source` inherits the publisher root; `_ROOT_` selects
-the root without a name query. Runtime declarations (including prepared inactive
-profiles) and the open editor share a bounded session cache: 64 roots, 1,024
-prims, 256 members per root, 256 bytes per name. Missing properties use the existing
-`build/property_query.rs` routing, at most four reads in every rolling second
-and three finite attempts per lookup. The first four can leave on consecutive
-frames, avoiding quarter-second gaps on small cold linksets without increasing
-the read budget. Every member, including the root, follows
-FSAreaSearch::requestObjectProperties (indra/newview/fsareasearch.cpp), sending
-ObjectSelect then immediate ObjectDeselect for that individual local ID.
-Already selected prims are never deselected, including children of a selected
-linkset. These reads do not change local selection, manipulators or object transforms.
-J8 identifies unread root/anonymous child entries and their finite attempt counts,
-without exposing object IDs or relaxing complete-map uniqueness checks.
-New unresolved declarations and topology changes
-can refresh names once; repeated profile/state packets do not. Fresh property
-replies cannot be overwritten by the build cache's older names. Previously
-verified contacts remain usable during unrelated name refreshes. Project and
-binding clipboard snapshots share canonical root/link identities.
-Admission and query scheduling prioritize the editor, local seat and local
-attachments before observers, preserving existing entries within a priority.
-Maps rebuild only on membership/name changes; pose jobs read resolved
-identities and the ordinary current-frame transforms. Deleted/unlinked targets
-fail their live parentage check. Sources and regions release unused names.
-LSL forwards root/name declarations without resolving or rebuilding child UUIDs.
-
-`ik_edit/links.rs` owns the guided Bindings tab: a highlighted, locked source bone,
-direct prim/bone and row-pencil actions, scene designation, and atomic
-replacement with pose preservation and dependency validation. Cancellation
-leaves saved contacts intact. `ik_edit/pose.rs` owns detailed posing and
-release rebasing: explicit edits clear an inactive bone's suppression, while
-passive selection/refresh does not. Released bones start manual posing from
-their displayed transform without changing their authored mode. All parented
-joints default to length-preserving chains; Detach is explicit. The parentless
-root remains directly movable and has no Detach option. Limb activation counts
-IK goals and explicitly
-converts a direct goal back to its body-assisted IK chain. Association rows
-still control either mode. Reactivation synchronizes the selected inspector;
-unchecking Detach restores an actual chain when a direct binding resolved
-with its root equal to its own bone. `ik_edit/pose/tests.rs` exercises both transforms
-through real pointer events and all existing binding formats.
+`ik_edit/pose.rs` owns detailed posing and release rebasing: explicit edits
+clear an inactive bone's suppression, while passive selection does not.
+Released bones start manual posing from their displayed transform without
+changing their authored mode. All parented joints default to
+length-preserving chains; Detach is explicit. The parentless root remains
+directly movable and has no Detach option. Limb activation counts IK goals and
+explicitly converts a direct goal back to its body-assisted IK chain.
+`ik_edit/pose/tests.rs` exercises both transforms through real pointer events.
 `ik_edit/authoring.rs` records manual, unbound edits as local joint channels
 instead of world-space pins. Rotation changes only the chosen joint; a
 translation solves its configured chain once and records the affected local
 channels. Previously edited descendants follow later parent rotations.
 `scene/ik.rs::EditRequest::joints` applies these channels after animation
 sampling and before explicit targets. Local translation deltas preserve root
-offsets and shaped proportions. Explicit limb activation and binding creation
-remove the corresponding manual ownership. Native clip authoring saves and
+offsets and shaped proportions. Explicit limb activation removes the
+corresponding manual ownership. Native clip authoring saves and
 restores this layer and records its affected channels.
 `ik_edit/segments.rs` owns visible shaft geometry, canonical terminal tips and
-narrow screen-space selection. Real segments select their origin joint;
-virtual parent connectors select their node. Endpoint/effector/bend controls,
-gizmos, foreground windows, Alt camera navigation and prim designation retain
-priority. One small background hit widget follows the nearest segment, avoiding
-large bounding rectangles intercepting object editing. Bone-target picking
-uses the same geometry without changing its locked source.
-The standard Aurora IK strip exposes Bindings, Virtual bones,
-Animations and Display; animation subinspectors use the same
-shared widget. Row pencils use standard action buttons and dropdown menus.
-Bindings groups the local script-IK mask, independent limb activations and
-the Symmetry switch, world/local space and whole-pose reset in Options
-below the saved rows. The selected source card holds Detach (direct mode),
-chain root, bone reset and numeric position/rotation. Contact and target offsets
-are in an advanced source section. Saved rows own Follow rotation toggles;
-changes preserve offsets, selection, strength and disabled state. Script import
-is collapsible under Bindings Options. There is no IK Pose tab;
-virtual rows pair each control with its named parent, without duplicate tool
-selectors or link-name fields. Native clip authoring retains chain/space/reset
-controls in Pose because it has no Bindings tab.
-The persistent IK footer exports either the complete companion or just the
-rig JSON definition. `graph_payload` shares its bounded ASCII JSON with
-the rig script's RIG value, including converted legacy contacts and virtual-only
-graphs, without exposing session state or adding LSL boilerplate to the data.
+narrow screen-space selection. Real segments select their origin joint.
+Endpoint/effector/bend controls, gizmos, foreground windows, Alt camera
+navigation and object Edit handles retain priority. One small background hit
+widget follows the nearest segment, avoiding large bounding rectangles
+intercepting object editing.
 `ik_edit/poles.rs` draws active-only bend handles at their real bend targets
 and owns bend-target orbits. Their rotation gizmos pivot at the middle joint.
 Hand/foot grips and their translation/rotation axes stay at the physical
@@ -4867,23 +4619,13 @@ Bento spine offsets retain their animation rather than becoming extra hinges.
 The shared gizmo shows translation arrows/planes by default, with no toggle.
 Ctrl exposes rotation rings; Shift hides the gizmo for free point translation.
 Ctrl wins when both modifiers are held. The grabbed gizmo operation stays
-fixed until mouse release if either modifier changes. Virtual
-and real-bone renderers share the manipulator without cancelling each other's
-drag state.
-Point hit areas take precedence over idle gizmo axes. Selected virtual points
-win virtual overlaps; covered point areas pass clicks through to the owning
-control rather than reserving an otherwise passive background layer.
-Remote-avatar authoring stays hidden while runtime compatibility is retained.
+fixed until mouse release if either modifier changes.
+Point hit areas take precedence over idle gizmo axes; covered point areas
+pass clicks through to the owning control rather than reserving an otherwise
+passive background layer.
 The default Human display shows the torso/head, arms and legs. Four auxiliary
 Bento spine joints have their own opt-in display group; hidden spine pairs
 are skipped only for overlay connections, without changing rig transforms.
-
-Authoring opens independently of script sources; imports are explicit.
-`scene/ik.rs::EditRequest::suppress_script_ik` locally masks received goals
-without suppressing editor goals or changing publisher/lease state. Runtime
-targets keep updating under the frozen animation pose, so unmasking or
-closing restores their current state. Runtime activation policy remains in
-the LSL template, outside the authoring UI.
 
 `scene/anim/legacy_grounding.rs` corrects the native standing/crouching
 motions before animation blending and captures native stand-up recovery's
@@ -4898,8 +4640,6 @@ solver shares the analytic two-segment math in `scene/hand_ik.rs`.
 Explicit IK is applied after additive animation and the selected automatic
 foot placement, without writing either correction into the held animation channels.
 IK Edit suspends automatic foot placement before capturing its frozen source.
-Cross-avatar target refresh retains terrain evaluation and advances body
-physics once from the final constrained pose, within the parallel pose jobs.
 
 ## Avatar Studio
 

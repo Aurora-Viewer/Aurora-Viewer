@@ -7,9 +7,8 @@ The human validated the local demo on 2026-10-23 and authorized main integration
 
 The poser edits joint rotations and scales directly and moves joints through
 their articulated ancestor chains. It reuses the shaped Bento
-skeleton and transform tools from the IK editor; it does not evaluate IK
-projects or create bone-to-prim/bone bindings. Its selection, overlays and
-pose history are independent of the binding editor and virtual controls.
+skeleton and transform tools from the IK editor. Its selection, overlays and
+pose history are independent of IK Edit's.
 
 ## Posing
 
@@ -313,11 +312,11 @@ ignored tests. The suite used one test thread on the shared PC. Twenty-three pos
 regressions cover actual pointer actions for both hands, visible scroll
 clips, scaled text and window stability, pose/BVH/native files, eligibility,
 history and authenticated consent lifetime. Rotation and articulated movement drags create one undo
-step; idle controls preserve exact values, and stale IK bindings/virtual
-controls cannot affect the poser. Camera orbit/roll is checked against
+step; idle controls preserve exact values, and stale IK Edit goals cannot
+affect the poser. Camera orbit/roll is checked against
 projected axes; pointer tests cover axis/uniform scale drags and tab-exclusive
-marker sets. Seventeen native poser scenarios and a
-separate IK bindings regression were inspected, with zero runtime errors.
+marker sets. Seventeen native poser scenarios were inspected, with zero
+runtime errors.
 This does not validate real two-client LSL delivery.
 
 Offline demos use `AURORA_DEMO=1` and `AURORA_DEMO_POSER=` with `self`,

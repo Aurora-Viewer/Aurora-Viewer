@@ -49,7 +49,6 @@ pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
-pub mod hand_ik;
 pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
@@ -100,8 +99,6 @@ pub mod region_messages;
 pub mod region_restart;
 pub mod region_titles;
 pub mod region_tracker;
-pub mod rig_graph;
-pub mod rig_targets;
 pub mod rlva;
 pub mod rlva_selftest;
 pub mod script_debug;
@@ -495,9 +492,6 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
-    /// Session-only local contacts from our own seated vehicle.
-    pub hand_contacts: hand_ik::Contacts,
-    pub ik_targets: rig_targets::Targets,
     pub(crate) scripted_camera: crate::camera::follow::Sources,
     /// When the clocks of the regions were last advanced (`advance_motion`).
     motion_tick: Instant,
@@ -913,8 +907,6 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
-    /// Whose shared portals are shown (from the settings, `portals::Sources`).
-    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
@@ -1163,8 +1155,6 @@ impl World {
             poser_consent: poser_consent::State::default(),
             portals: portals::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
-            hand_contacts: hand_ik::Contacts::default(),
-            ik_targets: rig_targets::Targets::default(),
             rlva: rlva::Rlva::default(),
             rlva_privacy: Default::default(),
             rlva_name_privacy: Default::default(),
@@ -1250,7 +1240,6 @@ impl World {
             arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
-            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
@@ -3541,7 +3530,6 @@ impl World {
                     }
                 }
                 self.move_rekeyed();
-                self.retry_ik_declarations(Instant::now());
                 if land_changed {
                     self.land.objects_changed(handle, Instant::now());
                 }
@@ -5068,9 +5056,6 @@ impl World {
             return;
         }
         if self.object_chat_filtered(&c) {
-            return;
-        }
-        if self.receive_hand_contacts(&c, Instant::now()) {
             return;
         }
         // process_chat_from_simulator: before the debug channel takes its
