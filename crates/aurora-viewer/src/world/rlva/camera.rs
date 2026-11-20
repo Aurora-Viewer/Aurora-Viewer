@@ -1,17 +1,16 @@
 //! Camera modifiers share the RLVa exclusive owner and remain session-local.
-use super::{Command, Param, Rlva};
+use super::{Command, Param, Rlva, numeric};
 use crate::camera::CameraSettings;
 use glam::Vec3;
 use uuid::Uuid;
 
+/// RlvCommandOptionHelper::parseOption<LLVector3> (rlvhelper.cpp):
+/// `sscanf("%f/%f/%f")`, what follows the third number ignored. The Legacy
+/// Viewer also takes `inf` and `nan` and moves its camera or colours with
+/// them; a vector that is not finite is refused here instead.
 pub fn vector(text: &str) -> Option<Vec3> {
-    let mut parts = text.split('/');
-    let p = Vec3::new(
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    );
-    (parts.next().is_none() && p.is_finite()).then_some(p)
+    let p = Vec3::from_array(numeric::scan_floats::<3>(text)?);
+    p.is_finite().then_some(p)
 }
 
 /// What RLVa holds of the avatar's own view. The camera reads it once a
@@ -49,23 +48,30 @@ pub struct FocusRequest {
 }
 
 impl FocusRequest {
+    /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>::onCommand (rlvhandler.cpp):
+    /// the option split on every ';' (RlvCommandOptionHelper::
+    /// parseStringList, tokens after the third ignored), a key (LLUUID::set)
+    /// or a region position, then a distance (`std::stof`) and a direction.
+    /// A distance that is not finite is refused: the Legacy Viewer would
+    /// place its camera at an infinite or NaN position.
     pub fn parse(text: &str) -> Option<Self> {
-        let mut parts = text.split(';');
-        let target = parts.next()?;
-        let target = Uuid::parse_str(target)
-            .ok()
-            .map(FocusTarget::Object)
-            .or_else(|| vector(target).map(FocusTarget::Position))?;
-        let distance = parts.next().filter(|v| !v.is_empty()).map(str::parse::<f32>).transpose().ok()?;
-        if distance.is_some_and(|v| !v.is_finite()) {
+        if text.is_empty() {
             return None;
         }
-        let direction = parts
-            .next()
-            .filter(|v| !v.is_empty())
-            .map(vector)
-            .map_or(Some(None), |v| v.map(Some))?;
-        parts.next().is_none().then_some(Self {
+        let mut parts = text.split(';');
+        let target = parts.next()?;
+        let target = numeric::uuid_set(target)
+            .map(FocusTarget::Object)
+            .or_else(|| vector(target).map(FocusTarget::Position))?;
+        let distance = match parts.next().filter(|v| !v.is_empty()) {
+            Some(v) => Some(numeric::finite(numeric::stof(v))?),
+            None => None,
+        };
+        let direction = match parts.next().filter(|v| !v.is_empty()) {
+            Some(v) => Some(vector(v)?),
+            None => None,
+        };
+        Some(Self {
             target,
             distance,
             direction,
@@ -85,13 +91,11 @@ impl FocusRequest {
     }
 }
 
-/// RlvCommandOptionAdjustHeight: the one-value form is centimetres; the
-/// extended form adjusts the current pelvis-to-foot measurement.
+/// RlvCommandOptionAdjustHeight (rlvhelper.cpp): the one-value form is
+/// centimetres; the extended form adjusts the current pelvis-to-foot
+/// measurement. Each value is read by LLStringUtil::convertToF32.
 pub fn height_offset(text: &str, pelvis_to_foot: f32) -> Option<f32> {
-    let parts: Vec<_> = text.split(';').map(str::parse::<f32>).collect::<Result<_, _>>().ok()?;
-    if parts.iter().any(|v| !v.is_finite()) {
-        return None;
-    }
+    let parts: Vec<_> = text.split(';').map(numeric::convert_to_f32).collect::<Option<_>>()?;
     let offset = match parts.as_slice() {
         [value] => *value / 100.0,
         [height, factor] => (height - pelvis_to_foot) * factor,
@@ -115,7 +119,8 @@ impl Rlva {
                 // different id.
                 Some(aurora_prim::te::IMG_DEFAULT)
             } else {
-                Uuid::parse_str(value).ok()
+                // A key modifier: LLUUID::parseUUID.
+                numeric::parse_uuid(value)
             }
         })
     }
@@ -213,18 +218,26 @@ impl Rlva {
             .flat_map(|(id, rules)| rules.iter().map(move |r| (*id, r)))
             .filter(|(_, r)| super::canonical(&r.behaviour) == name)
             .filter_map(|(id, r)| {
+                // RlvBehaviourCamZoomMinMaxHandler::onCommand stores
+                // DEFAULT_FIELD_OF_VIEW / multiplier; the others the
+                // `std::stof` value. A limit that is not finite (a zero
+                // multiplier, `inf`, `nan`) is left out: the Legacy Viewer
+                // would clamp its view with it.
                 let value = if r.behaviour.starts_with("camzoom") && r.option.is_empty() {
                     Some(1.0)
                 } else {
-                    r.option.parse::<f32>().ok()
+                    numeric::stof(&r.option)
                 };
-                value.map(|v| {
-                    if r.behaviour.starts_with("camzoom") {
-                        (std::f32::consts::FRAC_PI_3 / v, id)
-                    } else {
-                        (v, id)
-                    }
-                })
+                value
+                    .map(|v| {
+                        if r.behaviour.starts_with("camzoom") {
+                            std::f32::consts::FRAC_PI_3 / v
+                        } else {
+                            v
+                        }
+                    })
+                    .filter(|v| v.is_finite())
+                    .map(|v| (v, id))
             });
         super::modifiers::best(values, largest)
     }
@@ -291,8 +304,7 @@ impl Rlva {
             focus_offset: self.camera_value("setcam_focusoffset").and_then(vector),
             eye_offset_scale: self
                 .camera_value("setcam_eyeoffsetscale")
-                .and_then(|v| v.parse::<f32>().ok())
-                .filter(|v| v.is_finite()),
+                .and_then(|v| numeric::finite(numeric::stof(v))),
             no_mouselook: !self.can_mouselook(),
             preset_locked: self.camera_preset_locked(Uuid::nil()),
         }
@@ -336,7 +348,7 @@ impl Rlva {
             } else {
                 self.camera_values.remove(&c.behaviour);
             }
-        } else if (vector && self::vector(&c.option).is_some()) || (!vector && c.option.parse::<f32>().is_ok_and(f32::is_finite)) {
+        } else if (vector && self::vector(&c.option).is_some()) || (!vector && numeric::finite(numeric::stof(&c.option)).is_some()) {
             self.camera_values.insert(c.behaviour.clone(), c.option.clone());
         }
         true
@@ -370,7 +382,7 @@ impl Rlva {
         if let Some(v) = view.eye_offset_scale {
             s.offset_scale = v;
         }
-        if let Some(v) = self.camera_value("setcam_fov").and_then(|v| v.parse::<f32>().ok()) {
+        if let Some(v) = self.camera_value("setcam_fov").and_then(|v| numeric::finite(numeric::stof(v))) {
             s.fov = v;
         }
         if let Some((low, high)) = self.camera_fov_limits(aspect) {

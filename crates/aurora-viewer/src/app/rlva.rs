@@ -76,6 +76,25 @@ impl App {
             .any(|frame| frame.blocks_touch && self.ui_image_masks.get(&frame.texture).is_none_or(|mask| mask.hit(u, v)))
     }
 
+    /// LLStartUp's state for RLVa: started when the login begins, its
+    /// commands retained until the world is shown (STATE_STARTED).
+    fn rlva_phase(&self) -> crate::world::rlva::startup::Phase {
+        use crate::world::rlva::startup::Phase;
+        match self.screen {
+            super::Screen::Login => Phase::Login,
+            super::Screen::Loading { .. } => Phase::Loading,
+            super::Screen::World => Phase::Started,
+        }
+    }
+
+    /// RLVa on or off and its settings, before a command is checked: the
+    /// ones read once keep the values RLVa started with.
+    pub(super) fn rlva_sync_settings(&mut self) {
+        self.world.rlva_configure(self.settings.rlva_enabled);
+        let phase = self.rlva_phase();
+        self.world.rlva.apply_preferences(&self.settings.rlva, phase);
+    }
+
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         if std::mem::take(&mut self.world.rlva.im.remember) {
@@ -85,7 +104,8 @@ impl App {
             }
         }
         self.world.rlva_configure(self.settings.rlva_enabled);
-        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        let phase = self.rlva_phase();
+        self.world.rlva_startup(phase, &self.settings.rlva, Instant::now());
         if !self.settings.rlva_enabled || !self.settings.rlva.im_queries {
             self.world
                 .notifications
@@ -688,7 +708,7 @@ impl App {
             );
         }
         if mode == "tools-closed" && self.frame_count == 810 {
-            self.world.rlva.close_console();
+            self.world.rlva.close_console(self.world.agent_id);
             self.options_ui.rlva_tools.open = false;
             log::info!(
                 "RLVa console demo: closed, fly={}, other_jump={}",
@@ -883,7 +903,9 @@ impl App {
         if !self.world.rlva.enabled() || self.world.rlva.has_except("setenv", actor) {
             return;
         }
-        let asset = if let Ok(id) = Uuid::parse_str(&command.option) {
+        // LLUUID::set (RlvEnvironment, rlvenvironment.cpp): a key, else a
+        // library preset by name.
+        let asset = if let Some(id) = crate::world::rlva::numeric::uuid_set(&command.option).filter(|id| !id.is_nil()) {
             Some(id)
         } else {
             let root = self.world.inventory.lib_root;
@@ -969,6 +991,18 @@ impl App {
             camera::{FocusRequest, FocusTarget},
         };
         for (actor, c) in std::mem::take(&mut self.world.rlva.viewer) {
+            // @version*, @getstatus* and @getcommand queued behind these to
+            // keep the replies in order, with the rules they were received
+            // under
+            if let Param::Reply(channel) = c.param {
+                let live = self.world.rlva.rewind(&c);
+                let text = self.world.rlva.inline_reply(actor, &c);
+                self.world.rlva.resume(live);
+                if let Some(text) = text {
+                    self.world.rlva.reply(channel, &c.behaviour, text);
+                    continue;
+                }
+            }
             if c.behaviour.starts_with("getdebug_") {
                 if let Param::Reply(channel) = c.param {
                     let text = match c.behaviour.as_str() {

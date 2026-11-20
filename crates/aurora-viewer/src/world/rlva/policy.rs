@@ -514,19 +514,41 @@ impl World {
         pending: &mut std::vec::IntoIter<(Uuid, super::Command)>,
         commands: &mut Vec<(Uuid, NetCommand)>,
     ) -> bool {
+        // A @notify line told while this queue waited: sent in its place,
+        // behind the camera and debug commands queued before it.
+        if c.behaviour == super::NOTICE {
+            if let super::Param::Reply(channel) = c.param {
+                if self.rlva.viewer.is_empty() {
+                    self.rlva.reply(channel, "notify", c.option);
+                } else if self.rlva.viewer.len() < super::MAX_QUEUED {
+                    self.rlva.viewer.push((source, c));
+                }
+            }
+            return true;
+        }
         if !self.rlva.controllers.accepts(source, c.param) {
             return true;
         }
         if self.rlva_environment_command(source, &c) {
             return true;
         }
+        // A reply from RLVa's own state, queued to keep the order of the
+        // replies: it reads the rules it was received under (`rewind`).
+        if let super::Param::Reply(channel) = c.param
+            && self.rlva.viewer.is_empty()
+            && let Some(text) = self.rlva.inline_reply(source, &c)
+        {
+            self.rlva.reply(channel, &c.behaviour, text);
+            return true;
+        }
         if c.behaviour.starts_with("getcam_")
+            || (matches!(c.param, super::Param::Reply(_)) && !self.rlva.viewer.is_empty() && self.rlva.inline_reply(source, &c).is_some())
             || c.behaviour.starts_with("setcam_")
             || c.behaviour.starts_with("getdebug_")
             || c.behaviour.starts_with("setdebug_")
             || matches!(c.behaviour.as_str(), "adjustheight" | "getheightoffset")
         {
-            if self.rlva.viewer.len() < 256 {
+            if self.rlva.viewer.len() < super::MAX_QUEUED {
                 self.rlva.viewer.push((source, c));
             }
             return true;
@@ -600,9 +622,9 @@ impl World {
             // it the null key, which no option is too (LLUUID::set).
             "sitground" => self.rlva_force_ground_sit(source),
             "sit" if c.option.is_empty() => self.rlva_force_ground_sit(source),
-            "sit" => match Uuid::parse_str(&c.option) {
-                Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
-                Ok(id) => self
+            "sit" => match super::numeric::uuid_set(&c.option) {
+                Some(id) if id.is_nil() => self.rlva_force_ground_sit(source),
+                Some(id) => self
                     .objects
                     .index_of_uuid(&id)
                     .and_then(|i| self.objects.get(i))
@@ -611,12 +633,12 @@ impl World {
                         target: o.full_id,
                         offset: Vec3::ZERO,
                     }),
-                Err(_) => None,
+                None => None,
             },
+            // RlvExtGetSet::processCommand (rlvextensions.cpp):
+            // LLStringUtil::convertToF32, which never reads `inf` or `nan`.
             "setrot" => {
-                if let Ok(angle) = c.option.parse::<f32>()
-                    && angle.is_finite()
-                {
+                if let Some(angle) = super::numeric::convert_to_f32(&c.option) {
                     self.agent.yaw = std::f32::consts::FRAC_PI_2 - angle;
                 }
                 None
@@ -652,33 +674,40 @@ impl World {
     }
 }
 
-fn teleport(option: &str) -> Option<NetCommand> {
-    // RlvForceHandler<TPTO> retains double precision until the region origin
-    // is removed and rotates the look vector by the optional radian angle.
+pub(super) fn teleport(option: &str) -> Option<NetCommand> {
+    use super::numeric;
+    // RlvForceHandler<RLV_BHVR_TPTO>::onCommand (rlvhandler.cpp): the option
+    // split on every ';' (tokens after the second ignored), the angle read by
+    // `std::stof`; a global position read by `sscanf("%lf/%lf/%lf")` keeps
+    // double precision until the region origin is removed; otherwise
+    // `<region>/<x>/<y>/<z>`, the position read by `sscanf("%f/%f/%f")`.
+    // A value that is not finite is refused: the Legacy Viewer would send it.
+    if option.is_empty() {
+        return None;
+    }
     let mut options = option.split(';');
     let destination = options.next()?;
     let look_at = match options.next() {
         Some(angle) => {
-            let angle = angle.parse::<f32>().ok()?;
-            if !angle.is_finite() {
-                return None;
-            }
+            let angle = numeric::finite(numeric::stof(angle))?;
             let (sin, cos) = angle.sin_cos();
             Vec3::new(cos, sin, 0.0)
         }
         None => Vec3::ZERO,
     };
-    let parts: Vec<_> = destination.split('/').collect();
-    let (name, coordinates) = match parts.as_slice() {
-        [x, y, z] => (None, [*x, *y, *z]),
-        [region, x, y, z] if !region.is_empty() => (Some(*region), [*x, *y, *z]),
-        _ => return None,
+    let (name, p) = if let Some(global) = numeric::scan_doubles::<3>(destination) {
+        (None, glam::DVec3::from_array(global))
+    } else {
+        let parts: Vec<_> = destination.split('/').collect();
+        let [region, ..] = parts.as_slice() else {
+            return None;
+        };
+        if parts.len() != 4 || region.is_empty() {
+            return None;
+        }
+        let local = numeric::scan_floats::<3>(&destination[region.len() + 1..])?;
+        (Some(*region), glam::Vec3::from_array(local).as_dvec3())
     };
-    let p = glam::DVec3::new(
-        coordinates[0].parse().ok()?,
-        coordinates[1].parse().ok()?,
-        coordinates[2].parse().ok()?,
-    );
     if !p.is_finite() {
         return None;
     }

@@ -4,13 +4,14 @@
 use super::{super::World, Rlva};
 use uuid::Uuid;
 
-/// rlvParseNotifyOption (rlvhandler.cpp): the channel, then an optional
-/// filter; a third token makes the option invalid.
+/// rlvParseNotifyOption (rlvhandler.cpp): the channel, read by
+/// LLStringUtil::convertToS32 (blanks around it, text after the number),
+/// then an optional filter; a third token makes the option invalid.
 pub(super) fn notification_option(option: &str) -> Option<(i32, &str)> {
     let mut tokens = option.split(';');
-    let channel = tokens.next()?.parse::<i32>().ok()?;
+    let channel = super::numeric::convert_to_s32(tokens.next()?)?;
     let filter = tokens.next().unwrap_or_default();
-    (tokens.next().is_none() && channel > 0 && channel != i32::MAX).then_some((channel, filter))
+    (tokens.next().is_none() && super::valid_reply_channel(channel)).then_some((channel, filter))
 }
 
 impl Rlva {
@@ -32,7 +33,30 @@ impl Rlva {
             .map(|(channel, _)| channel)
             .collect();
         for channel in channels {
-            self.reply(channel, "notify", format!("/{subject}{suffix}"));
+            self.notice_reply(channel, format!("/{subject}{suffix}"));
+        }
+    }
+
+    /// RlvBehaviourNotifyHandler sends its line when RlvHandler processes
+    /// the command or the event, after the answers to the queries before
+    /// it: a line told while queries wait here waits behind them, as a
+    /// queued entry that only sends it (`NOTICE`). It belongs to no issuer,
+    /// so that a release before the queue drains does not take it back.
+    fn notice_reply(&mut self, channel: i32, text: String) {
+        let notice = || super::Command {
+            behaviour: super::NOTICE.to_owned(),
+            option: text.clone(),
+            strict: false,
+            param: super::Param::Reply(channel),
+            environment_locked: false,
+            received: super::Received::default(),
+        };
+        if !self.pending.is_empty() && self.pending.len() < super::MAX_QUEUED {
+            self.pending.push((Uuid::nil(), notice()));
+        } else if self.pending.is_empty() && !self.viewer.is_empty() && self.viewer.len() < super::MAX_QUEUED {
+            self.viewer.push((Uuid::nil(), notice()));
+        } else {
+            self.reply(channel, "notify", text);
         }
     }
 

@@ -80,6 +80,7 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
 
 /// Discovery uses the same property table as command dispatch, including
 /// legacy components and the environment-selection write extensions.
+#[cfg(test)]
 pub fn command_names(set: bool) -> Vec<String> {
     let prefix = if set { "setenv_" } else { "getenv_" };
     let mut names: Vec<_> = SCALARS
@@ -104,8 +105,12 @@ pub fn command_names(set: bool) -> Vec<String> {
     names
 }
 
+/// RlvCommandOptionHelper::parseOption<float> (rlvhelper.cpp), as
+/// RlvEnvironment::handleSetFn and the legacy component setters
+/// (rlvenvironment.cpp) read a value: `std::stof`. A value that is not
+/// finite is refused: the Legacy Viewer would draw its sky with it.
 fn number(text: &str) -> Option<f32> {
-    text.parse::<f32>().ok().filter(|v| v.is_finite())
+    super::numeric::finite(super::numeric::stof(text))
 }
 fn color<'a>(s: &'a mut SkyFrame, name: &str) -> Option<(&'a mut Vec3, f32)> {
     Some(match name {
@@ -190,8 +195,13 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
     }
     if name == "cloudscroll" {
         if let Some(v) = value {
-            let (x, y) = v.split_once('/')?;
-            s.cloud_scroll_rate = glam::Vec2::new(number(x)?, number(y)?);
+            // parseOption<LLVector2>: `sscanf("%f/%f")`.
+            let [x, y] = super::numeric::scan_floats::<2>(v)?;
+            let rate = glam::Vec2::new(x, y);
+            if !rate.is_finite() {
+                return None;
+            }
+            s.cloud_scroll_rate = rate;
         }
         return Some(format!("{:.6}/{:.6}", s.cloud_scroll_rate.x, s.cloud_scroll_rate.y));
     }
@@ -203,7 +213,8 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
     };
     if let Some(field) = texture {
         if let Some(v) = value {
-            *field = Uuid::parse_str(v).ok()?;
+            // parseOption<LLUUID>: LLUUID::set, where nothing is the null key.
+            *field = super::numeric::uuid_set(v)?;
         }
         return Some(field.to_string());
     }

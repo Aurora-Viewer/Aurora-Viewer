@@ -165,13 +165,16 @@ pub struct Visuals {
     pub sphere_order: Vec<Uuid>,
 }
 
+/// RlvBehaviourModifier::convertOptionValue (rlvhelper.cpp) for a float
+/// modifier: `std::stof`. A value that is not finite is refused: the Legacy
+/// Viewer passes it to its shader.
 fn scalar(text: &str) -> Option<f32> {
-    text.parse::<f32>().ok().filter(|v| v.is_finite())
+    super::numeric::finite(super::numeric::stof(text))
 }
 
+/// The same for LLVector3 and LLVector4 modifiers: `sscanf("%f/%f/...")`.
 fn vector<const N: usize>(text: &str) -> Option<[f32; N]> {
-    let values = text.split('/').map(scalar).collect::<Option<Vec<_>>>()?;
-    values.try_into().ok()
+    super::numeric::scan_floats::<N>(text).filter(|v| v.iter().all(|v| v.is_finite()))
 }
 
 fn format_values(values: &[f32]) -> String {
@@ -244,7 +247,8 @@ impl Visuals {
                     if query {
                         return Some(effect.texture.to_string());
                     }
-                    if let Ok(texture) = Uuid::parse_str(&c.option) {
+                    // A key modifier: LLUUID::parseUUID.
+                    if let Some(texture) = super::numeric::parse_uuid(&c.option) {
                         effect.texture = texture;
                     }
                 }
@@ -280,7 +284,9 @@ impl Visuals {
                 if query {
                     return Some(value.to_string());
                 }
-                if let Ok(new) = c.option.parse::<u32>()
+                // An int modifier: `std::stoi`. The Legacy Viewer casts any
+                // value to its mode enum; one outside the modes is refused.
+                if let Some(new) = super::numeric::stoi(&c.option).and_then(|v| u32::try_from(v).ok())
                     && new <= max
                 {
                     *value = new;

@@ -371,20 +371,25 @@ fn rlva_debug_resolution_writes_are_allowlisted_locked_ordered_and_released() {
     assert_eq!(r.resolution_divisor, Some(12));
     assert_eq!(writes[1].1.behaviour, "getdebug_renderresolutiondivisor");
     let force = |value| Command::parse(&format!("setdebug_renderresolutiondivisor:{value}=force")).unwrap();
-    for value in ["-1", "NaN", "4294967296", "2.5"] {
+    // LLStringUtil::convertToU32: no NaN, no overflow, no "default"
+    for value in ["NaN", "4294967296", "default", ""] {
         r.debug_force(A, &force(value));
     }
     assert_eq!(r.resolution_divisor, Some(12));
     r.debug_force(B, &force("4"));
     assert_eq!(r.resolution_divisor, Some(12), "another issuer cannot bypass the debug lock");
-    r.debug_force(A, &force("default"));
-    assert_eq!(r.resolution_divisor, None);
+    r.debug_force(A, &force("2.5"));
+    assert_eq!(r.resolution_divisor, Some(2), "what follows the number is ignored");
     r.debug_force(A, &force("4"));
     r.configure(false);
     assert_eq!(r.resolution_divisor, None);
     r.debug_force(A, &force("4"));
     assert_eq!(r.resolution_divisor, None);
-    assert!(command_list("renderresolutiondivisor;force").contains("setdebug_renderresolutiondivisor"));
+    assert_eq!(
+        command_list("renderresolutiondivisor;force"),
+        "",
+        "@setdebug_ names are not dictionary entries"
+    );
 }
 
 #[test]
@@ -1255,9 +1260,11 @@ fn rlva_camera_focus_defaults_fit_objects_and_positions_without_changing_identit
     assert!(position.camera(at, Vec3::ZERO, at).unwrap().distance(at) < 0.002);
     let explicit = FocusRequest::parse(&format!("{TARGET};4;0/0/-2")).unwrap();
     assert_eq!(explicit.camera(at, Vec3::ZERO, at).unwrap(), at - Vec3::Z * 4.0);
-    for text in ["", "10/20/NaN", "10/20/30;NaN", "10/20/30;;1/0", "10/20/30;4;1/0/0;extra"] {
+    for text in ["", "10/20/NaN", "10/20/30;NaN", "10/20/30;;1/0"] {
         assert!(FocusRequest::parse(text).is_none(), "{text}");
     }
+    // RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: the tokens after the third are ignored
+    assert!(FocusRequest::parse("10/20/30;4;1/0/0;extra").is_some());
 }
 
 #[test]
@@ -1289,10 +1296,9 @@ fn rlva_command_discovery_includes_strict_and_supported_environment_variants() {
     for set in [false, true] {
         let commands = environment::command_names(set);
         assert!(commands.iter().all(|name| environment::supports(name, set)));
-        let listed = command_list(if set { "setenv_;force" } else { "getenv_;reply" });
-        for name in commands {
-            assert!(listed.split(';').any(|n| n == name), "{name}");
-        }
+        // RlvBehaviourDictionary::getCommands lists dictionary entries only:
+        // the @setenv_/@getenv_ names are handled by RlvEnvironment.
+        assert_eq!(command_list(if set { "setenv_;force" } else { "getenv_;reply" }), "");
     }
     let mut r = enabled();
     command(&mut r, A, "@setcam_fov_sec:1=force,getcam_fov_sec=123,getenv_daytime_sec=123");

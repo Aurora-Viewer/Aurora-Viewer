@@ -5061,13 +5061,18 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        // process_chat_from_simulator (llviewermessage.cpp) returns for a
+        // blocked object, or an object of a blocked owner, before anything
+        // else: its RLVa commands never reach RlvHandler either.
+        if c.source_type == aurora_net::ChatSourceType::Object && self.chat_blocked(&c) {
+            return;
+        }
         let controller_allowed = self.rlva_controller_chat_allowed(c.source_id);
         if c.source_type == aurora_net::ChatSourceType::Object
             && c.chat_type == aurora_net::ChatType::OwnerSay
             && c.message.starts_with('@')
             && controller_allowed
         {
-            self.rlva_bind_controller(c.source_id);
             self.rlva_prepare_version(c.source_id, &c.message);
         }
         if controller_allowed && self.rlva.receive(&c) {
@@ -5083,8 +5088,21 @@ impl World {
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
             self.refresh_rlva_privacy();
             self.rlva_watchdog_tick(Instant::now());
+            // RestrainedLoveDebug: process_chat_from_simulator shows what
+            // ran, failed or was retained as the object's chat line
+            let Some(line) = self.rlva.take_debug_line() else {
+                return;
+            };
+            let mut c = c;
+            c.message = line;
+            self.on_chat_line(c);
             return;
         }
+        self.on_chat_line(c);
+    }
+
+    /// An object's or a resident's chat line, past the RLVa commands.
+    fn on_chat_line(&mut self, c: ChatMessage) {
         let mut c = c;
         // `@shownames` and `@showloc` rewrite what an object or the system
         // says, never what a resident typed ("avatar => filter only their

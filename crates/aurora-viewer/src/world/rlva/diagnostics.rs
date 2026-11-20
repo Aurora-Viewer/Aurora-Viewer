@@ -1,7 +1,7 @@
 //! RlvFloaterConsole / RlvFloaterBehaviours (rlvfloaters.cpp, LGPL 2.1).
 //! Console commands use the agent as their issuer. Channel zero is local
 //! console output only for that issuer, never an object-script reply channel.
-use super::{super::World, Rlva};
+use super::{super::World, Command, Param, Rlva};
 use crate::world::inventory::asset_ids::AssetIds;
 use std::{borrow::Cow, collections::VecDeque};
 use uuid::Uuid;
@@ -15,6 +15,8 @@ pub enum Outcome {
     Unset,
     Rejected,
     Reply,
+    /// Kept until the login completes (RLV_RET_RETAINED).
+    Retained,
 }
 
 pub struct Entry {
@@ -42,6 +44,14 @@ fn replies_asset(behaviour: &str) -> bool {
     )
 }
 
+/// A key in any form someone may type: the Rust forms and the Legacy ones
+/// (LLUUID::parseUUID), so that no form of a texture id gets past the rule.
+fn any_key(text: &str) -> Option<Uuid> {
+    Uuid::parse_str(text)
+        .ok()
+        .or_else(|| super::numeric::parse_uuid(text).filter(|id| !id.is_nil()))
+}
+
 impl Entry {
     /// The text the console shows: every texture id it holds goes through the
     /// asset id rule (`hidden-`), in a command's option, in a rule that
@@ -51,9 +61,9 @@ impl Entry {
     /// only taken when the entry holds such an id.
     pub fn shown<'a>(&'a self, ids: impl FnOnce() -> &'a AssetIds) -> Cow<'a, str> {
         if self.asset {
-            return match Uuid::parse_str(self.text.trim()) {
-                Ok(id) => Cow::Owned(ids().id(id).to_string()),
-                Err(_) => Cow::Borrowed(&self.text),
+            return match any_key(self.text.trim()) {
+                Some(id) => Cow::Owned(ids().id(id).to_string()),
+                None => Cow::Borrowed(&self.text),
             };
         }
         let text = self.text.as_str();
@@ -65,7 +75,7 @@ impl Entry {
             let option_start = colon + 1;
             let option_end = text[option_start..].find(is_delimiter).map_or(text.len(), |at| option_start + at);
             if ASSET_OPTIONS.contains(&super::canonical(&text[name_start..colon].to_ascii_lowercase()))
-                && let Ok(id) = Uuid::parse_str(&text[option_start..option_end])
+                && let Some(id) = any_key(&text[option_start..option_end])
             {
                 found.push((option_start..option_end, id));
             }
@@ -132,11 +142,14 @@ impl Rlva {
         }
     }
 
-    /// Closing the console releases its own locks/modifiers and pending work;
-    /// it cannot clear another controller. No diagnostic data is persisted.
-    pub fn close_console(&mut self) {
-        if let Some(source) = self.diagnostics.console_source.take() {
-            self.forget(source);
+    /// RlvFloaterConsole::onClose (rlvfloaters.cpp): closing the console
+    /// clears the agent's own locks, modifiers and pending work, never
+    /// another controller's, with the "/clear" every @notify listener hears.
+    /// No diagnostic data is persisted.
+    pub fn close_console(&mut self, agent: Uuid) {
+        let source = self.diagnostics.console_source.take().unwrap_or(agent);
+        if !source.is_nil() {
+            self.clear_issuer(source);
         }
     }
 }
@@ -161,6 +174,123 @@ impl World {
             from_name: String::new(),
             message: text.to_owned(),
         }));
+    }
+}
+
+/// The RestrainedLoveDebug line process_chat_from_simulator
+/// (llviewermessage.cpp) puts in nearby chat for an OwnerSay of commands.
+#[derive(Default)]
+pub(super) struct DebugLine {
+    executed: String,
+    failed: String,
+    retained: String,
+}
+
+impl DebugLine {
+    /// One command, `text` as the comma split gave it, with
+    /// RlvStrings::getStringFromReturnCode's suffix.
+    pub(super) fn push(&mut self, outcome: Outcome, text: &str, failure: Option<&str>) {
+        let (list, suffix) = match outcome {
+            Outcome::Retained => (&mut self.retained, None),
+            Outcome::Rejected => (&mut self.failed, failure),
+            Outcome::Duplicate => (&mut self.executed, Some("duplicate")),
+            Outcome::Unset => (&mut self.executed, Some("unset")),
+            Outcome::Input | Outcome::Processed | Outcome::Queued | Outcome::Reply => (&mut self.executed, None),
+        };
+        if !list.is_empty() {
+            list.push(',');
+        }
+        list.push_str(text);
+        if let Some(suffix) = suffix {
+            list.push_str(" (");
+            list.push_str(suffix);
+            list.push(')');
+        }
+    }
+
+    /// The chat text: one verb when one list holds everything, else the
+    /// commands as received and a line per list. `message` is the OwnerSay
+    /// in lower case, without its '@'.
+    pub(super) fn finish(self, message: &str) -> Option<String> {
+        let lists = [&self.executed, &self.failed, &self.retained];
+        match lists.map(|list| !list.is_empty()) {
+            [false, false, false] => None,
+            [true, false, false] => Some(format!(" executes: @{}", self.executed)),
+            [false, true, false] => Some(format!(" failed: @{}", self.failed)),
+            [false, false, true] => Some(format!(" retained: @{}", self.retained)),
+            _ => {
+                let mut text = format!(": @{message}");
+                for (verb, list) in [("executed", &self.executed), ("failed", &self.failed), ("retained", &self.retained)] {
+                    if !list.is_empty() {
+                        text.push_str(&format!("\n    - {verb}: @{list}"));
+                    }
+                }
+                Some(text)
+            }
+        }
+    }
+}
+
+impl Rlva {
+    /// Whether RestrainedLoveDebug lists this outcome
+    /// (RestrainedLoveDebugHideUnsetDup hides the unset and duplicate ones).
+    pub(super) fn debug_lists(&self, outcome: Outcome) -> bool {
+        self.preferences.debug_commands
+            && !self.startup.replaying
+            && (!self.preferences.debug_hide_unset_duplicate || !matches!(outcome, Outcome::Duplicate | Outcome::Unset))
+    }
+
+    /// The RLV_RET_FAILED_* code of a refused command, as
+    /// RlvStrings::getStringFromReturnCode (rlvcommon.cpp) words it: the
+    /// checks of RlvHandler::processCommand and its processors, in their
+    /// order. None is a plain RLV_RET_FAILED, which has no suffix.
+    pub(super) fn failure(&self, source: Uuid, c: Option<&Command>) -> Option<&'static str> {
+        let blocked = |param| !self.controllers.accepts(source, param);
+        let Some(c) = c else {
+            return Some(if blocked(Param::Add) { "blocked object" } else { "thingy error" });
+        };
+        if blocked(c.param) {
+            return Some("blocked object");
+        }
+        if c.behaviour == "setenv" && matches!(c.param, Param::Add | Param::Remove) && !self.preferences.allow_environment_locks {
+            return Some("disabled command");
+        }
+        let available = self.preferences.command_available(&c.behaviour);
+        match c.param {
+            Param::Add | Param::Remove => {
+                if !available || !super::RESTRICTIONS.contains(&c.behaviour.as_str()) || (c.strict && !super::supports_strict(&c.behaviour))
+                {
+                    Some("invalid param")
+                } else if c.param == Param::Add
+                    && matches!(c.behaviour.as_str(), "setcam" | "setenv" | "setdebug")
+                    && self.has_except(&c.behaviour, source)
+                {
+                    Some("locked command")
+                } else if !super::valid_option(c) {
+                    Some("invalid option")
+                } else {
+                    None
+                }
+            }
+            Param::Reply(channel)
+                if !(super::valid_reply_channel(channel) || (channel == 0 && self.diagnostics.console_source == Some(source))) =>
+            {
+                Some("invalid param")
+            }
+            Param::Force if super::effects::MODIFIERS.contains(&c.behaviour.as_str()) => Some("base behaviour not held"),
+            Param::Force | Param::Reply(_) => {
+                let known = match c.param {
+                    Param::Force => super::FORCES.contains(&c.behaviour.as_str()) || super::environment::supports(&c.behaviour, true),
+                    _ => {
+                        super::QUERIES.contains(&c.behaviour.as_str())
+                            || super::environment::supports(&c.behaviour, false)
+                            || c.behaviour.starts_with("getdebug_")
+                    }
+                };
+                (c.strict || !available || !known).then_some("unknown command")
+            }
+            Param::Clear => None,
+        }
     }
 }
 
@@ -221,7 +351,7 @@ mod tests {
             ),
             Outcome::Rejected
         );
-        world.rlva.close_console();
+        world.rlva.close_console(agent);
         assert!(!world.rlva.has("fly") && world.rlva.has("jump"));
         assert!(world.rlva.diagnostics.console_source.is_none());
         world.rlva.configure(false);
@@ -238,6 +368,8 @@ mod tests {
         world.rlva_console_input(&format!("@camtextures:{TEXTURE}=n,sendim:{FRIEND}=add"));
         world.rlva_console_input(&format!("@setenv_suntexture:{}=force", TEXTURE.replace('-', "")));
         world.rlva_console_input("@getstatus=0");
+        // (the status waits behind the force, as RlvHandler answers in order)
+        world.rlva_pending();
         world.rlva.reply(0, "getcam_textures", TEXTURE.to_owned());
         world.rlva.reply(0, "getsitid", FRIEND.to_owned());
 
