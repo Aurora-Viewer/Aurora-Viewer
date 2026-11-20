@@ -1979,7 +1979,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 43;
+const SETTINGS_VERSION: u32 = 44;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -3544,6 +3544,11 @@ impl Settings {
             // Aurora Weather's main and card switches, off by default: an
             // earlier file keeps on what it drew
             self.weather.upgrade_to_switches();
+        }
+        if self.settings_version < 44 {
+            // the wind's defaults, a breeze: a wind off and left still
+            // takes them, so that switching it on blows
+            self.weather.upgrade_wind_defaults();
         }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving
