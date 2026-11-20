@@ -1,4 +1,4 @@
-# Windows package updates
+# Package updates
 
 The viewer queries the public releases in the background and shows the login
 screen immediately. Its button stays disabled during the initial check
@@ -83,7 +83,8 @@ main a few days before a stable version, to catch crashes before everyone.
 next tag, the pruning and the policy line; the Nightly workflow runs them on
 the pull requests that change these files. `./scripts/nightly-tag.ps1
 -DryRun` prints the tag the next nightly would create. A beta update is
-tried locally with `scripts/test-update.ps1 -Beta`
+tried locally with `scripts/test-update.ps1 -Beta` (`--beta` for
+`scripts/test-update-linux.py`), in an isolated installation
 ([TESTING.md](TESTING.md#interface)).
 
 ## Package and release policy
@@ -101,12 +102,15 @@ The Release workflow publishes together:
   never downloaded by the viewer, which looks for the package's exact name;
 - then `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` and its `.tar.gz.sha256`,
   built on Ubuntu 24.04 by a second job and added once the release exists:
-  a failed Linux build leaves the Windows release published.
+  a failed Linux build leaves the Windows release published. The tarball's
+  single root folder, of that name, holds the viewer (`aurora-viewer`), its
+  desktop entry and icon, with the executable bit kept.
 
-On Linux the viewer checks the releases the same way, with the same policy
-(a required update still blocks the login), but does not install them: its
-"Open the release page" button leads to the archive, extracted by hand
-([Installing on Linux](LINUX.md#updates)).
+The viewer installs the package of its system, named after the release tag:
+the ZIP on Windows, the tar.gz on Linux. The format is read from the asset's
+name, and each one names its own root folder and executable. macOS installs
+its signed application by hand: the offer links the release page
+([Installing on macOS](MACOS.md#updates)).
 
 `scripts/package.ps1` adds `aurora-install.json` (`schema: 1`, version read
 by `--version`). The exe, the assets and the licence are mandatory in the
@@ -145,25 +149,45 @@ The interface announces separately what happens to the cache and to the
 settings, both before the download and before "Install and restart Aurora".
 
 Old releases without a hash or a manifest go through their page for a manual
-installation. Platforms other than Windows remain out of scope. The current
-ZIP is kept: Velopack was studied, but its chain of packages and installers
-is not that of the Aurora releases.
+installation. macOS remains out of scope: its application bundle is signed
+and replaced as a whole. The current ZIP is kept: Velopack was studied, but
+its chain of packages and installers is not that of the Aurora releases.
 
 ## Replacement and rollback
 
 Download, hash and extraction run in the background. Extraction refuses
 path traversals, links, Windows duplicates, reserved files and archives
-exceeding the size limits. The staging is done next to the installation, on
-the same volume. The installation refuses repositories, build trees, folder
-links and folders containing files foreign to the package.
+exceeding the size limits, in the ZIP as in the tar.gz; the tar.gz accepts
+only regular files and folders, never a link, a device node or a sparse
+file, and keeps the permission bits of the archive without setuid. The
+staging is done next to the installation, on the same volume. Only the
+package's own entries are replaced (the viewer, `assets`, the notices,
+`aurora-install.json`): whatever else the folder holds, a shortcut or the
+user's notes, stays where it is. A folder without `aurora-install.json`
+(the viewer copied alone, onto the Desktop for example) has only the
+viewer's executable replaced. Links among those entries, and a folder at the
+root of a drive, are refused, as is a viewer without its executable bit.
+Development builds never update.
 
 After the agreement to restart, a copy of the viewer acts as a helper
-outside the installed folder. It waits for the end of the parent with a
-Windows handle, takes a lock, backs up the old folder and puts the new one
-in place. The arguments are kept. The new instance signals a presented
-frame; the backup is then deleted. If it exits or shows nothing for
-90 seconds, the old version is restored and restarted with a message. The
-errors offer the release page.
+outside the installed folder. It waits for the end of the parent (a Windows
+handle, or the parent's `/proc` entry on Linux, with its start time so that a
+reused PID is not taken for it), takes a lock, moves the old package entries
+into the backup and puts the new ones in place. The arguments are kept. The
+new instance signals a presented frame; the backup is then deleted. While
+it starts, it also signals each step (a pipeline compiled, the next phase):
+if it exits, goes 90 seconds without a step, or shows no frame after 15
+minutes, the old version is restored and restarted with a message. A new
+version that does not signal its steps gets 90 seconds in all, as before.
+The rule is the helper's, a copy of the version being updated: it applies
+from the updates made by a version that has it. The errors offer the
+release page.
+
+Where the folder cannot be replaced, the viewer does not try: a sandbox owns
+it as a read-only package (Flatpak, Snap, AppImage), or the account cannot
+write beside it (a system package installed by root). The window then says
+so and links the release page, for the package manager or the bundle to
+update.
 
 Settings, layout, accounts and cache are outside the replaced folder. If the
 policy requires it, the helper moves the cache and/or `settings.json` to a
@@ -181,11 +205,12 @@ up the successful transactions after the helper has finished.
 
 ## Validation
 
-`cargo test -p aurora-updater`: loopback HTTP server and throwaway packages
+The workspace tests: loopback HTTP server and throwaway packages
 for SemVer, required update, tampered hash, incomplete transfer,
-cancellation, dangerous ZIP, lock, backup and rollback of the package and of
-the data. `scripts/test-update-policy.ps1` checks the release choices (minimum
+cancellation, dangerous archives (ZIP and tar.gz, with their permission
+bits), lock, backup and rollback of the package and of the data.
+`scripts/test-update-policy.ps1` checks the release choices (minimum
 version included, typed or refused), their carry-over into an annotated tag and the refusal of an invalid threshold,
 without touching the current repository. The visual demo downloads nothing
-(`AURORA_DEMO_UPDATE`). The human test with two real executables is
+(`AURORA_DEMO_UPDATE`). The human test with two real packages is
 described in [TESTING.md](TESTING.md#interface).

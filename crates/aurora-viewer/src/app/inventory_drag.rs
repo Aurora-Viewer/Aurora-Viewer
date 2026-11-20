@@ -9,11 +9,14 @@ use super::*;
 pub(super) use crate::build::contents_drop::target_allowed;
 use crate::build::contents_drop::{self, Target, copyable};
 use crate::build::task_inventory::TransferRequest;
-use crate::ui::inventory::InvDrag;
 use crate::ui::inventory::task_drop::TaskDrag;
+use crate::ui::inventory::{InvDrag, NotecardDrag};
 use crate::world::inventory::{Inventory, actions as rules};
 use aurora_net::build::BuildCmd;
-use aurora_net::inventory::{InvItem, rez::RezInventory};
+use aurora_net::inventory::{
+    InvItem,
+    rez::{FromNotecard, RezInventory},
+};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -61,23 +64,24 @@ pub(super) struct InventoryDrop {
     selected: bool,
 }
 
+/// A drop an RLVa restriction refuses: the cursor says so, nothing else
+/// does (ACCEPT_NO_LOCKED, lltooldraganddrop.cpp).
+const RLVA_LOCKED: &str = "rlva-locked";
+
 fn reason_text(reason: &str) -> &'static str {
     match reason {
-        "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
         "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
         "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
         "rez-task-single" => aurora_i18n::tr!("rez-task-single"),
         "rez-task-denied" => aurora_i18n::tr!("rez-task-denied"),
+        "rez-notecard-unsaved" => aurora_i18n::tr!("rez-notecard-unsaved"),
         _ => contents_drop::reason_text(reason),
     }
 }
 
-fn portal_support(world: &World, surface: (Vec3, Option<usize>), ready: bool) -> Result<(), &'static str> {
+fn portal_support(world: &World, surface: (Vec3, Option<usize>)) -> Result<(), &'static str> {
     if let Some(idx) = surface.1 {
         contents_drop::surface_allowed(world, idx)?;
-    }
-    if !ready {
-        return Err("portal-bridge-required");
     }
     let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
     if !center.is_finite()
@@ -204,6 +208,7 @@ fn prepare(
             remove,
             source_folder,
             from_task: Uuid::nil(),
+            notecard: None,
         })),
         consume: remove.then_some(item.id),
         selected,
@@ -285,7 +290,69 @@ fn prepare_task(
             remove: rules::task_agent_mask(&request.item, world.agent_id) & rules::COPY == 0,
             source_folder: item.parent,
             from_task: request.object,
+            notecard: None,
             item,
+        })),
+        consume: None,
+        selected,
+    })
+}
+
+/// Whether an object embedded in a notecard rezzes where it is held
+/// (dad3dRezObjectOnLand, dad3dRezObjectOnObject with SOURCE_NOTECARD): an
+/// object, on the land or on an object without Ctrl; with Ctrl the drop
+/// would go into the object's contents, which the Legacy Viewer refuses from
+/// a notecard (SL-22177).
+fn notecard_cargo(world: &World, item: &InvItem, target: Option<usize>, ctrl: bool) -> Result<(), &'static str> {
+    if item.asset_type != 6 {
+        return Err("rez-object-only");
+    }
+    if !world.movement_complete || world.objects.index_of_uuid(&world.agent_id).is_none() {
+        return Err("rez-incomplete");
+    }
+    if let Some(idx) = target {
+        contents_drop::surface_allowed(world, idx)?;
+        if ctrl {
+            return Err("rez-contents-denied");
+        }
+    }
+    Ok(())
+}
+
+/// RezObjectFromNotecard for an object embedded in a notecard (dropObject,
+/// SOURCE_NOTECARD): the notecard and the object that holds it name the
+/// item, which the simulator copies out of the notecard. RemoveItem when the
+/// agent may not copy it (allowCopyBy); nothing leaves the agent's inventory.
+#[allow(clippy::too_many_arguments)]
+fn prepare_notecard(
+    world: &World,
+    item: &InvItem,
+    from: FromNotecard,
+    eye: Vec3,
+    surface: (Vec3, Option<usize>),
+    ctrl: bool,
+    selected: bool,
+    under_land: bool,
+) -> Result<InventoryDrop, &'static str> {
+    let (point, target) = surface;
+    notecard_cargo(world, item, target, ctrl)?;
+    if !point.is_finite() || !eye.is_finite() {
+        return Err("rez-no-surface");
+    }
+    let (handle, offset) = region_at(world, point)?;
+    Ok(InventoryDrop {
+        command: BuildCmd::RezInventory(Box::new(RezInventory {
+            handle,
+            group: world.group_for_rez(under_land),
+            item: item.clone(),
+            ray_start: eye - offset,
+            ray_end: point - offset,
+            target: target.and_then(|idx| world.objects.get(idx)).map_or(Uuid::nil(), |o| o.full_id),
+            selected,
+            remove: !copyable(item, world.agent_id),
+            source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
+            notecard: Some(from),
         })),
         consume: None,
         selected,
@@ -302,7 +369,8 @@ impl App {
         ui::places::drag::ghost(ctx, &self.palette);
         let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx);
         let task_drag = egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx);
-        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag && !task_drag {
+        let notecard_drag = egui::DragAndDrop::has_payload_of_type::<NotecardDrag>(ctx);
+        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag && !task_drag && !notecard_drag {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
@@ -317,6 +385,8 @@ impl App {
         }
         if task_drag {
             self.task_drag_input(ctx, renderer).into_iter().collect()
+        } else if notecard_drag {
+            self.notecard_drag_input(ctx, renderer).into_iter().collect()
         } else if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
             self.item_drag_input(ctx, renderer).into_iter().collect()
         } else {
@@ -466,6 +536,100 @@ impl App {
         }
     }
 
+    /// The object a notecard's drag carries, and where it comes from: the
+    /// notecard, and the object whose contents hold it (nil for the
+    /// agent's inventory). The notecard must be saved with it: the
+    /// simulator only knows the saved items (stricter than the Legacy
+    /// Viewer, which sends the drag and lets the simulator fail).
+    fn notecard_cargo(&mut self, cargo: NotecardDrag) -> Result<(InvItem, FromNotecard), &'static str> {
+        let object = self
+            .task_notecards
+            .iter()
+            .find(|(_, d)| d.state.ui_id == cargo.editor)
+            .map_or(Uuid::nil(), |((object, _), _)| *object);
+        let st = self
+            .document_state(cargo.editor)
+            .filter(|st| st.preview == Some(cargo.notecard))
+            .ok_or("rez-incomplete")?;
+        let attachment = st
+            .preview_source
+            .as_ref()
+            .and_then(|source| source.attachment(cargo.marker))
+            .ok_or("rez-incomplete")?;
+        if st.save_pending || !attachment.saved {
+            return Err("rez-notecard-unsaved");
+        }
+        Ok((
+            attachment.item.clone(),
+            FromNotecard {
+                notecard: cargo.notecard,
+                object,
+            },
+        ))
+    }
+
+    /// An object dragged out of an open notecard: it rezzes on the land or
+    /// on an object (`prepare_notecard`).
+    fn notecard_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
+        let cargo = *egui::DragAndDrop::payload::<NotecardDrag>(ctx)?;
+        if ctx.is_pointer_over_egui() {
+            return None;
+        }
+        let (pos, released, ctrl) = ctx.input(|i| {
+            Some((
+                i.pointer.interact_pos()?,
+                i.pointer.button_released(egui::PointerButton::Primary),
+                i.modifiers.ctrl,
+            ))
+        })?;
+        let ppp = ctx.pixels_per_point();
+        let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (pos.x * ppp, pos.y * ppp),
+            released,
+        );
+        let surface = self.inventory_drag.surface;
+        let cargo = self.notecard_cargo(cargo);
+        let check = cargo
+            .as_ref()
+            .map_err(|reason| *reason)
+            .and_then(|(item, _)| notecard_cargo(&self.world, item, surface.ok_or("rez-no-surface")?.1, ctrl));
+        self.inventory_drag.cursor = Some(if check.is_ok() {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        if !released {
+            return None;
+        }
+        egui::DragAndDrop::clear_payload(ctx);
+        let result = check.and(cargo).and_then(|(item, from)| {
+            prepare_notecard(
+                &self.world,
+                &item,
+                from,
+                self.camera.position,
+                surface.ok_or("rez-no-surface")?,
+                ctrl,
+                self.build.open,
+                self.settings.build.rez_under_land_group,
+            )
+        });
+        log::debug!("notecard object drop on the world: ctrl={ctrl}, {:?}", result.as_ref().err());
+        match result {
+            Ok(drop) => Some(drop),
+            Err(reason) => {
+                self.world
+                    .system_notice(reason_text(reason), crate::world::notice_topics::Topic::Items);
+                None
+            }
+        }
+    }
+
     /// The linkset outlined while a drop would go into the prim `idx`'s
     /// contents (LLSelectMgr::highlightObjectAndFamily in dragOrDrop3D).
     fn contents_outline(&self, idx: usize) -> Option<usize> {
@@ -497,13 +661,12 @@ impl App {
             (drag.position.x * ppp, drag.position.y * ppp),
             drag.released,
         );
-        let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
-        super::portals::landmark::preview(ctx, &self.palette, drag.position, drag.shift, ready);
+        super::portals::landmark::preview(ctx, &self.palette, drag.position);
         let result = self
             .inventory_drag
             .surface
             .ok_or("rez-no-surface")
-            .and_then(|surface| portal_support(&self.world, surface, ready).map(|()| surface.0));
+            .and_then(|surface| portal_support(&self.world, surface).map(|()| surface.0));
         self.inventory_drag.cursor = Some(if result.is_ok() {
             egui::CursorIcon::Copy
         } else {
@@ -513,7 +676,7 @@ impl App {
             egui::DragAndDrop::clear_payload(ctx);
             match result {
                 Ok(point) => {
-                    self.queue_location_portal(drag.target, point, drag.shift);
+                    self.queue_location_portal(drag.target, point);
                     self.inventory_ui.release_world_drag_focus(ctx);
                 }
                 Err(reason) => self.portal_drop_notice(reason),
@@ -535,9 +698,8 @@ impl App {
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
         let started = Instant::now();
         let landmark = !ctrl && super::portals::landmark::cargo(&self.world.inventory, drag.item).is_some();
-        let portal_ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
         if landmark {
-            super::portals::landmark::preview(ctx, &self.palette, pos, drag.shift, portal_ready);
+            super::portals::landmark::preview(ctx, &self.palette, pos);
         }
         let item = if landmark {
             super::portals::landmark::cargo(&self.world.inventory, drag.item).ok_or("portal-landmark-unavailable")
@@ -562,11 +724,18 @@ impl App {
             if let Some(idx) = surface.1 {
                 target_allowed(&self.world, idx, item, false)?;
             }
+            // LLToolDragAndDrop::dad3dRezObjectOnLand and
+            // dad3dRezObjectOnObject: ACCEPT_NO_LOCKED, the drop is refused
+            // without a sound or a message.
+            // A landmark dropped on the world rezzes its portal: the same test.
+            if (landmark || item.asset_type == 6) && !self.world.rlva_can_rez(surface.1.filter(|_| contents)) {
+                return Err(RLVA_LOCKED);
+            }
             if landmark {
                 if item.asset_id.is_nil() {
                     return Err("portal-landmark-unavailable");
                 }
-                portal_support(&self.world, surface, portal_ready)?;
+                portal_support(&self.world, surface)?;
                 Ok(egui::CursorIcon::Copy)
             } else if let Some(idx) = surface.1.filter(|_| contents) {
                 self.inventory_drag
@@ -594,7 +763,7 @@ impl App {
             match result {
                 Ok(_) => {
                     if let Some((point, _)) = self.inventory_drag.surface {
-                        self.queue_landmark_portal(drag.item, point, drag.shift);
+                        self.queue_landmark_portal(drag.item, point);
                         self.inventory_ui.release_world_drag_focus(ctx);
                     }
                 }
@@ -631,6 +800,7 @@ impl App {
                 self.inventory_ui.release_world_drag_focus(ctx);
                 Some(drop)
             }
+            Err(RLVA_LOCKED) => None,
             Err(reason) => {
                 self.inventory_ui.message = reason_text(reason).into();
                 self.world
@@ -683,7 +853,8 @@ impl App {
         if released {
             egui::DragAndDrop::clear_payload(ctx);
             if allowed {
-                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, to));
+                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, vec![to]));
+                self.inventory_ui.share_in_session = None;
                 self.inventory_ui.release_world_drag_focus(ctx);
             } else {
                 self.world
@@ -694,6 +865,11 @@ impl App {
     }
 
     pub(super) fn apply_inventory_drop(&mut self, drop: InventoryDrop) {
+        // LLToolDragAndDrop::dropObject: its own test, before the rez sound,
+        // for the drops whose cursor did not refuse them.
+        if matches!(drop.command, BuildCmd::RezInventory(_)) && !self.world.rlva_can_rez(None) {
+            return;
+        }
         if drop.selected {
             self.build.edit_inventory_rez(&self.world);
         }
@@ -716,7 +892,24 @@ impl App {
             if rez { "rez" } else { "contents" },
             drop.consume.is_some()
         );
+        // LLToolDragAndDrop::dropObject (at the point hit) and dropInventory /
+        // dropScript (at the object): a beam from our hand
+        let beam = match &drop.command {
+            BuildCmd::RezInventory(r) => {
+                let (x, y) = aurora_net::handle_to_origin(r.handle);
+                let at = r.ray_end;
+                Some((
+                    Uuid::nil(),
+                    glam::DVec3::new(f64::from(x) + f64::from(at.x), f64::from(y) + f64::from(at.y), f64::from(at.z)),
+                ))
+            }
+            BuildCmd::UpdateTaskInventory { item, .. } | BuildCmd::RezScript { item, .. } => Some((item.parent_id, glam::DVec3::ZERO)),
+            _ => None,
+        };
         self.send(NetCommand::Build(drop.command));
+        if let Some((target, position)) = beam {
+            self.fire_beam(target, position);
+        }
         if let Some(id) = drop.consume {
             self.world.inventory.consume_item(id);
         }
@@ -896,6 +1089,122 @@ mod tests {
         };
         let shared = rez(prepare_task(&w, &cargo(&[shared]), eye, (point, None), false, false, false).unwrap());
         assert!(shared.remove);
+    }
+
+    #[test]
+    fn an_object_of_a_notecard_rezzes_from_the_notecard_on_land_or_object() {
+        let mut w = world();
+        let point = Vec3::new(140.0, 130.0, 32.0);
+        let eye = point + Vec3::Z * 4.0;
+        let from = FromNotecard {
+            notecard: item(9600),
+            object: item(9601),
+        };
+        let mine = InvItem {
+            id: item(9602),
+            owner: w.agent_id,
+            owner_mask: rules::FULL,
+            everyone_mask: 0,
+            asset_type: 6,
+            inv_type: 6,
+            name: "Chair".into(),
+            ..Default::default()
+        };
+        // land, with the Build window open: selected, nothing consumed
+        let drop = prepare_notecard(&w, &mine, from, eye, (point, None), false, true, false).unwrap();
+        assert!(drop.consume.is_none() && drop.selected);
+        let land = rez(drop);
+        assert_eq!(land.notecard, Some(from));
+        assert_eq!(land.item.id, mine.id);
+        assert!(land.from_task.is_nil() && land.source_folder.is_nil());
+        assert!(!land.remove && land.target.is_nil());
+        assert_eq!(land.ray_end, point);
+        // Ctrl changes nothing on the land; an object without Ctrl, never
+        // into its contents with it (SL-22177)
+        assert!(prepare_notecard(&w, &mine, from, eye, (point, None), true, false, false).is_ok());
+        let target = Some(object(&w));
+        let on_object = rez(prepare_notecard(&w, &mine, from, eye, (point, target), false, false, false).unwrap());
+        assert_eq!(on_object.target, w.objects.get(object(&w)).unwrap().full_id);
+        assert_eq!(
+            prepare_notecard(&w, &mine, from, eye, (point, target), true, false, false).err(),
+            Some("rez-contents-denied")
+        );
+        // the copy right the agent holds (allowCopyBy): owner, group-owned,
+        // someone else's, a Library item, no copy, no transfer, no modify
+        let other = item(9603);
+        let cases = [
+            (mine.clone(), false),
+            (
+                InvItem {
+                    owner: item(9604),
+                    group_owned: true,
+                    group_id: item(9604),
+                    group_mask: rules::FULL,
+                    everyone_mask: 0,
+                    ..mine.clone()
+                },
+                true,
+            ),
+            (
+                InvItem {
+                    owner: other,
+                    everyone_mask: rules::COPY,
+                    ..mine.clone()
+                },
+                false,
+            ),
+            (
+                InvItem {
+                    owner: other,
+                    everyone_mask: 0,
+                    ..mine.clone()
+                },
+                true,
+            ),
+            (
+                InvItem {
+                    // the Library's account: anyone holds its everyone mask
+                    owner: item(9605),
+                    everyone_mask: rules::COPY | rules::TRANSFER,
+                    ..mine.clone()
+                },
+                false,
+            ),
+            (
+                InvItem {
+                    owner_mask: rules::MODIFY | rules::TRANSFER,
+                    ..mine.clone()
+                },
+                true,
+            ),
+            (
+                InvItem {
+                    owner_mask: rules::COPY | rules::MODIFY,
+                    ..mine.clone()
+                },
+                false,
+            ),
+            (
+                InvItem {
+                    owner_mask: rules::COPY | rules::TRANSFER,
+                    ..mine.clone()
+                },
+                false,
+            ),
+        ];
+        for (it, remove) in cases {
+            let r = rez(prepare_notecard(&w, &it, from, eye, (point, None), false, false, false).unwrap());
+            assert_eq!(r.remove, remove, "{it:?}");
+        }
+        // only an object, and only once the agent stands in the world
+        let script = InvItem {
+            asset_type: 10,
+            inv_type: 10,
+            ..mine.clone()
+        };
+        assert_eq!(notecard_cargo(&w, &script, None, false).err(), Some("rez-object-only"));
+        w.movement_complete = false;
+        assert_eq!(notecard_cargo(&w, &mine, None, false).err(), Some("rez-incomplete"));
     }
 
     #[test]
@@ -1091,6 +1400,7 @@ mod tests {
                 voice_server: String::new(),
                 avatar_hover_height: false,
                 lsl_syntax_id: None,
+                lua_scripts: false,
                 materials_limits: Default::default(),
                 max_tasks: 0,
                 grid_status: Default::default(),
@@ -1098,7 +1408,10 @@ mod tests {
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
+                game_control: false,
                 max_link_children: None,
+                open_settings: None,
                 animated_object_max_tris: 0,
             },
         );

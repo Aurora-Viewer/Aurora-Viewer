@@ -4,15 +4,39 @@
 //! list replaces the chosen look or adds one, the list in three tabs
 //! (Legacy, Aurora by section, the user's tables) with a search, and the
 //! chosen look's strength and settings. The look pointed at in the list is
-//! tried on the live view (`snapshot::looks::tried`).
+//! tried on the live view (`snapshot::looks::tried`). The World look window
+//! (`ui/world_look.rs`) edits the world's own stack with it.
 
 use super::snapshot::{Action, chip};
 use super::widgets;
 use crate::snapshot::Settings;
 use crate::snapshot::knobs::{self, Kind, Knob};
-use crate::snapshot::looks::{self, Entry, MAX_LAYERS, Mode, Tab};
+use crate::snapshot::looks::{self, Entry, Layer, MAX_LAYERS, Mode, Tab, WorldLook};
 use crate::theme::Palette;
 use egui::{RichText, Vec2};
+
+/// The stack the editor changes, with the settings of its Aurora looks:
+/// the photos' and films' (`photo`) or the world's (`world`).
+pub struct Stack<'a> {
+    pub looks: &'a mut Vec<Layer>,
+    pub look_settings: &'a mut looks::Settings,
+}
+
+impl<'a> Stack<'a> {
+    pub fn photo(s: &'a mut Settings) -> Self {
+        Stack {
+            looks: &mut s.looks,
+            look_settings: &mut s.look_settings,
+        }
+    }
+
+    pub fn world(w: &'a mut WorldLook) -> Self {
+        Stack {
+            looks: &mut w.looks,
+            look_settings: &mut w.look_settings,
+        }
+    }
+}
 
 /// The editor's state for the session.
 #[derive(Debug, Default)]
@@ -31,6 +55,8 @@ pub struct LooksUi {
     /// The photo window's settings scroll to the filters once
     /// (AURORA_DEMO_PHOTO_LOOK).
     pub reveal: bool,
+    /// The photo window is in its 360° format (`Options::pano`).
+    pano: bool,
 }
 
 /// What the editor shows besides the looks.
@@ -41,6 +67,10 @@ pub struct Options<'a> {
     pub compare: bool,
     /// The user's tables, by file name.
     pub luts: &'a [String],
+    /// The photo window is in its 360° format: only the colour looks (the
+    /// ones a face can take alone) are drawn; the others stay in the stack,
+    /// greyed.
+    pub pano: bool,
 }
 
 fn keep_keys(resp: &egui::Response) {
@@ -57,9 +87,10 @@ fn heading(ui: &mut egui::Ui, p: &Palette, text: &str) {
 
 impl LooksUi {
     /// The whole editor.
-    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, opts: Options, out: &mut Vec<Action>) {
+    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, mut s: Stack<'_>, opts: Options, out: &mut Vec<Action>) {
         self.selected = self.selected.min(s.looks.len().saturating_sub(1));
-        self.stack(ui, p, s);
+        self.pano = opts.pano;
+        self.stack(ui, p, &mut s);
         if !s.looks.is_empty() {
             let mut mode = usize::from(self.mode == Mode::Add);
             let full = s.looks.len() >= MAX_LAYERS;
@@ -89,9 +120,9 @@ impl LooksUi {
             .id_salt("looks_list")
             .max_height(opts.list_height)
             .auto_shrink([false, true])
-            .show(ui, |ui| self.list(ui, p, s, opts.luts, out));
+            .show(ui, |ui| self.list(ui, p, &mut s, opts.luts, out));
         widgets::divider(ui, p);
-        self.settings(ui, p, s);
+        self.settings(ui, p, &mut s);
         if opts.compare {
             ui.add_enabled_ui(!s.looks.is_empty(), |ui| {
                 let mut compare = self.compare.is_some();
@@ -106,7 +137,7 @@ impl LooksUi {
     }
 
     /// The stack: a row per look, the chosen one marked.
-    fn stack(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings) {
+    fn stack(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Stack<'_>) {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("photo-looks-stack", count = s.looks.len()))
@@ -142,7 +173,14 @@ impl LooksUi {
                 let from = looks::tab_of(&layer.id).label();
                 let text = format!("{name}  ·  {} %", layer.strength);
                 let tip = format!("{from} · {}", aurora_i18n::tr!("photo-looks-choose-tip"));
-                let row = chip(ui, p, &text, None, i == self.selected, true).on_hover_text(tip);
+                // (not in a 360° picture: kept in the stack, greyed)
+                let drawn = !self.pano || looks::is_pointwise(&layer.id);
+                let tip = if drawn {
+                    tip
+                } else {
+                    format!("{tip}\n{}", aurora_i18n::tr!("photo-looks-not-in-360"))
+                };
+                let row = chip(ui, p, &text, None, i == self.selected && drawn, drawn).on_hover_text(tip);
                 keep_keys(&row);
                 if row.clicked() {
                     self.selected = i;
@@ -180,7 +218,7 @@ impl LooksUi {
     }
 
     /// The tab's looks, or what the search finds in every tab.
-    fn list(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, luts: &[String], out: &mut Vec<Action>) {
+    fn list(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Stack<'_>, luts: &[String], out: &mut Vec<Action>) {
         let query = self.query.trim().to_owned();
         if !query.is_empty() {
             let found = looks::search(&query, luts);
@@ -204,15 +242,19 @@ impl LooksUi {
     }
 
     /// A wrapped row of looks: pointed at, tried; clicked, chosen.
-    fn chips(&mut self, ui: &mut egui::Ui, p: &Palette, entries: &[Entry], s: &mut Settings) {
+    fn chips(&mut self, ui: &mut egui::Ui, p: &Palette, entries: &[Entry], s: &mut Stack<'_>) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
             for e in entries {
                 let used = s.looks.iter().any(|l| l.id == e.id);
-                let mut resp = chip(ui, p, &e.name, None, used, true);
+                let drawn = !self.pano || looks::is_pointwise(&e.id);
+                let mut resp = chip(ui, p, &e.name, None, used, drawn);
                 keep_keys(&resp);
                 if let Some(tip) = e.tip {
                     resp = resp.on_hover_text(tip);
+                }
+                if !drawn {
+                    resp = resp.on_hover_text(aurora_i18n::tr!("photo-looks-not-in-360"));
                 }
                 if resp.hovered() {
                     self.hover = Some(Some(e.id.clone()));
@@ -225,15 +267,15 @@ impl LooksUi {
     }
 
     /// A look clicked: it replaces the chosen layer or goes on top.
-    pub fn pick(&mut self, s: &mut Settings, id: &str) {
-        self.selected = looks::choose(&mut s.looks, id, self.mode, self.selected);
+    pub fn pick(&mut self, s: &mut Stack<'_>, id: &str) {
+        self.selected = looks::choose(s.looks, id, self.mode, self.selected);
         // a look added: the next click goes on with it
         self.mode = Mode::Replace;
     }
 
     /// The creators' tables under their name, then the user's: a row each
     /// with its bin, then the import.
-    fn luts(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, luts: &[String], out: &mut Vec<Action>) {
+    fn luts(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Stack<'_>, luts: &[String], out: &mut Vec<Action>) {
         for (creator, entries) in looks::pack_list() {
             ui.add_space(4.0);
             ui.label(
@@ -300,7 +342,7 @@ impl LooksUi {
     }
 
     /// The chosen layer's strength and settings.
-    fn settings(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings) {
+    fn settings(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Stack<'_>) {
         let Some(layer) = s.looks.get_mut(self.selected) else {
             return;
         };

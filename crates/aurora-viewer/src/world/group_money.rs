@@ -58,7 +58,20 @@ impl GroupMoneyData {
 pub struct GroupMoney {
     groups: HashMap<Uuid, GroupMoneyData>,
     out: Vec<NetCommand>,
+    /// The latest reply on our own parcels named a Linden Home
+    /// (LLFloaterLandHoldings::sHasLindenHome).
+    linden_home: bool,
 }
+
+/// LINDEN_HOMES_SKU (indra/newview/llfloaterlandholdings.cpp): the
+/// ProductSKU of a Linden Home parcel.
+const LINDEN_HOMES_SKU: &str = "131";
+
+/// World › My Linden Home (lindenhomes_my_home_url / lindenhomes_get_home_url
+/// of strings.xml): the page of the agent's Linden Home, or the page to get
+/// one.
+pub const LINDEN_HOME_MY_URL: &str = "https://land.secondlife.com/en-Us/lindenhomes/my-home.php";
+pub const LINDEN_HOME_GET_URL: &str = "https://secondlife.com/land/lindenhomes/member.php";
 
 impl GroupMoney {
     pub fn get(&self, group: &Uuid) -> Option<&GroupMoneyData> {
@@ -97,8 +110,20 @@ impl GroupMoney {
     }
 
     /// LLFloaterLandHoldings::onOpen: the null query id selects our parcels.
+    /// Also sent once at login (llstartup.cpp, "look for parcels we own"),
+    /// for World › My Linden Home.
     pub fn request_owned_land(&mut self) {
         self.request_land(Uuid::nil());
+    }
+
+    /// LLWorldLindenHome (indra/newview/llviewermenu.cpp): the agent's
+    /// Linden Home page when its parcels name one, else the page to get one.
+    pub fn linden_home_url(&self) -> &'static str {
+        if self.linden_home {
+            LINDEN_HOME_MY_URL
+        } else {
+            LINDEN_HOME_GET_URL
+        }
     }
 
     /// requestGroupLandInfo: a new transaction, the list emptied.
@@ -153,6 +178,11 @@ impl GroupMoney {
     /// processGroupLand: the totals of any reply; the parcels only for the
     /// latest query.
     pub fn on_land(&mut self, reply: &GroupLandReply) {
+        if reply.group.is_nil() {
+            // LLFloaterLandHoldings::processPlacesReply: each reply on our
+            // own parcels says it again, whether My land is open or not
+            self.linden_home = reply.parcels.iter().any(|p| p.sku == LINDEN_HOMES_SKU);
+        }
         let Some(g) = self.groups.get_mut(&reply.group) else {
             log::info!("group land: no panel for {}", reply.group);
             return;
@@ -289,6 +319,42 @@ mod tests {
         assert!(money.get(&G).is_none());
         money.request_owned_land();
         assert!(money.get(&Uuid::nil()).unwrap().parcels.is_none());
+    }
+
+    #[test]
+    fn my_linden_home_follows_the_latest_reply_on_our_own_parcels() {
+        let mut money = GroupMoney::default();
+        assert_eq!(money.linden_home_url(), LINDEN_HOME_GET_URL, "nothing known yet");
+        let own = |parcels: Vec<GroupParcel>| GroupLandReply {
+            group: Uuid::nil(),
+            transaction: Uuid::nil(),
+            totals: None,
+            parcels,
+        };
+        let home = GroupParcel {
+            sku: LINDEN_HOMES_SKU.into(),
+            ..parcel("Home")
+        };
+        let mainland = GroupParcel {
+            sku: "023".into(),
+            ..parcel("Shop")
+        };
+        // the login query answers with no window open
+        money.on_land(&own(vec![mainland.clone(), home.clone()]));
+        assert_eq!(money.linden_home_url(), LINDEN_HOME_MY_URL);
+        // a group's Linden Home is not ours
+        money.on_land(&GroupLandReply {
+            group: G,
+            transaction: Uuid::nil(),
+            totals: None,
+            parcels: vec![home],
+        });
+        assert_eq!(money.linden_home_url(), LINDEN_HOME_MY_URL, "group replies leave it");
+        // the home was given up: the next reply says so
+        money.on_land(&own(vec![mainland]));
+        assert_eq!(money.linden_home_url(), LINDEN_HOME_GET_URL);
+        money.on_land(&own(Vec::new()));
+        assert_eq!(money.linden_home_url(), LINDEN_HOME_GET_URL);
     }
 
     #[test]

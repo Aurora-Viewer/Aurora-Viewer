@@ -22,6 +22,18 @@ fn load_depth(p: vec2<i32>) -> f32 {
     return textureLoad(depth_tex, clamp_load(p, vec2<i32>(0), fsr.render_size), 0);
 }
 
+fn camera_motion(reproj: mat4x4<f32>, uv: vec2<f32>, depth: f32, jitter_uv: vec2<f32>) -> vec2<f32> {
+    // Both ends of the motion vector exclude the current raster jitter.
+    let cur_uv = uv - jitter_uv;
+    let ndc = vec2<f32>(cur_uv.x * 2.0 - 1.0, 1.0 - cur_uv.y * 2.0);
+    let pp = reproj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
+    if (pp.w <= 0.0) {
+        return vec2<f32>(2.0);
+    }
+    let prev_uv = vec2<f32>(pp.x / pp.w * 0.5 + 0.5, 0.5 - pp.y / pp.w * 0.5);
+    return prev_uv - cur_uv;
+}
+
 // The motion to the last frame, in uv (FSR's sign: previous = uv + motion).
 // Where the prepass wrote none (the sky, water and what did not move) the
 // camera alone moves the pixel, through its depth, as taa.wgsl does.
@@ -33,16 +45,7 @@ fn load_input_motion_vector(p_in: vec2<i32>) -> vec2<f32> {
         return -motion;
     }
     let uv = (vec2<f32>(p) + 0.5) / render_size();
-    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    let wp = fsr.inv_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
-    let pp = fsr.prev_view_proj * vec4<f32>(wp.xyz / wp.w, 1.0);
-    if (pp.w <= 0.0) {
-        // behind the last camera: no history there
-        return vec2<f32>(2.0);
-    }
-    let prev_uv = vec2<f32>(pp.x / pp.w * 0.5 + 0.5, 0.5 - pp.y / pp.w * 0.5);
-    // the pixel shows the unjittered point `uv - jitter`
-    return prev_uv - (uv - fsr.jitter / render_size());
+    return camera_motion(fsr.motion_reproj, uv, depth, fsr.jitter / render_size());
 }
 
 fn reconstruct_prev_depth(p: vec2<i32>, depth: f32, mv_in: vec2<f32>) {

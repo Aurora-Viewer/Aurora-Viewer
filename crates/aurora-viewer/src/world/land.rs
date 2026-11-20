@@ -64,7 +64,7 @@ const REFRESH_AFTER_UPDATE: Duration = Duration::from_secs(5);
 /// A refresh without an answer is forgotten after this long.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 /// PARCEL_GRID_STEP_METERS.
-const GRID_STEP: f32 = 4.0;
+pub(super) const GRID_STEP: f32 = 4.0;
 
 /// Who the agent is, for the permission rules.
 pub struct AgentRights<'a> {
@@ -350,7 +350,8 @@ impl EnvSummary {
         };
         if name.is_empty() {
             name = self.track_name(index - 1);
-            if !name.starts_with('(') {
+            // already in brackets: the region's own message (full width in Japanese)
+            if !name.starts_with(['(', '（']) {
                 name = format!("({name})");
             }
         }

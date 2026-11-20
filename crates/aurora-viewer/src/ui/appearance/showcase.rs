@@ -711,7 +711,10 @@ fn preview_panel(
     // the outfit's paid HD picture once it has loaded (`outfit_hd`), else
     // its picture; the cards keep the thumbnail
     let hd = model::outfit_hd_picture(inv, id);
-    if let Some(hd) = hd {
+    if ui.is_rect_visible(picture)
+        && let Some(hd) = hd
+    {
+        st.wanted_outfit_portrait = Some(hd);
         st.wanted_images.insert(hd);
     }
     let image = st.outfit_picture(inv, id);
@@ -861,6 +864,14 @@ fn preview_panel(
             }
         });
     }
+    // What an outfit holds is an Aurora addition to the gallery. The Legacy
+    // Viewer shows it in the "My Outfits" list alone, which @showinv
+    // disables (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>,
+    // indra/newview/rlvhandler.cpp): the items and their copied list follow
+    // it, the gallery keeps its outfits.
+    if world.rlva.has("showinv") {
+        return;
+    }
     ui.add_space(8.0);
     contents(ui, p, world, st, id, actions);
     ui.add_space(8.0);
@@ -946,7 +957,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                 st.select_item(&response, id, it.id, &order);
                 items::double_click(&response, world, it, label.is_some(), actions);
                 let selected = st.selected_items(id, it.id, &order);
-                items::context_menu(&response, p, world, st, id, it, &selected, actions);
+                items::context_menu(&response, p, world, st, items::List::Outfit(id), it, &selected, actions);
                 // the menu's Wear, for this item alone (wear_action, replace)
                 if label.is_none()
                     && matches!(it.asset_type, 5 | 6 | 13)
