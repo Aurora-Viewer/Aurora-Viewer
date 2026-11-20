@@ -15,7 +15,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
-use crate::world::notifications::{Data, Notification, Notifications, Response};
+use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
@@ -110,6 +110,8 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
         // a message is information; a shorter IM toast setting shortens it
         Data::Message { .. } => message_seconds.clamp(1.0, SHOW_INFO),
+        // ShowMyComplexityChanges (the notice's expiry)
+        Data::Complexity { seconds } => f64::from(seconds),
         _ if n.interactive() => SHOW_ANSWER,
         _ => SHOW_INFO,
     }
@@ -130,9 +132,10 @@ fn may_show(n: &Notification, m: &Moment) -> bool {
 }
 
 /// Rolls out as a card: what is listed, and a message kept out of the bell
-/// (`ToastPrefs::im_in_bell` off), whose card leaves with its time.
+/// (`ToastPrefs::im_in_bell` off) or the complexity notice, whose card
+/// leaves with its time.
 fn card(n: &Notification) -> bool {
-    !n.transient || matches!(n.data, Data::Message { .. })
+    !n.transient || matches!(n.data, Data::Message { .. } | Data::Complexity { .. })
 }
 
 /// The count on the bell: what waits in "To do", without the cards still
@@ -490,7 +493,8 @@ fn rolled_out(
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
+    // ToastGap, as between the Legacy toasts
+    ui.spacing_mut().item_spacing.y = env.toast_gap;
     let (shown, behind) = visible(&nui.center);
     // newest on top
     for peek in shown.iter().rev() {
@@ -503,11 +507,23 @@ fn rolled_out(
         let top = ui.cursor().min;
         let width = nui.center.inner_width;
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
+        // the card keeps its own row spacing; ToastGap stands between cards
+        child.spacing_mut().item_spacing.y = super::notifications::CARD_ROW_SPACING;
         if fold > 0.0 {
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
-        let r = center_card(&mut child, p, icons, world, env, &mut nui.wanted_pics, &mut nui.wanted_images, n);
+        let r = center_card(
+            &mut child,
+            p,
+            icons,
+            world,
+            env,
+            &mut nui.wanted_pics,
+            &mut nui.wanted_images,
+            n,
+            true,
+        );
         let card = child.min_rect();
         nui.center.heights.insert(peek.id, card.height());
         // the time left, a fine violet bar along the card's bottom
@@ -660,7 +676,7 @@ fn full_list(
                     let pinned = |n: &Notification| matches!(n.data, Data::RegionRestart);
                     for first in [true, false] {
                         for n in list.list.iter_mut().rev().filter(|n| !n.transient && pinned(n) == first) {
-                            if let Some(r) = center_card(ui, p, icons, world, env, &mut nui.wanted_pics, &mut nui.wanted_images, n) {
+                            if let Some(r) = center_card(ui, p, icons, world, env, &mut nui.wanted_pics, &mut nui.wanted_images, n, false) {
                                 answers.push((n.id, r));
                             }
                         }
@@ -718,11 +734,13 @@ pub(super) fn history_list(
         {
             hist.clear();
         }
-        ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-                .desired_width(ui.available_width()),
-        );
+        {
+            let width = ui.available_width();
+            crate::ui::widgets::search_text_edit(ui, p, query, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                    .desired_width(width)
+            })
+        };
     });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
@@ -730,7 +748,26 @@ pub(super) fn history_list(
         .into_iter()
         .filter_map(|(i, e)| {
             let mut e = e.clone();
-            privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
+            hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
+            // the kinds that name their resident keep its name under
+            // `@shownames` (`Kind::names`), and the bodies shown as written
+            // stay as written (`Kind::text`); a script's prompt stays as
+            // received, its owner's name included (`Kind::as_received`)
+            let kind = Kind::of_look(e.look);
+            let text = entry_text(&e);
+            let privacy = if world.rlva.enabled() {
+                world.rlva_filter_in(text.names)
+            } else {
+                privacy
+            };
+            if !kind.as_received() {
+                privacy.redact_notice(
+                    &world.social.avatar_names,
+                    &mut e.title,
+                    text.rewritten.then_some(&mut e.body),
+                    &mut e.name_links,
+                );
+            }
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();
@@ -775,7 +812,11 @@ fn center_card(
     wanted: &mut std::collections::HashSet<uuid::Uuid>,
     wanted_images: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
+    window: bool,
 ) -> Option<Response> {
+    if super::notifications::close_script_prompt(ui.ctx(), n, window) {
+        return Some(Response::Dismiss);
+    }
     if matches!(n.data, Data::RegionRestart)
         && let Some(info) = &env.restart
     {
@@ -789,7 +830,10 @@ fn center_card(
             cards::card(ui, p, icons, world, env.images, wanted_images, n, false, true)
         }
     });
-    if !read {
+    // a new version of Aurora: the aurora's edge, read or not
+    if matches!(n.data, Data::Update { .. }) {
+        aurora::paint_edge(ui, p, inner.response.rect);
+    } else if !read {
         let r = inner.response.rect;
         ui.painter().rect_filled(
             Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.0, r.bottom())),
@@ -840,7 +884,7 @@ fn presence_toasts(
         .collect();
     let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
     let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
-    let rects = presence::stack(room, env.presence_at, &only, &avoid);
+    let rects = presence::stack(room, env.presence_at, &only, &avoid, env.toast_gap);
     let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
         return;
     };
@@ -883,7 +927,7 @@ fn presence_toasts(
                                     super::presence::Status::Offline
                                 };
                                 super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false);
+                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false, n.kind.names());
                             });
                         })
                         .response
@@ -902,7 +946,7 @@ fn presence_toasts(
                     if click.clicked()
                         && let Some(target) = name_hover
                     {
-                        cards::text::open(ctx, target);
+                        cards::text::open(ctx, n.kind.names(), target);
                     }
                     continue;
                 }
@@ -974,6 +1018,28 @@ fn follow_label(f: &Follow) -> Option<&'static str> {
     })
 }
 
+/// How an entry of the history shows its text under `@shownames` and
+/// `@showloc`: as the kind of its notice did (`Kind::text`), or naming
+/// everyone when the notice named its resident (`Entry::named`).
+fn entry_text(e: &Entry) -> crate::world::names::TextScope {
+    if e.named {
+        crate::world::names::NameScope::Roster.into()
+    } else {
+        Kind::of_look(e.look).text()
+    }
+}
+
+/// History can predate the current restriction or come from an earlier
+/// session. Filter the displayed copy before search, including its action.
+fn hide_teleport_history_location(entry: &mut Entry, showloc: bool) {
+    if showloc && entry.look == crate::world::notification_history::Look::Teleport {
+        entry.body = aurora_i18n::tr!("rlva-hidden-generic").into();
+        if !matches!(entry.follow, Follow::Conversation(_)) {
+            entry.follow = Follow::None;
+        }
+    }
+}
+
 /// A greyed card of the history: its state, and the useful action left.
 fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e: &Entry) -> Option<Follow> {
     let mut out = None;
@@ -995,12 +1061,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                         let time = hhmm(e.time);
                         let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
+                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true, entry_text(e).names);
                         });
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        super::chat::text_with_links(ui, p, world, &e.body, &e.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, entry_text(e), &e.body, &e.name_links, 12.0, p.muted);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()
@@ -1032,6 +1098,7 @@ fn hhmm(secs: u64) -> String {
     super::chat::hhmm(at(secs))
 }
 
+pub mod aurora;
 pub mod presence;
 
 #[cfg(test)]

@@ -47,36 +47,49 @@ pub fn world_line_at(ctx: &egui::Context, a: Vec3, b: Vec3) {
     });
 }
 
-fn line_plane(a: Vec3, b: Vec3, view: &LabelView) -> Option<[Vec3; 2]> {
-    let (mut a, mut b) = (view.view_proj * a.extend(1.0), view.view_proj * b.extend(1.0));
-    if !a.is_finite() || !b.is_finite() || (a.w <= 1e-5 && b.w <= 1e-5) {
+/// Minimum clip-space W for the world's overlay lines and build handles.
+pub const WORLD_OVERLAY_NEAR_W: f32 = 0.02;
+
+/// Clip the stroke and its depth endpoints at the same near plane.
+pub fn clip_world_line(a: glam::Vec4, b: glam::Vec4) -> Option<[glam::Vec4; 2]> {
+    if !a.is_finite() || !b.is_finite() || (a.w < WORLD_OVERLAY_NEAR_W && b.w < WORLD_OVERLAY_NEAR_W) {
         return None;
     }
-    if a.w < 1e-5 {
-        a = a.lerp(b, (1e-5 - a.w) / (b.w - a.w));
-    }
-    if b.w < 1e-5 {
-        b = b.lerp(a, (1e-5 - b.w) / (a.w - b.w));
-    }
-    let project = |c: glam::Vec4| {
+    let cut = |p: glam::Vec4, q: glam::Vec4| {
+        let (p, q) = (p.as_dvec4(), q.as_dvec4());
+        p.lerp(q, (f64::from(WORLD_OVERLAY_NEAR_W) - p.w) / (q.w - p.w)).as_vec4()
+    };
+    Some(if a.w < WORLD_OVERLAY_NEAR_W {
+        [cut(a, b), b]
+    } else if b.w < WORLD_OVERLAY_NEAR_W {
+        [a, cut(b, a)]
+    } else {
+        [a, b]
+    })
+}
+
+fn line_plane(a: Vec3, b: Vec3, view: &LabelView) -> Option<[Vec3; 2]> {
+    let ends = clip_world_line(view.view_proj * a.extend(1.0), view.view_proj * b.extend(1.0))?;
+    Some(ends.map(|c| {
         Vec3::new(
             (c.x / c.w * 0.5 + 0.5) * view.size[0] as f32 / view.pixels_per_point,
             (0.5 - c.y / c.w * 0.5) * view.size[1] as f32 / view.pixels_per_point,
             c.z / c.w,
         )
-    };
-    Some([project(a), project(b)])
+    }))
 }
 
 fn depth_along(line: [Vec3; 2], at: egui::Pos2) -> f32 {
-    let [a, b] = line;
+    // Long move axes can span the camera plane. Keep the screen-space ratio
+    // precise until the vertex depth (inverse distance) has been interpolated.
+    let [a, b] = line.map(|p| p.as_dvec3());
     let d = b.truncate() - a.truncate();
     let t = if d.length_squared() > 1e-8 {
-        ((Vec2::new(at.x, at.y) - a.truncate()).dot(d) / d.length_squared()).clamp(0.0, 1.0)
+        ((glam::DVec2::new(at.x.into(), at.y.into()) - a.truncate()).dot(d) / d.length_squared()).clamp(0.0, 1.0)
     } else {
         0.5
     };
-    a.z + (b.z - a.z) * t
+    (a.z + (b.z - a.z) * t) as f32
 }
 
 #[cfg(test)]
@@ -102,6 +115,31 @@ fn beacon_line_depth_tracks_both_ends_and_clips_the_near_plane() {
             .all(Vec3::is_finite)
     );
     assert!(line_plane(Vec3::Z, Vec3::Z * 2.0, &view).is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn move_guide_depth_stays_accurate_across_the_camera_plane_in_both_directions() {
+    let view = LabelView {
+        view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1),
+        pixels_per_point: 1.5,
+        size: [900, 900],
+        jitter: Vec2::ZERO,
+    };
+    let pivot = Vec3::new(1.0, 0.0, -5.0);
+    let a = pivot + Vec3::Z * 256.0;
+    let b = pivot - Vec3::Z * 256.0;
+    for (first, last) in [(a, b), (b, a)] {
+        let line = line_plane(first, last, &view).expect("part of the guide is in view");
+        for distance in [2.0, 8.0, 32.0, 128.0, 256.0] {
+            let world = Vec3::new(1.0, 0.0, -distance);
+            let c = view.view_proj * world.extend(1.0);
+            let at = egui::pos2(300.0 * (1.0 + c.x / c.w), 300.0);
+            let actual = depth_along(line, at);
+            let expected = 0.1 / distance;
+            assert!((actual - expected).abs() < 1e-7, "at {distance} m: {actual} vs {expected}");
+        }
+    }
 }
 
 /// Depth of what is never hidden: nearer than the near plane (reverse-Z).

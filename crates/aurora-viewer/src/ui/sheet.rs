@@ -859,13 +859,15 @@ pub fn list_title(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, count
     });
 }
 
-/// A resident's display name and user name (when the settings show both).
+/// A resident's display name and user name (when the settings show both),
+/// as the land and estate windows name their people: whoever is around,
+/// `@shownames` hides no one there (`NameScope::Roster`).
 pub fn names(world: &mut World, id: &Uuid) -> (String, Option<String>) {
     world.social.want_name(*id);
     let names = &world.social.avatar_names;
-    match names.get(id) {
+    match names.get_in(crate::world::names::NameScope::Roster, id) {
         Some(n) => (n.display(&names.options), n.chat_username(&names.options)),
-        None => (world.social.name_of(id), None),
+        None => (world.social.name_in(crate::world::names::NameScope::Roster, id), None),
     }
 }
 
@@ -931,6 +933,7 @@ pub struct RowAnswer {
 /// the right end. A double click opens the profile.
 pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_>, width: f32) -> RowAnswer {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
+    widgets::reveal_search_selection(ui, &r, row.selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if row.selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -1022,6 +1025,41 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The land and estate windows name their people whoever is around:
+    /// `@shownames` hides none of them (issue #3547).
+    #[test]
+    fn the_land_and_estate_windows_name_a_resident_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let agent = world.agent_id;
+        let id = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != agent).unwrap();
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Jane Doe".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert_ne!(world.social.name_of(&id), "Jane Doe", "the world's name is hidden");
+        assert_eq!(names(&mut world, &id).0, "Jane Doe");
+    }
 
     /// A header's picture keeps its aspect: a square picture fills the
     /// width and loses its top and bottom.

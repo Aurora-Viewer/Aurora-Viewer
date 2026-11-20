@@ -14,17 +14,30 @@ use crate::ui::widgets::{flat_button_sized, primary_button_sized, switch};
 use crate::world::World;
 use egui::{RichText, Vec2};
 
-pub fn button(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings) {
-    if !tool.replacement_visible(world, s) {
-        return;
-    }
-    ui.add_space(3.0);
-    if flat_button_sized(ui, p, aurora_i18n::tr!("replace-button"), Vec2::new(ui.available_width(), 24.0))
-        .on_hover_text(aurora_i18n::tr!("replace-button-help"))
-        .clicked()
-    {
-        tool.begin_replacement(world, s);
-    }
+pub fn entry(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings) {
+    let enabled = tool.replacement_visible(world, s) && !tool.replacement_busy();
+    super::common::row(ui, p, aurora_i18n::tr!("replace-link-label"), 112.0, |ui| {
+        let response = crate::ui::widgets::action_button_if(
+            ui,
+            p,
+            "",
+            if enabled {
+                aurora_i18n::tr!("replace-button-short")
+            } else {
+                aurora_i18n::tr!("replace-select-link")
+            },
+            crate::ui::widgets::ActionKind::Flat,
+            Vec2::new(ui.available_width().max(1.0), 26.0),
+            enabled,
+        )
+        .on_hover_text(aurora_i18n::tr!("replace-button-help"));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("build-replace-button"), (response.rect, enabled)));
+        if response.clicked() {
+            tool.begin_replacement(world, s);
+        }
+    });
 }
 
 fn toggle(ui: &mut egui::Ui, p: &Palette, value: &mut bool, label: &str, help: &str) {

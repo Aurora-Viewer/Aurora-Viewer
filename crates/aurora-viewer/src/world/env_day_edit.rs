@@ -124,6 +124,13 @@ impl DayDoc {
         self.map["flags"].as_u32()
     }
 
+    /// The day's flags with its frames' (`env_edit::source_flags`; none
+    /// without a `flags` key).
+    pub fn source_flags(&self) -> u32 {
+        let frames = self.tracks.iter().flatten().map(|(_, frame)| frame["flags"].as_u32());
+        frames.fold(self.flags(), |f, frame| f | frame)
+    }
+
     pub fn set_flags(&mut self, flags: u32) {
         self.map.insert("flags", flags as i32);
     }
@@ -406,7 +413,9 @@ impl DayDoc {
     }
 }
 
-/// Frames carry no name of their own in a day.
+/// Frames carry no name of their own in a day (LLSettingsDay::getSettings
+/// clones its frames without SETTING_NAME): Aurora writes nothing there of
+/// its own either.
 fn without_name(mut v: Llsd) -> Llsd {
     if let Llsd::Map(m) = &mut v {
         m.remove("name");
@@ -455,6 +464,24 @@ mod tests {
         DayDoc::from_llsd(v).expect("a day")
     }
 
+    /// A sky put in a day loses its name, whatever the name holds (an old
+    /// Aurora Weather code included), and the saved day carries none.
+    #[test]
+    fn a_frame_keeps_no_name_in_a_day() {
+        let mut d = day();
+        let frame = |d: &DayDoc, i: usize| d.frame_doc(TRACK_GROUND + 1, i).expect("frame");
+        for name in ["Plain", "Stormy ~K7Q2M9XAP"] {
+            let sky = SettingsDoc::snapshot_sky(&SkyFrame::default(), name);
+            let i = d.put_frame(TRACK_GROUND + 1, 0.75, &sky).expect("put");
+            assert_eq!(frame(&d, i).name(), "", "{name}");
+        }
+        let saved = d.to_llsd();
+        assert!(
+            saved["frames"].as_map().expect("frames").values().all(|f| !f.has("name")),
+            "{saved:?}"
+        );
+    }
+
     #[test]
     fn frames_round_trip_and_mistyped_keys_are_dropped() {
         let d = day();
@@ -467,6 +494,17 @@ mod tests {
         let rendered = d.day();
         assert!((rendered.sky_at(0.5, 0).gamma - 2.0).abs() < 1e-6);
         assert!((rendered.water_at(0.3).fog_density - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_days_source_flags_join_its_frames() {
+        use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
+        let mut d = day();
+        assert_eq!(d.source_flags(), 0, "no flags key: no restriction");
+        d.set_flags(FLAG_NOTRANS);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS);
+        d.tracks[TRACK_GROUND][0].1.insert("flags", FLAG_NOCOPY as i32);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS | FLAG_NOCOPY);
     }
 
     #[test]

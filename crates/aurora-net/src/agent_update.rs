@@ -6,7 +6,8 @@
 //! motions when told twice. Everything else (camera, body and head
 //! rotation, render state) is sent when it moved past Firestorm's
 //! thresholds, at most 125 times a second, and one update a second keeps
-//! the agent alive.
+//! the agent alive. The draw distance it asks for (`Far`) follows the same
+//! function's interest list steps, [`FarStep`].
 
 use crate::AgentControls;
 use std::time::{Duration, Instant};
@@ -110,6 +111,83 @@ impl AgentUpdateRule {
             return false;
         }
         head < ROTATION_FAR + since.as_secs_f32() * (HEAD_CLOSE - ROTATION_FAR) / HEAD_GROWTH
+    }
+}
+
+/// TeleportArrivalDelay (settings.xml, 2 s): how long TELEPORT_ARRIVING
+/// lasts after AgentMovementComplete (llviewerdisplay.cpp).
+const TELEPORT_ARRIVAL_DELAY: Duration = Duration::from_secs(2);
+/// The interest list never asks for less than this on arrival.
+const ARRIVAL_FAR_MIN: f32 = 50.0;
+/// After an arrival, `Far` grows by a tenth of the draw distance...
+const FAR_GROWTH: f32 = 0.1;
+/// ...at most once a second.
+const FAR_GROWTH_PERIOD: Duration = Duration::from_secs(1);
+
+/// The draw distance AgentUpdate asks for (`Far`), port of the interest
+/// list steps of `send_agent_update` (its `last_draw_disatance_step`). The
+/// simulator connects the agent to the neighbouring regions within this
+/// distance (EnableSimulator) and sends the objects within it. While
+/// logging in and during TELEPORT_ARRIVING it asks for half the draw
+/// distance (50 m at least), "to prioritize closer area": the simulator
+/// does not sort the attachments by distance. Then it grows by a tenth of
+/// the draw distance a second up to it; a smaller draw distance applies at
+/// once. (FSDrawDistanceVRAMOptimization, off by default, is not ported.)
+pub(crate) struct FarStep {
+    step: f32,
+    raised_at: Instant,
+    /// TELEPORT_ARRIVING (or logging in) until then.
+    arriving_until: Option<Instant>,
+    /// A TeleportFinish came: its AgentMovementComplete starts arriving.
+    teleported: bool,
+}
+
+impl FarStep {
+    pub(crate) fn new(now: Instant) -> Self {
+        FarStep {
+            // (`static F32 last_draw_disatance_step = 1024`)
+            step: 1024.0,
+            raised_at: now,
+            arriving_until: None,
+            teleported: false,
+        }
+    }
+
+    /// TeleportFinish: the agent is on its way to another region.
+    pub(crate) fn teleported(&mut self) {
+        self.teleported = true;
+    }
+
+    /// AgentMovementComplete. `login`: the first region of the session
+    /// (LLStartUp's state before STATE_MISC); a teleport's arrival then
+    /// lasts TeleportArrivalDelay; a region crossing changes nothing.
+    pub(crate) fn movement_complete(&mut self, login: bool, now: Instant) {
+        let hold = if login {
+            Some(Duration::ZERO)
+        } else {
+            std::mem::take(&mut self.teleported).then_some(TELEPORT_ARRIVAL_DELAY)
+        };
+        if let Some(hold) = hold {
+            self.arriving_until = Some(now + hold);
+        }
+    }
+
+    /// `Far` of an update leaving at `now`, for the viewer's draw distance.
+    pub(crate) fn far(&mut self, draw_distance: f32, now: Instant) -> f32 {
+        if let Some(until) = self.arriving_until {
+            if now >= until {
+                self.arriving_until = None;
+            }
+            self.step = (draw_distance / 2.0).max(ARRIVAL_FAR_MIN).min(draw_distance);
+        } else if self.step < draw_distance {
+            if now.saturating_duration_since(self.raised_at) > FAR_GROWTH_PERIOD {
+                self.raised_at = now;
+                self.step = (self.step + draw_distance * FAR_GROWTH).min(draw_distance);
+            }
+        } else {
+            self.step = draw_distance;
+        }
+        self.step
     }
 }
 
@@ -225,6 +303,65 @@ mod tests {
         // the draw distance travels with the next update, it does not cause one
         let far = AgentControls { far: 512.0, ..idle };
         assert!(!rule.should_send(&far, t + ms(1500)));
+    }
+
+    #[test]
+    fn far_is_the_draw_distance_after_half_of_it_on_arrival() {
+        let t = Instant::now();
+        // #2810: the session asked for 128 m whatever the draw distance, so
+        // the simulator connected only the neighbours within 128 m
+        let mut far = FarStep::new(t);
+        far.movement_complete(true, t);
+        assert_eq!(far.far(290.0, t), 145.0);
+        // then a tenth of the draw distance a second, up to it
+        assert_eq!(far.far(290.0, t + ms(500)), 145.0);
+        assert_eq!(far.far(290.0, t + ms(1100)), 174.0);
+        assert_eq!(far.far(290.0, t + ms(1500)), 174.0);
+        let mut at = t + ms(1100);
+        for _ in 0..4 {
+            at += ms(1001);
+            far.far(290.0, at);
+        }
+        assert_eq!(far.far(290.0, at), 290.0);
+        // a smaller draw distance at once, a larger one step by step again
+        assert_eq!(far.far(64.0, at + ms(10)), 64.0);
+        assert_eq!(far.far(512.0, at + ms(20)), 64.0);
+        assert!((far.far(512.0, at + ms(1100)) - 115.2).abs() < 1e-3);
+        // never under 50 m on arrival, nor over a short draw distance
+        let mut short = FarStep::new(t);
+        short.movement_complete(true, t);
+        assert_eq!(short.far(64.0, t), 50.0);
+        let mut shorter = FarStep::new(t);
+        shorter.movement_complete(true, t);
+        assert_eq!(shorter.far(32.0, t), 32.0);
+    }
+
+    #[test]
+    fn a_teleport_arrival_holds_half_the_draw_distance_for_two_seconds() {
+        let t = Instant::now();
+        let mut far = FarStep::new(t);
+        far.movement_complete(true, t);
+        assert_eq!(far.far(256.0, t), 128.0);
+        let mut at = t;
+        for _ in 0..6 {
+            at += ms(1001);
+            far.far(256.0, at);
+        }
+        assert_eq!(far.far(256.0, at), 256.0);
+        // a region crossing keeps the draw distance
+        far.movement_complete(false, at);
+        assert_eq!(far.far(256.0, at), 256.0);
+        // a teleport: half of it until TeleportArrivalDelay has passed
+        far.teleported();
+        let arrived = at + ms(5000);
+        far.movement_complete(false, arrived);
+        assert_eq!(far.far(256.0, arrived), 128.0);
+        assert_eq!(far.far(256.0, arrived + ms(1900)), 128.0);
+        assert_eq!(far.far(256.0, arrived + ms(2000)), 128.0);
+        assert!((far.far(256.0, arrived + ms(2100)) - 153.6).abs() < 1e-3);
+        // the teleport was used up: a later crossing changes nothing
+        far.movement_complete(false, arrived + ms(3000));
+        assert!((far.far(256.0, arrived + ms(3000)) - 153.6).abs() < 1e-3);
     }
 
     #[test]

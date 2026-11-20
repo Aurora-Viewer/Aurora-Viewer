@@ -58,6 +58,9 @@ const DEFAULT_ASPECT: f32 = 16.0 / 9.0;
 const MIN_VIDEO_CARD: f32 = 200.0;
 /// The player window's id (its place and size are remembered).
 const PLAYER_WINDOW: &str = "link_preview_player";
+/// The key of a video the viewer plays itself (`Previews::play_video`): no
+/// link of the chat has it.
+const OWN_VIDEO: u64 = u64::MAX;
 
 /// A picture made into textures.
 #[derive(Clone)]
@@ -281,6 +284,16 @@ fn links(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Who wrote a line, for its previews: what an object or a script says,
+/// its IMs and the viewer's notices wait for a click (`lp::Sender`).
+fn sender(line: &ChatLine) -> lp::Sender {
+    if line.kind.is_automated() {
+        lp::Sender::Object
+    } else {
+        lp::Sender::Resident
+    }
 }
 
 /// One preview of one message.
@@ -550,13 +563,59 @@ impl Previews {
         let w = self.settings.size.width();
         links(text)
             .iter()
-            .filter_map(|url| lp::decide(&self.settings, self.place, url).map(|(target, _)| (url, target)))
+            .filter_map(|url| lp::decide(&self.settings, self.place, sender(line), url).map(|(target, _)| (url, target)))
             .map(|(url, target)| match target {
                 // a Gyazo page may lead to a video capture
                 Target::Picture | Target::Page(_) if !matches!(self.cache.get(url).map(|c| &c.entry), Some(Entry::Video { .. })) => w,
                 _ => w + VIDEO_EXTRA,
             })
             .fold(0.0, f32::max)
+    }
+
+    /// A video of the viewer's own choosing may play in the player window:
+    /// the resident did not hide YouTube's previews. (The media plugins
+    /// are the app's to check.)
+    pub fn can_play_video(&self) -> bool {
+        !self.settings.hidden_sites.iter().any(|site| site.contains("youtube"))
+    }
+
+    /// Plays a video of YouTube in the player window from `start` seconds
+    /// in, its page telling where the video is (`lp::video_time`): the
+    /// music of the viewer's own show (`crate::oiia`), not a link of the
+    /// chat. False when it may not (`can_play_video`).
+    pub fn play_video(&mut self, id: &str, start: u32, title: &str) -> bool {
+        if !self.can_play_video() {
+            return false;
+        }
+        let mut options = self.settings.player_options(aurora_i18n::language());
+        options.clock = true;
+        lp::forget_video_time();
+        let mut web = WebView::default();
+        web.navigate(&lp::Video { id: id.to_owned(), start }.player_page(&options));
+        self.playing = Some(Playing {
+            key: OWN_VIDEO,
+            link: format!("https://www.youtube.com/watch?v={id}&t={start}"),
+            title: title.to_owned(),
+            web,
+            window: true,
+            drawn: 0,
+            aspect: DEFAULT_ASPECT,
+            fitted: false,
+            chrome: Vec2::new(0.0, TITLE_BAR),
+        });
+        true
+    }
+
+    /// The video `play_video` started is still in its window.
+    pub fn own_video_playing(&self) -> bool {
+        self.playing.as_ref().is_some_and(|v| v.key == OWN_VIDEO)
+    }
+
+    /// Closes the video `play_video` started.
+    pub fn stop_own_video(&mut self) {
+        if self.own_video_playing() {
+            self.playing = None;
+        }
     }
 
     /// The video playing in a window: its window; the one of a card no
@@ -687,7 +746,7 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
     let ready: Vec<String> = links(text)
         .into_iter()
         .filter(|url| {
-            let Some((_, start)) = lp::decide(&pv.settings, pv.place, url) else {
+            let Some((_, start)) = lp::decide(&pv.settings, pv.place, sender(line), url) else {
                 return false;
             };
             let k = key(line, url);
@@ -711,16 +770,16 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
     if ready.is_empty() {
         return text.into();
     }
-    let mut rest = text;
+    let mut at = 0;
     let mut out = String::with_capacity(text.len());
-    while let Some((at, len, seg)) = super::next_link(rest) {
-        out.push_str(&rest[..at]);
+    for (i, len, seg) in super::link_spans(text) {
+        out.push_str(&text[at..i]);
         if !matches!(seg, Seg::Url(url) if ready.iter().any(|u| u == web_target(url).as_ref())) {
-            out.push_str(&rest[at..at + len]);
+            out.push_str(&text[i..i + len]);
         }
-        rest = &rest[at + len..];
+        at = i + len;
     }
-    out.push_str(rest);
+    out.push_str(&text[at..]);
     out.trim().to_owned().into()
 }
 
@@ -736,7 +795,7 @@ pub(super) fn cards(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, text:
     }
     let p = env.p;
     for url in links(text) {
-        let Some((target, start)) = lp::decide(&pv.settings, pv.place, &url) else {
+        let Some((target, start)) = lp::decide(&pv.settings, pv.place, sender(line), &url) else {
             continue;
         };
         let k = key(line, &url);
@@ -1456,6 +1515,9 @@ mod tests {
             kind: crate::world::ChatKind::Im,
             source: uuid::Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         let mut pv = Previews::default();
         let visible = |pv: &Previews, line: &ChatLine| text(Some(pv), line, &line.text, 320.0).into_owned();
@@ -1543,6 +1605,9 @@ mod tests {
             kind: crate::world::ChatKind::Im,
             source: uuid::Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         assert_eq!(text(Some(&pv), &line, &line.text, 340.0), urls[3]);
         assert_eq!(

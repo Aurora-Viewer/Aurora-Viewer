@@ -1,5 +1,6 @@
-//! CPU painter for the small recovery window. No graphics adapter, surface,
-//! shader, GPU thread or driver is initialized after a rendering crash.
+//! CPU painter for the small recovery window and the startup splash
+//! (`splash/`). No graphics adapter, surface, shader, GPU thread or driver
+//! is initialized after a rendering crash, nor before the renderer starts.
 //! Only egui meshes are accepted: the recovery UI has no paint callbacks.
 
 use egui::{
@@ -23,6 +24,13 @@ impl Painter {
         scale: f32,
         background: Color32,
     ) {
+        self.update_textures(delta);
+        self.fill_and_draw(pixels, size, primitives, scale, background);
+        self.free_textures(delta);
+    }
+
+    /// The textures a frame sets (before drawing it).
+    pub fn update_textures(&mut self, delta: &egui::TexturesDelta) {
         for (id, changes) in &delta.set {
             for change in changes {
                 let egui::ImageData::Color(image) = &change.image;
@@ -42,7 +50,31 @@ impl Painter {
                 }
             }
         }
+    }
+
+    /// The textures a frame frees (after drawing it).
+    pub fn free_textures(&mut self, delta: &egui::TexturesDelta) {
+        for id in &delta.free {
+            self.textures.remove(id);
+        }
+    }
+
+    /// `background` everywhere, then the meshes.
+    pub fn fill_and_draw(
+        &mut self,
+        pixels: &mut [u32],
+        size: [usize; 2],
+        primitives: &[ClippedPrimitive],
+        scale: f32,
+        background: Color32,
+    ) {
         pixels.fill(rgb(background));
+        self.draw(pixels, size, primitives, scale);
+    }
+
+    /// The meshes over what `pixels` already holds (the startup splash
+    /// keeps its background from one frame to the next).
+    pub fn draw(&self, pixels: &mut [u32], size: [usize; 2], primitives: &[ClippedPrimitive], scale: f32) {
         for primitive in primitives {
             let Primitive::Mesh(mesh) = &primitive.primitive else { continue };
             let Some(texture) = self.textures.get(&mesh.texture_id) else {
@@ -66,9 +98,6 @@ impl Painter {
                     triangle(pixels, size, clip, [*a, *b, *c], texture, scale);
                 }
             }
-        }
-        for id in &delta.free {
-            self.textures.remove(id);
         }
     }
 }

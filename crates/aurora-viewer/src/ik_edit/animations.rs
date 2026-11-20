@@ -42,36 +42,9 @@ pub(super) struct Stack {
     pub suppress_live: bool,
     picker: bool,
     replacement: Option<usize>,
-    requested: std::collections::HashSet<Uuid>,
-    out: Vec<aurora_net::NetCommand>,
     filter: String,
     cache: Option<(u64, String)>,
     candidates: Vec<(Uuid, String)>,
-}
-
-#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SavedStack {
-    pub rows: Vec<SavedRow>,
-    pub suppress_live: bool,
-}
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SavedRow {
-    pub item: Option<Uuid>,
-    pub asset: Uuid,
-    pub name: String,
-    pub frame: u32,
-    pub enabled: bool,
-}
-impl SavedStack {
-    pub fn valid(&self) -> bool {
-        self.rows.len() <= LIMIT
-            && self
-                .rows
-                .iter()
-                .all(|r| r.name.len() <= 256 && r.frame <= 1_000_000 && !r.asset.is_nil())
-    }
 }
 
 fn item(inv: &Inventory, id: Uuid) -> Option<(Uuid, String)> {
@@ -97,18 +70,6 @@ impl Stack {
             }
         }
     }
-    pub fn take_requests(&mut self, owner: Uuid) -> Vec<aurora_net::NetCommand> {
-        let ids: Vec<_> = self
-            .rows
-            .iter()
-            .filter_map(|r| r.item)
-            .filter(|id| self.requested.insert(*id))
-            .collect();
-        if !ids.is_empty() {
-            self.out.push(aurora_net::NetCommand::FetchItems { items: ids, owner });
-        }
-        std::mem::take(&mut self.out)
-    }
     pub fn tick(&mut self, streamer: &mut AnimStreamer, inv: &mut Inventory) {
         if self.picker
             && let Some(root) = actions::system(inv, 20)
@@ -128,6 +89,12 @@ impl Stack {
                     row.clip = None;
                     continue;
                 }
+            } else if row.clip.is_none() {
+                // A row plays an animation of the agent's inventory: an asset
+                // id alone (a project file from someone else) stays missing.
+                // Only the clips the editor builds itself (demo) have no item.
+                row.failed = true;
+                continue;
             }
             if row.clip.is_none() {
                 row.clip = streamer.get(&row.asset);
@@ -146,37 +113,10 @@ impl Stack {
                 Some(Sample {
                     animation: r.clip.clone()?,
                     frame: r.frame,
+                    time_seconds: None,
                 })
             })
             .collect()
-    }
-    pub(super) fn save(&self) -> SavedStack {
-        SavedStack {
-            suppress_live: self.suppress_live,
-            rows: self
-                .rows
-                .iter()
-                .map(|r| SavedRow {
-                    item: r.item,
-                    asset: r.asset,
-                    name: r.name.clone(),
-                    frame: r.frame,
-                    enabled: r.enabled,
-                })
-                .collect(),
-        }
-    }
-    pub(super) fn restore(&mut self, saved: &SavedStack) {
-        let previous = std::mem::take(&mut self.rows);
-        self.suppress_live = saved.suppress_live;
-        for row in &saved.rows {
-            let mut restored = Row::new(row.asset, row.name.clone());
-            restored.item = row.item;
-            restored.frame = row.frame;
-            restored.enabled = row.enabled;
-            restored.clip = previous.iter().find(|r| r.asset == row.asset).and_then(|r| r.clip.clone());
-            self.rows.push(restored);
-        }
     }
     fn reorder(&mut self, index: usize, delta: isize) {
         if let Some(to) = index.checked_add_signed(delta).filter(|to| *to < self.rows.len()) {
@@ -198,6 +138,7 @@ impl Stack {
                 loop_in: 0.0,
                 loop_out: 2.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,
@@ -332,7 +273,9 @@ impl Stack {
                     self.replacement = None;
                 }
                 if self.picker {
-                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-animation-search")));
+                    crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ik-edit-animation-search"))
+                    });
                     if self.cache.as_ref() != Some(&(inv.generation, self.filter.clone())) {
                         let filter = self.filter.to_lowercase();
                         self.candidates = inv
@@ -344,7 +287,7 @@ impl Stack {
                             })
                             .collect();
                         self.candidates
-                            .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.0.cmp(&b.0)));
+                            .sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
                         self.cache = Some((inv.generation, self.filter.clone()));
                     }
                     let mut chosen = None;
@@ -391,11 +334,6 @@ fn frame_controls(ui: &mut egui::Ui, frame: &mut u32, last: u32) {
 impl Editor {
     pub fn tick_animations(&mut self, streamer: &mut AnimStreamer, inv: &mut Inventory) {
         if self.open && !self.poser.active {
-            if self.project.picking_notecard()
-                && let Some(root) = actions::system(inv, 7)
-            {
-                actions::request_tree(inv, root);
-            }
             self.animations.tick(streamer, inv);
         }
     }

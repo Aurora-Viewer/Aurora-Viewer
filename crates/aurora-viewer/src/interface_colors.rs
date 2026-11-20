@@ -182,7 +182,15 @@ pub fn derive(skin: Palette, colors: &InterfaceColors) -> (Palette, Adjusted) {
         // reads on the new panel: they colour text as well as dots and
         // badges, so the text minimum (the skin's already reach it)
         if p.panel != skin.panel {
-            for c in [&mut p.danger, &mut p.success, &mut p.warn, &mut p.amber, &mut p.rose, &mut p.teal] {
+            for c in [
+                &mut p.danger,
+                &mut p.success,
+                &mut p.warn,
+                &mut p.amber,
+                &mut p.rose,
+                &mut p.teal,
+                &mut p.axis_z,
+            ] {
                 *c = readable(*c, p.panel, TEXT);
             }
         }

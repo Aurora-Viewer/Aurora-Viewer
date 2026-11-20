@@ -180,6 +180,16 @@ pub fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The lists whose write was refused: tried again (`save_retry`), once more
+/// at exit, and read from here by a login meanwhile.
+/// FSAssetBlacklist::saveBlacklist writes once and warns.
+static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("aurora-asset-blacklist", "asset blacklist");
+
+/// The viewer closing: a list still owed is tried once more.
+pub fn save_before_exit() {
+    OWED.finish();
+}
+
 impl Derender {
     /// FSAssetBlacklist::loadBlacklist: the account's permanent entries.
     pub fn load(path: PathBuf) -> Self {
@@ -187,7 +197,9 @@ impl Derender {
             path: Some(path.clone()),
             ..Derender::default()
         };
-        let bytes = match std::fs::read(&path) {
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
+        // a list whose last write was refused is read from memory
+        let bytes = match OWED.owed(&path).map_or_else(|| std::fs::read(&path), Ok) {
             Ok(bytes) => bytes,
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound {
@@ -261,12 +273,15 @@ impl Derender {
             data.insert("asset_permanent".into(), Llsd::from(true));
             map.insert(mask(*id).to_string(), Llsd::Map(data));
         }
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = crate::atomic_file::write(path, &aurora_llsd::to_xml(&Llsd::Map(map))) {
-            log::warn!("asset blacklist not saved: {e}");
-        }
+        // written by a save thread (saves.rs): an edit no longer waits for
+        // the disk on the frame
+        let xml = aurora_llsd::to_xml(&Llsd::Map(map));
+        let path = path.clone();
+        crate::saves::replace(path.clone(), move || {
+            if let Err(e) = OWED.write(&path, xml) {
+                log::warn!("asset blacklist not saved ({e}); kept, tried again later");
+            }
+        });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -842,6 +857,8 @@ mod tests {
         let anim = Uuid::from_u128(404);
         let mut list = Derender::load(path.clone());
         list.add(anim, entry(Kind::Animation, true));
+        // written by a save thread (saves.rs)
+        assert!(crate::saves::wait_for(&path, std::time::Duration::from_secs(10)));
         let saved = aurora_llsd::from_xml(&std::fs::read(&path).expect("saved")).expect("llsd");
         assert_eq!(saved.get(&mask(anim).to_string()).get("asset_type").as_i32(), AT_ANIMATION);
         let mut list = Derender::load(path.clone());
@@ -1111,6 +1128,38 @@ mod tests {
         assert!(world.objects.index_of_uuid(&hat).is_none());
         world.underender(&[hat]);
         assert!(world.objects.index_of_uuid(&hat).is_some());
+    }
+
+    /// "Edit linked parts" then Derender (#3384): one child prim of our worn
+    /// linkset goes, its root and the rest of the linkset stay.
+    #[test]
+    fn a_linked_part_alone_can_be_derendered_and_comes_back_linked() {
+        use aurora_net::NetEvent;
+        let (mut world, handle) = demo_world();
+        for ev in crate::demo::worn::events() {
+            let _ = world.apply(ev);
+        }
+        let key = |local_id| ObjKey { region: handle, local_id };
+        let (root, child) = (key(crate::demo::worn::ROOT), key(crate::demo::worn::CHILD));
+        let id_of = |w: &super::super::World, k: &ObjKey| w.objects.get(w.objects.index_of(k).expect("prim")).expect("prim").full_id;
+        let child_id = id_of(&world, &child);
+        let children = |w: &super::super::World| {
+            w.objects
+                .index_of(&root)
+                .map(|i| w.objects.get(i).map_or(0, |o| w.objects.children_of(&o.key).len()))
+        };
+        assert_eq!(children(&world), Some(1));
+        assert!(!world.derender(child_id, entry(Kind::Object, false)));
+        assert!(world.objects.index_of(&child).is_none());
+        assert_eq!(children(&world), Some(0), "the root stays, without the part");
+        // the simulator sends the whole linkset again: the part stays out
+        let resent = world.derender.hidden.values().filter_map(|h| h.update.clone()).collect::<Vec<_>>();
+        assert_eq!(resent.len(), 1);
+        let _ = world.apply(NetEvent::ObjectUpdates { handle, objects: resent });
+        assert!(world.objects.index_of(&child).is_none());
+        assert_eq!(children(&world), Some(0));
+        world.underender(&[child_id]);
+        assert_eq!(children(&world), Some(1), "back in its linkset");
     }
 
     #[test]

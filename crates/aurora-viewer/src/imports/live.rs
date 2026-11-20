@@ -64,7 +64,7 @@ impl Imports {
         jobs: &crate::scene::jobs::Jobs,
         ctx: &egui::Context,
     ) {
-        if self.pending_files.is_some() || self.busy() || self.entries.len() >= 512 {
+        if self.pending_files.is_some() || self.busy() {
             return;
         }
         let request = Uuid::new_v4();

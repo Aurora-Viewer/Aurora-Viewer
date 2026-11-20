@@ -40,7 +40,8 @@ pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
 }
 
 /// Two lines under one head: the same resident or object, said in a row
-/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323);
+/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323)
+/// and from the same side of the say range (a card is dimmed whole);
 /// notices stand alone.
 fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
     !a.kind.is_notice()
@@ -50,6 +51,7 @@ fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
         && is_object(a.kind) == is_object(b.kind)
         && a.kind.is_own() == b.kind.is_own()
         && a.kind.volume() == b.kind.volume()
+        && a.beyond_range == b.beyond_range
 }
 
 fn is_object(kind: ChatKind) -> bool {
@@ -60,6 +62,52 @@ fn is_object(kind: ChatKind) -> bool {
 fn alpha(seconds: f32, line: &ChatLine, now: std::time::SystemTime) -> f32 {
     let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
     ((seconds - age) / 3.0).clamp(0.0, 1.0)
+}
+
+/// Newest whole messages within the wrapped-text budget, in reading order,
+/// following LLConsole::draw (indra/llui/llconsole.cpp). Headers of Aurora's
+/// cards are presentation, not message text. Measure only until the budget
+/// is full; the renderer reuses egui's cached text layouts.
+pub(super) fn recent(
+    world: &World,
+    now: std::time::SystemTime,
+    seconds: f32,
+    max_lines: u32,
+    residents: bool,
+    mut rows: impl FnMut(&ChatLine) -> usize,
+) -> Vec<&ChatLine> {
+    let mut remaining = max_lines as usize;
+    let mut recent = Vec::new();
+    for line in world
+        .chat
+        .iter()
+        .rev()
+        // a blocked resident's line stays in the history (LLNearbyChatHandler
+        // never sees a muted line)
+        .filter(|l| !l.blocked && (residents || !super::said_by_resident(l)))
+        // Bound the look-back even when every recent message has expired.
+        .take(max_lines as usize)
+        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
+    {
+        let count = rows(line).max(1);
+        if count > remaining {
+            break;
+        }
+        recent.push(line);
+        remaining -= count;
+        if remaining == 0 {
+            break;
+        }
+    }
+    recent.reverse();
+    recent
+}
+
+/// Count the same bidi and emoji layout the line's painter uses, including
+/// explicit newlines, wrapping, link badges and the selected chat font.
+pub(super) fn rows(ctx: &egui::Context, line: &ChatLine, job: BubbleJob) -> usize {
+    let base = super::bidi_base(&job.name, &line.from);
+    ctx.fonts_mut(|f| crate::ui::bidi::layout(f, job.job, base).galley.rows.len())
 }
 
 /// The colour of a head's name: ours in the theme's teal, an object's in
@@ -88,38 +136,57 @@ pub(super) fn cards(
     wanted_pics: &mut HashSet<uuid::Uuid>,
     bottom: f32,
     seconds: f32,
+    max_lines: u32,
     times: bool,
     compact_automated: bool,
     residents: bool,
 ) {
     let now = std::time::SystemTime::now();
-    let mut recent: Vec<&ChatLine> = world
-        .chat
-        .iter()
-        .rev()
-        .filter(|l| residents || !super::said_by_resident(l))
-        .take(6)
-        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
-        .collect();
+    let recent = recent(world, now, seconds, max_lines, residents, |line| {
+        let small = super::object_row::compact(line, compact_automated);
+        let (width, size, look) = if small {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let time_w = if times {
+                super::object_row::time_galley(&painter, p, line).size().x + 5.0
+            } else {
+                0.0
+            };
+            let size = chat_size(ctx, super::object_row::TEXT);
+            let lead = time_w + if line.kind.is_notice() { super::pic_side(size) + 2.0 } else { 0.0 };
+            (WIDTH - 18.0 - lead, size, JobLook::Compact)
+        } else {
+            let width = WIDTH - 18.0 - if line.kind.is_notice() { 0.0 } else { PICTURE + GAP };
+            (width, chat_size(ctx, TEXT), JobLook::Body)
+        };
+        rows(ctx, line, line_job(ctx, line, p, world, want_names, width, size, false, look))
+    });
     if recent.is_empty() {
         return;
     }
-    recent.reverse();
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
+    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
-        )
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a card that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = super::Held::new(ui, lift);
             ui.set_max_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 0.0;
             for group in groups(&recent) {
                 let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
-                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * card_alpha) as u8);
+                let (console_tint, console_blur) =
+                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+                let tint = Color32::from_rgba_unmultiplied(
+                    p.bar.r(),
+                    p.bar.g(),
+                    p.bar.b(),
+                    (190.0 * console_tint * card_alpha).min(255.0) as u8,
+                );
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
@@ -134,7 +201,9 @@ pub(super) fn cards(
                     })
                     .show(ui, |ui| {
                         slot = Some(ui.painter().add(egui::Shape::Noop));
-                        ui.multiply_opacity(card_alpha);
+                        // a card from beyond the say range has its content
+                        // dimmed, never its glass (one range per card)
+                        ui.multiply_opacity(card_alpha * crate::ui::colors::beyond_range_alpha(group[0]));
                         if small {
                             compact_card(
                                 ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
@@ -160,17 +229,19 @@ pub(super) fn cards(
                 if glass && let Some(slot) = slot {
                     ui.painter().set(
                         slot,
-                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha),
+                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha * console_blur),
                     );
                 }
                 ui.add_space(4.0);
             }
+            shift = held.settle(ui);
         });
+    super::Held::publish(ctx, shift);
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 
@@ -368,7 +439,7 @@ fn picture(
         thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
         return;
     }
-    let id = line.source;
+    let id = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
     if !id.is_nil() {
         wanted_pics.insert(id);
     }
@@ -420,7 +491,124 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         }
+    }
+
+    /// Count painted text rows rather than messages, with each renderer's
+    /// actual widths, timestamp gutter and chat font scale. Older messages
+    /// leave as whole paragraphs when they no longer fit (LLConsole::draw).
+    #[test]
+    fn console_max_lines_counts_wrapping_in_both_styles() {
+        for (cards, pills) in [(true, false), (false, false), (false, true)] {
+            for (kind, compact) in [
+                (ChatKind::OWN, false),
+                (ChatKind::Object(ChatType::Normal), false),
+                (ChatKind::System, false),
+                (ChatKind::Object(ChatType::Normal), true),
+                (ChatKind::System, true),
+            ] {
+                for scale in [1.0, 1.5] {
+                    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                    for text in [
+                        "console-oldest".to_owned(),
+                        format!("console-wrapped {}\nconsole-newline", "a longer chat message that wraps ".repeat(8)),
+                        "console-newest".to_owned(),
+                    ] {
+                        let mut said = line(kind, "Nova", 1);
+                        said.text = text;
+                        world.chat.push_back(said);
+                    }
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, 1.0);
+                    crate::ui::fonts::set_chat_scale(&ctx, scale, 1.0);
+                    let p = theme.palette();
+                    let draw = |limit| {
+                        let mut out = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0))),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                super::super::toasts(
+                                    ui.ctx(),
+                                    &p,
+                                    &world,
+                                    &HashMap::new(),
+                                    &mut HashSet::new(),
+                                    &mut HashSet::new(),
+                                    900.0,
+                                    60.0,
+                                    limit,
+                                    true,
+                                    pills,
+                                    cards,
+                                    compact,
+                                    true,
+                                );
+                            },
+                        );
+                        out.textures_delta.clear();
+                        out.shapes
+                            .iter()
+                            .filter_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text().contains("console-") => {
+                                    Some((t.galley.text().to_owned(), t.galley.rows.len()))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    draw(50);
+                    let all = draw(50);
+                    let case = format!("cards={cards}, pills={pills}, kind={kind:?}, compact={compact}, scale={scale}");
+                    assert_eq!(all.len(), 3, "{case}: {all:?}");
+                    let wrapped = all.iter().find(|(text, _)| text.contains("console-wrapped")).unwrap().1;
+                    assert!(wrapped > 2, "{case}: a newline and width wrapping both count");
+                    let limit = wrapped as u32 + 1;
+                    let within = draw(limit);
+                    assert_eq!(within.len(), 2, "{case}: {within:?}");
+                    assert!(within[0].0.contains("console-wrapped"), "{case}: {within:?}");
+                    assert!(within[1].0.contains("console-newest"), "{case}: {within:?}");
+                    assert_eq!(within.iter().map(|(_, rows)| rows).sum::<usize>(), limit as usize, "{case}");
+                    let newest = draw(limit - 1);
+                    assert_eq!(newest.len(), 1, "{case}: {newest:?}");
+                    assert!(newest[0].0.contains("console-newest"), "{case}: {newest:?}");
+                    assert!(draw(0).is_empty(), "{case}: zero hides all text");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn console_max_lines_filters_age_and_residents_before_spending_the_budget() {
+        let now = std::time::SystemTime::now();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut older = line(ChatKind::System, "", 0);
+        older.text = "older".into();
+        let mut expired = line(ChatKind::System, "", 0);
+        expired.time = now - std::time::Duration::from_secs(21);
+        let mut resident = line(ChatKind::OWN, "Nova", 1);
+        resident.time = now;
+        resident.text = "resident".into();
+        let mut newest = line(ChatKind::System, "", 0);
+        newest.time = now;
+        newest.text = "newest".into();
+        older.time = now;
+        world.chat.extend([expired, older, resident, newest]);
+        let selected = recent(&world, now, 20.0, 2, false, |_| 1);
+        assert_eq!(selected.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["older", "newest"]);
+        let selected = recent(&world, now, 20.0, 2, true, |_| 1);
+        assert_eq!(selected.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["resident", "newest"]);
+        assert!(recent(&world, now, 0.0, 40, true, |_| panic!("expired text must not be measured")).is_empty());
+        assert!(recent(&world, now, 20.0, 0, true, |_| panic!("hidden text must not be measured")).is_empty());
+        assert!(
+            recent(&world, now, 20.0, 1, true, |_| 2).is_empty(),
+            "an oversized newest message is not cut"
+        );
     }
 
     /// Lines of one sender said in a row share a card; another sender, an
@@ -491,6 +679,7 @@ mod tests {
                                 &mut HashSet::new(),
                                 700.0,
                                 1e10,
+                                40,
                                 true,
                                 true,
                                 true,
@@ -567,6 +756,22 @@ mod tests {
         assert!(same_sender(&said, &line(ChatKind::OWN, "Me", 0)));
     }
 
+    /// A resident who walks out of the say range between two lines: the
+    /// far line gets its own card, dimmed whole.
+    #[test]
+    fn a_line_from_beyond_the_say_range_gets_its_own_card() {
+        let said = ChatKind::Local(ChatType::Normal);
+        let near = line(said, "Nova", 1);
+        let mut far = line(said, "Nova", 1);
+        far.beyond_range = true;
+        let far_again = far.clone();
+        assert!(!same_sender(&near, &far));
+        assert!(same_sender(&far, &far_again));
+        let lines = [&near, &far, &far_again];
+        let sizes: Vec<usize> = groups(&lines).iter().map(Vec::len).collect();
+        assert_eq!(sizes, vec![1, 2]);
+    }
+
     /// A card's body leaves the name to the head, except an emote's, whose
     /// name is part of its sentence.
     #[test]
@@ -587,6 +792,63 @@ mod tests {
         let mut emote = line(ChatKind::Local(ChatType::Normal), "Orion", 2);
         emote.text = "/me waves".into();
         assert_eq!(job(&emote), "Orion waves");
+    }
+
+    /// Under RLVa's `@shownames` and `@showloc` the on-screen chat hides who
+    /// speaks and shows what they typed as typed; what an object says is
+    /// rewritten (LLFloaterIMNearbyChatHandler::processChat filters only
+    /// when the source is not an avatar). Both are decided when the line
+    /// arrives (`World::rlva_freeze_line`), and drawn as they were kept.
+    #[test]
+    fn rlva_keeps_what_a_resident_typed_and_rewrites_what_an_object_says() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != me).unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: me,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n,showloc=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let text = "Near Tester waits in Secret Region";
+        let mut job = |source_type, source_id: uuid::Uuid, from: &str| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: from.into(),
+                source_id,
+                owner_id: me,
+                source_type,
+                chat_type: ChatType::Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.into(),
+            }));
+            let l = world.chat.back().expect("the line");
+            assert_eq!(l.source, source_id);
+            line_job(&ctx, l, &p, &world, &mut HashSet::new(), 800.0, TEXT, false, JobLook::Line)
+                .job
+                .text
+        };
+        let said = job(aurora_net::ChatSourceType::Agent, near, "Near Tester");
+        assert!(said.ends_with(text), "the text as typed: {said}");
+        assert!(!said[..said.len() - text.len()].contains("Tester"), "the speaker hidden: {said}");
+        let object = job(aurora_net::ChatSourceType::Object, uuid::Uuid::from_u128(0xB0C5), "Box");
+        assert!(!object.contains("Tester") && !object.contains("Secret Region"), "{object}");
     }
 
     /// The picture and the name of a card open the profile, and offer the
@@ -622,6 +884,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        40,
                         false,
                         false,
                         true,

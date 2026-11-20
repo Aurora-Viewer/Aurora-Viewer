@@ -111,7 +111,7 @@ fn j2k_files(value: &str) -> Option<Arc<Vec<PathBuf>>> {
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "j2c"))
+        .filter(|p| p.extension().is_some_and(|e| e == "j2c") && super::source::usable(p))
         .collect();
     files.sort();
     if files.is_empty() {
@@ -272,7 +272,7 @@ const FEED_AGAIN: Duration = Duration::from_secs(2);
 fn spawn_cache_hits(jobs: &Jobs, files: Arc<Vec<PathBuf>>, textures: Vec<u32>) {
     jobs.spawn_many(textures, move |i| JobResult::TextureCache {
         id: texture(i),
-        data: crate::cache::read(&files[i as usize % files.len()]).ok(),
+        data: super::source::read(&files[i as usize % files.len()]).ok(),
         complete: true,
         keep_rgba: false,
     });
@@ -309,28 +309,42 @@ pub struct StreamDemo {
     size: f32,
     /// Nothing was under way at the previous look.
     idle_before: bool,
+    /// A GPU recovery happened since the last `tick` ([`Self::gpu_reset`]).
+    gpu_lost: bool,
+    /// Since this GPU recovery, textures of the lost device are not shown
+    /// again yet: the scenario keeps feeding them after its loading too.
+    recovering: Option<Instant>,
 }
 
 /// Shares of the textures showing their first pixels the log tells, in
 /// tenths (`net=`).
 const SHOWN_STEPS: [u32; 3] = [5, 9, 10];
 
+/// Texture `i` is used and shows nothing yet (after `,leave`, the textures
+/// nothing uses any more are not brought back).
+fn lost_on_the_gpu(textures: &TextureStreamer, i: u32) -> bool {
+    textures.is_wanted(&texture(i)) && textures.decoded_level(&texture(i)).is_none()
+}
+
 impl StreamDemo {
     pub fn from_env() -> Option<Self> {
-        let value = std::env::var("AURORA_DEMO_STREAM").ok()?;
-        let (n, wave, leave) = parse(&value);
-        let j2k = j2k_files(&value);
-        let net = net_delay(&value).filter(|_| j2k.is_some());
+        std::env::var("AURORA_DEMO_STREAM").ok().map(|value| Self::from_value(&value))
+    }
+
+    fn from_value(value: &str) -> Self {
+        let (n, wave, leave) = parse(value);
+        let j2k = j2k_files(value);
+        let net = net_delay(value).filter(|_| j2k.is_some());
         if net.is_some() {
             // (never 0: the ids of the runs without `net=`)
             let nanos = std::time::UNIX_EPOCH.elapsed().map_or(1, |t| t.subsec_nanos());
             RUN.store(nanos.max(1), Ordering::Relaxed);
         }
-        Some(StreamDemo {
+        StreamDemo {
             j2k,
             net,
             shown_told: 0,
-            size: object_size(&value),
+            size: object_size(value),
             idle_before: false,
             fed: vec![None; n as usize],
             n,
@@ -346,7 +360,55 @@ impl StreamDemo {
             with_data: 0,
             left_at: None,
             evicted_logged: false,
-        })
+            gpu_lost: false,
+            recovering: None,
+        }
+    }
+
+    /// The GPU device was lost and the scene moved to a new one
+    /// (app/gpu_recovery.rs). The streamer keeps every texture and loads it
+    /// again from the data it holds, but the scenario's checkers arrive
+    /// decoded, without data: only the scenario can bring them back, at the
+    /// next `tick`, as on their arrival.
+    pub fn gpu_reset(&mut self) {
+        self.gpu_lost = true;
+    }
+
+    /// After a GPU recovery: the textures the new device lacks, decoded
+    /// again (a quarter of their size, then full size, as on arrival).
+    /// With `j2k=`, the streamer looks for their data again and the files
+    /// are given at once where it finds none; with `net=`, it downloads
+    /// them again from the local server by itself.
+    fn give_again(&mut self, textures: &TextureStreamer, jobs: &Jobs, now: Instant) {
+        let lost: Vec<u32> = (0..self.next).filter(|&i| lost_on_the_gpu(textures, i)).collect();
+        log::info!("demo stream: GPU recovery, {} textures to show again", lost.len());
+        if lost.is_empty() {
+            return;
+        }
+        self.recovering = Some(now);
+        if self.j2k.is_some() {
+            for &i in &lost {
+                self.fed[i as usize] = None;
+            }
+        } else {
+            self.upgrades.extend(lost.iter().map(|&i| (now + UPGRADE_AFTER, i)));
+            spawn_decodes(jobs, textures.staging.clone(), lost, 2);
+        }
+    }
+
+    /// Every texture shows again after the recovery: the end is logged.
+    fn recovery_over(&mut self, textures: &TextureStreamer, now: Instant) {
+        let Some(since) = self.recovering else {
+            return;
+        };
+        if (0..self.next).any(|i| lost_on_the_gpu(textures, i)) {
+            return;
+        }
+        self.recovering = None;
+        log::info!(
+            "demo stream: textures shown again {:.2} s after the GPU recovery",
+            now.duration_since(since).as_secs_f32()
+        );
     }
 
     /// `,leave`: the objects removed and their textures released a second
@@ -424,13 +486,22 @@ impl StreamDemo {
         if frame < FIRST_FRAME || armed.elapsed() < FIRST_AFTER {
             return;
         }
+        let now = Instant::now();
+        if std::mem::take(&mut self.gpu_lost) {
+            self.give_again(textures, jobs, now);
+        }
+        if self.recovering.is_some() && frame.is_multiple_of(10) {
+            self.recovery_over(textures, now);
+        }
         if self.loaded_logged {
             if self.leave {
                 self.leave_region(frame, world, textures);
             }
-            return;
+            // (after a GPU recovery, the textures are fed below again)
+            if self.recovering.is_none() && self.upgrades.is_empty() {
+                return;
+            }
         }
-        let now = Instant::now();
         let started = *self.started.get_or_insert(now);
         if self.next < self.n && self.last_wave.is_none_or(|t| now.duration_since(t) >= WAVE_EVERY) {
             self.last_wave = Some(now);
@@ -493,7 +564,7 @@ impl StreamDemo {
                 self.shown_told += 1;
             }
         }
-        if self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
+        if !self.loaded_logged && self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
             if self.j2k.is_some() {
                 // every texture shown at some level and nothing under way:
                 // the levels follow the size on screen from there
@@ -594,6 +665,78 @@ mod tests {
     fn downloaded_data_weighs_like_a_j2c_file() {
         assert_eq!(data_len(0), 1024 * 1024 / 4);
         assert_eq!(data_len(6), 128 * 128 / 4);
+    }
+
+    /// The streamer after a GPU recovery, textures 0–3 sent: 0 and 3 show
+    /// nothing on the new device, 1 shows again already, 2 was released by
+    /// `,leave`; 5 is used but not sent yet.
+    fn recovered_streamer() -> TextureStreamer {
+        let mut textures = TextureStreamer::new(PathBuf::new());
+        textures.test_used(texture(0), 1, None);
+        textures.test_used(texture(1), 1, Some(2));
+        textures.test_used(texture(2), 0, None);
+        textures.test_used(texture(3), 1, None);
+        textures.test_used(texture(5), 1, None);
+        textures
+    }
+
+    #[test]
+    fn a_gpu_recovery_decodes_again_the_used_textures_the_new_device_lacks() {
+        let mut textures = recovered_streamer();
+        let (jobs, results) = Jobs::new();
+        let mut demo = StreamDemo::from_value("8,8");
+        demo.next = 4;
+        demo.gpu_reset();
+        assert!(demo.gpu_lost, "handled at the next tick");
+        demo.give_again(&textures, &jobs, Instant::now());
+        // a quarter of their size at once, full size after UPGRADE_AFTER
+        let mut decoded: Vec<(Uuid, u8)> = (0..2)
+            .map(|_| match results.recv_timeout(Duration::from_secs(10)) {
+                Ok(JobResult::Texture { id, discard, .. }) => (id, discard),
+                _ => panic!("a decoded texture"),
+            })
+            .collect();
+        decoded.sort();
+        assert_eq!(decoded, vec![(texture(0), 2), (texture(3), 2)]);
+        assert_eq!(demo.upgrades.iter().map(|u| u.1).collect::<Vec<_>>(), vec![0, 3]);
+        // the recovery lasts until both show again
+        assert!(demo.recovering.is_some());
+        demo.recovery_over(&textures, Instant::now());
+        assert!(demo.recovering.is_some());
+        textures.test_used(texture(0), 1, Some(2));
+        textures.test_used(texture(3), 1, Some(0));
+        demo.recovery_over(&textures, Instant::now());
+        assert!(demo.recovering.is_none());
+    }
+
+    #[test]
+    fn a_gpu_recovery_with_j2k_files_hands_them_over_again() {
+        let textures = recovered_streamer();
+        let (jobs, results) = Jobs::new();
+        let mut demo = StreamDemo::from_value("8,8");
+        demo.j2k = Some(Arc::new(Vec::new()));
+        demo.next = 4;
+        let fed = Instant::now();
+        demo.fed = vec![Some(fed); 8];
+        demo.give_again(&textures, &jobs, Instant::now());
+        // asked again at once by the feeding of `tick`, nothing decoded here
+        assert_eq!(demo.fed[..4], [None, Some(fed), Some(fed), None]);
+        assert!(demo.upgrades.is_empty());
+        assert!(demo.recovering.is_some());
+        assert!(results.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn nothing_to_show_again_ends_no_recovery() {
+        let mut textures = recovered_streamer();
+        textures.test_used(texture(0), 1, Some(0));
+        textures.test_used(texture(3), 1, Some(0));
+        let (jobs, _results) = Jobs::new();
+        let mut demo = StreamDemo::from_value("8,8");
+        demo.next = 4;
+        demo.give_again(&textures, &jobs, Instant::now());
+        assert!(demo.recovering.is_none());
+        assert!(demo.upgrades.is_empty());
     }
 
     #[test]

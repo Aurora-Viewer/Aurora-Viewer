@@ -20,6 +20,10 @@
 //! texture texels only for the camera). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
+//! Left interactions also put Mask cutout geometry into the second answer,
+//! retaining the visible opaque surface behind it for attachment priorities.
+//! Only world and worn objects enter it; system avatar alpha layers keep
+//! their displayed cutouts.
 //! The red/blue transparency overlays also enter the second pass with
 //! their full triangles, as displayed, even for camera picks.
 //!
@@ -67,17 +71,18 @@ pub struct DrawnFace {
 pub struct Drawn {
     /// The nearest opaque or alpha-masked face.
     pub opaque: Option<DrawnFace>,
-    /// The nearest alpha-blended face in front of it.
+    /// The nearest alpha-blended face, or Mask cutout for a left interaction,
+    /// in front of the visible opaque surface.
     pub blend: Option<DrawnFace>,
 }
 
 /// Button-specific alpha rules. Interaction/Visible retain the menu and
-/// worn-object behavior; left variants skip only alpha-zero world Blend texels.
+/// worn-object behavior; left variants skip world Blend texels with alpha <= 32/255.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrawnMode {
     Interaction,
     Visible,
-    /// Left button: exact alpha-zero holes on world Blend objects only.
+    /// Left button: legacy alpha > 32/255 threshold on world Blend objects only.
     Left,
     LeftVisible,
 }
@@ -215,7 +220,7 @@ impl DrawnPick {
             .map(|_| Slot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("drawn pick readback"),
-                    size: TARGET_BYTES * 2,
+                    size: crate::readback::readback_size(TARGET_BYTES * 2),
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }),

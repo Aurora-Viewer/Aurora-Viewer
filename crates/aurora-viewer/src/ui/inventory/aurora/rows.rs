@@ -181,7 +181,7 @@ fn item_kind(it: &aurora_net::inventory::InvItem) -> String {
 
 /// What a hovered row offers in place.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Quick {
+pub(super) enum Quick {
     /// Add without replacing, independently of the double-click preferences.
     Add,
     /// Wear a non-stackable wearable, or take off a worn item.
@@ -218,7 +218,7 @@ fn quick_label(quick: Quick) -> &'static str {
 /// The buttons a hovered item shows: add or take off a wearable, and
 /// "more actions" at the wide width. Body parts and physics only replace;
 /// a worn body part cannot be taken off.
-fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Vec<Quick> {
+pub(super) fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Vec<Quick> {
     let mut quick = Vec::new();
     if let Some(original) = rules::original(inv, id).and_then(|id| inv.items.get(&id))
         && matches!(original.asset_type, 5 | 6 | 13)
@@ -238,7 +238,7 @@ fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Ve
 
 /// Draw the quick buttons ending at `right`, centred on `center_y`.
 #[allow(clippy::too_many_arguments)]
-fn show_quick(
+pub(super) fn show_quick(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &Inventory,
@@ -351,6 +351,8 @@ pub(in super::super) fn item(
     let (Some(it), Some(frame)) = (inv.items.get(&id), st.aurora) else {
         return;
     };
+    let opacity = ui.opacity();
+    ui.multiply_opacity(clipboard::opacity(inv, st, id));
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
@@ -369,6 +371,7 @@ pub(in super::super) fn item(
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon_name, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
+        ui.set_opacity(opacity);
         return;
     }
     let r = ui.interact(rect, ui.make_persistent_id(("inv_item", id)), Sense::click_and_drag());
@@ -400,12 +403,11 @@ pub(in super::super) fn item(
     // By human choice, names share the tag's semi-bold face and text colour.
     let active = pills.iter().any(|(_, tone)| *tone == Tone::Worn);
     let ink = if active { widgets::row_tag_ink(p, true) } else { p.ink };
-    let name = if selected || active {
+    let mut name = if selected || active {
         sheet::semibold(ui, &it.name, NAME, ink)
     } else {
         egui::text::LayoutJob::single_section(it.name.clone(), egui::TextFormat::simple(egui::FontId::proportional(NAME), ink))
     };
-    let mut name = name;
     name.wrap = egui::text::TextWrapping::truncate_at_width(room.max(24.0));
     if matches!(it.asset_type, 24 | 25) {
         for section in &mut name.sections {
@@ -445,6 +447,7 @@ pub(in super::super) fn item(
     }
     ui.set_clip_rect(clip);
     paint_columns(ui, p, inv, &st.view, id, cols, frame, permissions, rect.center().y, selected);
+    ui.set_opacity(opacity);
     item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     if !quick.is_empty() {
         let right = cols.name_end - trailing - if trailing > 0.0 { 8.0 } else { 0.0 };
@@ -472,6 +475,8 @@ pub(in super::super) fn folder(
     let (Some(folder), Some(frame)) = (inv.folders.get(&id), st.aurora) else {
         return;
     };
+    let opacity = ui.opacity();
+    ui.multiply_opacity(clipboard::opacity(inv, st, id));
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
@@ -492,6 +497,7 @@ pub(in super::super) fn folder(
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
+        ui.set_opacity(opacity);
         return;
     }
     let sense = if folder_draggable(inv, id, prefs) {
@@ -583,6 +589,7 @@ pub(in super::super) fn folder(
     paint_columns(ui, p, inv, &st.view, id, cols, frame, None, rect.center().y, selected);
     let lead = caret.as_ref().map(|caret| caret.rect);
     let was_open = *open;
+    ui.set_opacity(opacity);
     let r = folder_response(ui, p, inv, id, r, lead, open, st, prefs, facts, actions);
     if frame.explorer {
         // The explorer goes into a folder (a double-click, or cargo held
@@ -692,10 +699,10 @@ pub(super) mod tests {
     fn a_date_of_this_year_has_no_year() {
         // 2026-10-14 and 2025-09-03, read on 2026-10-19
         let now = 1_792_368_000;
-        let october = short_date(1_791_936_000, now);
-        assert!(october.starts_with("14 ") && !october.contains("2026"), "{october}");
-        let last_year = short_date(1_756_857_600, now);
-        assert!(last_year.starts_with("3 ") && last_year.ends_with("2025"), "{last_year}");
+        // the day and month in the language's order
+        let date = crate::ui::land::day_month;
+        assert_eq!(short_date(1_791_936_000, now), date(None, 10, 14));
+        assert_eq!(short_date(1_756_857_600, now), date(Some(2025), 9, 3));
         assert_eq!(short_date(0, now), "");
     }
 

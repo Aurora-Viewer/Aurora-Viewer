@@ -2,7 +2,8 @@
 //! letters weighted at the bottom, easier to read with dyslexia; #851) are
 //! embedded with their semi-bold face (SIL OFL, see
 //! assets/fonts/LICENSE-*.txt); installed
-//! system fonts are listed too. Characters none of them has come from the
+//! system fonts are listed too. PromptFont (SIL OFL) draws the game
+//! controller pictograms of Game Controls, in a family of its own. Characters none of them has come from the
 //! system's fonts (`fallback`).
 
 use std::path::PathBuf;
@@ -21,15 +22,18 @@ pub const OPEN_DYSLEXIC: &str = "OpenDyslexic";
 pub const DEFAULT: &str = INTER;
 
 static INTER_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
-static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
+pub(crate) static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
 static NOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf");
-static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
+pub(crate) static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
 static ROBOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
 // Roboto has no static SemiBold: Medium is its emphasis weight
 static ROBOTO_MEDIUM_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");
 // OpenDyslexic has no semi-bold: Bold is its emphasis weight
 static OPEN_DYSLEXIC_OTF: &[u8] = include_bytes!("../../assets/fonts/OpenDyslexic-Regular.otf");
 static OPEN_DYSLEXIC_BOLD_OTF: &[u8] = include_bytes!("../../assets/fonts/OpenDyslexic-Bold.otf");
+// the LL viewer 26.5's SecondLife-game-control family is based on it
+// (fonts.xml), with the same codepoints
+pub(crate) static PROMPTFONT_TTF: &[u8] = include_bytes!("../../assets/fonts/Promptfont.ttf");
 
 /// An embedded interface font: its regular face and the face of its
 /// semi-bold texts.
@@ -276,7 +280,7 @@ pub fn system_fonts() -> Vec<SystemFont> {
             out.push(SystemFont { name, path });
         }
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
+    out.sort_by_key(|f| crate::natural_order::key(&f.name));
     out
 }
 
@@ -319,6 +323,7 @@ const DEFINITIONS_ID: &str = "aurora-font-definitions";
 const SEMIBOLD_ID: &str = "aurora-font-has-semibold";
 const SCALE_ID: &str = "aurora-font-scale";
 const BASELINE_ID: &str = "aurora-font-baseline";
+const INSTALLED_ID: &str = "aurora-font-installed";
 
 #[derive(Clone, Copy)]
 struct BaselineFace {
@@ -424,12 +429,14 @@ pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
+    let frame = ctx.cumulative_frame_nr();
     let heavier =
         definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
     ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
         data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
         data.insert_temp(egui::Id::unique(BASELINE_ID), BaselineFace::of(&definitions));
+        data.insert_temp(egui::Id::unique(INSTALLED_ID), frame);
     });
     let scale = scale(ctx);
     let mut scaled = definitions;
@@ -482,6 +489,8 @@ const SEMIBOLD: &str = "aurora-semibold";
 /// Name of the interface font's regular face.
 const MAIN: &str = "aurora-main";
 const ICON_FALLBACK: &str = "emoji-icon-font";
+/// The game controller pictograms' family and face.
+const GAME_CONTROL: &str = "aurora-game-control";
 
 fn semibold_family() -> egui::FontFamily {
     egui::FontFamily::Name(SEMIBOLD.into())
@@ -494,6 +503,16 @@ fn semibold_family() -> egui::FontFamily {
 pub fn semibold(ctx: &egui::Context) -> egui::FontFamily {
     let known = ctx.fonts(|f| f.definitions().families.contains_key(&semibold_family()));
     if known { semibold_family() } else { egui::FontFamily::Proportional }
+}
+
+/// Family of the game controller pictograms (`ui/options/pages/
+/// game_controls.rs`), PromptFont alone. Its pictograms sit on real arrow
+/// codepoints, so it is never a fallback of the text families, as the LL
+/// viewer keeps SecondLife-game-control apart (fonts.xml). A context without
+/// the viewer's fonts (tests) gets `None`.
+pub fn game_control(ctx: &egui::Context) -> Option<egui::FontFamily> {
+    let family = egui::FontFamily::Name(GAME_CONTROL.into());
+    ctx.fonts(|f| f.definitions().families.contains_key(&family)).then_some(family)
 }
 
 /// Format of a text in the `semibold` family. The `wght` axis makes a
@@ -549,6 +568,13 @@ pub fn has_semibold(ctx: &egui::Context) -> bool {
     ctx.data(|data| data.get_temp(egui::Id::unique(SEMIBOLD_ID))).unwrap_or(false)
 }
 
+/// The frame the fonts were last installed in: they are in use from the
+/// next one on (`Context::set_fonts`), so a text measured in a later frame
+/// was measured with them. `None` before any install (the tests).
+pub fn installed_at(ctx: &egui::Context) -> Option<u64> {
+    ctx.data(|data| data.get_temp(egui::Id::unique(INSTALLED_ID)))
+}
+
 fn has_weight_axis(font: &[u8]) -> bool {
     let wght = ttf_parser::Tag::from_bytes(b"wght");
     ttf_parser::Face::parse(font, 0).is_ok_and(|face| face.variation_axes().into_iter().any(|axis| axis.tag == wght))
@@ -584,6 +610,11 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
             family.insert(before_icons, face.key.clone());
         }
     }
+    // (after the system faces, which join every family before it)
+    defs.font_data
+        .insert(GAME_CONTROL.into(), Arc::new(egui::FontData::from_static(PROMPTFONT_TTF)));
+    defs.families
+        .insert(egui::FontFamily::Name(GAME_CONTROL.into()), vec![GAME_CONTROL.into()]);
     defs
 }
 
@@ -735,6 +766,27 @@ mod tests {
         // a static system font: its regular face only, no weight axis
         install(&ctx, definitions(egui::FontData::from_static(INTER_TTF), &[]));
         assert!(!has_semibold(&ctx));
+    }
+
+    #[test]
+    fn game_control_pictograms_keep_a_family_of_their_own() {
+        let ctx = egui::Context::default();
+        // the fonts are read in a frame, once egui has them
+        let in_frame = |ctx: &egui::Context| {
+            let mut family = None;
+            let mut output = ctx.run_ui(Default::default(), |ui| family = game_control(ui.ctx()));
+            output.textures_delta.clear();
+            family
+        };
+        assert_eq!(in_frame(&ctx), None, "a context without the viewer's fonts");
+        let defs = definitions_for(INTER, &[]);
+        // its glyphs sit on real arrow codepoints: never a fallback of the text
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            assert!(!defs.families[&family].iter().any(|f| f == GAME_CONTROL), "{family:?}");
+        }
+        install(&ctx, defs);
+        let family = in_frame(&ctx).expect("installed with the interface fonts");
+        assert_eq!(ctx.fonts(|f| f.definitions().families[&family].clone()), [GAME_CONTROL.to_owned()]);
     }
 
     #[test]
@@ -909,7 +961,10 @@ mod tests {
     fn system_text_faces_precede_the_icon_font_in_every_family() {
         let system = fallback::wait();
         let (without, with) = (noto(&[]), noto(system));
-        for (family, fonts) in &with.families {
+        // the controller pictograms draw no text: no system face, no icons
+        let pictograms = egui::FontFamily::Name(GAME_CONTROL.into());
+        assert_eq!(with.families[&pictograms], [GAME_CONTROL.to_owned()]);
+        for (family, fonts) in with.families.iter().filter(|(family, _)| **family != pictograms) {
             let embedded = &without.families[family];
             let text_len = embedded.len() - 1;
             assert_eq!(embedded.last().map(String::as_str), Some(ICON_FALLBACK));
