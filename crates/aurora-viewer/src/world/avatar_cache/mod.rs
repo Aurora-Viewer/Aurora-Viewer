@@ -34,12 +34,20 @@
 //! outfit's COF checks, the list of worn objects and the appearance editor
 //! read the region's only. When the region's comes, it replaces the kept
 //! one (a shape that changed glides to it, like any new appearance).
+//!
+//! Ours also keeps the animations its worn objects' scripts were playing on
+//! it (a bento tail's wag): at login those scripts only run again once the
+//! region has attached their objects, 10 to 16 s after arriving on a busy
+//! region. Each is played on our avatar while the copy of its object is
+//! drawn, until the region lists it (AvatarAnimation); it takes over from
+//! there without a restart. The blocked animations (Asset Blacklist) are
+//! not played, and nothing is sent to the region.
 
 pub mod capture;
 pub mod file;
 
-use super::World;
 use super::objects::{ObjKey, PREVIEW_REGION};
+use super::{PlayingAnimation, World};
 use aurora_net::types::AvatarAppearance;
 use file::{KeptAvatar, WornObject};
 use std::collections::{HashMap, HashSet};
@@ -154,6 +162,11 @@ pub struct AvatarCache {
     /// The kept looks drawn for avatars no appearance came for yet, with
     /// their generation (`World::appearance_generation`).
     looks: HashMap<Uuid, (AvatarAppearance, u64)>,
+    /// The animations of our worn objects played from the cache, until the
+    /// region lists them.
+    motions: HashMap<Uuid, PlayingAnimation>,
+    /// Our animations in the region's last AvatarAnimation.
+    region_motions: HashSet<Uuid>,
     /// What was last written for each avatar ([`capture::signature`]), and
     /// when.
     saved: HashMap<Uuid, (u64, Instant)>,
@@ -224,6 +237,19 @@ impl AvatarCache {
             v.iter()
                 .any(|c| c.root_id == object || item.is_some_and(|i| !i.is_nil() && c.item_id == i))
         })
+    }
+
+    /// The region listed our animations (AvatarAnimation): those it lists
+    /// are its own from now on.
+    pub fn region_signals(&mut self, ids: impl Iterator<Item = Uuid>) {
+        self.region_motions = ids.collect();
+        let region = &self.region_motions;
+        self.motions.retain(|id, _| !region.contains(id));
+    }
+
+    /// Our animations played from the cache now.
+    pub fn played_motions(&self) -> impl Iterator<Item = &PlayingAnimation> {
+        self.motions.values()
     }
 
     /// Give a set read elsewhere (the demo, the tests).
@@ -299,6 +325,7 @@ impl World {
                     self.remove_worn_copy(c.root);
                 }
             }
+            self.draw_kept_motions(now);
             let looks: Vec<Uuid> = self.avatar_cache.looks.drain().map(|(id, _)| id).collect();
             for id in looks {
                 // (back to a cloud: the appearance generation moves on)
@@ -311,6 +338,7 @@ impl World {
         self.draw_kept_looks();
         self.draw_worn_copies(now);
         self.retire_worn_copies(now);
+        self.draw_kept_motions(now);
         self.capture_worn_sets(now);
     }
 
@@ -378,6 +406,53 @@ impl World {
             self.appearance_counter += 1;
             self.avatar_cache.looks.insert(id, (a, self.appearance_counter));
             self.mark_avatar_materials_dirty(&id);
+        }
+    }
+
+    /// Play the kept animations of our worn objects whose copy is drawn,
+    /// until the region lists them; stop those whose copy went.
+    fn draw_kept_motions(&mut self, now: Instant) {
+        let me = self.agent_id;
+        let cache = &self.avatar_cache;
+        let wanted: HashSet<Uuid> = match (cache.enabled, cache.sets.get(&me), cache.copies.get(&me)) {
+            (true, Some(Some(set)), Some(copies)) => set
+                .motions
+                .iter()
+                .filter(|m| copies.iter().any(|c| c.item_id == m.item_id))
+                .map(|m| m.animation)
+                .filter(|id| !self.derender.animation_blocked(id))
+                .collect(),
+            _ => HashSet::new(),
+        };
+        let gone: Vec<Uuid> = cache.motions.keys().filter(|id| !wanted.contains(id)).copied().collect();
+        for id in gone {
+            self.avatar_cache.motions.remove(&id);
+            if !self.avatar_cache.region_motions.contains(&id)
+                && let Some(list) = self.animations.get_mut(&me)
+            {
+                list.retain(|a| a.id != id);
+            }
+        }
+        let cache = &self.avatar_cache;
+        let mut new: Vec<Uuid> = wanted
+            .into_iter()
+            .filter(|id| !cache.motions.contains_key(id) && !cache.region_motions.contains(id))
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        new.sort();
+        log::info!(
+            "avatar cache: {} animations of our worn objects played until the region's",
+            new.len()
+        );
+        for id in new {
+            let motion = PlayingAnimation::from_signal(id, 0, now, None);
+            self.avatar_cache.motions.insert(id, motion);
+            let list = self.animations.entry(me).or_default();
+            if !list.iter().any(|a| a.id == id) {
+                list.push(motion);
+            }
         }
     }
 

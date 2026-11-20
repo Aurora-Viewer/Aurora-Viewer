@@ -5,9 +5,11 @@
 //! actions and name-values (the AttachItemID among them) are left out: a
 //! copy is never taken for the object, by the outfit, RLVa or a click.
 //! With them, the avatar's last appearance from the region: its shape, its
-//! bakes and its hover height.
+//! bakes and its hover height; for ours, the animations its worn objects'
+//! scripts were playing on it (a bento tail's wag), which only start again
+//! once the region has attached those objects.
 
-use super::file::{KeptAvatar, KeptLook, WornObject, WornPrim};
+use super::file::{KeptAvatar, KeptLook, KeptMotion, WornObject, WornPrim};
 use crate::world::World;
 use crate::world::objects::Object;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate};
@@ -129,6 +131,57 @@ fn kept_look(world: &World, avatar: usize) -> Option<KeptLook> {
     }
 }
 
+/// The animations our worn objects are playing on us (the AnimationSourceList
+/// of AvatarAnimation, `World::animation_sources`), each with the item the
+/// object was worn from. Not the HUDs' (an AO's stands are its own to
+/// choose), not another avatar's: the region sends theirs with them.
+pub fn own_motions(world: &World, avatar: usize) -> Vec<KeptMotion> {
+    let Some(me) = world.objects.get(avatar).filter(|o| o.full_id == world.agent_id) else {
+        return Vec::new();
+    };
+    let playing = world.animations.get(&me.full_id).map(Vec::as_slice).unwrap_or_default();
+    let mut out: Vec<KeptMotion> = world
+        .animation_sources
+        .iter()
+        .filter_map(|(source, motions)| {
+            // the source may be a child prim: up to the root worn by us
+            let mut idx = world.objects.index_of_uuid(source)?;
+            let mut guard = 0;
+            loop {
+                let o = world.objects.get(idx)?;
+                let parent = world.objects.parent_of(o)?;
+                if parent == avatar {
+                    break;
+                }
+                idx = parent;
+                guard += 1;
+                if guard > 256 {
+                    return None;
+                }
+            }
+            let root = world
+                .objects
+                .get(idx)
+                .filter(|o| !o.is_client_preview() && !is_hud_point(o.attachment_point()))?;
+            let item = root.attachment_item_id().filter(|i| !i.is_nil())?;
+            Some(
+                motions
+                    .iter()
+                    .filter(|m| playing.iter().any(|p| p.id == **m))
+                    .map(move |m| KeptMotion {
+                        animation: *m,
+                        item_id: item,
+                    }),
+            )
+        })
+        .flatten()
+        .collect();
+    out.sort();
+    out.dedup();
+    out.truncate(super::file::MAX_MOTIONS);
+    out
+}
+
 /// What changes when what the avatar wears or how it looks changes: its
 /// roots, each prim's count of full updates and GLTF overrides, and its
 /// appearance's shape, bakes and hover height.
@@ -144,6 +197,7 @@ pub fn signature(world: &World, avatar: usize) -> u64 {
         look.texture_entry.hash(&mut h);
         look.hover_height.to_bits().hash(&mut h);
     }
+    own_motions(world, avatar).hash(&mut h);
     for (id, root) in roots {
         id.hash(&mut h);
         for p in prims_of(world, root) {
@@ -224,5 +278,6 @@ pub fn capture(world: &World, avatar: usize, saved_at: u64) -> KeptAvatar {
         saved_at,
         objects,
         look: kept_look(world, avatar),
+        motions: own_motions(world, avatar),
     }
 }

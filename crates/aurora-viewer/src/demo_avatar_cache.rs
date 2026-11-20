@@ -10,11 +10,15 @@
 //! copies are drawn, then the region's own, the hat violet now. With AURORA_DEMO_OUTFIT_RESTORE=warm, the cache also holds our demo
 //! outfit's hair, earrings and boots (drawn visible for this scenario):
 //! they show from the start instead of when the restore puts them back.
+//! The hair's script played `WORN_MOTION` on us (the wrists tapping, as a
+//! bento tail's wag): it plays with the hair's copy from the start, and
+//! once the restore has put the hair back, its script plays it again and
+//! the region's takes over without a restart.
 //! The log ends with `avatar cache: N copies drawn, N handed over to
 //! the region's objects`.
 
 use crate::world::World;
-use crate::world::avatar_cache::file::{KeptAvatar, WornObject, WornPrim};
+use crate::world::avatar_cache::file::{KeptAvatar, KeptMotion, WornObject, WornPrim};
 use aurora_net::objects::ObjectUpdate;
 use aurora_net::{AttachRequest, NetEvent};
 use std::time::{Duration, Instant};
@@ -29,6 +33,10 @@ const LATE: Duration = Duration::from_secs(6);
 /// The demo outfit's objects kept in the cache: hair, earrings, boots
 /// (world::appearance::seed_demo), with their points.
 pub const KEPT_OUTFIT: [(u128, u8); 3] = [(717, 2), (718, 13), (720, 7)];
+/// The animation the hair's script plays on us (`crate::demo::typing_animation`
+/// under an id of its own, so that it neither types nor makes a sound).
+pub const WORN_MOTION: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0140);
+const WORN_MOTION_ITEM: u128 = 717;
 
 /// The scenario is on (read once).
 pub fn enabled() -> bool {
@@ -41,6 +49,8 @@ pub struct AvatarCacheDemo {
     /// Violet Wolf's appearance from the region, until it is sent.
     appearance: Option<aurora_net::AvatarAppearance>,
     sent: bool,
+    /// The hair's script played its animation again.
+    motion_sent: bool,
 }
 
 impl AvatarCacheDemo {
@@ -49,6 +59,7 @@ impl AvatarCacheDemo {
             start: None,
             appearance: None,
             sent: false,
+            motion_sent: false,
         })
     }
 
@@ -76,9 +87,12 @@ impl AvatarCacheDemo {
             .map(|&(item, point)| crate::demo::outfit_attachment(&request(Uuid::from_u128(item), point)))
             .collect();
         // (the demo's outfit objects take their item's id)
-        world
-            .avatar_cache
-            .insert_set(world.agent_id, kept_set(&outfit, saved_at, |o| o.full_id));
+        let mut ours = kept_set(&outfit, saved_at, |o| o.full_id);
+        ours.motions = vec![KeptMotion {
+            animation: WORN_MOTION,
+            item_id: Uuid::from_u128(WORN_MOTION_ITEM),
+        }];
+        world.avatar_cache.insert_set(world.agent_id, ours);
         look.attachments = listed;
         self.appearance = Some(look);
         log::info!("demo avatar cache: kept look and objects for Violet Wolf, kept objects for our outfit");
@@ -87,7 +101,29 @@ impl AvatarCacheDemo {
     /// Violet Wolf's appearance `APPEARANCE_LATE` after `FIRST_FRAME`, its
     /// worn objects `LATE` after.
     pub fn tick(&mut self, frame: u64, world: &mut World, now: Instant) {
-        if frame < FIRST_FRAME || self.sent {
+        if frame < FIRST_FRAME {
+            return;
+        }
+        // the hair worn again: its script plays its animation, the region
+        // lists it with what plays on us
+        if !self.motion_sent && world.outfit_attachment_items().contains(&Uuid::from_u128(WORN_MOTION_ITEM)) {
+            self.motion_sent = true;
+            let played: Vec<Uuid> = world.avatar_cache.played_motions().map(|m| m.id).collect();
+            let mut anims: Vec<(Uuid, i32)> = world
+                .animations_of(&world.agent_id)
+                .iter()
+                .filter(|a| !played.contains(&a.id))
+                .map(|a| (a.id, a.sequence))
+                .collect();
+            anims.push((WORN_MOTION, 1));
+            log::info!("demo avatar cache: the hair's script plays its animation again");
+            let _ = world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims,
+                sources: Vec::new(),
+            });
+        }
+        if self.sent {
             return;
         }
         let start = *self.start.get_or_insert(now);
@@ -136,6 +172,7 @@ fn kept_set(objects: &[ObjectUpdate], saved_at: u64, item: impl Fn(&ObjectUpdate
             })
             .collect(),
         look: None,
+        motions: Vec::new(),
     }
 }
 

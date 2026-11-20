@@ -14,7 +14,10 @@
 //! length, empty when it has none). Then its look: 0, or 1 followed by its
 //! visual parameters (u32 length then the bytes), its texture entry as
 //! AvatarAppearance sends it (u32 length then the bytes), its hover height
-//! (f32), its appearance and COF versions (i32 each).
+//! (f32), its appearance and COF versions (i32 each). Then the animations
+//! its worn objects were playing on it (ours only): their number (u16),
+//! each the animation (16 bytes) and the inventory item of the object that
+//! played it (16).
 
 use uuid::Uuid;
 
@@ -22,6 +25,7 @@ const MAGIC: &[u8; 4] = b"AAC1";
 /// Bounds of what a file may hold (an outfit is a few hundred prims).
 pub const MAX_OBJECTS: usize = 80;
 pub const MAX_PRIMS: usize = 2048;
+pub const MAX_MOTIONS: usize = 32;
 const MAX_PRIM_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -31,6 +35,16 @@ pub struct KeptAvatar {
     pub objects: Vec<WornObject>,
     /// Its last appearance from the region, when one had come.
     pub look: Option<KeptLook>,
+    /// The animations its worn objects' scripts were playing on it.
+    pub motions: Vec<KeptMotion>,
+}
+
+/// An animation a worn object was playing on its wearer (a bento tail's
+/// wag), and the item that object was worn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct KeptMotion {
+    pub animation: Uuid,
+    pub item_id: Uuid,
 }
 
 /// What an AvatarAppearance said of the avatar's look (its list of worn
@@ -103,6 +117,12 @@ pub fn encode(set: &KeptAvatar) -> Vec<u8> {
             out.extend_from_slice(&l.appearance_version.to_le_bytes());
             out.extend_from_slice(&l.cof_version.to_le_bytes());
         }
+    }
+    let motions = &set.motions[..set.motions.len().min(MAX_MOTIONS)];
+    out.extend_from_slice(&(motions.len() as u16).to_le_bytes());
+    for m in motions {
+        out.extend_from_slice(m.animation.as_bytes());
+        out.extend_from_slice(m.item_id.as_bytes());
     }
     out
 }
@@ -191,7 +211,23 @@ pub fn decode(d: &[u8]) -> Option<KeptAvatar> {
         }),
         _ => return None,
     };
-    (r.p == d.len()).then_some(KeptAvatar { saved_at, objects, look })
+    let n = r.u16()? as usize;
+    if n > MAX_MOTIONS {
+        return None;
+    }
+    let mut motions = Vec::with_capacity(n);
+    for _ in 0..n {
+        motions.push(KeptMotion {
+            animation: r.uuid()?,
+            item_id: r.uuid()?,
+        });
+    }
+    (r.p == d.len()).then_some(KeptAvatar {
+        saved_at,
+        objects,
+        look,
+        motions,
+    })
 }
 
 #[cfg(test)]
@@ -237,6 +273,10 @@ mod tests {
                 appearance_version: 1,
                 cof_version: 42,
             }),
+            motions: vec![KeptMotion {
+                animation: Uuid::from_u128(7),
+                item_id: Uuid::from_u128(2),
+            }],
         }
     }
 

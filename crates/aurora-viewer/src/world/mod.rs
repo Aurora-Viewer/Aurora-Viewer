@@ -4304,6 +4304,16 @@ impl World {
                         }
                     }
                 }
+                // the animations of our worn objects played from the cache
+                // (world/avatar_cache): those the region lists now go on
+                // as they are, without a restart; the others stay
+                let cached: Vec<PlayingAnimation> = if avatar == self.agent_id {
+                    let cached = self.avatar_cache.played_motions().copied().collect();
+                    self.avatar_cache.region_signals(anims.iter().map(|a| a.0));
+                    cached
+                } else {
+                    Vec::new()
+                };
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
                 const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
@@ -4312,8 +4322,24 @@ impl World {
                 }
                 let mut list: Vec<_> = anims
                     .into_iter()
-                    .map(|(id, seq)| PlayingAnimation::from_signal(id, seq, now, prev.iter().find(|p| p.id == id)))
+                    .map(|(id, seq)| {
+                        let previous = prev.iter().find(|p| p.id == id).map(|p| {
+                            if cached.iter().any(|c| c.id == id) {
+                                PlayingAnimation { sequence: seq, ..*p }
+                            } else {
+                                *p
+                            }
+                        });
+                        PlayingAnimation::from_signal(id, seq, now, previous.as_ref())
+                    })
                     .collect();
+                if avatar == self.agent_id {
+                    for motion in self.avatar_cache.played_motions() {
+                        if !list.iter().any(|a| a.id == motion.id) {
+                            list.push(*motion);
+                        }
+                    }
+                }
                 if avatar == self.agent_id
                     && let Some(preview) = self.local_preview
                 {

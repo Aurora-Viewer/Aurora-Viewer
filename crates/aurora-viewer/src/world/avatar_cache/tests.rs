@@ -211,6 +211,7 @@ fn a_copy_goes_when_its_object_is_no_longer_worn() {
         saved_at: unix_now(),
         objects: Vec::new(),
         look: None,
+        motions: Vec::new(),
     };
     // a hat of ours, and a scarf another avatar wore
     for (id, item) in [(900, HAT_ITEM), (920, 0)] {
@@ -279,6 +280,7 @@ fn copies_wait_a_limited_time_and_go_with_the_setting() {
                 prims,
             }],
             look: None,
+            motions: Vec::new(),
         },
     );
     world.apply(NetEvent::Appearance(appearance(OTHER, vec![(Uuid::from_u128(920), 2)])));
@@ -305,6 +307,7 @@ fn only_wanted_objects_not_there_yet_are_drawn() {
         saved_at: 0,
         objects: vec![object(1, 10), object(2, 20), object(3, 0)],
         look: None,
+        motions: Vec::new(),
     };
     let ids = |v: Vec<&WornObject>| v.iter().map(|o| o.root_id.as_u128()).collect::<Vec<_>>();
     let outfit: HashSet<Uuid> = [Uuid::from_u128(10), Uuid::from_u128(20)].into();
@@ -339,6 +342,7 @@ fn a_copy_keeps_the_textures_of_its_object() {
             })
             .collect(),
         look: None,
+        motions: Vec::new(),
     };
     world.avatar_cache.insert_set(OTHER, set);
     let listed = original.iter().map(|o| (o.full_id, o.state.rotate_left(4))).collect();
@@ -383,6 +387,7 @@ fn a_kept_look_is_drawn_until_the_region_sends_its_own() {
             saved_at: unix_now(),
             objects: Vec::new(),
             look: Some(capture::look_of(&shaped(OTHER, 40, 0xBA4E))),
+            motions: Vec::new(),
         },
     );
     world.update_avatar_cache(Instant::now());
@@ -418,6 +423,7 @@ fn a_kept_look_goes_with_the_setting_and_an_empty_one_is_not_drawn() {
             saved_at: unix_now(),
             objects: Vec::new(),
             look: Some(look.clone()),
+            motions: Vec::new(),
         },
     );
     world.update_avatar_cache(Instant::now());
@@ -441,6 +447,7 @@ fn a_kept_look_goes_with_the_setting_and_an_empty_one_is_not_drawn() {
                 visual_params: Vec::new(),
                 ..look
             }),
+            motions: Vec::new(),
         },
     );
     world.update_avatar_cache(Instant::now());
@@ -459,6 +466,7 @@ fn the_store_stays_for_the_next_login() {
             saved_at: unix_now(),
             objects: Vec::new(),
             look: Some(capture::look_of(&shaped(OTHER, 40, 0xBA4E))),
+            motions: Vec::new(),
         },
     );
     world.update_avatar_cache(Instant::now());
@@ -491,6 +499,7 @@ fn the_rez_effect_knows_what_the_cache_draws() {
                     .collect(),
             }],
             look: None,
+            motions: Vec::new(),
         },
     );
     assert!(!world.avatar_cache.draws(&ME));
@@ -518,4 +527,116 @@ fn the_rez_effect_knows_what_the_cache_draws() {
     world.update_avatar_cache(Instant::now());
     assert!(world.objects.killed.is_empty());
     assert!(!world.avatar_cache.draws(&ME));
+}
+
+const WAG: Uuid = Uuid::from_u128(0x7A11_0000_0000_0000_0000_0000_0000_0001);
+const STAND: Uuid = Uuid::from_u128(0x2408_0000_0000_0000_0000_0000_0000_0001);
+
+fn own_animations(world: &mut World, anims: Vec<(Uuid, i32)>, sources: Vec<Uuid>) {
+    world.apply(NetEvent::AvatarAnimations {
+        avatar: ME,
+        anims,
+        sources,
+    });
+}
+
+fn playing(world: &World, id: Uuid) -> Option<crate::world::PlayingAnimation> {
+    world.animations_of(&ME).iter().find(|a| a.id == id).copied()
+}
+
+/// What the last session kept: the hat, whose child prim's script played
+/// `WAG` on us.
+fn kept_with_wag() -> KeptAvatar {
+    let (mut world, handle, me) = setup();
+    world.apply(NetEvent::ObjectUpdates {
+        handle,
+        objects: worn(&me, me.local_id, 70_000, 900, 2, Some(HAT_ITEM)),
+    });
+    own_animations(&mut world, vec![(STAND, 1), (WAG, 3)], vec![Uuid::nil(), Uuid::from_u128(901)]);
+    let idx = world.objects.index_of_uuid(&ME).expect("us");
+    capture::capture(&world, idx, unix_now())
+}
+
+#[test]
+fn the_animations_of_our_worn_objects_are_kept() {
+    let kept = kept_with_wag();
+    assert_eq!(
+        kept.motions,
+        vec![file::KeptMotion {
+            animation: WAG,
+            item_id: Uuid::from_u128(HAT_ITEM),
+        }],
+        "the hat's, not the stand"
+    );
+}
+
+#[test]
+fn a_kept_animation_plays_with_its_copy_until_the_region_lists_it() {
+    let kept = kept_with_wag();
+    let (mut world, handle, me) = setup();
+    world.avatar_cache.insert_set(ME, kept);
+    own_animations(&mut world, vec![(STAND, 1)], vec![Uuid::nil()]);
+    let t0 = Instant::now();
+    world.update_avatar_cache(t0);
+    assert!(playing(&world, WAG).is_none(), "no copy of the hat yet");
+    outfit_links(&mut world, &[HAT_ITEM]);
+    world.update_avatar_cache(t0);
+    let played = playing(&world, WAG).expect("the wag plays with the hat's copy");
+    assert!(playing(&world, STAND).is_some());
+    // a new list from the region without it: it goes on
+    own_animations(&mut world, vec![(STAND, 2)], vec![Uuid::nil()]);
+    assert_eq!(playing(&world, WAG), Some(played));
+    world.update_avatar_cache(t0 + Duration::from_secs(1));
+    assert_eq!(playing(&world, WAG), Some(played));
+    // the region's hat comes and its script plays it: the region's from now
+    // on, without a restart
+    world.apply(NetEvent::ObjectUpdates {
+        handle,
+        objects: worn(&me, me.local_id, 80_000, 990, 2, Some(HAT_ITEM)),
+    });
+    own_animations(&mut world, vec![(STAND, 2), (WAG, 7)], vec![Uuid::nil(), Uuid::from_u128(991)]);
+    let region = playing(&world, WAG).expect("still playing");
+    assert_eq!(region.sequence, 7);
+    assert_eq!(region.sequence_start, played.sequence_start, "no restart");
+    assert_eq!(world.avatar_cache.played_motions().count(), 0);
+    // the copy goes: the region's goes on
+    world.update_avatar_cache(t0 + Duration::from_secs(2));
+    assert_eq!(playing(&world, WAG), Some(region));
+    world.update_avatar_cache(t0 + Duration::from_secs(8));
+    assert!(copies_of(&world, &ME).is_empty());
+    assert!(playing(&world, WAG).is_some());
+}
+
+#[test]
+fn a_kept_animation_stops_with_its_copy_and_a_blocked_one_never_plays() {
+    let kept = kept_with_wag();
+    let (mut world, _, _) = setup();
+    world.avatar_cache.insert_set(ME, kept.clone());
+    outfit_links(&mut world, &[HAT_ITEM]);
+    let t0 = Instant::now();
+    world.update_avatar_cache(t0);
+    assert!(playing(&world, WAG).is_some());
+    // the copy goes before the region lists it (the setting off here)
+    world.avatar_cache.set_enabled(false);
+    world.update_avatar_cache(t0);
+    assert!(playing(&world, WAG).is_none());
+
+    // blocked in the Asset Blacklist: never played
+    let (mut world, _, _) = setup();
+    world.derender.add(
+        WAG,
+        crate::world::derender::Entry {
+            name: String::new(),
+            region: String::new(),
+            kind: crate::world::derender::Kind::Animation,
+            date: 0,
+            // (not saved: a test)
+            permanent: false,
+        },
+    );
+    world.avatar_cache.insert_set(ME, kept);
+    outfit_links(&mut world, &[HAT_ITEM]);
+    world.update_avatar_cache(t0);
+    assert_eq!(copies_of(&world, &ME).len(), 1);
+    assert!(playing(&world, WAG).is_none());
 }

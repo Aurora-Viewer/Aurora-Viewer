@@ -10864,7 +10864,11 @@ the fade: until then their copies are drawn (the pink hat), then the
 region's own (the violet hat). With `AURORA_DEMO_OUTFIT_RESTORE=warm`, the
 cache also holds the demo outfit's hair, earrings and boots, drawn visible
 for this scenario (pink, gold, brown): they show from the start instead of
-when the restore puts them back. Right-clicking a copy finds no object.
+when the restore puts them back. The hair's script played an animation on
+us (the wrists tapping, as a bento tail's wag): it plays from the start
+with the hair's copy, and goes on without a restart once the restore has
+put the hair back and its script plays it again (`demo avatar cache: the
+hair's script plays its animation again`). Right-clicking a copy finds no object.
 The log says `demo avatar cache: the region sends Violet Wolf's
 appearance`, then `demo avatar cache: the region sends Violet Wolf's worn
 objects (<n> copies drawn now)`, then `avatar cache: <n> copies drawn, <n>

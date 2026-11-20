@@ -21549,6 +21549,14 @@ impl ApplicationHandler for App {
                 crate::world::radar::ANIM_AGENT_TYPE,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
+            // AURORA_DEMO_AVATAR_CACHE: the animation a worn object's
+            // script plays on us
+            if crate::demo::avatar_cache::enabled() {
+                self.scene.anims.insert(
+                    crate::demo::avatar_cache::WORN_MOTION,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
+                );
+            }
             if crate::demo::pose_stand::mode().is_some() {
                 for (id, anim) in crate::demo::pose_stand::animations() {
                     self.scene
