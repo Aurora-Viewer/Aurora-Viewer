@@ -29,10 +29,20 @@ impl HiddenMinimap {
 /// The windows @showinv, @showminimap and @showworldmap hide never show,
 /// whatever asked for them: run every frame, and again once the bars have
 /// drawn, whose buttons and menus open a window in the frame it is drawn.
+/// @edit hides the beacons window and refuses it, without a notice
+/// (RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle,
+/// rlvhandler.cpp: addGenericFloaterFilter("beacons")).
 pub(super) fn keep_windows_closed(rlva: &crate::world::rlva::Rlva, panels: &mut ui::Panels) {
     panels.inventory &= !rlva.has("showinv");
     panels.minimap &= !rlva.has("showminimap");
     panels.world_map &= !rlva.has("showworldmap");
+    panels.beacons &= !rlva.has("edit");
+}
+
+/// RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle: build mode is
+/// left as @edit comes, not while it lasts.
+fn leaves_build_mode(edit_before: bool, edit_now: bool) -> bool {
+    edit_now && !edit_before
 }
 
 /// RlvActions::canHighlightTransparent (rlvactions.cpp) refuses the
@@ -52,6 +62,7 @@ fn refuses_shortcut(rlva: &crate::world::rlva::Rlva, action: Action) -> bool {
         Action::Minimap => rlva.has("showminimap"),
         Action::WorldMap => rlva.has("showworldmap"),
         Action::ShowTransparency => !can_highlight_transparent(rlva),
+        Action::Beacons => rlva.has("edit"),
         _ => false,
     }
 }
@@ -215,6 +226,22 @@ impl App {
         // under way (gAgent.setFlying(false)), not only refuses a takeoff.
         if self.world.agent.flying && self.world.rlva.has("fly") {
             self.world.agent.flying = false;
+        }
+        // RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle
+        // (rlvhandler.cpp): @edit leaves build mode as it comes
+        // (LLToolMgr::leaveBuildMode); the tools may open again after, as
+        // far as RlvActions::canBuild allows.
+        let edit = self.world.rlva.has("edit");
+        if leaves_build_mode(std::mem::replace(&mut self.rlva_edit, edit), edit) && self.build.open {
+            self.build.close(&mut self.world, &mut self.settings.build);
+        }
+        if self
+            .interactions
+            .contents
+            .as_ref()
+            .is_some_and(|c| !self.world.rlva_keeps_contents_open(c.target.object))
+        {
+            self.interactions.contents = None;
         }
         // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
         // leaves the selection, the temporary one of a menu excepted
@@ -1198,5 +1225,24 @@ mod tests {
         }
         let other = restricted("@showinv=n");
         assert!(can_highlight_transparent(&other));
+    }
+
+    /// RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle
+    /// (rlvhandler.cpp): @edit hides the beacons window and filters it
+    /// without a notice, and build mode is left once, as @edit comes.
+    #[test]
+    fn rlva_edit_closes_the_beacons_and_leaves_build_mode_as_it_comes() {
+        let free = crate::world::rlva::Rlva::default();
+        let rlva = restricted("@edit=n");
+        let mut panels = ui::Panels::from_settings(&crate::settings::Settings::default());
+        panels.beacons = true;
+        keep_windows_closed(&free, &mut panels);
+        assert!(panels.beacons && !refuses_shortcut(&free, Action::Beacons));
+        keep_windows_closed(&rlva, &mut panels);
+        assert!(!panels.beacons && refuses_shortcut(&rlva, Action::Beacons));
+        assert!(!refuses_shortcut(&restricted("@editworld=n"), Action::Beacons));
+        assert!(leaves_build_mode(false, true), "@edit comes");
+        assert!(!leaves_build_mode(true, true), "build mode opened while it lasts stays");
+        assert!(!leaves_build_mode(true, false) && !leaves_build_mode(false, false));
     }
 }

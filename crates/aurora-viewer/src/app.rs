@@ -640,6 +640,8 @@ pub struct App {
     temp_run: Option<u8>,
     /// @temprun as of the last RLVa update, to catch its changes.
     rlva_temprun: bool,
+    /// @edit as of the last RLVa update, to close the build tools as it comes.
+    rlva_edit: bool,
     /// "Always run" (Ctrl+R).
     always_run: bool,
     /// The Controls window (`ui/controls.rs`), the keys its buttons and
@@ -1971,6 +1973,7 @@ impl App {
             last_tap: None,
             temp_run: None,
             rlva_temprun: false,
+            rlva_edit: false,
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
