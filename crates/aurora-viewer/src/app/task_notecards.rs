@@ -203,9 +203,8 @@ impl App {
     }
 
     pub(super) fn show_task_notecards(&mut self, ctx: &egui::Context, p: &Palette) {
-        if self.world.rlva.has("viewnote") {
-            return;
-        }
+        // (`open_task_notecard` refuses @viewnote; what is open stays open,
+        // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp)
         if let Some((object, item)) = self.build.ui.open_notecard.take() {
             self.open_task_notecard(object, item);
         }
@@ -232,7 +231,7 @@ impl App {
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
             }
-            // RLVa's @viewtexture closes a texture's preview here as well
+            // RLVa's @viewtexture refuses the textures it embeds as well
             d.inventory.rlva_preview_mask = self.world.inventory.rlva_preview_mask;
             if metadata.is_none() {
                 d.state.preview_message = aurora_i18n::tr!("notecard-task-unavailable").into();

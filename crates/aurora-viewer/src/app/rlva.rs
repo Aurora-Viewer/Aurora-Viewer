@@ -123,7 +123,9 @@ impl App {
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.rlva_yield_environment();
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
-        self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
+        // (@viewnote, @viewscript and @viewtexture refuse to open a preview,
+        // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp; one already open
+        // stays open and usable)
         // An outfit change is over once its detaches have landed too: the
         // COF write is acknowledged before the objects leave the avatar.
         self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some() || self.world.rlva_detach_in_flight(Instant::now());
