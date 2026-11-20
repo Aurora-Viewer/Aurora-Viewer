@@ -19128,7 +19128,7 @@ impl App {
                     }
                 }
                 if self.skin.layout.chat_toasts
-                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                    && (crate::demo::chat_volume_comparison() || !ui::chat::nearby_chat_shown(&ctx, &self.chat_ui, self.panels.chat))
                 {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
