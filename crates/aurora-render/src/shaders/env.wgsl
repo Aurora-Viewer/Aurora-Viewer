@@ -2370,7 +2370,7 @@ fn rain_ring_detail(footprint: f32) -> f32 {
 // Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
 // place; the normal tilts across each ring's expanding crest. The cells'
 // lattice is turned to an angle of its own for each layer (`salt`) and bent
-// by slow noise (up to a third of a metre): square cells along the world's
+// by slow noise (up to half a cell each way): square cells along the world's
 // axes set the drops out at an even spacing, which showed as a grid along a
 // lamp's reflection.
 // The bend of the rings' lattice at `xy` (-0.5..0.5 each way), worked
@@ -2411,10 +2411,6 @@ fn rain_ripples_layer(world_xy: vec2<f32>, time: f32, cell: f32, period: f32, sa
     }
     // back from the lattice's turn to the world's axes
     return vec2<f32>(ca * slope.x - sa * slope.y, sa * slope.x + ca * slope.y);
-}
-
-fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
-    return rain_ripples_layer(xy, time, 0.6, 0.9, 0u, rain_ripple_bend(xy));
 }
 
 // The chop of a downpour, as the slope of two layers of smooth noise (about
@@ -2476,14 +2472,17 @@ fn rain_splash_mist(heavy: f32, view_up: f32) -> f32 {
 }
 
 // The splash mist dulls what it covers rather than lighting it: by
-// `amount`, its colours go to the overcast's grey hue at the brightness
-// they had (a mix to the sky's grey lifted the dark water by a fifth),
-// which with the rough surface takes the contrast out of the reflections.
+// `amount`, its colours go grey at the brightness they had (a mix to the
+// sky's grey lifted the dark water by a fifth), which with the rough
+// surface takes the contrast out of the reflections. A touch of the sky's
+// hue, held near grey: a night or sunset sky would tint the water blue or
+// orange. Dry water (amount 0) is returned as it is.
 fn rain_dull(c: vec3<f32>, amount: f32) -> vec3<f32> {
+    if (amount <= 0.0) { return c; }
     let lum = vec3<f32>(0.2126, 0.7152, 0.0722);
     let sky = frame.sky_horizon.rgb * 0.75 + frame.sky_zenith.rgb * 0.25;
-    let hue = select(vec3<f32>(1.0), sky / max(dot(sky, lum), 1e-4), dot(sky, lum) > 1e-4);
-    return mix(c, dot(c, lum) * mix(vec3<f32>(1.0), hue, 0.5), amount);
+    let hue = select(vec3<f32>(1.0), clamp(sky / max(dot(sky, lum), 1e-4), vec3<f32>(0.8), vec3<f32>(1.25)), dot(sky, lum) > 1e-4);
+    return mix(c, dot(c, lum) * mix(vec3<f32>(1.0), hue, 0.3), amount);
 }
 
 // The screen position of `p` and how far behind what the depth prepass
@@ -2952,7 +2951,10 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         // but for the grazing ones, the lamps in it soft.
         let along = max(abs(view.z), 0.05);
         let footprint = dist * 1.15 * frame.screen.w / along;
-        let fine = 1.0 - smoothstep(0.006, 0.03, footprint);
+        // the streaks are 46 cycles a metre across, the frost's bumps 31:
+        // gone before a pixel spans half a cycle, else they shimmer
+        let fine = 1.0 - smoothstep(0.004, 0.011, footprint);
+        let fine_n = 1.0 - smoothstep(0.006, 0.016, footprint);
         let q = world.xy;
         let qa = vec2<f32>(dot(q, vec2<f32>(0.809, 0.588)), dot(q, vec2<f32>(-0.588, 0.809)));
         let qb = vec2<f32>(dot(q, vec2<f32>(-0.276, 0.961)), dot(q, vec2<f32>(-0.961, -0.276)));
@@ -2963,7 +2965,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let feather = mix(0.3, smoothstep(0.62, 0.97, streak), fine) * (0.25 + 0.75 * drifts);
         let rim = 1.0 - smoothstep(0.0, 0.14, inside);
         let frost = clamp(0.12 + rim * 0.75 + feather * (0.25 + 0.4 * rim), 0.0, 1.0);
-        let frost_n = vec2<f32>(snow_noise(q * 31.0) - 0.5, snow_noise(q * 29.0 + 7.0) - 0.5) * fine;
+        let frost_n = vec2<f32>(snow_noise(q * 31.0) - 0.5, snow_noise(q * 29.0 + 7.0) - 0.5) * fine_n;
         let ni = normalize(vec3<f32>(frost_n * 0.08 * (0.3 + frost), 1.0));
         let r = reflect(-view, ni);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(ni, view), 0.0), 5.0);
@@ -3493,8 +3495,9 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
 // ------------------------------------------------- rain on water (prototype)
 // The rain on the water (`water_pixel`), open to the sky: xy the puddles'
 // rings and chop (`rain_water_churn`) as a slope added to its waves, within
-// reach; z how rough a downpour makes it (0..1), farther out; w its splash
-// mist (`rain_splash_mist`). Light rain draws rings on a clear surface; a
+// 45 m (past it the pixels are too coarse to show them); z how much a
+// downpour dulls its reflection (0..1), out to 200 m, standing for the
+// roughness too fine to draw there; w its splash mist (`rain_splash_mist`). Light rain draws rings on a clear surface; a
 // downpour roughens and greys it, as rain on a lake does.
 fn rain_on_water(world: vec3<f32>, footprint: f32, view_up: f32) -> vec4<f32> {
     let heavy = rain_liquid();

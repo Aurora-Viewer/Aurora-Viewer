@@ -4951,7 +4951,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
-| `AURORA_SNOW_AFTER=<s>` | `AURORA_SNOW` starts this many seconds after launch, `AURORA_RAIN` falling until then |
+| `AURORA_SNOW_AFTER=<s>` | `AURORA_SNOW` starts this many seconds after the weather is first drawn, `AURORA_RAIN` falling until then |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
 | `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
@@ -4976,7 +4976,8 @@ both open states and the selection count. Capture at frame 620.
   a dusting, then a white cover on what faces up, none on walls or steep
   roofs).
   `AURORA_SNOW_AFTER=<s>` (with `AURORA_SNOW` and `AURORA_RAIN`) lets the
-  rain fall for that many seconds, then stops it and starts the snow: the
+  rain fall for that many seconds (from the weather's first frame), then
+  stops it and starts the snow: the
   puddles the rain left freeze, for captures of the ice
   (`AURORA_RAIN=1 AURORA_SNOW=0.3 AURORA_SNOW_AFTER=35
   AURORA_DEMO_WATER=high:puddles`, captured after 45 s or so). The ice must
