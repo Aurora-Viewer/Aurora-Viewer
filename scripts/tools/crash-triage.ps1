@@ -259,15 +259,25 @@ function Get-CrashSignature($Report, $Frames) {
         }
     }
     $text = $null
+    $unidentifiedModule = $false
     if (-not $resolved.Count) {
         $own = @($Report.Frames | Where-Object { $_.Module -eq $OwnModule } | Select-Object -First 3 | ForEach-Object { $_.Text })
         $foreign = @($Report.Frames | Where-Object { $_.Module -and $_.Text -notmatch $IgnoredFrame } | Select-Object -First 1)
         if (-not $own.Count -and $foreign.Count) {
             $module = $foreign[0].Module
             $keys = @($Report.Frames | Where-Object { $_.Module -eq $module } | Select-Object -First 3 | ForEach-Object { $_.Text })
-            $moduleId = ''
-            if ($Report.Modules.ContainsKey($module)) { $moduleId = $Report.Modules[$module].Id }
-            $text = "$kind|$($keys -join '|')|$module $moduleId"
+            $identity = $Report.Modules[$module]
+            if ($identity.Id) {
+                $text = "$kind|$($keys -join '|')|$module $($identity.Id)"
+            }
+            elseif ($identity.Code) {
+                $text = "$kind|$($keys -join '|')|$module code $($identity.Code.ToUpperInvariant())"
+            }
+            else {
+                # The same offsets can belong to different builds of this
+                # library. Keep the stack for triage without closing a report.
+                $unidentifiedModule = $true
+            }
         }
         else {
             $id = ''
@@ -278,7 +288,7 @@ function Get-CrashSignature($Report, $Frames) {
     if (-not $text) { $text = "$kind|$($keys -join '|')" }
     $sha = [Security.Cryptography.SHA256]::Create()
     $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
-    @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys }
+    @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys; UnidentifiedModule = $unidentifiedModule }
 }
 
 function Get-TriageTitle($Report, $Signature) {
@@ -310,7 +320,12 @@ function Format-TriageSection($Frames, [string]$SymbolsName, $Signature) {
     $lines += '```'
     $lines += ''
     $lines += "Signature ``$($Signature.Id)``: $(@($Signature.Frames) -join ' > ')"
-    $lines += "<!-- crash-signature: $($Signature.Id) -->"
+    if ($Signature.UnidentifiedModule) {
+        $lines += 'The crashed module has no debug or code ID. Check duplicates manually.'
+    }
+    else {
+        $lines += "<!-- crash-signature: $($Signature.Id) -->"
+    }
     $lines += $TriageEnd
     $lines -join "`n"
 }

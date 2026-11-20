@@ -157,6 +157,17 @@ try {
     Assert-Triage ((Get-CrashSignature $otherDll (Get-SymbolizedFrames $otherDll $null)).Id -ne $hookSig.Id) 'Another version of the DLL is another crash.'
     $otherPlace = Read-CrashReport ($hookReport -replace '0x40835', '0x41000')
     Assert-Triage ((Get-CrashSignature $otherPlace (Get-SymbolizedFrames $otherPlace $null)).Id -ne $hookSig.Id) 'Another place in the DLL is another crash, even on the same build.'
+    $codeOnlyReport = $hookReport -replace " id=$hookId", ''
+    $codeOnly = Read-CrashReport $codeOnlyReport
+    $codeSig = Get-CrashSignature $codeOnly (Get-SymbolizedFrames $codeOnly $null)
+    Assert-Triage (-not $codeSig.UnidentifiedModule) 'A module with a code ID can be deduplicated.'
+    $otherCode = Read-CrashReport ($codeOnlyReport -replace '69A5F5AA11d000', '69A5F5AB11d000')
+    Assert-Triage ((Get-CrashSignature $otherCode (Get-SymbolizedFrames $otherCode $null)).Id -ne $codeSig.Id) 'Distinct code IDs must keep the reports apart.'
+    $unknown = Read-CrashReport ($codeOnlyReport -replace 'osmimhk64 code=69A5F5AA11d000', 'osmimhk64')
+    $unknownFrames = Get-SymbolizedFrames $unknown $null
+    $unknownSig = Get-CrashSignature $unknown $unknownFrames
+    Assert-Triage $unknownSig.UnidentifiedModule 'A module without a debug or code ID needs manual triage.'
+    Assert-Triage (-not (Get-TriageSignature (Format-TriageSection $unknownFrames '' $unknownSig))) 'An unknown module must not become a reference for automatic duplicate closure.'
     # Only system frames: still the viewer build's signature, as before.
     $systemOnly = Read-CrashReport (New-Report 'Native exception 0xC0000005' @('00 kernelbase+0x1234', '01 ntdll+0x7ee4c'))
     Assert-Triage ((@((Get-CrashSignature $systemOnly (Get-SymbolizedFrames $systemOnly $null)).Frames)[0]) -eq "unsymbolized $id") 'A stack of system frames alone keeps the build signature.'

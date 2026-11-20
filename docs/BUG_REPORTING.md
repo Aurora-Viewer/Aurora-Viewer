@@ -204,9 +204,9 @@ inlined functions included, to functions and source lines. It then:
   (development build, release older than the symbols), the signature is the
   build's debug id and its first offsets. A stack with no frame of the
   viewer at all (a thread of another program's DLL loaded in the process)
-  is signed by that module's first three offsets and its own debug id: the
-  same DLL crashing at the same place is one crash under every version of
-  the viewer;
+  is signed by that module's first three offsets and its debug or code ID.
+  This groups the same DLL crashing at the same place across viewer builds.
+  If both IDs are missing, the report needs manual duplicate triage;
 - when an open issue already has the same signature, comments there with
   the new occurrence (version, system, GPU) and closes the new issue as its
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
