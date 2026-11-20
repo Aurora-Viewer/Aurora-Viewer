@@ -32,22 +32,21 @@ fn texted(world: &mut World, text: &str) -> Uuid {
     id
 }
 
-/// A resident around us, with the name RlvUtil::filterNames looks for
-/// (their display name, else the name their object came with).
-fn near(world: &World) -> (Uuid, String) {
-    let name = |id: &Uuid| {
-        world
-            .social
-            .avatar_names
-            .raw(id)
-            .map(|n| n.display_name.clone())
-            .or_else(|| world.avatar_name(id))
-            .filter(|n| n.len() > 2)
-    };
-    crate::world::radar::sightings(world)
+/// A resident around us, with the display name RlvUtil::filterNames looks
+/// for: a cached one (LLAvatarNameCache::get), given here when the demo has
+/// none yet.
+fn near(world: &mut World) -> (Uuid, String) {
+    let me = world.agent_id;
+    let id = crate::world::radar::sightings(world)
         .into_iter()
-        .find_map(|s| name(&s.id).map(|n| (s.id, n)))
-        .expect("the demo has residents around")
+        .map(|s| s.id)
+        .find(|id| *id != me)
+        .expect("the demo has residents around");
+    if world.social.avatar_names.raw(&id).is_none() {
+        world.social.avatar_names.on_legacy(id, "Near", "Tester");
+    }
+    let name = world.social.avatar_names.raw(&id).expect("cached").display_name.clone();
+    (id, name)
 }
 
 /// LLVOAvatar::idleUpdateNameTag (llvoavatar.cpp): render_name =
@@ -159,7 +158,7 @@ fn a_bubble_shows_its_tag_under_shownametags() {
 #[test]
 fn a_floating_text_mention_of_a_hidden_resident_is_frozen() {
     let mut world = demo_world();
-    let (resident, _) = near(&world);
+    let (resident, _) = near(&mut world);
     let text = format!("ask secondlife:///app/agent/{resident}/mention");
     let object = texted(&mut world, &text);
     assert_eq!(hover_text(&world, object, false, &text), text);
@@ -175,7 +174,7 @@ fn a_floating_text_mention_of_a_hidden_resident_is_frozen() {
 #[test]
 fn a_floating_text_is_filtered_when_it_comes_and_when_a_followed_restriction_toggles() {
     let mut world = demo_world();
-    let (_, name) = near(&world);
+    let (_, name) = near(&mut world);
     let text = format!("Hello {name}");
     let object = texted(&mut world, &text);
     assert_eq!(hover_text(&world, object, false, &text), text);
@@ -203,7 +202,7 @@ fn a_floating_text_is_filtered_when_it_comes_and_when_a_followed_restriction_tog
 #[test]
 fn an_object_named_by_its_floating_text_follows_the_hover_text_restrictions() {
     let mut world = demo_world();
-    let (_, name) = near(&world);
+    let (_, name) = near(&mut world);
     let object = texted(&mut world, &format!("{name} stall\nsecond line"));
     let tool = crate::build::BuildTool::default();
     assert_eq!(crate::build::replace::object_name(&tool, &world, object), format!("{name} stall"));

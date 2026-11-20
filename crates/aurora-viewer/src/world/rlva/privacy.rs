@@ -724,23 +724,9 @@ impl World {
                         filter.add(&original, &replacement);
                     }
                 }
-            } else {
-                // Until the name service answers, the legacy name the
-                // avatar's object came with stands for both. Stricter than
-                // the Legacy Viewer, which replaces only a cached name.
-                if let Some(name) = self.social.names.get(&id).filter(|name| name.len() > 2) {
-                    filter.add(name, &replacement);
-                }
-                if let Some(name) = self
-                    .objects
-                    .index_of_uuid(&id)
-                    .and_then(|i| self.objects.get(i))
-                    .and_then(|o| o.display_name())
-                    .filter(|name| name.len() > 2)
-                {
-                    filter.add(&name, &replacement);
-                }
             }
+            // a name not cached yet is left as it is
+            // (`LLAvatarNameCache::get` fails), like the Legacy Viewer
         }
         filter
     }
@@ -2357,5 +2343,31 @@ mod tests {
         assert!(!filtered.contains("Ab") && !filtered.contains("Cd"), "{filtered}");
         assert!(world.rlva_private_region("Ab"));
         assert!(!world.rlva_private_region("ab"), "the exact name only");
+    }
+
+    /// RlvUtil::filterNames takes a name only from LLAvatarNameCache::get:
+    /// the name an avatar's object or the chat came with is not filtered
+    /// until the name service gives it.
+    #[test]
+    fn the_name_filter_leaves_a_name_the_cache_does_not_have_yet() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let (id, name) = world
+            .objects
+            .avatars()
+            .filter(|(_, o)| o.full_id != world.agent_id && world.social.avatar_names.raw(&o.full_id).is_none())
+            .find_map(|(_, o)| o.display_name().filter(|n| n.len() > 2).map(|n| (o.full_id, n)))
+            .expect("an avatar around whose name is not cached");
+        world.social.names.insert(id, name.clone());
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        let text = format!("hello {name}");
+        assert!(matches!(world.rlva_filter_text(&text), Cow::Borrowed(_)), "{text}");
+        cache_name(&mut world, id, "Late", "Comer", &name);
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_filter_text(&text).contains(name.as_str()));
     }
 }
