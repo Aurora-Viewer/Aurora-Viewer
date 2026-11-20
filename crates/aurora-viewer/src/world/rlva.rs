@@ -235,6 +235,9 @@ const MAX_MESSAGE: usize = 4096;
 const MAX_ISSUERS: usize = 65_536;
 const MAX_RULES: usize = 65_536;
 const MAX_QUEUED: usize = 65_536;
+/// The behaviour of a queued @notify line (`Rlva::notice_reply`): a comma
+/// cannot be in a behaviour read from chat, which is split on commas.
+const NOTICE: &str = "notify,queued";
 
 /// Commands listed here have a consumer. Do not advertise unfinished handlers
 /// through @getcommand: scripts use it to decide whether a feature is safe.
@@ -1128,12 +1131,14 @@ impl Rlva {
             "getstatus" => Some(self.status(Some(source), &c.option)),
             "getstatusall" => Some(self.status(None, &c.option)),
             "getcommand" => Some(command_list_with(&c.option, &self.preferences)),
+            NOTICE => Some(c.option.clone()),
             _ => None,
         }
     }
 
     /// `behaviour` is the query answered (the console masks a texture id).
     pub fn reply(&mut self, channel: i32, behaviour: &str, message: String) {
+        let behaviour = if behaviour == NOTICE { "notify" } else { behaviour };
         // RlvExtGetSet and RlvEnvironment answer through RlvUtil::
         // sendChatReply (rlvextensions.cpp, rlvenvironment.cpp), which refuses
         // channel 0: the console gets no answer to them.

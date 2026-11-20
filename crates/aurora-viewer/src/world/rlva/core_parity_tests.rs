@@ -423,3 +423,30 @@ fn core_numeric_options_follow_the_legacy_converters_at_their_use_sites() {
     assert!(policy::teleport("256.5/512/20").is_some());
     assert!(policy::teleport("Region/1/2").is_none() && policy::teleport("inf/0/0").is_none());
 }
+
+/// RlvBehaviourNotifyHandler sends its line as RlvHandler processes the
+/// command, after the answer to the query before it: the line waits behind
+/// a queued query, and the filters of that moment decide who hears it.
+#[test]
+fn core_g5_notify_lines_wait_behind_the_queued_replies() {
+    let mut world = world();
+    world.apply(aurora_net::NetEvent::Chat(owner_say(B, "@notify:6=n")));
+    replies(&mut world.rlva);
+    world.apply(aurora_net::NetEvent::Chat(owner_say(A, "@getgroup=5,fly=n,versionnum=5")));
+    assert!(world.rlva.out.is_empty(), "the notification waits behind @getgroup");
+    world.apply(aurora_net::NetEvent::Chat(owner_say(B, "@notify:6=y")));
+    world.rlva_pending();
+    assert_eq!(
+        replies(&mut world.rlva),
+        [reply(5, "none"), reply(6, "/fly=n"), reply(5, "3040300")],
+        "in the order of the commands, to the listener of that moment"
+    );
+    let mut r = enabled();
+    say(&mut r, B, "@notify:6=n");
+    say(&mut r, A, "@fly=n");
+    assert_eq!(
+        replies(&mut r)[1..],
+        [reply(6, "/fly=n")],
+        "with nothing queued, the line is immediate"
+    );
+}

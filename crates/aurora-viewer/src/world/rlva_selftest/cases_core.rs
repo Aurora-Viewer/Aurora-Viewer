@@ -64,6 +64,25 @@ pub(super) fn cases() -> Vec<Case> {
             ],
         ),
         case(
+            "core-G5-notify-order",
+            "a @notify line leaves after the reply of the queued query before it",
+            vec![
+                Step::Say(Who::Controller, "@notify:{ch}=add"),
+                Step::Say(Who::Controller, "@getgroup={ch},fly=n,versionnum={ch}"),
+                Step::Expect(
+                    "the group, then /fly=n, then 3040300",
+                    test(|_, c| {
+                        let n = c.replies.len();
+                        if n >= 3 && c.replies[n - 1] == "3040300" && c.replies[n - 2] == "/fly=n" && c.replies[n - 3] != "3040300" {
+                            Ok(())
+                        } else {
+                            Err(format!("{:?}", c.replies))
+                        }
+                    }),
+                ),
+            ],
+        ),
+        case(
             "core-G6-getcommand-duplicates",
             "@getcommand lists a name once per type it has (RlvBehaviourDictionary::getCommands)",
             vec![

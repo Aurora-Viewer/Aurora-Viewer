@@ -514,6 +514,18 @@ impl World {
         pending: &mut std::vec::IntoIter<(Uuid, super::Command)>,
         commands: &mut Vec<(Uuid, NetCommand)>,
     ) -> bool {
+        // A @notify line told while this queue waited: sent in its place,
+        // behind the camera and debug commands queued before it.
+        if c.behaviour == super::NOTICE {
+            if let super::Param::Reply(channel) = c.param {
+                if self.rlva.viewer.is_empty() {
+                    self.rlva.reply(channel, "notify", c.option);
+                } else if self.rlva.viewer.len() < super::MAX_QUEUED {
+                    self.rlva.viewer.push((source, c));
+                }
+            }
+            return true;
+        }
         if !self.rlva.controllers.accepts(source, c.param) {
             return true;
         }

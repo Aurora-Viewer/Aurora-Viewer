@@ -485,8 +485,9 @@ mod tests {
         });
         world.rlva_controller_resources(&resources(root));
         // RlvHandler::isBlockedObject is the reported object alone: its
-        // child prim's rules stay and it may still add some.
-        assert!(!world.rlva.has("fly") && world.rlva.pending.is_empty());
+        // child prim's rules stay and it may still add some. Its queued
+        // force goes; the "/notify:7=add" line told before stays queued.
+        assert!(!world.rlva.has("fly") && world.rlva.pending.iter().all(|(id, _)| *id != root));
         assert!(world.rlva.has("jump") && !world.rlva.controllers.blocked(child));
         say(&mut world, child, "@unsit=n");
         assert!(world.rlva.has("unsit"));

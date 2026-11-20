@@ -33,7 +33,30 @@ impl Rlva {
             .map(|(channel, _)| channel)
             .collect();
         for channel in channels {
-            self.reply(channel, "notify", format!("/{subject}{suffix}"));
+            self.notice_reply(channel, format!("/{subject}{suffix}"));
+        }
+    }
+
+    /// RlvBehaviourNotifyHandler sends its line when RlvHandler processes
+    /// the command or the event, after the answers to the queries before
+    /// it: a line told while queries wait here waits behind them, as a
+    /// queued entry that only sends it (`NOTICE`). It belongs to no issuer,
+    /// so that a release before the queue drains does not take it back.
+    fn notice_reply(&mut self, channel: i32, text: String) {
+        let notice = || super::Command {
+            behaviour: super::NOTICE.to_owned(),
+            option: text.clone(),
+            strict: false,
+            param: super::Param::Reply(channel),
+            environment_locked: false,
+            received: super::Received::default(),
+        };
+        if !self.pending.is_empty() && self.pending.len() < super::MAX_QUEUED {
+            self.pending.push((Uuid::nil(), notice()));
+        } else if self.pending.is_empty() && !self.viewer.is_empty() && self.viewer.len() < super::MAX_QUEUED {
+            self.viewer.push((Uuid::nil(), notice()));
+        } else {
+            self.reply(channel, "notify", text);
         }
     }
 
