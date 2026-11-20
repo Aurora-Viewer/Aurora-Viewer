@@ -8277,6 +8277,17 @@ photo-lut-imported-many = { $count ->
     }
 photo-lut-pack = Par { $creator }
 photo-lut-pack-tip = LUT créées par { $creator } et offertes à tous les utilisateurs d'Aurora
+world-look-title = Filtres du monde
+world-look-help = Des filtres et des LUT sur la vue 3D en permanence, à part de ceux des photos. L'interface n'est jamais colorée.
+world-look-on = Afficher les filtres sur le monde
+world-look-note = Appliqués à la vue 3D, sous l'interface. Les photos et les films gardent les filtres de la fenêtre Photo.
+world-look-photo-open = La fenêtre Photo ou le Director est ouvert : ses propres filtres sont affichés à la place.
+ui-options-world-look = Filtres du monde
+ui-options-world-look-on = Filtres sur le monde
+ui-options-world-look-on-help = Applique en permanence à la vue 3D les filtres et LUT choisis dans la fenêtre Filtres du monde. Les photos et les films gardent les leurs.
+ui-options-world-look-choose = Filtres choisis
+ui-options-world-look-choose-help = Ouvre la fenêtre Filtres du monde : les mêmes filtres et LUT que le mode photo, avec leurs propres réglages.
+ui-options-world-look-open = Choisir…
 photo-lut-mine = Mes LUT
 photo-lut-failed = LUT illisible : { $error }
 photo-look-a-fine-grain = Grain fin

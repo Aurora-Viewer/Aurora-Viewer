@@ -178,6 +178,7 @@ mod viewfinder;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
+mod world_look;
 mod worn_demo;
 
 enum Screen {
@@ -12684,8 +12685,12 @@ impl App {
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            // the spinning cat's colours, when the photo mode shows no look
-            None => self.live_look((w, h), focus).or_else(|| self.oiia.look(w, h)),
+            // the spinning cat's colours, when the photo mode shows no look,
+            // then the world's own filters
+            None => self
+                .live_look((w, h), focus)
+                .or_else(|| self.oiia.look(w, h))
+                .or_else(|| self.world_look((w, h), focus)),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -17718,6 +17723,9 @@ impl App {
         if !open {
             self.options_ui.cancel_capture();
         }
+        if res.open_world_look {
+            self.panels.world_look = true;
+        }
         if res.clear_cache {
             self.disk_cache.clear();
             self.net.send(NetCommand::ClearObjectCache);
@@ -18086,6 +18094,7 @@ impl App {
                 // playing, the reel's quick view) never keeps a look that was
                 // only pointed at on the live view and its film.
                 self.snapshots.ui.looks.hover = None;
+                self.snapshots.world_ui.looks.hover = None;
                 // the Director's track plays: the world alone, and the
                 // countdown of its start delay
                 if self.director_playing() {
@@ -20380,6 +20389,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
+                self.world_look_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);

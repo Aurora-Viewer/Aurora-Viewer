@@ -679,6 +679,9 @@ pub struct Settings {
     pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// The world look (Preferences › Graphics › Image): a stack of looks of
+    /// its own on the 3D view, apart from the photos' (`snapshot::looks`).
+    pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
@@ -2515,6 +2518,7 @@ impl Default for Settings {
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
+            world_look: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,

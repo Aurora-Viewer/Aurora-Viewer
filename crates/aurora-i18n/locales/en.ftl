@@ -8269,6 +8269,17 @@ photo-lut-imported-many = { $count ->
     }
 photo-lut-pack = By { $creator }
 photo-lut-pack-tip = LUTs made by { $creator } and shared with every Aurora user
+world-look-title = World filters
+world-look-help = Filters and LUTs on the 3D view all the time, apart from the photos' ones. The interface is never coloured.
+world-look-on = Show the filters on the world
+world-look-note = Drawn on the 3D view, under the interface. Photos and films keep the Photo window's filters.
+world-look-photo-open = The Photo window or the Director is open: its own filters are shown instead.
+ui-options-world-look = World filters
+ui-options-world-look-on = Filters on the world
+ui-options-world-look-on-help = Draws the filters and LUTs chosen in the World filters window on the 3D view, all the time. Photos and films keep their own.
+ui-options-world-look-choose = Chosen filters
+ui-options-world-look-choose-help = Opens the World filters window: the same filters and LUTs as the photo mode, with their own settings.
+ui-options-world-look-open = Choose…
 photo-lut-mine = My LUTs
 photo-lut-failed = LUT not read: { $error }
 photo-look-a-fine-grain = Fine grain
