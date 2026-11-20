@@ -81,6 +81,11 @@ pub struct AppearanceUi {
     save_in: Option<Uuid>,
     select_name: bool,
     adding: bool,
+    /// @showinv as `follow_showinv` last saw it, and the tab shown then: the
+    /// restriction's start is an event, and a tab it disables keeps the
+    /// window on the one it was showing.
+    showinv: bool,
+    showinv_tab: usize,
     add_search: String,
     reverse_sort: bool,
     pub pending: Option<(Uuid, bool)>,
@@ -226,15 +231,35 @@ impl AppearanceUi {
         self.open(if self.tab < 2 { self.tab } else { 0 }, false);
     }
 
-    /// @showinv: the outfit tabs are left for the worn one and the list of
-    /// items to add closes, as
+    /// @showinv, once per frame, as
     /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
-    /// (rlvhandler.cpp) leaves "My Outfits" for the worn tab and
-    /// LLPanelOutfitEdit::showAddWearablesPanel refuses its inventory panel.
-    /// The gallery shows the same outfit folders as the list: both go.
-    pub fn hide_inventory(&mut self) {
-        self.tab = 2;
-        self.adding = false;
+    /// (indra/newview/rlvhandler.cpp) and
+    /// LLPanelOutfitEdit::showAddWearablesPanel
+    /// (indra/newview/llpaneloutfitedit.cpp).
+    ///
+    /// When the restriction starts, and only then: the "My Outfits" list is
+    /// left for the worn tab if it is the one shown, and an open outfit
+    /// editor closes (LLSidepanelAppearance::showOutfitsInventoryPanel). The
+    /// gallery is not touched, and the editor may be opened again.
+    ///
+    /// While it lasts: the list's tab button is disabled, and a disabled
+    /// button refuses a selection made by the viewer too
+    /// (LLTabContainer::setTab, indra/llui/lltabcontainer.cpp), so a request
+    /// for the list keeps the tab shown before; the editor's list of items
+    /// to add never opens.
+    fn follow_showinv(&mut self, hidden: bool) {
+        let started = hidden && !self.showinv;
+        self.showinv = hidden;
+        if hidden {
+            if started {
+                self.editing = false;
+            }
+            if self.tab == 1 {
+                self.tab = if started || self.showinv_tab == 1 { 2 } else { self.showinv_tab };
+            }
+            self.adding = false;
+        }
+        self.showinv_tab = self.tab;
     }
 
     /// Scrolls the gallery or the list to the current outfit and selects
@@ -1750,9 +1775,7 @@ pub fn show(
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
     let inventory_hidden = world.rlva.has("showinv");
-    if inventory_hidden {
-        st.hide_inventory();
-    }
+    st.follow_showinv(inventory_hidden);
     if *open {
         st.read_pictures(world);
     }
@@ -1841,8 +1864,9 @@ pub fn show(
                         super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
                     }
                     if !st.editing {
-                        // it opens an outfit tab, which @showinv disables
-                        let can_locate = locatable(inv).is_some() && !inventory_hidden;
+                        // It stays on the list only from the list, which
+                        // @showinv leaves: under it, it shows the gallery.
+                        let can_locate = locatable(inv).is_some();
                         let locate = ui
                             .add_enabled_ui(can_locate, |ui| {
                                 icon_button(
@@ -1894,7 +1918,11 @@ pub fn show(
                 p,
                 &mut st.tab,
                 &[
-                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), !inventory_hidden),
+                    // @showinv disables the "My Outfits" list alone
+                    // (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>,
+                    // indra/newview/rlvhandler.cpp: enableTabButton on the
+                    // index of getMyOutfitsPanel); the gallery stays.
+                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), true),
                     (aurora_i18n::tr!("ui-appearance-outfits"), !inventory_hidden),
                     (&worn, true),
                 ],
@@ -1974,12 +2002,10 @@ pub fn show(
                 } else {
                     aurora_i18n::tr!("ui-appearance-add-more")
                 };
-                // LLPanelOutfitEdit::showAddWearablesPanel: no inventory to add from under @showinv
-                if ui
-                    .add_enabled_ui(!inventory_hidden, |ui| widgets::flat_button(ui, p, label))
-                    .inner
-                    .clicked()
-                {
+                // LLPanelOutfitEdit::showAddWearablesPanel
+                // (indra/newview/llpaneloutfitedit.cpp): under @showinv the
+                // button stays enabled and its click opens nothing.
+                if widgets::flat_button(ui, p, label).clicked() && !inventory_hidden {
                     st.adding = !st.adding;
                     st.selected_item = None;
                 }
@@ -2321,19 +2347,62 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
 mod tests {
     use super::*;
 
-    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle: the
-    /// window is left on the worn tab, with no list of items to add.
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// (indra/newview/rlvhandler.cpp): when the restriction starts, the list
+    /// tab alone is left for the worn one and the outfit editor closes.
     #[test]
-    fn rlva_showinv_leaves_the_outfit_tabs_for_the_worn_one() {
-        for tab in 0..=2 {
+    fn rlva_showinv_start_leaves_the_list_tab_and_the_editor() {
+        for (tab, left_on) in [(0, 0), (1, 2), (2, 2)] {
             let mut st = AppearanceUi {
                 tab,
+                editing: true,
                 adding: true,
                 ..Default::default()
             };
-            st.hide_inventory();
-            assert_eq!((st.tab, st.adding), (2, false));
+            st.follow_showinv(false);
+            assert_eq!((st.tab, st.editing, st.adding), (tab, true, true), "no restriction");
+            st.follow_showinv(true);
+            assert_eq!((st.tab, st.editing, st.adding), (left_on, false, false), "from tab {tab}");
         }
+    }
+
+    /// What lasts with @showinv: the list tab refuses a selection
+    /// (LLTabContainer::setTab on a disabled button) and the list of items
+    /// to add stays closed (LLPanelOutfitEdit::showAddWearablesPanel); the
+    /// gallery and the editor open as before.
+    #[test]
+    fn rlva_showinv_keeps_the_gallery_and_the_editor_reachable() {
+        let mut st = AppearanceUi::restored(1);
+        st.follow_showinv(true);
+        assert_eq!(st.tab, 2);
+        // the gallery is selected and stays
+        st.tab = 0;
+        st.follow_showinv(true);
+        assert_eq!(st.tab, 0);
+        // a request for the list keeps the tab shown
+        st.open_outfit(Uuid::from_u128(7));
+        st.follow_showinv(true);
+        assert_eq!(st.tab, 0);
+        st.open(2, false);
+        st.follow_showinv(true);
+        st.open(1, false);
+        st.follow_showinv(true);
+        assert_eq!(st.tab, 2);
+        // the editor opens again, without its list of items to add
+        st.open(2, true);
+        st.adding = true;
+        st.follow_showinv(true);
+        assert_eq!((st.editing, st.adding), (true, false));
+        // the release changes nothing by itself, and the list is back
+        st.follow_showinv(false);
+        assert_eq!((st.tab, st.editing), (2, true));
+        st.open(1, false);
+        st.follow_showinv(false);
+        assert_eq!(st.tab, 1);
+        // a second start is an event again
+        st.editing = true;
+        st.follow_showinv(true);
+        assert_eq!((st.tab, st.editing), (2, false));
     }
 
     #[test]
@@ -2968,6 +3037,22 @@ mod tests {
                 "one faux-bold pixel at {ppp}: {positions:?}, offset {expected_offset}"
             );
         }
+    }
+
+    #[test]
+    fn save_as_suggests_an_editable_name_for_an_existing_unicode_outfit() {
+        let mut inv = crate::world::inventory::Inventory::default();
+        model::seed_demo(&mut inv, Uuid::from_u128(1));
+        let id = model::base(&inv).expect("saved outfit");
+        inv.folders.get_mut(&id).expect("outfit folder").info.name = "花見コーデ".into();
+
+        let mut st = AppearanceUi::default();
+        st.begin_save_as(&inv);
+
+        let name = st.save_as.expect("Save as dialog");
+        assert!(!name.is_empty() && !name.contains('?'));
+        assert!(crate::text_validation::Policy::Ascii.accepts(&name));
+        assert_eq!(inv.folders[&id].info.name, "花見コーデ");
     }
 
     #[test]

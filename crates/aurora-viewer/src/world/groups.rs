@@ -274,6 +274,7 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 

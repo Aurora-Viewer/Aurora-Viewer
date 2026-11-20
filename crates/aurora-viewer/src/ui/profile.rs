@@ -520,6 +520,28 @@ impl ProfileUi {
         }
     }
 
+    /// The residents whose profile is shown, written over `out`: RLVa asks
+    /// it for the giver of an inventory offer (`World::rlva_names_giver`).
+    /// LLAvatarActions::profileVisible is LLFloater::isShown: a minimized
+    /// window does not count, nor one that is not drawn (a resident whose
+    /// name the window may not show).
+    pub(crate) fn open_residents(&self, ctx: &egui::Context, world: &World, classic: bool, out: &mut std::collections::HashSet<Uuid>) {
+        out.clear();
+        out.extend(
+            self.windows
+                .iter()
+                .filter(|w| {
+                    let win_id = if classic {
+                        format!("profile-{}", w.id)
+                    } else {
+                        aurora::window_id(w.id)
+                    };
+                    w.open && world.rlva_shows_name(w.scope, w.id) && !widgets::floater_minimized(ctx, &win_id)
+                })
+                .map(|w| w.id),
+        );
+    }
+
     /// The windows open and the place each one names its resident from.
     #[cfg(test)]
     pub(crate) fn opened(&self) -> Vec<(Uuid, NameScope)> {
@@ -1654,13 +1676,13 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui
-                .add_enabled(
-                    super::context::can_pay_resident(world),
-                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
-                )
-                .clicked()
-            {
+            // Pay stays enabled under @pay: updateButtons
+            // (indra/newview/llpanelprofile.cpp) never tests it, and the
+            // click's LLAvatarActions::pay is refused where the pay window
+            // opens, with the "blocked" notice
+            // (RlvBehaviourToggleHandler<RLV_BHVR_PAY>,
+            // indra/newview/rlvhandler.cpp; here `App::open_pay`).
+            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
@@ -1727,8 +1749,9 @@ fn overflow_menu(
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        let payable = super::context::can_pay_resident(world);
-        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), payable) {
+        // LLPanelProfileSecondLife::onEnableMenu has no rule for "pay": the
+        // entry stays enabled under @pay, like the button (`action_buttons`).
+        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
@@ -2830,6 +2853,63 @@ mod tests {
             let requests = take_requests(&frames.ctx);
             assert_eq!(requests.len(), usize::from(received != 0 && online));
             assert!(requests.iter().all(|a| matches!(a, CtxAction::ShowOnMap(target) if *target == id)));
+            assert!(actions.is_empty());
+        }
+    }
+
+    /// LLPanelProfileSecondLife::updateButtons (indra/newview/llpanelprofile.cpp)
+    /// leaves Pay enabled under @pay: the click reaches the pay window's
+    /// opening, which is what refuses (`App::open_pay`).
+    #[test]
+    fn classic_profile_pay_button_stays_enabled_under_rlva_pay() {
+        use crate::ui::context::{CtxAction, take_requests};
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let w = Window::new(id);
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        for restricted in [false, true] {
+            if restricted {
+                assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                    from_name: String::new(),
+                    source_id: Uuid::from_u128(9000),
+                    owner_id: Uuid::from_u128(1),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::OwnerSay,
+                    region: None,
+                    position: glam::Vec3::ZERO,
+                    message: "@pay=n".into(),
+                }));
+            }
+            assert_eq!(world.rlva_can_pay(), !restricted);
+            let mut point = egui::Pos2::ZERO;
+            for _ in 0..2 {
+                let texts = frames.run(Vec::new(), |ui| action_buttons(ui, &p, &world, &w, false, &mut actions));
+                point = painted(&texts, aurora_i18n::tr!("common-pay")).rect.center();
+            }
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    |ui| action_buttons(ui, &p, &world, &w, false, &mut actions),
+                );
+            }
+            let requests = take_requests(&frames.ctx);
+            assert!(
+                matches!(requests.as_slice(), [CtxAction::PayResident(target)] if *target == id),
+                "restricted {restricted}: {} request(s)",
+                requests.len()
+            );
             assert!(actions.is_empty());
         }
     }

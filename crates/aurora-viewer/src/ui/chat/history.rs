@@ -15,6 +15,16 @@ use egui::RichText;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
+/// The names a transcript read again shows under RLVa's `@shownames`: those
+/// it was written with. Neither LLLogChat::loadChatHistory
+/// (indra/newview/lllogchat.cpp) nor
+/// LLFloaterConversationPreview::showHistory
+/// (indra/newview/llfloaterconversationpreview.cpp) has an RLVa test. What
+/// the restriction hid when a line was said is hidden in the file already:
+/// the nearby chat's transcript is written as the chat showed it
+/// (`World::transcript_text`).
+const NAMES: crate::world::names::NameScope = crate::world::names::NameScope::Roster;
+
 #[derive(Default)]
 pub struct HistoryUi {
     pub open: bool,
@@ -557,9 +567,7 @@ impl HistoryUi {
             emoji,
             pics,
             world,
-            // a transcript read again: the names of those around stay
-            // hidden in its text, whichever conversation it was
-            names: crate::world::names::NameScope::World,
+            names: NAMES,
             want_names,
             wanted: &mut no_pictures,
             own_name: &own_name,
@@ -617,7 +625,7 @@ impl HistoryUi {
                 lines,
                 first: clock.first,
                 world,
-                names: crate::world::names::NameScope::World,
+                names: NAMES,
                 own_name: &own_name,
             };
             // (no field here: what is typed goes nowhere)
@@ -625,9 +633,87 @@ impl HistoryUi {
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, crate::world::names::NameScope::World, &target.line);
+                super::super::context::chat_sender_menu(ui, p, world, avatar, NAMES, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::names::NameScope;
+
+    /// LLFloaterConversationPreview has no RLVa test: a line read back from
+    /// a transcript keeps the name and the text it was written with under
+    /// `@shownames`, in this window and at the top of the nearby chat
+    /// (FSFloaterNearbyChat::loadHistory), where a line said now hides them.
+    #[test]
+    fn a_transcript_keeps_the_names_it_was_written_with_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Transcript fixture".into(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_shows_name(NameScope::World, near));
+        // as the file gives a line: a name, and no resident looked up
+        let line = ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Near Tester".into(),
+            text: "hello".into(),
+            kind: crate::world::ChatKind::Local(aurora_net::ChatType::Normal),
+            source: uuid::Uuid::nil(),
+            origin: crate::world::Origin::Log,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        assert_eq!(NAMES, NameScope::Roster);
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
+        // said now: the stand-in the line takes when it arrives
+        let mut said = line.clone();
+        said.origin = crate::world::Origin::Live;
+        said.source = near;
+        world.rlva_freeze_line(NameScope::World, &mut said);
+        let around = super::super::sender_name(&world, "Aurora Demo", &said);
+        assert!(!around.contains("Tester"), "{around}");
+        // the text: a notice of the viewer is rewritten when it comes, and
+        // read back as the file has it
+        let mut notice = line.clone();
+        notice.kind = crate::world::ChatKind::System;
+        notice.text = "Near Tester is online".into();
+        for scope in [NAMES, NameScope::World] {
+            let wording = notice.wording(scope);
+            assert_eq!(world.rlva_filter_text_in(wording, &notice.text), notice.text, "{scope:?}");
+            assert_eq!(
+                super::super::resolved_text_in(&world, wording, &notice.text),
+                notice.text,
+                "{scope:?}"
+            );
+        }
+        notice.origin = crate::world::Origin::Live;
+        world.rlva_freeze_line(NameScope::World, &mut notice);
+        assert!(!notice.text.contains("Tester"), "{}", notice.text);
+        // and nothing rewrites it again when it is drawn
+        assert!(!notice.wording(NameScope::World).rewritten);
     }
 }
