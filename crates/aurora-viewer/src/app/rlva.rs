@@ -1088,13 +1088,11 @@ impl App {
                             else {
                                 continue;
                             };
-                            let Some((position, rotation, hud)) = crate::scene::Scene::object_transform_unshifted(&self.world, i, now)
+                            let Some((position, rotation)) =
+                                rlva_focus_transform(crate::scene::Scene::object_transform_unshifted(&self.world, i, now))
                             else {
                                 continue;
                             };
-                            if hud {
-                                continue;
-                            }
                             let geom = crate::camera::FocusObject {
                                 position,
                                 rotation,
@@ -1120,6 +1118,16 @@ impl App {
             }
         }
     }
+}
+
+/// Where `@setcam_focus` puts the focus for an object: its position as
+/// the Legacy Viewer reads it (RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>,
+/// rlvhandler.cpp: getPositionAgent), a HUD attachment included, whose
+/// position is then in the HUD's own frame (no refusal there).
+pub(super) fn rlva_focus_transform(transform: Option<(Vec3, glam::Quat, bool)>) -> Option<(Vec3, glam::Quat)> {
+    transform
+        .filter(|(position, _, _)| position.is_finite())
+        .map(|(position, rotation, _hud)| (position, rotation))
 }
 
 /// What `@setenv_asset`, `preset` and `daycycle` name.
@@ -1389,5 +1397,18 @@ mod tests {
             lookup(&inventory, "setenv_preset", "Sunset", SettingsKind::Sky),
             EnvironmentLookup::Loading(vec![environments])
         );
+    }
+
+    /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS> takes any object it finds, a
+    /// HUD attachment included.
+    #[test]
+    fn rlva_setcam_focus_accepts_a_hud_object() {
+        let at = glam::Vec3::new(0.1, 0.2, 0.3);
+        assert_eq!(
+            rlva_focus_transform(Some((at, glam::Quat::IDENTITY, true))),
+            Some((at, glam::Quat::IDENTITY))
+        );
+        assert_eq!(rlva_focus_transform(Some((glam::Vec3::NAN, glam::Quat::IDENTITY, false))), None);
+        assert_eq!(rlva_focus_transform(None), None);
     }
 }
