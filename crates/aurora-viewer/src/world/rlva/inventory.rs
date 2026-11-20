@@ -368,7 +368,7 @@ pub(super) fn path(inv: &Inventory, mut id: Uuid) -> Option<String> {
     Some(names.join("/"))
 }
 
-fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
+pub(super) fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
     let mut id = shared_root(inv)?;
     if name.is_empty() {
         return Some(id);
@@ -388,68 +388,6 @@ fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
             })?;
     }
     Some(id)
-}
-
-/// What the shared folders say about a path an RLVa command names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Lookup {
-    /// A folder under #RLV answers to every component.
-    Found,
-    /// The folders that could hold it are loaded and none does (or there is no #RLV).
-    Missing,
-    /// The answer depends on this folder, whose contents are not loaded yet.
-    Loading(Uuid),
-    /// The folder that would tell failed to load: nothing can be said.
-    Unverified,
-}
-
-/// RlvInventory::getSharedFolder (rlvinventory.cpp) asks whether a path
-/// names a folder under #RLV: each component matches a folder of the level
-/// by its name, exactly first (case-insensitive), else the first visible
-/// folder whose name contains it. The Legacy Viewer reads the folders it
-/// holds at that moment; Aurora loads #RLV on demand, so a level whose
-/// contents have not arrived is reported as `Loading` instead of letting a
-/// folder that exists look missing. An exact match settles a level at once.
-pub(super) fn lookup(inv: &Inventory, path: &str) -> Lookup {
-    use super::super::inventory::FetchState;
-    let Some(mut id) = shared_root(inv) else {
-        return match inv.folders.get(&inv.root).map(|f| f.state) {
-            Some(FetchState::Fetched) => Lookup::Missing,
-            Some(FetchState::Failed) => Lookup::Unverified,
-            _ => Lookup::Loading(inv.root),
-        };
-    };
-    for component in path.split('/').filter(|v| !v.is_empty()) {
-        let Some(f) = inv.folders.get(&id) else {
-            return Lookup::Missing;
-        };
-        let wanted = component.to_lowercase();
-        let found = f
-            .children
-            .iter()
-            .copied()
-            .find(|child| inv.folders.get(child).is_some_and(|f| f.info.name.eq_ignore_ascii_case(component)));
-        if let Some(child) = found {
-            id = child;
-            continue;
-        }
-        match f.state {
-            FetchState::Fetched => {
-                let partial = f.children.iter().copied().find(|child| {
-                    inv.folders
-                        .get(child)
-                        .is_some_and(|f| visible(&f.info.name) && f.info.name.to_lowercase().contains(&wanted))
-                });
-                match partial {
-                    Some(child) => id = child,
-                    None => return Lookup::Missing,
-                }
-            }
-            FetchState::Failed => return Lookup::Unverified,
-            FetchState::Unknown | FetchState::Fetching => return Lookup::Loading(id),
-        }
-    }
-    Lookup::Found
 }
 
 impl World {

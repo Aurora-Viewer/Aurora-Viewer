@@ -144,7 +144,7 @@ permission rule hides it.
   copies, renames or deletion from invalidating folder locks.
   A folder lock whose option names nothing (no such shared folder, or a
   point or a type for an `_except` form) is refused and never listed, `=y`
-  included; one that needs #RLV folders not loaded yet waits for them.
+  included, against the folders the inventory holds when the command arrives.
 - Forced wear: attach/over/all/allover, detach/all/me, remattach, remoutfit,
   through the native COF planner. Shared-folder queries: getinv, getinvworn,
   findfolder/s, getpath/new; attachment and outfit presence/name queries.
