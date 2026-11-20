@@ -466,6 +466,12 @@ pub struct ObjGpu {
     /// the reflections and probes, so that the subject keeps the scene's
     /// light (#2316).
     pub unseen: bool,
+    /// What our avatar wears and RLVa's @showself or @showselfhead hide: not
+    /// drawn, and not picked either, the ray going on to what is behind
+    /// (LLViewerJointAttachment::setAttachmentVisibility clears the bridge's
+    /// drawable type, which LLOctreeIntersect::check skips,
+    /// llspatialpartition.cpp).
+    pub rlva_hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -4250,6 +4256,7 @@ impl Scene {
         // its texture entry says
         let plant = plants::plant_face(o);
         let visible = world.rlva_object_visible(idx);
+        g.rlva_hidden = !visible;
         for (fi, face) in geom.faces.iter().enumerate() {
             if !visible {
                 continue;

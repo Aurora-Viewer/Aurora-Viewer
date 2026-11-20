@@ -83,10 +83,10 @@ pub(super) fn rlva_click_target(
         }
         _ => target,
     };
-    // (what our avatar wears and @showself or @showselfhead hide is not
-    // offered to the click)
+    // (what our avatar wears and @showself or @showselfhead hide never
+    // gets here: the pick goes through it, `ObjGpu::rlva_hidden`)
     if matches!(target.action, Action::Touch | Action::Grab)
-        && (!world.rlva_object_visible(idx) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point))
+        && !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point)
     {
         return None;
     }
@@ -95,7 +95,7 @@ pub(super) fn rlva_click_target(
 
 /// The cursor's half of `App::hover_cursor_action`, RLVa on.
 fn rlva_hover_action(world: &World, target: Target, idx: usize, point: Option<Vec3>, sit_offset: Option<Vec3>) -> Option<Action> {
-    if !world.rlva_object_visible(idx) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point) {
+    if !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point) {
         return None;
     }
     let left = rlva_click_target(world, target, idx, point, sit_offset)?;
