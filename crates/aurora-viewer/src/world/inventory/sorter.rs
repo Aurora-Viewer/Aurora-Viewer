@@ -4677,6 +4677,43 @@ fn body_addon_kit(root: &super::Folder, samples: &[(&InvItem, Classified)]) -> b
     components.len() >= 2
 }
 
+/// A modular floor can be titled by its finish, with dimensions as the
+/// only part names. Require different, small footprints under the exact
+/// floor title so that image resolutions and unrelated objects do not vote.
+fn modular_floor(root: &super::Folder, samples: &[(&InvItem, Classified)]) -> bool {
+    if !root.children.is_empty() || !(2..=96).contains(&root.items.len()) {
+        return false;
+    }
+    let Some((name, pack)) = root.info.name.trim().strip_suffix(']').and_then(|title| title.rsplit_once('[')) else {
+        return false;
+    };
+    let stem = words(name);
+    if stem.len() < 2 || !stem.last().is_some_and(|word| word == "floor") || !words(pack).last().is_some_and(|word| word == "pack") {
+        return false;
+    }
+    let edge = |value: &str| value.parse::<u8>().ok().filter(|n| (1..=32).contains(n));
+    let mut sizes = HashSet::new();
+    for (item, found) in samples {
+        let title = words(&item.name);
+        let Some((size, finish)) = title.strip_prefix(stem.as_slice()).and_then(|label| label.split_first()) else {
+            return false;
+        };
+        let Some((width, depth)) = size.split_once('x').and_then(|(x, y)| Some((edge(x)?, edge(y)?))) else {
+            return false;
+        };
+        if item.asset_type != 6
+            || found.category.is_some_and(|category| category != Category::Decor)
+            || ["texture", "normal", "specular", "diffuse", "roughness", "albedo", "metallic"]
+                .iter()
+                .any(|role| has(finish, role))
+        {
+            return false;
+        }
+        sizes.insert((width, depth));
+    }
+    sizes.len() >= 2
+}
+
 /// Where a folder whose name says nothing goes, from what it holds: the
 /// destination most of its objects, clothing, body parts, animations and
 /// gestures read as when at least three in five agree. A pack already
@@ -4772,8 +4809,15 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         }
         return Some(Dest::Path(path));
     }
-    if !named_set && inv.folders.get(&folder).is_some_and(|root| body_addon_kit(root, &samples)) {
-        let mut path = vec![category_folder(Category::BodyAddons)];
+    let matched_parts = (!named_set).then(|| inv.folders.get(&folder)).flatten().and_then(|root| {
+        if body_addon_kit(root, &samples) {
+            Some(Category::BodyAddons)
+        } else {
+            modular_floor(root, &samples).then_some(Category::Decor)
+        }
+    });
+    if let Some(category) = matched_parts {
+        let mut path = vec![category_folder(category)];
         path.extend(shop.map(str::to_owned));
         return Some(Dest::Path(path));
     }

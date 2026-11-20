@@ -4780,6 +4780,29 @@ fn numbered_same_product_style_folders_use_the_named_primary_object() {
 }
 
 #[test]
+fn modular_floor_packs_use_matching_physical_tiles_and_keep_variants_together() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Nookery Star Floor [Black & White Pack]");
+    add_item(&mut inv, 201, 70, "Nookery Star Floor//1x1 [White]", 0);
+    add_item(&mut inv, 202, 70, "Nookery Star Floor//2x1 [Black/PBR]", 0);
+    add_item(&mut inv, 203, 70, "Nookery Star Floor//1x1 [White/PBR] 1", 0);
+    add_typed(&mut inv, 204, 70, "Nookery Floor assembly notes", 0, 7);
+    let none = HashSet::new();
+    let prefs = Preferences::default();
+    for planned in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(planned.moves.len(), 1);
+        assert_eq!(planned.moves[0].id, id(70));
+        assert_eq!(planned.moves[0].to, Dest::Path(vec![category_folder(Category::Decor)]));
+    }
+
+    add_item(&mut inv, 205, 70, "Nookery Star Floor 1024x1024 [White]", 0);
+    assert!(plan_whole(&inv, &prefs, &none, &none).moves.is_empty());
+}
+
+#[test]
 fn body_addon_kits_follow_matching_mesh_parts_and_keep_the_layers() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Nookery Clearwater Fins Kit");
