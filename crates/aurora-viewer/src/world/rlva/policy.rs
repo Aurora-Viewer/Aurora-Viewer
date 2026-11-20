@@ -5,6 +5,10 @@ use aurora_net::{NetCommand, control};
 use glam::Vec3;
 use uuid::Uuid;
 
+/// The particle editor's script injection, sent past the attachment locks
+/// (ParticleEditor::scriptInjectReturned, `NetCommand::Build` below).
+pub const PARTICLE_EDITOR: Uuid = Uuid::from_u128(0x726c_7661_7061_7274_6963_6c65_0000_0001);
+
 impl World {
     /// Resident and group payments follow RLV `@pay`; object purchases use
     /// the independent `@buy` restriction.
@@ -341,6 +345,11 @@ impl World {
             // `rlva_can_rez`).
             NetCommand::Build(aurora_net::build::BuildCmd::RezInventory(_)) => !blocked("rez") && !blocked("interact"),
             NetCommand::Build(aurora_net::build::BuildCmd::Add(_)) => !blocked("rez"),
+            // ParticleEditor::scriptInjectReturned (particleeditor.cpp) puts
+            // its script in with LLViewerObject::saveScript
+            // (llviewerobject.cpp), which asks nothing of RLVa: a locked
+            // attachment takes it too
+            NetCommand::Build(aurora_net::build::BuildCmd::RezScript { .. }) if actor == PARTICLE_EDITOR => true,
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
             NetCommand::AcceptLure { lure_id, godlike } => {

@@ -273,5 +273,28 @@ pub(super) fn cases() -> Vec<Case> {
                 Step::Expect("released", holds(|w, _| w.rlva_can_change_group(), "still refused")),
             ],
         ),
+        case(
+            "int-PART-inject-locked",
+            "the particle editor's script goes into a locked attachment, a drop does not",
+            vec![
+                Step::Say(Who::Controller, "@remattach=n"),
+                Step::Expect(
+                    "a script dropped into the locked controller refused",
+                    holds(on_controller(script_drop, false), "still allowed"),
+                ),
+                Step::Now(
+                    "the particle editor's script passes (LLViewerObject::saveScript)",
+                    holds(
+                        |w, c| {
+                            controller(w, c)
+                                .is_some_and(|i| w.rlva_allows_command(&script_drop(w, c, i), crate::world::rlva::policy::PARTICLE_EDITOR))
+                        },
+                        "refused",
+                    ),
+                ),
+                Step::Say(Who::Controller, "@remattach=y"),
+                Step::Expect("released", holds(on_controller(script_drop, true), "still refused")),
+            ],
+        ),
     ]
 }

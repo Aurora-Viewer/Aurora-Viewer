@@ -34,7 +34,7 @@ pub mod login;
 pub mod modifiers;
 mod naming;
 pub mod offers;
-mod policy;
+pub(crate) mod policy;
 pub mod preferences;
 pub mod privacy;
 mod relative;

@@ -306,3 +306,26 @@ fn rlva_getgroup_answers_the_name_of_agent_data_update() {
     world.apply(active(Uuid::nil()));
     assert_eq!(ask(&mut world), [parity_reply(7371, "none")]);
 }
+
+/// ParticleEditor::scriptInjectReturned (particleeditor.cpp) puts its script
+/// in with LLViewerObject::saveScript, which asks nothing of RLVa: a locked
+/// attachment takes the particle editor's script, and nothing else of it.
+#[test]
+fn rlva_the_particle_editor_injects_its_script_into_a_locked_attachment() {
+    let mut world = parity_demo_world();
+    let chest = worn_attachment(&mut world, 0x7381, 1);
+    let collar = worn(&world, chest);
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    let script = task_item(&world, collar, chest, true);
+    assert!(!world.rlva_allows_command(&script, Uuid::nil()), "a drop is refused");
+    assert!(world.rlva_allows_command(&script, crate::world::rlva::policy::PARTICLE_EDITOR));
+    command(&mut world.rlva, A, "@edit=n");
+    assert!(
+        !world.rlva_allows_command(&texture(&world, collar), crate::world::rlva::policy::PARTICLE_EDITOR),
+        "its script alone"
+    );
+    assert!(!world.rlva_allows_command(
+        &task_item(&world, collar, chest, false),
+        crate::world::rlva::policy::PARTICLE_EDITOR
+    ));
+}
