@@ -22,6 +22,7 @@ use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::widgets;
+use aurora_i18n::UiUpper;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -1756,7 +1757,7 @@ fn sidebar(
                 if let Some(title) = page.section() {
                     ui.add_space(10.0);
                     let font = egui::FontId::new(11.0, super::fonts::semibold(ui.ctx()));
-                    let galley = ui.painter().layout_no_wrap(title.to_uppercase(), font, p.violet_light);
+                    let galley = ui.painter().layout_no_wrap(title.ui_upper(), font, p.violet_light);
                     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
                     super::widgets::paint_row_text(ui.painter(), galley, rect.left() + 8.0, rect.center().y, p.violet_light);
                 }

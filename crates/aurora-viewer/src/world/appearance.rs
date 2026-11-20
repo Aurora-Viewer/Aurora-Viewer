@@ -292,7 +292,16 @@ pub fn dirty(inv: &Inventory) -> bool {
         let mut keys: Vec<_> = folder_links(inv, id)
             .into_iter()
             .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13 | 21)))
-            .map(|l| (l.target, l.name, l.desc))
+            // read as the Legacy Viewer holds them (LLInventoryItem::fromLLSD):
+            // an outfit saved before the links went out in plain ASCII is
+            // not a change
+            .map(|l| {
+                (
+                    l.target,
+                    aurora_net::outfits::link_name(&l.name),
+                    aurora_net::outfits::link_desc(&l.desc),
+                )
+            })
             .collect();
         keys.sort();
         keys
@@ -2648,6 +2657,30 @@ mod tests {
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
         assert_eq!(base(&inv), Some(change.folder));
         assert!(!dirty(&inv));
+        // #4225: an outfit saved with a UTF-8 link name, worn since with the
+        // plain-ASCII link the Legacy Viewer sends, has not changed
+        let target = folder_links(&inv, change.folder).iter().find(|l| !l.folder).expect("link").target;
+        let name = "Veste « été »";
+        for (folder, link_name) in [
+            (change.folder, name.to_owned()),
+            (cof(&inv).expect("COF"), aurora_net::outfits::link_name(name)),
+        ] {
+            let link = inv
+                .items
+                .values_mut()
+                .find(|it| it.parent == folder && it.asset_type == 24 && it.asset_id == target)
+                .expect("outfit link");
+            link.name = link_name;
+        }
+        assert!(!dirty(&inv), "the same link read as the Legacy Viewer reads it");
+        let cof_folder = cof(&inv).expect("COF");
+        let link = inv
+            .items
+            .values_mut()
+            .find(|it| it.parent == cof_folder && it.asset_type == 24 && it.asset_id == target)
+            .expect("COF link");
+        link.desc = "@1501".into();
+        assert!(dirty(&inv), "another layer is still a change");
     }
     #[test]
     fn body_parts_cannot_be_removed_and_unloaded_outfits_cannot_be_worn() {
