@@ -7103,6 +7103,26 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Import inspector layout
 
+Picker cancellation: in demo mode, open Add files (or Add folder), return to
+Aurora and close the import window. Its native picker must close too on Windows,
+macOS and Linux. On macOS the modeless panel must leave Aurora usable; on Linux,
+test both the desktop portal and the zenity fallback on a desktop without a
+file chooser portal.
+Reopen the importer: existing drafts remain and Add files is enabled. Repeat in
+a type-specific importer while another importer stays open; closing the other
+window must leave the original picker alone. Cancel in the native picker itself
+and retry, and close/reopen quickly while a selection is starting. Repeat with
+the material editor's texture upload (single-file selector). Ordinary selection
+must still load the chosen files with the same extension filters.
+`cargo test --workspace file_picker` covers ownership, stale replies, panics and
+the real floater close/reopen actions, portal request options, cancellation
+before/during the wait, and completion without a portal Response after Close.
+The portable portal implementation is also type-checked in tests on Windows.
+Native macOS/Linux UI validation still requires those desktops. On a Windows interactive desktop, run
+`cargo test --workspace file_picker_native_windows_close_after_the_dialog_is_visible -- --ignored --test-threads=1`
+alone: it opens and cancels actual multiple-file, folder and single-file dialogs
+with an automation title, without selecting or reading files.
+
 TGA texture imports: use `AURORA_DEMO_IMPORTS=type-texture` and
 `AURORA_DEMO_IMPORT_FILE` with a local `.tga`, including RLE files without a
 TGA 2.0 footer. The file must load with the right colours, orientation and alpha,
