@@ -4437,7 +4437,7 @@ impl Scene {
                 source = TexSource::Asset;
             }
             if wearer.is_none()
-                && plant.is_none()
+                && plants::takes_camera_texture(o)
                 && let Some(texture) = world.rlva.camera_texture()
             {
                 base_tex = texture;
