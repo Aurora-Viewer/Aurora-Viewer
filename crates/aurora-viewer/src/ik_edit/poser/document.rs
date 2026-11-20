@@ -58,7 +58,9 @@ impl Joint {
 /// scale instead (FSJointState::getTargetScale, `mScale + mBaseScale`), and
 /// before their version 4 give the joint's whole position and scale
 /// (FSPoserAnimator::loadJointPosition and loadJointScale without
-/// `loadPositionAsDelta`, indra/newview/fsposeranimator.cpp).
+/// `loadPositionAsDelta`, indra/newview/fsposeranimator.cpp), the pelvis's
+/// excepted: its whole position is measured from the Legacy Viewer's rest at
+/// zero (LLAvatarAppearance::buildSkeleton), so it is added like a change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Channels {
@@ -177,6 +179,7 @@ impl Document {
                 let (position, scale) = match self.channels {
                     Channels::Aurora => (base.0 + translation, base.1 * scale),
                     Channels::LegacyDelta => (base.0 + translation, base.1 + scale),
+                    Channels::LegacyAbsolute if bone == rig.pelvis => (base.0 + translation, scale),
                     Channels::LegacyAbsolute => (translation, scale),
                 };
                 pose.positions[bone] = position;

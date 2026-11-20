@@ -68,6 +68,7 @@ GPL-3.0-or-later as described above.
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
 | Region tracker, `newview/alfloaterregiontracker.cpp` — Copyright © 2014 Alchemy Viewer Project | `aurora-viewer/src/world/region_tracker.rs`, `ui/region_tracker.rs` | Originally LGPL 2.1 |
+| Alchemy's pose files, `newview/bdfloaterposer.cpp`, `bdanimator.cpp` (Alchemy Viewer) — Copyright © 2018 NiranV Dean | `aurora-viewer/src/ik_edit/poser/legacy_pose.rs` | Originally LGPL 2.1 |
 | Animation overrider, `newview/aoengine.cpp`, `aoengine.h`, `aoset.cpp`, `ao.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ao/`, `ui/ao/`, `movement.rs`, `movement/water_walk.rs`, `world/friend_join.rs` | Originally LGPL 2.1 |
 | Animation explorer, `newview/animationexplorer.cpp` — Copyright © 2013 Zi Ree | `aurora-viewer/src/app/animation_explorer.rs`, `ui/animation_explorer.rs`, `world/animation_log.rs` | Originally LGPL 2.1 |
 | Particle editor, `newview/particleeditor.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/app/particle_editor.rs`, `build/particle_editor.rs`, `build/ui/particles.rs`, `scene/particles.rs` | Originally LGPL 2.1 |

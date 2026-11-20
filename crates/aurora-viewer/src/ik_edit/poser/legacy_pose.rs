@@ -1,13 +1,21 @@
 //! The Legacy Viewer's saved poses: the LLSD XML files its poser writes in
-//! `user_settings/poses`, one map per joint. Alchemy's poser is the same
-//! (FSFloaterPoser in its sources), so its files read the same way. A file
-//! becomes a pose `Document`: loaded from Open a file, or converted into the
-//! library a whole folder at a time; the original is never changed.
+//! `user_settings/poses`, one map per joint. A file becomes a pose
+//! `Document`: loaded from Open a file, or converted into the library a whole
+//! folder at a time; the original is never changed.
 //!
 //! Port of FSFloaterPoser::loadPoseFromXml (indra/newview/fsfloaterposer.cpp)
 //! and FSPoserAnimator::loadJointRotation, loadJointPosition,
 //! loadJointScale and translateRotationToQuaternion
 //! (indra/newview/fsposeranimator.cpp), originally LGPL 2.1.
+//!
+//! Alchemy's released poser is another one, which writes the same map with
+//! version 3: BDFloaterPoser::onPoseSave (indra/newview/bdfloaterposer.cpp)
+//! and BDAnimator::loadPose (indra/newview/bdanimator.cpp) of its `main`
+//! branch, Copyright © 2018 NiranV Dean, originally LGPL 2.1. Its Euler
+//! angles are in another order (`alchemy_file`); its positions and scales
+//! are whole values, as in the Legacy Viewer's files before version 4.
+//! Alchemy's development branch has the Legacy Viewer's poser, whose files
+//! read as the Legacy Viewer's.
 //!
 //! What a file of a pose started from a playing animation also records (its
 //! `startFromTeePose` false, FSPoserAnimator::savePosingState) is the ids
@@ -42,11 +50,18 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
     } else {
         Channels::LegacyAbsolute
     };
+    let alchemy = version <= 3 && alchemy_file(map);
     let mut joints: Vec<(usize, Joint)> = Vec::new();
     for (key, value) in map {
         // the other keys: version, startFromTeePose and the animations of
         // savePosingState, which name no joint
         let Some(&bone) = rig.names.get(key) else { continue };
+        // an attachment point: Alchemy's file lists them, but neither poser
+        // moves one (no FSPoserJoint of that name; BDAnimator::loadPose
+        // gives them no joint state)
+        if attachment_point(rig, bone) {
+            continue;
+        }
         if !value.is_map() || joints.iter().any(|(b, _)| *b == bone) {
             continue;
         }
@@ -57,11 +72,22 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
         let vector = |field: &str| value.has(field).then(|| Vec3::from_array(value.get(field).as_vec3()));
         let euler = vector("rotation").unwrap_or(Vec3::ZERO);
         // translateRotationToQuaternion with SWAP_NOTHING: LLMatrix3(roll,
-        // pitch, yaw), whose column form is Rx · Ry · Rz
-        let rotation = Quat::from_euler(EulerRot::XYZ, euler.x, euler.y, euler.z);
+        // pitch, yaw), whose column form is Rx · Ry · Rz. Alchemy writes
+        // getEulerAngles(&x, &z, &y) and reads setEulerAngles(x, z, y): its
+        // file holds roll, yaw, pitch
+        let (roll, pitch, yaw) = if alchemy {
+            (euler.x, euler.z, euler.y)
+        } else {
+            (euler.x, euler.y, euler.z)
+        };
+        let rotation = Quat::from_euler(EulerRot::XYZ, roll, pitch, yaw);
+        // a whole pelvis position is an offset from the Legacy Viewer's rest
+        // at zero (LLAvatarAppearance::buildSkeleton), which
+        // `Document::apply` adds on the subject's own
+        let rest_position = if bone == rig.pelvis { Vec3::ZERO } else { rig.local_pos[bone] };
         let (translation, scale) = match channels {
             Channels::LegacyAbsolute => (
-                vector("position").unwrap_or(rig.local_pos[bone]),
+                vector("position").unwrap_or(rest_position),
                 vector("scale").unwrap_or(rig.scale[bone]),
             ),
             _ => (vector("position").unwrap_or(Vec3::ZERO), vector("scale").unwrap_or(Vec3::ZERO)),
@@ -102,6 +128,22 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
         return Err(invalid());
     }
     Ok(document)
+}
+
+/// Whether a file of version 3 or less comes from Alchemy's poser. Both
+/// posers wrote version 3, so the version does not tell them apart:
+/// Alchemy's writes its collision volumes and attachment points without
+/// `enabled` (BDFloaterPoser::onPoseSave keeps it for the bones), where the
+/// Legacy Viewer's wrote it on every joint.
+fn alchemy_file(map: &aurora_llsd::Map) -> bool {
+    map.values().any(|joint| joint.has("rotation") && !joint.has("enabled"))
+}
+
+/// Whether `joint` is one of the attachment points `Rig::add_attachment_points`
+/// adds: a point below a bone is in `skin_points`, "Avatar Center" (on
+/// mRoot, which the skeleton has not) is a root other than the pelvis.
+fn attachment_point(rig: &Rig, joint: usize) -> bool {
+    rig.skin_points.contains_key(&rig.canonical_names[joint]) || (rig.parent[joint].is_none() && joint != rig.pelvis)
 }
 
 fn truncate(mut name: String, bytes: usize) -> String {
@@ -239,6 +281,97 @@ mod tests {
         let document = document(&bytes, "Look".into(), &rig).expect("pose");
         let expected = Quat::from_rotation_x(0.3) * Quat::from_rotation_y(-0.7) * Quat::from_rotation_z(1.1);
         assert!(find(&document, "mHead").expect("head").rotation().angle_between(expected) < 1e-5);
+    }
+
+    /// A joint as Alchemy's BDFloaterPoser::onPoseSave writes a collision
+    /// volume or an attachment point: no `enabled`.
+    fn alchemy_extra(name: &str, position: [f32; 3], scale: [f32; 3]) -> String {
+        let array = |v: [f32; 3]| format!("<array><real>{}</real><real>{}</real><real>{}</real></array>", v[0], v[1], v[2]);
+        format!(
+            "<key>{name}</key><map><key>rotation</key>{}<key>position</key>{}<key>scale</key>{}</map>",
+            array([0.0; 3]),
+            array(position),
+            array(scale)
+        )
+    }
+
+    /// An excerpt of a pose saved by Alchemy's poser (version 3, no
+    /// startFromTeePose): bones with `enabled`, a collision volume and an
+    /// attachment point without.
+    fn alchemy_pose(elbow: [f32; 3]) -> Vec<u8> {
+        file(
+            3,
+            None,
+            &(joint("mElbowRight", true, elbow, [0.0, -0.248, 0.0], [0.996, 1.099, 0.996], "")
+                + &joint("mPelvis", true, [0.0; 3], [0.0039, 0.0159, 0.0016], [0.996, 1.0, 0.946], "")
+                + &alchemy_extra("L_CLAVICLE", [0.02, 0.0, 0.01844], [0.07, 0.12952, 0.04844])
+                + &alchemy_extra("Avatar Center", [0.0; 3], [1.0; 3])),
+        )
+    }
+
+    #[test]
+    fn an_alchemy_file_holds_roll_yaw_pitch() {
+        // BDFloaterPoser::onPoseSave: getEulerAngles(&x, &z, &y)
+        let rig = rig();
+        let bytes = alchemy_pose([0.462, 2.562, -0.0945]);
+        let document = document(&bytes, "port11".into(), &rig).expect("pose");
+        assert_eq!(document.channels, Channels::LegacyAbsolute);
+        let expected = Quat::from_rotation_x(0.462) * Quat::from_rotation_y(-0.0945) * Quat::from_rotation_z(2.562);
+        let elbow = find(&document, "mElbowRight").expect("elbow");
+        // a dot product: angle_between's approximate acos is too coarse here
+        assert!(elbow.rotation().dot(expected).abs() > 1.0 - 1e-6);
+        assert!(!elbow.change());
+        // the attachment point is left as it is
+        assert!(rig.names.contains_key("Avatar Center") && rig.names.contains_key("Chest"));
+        assert!(find(&document, "Avatar Center").is_none());
+        assert!(attachment_point(&rig, rig.names["Chest"]));
+        assert!(!attachment_point(&rig, rig.names["mChest"]));
+        assert!(!attachment_point(&rig, rig.names["CHEST"]));
+        assert!(!attachment_point(&rig, rig.pelvis));
+        assert!(find(&document, "L_CLAVICLE").is_some());
+    }
+
+    #[test]
+    fn a_legacy_file_of_version_three_keeps_roll_pitch_yaw() {
+        // the Legacy Viewer's poser also wrote version 3, `enabled` on
+        // every joint
+        let rig = rig();
+        let bytes = file(
+            3,
+            None,
+            &(joint("mHead", true, [0.3, -0.7, 1.1], [0.0, 0.0, 0.076], [1.0; 3], "")
+                + &joint("PELVIS", true, [0.0; 3], [0.0; 3], [0.1, 0.1, 0.1], "")),
+        );
+        let document = document(&bytes, "Look".into(), &rig).expect("pose");
+        let expected = Quat::from_rotation_x(0.3) * Quat::from_rotation_y(-0.7) * Quat::from_rotation_z(1.1);
+        assert!(find(&document, "mHead").expect("head").rotation().dot(expected).abs() > 1.0 - 1e-6);
+    }
+
+    #[test]
+    fn a_whole_pelvis_position_is_an_offset_from_the_subject_rest() {
+        // LLAvatarAppearance::buildSkeleton puts the pelvis at zero: an
+        // Alchemy pose must not sink the avatar into the ground
+        let rig = rig();
+        let mut session = session(&rig);
+        let pelvis = rig.pelvis;
+        let elbow = rig.names["mElbowRight"];
+        let pose = document(&alchemy_pose([0.0; 3]), "port11".into(), &rig).expect("pose");
+        assert!(pose.apply(&rig, &mut session, document::LoadMode::All, Mat4::IDENTITY));
+        let offset = Vec3::new(0.0039, 0.0159, 0.0016);
+        assert!((session.pose.positions[pelvis] - (rig.local_pos[pelvis] + offset)).length() < 1e-6);
+        // the other joints keep the file's whole position
+        assert!((session.pose.positions[elbow] - Vec3::new(0.0, -0.248, 0.0)).length() < 1e-6);
+        // a file without the pelvis's position leaves it at rest
+        let bytes = file(
+            3,
+            None,
+            &joint("mPelvis", true, [0.1, 0.0, 0.0], [0.0; 3], [1.0; 3], "")
+                .replace("<key>position</key><array><real>0</real><real>0</real><real>0</real></array>", ""),
+        );
+        let tilt = document(&bytes, "Tilt".into(), &rig).expect("pose");
+        let mut other = self::session(&rig);
+        assert!(tilt.apply(&rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
+        assert!((other.pose.positions[pelvis] - rig.local_pos[pelvis]).length() < 1e-6);
     }
 
     #[test]
