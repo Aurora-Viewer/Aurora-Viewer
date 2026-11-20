@@ -29,7 +29,8 @@ impl App {
         for effect in self.world.inventory.poll_offers(session) {
             match effect {
                 Effect::Sent { recipient, name, folder } => {
-                    self.world.inventory_offer_sent(recipient, &name, folder);
+                    let in_session = self.inventory_ui.offers_in_session.contains(&recipient);
+                    self.world.inventory_offer_sent(recipient, &name, folder, in_session);
                     self.fire_beam(recipient, glam::DVec3::ZERO);
                 }
                 Effect::Feedback(reason) => self.offer_feedback(reason),
@@ -668,9 +669,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags, item) => {
+            InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.pick_local_settings(asset, kind, Some(item));
+                    self.world.eep.request_local(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
@@ -715,6 +716,16 @@ impl App {
                 }
             }
             InvAction::Share { items, residents } => {
+                // dropped on the conversation of its one resident, or given
+                // another way (`InventoryUi::share_in_session`)
+                let in_session = self.inventory_ui.share_in_session.take();
+                for resident in &residents {
+                    if in_session == Some(*resident) && residents.len() == 1 {
+                        self.inventory_ui.offers_in_session.insert(*resident);
+                    } else {
+                        self.inventory_ui.offers_in_session.remove(resident);
+                    }
+                }
                 let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
                 let roots = rules::roots(&self.world.inventory, &items);
                 let mut blocked = false;

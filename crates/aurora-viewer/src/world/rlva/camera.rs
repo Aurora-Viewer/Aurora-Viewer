@@ -144,6 +144,35 @@ impl Rlva {
             .any(|name| self.has(name))
     }
 
+    /// The second camera (Aurora's own, `camera/second.rs`) pauses while
+    /// RLVa holds the avatar's view in any way: the camera itself
+    /// (`camera_restricted`), its distances and zoom, what the view may show
+    /// (spheres, overlays, textures) and whether our avatar may be seen.
+    /// A second camera would see around each of them; the Legacy Viewer has
+    /// no such view to compare with, so this is the strictest rule.
+    pub fn second_camera_blocked(&self) -> bool {
+        self.camera_restricted()
+            || [
+                "setcam",
+                "setcam_avdist",
+                "setcam_textures",
+                "setcam_eyeoffsetscale",
+                "camavdist",
+                "camtextures",
+                "camdistmin",
+                "camdistmax",
+                "camzoommin",
+                "camzoommax",
+                "camunlock",
+                "setsphere",
+                "setoverlay",
+                "showself",
+                "showselfhead",
+            ]
+            .iter()
+            .any(|name| self.has(name))
+    }
+
     pub fn camera_value(&self, name: &str) -> Option<&str> {
         if !self.enabled() {
             return None;
@@ -161,6 +190,14 @@ impl Rlva {
 
     pub fn camera_limit(&self, name: &str, default: f32, minimum: bool) -> f32 {
         self.camera_number(name, minimum).unwrap_or(default)
+    }
+
+    /// RlvActions::getCameraAvatarDistanceLimits and
+    /// getCameraOriginDistanceLimits (indra/newview/rlvactions.cpp): the two
+    /// limits once one of them is set, the other at its default.
+    pub fn camera_distance_limits(&self, low: &str, high: &str) -> Option<(f32, f32)> {
+        let (min, max) = (self.camera_number(low, true), self.camera_number(high, false));
+        (min.is_some() || max.is_some()).then(|| (min.unwrap_or(0.0), max.unwrap_or(f32::INFINITY)))
     }
 
     fn camera_number(&self, name: &str, minimum: bool) -> Option<f32> {

@@ -45,7 +45,7 @@ pub fn draw(
             continue;
         }
         let name = world.avatar_name(&s.id);
-        let color = crate::ui::colors::map_color(world, &s.id, name.as_deref().unwrap_or_default());
+        let color = crate::ui::colors::arrow_color(world, &s.id, name.as_deref().unwrap_or_default());
         if settings.mouselook_iff {
             let clip = proj.view_proj * s.position.extend(1.0);
             if let Some((at, false, direction)) = super::minimap::beacon_marker(clip, inner, proj) {

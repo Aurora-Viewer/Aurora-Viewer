@@ -1676,7 +1676,7 @@ fn group_row(
     }
     if resp.double_clicked() {
         if id.is_nil() {
-            if world.groups.active != id {
+            if world.groups.active != id && world.rlva_can_change_group() {
                 actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
             }
         } else {
@@ -1686,7 +1686,9 @@ fn group_row(
     menu::context_menu(&resp, p, |ui| group_menu(ui, p, world, st, id, actions));
 }
 
-/// Right-click menu of a group (menu_people_groups.xml).
+/// Right-click menu of a group (menu_people_groups.xml). Under @setgroup
+/// "Activate" is greyed, and "Leave" for the active group
+/// (LLGroupList::onContextMenuItemEnable, indra/newview/llgrouplist.cpp).
 fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, id: Uuid, actions: &mut Vec<ContactsAction>) {
     let real = !id.is_nil();
     if menu::item_if(
@@ -1694,7 +1696,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         p,
         "circle-check-filled",
         aurora_i18n::tr!("common-activate"),
-        world.groups.active != id,
+        world.groups.active != id && world.rlva_can_change_group(),
     ) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
     }
@@ -1727,7 +1729,13 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         }
     }
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "logout", aurora_i18n::tr!("common-quit"), real) {
+    if menu::item_if(
+        ui,
+        p,
+        "logout",
+        aurora_i18n::tr!("common-quit"),
+        real && world.rlva_can_leave_group(id),
+    ) {
         st.ask_leave_group(id);
     }
 }
@@ -1752,7 +1760,10 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), "", true) {
         actions.push(ContactsAction::GroupTitles);
     }
-    if side_button(ui, p, aurora_i18n::tr!("common-activate"), "", sel != world.groups.active) {
+    // FSFloaterContacts::updateGroupButtons has no RLVa test: under
+    // @setgroup the two buttons stay, and LLGroupActions::activate and
+    // leave do nothing
+    if side_button(ui, p, aurora_i18n::tr!("common-activate"), "", sel != world.groups.active) && world.rlva_can_change_group() {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }
     let pinned = world.groups.favorites.contains(&sel);
@@ -1769,7 +1780,7 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     ) {
         world.groups.toggle_favorite(sel);
     }
-    if side_button(ui, p, aurora_i18n::tr!("common-quit"), "", real) {
+    if side_button(ui, p, aurora_i18n::tr!("common-quit"), "", real) && world.rlva_can_leave_group(sel) {
         st.dialog = Some(Dialog::LeaveGroup(sel));
     }
     ui.add_space(6.0);

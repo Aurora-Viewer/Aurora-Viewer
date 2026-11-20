@@ -545,6 +545,45 @@ pub fn sharp_zone(coc_scale: f32, near: f32, far: f32) -> (f32, f32) {
     (front, back)
 }
 
+/// From mHead, at the base of the skull, up to the head's middle (m).
+const HEAD_MIDDLE: f32 = 0.09;
+/// About half a head's depth (m): from its middle to its outside.
+const HEAD_RADIUS: f32 = 0.09;
+/// An eyeball's radius (m): from its joint, at its centre, to the cornea.
+const EYE_RADIUS: f32 = 0.012;
+
+/// The point of an avatar's head the lens takes from `camera`: the cornea
+/// of its nearer eye, like a camera's eye autofocus, since the eyes are
+/// what a portrait must hold sharp and only a few centimetres are sharp
+/// close up at a wide aperture (3 cm either side at 0.4 m and f/2.8). The
+/// eyes are their animated joints (`eyes`, left and right), so the lens
+/// follows a head that an animation tilts, turns or leans, on any head
+/// shape; a place worked out from mHead (`head`) alone was off by the tilt
+/// and by the head's own depth, and the eyes blurred. Once the face is
+/// turned away (`forward` is the way it looks) there are no eyes to hold:
+/// the lens goes over to the outside of the head on the camera's side, as
+/// it does on a skeleton without eyes.
+pub fn face_focus(camera: glam::Vec3, head: glam::Vec3, forward: glam::Vec3, eyes: Option<(glam::Vec3, glam::Vec3)>) -> glam::Vec3 {
+    let centre = head + glam::Vec3::Z * HEAD_MIDDLE;
+    let toward = (camera - centre).normalize_or_zero();
+    let outside = centre + toward * HEAD_RADIUS;
+    let Some((left, right)) = eyes else {
+        return outside;
+    };
+    let eye = if left.distance_squared(camera) <= right.distance_squared(camera) {
+        left
+    } else {
+        right
+    };
+    let cornea = eye + (camera - eye).normalize_or_zero() * EYE_RADIUS;
+    // 1 with the camera before the face, 0 behind it; the nearer eye still
+    // shows a little past the profile, and the lens goes over slowly (from
+    // 96° to 134° off the face), not in a step
+    let facing = forward.normalize_or_zero().dot(toward);
+    let t = ((facing + 0.7) / 0.6).clamp(0.0, 1.0);
+    outside.lerp(cornea, t * t * (3.0 - 2.0 * t))
+}
+
 /// What the focus holds: an avatar's face, or a point of the world.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Subject {
@@ -956,6 +995,54 @@ mod tests {
         assert!((back - sharp_range(k * 2.0 / 6.0, 6.0).1).abs() < 1e-4);
         // a zone of one plane is the plane's
         assert_eq!(sharp_zone(k, 4.0, 4.0), sharp_range(k, 4.0));
+    }
+
+    #[test]
+    fn the_lens_takes_the_nearer_eye_of_a_face_and_the_outside_of_a_head_turned_away() {
+        use glam::Vec3;
+        // a head at the origin looking along +X, its eyes where the default
+        // skeleton has them (mEyeLeft / mEyeRight from mHead)
+        let head = Vec3::ZERO;
+        let forward = Vec3::X;
+        let eyes = (Vec3::new(0.098, 0.036, 0.079), Vec3::new(0.098, -0.036, 0.079));
+        // straight before the face, 0.4 m from the eyes: both are as near,
+        // the lens is an eyeball's radius before one of them
+        let camera = Vec3::new(0.498, 0.0, 0.079);
+        let f = face_focus(camera, head, forward, Some(eyes));
+        assert!((f.x - (0.098 + EYE_RADIUS)).abs() < 1e-3, "{f}");
+        assert!((f.z - 0.079).abs() < 1e-3);
+        // from its left, the left eye
+        let f = face_focus(Vec3::new(0.4, 0.3, 0.079), head, forward, Some(eyes));
+        assert!(f.distance(eyes.0) <= EYE_RADIUS + 1e-4 && f.distance(eyes.1) > 0.05, "{f}");
+        let f = face_focus(Vec3::new(0.4, -0.3, 0.079), head, forward, Some(eyes));
+        assert!(f.distance(eyes.1) <= EYE_RADIUS + 1e-4);
+        // a head an animation tilts 30° forward carries its eyes 3 cm
+        // nearer the camera: the lens goes with them, where a place worked
+        // out from mHead alone stays put
+        let tilt = glam::Quat::from_rotation_y(30f32.to_radians());
+        let tilted = (tilt * eyes.0, tilt * eyes.1);
+        assert!(tilted.0.x - eyes.0.x > 0.025);
+        let still = face_focus(camera, head, forward, Some(eyes));
+        let moved = face_focus(camera, head, tilt * forward, Some(tilted));
+        assert!((moved.x - still.x - (tilted.0.x - eyes.0.x)).abs() < 2e-3, "{still} {moved}");
+        // from behind, the outside of the head on the camera's side, as on
+        // a skeleton without eyes
+        let behind = Vec3::new(-2.0, 0.0, 0.09);
+        let f = face_focus(behind, head, forward, Some(eyes));
+        assert!((f - Vec3::new(-HEAD_RADIUS, 0.0, HEAD_MIDDLE)).length() < 1e-4, "{f}");
+        assert_eq!(f, face_focus(behind, head, forward, None));
+        // and no jump of the lens on the way round, from one eye to the
+        // other nor over to the back of the head, 16 cm from the eyes: a
+        // degree more never moves its distance by a centimetre
+        let at = |deg: f32| {
+            let a = deg.to_radians();
+            let camera = Vec3::new(a.cos(), a.sin(), 0.09) * 2.0;
+            face_focus(camera, head, forward, Some(eyes)).distance(camera)
+        };
+        for deg in 0..360 {
+            let step = (at(deg as f32) - at(deg as f32 + 1.0)).abs();
+            assert!(step < 0.01, "{deg}°: {step}");
+        }
     }
 
     #[test]

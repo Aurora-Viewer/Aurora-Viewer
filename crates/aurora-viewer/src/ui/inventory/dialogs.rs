@@ -730,7 +730,7 @@ pub(super) fn preview(
             }
             if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, aurora_i18n::tr!("common-apply-to-myself-only")).clicked()
             {
-                actions.push(InvAction::Environment(it.asset_id, it.flags, it.id));
+                actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
             let mut edited = super::embedded::EditorResult::default();
             match &mut st.preview_text {
