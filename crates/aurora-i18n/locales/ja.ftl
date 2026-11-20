@@ -4052,7 +4052,7 @@ scene-particles-block-object = このオブジェクトからのパーティク�
 scene-particles-block-owner = 所有者からのパーティクルをブロック
 scene-particles-unknown-object = オブジェクト{ $id }
 ui-context-display-options = 表示
-ui-context-information-options = 情報
+ui-context-information-options = アバター情報
 ui-context-reset-options = リセット
 ui-context-moderation-options = モデレーション
 ui-context-clicked-object = クリックしたオブジェクト
@@ -4788,6 +4788,7 @@ ui-land-general-script-info = スクリプト情報
 world-profiles-joined-today = 今日参加
 keybinds-insert = 挿入
 ui-context-inspect-2 = 調査
+ui-context-inspect-all-attachments = すべての装着物を調査
 inspect-title = オブジェクトを調査
 inspect-col-name = オブジェクト名
 inspect-col-description = 説明
@@ -5891,7 +5892,6 @@ ui-chat-today-at = 今日の{ $time }
 ui-chat-yesterday-at = 昨日の{ $time }
 ui-chat-date-at = { $date }の{ $time }
 ui-chat-new-messages = 新規
-ui-chat-latest = 最新のメッセージへ移動
 ui-chat-latest-new = { $count ->
     [one] 新着メッセージ{ $count }件
    *[other] 新着メッセージ{ $count }件
@@ -10424,7 +10424,6 @@ ui-context-save-backup = バックアップ
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = 表示の例外から削除する
-ui-context-script-info = スクリプト情報
 
 script-color-hint = 色の可能性があります：クリックでカラーピッカーを開きます。
 script-edit-line-comment = 行コメントを切り替え（Ctrl＋KまたはCtrl＋/）
