@@ -17,6 +17,7 @@ use crate::ui::{menu, presence};
 use crate::world::World;
 use crate::world::names::NameScope;
 use crate::world::social::{Friend, rights};
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -337,7 +338,7 @@ fn buttons(
 /// The title of a part of the sheet, in small capitals.
 pub(super) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.label(
-        egui::RichText::new(title.to_uppercase())
+        egui::RichText::new(title.ui_upper())
             .font(FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
             .color(p.muted_dim),
     );
