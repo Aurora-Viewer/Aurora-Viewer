@@ -481,6 +481,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_LENS_FLARE=<look>[:<options>]` | Lens flare on a dark stage with an HDR emitter and a polished sphere |
 | `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview\|medium\|high\|maximum][:hide][:inventory][:panel\|:classic]` | The photo window opened in 360° at frame 600 and its shutter pressed, the panorama written to the folder |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_PHOTO_GAZE=look[:<percent>]\|turn\|orbit\|others` | With the photo window open: "Look at camera" on (at a "Look intensity"), "Turn to camera" pressed, the camera going round the avatar while it looks at it, or the nearby avatars allowing posing and looking at the camera |
@@ -723,6 +724,27 @@ avatar, and the capture would show the avatar instead of the sky (#3964); the
 log then says `demo sky view: the camera was moved before the capture; put
 back`. Without `AURORA_CAPTURE`, or once the last frame is captured, the
 camera is free.
+
+`AURORA_DEMO_LENS_FLARE` accepts `subtle`, `golden`, `blue`, `star`,
+`off`, `occluded`, and `dark`. Use `performance`, `balanced` (default),
+or `high` for the working resolution. `panel` opens the floater, `advanced`
+opens it with the advanced controls visible, and
+`sweep` moves the camera so the specular reflection travels across the
+sphere and the emitter approaches the edge of the frame. The fixed camera
+gives repeatable comparisons with `AURORA_BLOOM=0` and `AURORA_BLOOM=1`.
+Compare `golden:threshold=0` and `golden:threshold=32` to check highlight
+selection across its full range. Compare `golden:blur=0` and
+`golden:blur=1` to check the softening of the ghosts and halos. In the
+floater Advanced and Preferences › Graphics › Light, both Bloom rows
+control the same live values.
+With `golden:advanced` and `AURORA_DEMO_RESIZE=sweep,screen_space_lens_flare`,
+drag the corner in and back out. The controls scroll within the chosen size.
+Try `AURORA_DEMO_SNAPSHOT=viewfinder-shoot` with and without
+`AURORA_DEMO_SNAPSHOT_TILE=512` to check the ghost on the opposite side of
+the image from its source. With `AURORA_PROFILE=1`, compare
+`g_lens_flare` at the actual render sizes reported by the profiler.
+`AURORA_GPU_OOM_FIRST_USE=3` exercises allocation refusal and automatic
+recovery without filling video memory.
 
 `AURORA_DEMO_SNAPSHOT`: `viewfinder` opens the photo mode in its
 viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
@@ -14469,6 +14491,8 @@ parts, against the scene without weather. `--scenes` picks some,
     layers;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
+  - `g_lens_flare`: highlight extraction and optics filtering, also counted in
+    `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn

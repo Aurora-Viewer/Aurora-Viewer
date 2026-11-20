@@ -177,6 +177,7 @@ pub enum BarAction {
     /// World › Environment › Aurora Weather: its window (testers looked
     /// for the weather there, beside Personal lighting).
     AuroraWeather,
+    LensFlare,
     /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
@@ -1379,6 +1380,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 *action = BarAction::HoverTips(tips);
             }
         });
+        if menu::item(ui, p, "flare-filled", aurora_i18n::tr!("lens-flare-title")) {
+            *action = BarAction::LensFlare;
+        }
         menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // menu_viewer.xml, RLV.EnableIfNot setenv: every entry here is
             // greyed while RLVa holds the environment

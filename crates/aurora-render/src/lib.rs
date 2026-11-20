@@ -40,6 +40,7 @@ mod helpers;
 mod histogram;
 pub mod hud;
 mod label_depth;
+pub mod lens_flare;
 pub mod light_tiles;
 pub mod looks;
 pub mod main_thread;

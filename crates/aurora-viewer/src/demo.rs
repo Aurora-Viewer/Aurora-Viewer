@@ -189,6 +189,7 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+pub mod lens_flare;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
@@ -6278,6 +6279,13 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += skin_layer::COUNT;
     }
+    if let Some(scene) = lens_flare::scenario() {
+        let props = lens_flare::objects(*scene, id);
+        id += props.len() as u32;
+        for object in props {
+            add(object);
+        }
+    }
     if mirror::enabled() {
         for o in mirror::objects(id) {
             add(o);
@@ -9906,6 +9914,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     ));
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
+    }
+    if lens_flare::scenario().is_some() {
+        list.extend(lens_flare::materials());
     }
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((

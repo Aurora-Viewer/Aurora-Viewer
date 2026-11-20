@@ -131,6 +131,8 @@ struct Job {
     /// Drawn at this many times the photo's size, reduced once complete
     /// (the photo quality's supersampling).
     supersample: u32,
+    /// The scene optics at shutter time, shared by all tiles and retries.
+    lens_flare: Option<aurora_render::lens_flare::Frame>,
     /// Cut out by the isolation (`snapshot::isolate`): its alpha is kept.
     cutout: bool,
     /// The looks it is drawn with, chosen when it started, their strength,
@@ -160,6 +162,7 @@ struct Held {
 
 /// The photo frame drawn this frame: how the app lays it out.
 pub(super) struct PhotoFrame {
+    pub lens_flare: Option<aurora_render::lens_flare::Frame>,
     /// Width over height of the whole photo.
     pub aspect: f32,
     /// Off-centre projection of the tile drawn (identity in one pass).
@@ -609,7 +612,7 @@ impl App {
                     job.next = 0;
                     job.pixels = Vec::new();
                     job.hold = None;
-                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion);
+                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion, job.lens_flare.is_some());
                     return None;
                 }
             }
@@ -646,7 +649,7 @@ impl App {
         }
         let scale = snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent);
         if let ContextPass::Pending((width, height)) = job.context {
-            // the whole photo, for the tiles' occlusion: nothing of it is kept
+            // The tiles use the whole frame's depth or lens-flare map.
             let spec = SnapshotSpec {
                 width,
                 height,
@@ -666,6 +669,7 @@ impl App {
                 scale,
                 look: None,
                 context: aurora_render::PhotoContext::Record,
+                lens_flare: job.lens_flare,
                 cube_face: false,
             });
         }
@@ -702,6 +706,12 @@ impl App {
             height: job.size.1,
             scale,
             look,
+            lens_flare: job.lens_flare.filter(|_| single || job.context == ContextPass::Drawn).map(|frame| {
+                aurora_render::lens_flare::Frame {
+                    last_context_tile: !single && job.next + 1 == job.tiles.len(),
+                    ..frame
+                }
+            }),
             context: if job.context == ContextPass::Drawn {
                 aurora_render::PhotoContext::Use
             } else {
@@ -725,6 +735,7 @@ impl App {
         let Some(answer) = renderer.snapshot.take() else {
             return;
         };
+        let occlusion = self.photo_ambient_occlusion() > 0;
         let Some(job) = self.snapshots.job.as_mut() else {
             return;
         };
@@ -740,7 +751,7 @@ impl App {
             job.context = if answer.is_some_and(|(w, h, _)| (w, h) == size) {
                 ContextPass::Drawn
             } else {
-                log::warn!("photo: the whole photo's depth was not drawn, the tiles go without it");
+                log::warn!("photo: the full-frame context was not drawn, the tiles go without it");
                 ContextPass::None
             };
             return;
@@ -792,6 +803,7 @@ impl App {
                 job.next = 0;
                 job.pixels = Vec::new();
                 job.hold = None;
+                job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion, job.lens_flare.is_some());
             }
             return;
         }
@@ -1210,7 +1222,13 @@ impl App {
         // HUDs or the photo's looks, whatever the Photo window has chosen
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
-        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0);
+        let cutout = self.world.photo_isolation.empty_background();
+        let lens_flare = if outfit || cutout || self.avatar_studio.active {
+            None
+        } else {
+            self.settings.lens_flare.frame(Some((size.0 / supersample, size.1 / supersample)))
+        };
+        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0, lens_flare.is_some());
         // (the outfit's photo mode keeps the viewfinder's looks: the
         // square shows them)
         let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
@@ -1227,7 +1245,8 @@ impl App {
             huds: !outfit && s.huds,
             started: Instant::now(),
             supersample,
-            cutout: self.world.photo_isolation.empty_background(),
+            lens_flare,
+            cutout,
             looks: Vec::new(),
             focus: self.snapshots.look_focus,
             photo: full,

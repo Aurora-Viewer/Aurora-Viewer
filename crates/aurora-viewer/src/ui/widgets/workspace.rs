@@ -538,6 +538,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         return "run";
     }
     match id {
+        super::super::lens_flare::WINDOW => "flare-filled",
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",

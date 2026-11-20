@@ -3540,6 +3540,31 @@ falls or lies (`RenderStats::snow_lying`).
 
 ## Life of a frame
 
+### Screen Space Lens Flare
+
+The World menu and Photo Viewfinder open the same resizable floater
+(`ui/lens_flare.rs`). `settings/lens_flare.rs` owns the four built-in
+looks and local named presets. The active values travel in `FrameParams`
+independently of bloom and graphics quality profiles.
+The Advanced controls mirror the existing Graphics › Light Bloom settings.
+Quality stays in the main floater and belongs to the selected flare preset.
+
+`aurora-render/src/lens_flare.rs` extracts highlights from the resolved HDR
+scene, evaluates the optics in WGSL at half, quarter, or eighth resolution,
+and provides an additive texture to the tone-mapping pass. Exposure and
+the scene's resolved HDR color drive extraction before depth of field.
+Screen edges fade incoming highlights before sampling displaced reflections.
+Successive directional filters overlap their pixel footprints to keep narrow
+streaks and starburst rays continuous.
+The threshold works in exposed linear units, with an adjustable transition
+around it and a maximum that excludes every highlight. The optional
+separable Gaussian blur softens the assembled flare before it is composited.
+Ordinary 2D photos freeze the settings at shutter time. Their full-frame
+context holds the flare map for every tile, including a tile with no visible
+source of its own, so each tile samples the same image coordinates.
+The offline demonstration in `demo/lens_flare.rs` uses scene geometry and
+materials.
+
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
 HID reports through hidapi on one worker. Joystick and Gamepad preferences
