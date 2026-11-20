@@ -11663,6 +11663,21 @@ separate searches enabled and disabled; that preference controls only the text.
   full width, including blank and wrapped rows. Repeat in both previews at a
   narrow window width; inline code keeps its small highlight, selection stays
   visible and neither scrolling nor switching views changes the saved source.
+- `note-find`, `note-replace`: the notecard's find and replace (the Legacy
+  Viewer's search / replace, #4153) on a pose notecard with three embedded
+  items, in Classic. At frame 650 the find bar opens above the text on
+  "female", every match is washed in amber and the first one is outlined
+  as well; capture frame 700. `note-replace` then replaces them all with
+  "woman" at frame 690: capture frame 740 for the new text, the "3
+  replacement(s)" note and the `*` of the unsaved title. By hand: Ctrl+F
+  with the keyboard in the text (or the magnifier beside Save) opens the bar,
+  with the selection as the text to find; Enter or Find goes to the next
+  match and wraps around, "Search upwards" goes back, "Case insensitive" is
+  off by default. Replace changes the selected match only, Replace all every
+  match, both undone in one Ctrl+Z. The three items must survive every
+  replacement. In Markdown the bar finds the text shown and replaces
+  nothing; a read-only note greys Replace out. Escape or the cross closes the
+  bar and gives the keyboard back to the text.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal
