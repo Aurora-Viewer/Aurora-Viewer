@@ -479,7 +479,7 @@ impl World {
                 .filter(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == u32::from(kind))
                 .map(|it| it.id)
                 .collect()
-            } else if let Ok(id) = Uuid::parse_str(option) {
+            } else if let Some(id) = super::numeric::uuid_set(option) {
                 self.rlva_attachment_item(id).into_iter().collect()
             } else {
                 out.insert(key, resolve(&self.inventory, option).into_iter().collect());
@@ -548,11 +548,11 @@ impl World {
                 })
                 .map(|link| link.target)
                 .collect()
-        } else if option.is_empty() || Uuid::parse_str(option).is_ok() {
+        } else if option.is_empty() || super::numeric::uuid_set(option).is_some() {
             let object = if option.is_empty() {
                 source
             } else {
-                Uuid::parse_str(option).unwrap_or_default()
+                super::numeric::uuid_set(option).unwrap_or_default()
             };
             self.rlva_own_attachment_root(object)
                 .and_then(|root| self.rlva_attachment_item(root))
@@ -898,9 +898,11 @@ impl World {
             })
         } else if !context
             && matches!(name, "detach" | "remattach")
-            && (c.option.is_empty() || point(&c.option).is_some() || Uuid::parse_str(&c.option).is_ok() || group)
+            && (c.option.is_empty() || point(&c.option).is_some() || super::numeric::uuid_set(&c.option).is_some() || group)
         {
-            let target = Uuid::parse_str(&c.option).ok().and_then(|id| self.rlva_attachment_item(id));
+            let target = super::numeric::uuid_set(&c.option)
+                .filter(|id| !id.is_nil())
+                .and_then(|id| self.rlva_attachment_item(id));
             let ids = worn
                 .iter()
                 .filter(|(id, at)| {

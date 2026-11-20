@@ -160,7 +160,7 @@ impl World {
                     break 'issuers;
                 }
                 message.push_str(&format!("  -> {}", super::rule_text(rule)));
-                if let Some(id) = Uuid::parse_str(&rule.option).ok().filter(|id| !id.is_nil()) {
+                if let Some(id) = super::numeric::uuid_set(&rule.option).filter(|id| !id.is_nil()) {
                     let name = self
                         .rlva_attachment_item(id)
                         .and_then(|item| self.inventory.items.get(&item))

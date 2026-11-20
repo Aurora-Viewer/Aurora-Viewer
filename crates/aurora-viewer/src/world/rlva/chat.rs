@@ -90,7 +90,7 @@ impl Rlva {
                 .values()
                 .flat_map(|rs| rs.iter())
                 .filter(|r| r.behaviour == redirect)
-                .filter_map(|r| r.option.parse::<i32>().ok())
+                .filter_map(|r| super::numeric::convert_to_s32(&r.option))
                 .filter(|c| self.allows_channel(*c))
                 .collect();
             let parts = if self.preferences.split_redirect_chat {

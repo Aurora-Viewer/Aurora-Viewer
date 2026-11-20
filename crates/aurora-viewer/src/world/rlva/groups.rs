@@ -46,11 +46,10 @@ impl World {
         if name == "none" {
             return Some(Uuid::nil());
         }
-        if let Ok(id) = Uuid::parse_str(name) {
+        // RlvForceHandler<RLV_BHVR_SETGROUP>::onCommand (rlvhandler.cpp):
+        // LLUUID::set, where an empty name is the null key (no group).
+        if let Some(id) = super::numeric::uuid_set(name) {
             return (id.is_nil() || self.groups.is_member(&id)).then_some(id);
-        }
-        if name.is_empty() {
-            return None;
         }
         let name = name.to_lowercase();
         let mut found = None;
@@ -83,6 +82,10 @@ impl World {
 
     pub(super) fn rlva_group_force(&mut self, source: Uuid, c: &Command, now: Instant) -> Vec<(Uuid, NetCommand)> {
         if !self.rlva.enabled() || self.rlva.has_except("setgroup", source) {
+            return Vec::new();
+        }
+        // parseStringList: no option is no list, a failure.
+        if c.option.is_empty() {
             return Vec::new();
         }
         let mut parts = c.option.split(';');
@@ -212,7 +215,7 @@ mod tests {
         assert_eq!(w.rlva_group_id("none"), Some(Uuid::nil()));
         assert_eq!(w.rlva_group_id(&Uuid::nil().to_string()), Some(Uuid::nil()));
         assert_eq!(w.rlva_group_id(&B.to_string()), None);
-        assert_eq!(w.rlva_group_id(""), None);
+        assert_eq!(w.rlva_group_id(""), Some(Uuid::nil()), "LLUUID::set reads no text as the null key");
         let now = Instant::now();
         assert!(matches!(&w.rlva_group_force(A, &command("exam"), now)[..], [(id, NetCommand::ActivateGroup(g))] if *id == A && *g == G2));
         assert!(w.rlva_group_force(B, &command("none"), now).is_empty());

@@ -4,13 +4,14 @@
 use super::{super::World, Rlva};
 use uuid::Uuid;
 
-/// rlvParseNotifyOption (rlvhandler.cpp): the channel, then an optional
-/// filter; a third token makes the option invalid.
+/// rlvParseNotifyOption (rlvhandler.cpp): the channel, read by
+/// LLStringUtil::convertToS32 (blanks around it, text after the number),
+/// then an optional filter; a third token makes the option invalid.
 pub(super) fn notification_option(option: &str) -> Option<(i32, &str)> {
     let mut tokens = option.split(';');
-    let channel = tokens.next()?.parse::<i32>().ok()?;
+    let channel = super::numeric::convert_to_s32(tokens.next()?)?;
     let filter = tokens.next().unwrap_or_default();
-    (tokens.next().is_none() && channel > 0 && channel != i32::MAX).then_some((channel, filter))
+    (tokens.next().is_none() && super::valid_reply_channel(channel)).then_some((channel, filter))
 }
 
 impl Rlva {

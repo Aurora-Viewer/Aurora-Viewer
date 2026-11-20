@@ -215,7 +215,7 @@ impl World {
         if private {
             allowed.insert(self.agent_id);
             for (_, option) in self.rlva.rules_for("shownames", Uuid::nil()) {
-                if let Ok(id) = Uuid::parse_str(option)
+                if let Some(id) = super::numeric::uuid_set(option).filter(|id| !id.is_nil())
                     && self.rlva_can_name(id)
                 {
                     allowed.insert(id);
@@ -517,7 +517,7 @@ impl World {
             || self
                 .rlva
                 .rules_for("tplure", Uuid::nil())
-                .any(|(_, option)| Uuid::parse_str(option).ok() == Some(id))
+                .any(|(_, option)| !option.is_empty() && super::numeric::uuid_set(option) == Some(id))
             || self
                 .social
                 .friends
@@ -624,7 +624,7 @@ impl World {
         if filter.private_names {
             filter.allowed_names.insert(self.agent_id);
             for (_, option) in self.rlva.rules_for("shownames", Uuid::nil()) {
-                if let Ok(id) = Uuid::parse_str(option)
+                if let Some(id) = super::numeric::uuid_set(option).filter(|id| !id.is_nil())
                     && self.rlva_can_name(id)
                 {
                     filter.allowed_names.insert(id);
