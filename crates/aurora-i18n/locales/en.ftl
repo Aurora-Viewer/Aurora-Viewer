@@ -14292,6 +14292,8 @@ rlva-blocked-permission-teleport = '{ $object }' was denied permission to telepo
 rlva-blocked-view-notecard = Unable to open the notecard due to RLVa restrictions.
 rlva-blocked-view-script = Unable to open the script due to RLVa restrictions.
 rlva-blocked-view-texture = Unable to open the texture due to RLVa restrictions.
+rlva-debug-explicit-point = Ignore attachment point names on inventory items and folders
+rlva-debug-explicit-point-hint = While an attachment point is locked, Wear and Add send an object to its default point instead of the point its name or its folder's name gives (incomplete).
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priority { $rank } of { $total }

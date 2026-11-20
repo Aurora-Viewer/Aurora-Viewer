@@ -14182,6 +14182,8 @@ rlva-blocked-permission-teleport = ＲＬＶの制限により、「{ $object }�
 rlva-blocked-view-notecard = ＲＬＶａの制限により、ノートカードを開くことができません。
 rlva-blocked-view-script = ＲＬＶａの制限により、スクリプトを開くことができません。
 rlva-blocked-view-texture = ＲＬＶａの制限により、テクスチャを開くことができません。
+rlva-debug-explicit-point = インベントリのアイテムとフォルダのアタッチポイント名を無視する
+rlva-debug-explicit-point-hint = アタッチポイントがロックされている間、「着用」と「追加」はオブジェクトを、その名前やフォルダ名が示すポイントではなく既定のポイントに送ります（未完成）。
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = 優先度{ $total }中{ $rank }

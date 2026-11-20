@@ -52,6 +52,11 @@ pub fn page(cx: &mut Cx) {
             &field!(rlva.debug_hide_unset_duplicate),
         );
         cx.toggle(
+            tr!("rlva-debug-explicit-point"),
+            tr!("rlva-debug-explicit-point-hint"),
+            &field!(rlva.debug_deprecate_explicit_point),
+        );
+        cx.toggle(
             tr!("rlva-split-redirect"),
             tr!("rlva-split-redirect-hint"),
             &field!(rlva.split_redirect_chat),

@@ -33,6 +33,7 @@ mod cases_privacy;
 mod cases_move;
 mod cases_int;
 mod cases_cam;
+mod cases_inv;
 mod cases_world;
 mod factory;
 mod guard;
@@ -53,7 +54,7 @@ pub const RELAY_SOURCE: &str = include_str!("bridge/selftest_relay.lsl");
 /// it is kept out of the chat.
 const HELLO: &str = "<aurora-selftest>";
 /// The attachment points the test wears its objects on: rarely used ones.
-/// Hind Right Foot (controller), Hind Left Foot (object A), Tail Tip
+/// Right Hind Foot (controller), Left Hind Foot (object A), Tail Tip
 /// (object B and the forced-wear cases).
 pub const POINT_CONTROLLER: u8 = 55;
 pub const POINT_A: u8 = 54;

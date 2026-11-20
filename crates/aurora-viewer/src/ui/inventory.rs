@@ -362,7 +362,8 @@ impl Facts {
         if self.worn.contains(&item) {
             return self.rlva.can_remove(item);
         }
-        let wear = self.rlva.wear(inv, item, 0);
+        // the row itself: a link is worn by its own folder's locks
+        let wear = self.rlva.wear(inv, id, 0);
         if add { wear.add } else { wear.replace }
     }
 

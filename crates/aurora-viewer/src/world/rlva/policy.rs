@@ -684,22 +684,6 @@ impl World {
             }
             return true;
         }
-        if c.behaviour == "detachme"
-            && c.option.is_empty()
-            && let Some(item) = self.rlva_attachment_item(source)
-            && let Some(key) = self.rlva_temporary_attachment(item)
-        {
-            if self.rlva_can_remove(item, source) {
-                commands.push((
-                    source,
-                    NetCommand::DetachObject {
-                        handle: key.region,
-                        local_id: key.local_id,
-                    },
-                ));
-            }
-            return true;
-        }
         if super::inventory::force_kind(&c.behaviour).is_some() {
             if !self.rlva_inventory_force(source, &c) {
                 self.rlva.pending.push((source, c));

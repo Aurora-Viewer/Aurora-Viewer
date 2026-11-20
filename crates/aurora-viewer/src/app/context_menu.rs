@@ -283,6 +283,7 @@ impl App {
         // what `toggle_fly` itself answers
         f.fly_blocked = !w.agent.flying && !crate::autopilot::can_takeoff(w);
         f.build_blocked = !self.build.open && !w.rlva_can_build();
+        f.show_original_blocked = w.rlva.has("showinv");
         if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
             f.object_sit_blocked = refused(NetCommand::RequestSit {
                 handle: key.region,

@@ -241,17 +241,20 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
         ("torso", "Chest"),
         ("arms", "Left Hand"),
         ("legs", "Left Foot"),
-        ("hud", "Center 2"),
+        // rlvAttachGroupFromIndex (rlvhelper.cpp): "hud" is avatar_lad
+        // group 8, the Bento additions; the real HUD points (group 9) are in
+        // no group, so the worn Center 2 is not listed
+        ("hud", ""),
     ] {
         let text = format!("getattachnames:{group}=123");
         let c = Command::parse(&text).unwrap();
         assert_eq!(world.rlva_inventory_query(&c, A).as_deref(), Some(expected));
     }
     let hud_points = world.rlva_inventory_query(&query("getaddattachnames:hud=123"), A).unwrap();
-    assert!(hud_points.split(',').any(|p| p == "Center 2"));
+    assert!(!hud_points.split(',').any(|p| p == "Center 2"));
     assert!(
-        !hud_points.split(',').any(|p| p == "Left Ring Finger"),
-        "Bento group 8 is not a HUD"
+        hud_points.split(',').any(|p| p == "Left Ring Finger"),
+        "the Bento group 8 is the \"hud\" group"
     );
     let head = Uuid::from_u128(702);
     command(&mut world.rlva, head, "@detach=n");
@@ -614,13 +617,16 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
             library: false,
         },
     );
-    // (id, attachment point): spine, skull, left hand.
-    let items = [(41, 9), (42, 2), (43, 5)];
-    for (id, point) in items {
+    // (id, attachment point, name): spine, skull, left hand. The point is
+    // named, as RlvAttachmentLocks::canAttach reads it (rlvlocks.h): a
+    // point saved on the item alone gives RLV_WEAR.
+    let items = [(41, 9, "Tail (spine)"), (42, 2, "Hat (skull)"), (43, 5, "Ring (left hand)")];
+    for (id, point, name) in items {
         w.inventory.items.insert(
             Uuid::from_u128(id),
             InvItem {
                 id: Uuid::from_u128(id),
+                name: name.to_owned(),
                 asset_type: 6,
                 flags: point,
                 ..Default::default()
@@ -628,7 +634,7 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
         );
     }
     command(&mut w.rlva, A, "@addattach:spine=n");
-    let ids: Vec<_> = items.iter().map(|(id, _)| Uuid::from_u128(*id)).collect();
+    let ids: Vec<_> = items.iter().map(|(id, _, _)| Uuid::from_u128(*id)).collect();
     for replace_unlocked in [true, false] {
         w.rlva.preferences.replace_unlocked = replace_unlocked;
         let mut cmd = aurora_net::NetCommand::UpdateOutfit {
@@ -824,7 +830,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
 }
 
 #[test]
-fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof() {
+fn rlva_temporary_attachment_locks_do_not_require_inventory_or_cof() {
     use aurora_net::{AttachRequest, NetCommand};
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     for event in crate::demo::events() {
@@ -863,10 +869,11 @@ fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof(
     assert!(world.rlva_pending().is_empty(), "detachme skips nostrip, not attachment locks");
     command(&mut world.rlva, A, "@detach=y,detachme=force");
     assert!(
-        world
+        !world
             .rlva_pending()
             .iter()
-            .any(|(actor, cmd)| *actor == A && matches!(cmd, NetCommand::DetachObject { .. }))
+            .any(|(actor, cmd)| *actor == A && matches!(cmd, NetCommand::DetachObject { .. })),
+        "LLVOAvatarSelf::detachAttachmentIntoInventory needs an inventory item: a temporary attachment stays on"
     );
     command(&mut world.rlva, B, "@remattach:left hand=n");
     assert!(
@@ -1412,8 +1419,10 @@ fn rlva_inventory_queries_keep_the_shared_root_and_report_descendants() {
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some(""));
     query = Command::parse("getinvworn=123").expect("query");
     assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
+    // RlvHandler::onGetInvWorn answers at once with what gInventory holds
+    // (rlvhandler.cpp): a folder still being fetched gives what it has
     w.inventory.folders.get_mut(&child).expect("folder").state = FetchState::Unknown;
-    assert!(w.rlva_inventory_query(&query, A).is_none(), "unloaded is not empty");
+    assert_eq!(w.rlva_inventory_query(&query, A).as_deref(), Some("|01,Test outfit|10"));
 }
 
 #[test]
@@ -1700,13 +1709,21 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         panic!("a forced folder wear is one Force batch");
     };
     assert!(remove.is_empty());
-    assert_eq!(wear.len(), 5);
-    assert!(wear[0].replace);
-    assert!(wear.iter().skip(1).take(3).all(|w| !w.replace));
-    assert!(
-        wear[4].item == object && wear[4].point == 1 && wear[4].replace,
-        "a folded attachment folder chooses the attachment point"
+    // LLInventoryModel::collectDescendentsIf (llinventorymodel.cpp): the
+    // subfolders first, depth first, then the folder's own items; the first
+    // shirt replaces, the next ones add (fSeenWType, RlvForceWear::forceFolder)
+    let order: Vec<(Uuid, bool)> = wear.iter().map(|w| (w.item, w.replace)).collect();
+    assert_eq!(
+        order,
+        vec![
+            (Uuid::from_u128(20), true),
+            (Uuid::from_u128(21), false),
+            (object, true),
+            (Uuid::from_u128(22), false),
+            (TARGET, false),
+        ]
     );
+    assert_eq!(wear[2].point, 1, "a folded attachment folder chooses the attachment point");
     w.rlva.appearance.clear();
     command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=123");
     w.rlva_pending();
@@ -2056,7 +2073,17 @@ fn rlva_watchdog_folder_locks_resolved_once_match_single_checks() {
             }),
         );
     }
+    // RlvFolderLocks::getLockedFolders, ST_ATTACHMENT (rlvlocks.cpp): an
+    // issuer's own lock takes the folder of its own item only, so the
+    // collar, whose item is outside #RLV, names its link's folder
     command(&mut world.rlva, collar_item, "@detachallthis=n,attachallthis=n");
+    let free_locks = super::inventory::FolderLocks::default();
+    assert!(
+        world.rlva_folder_allowed_in(&free_locks, collar, false, Uuid::nil()),
+        "the issuer's own item is outside #RLV"
+    );
+    command(&mut world.rlva, collar_item, "@clear");
+    command(&mut world.rlva, collar_item, "@detachallthis:Collar=n,attachallthis:Collar=n");
     command(&mut world.rlva, cuff, "@detachthis:Cuffs=n");
     let locks = super::inventory::FolderLocks::default();
     for folder in [root, rlv, collar, cuffs, other] {
@@ -2268,8 +2295,8 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         );
     }
     // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
-    // jacket, shape, an object naming the chest, one naming no point and
-    // never worn, and one naming no point last worn on the chest.
+    // jacket, shape, an object naming the chest, one naming no point, and
+    // one naming no point with the chest saved on the item.
     let items = [
         (40, 5, 4, "Old shirt"),
         (41, 13, 0, "Old shape"),
@@ -2348,19 +2375,11 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
     assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
     assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
-    assert_eq!(
-        locks.wear(&w.inventory, id(47), 0),
-        locked,
-        "Wear goes to the chest it was last worn on"
-    );
-    assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
-    w.rlva.last_points.note(id(46), 1, std::time::Instant::now());
-    assert_eq!(
-        w.rlva_wear_locks().wear(&w.inventory, id(46), 0),
-        locked,
-        "without a saved point, the point it was last seen on"
-    );
-    w.rlva.last_points = Default::default();
+    // RlvAttachmentLocks::canAttach(const LLInventoryItem*) (rlvlocks.h):
+    // RlvAttachPtLookup::getAttachPoint reads the names only, so a point
+    // saved on the item gives RLV_WEAR
+    assert_eq!(locks.wear(&w.inventory, id(47), 0), all, "a saved point is no named point");
+    assert_eq!(locks.wear(&w.inventory, id(47), 1), locked, "Attach To the chest");
     assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
 
     command(&mut w.rlva, A, "@clear");
@@ -2374,9 +2393,9 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
 }
 
-/// Wear onto a point a locked attachment holds is greyed (deliberate
-/// difference, human decision of 2026-10-31), Add stays: RLV lets an object
-/// attach beside a locked one.
+/// RlvAttachmentLocks::canAttach (rlvlocks.h): Wear onto a point a locked
+/// attachment holds is greyed when the names give that point, Add stays; an
+/// object whose names give no point is RLV_WEAR, whatever its saved point.
 #[test]
 fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     use super::wear_locks::Wear;
@@ -2387,12 +2406,13 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     }
     world.rlva.configure(true);
     let region = world.main_region.expect("demo region");
-    let (held, named, unnamed) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62));
-    for (id, flags) in [(held, 1), (named, 1), (unnamed, 0)] {
+    let (held, named, unnamed, saved) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62), Uuid::from_u128(63));
+    for (id, flags, name) in [(held, 1, ""), (named, 0, "Collar (chest)"), (unnamed, 0, ""), (saved, 1, "")] {
         world.inventory.items.insert(
             id,
             InvItem {
                 id,
+                name: name.to_owned(),
                 asset_type: 6,
                 flags,
                 owner_mask: 0x4000,
@@ -2428,11 +2448,10 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
         all,
         "no point known: it attaches where it can"
     );
-    world.rlva.last_points.note(unnamed, 1, std::time::Instant::now());
     assert_eq!(
-        world.rlva_wear_locks().wear(&world.inventory, unnamed, 0),
-        add_only,
-        "last worn on the held chest"
+        locks.wear(&world.inventory, saved, 0),
+        all,
+        "the chest saved on the item is no named point"
     );
 }
 
@@ -2981,8 +3000,9 @@ fn rlva_attach_request_leaves_refused_attachments_out_instead_of_being_refused()
 }
 
 /// RlvForceWear::addAttachment: attachments with no known point (the default
-/// point) each replace what their own point holds; only a known point is one
-/// slot, whose first item replaces and the next ones add (#3635).
+/// point) each replace what their own point holds (#3635). The point is the
+/// one RlvAttachPtLookup::getAttachPointIndex reads from the names: a point
+/// saved on the item alone is no slot, so all four replace.
 #[test]
 fn rlva_forced_replace_wears_every_attachment_of_unknown_point_as_a_replacement() {
     use crate::world::appearance::Action;
@@ -3037,7 +3057,7 @@ fn rlva_forced_replace_wears_every_attachment_of_unknown_point_as_a_replacement(
     };
     let mut modes: Vec<_> = wear.iter().map(|w| (w.item.as_u128(), w.replace)).collect();
     modes.sort_unstable();
-    assert_eq!(modes, [(31, true), (32, true), (33, true), (34, false)]);
+    assert_eq!(modes, [(31, true), (32, true), (33, true), (34, true)]);
 }
 
 /// A world with RLVa on and a fetched inventory: folders (id, parent, name,
@@ -3143,11 +3163,13 @@ fn rlva_wear_locks_are_built_once_and_rebuilt_only_when_their_inputs_change() {
     assert!(!placed.folder_allows(id(15), true) && placed.folder_allows(id(14), true));
 }
 
-/// A "…this" lock on what is worn names the folders of the worn item and of
-/// its links under #RLV only: a link kept elsewhere locks nothing, and the
-/// rest of the inventory is not read to find it.
+/// A "…this" lock on what is worn names the folder of the worn item under
+/// #RLV only (RlvCommandOptionGetPath::getItemIDs reads the COF links'
+/// targets, RlvInventory::getPath their folders; rlvhelper.cpp,
+/// rlvinventory.cpp): the folder of another link to it is not locked, and
+/// the rest of the inventory is not read to find it.
 #[test]
-fn rlva_this_lock_on_a_layer_finds_the_shared_folders_of_the_item_and_its_links() {
+fn rlva_this_lock_on_a_layer_finds_the_shared_folder_of_the_worn_item() {
     let id = Uuid::from_u128;
     let mut w = inventory_world(
         &[
@@ -3163,7 +3185,7 @@ fn rlva_this_lock_on_a_layer_finds_the_shared_folders_of_the_item_and_its_links(
     command(&mut w.rlva, A, "@detachthis:shirt=n");
     let locks = w.rlva_wear_locks();
     assert!(!locks.folder_allows(id(12), false), "the folder of the worn shirt");
-    assert!(!locks.folder_allows(id(13), false), "the folder of its shared link");
+    assert!(locks.folder_allows(id(13), false), "the folder of another link to it");
     assert!(locks.folder_allows(id(14), false), "a link outside #RLV locks nothing");
     assert!(locks.folder_allows(id(20), false));
     assert!(!locks.can_remove(id(31)));

@@ -14297,6 +14297,8 @@ rlva-blocked-permission-teleport = '{ $object }' s'est vu refuser la permission 
 rlva-blocked-view-notecard = Impossible d’ouvrir la note en raison des restrictions RLVa.
 rlva-blocked-view-script = Impossible d’ouvrir le script en raison des restrictions RLVa.
 rlva-blocked-view-texture = Impossible d’ouvrir la texture en raison des restrictions RLVa.
+rlva-debug-explicit-point = Ignorer les noms de points d'attache des objets et dossiers d'inventaire
+rlva-debug-explicit-point-hint = Tant qu'un point d'attache est verrouillé, Porter et Ajouter envoient un objet sur son point par défaut au lieu du point donné par son nom ou celui de son dossier (incomplet).
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }

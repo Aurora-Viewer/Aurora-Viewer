@@ -5137,7 +5137,9 @@ impl World {
         {
             self.rlva_prepare_version(c.source_id, &c.message);
         }
-        if controller_allowed && self.rlva.receive(&c) {
+        let inventory = &self.inventory;
+        let shared_folder = |path: &str| rlva::shared_folder_exists(inventory, path);
+        if controller_allowed && self.rlva.receive_with(&c, Some(&shared_folder)) {
             self.rlva_resolve_sources();
             self.rlva_sync_environment_lock();
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
