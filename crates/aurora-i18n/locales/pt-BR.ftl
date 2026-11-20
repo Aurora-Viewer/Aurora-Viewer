@@ -10562,7 +10562,11 @@ script-edit-outdent = Diminuir recuo (Shift+Tab)
 script-selection-edit-failed = Não é possível editar: código-fonte muito grande ou comentário de bloco existente. Use // para comentários aninhados.
 script-fold-collapse = Recolher bloco
 script-fold-expand = Expandir bloco
-script-fold-lines = linhas
+script-fold-line-count =
+    { $count ->
+        [one] { $count } linha
+        *[other] { $count } linhas
+    }
 script-fold-all = Recolher tudo
 script-expand-all = Expandir tudo
 loading-residents =
@@ -15455,6 +15459,11 @@ ui-weather-northern-lights-display = Aurora intensa
 ui-weather-northern-lights-night = Visível apenas após o pôr do sol.
 ui-weather-clean-up = Limpar
 ui-weather-snow-fill = Cobrir de neve
+ui-weather-enabled-tip = Clima do Aurora ativado: chuva ou neve, vento, trovoada e auroras boreais conforme definido abaixo. Desativado, nada disso é desenhado; as configurações são mantidas
+ui-weather-now-off = Clima desativado
+ui-weather-precipitation-on-tip = A chuva ou a neve cai conforme definido abaixo; desativado, nada cai e não há trovoada
+ui-weather-wind-on-tip = O vento do clima sopra a chuva e a neve e é ouvido ao ar livre; desativado, o ar fica calmo
+ui-weather-wind-follow-region = Vento da região
 picker-pipette-hint = Clique em uma face do objeto para selecionar a textura ou o material correspondente no inventário.
 picker-pipette-no-texture = Nenhuma textura copiável foi encontrada no inventário.
 picker-pipette-no-material = Nenhum material copiável foi encontrado no inventário.

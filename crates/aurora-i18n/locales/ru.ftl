@@ -10759,7 +10759,13 @@ script-edit-outdent = Уменьшить отступ (Shift+Tab)
 script-selection-edit-failed = Не удалось изменить код. Он слишком велик или уже содержит блочный комментарий. Для вложенных комментариев используйте //.
 script-fold-collapse = Свернуть блок
 script-fold-expand = Развернуть блок
-script-fold-lines = строк
+script-fold-line-count =
+    { $count ->
+        [one] { $count } строка
+        [few] { $count } строки
+        [many] { $count } строк
+        *[other] { $count } строки
+    }
 script-fold-all = Свернуть всё
 script-expand-all = Развернуть всё
 loading-residents =
@@ -15807,6 +15813,11 @@ ui-weather-northern-lights-display = Яркое сияние
 ui-weather-northern-lights-night = Видно только после заката.
 ui-weather-clean-up = Очистить
 ui-weather-snow-fill = Засыпать снегом
+ui-weather-enabled-tip = Погода Aurora включена: дождь или снег, ветер, гроза и северное сияние, как задано ниже. При отключении ничего из этого не отображается; настройки сохраняются.
+ui-weather-now-off = Погода отключена
+ui-weather-precipitation-on-tip = Дождь или снег идёт, как задано ниже. При отключении ничего не падает и грозы нет.
+ui-weather-wind-on-tip = Ветер погоды несёт дождь и снег и слышен на открытом воздухе. При отключении воздух неподвижен.
+ui-weather-wind-follow-region = Ветер региона
 picker-pipette-hint = Щёлкните по грани объекта, чтобы выбрать из инвентаря её текстуру или материал.
 picker-pipette-no-texture = В вашем инвентаре нет подходящей текстуры с правом копирования.
 picker-pipette-no-material = В вашем инвентаре нет подходящего материала с правом копирования.

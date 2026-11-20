@@ -10563,7 +10563,11 @@ script-edit-outdent = Einzug verkleinern (Umschalt+Tab)
 script-selection-edit-failed = Bearbeitung nicht möglich: Quelle zu groß oder vorhandener Blockkommentar. Verwenden Sie // für verschachtelte Kommentare.
 script-fold-collapse = Block einklappen
 script-fold-expand = Block ausklappen
-script-fold-lines = Zeilen
+script-fold-line-count =
+    { $count ->
+        [one] { $count } Zeile
+        *[other] { $count } Zeilen
+    }
 script-fold-all = Alles einklappen
 script-expand-all = Alle ausklappen
 loading-residents =
@@ -15456,6 +15460,11 @@ ui-weather-northern-lights-display = Helles Polarlicht
 ui-weather-northern-lights-night = Nur nach Sonnenuntergang sichtbar.
 ui-weather-clean-up = Aufräumen
 ui-weather-snow-fill = Mit Schnee bedecken
+ui-weather-enabled-tip = Aurora-Wetter an: Regen oder Schnee, Wind, Donner und die Nordlichter wie unten eingestellt. Aus, wird nichts davon gezeichnet; die Einstellungen bleiben erhalten
+ui-weather-now-off = Wetter aus
+ui-weather-precipitation-on-tip = Regen oder Schnee fällt wie unten eingestellt; aus, fällt nichts und es gibt keinen Donner
+ui-weather-wind-on-tip = Der Wind des Wetters weht den Regen und Schnee und ist im Freien zu hören; aus, ist die Luft ruhig
+ui-weather-wind-follow-region = Wind der Region
 picker-pipette-hint = Klicken Sie auf eine Objektfläche, um ihre Textur oder ihr Material aus Ihrem Inventar auszuwählen.
 picker-pipette-no-texture = In Ihrem Inventar wurde keine kopierbare Textur gefunden.
 picker-pipette-no-material = In Ihrem Inventar wurde kein kopierbares Material gefunden.

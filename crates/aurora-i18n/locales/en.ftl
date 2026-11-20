@@ -10502,7 +10502,11 @@ script-edit-outdent = Decrease indentation (Shift+Tab)
 script-selection-edit-failed = Cannot edit: source too large or existing block comment. Use // for nested comments.
 script-fold-collapse = Collapse block
 script-fold-expand = Expand block
-script-fold-lines = lines
+script-fold-line-count =
+    { $count ->
+        [one] { $count } line
+        *[other] { $count } lines
+    }
 script-fold-all = Collapse all
 script-expand-all = Expand all
 loading-residents = { $count ->
