@@ -384,7 +384,7 @@ fn rlva_refused_tpto_shows_the_blocked_notice() {
     say(&mut w, A, &format!("tpto:{}/{}/{}=force", x as f32 + to.x, y as f32 + to.y, to.z));
     assert!(w.rlva_pending().is_empty());
     assert_eq!(w.chat.len(), lines + 1);
-    assert_eq!(w.chat.back().unwrap().text, aurora_i18n::tr!("rlva-blocked"));
+    assert_eq!(w.chat.back().unwrap().text, aurora_i18n::tr!("rlva-blocked-teleport"));
 }
 
 /// G9. The place windows grey Teleport by canTeleportToLocation whatever
@@ -442,4 +442,73 @@ fn rlva_double_click_drops_its_pick_under_interact_and_asks_the_local_rules() {
     assert_eq!(w.rlva_double_click(near), Blocked);
     assert_eq!(w.rlva_double_click(far), Blocked, "a far point is still asked the local rules");
     assert_eq!(w.rlva_double_click(Some(here + glam::DVec3::new(2.0, 0.0, 0.0))), Go);
+}
+
+fn script_question(task: u128, questions: i32) -> NetEvent {
+    NetEvent::ScriptQuestion {
+        task_id: Uuid::from_u128(task),
+        item_id: Uuid::from_u128(task + 1),
+        object_name: "Teleporter".into(),
+        owner_name: "Test Resident".into(),
+        questions,
+        experience: Uuid::nil(),
+        region: 77,
+    }
+}
+
+fn permission_question_id(w: &World, task: u128) -> u64 {
+    w.notifications
+        .list
+        .iter()
+        .rev()
+        .find(|n| matches!(&n.data, crate::world::notifications::Data::Permissions { task: t, .. } if *t == Uuid::from_u128(task)))
+        .expect("the question is shown")
+        .id
+}
+
+/// process_script_question and script_question_cb (llviewermessage.cpp):
+/// what RLVa stripped from a question (RlvUtil::filterScriptQuestions) is
+/// told once the question is answered yes, at once when nothing is left to
+/// ask; a refusal says nothing.
+#[test]
+fn rlva_stripped_script_permissions_are_told_when_the_question_is_answered_yes() {
+    use crate::world::notifications::Response;
+    const ANIMATE: i32 = 1 << 4;
+    const ATTACH: i32 = 1 << 5;
+    const TELEPORT: i32 = 1 << 12;
+    let teleport = aurora_i18n::tr!("rlva-blocked-permission-teleport", object = "Teleporter".to_owned());
+    let attach = aurora_i18n::tr!("rlva-blocked-permission-attach", object = "Teleporter".to_owned());
+    let told = |w: &World, text: &str| w.chat.iter().filter(|line| line.text == text).count();
+    let mut w = world();
+    say(&mut w, A, "tploc=n");
+    // the dialog stays for what is left; a yes tells what was stripped
+    w.apply(script_question(0x7a00, ANIMATE | TELEPORT));
+    assert_eq!(told(&w, &teleport), 0, "nothing before the answer");
+    let id = permission_question_id(&w, 0x7a00);
+    let (cmds, _) = w.respond_notification(id, Response::Accept);
+    assert!(
+        matches!(&cmds[..], [NetCommand::ScriptAnswer { questions: ANIMATE, .. }]),
+        "{cmds:?}"
+    );
+    assert_eq!(told(&w, &teleport), 1);
+    // a refusal says nothing
+    w.apply(script_question(0x7b00, ANIMATE | TELEPORT));
+    let id = permission_question_id(&w, 0x7b00);
+    w.respond_notification(id, Response::Decline);
+    assert_eq!(told(&w, &teleport), 1);
+    // nothing left to ask: answered yes at once (forceResponse)
+    w.apply(script_question(0x7c00, TELEPORT));
+    assert!(matches!(&w.rlva.out[..], [.., NetCommand::ScriptAnswer { questions: 0, .. }]));
+    assert_eq!(told(&w, &teleport), 2);
+    // the attach lock, and the teleport notice when both are stripped
+    say(&mut w, A, "clear,addattach=n");
+    w.apply(script_question(0x7d00, ANIMATE | ATTACH));
+    let id = permission_question_id(&w, 0x7d00);
+    w.respond_notification(id, Response::Accept);
+    assert_eq!(told(&w, &attach), 1);
+    say(&mut w, A, "tploc=n");
+    w.apply(script_question(0x7e00, ANIMATE | ATTACH | TELEPORT));
+    let id = permission_question_id(&w, 0x7e00);
+    w.respond_notification(id, Response::Accept);
+    assert_eq!((told(&w, &attach), told(&w, &teleport)), (1, 3));
 }

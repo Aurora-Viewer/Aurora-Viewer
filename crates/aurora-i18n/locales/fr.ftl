@@ -14308,6 +14308,9 @@ rlva-hide-layers-hint = Indiquer une couche absente lorsqu’elle ne peut pas ê
 rlva-add-prefix = Préfixe de dossier pour ajouter
 rlva-replace-prefix = Préfixe de dossier pour remplacer
 rlva-prefix-hint = Imposer ce mode de port aux dossiers commençant par ce texte. Vide le désactive ; les préfixes de dossiers cachés comme .nom sont ignorés.
+rlva-blocked-teleport = Impossible d'initier la téléportation en raison des restrictions RLV
+rlva-blocked-permission-attach = La tentative d'attacher '{ $object }' a été refusée en raison de restrictions RLV.
+rlva-blocked-permission-teleport = '{ $object }' s'est vu refuser la permission de vous téléporter en raison des restrictions RLV
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }

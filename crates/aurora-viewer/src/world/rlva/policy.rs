@@ -746,7 +746,10 @@ impl World {
             } else if c.behaviour == "tpto" {
                 // LLAgent::teleportViaLocation(LookAt): a refused teleport
                 // says so (RlvUtil::notifyBlocked, Blocked::Teleport).
-                self.system_notice(aurora_i18n::tr!("rlva-blocked"), super::super::notice_topics::Topic::Warning);
+                self.system_notice(
+                    aurora_i18n::tr!("rlva-blocked-teleport"),
+                    super::super::notice_topics::Topic::Warning,
+                );
             }
         }
         true

@@ -8593,6 +8593,14 @@ impl App {
             self.world.apply(NetEvent::TeleportFailed {
                 reason: aurora_i18n::tr!("rlva-blocked").into(),
             });
+        } else if !actor.is_nil() && !self.world.rlva_allows_command(&command, actor) {
+            // an @tpto by region name, refused once the map answered
+            // (RlvHandler::onTeleportCallback, LLAgent::teleportViaLocation:
+            // RlvUtil::notifyBlocked, Blocked::Teleport)
+            self.world.system_notice(
+                aurora_i18n::tr!("rlva-blocked-teleport"),
+                crate::world::notice_topics::Topic::Warning,
+            );
         } else {
             self.send_from(command, actor);
         }
