@@ -15,7 +15,7 @@ pub(super) struct WindowPlan {
 }
 
 impl App {
-    pub(super) fn open_window(&self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
+    pub(super) fn open_window(&mut self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
             // Metal needs a visible layer to present its first drawable.
@@ -31,6 +31,7 @@ impl App {
             attrs = attrs.with_position(position);
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
+        self.current_window = Arc::downgrade(&window);
         crate::window_hold::install(&window);
         crate::slurl_handoff::window_ready(&window);
         Ok(window)
@@ -191,6 +192,11 @@ impl App {
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
         self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
+        // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
+        // streamer could load them again from
+        if let Some(demo) = &mut self.stream_demo {
+            demo.gpu_reset();
+        }
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
@@ -265,7 +271,13 @@ impl App {
         };
         let maximized = old.window.is_maximized();
         let Gfx { mut renderer, window, .. } = old;
+        let released = Instant::now();
         self.forget_gpu_scene(&mut renderer);
+        // (#2997: a scene paged out to the disk once took over 10 s here)
+        log::info!(
+            "GPU recovery: the scene let go of the lost device in {} ms",
+            released.elapsed().as_millis()
+        );
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);
@@ -287,7 +299,7 @@ impl App {
                 return None;
             }
         };
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());

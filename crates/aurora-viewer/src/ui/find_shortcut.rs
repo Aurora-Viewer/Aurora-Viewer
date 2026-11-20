@@ -3,7 +3,7 @@
 //! - the script editor, for its own find (LLFloaterScriptSearch);
 //! - a window with a find bar over a conversation (Conversations, the
 //!   history of a conversation), like LLFloaterSearchReplace on a chat
-//!   history;
+//!   history, or over a notecard's text (`inventory/find.rs`);
 //! - "Search", the accelerator of Firestorm's menu (menu_viewer.xml),
 //!   a shortcut of the viewer (`keybinds::Action::Search` by default).
 //!

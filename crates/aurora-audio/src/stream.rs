@@ -20,6 +20,7 @@ use crate::icy::{IcyReader, TitleSlot};
 use crate::mixer::{Channel, Command, ENGINE_SAMPLE_RATE, PcmSource};
 use crate::playlist;
 use crate::resample::{Resampler, to_stereo};
+use crate::tls::CertificateIssue;
 
 /// State of the parcel music stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +30,12 @@ pub enum StreamStatus {
     /// Connecting / buffering (also while waiting to reconnect).
     Connecting,
     /// Audio is flowing. `title` is the current ICY `StreamTitle` (or the
-    /// Ogg comment title), when the station sends one.
-    Playing { title: Option<String> },
+    /// Ogg comment title), when the station sends one. `certificate`: the
+    /// failed certificate of an `https` station played anyway (`tls.rs`).
+    Playing {
+        title: Option<String>,
+        certificate: Option<CertificateIssue>,
+    },
     /// Last attempt failed; a reconnect is scheduled.
     Error(StreamError),
 }
@@ -322,6 +327,7 @@ fn stream_thread(url: String, stop: Arc<AtomicBool>, status: StatusHandle, cmd_t
 
 fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &Sender<Command>) -> Result<EndReason, StreamError> {
     let resp = playlist::open(url, stop)?;
+    let certificate = resp.certificate;
     let hint = resp
         .content_type
         .as_deref()
@@ -407,7 +413,10 @@ fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &
 
         let current = title.lock().clone().or_else(|| decoder.tag_title());
         if reported.as_ref() != Some(&current) {
-            status.set(StreamStatus::Playing { title: current.clone() });
+            status.set(StreamStatus::Playing {
+                title: current.clone(),
+                certificate,
+            });
             reported = Some(current);
         }
     }
@@ -443,8 +452,17 @@ mod tests {
         };
         handle.set(StreamStatus::Connecting);
         assert!(matches!(slot.lock().status, StreamStatus::Error(_)));
-        handle.set(StreamStatus::Playing { title: None });
-        assert_eq!(slot.lock().status, StreamStatus::Playing { title: None });
+        handle.set(StreamStatus::Playing {
+            title: None,
+            certificate: None,
+        });
+        assert_eq!(
+            slot.lock().status,
+            StreamStatus::Playing {
+                title: None,
+                certificate: None
+            }
+        );
     }
 
     /// The error a station serving `body` as `content_type` ends in, through
@@ -681,7 +699,7 @@ mod tests {
                     sources.push(s);
                 }
             }
-            if let StreamStatus::Playing { title: Some(t) } = ctl.status() {
+            if let StreamStatus::Playing { title: Some(t), .. } = ctl.status() {
                 assert_eq!(t, "Test Artist - Test Song");
                 break;
             }

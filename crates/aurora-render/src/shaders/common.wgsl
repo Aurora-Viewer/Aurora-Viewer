@@ -110,7 +110,7 @@ struct Frame {
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none)
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none); z: FEATURE_FACE_SELECT_SLOT; w: 1 where the volumetric clouds replace the Legacy layer (main view)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
@@ -140,6 +140,10 @@ struct Frame {
 // faces it draws deferred (opaque, alpha-masked, terrain) lose their
 // emissive; blended and HUD faces keep it (pbralphaF, pbropaqueF IS_HUD)
 const FEATURE_NO_EMISSIVE: u32 = 1u;
+
+// frame.features.z: the slot of the face-select pattern's texture (0: the
+// procedural stand-in), see FEATURE_FACE_SELECT_SLOT in renderer.rs
+const FEATURE_FACE_SELECT_SLOT: u32 = 2u;
 
 fn deferred_emissive_off() -> bool {
     return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;
@@ -2631,7 +2635,13 @@ fn water_atlas_uv(uv:vec2<f32>)->vec2<f32> {
     return clamped*vec2<f32>(1.0,0.5);
 }
 fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {
-    if(!water_fx_on(16u) || abs(level-water_fx_bed(p).y)>0.2){return vec4<f32>(0.0);}
+    if(!water_fx_on(16u)){return vec4<f32>(0.0);}
+    return water_wake_at(p,level,water_fx_bed(p).y);
+}
+// The same, for a caller that already read the water's own level at `p`
+// (water_fx_bed(p).y).
+fn water_wake_at(p:vec2<f32>,level:f32,native_level:f32)->vec4<f32> {
+    if(!water_fx_on(16u) || abs(level-native_level)>0.2){return vec4<f32>(0.0);}
     let origin=water_fx.clock.zw;
     let uv=(p-origin)/32.0;
     if(any(uv<vec2<f32>(0.0)) || any(uv>vec2<f32>(1.0))){return vec4<f32>(0.0);}
@@ -2670,11 +2680,14 @@ fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16);
     return offset;
 }
-fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>)->vec3<f32> {
+// `swell` and `ground` are the caller's: the gradient of water_swell at `p`
+// and the terrain under it (water_fx_bed(p).x), which the surface reads once
+// for its normal, its wake and its foam.
+fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>,swell:vec2<f32>,ground:f32)->vec3<f32> {
     var gradient=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
-        gradient=water_swell(p,frame.camera_pos.w,water_fx.counts.w).gradient;
-        gradient*=smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+        gradient=swell;
+        gradient*=smoothstep(0.08,2.4,level-ground);
     }
     if(water_fx_on(16u)) {
         let texel=water_fx.area.z/f32(textureDimensions(water_field).x);
@@ -2699,7 +2712,10 @@ fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
 // A global constant avoids Naga re-emitting a local splat when specializing
 // masked/blended pipelines. The alpha specialization regression covers this.
 const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
-fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+// The light the water focuses on a submerged point, before the sun's shadow.
+// A surface that already looked its shadow up multiplies by it (the terrain);
+// water_caustics looks it up for the others.
+fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
     let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
@@ -2718,8 +2734,14 @@ fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
     let energy=max(intensity-0.9,0.0)*0.42;
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
-    let shadow=shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
-    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*shadow*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+}
+fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    let focused=water_caustic_light(pos,normal);
+    // no focused light here, or a face turned away from the sun: nothing for
+    // the shadow to dim, it is not looked up
+    if(max(focused.r,max(focused.g,focused.b))<=0.0){return vec3<f32>(0.0);}
+    return focused*shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
 }
 
 fn water_fx_noise(p: vec2<f32>) -> f32 {
@@ -2729,8 +2751,10 @@ fn water_fx_noise(p: vec2<f32>) -> f32 {
 }
 
 // Continuous torn coverage and filtered fine grain, without a lattice of holes.
-fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
-    if(amount<0.08){return 0.0;}
+// The pattern at a point (x the torn structure, y the grain) does not depend
+// on how much foam there is: the surface works it out once for the foam of
+// its field and the foam of its wakes, and only where one of them shows.
+fn water_foam_pattern(p:vec2<f32>,footprint:f32)->vec2<f32> {
     let drift=p-vec2<f32>(frame.camera_pos.w*0.09,frame.camera_pos.w*0.035);
     let warp=vec2<f32>(water_fx_noise(drift*1.3),water_fx_noise(drift*1.3+7.4));
     let q=drift+(warp-0.5)*0.7;
@@ -2738,7 +2762,10 @@ fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
     let medium=mix(water_fx_noise(rotated*3.7),0.5,smoothstep(0.04,0.18,footprint));
     let fine=mix(water_fx_noise(q*11.3),0.5,smoothstep(0.012,0.07,footprint));
     let structure=water_fx_noise(q*0.9)*0.55+medium*0.3+fine*0.15;
-    let coverage=smoothstep(0.08,0.75,amount)*smoothstep(0.28,0.72,structure);
     let grain=mix(0.84,0.5+0.5*water_fx_noise(rotated*38.0),1.0-smoothstep(0.004,0.025,footprint));
-    return coverage*grain;
+    return vec2<f32>(smoothstep(0.28,0.72,structure),grain);
+}
+fn water_foam_coverage(amount:f32,pattern:vec2<f32>)->f32 {
+    if(amount<0.08){return 0.0;}
+    return smoothstep(0.08,0.75,amount)*pattern.x*pattern.y;
 }

@@ -161,6 +161,9 @@ pub struct MediaImpl {
     texture: MediaTexture,
     pub interest: f32,
     pub distance: f32,
+    /// Distance to the ear, camera or avatar (mProximityCamera,
+    /// MediaSoundsEarLocation): the volume's rolloff.
+    pub ear_distance: f32,
     pub priority: Priority,
     /// Own volume (media controls), 0..1.
     pub volume: f32,
@@ -214,6 +217,7 @@ impl MediaImpl {
             },
             interest: 0.0,
             distance: 0.0,
+            ear_distance: 0.0,
             priority: Priority::Unloaded,
             volume: 1.0,
             muted: false,
@@ -431,6 +435,9 @@ struct ObjMedia {
 pub struct MediaFrame<'a> {
     pub view: &'a CullView,
     pub camera: Vec3,
+    /// Where media are heard from: the camera or the avatar
+    /// (`scene::sounds::ear_position`).
+    pub ear: Vec3,
     pub settings: &'a MediaSettings,
     /// ParcelMediaAutoPlayEnable (and isAutoPlayable for prim media).
     pub autoplay: bool,
@@ -438,6 +445,8 @@ pub struct MediaFrame<'a> {
     pub channel_volume: f32,
     pub agent_speed: f32,
     pub window_focused: bool,
+    /// Gaming mode (app/gaming_mode.rs): no media draws.
+    pub gaming_mode: bool,
     pub net: Option<(&'a tokio::runtime::Handle, reqwest::Client)>,
     pub cache_dir: &'a std::path::Path,
     pub language: &'a str,
@@ -486,6 +495,10 @@ pub struct MediaManager {
     nav_rx: crossbeam_channel::Receiver<(Uuid, u8, Result<(), String>)>,
     /// Messages for the chat / notifications (drained by the app).
     pub messages: Vec<String>,
+    /// `secondlife://` links clicked in a page shown on a prim or a HUD,
+    /// drained by the app (LLViewerMediaImpl::handleMediaEvent,
+    /// MEDIA_EVENT_CLICK_LINK_NOFOLLOW).
+    pub links: Vec<String>,
     /// Offline demo: autoplay regardless of the settings.
     force_autoplay: bool,
     /// Periodic state summary in the log.
@@ -531,6 +544,7 @@ impl Default for MediaManager {
             nav_tx,
             nav_rx,
             messages: Vec::new(),
+            links: Vec::new(),
             force_autoplay: false,
             last_diag: Instant::now() - Duration::from_secs(15),
             pick_cache: HashMap::new(),
@@ -554,7 +568,7 @@ pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
-/// language, the viewer's user agent and JavaScript.
+/// language, the viewer's user agent, JavaScript and the web proxy.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &MediaSettings) -> BrowserSettings {
     BrowserSettings {
         // the system's own separator, as the plugin appends `cef_cache`
@@ -568,7 +582,31 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &Med
         cookies_enabled: true,
         javascript_enabled: media.javascript,
         zoom_factor: 1.0,
+        // the Legacy Viewer gives CEF its HTTP web proxy only
+        // (BrowserProxyEnabled); a SOCKS 5 proxy does not reach it
+        proxy: aurora_proxy::rule()
+            .browser
+            .as_ref()
+            .map(|endpoint| (endpoint.host().to_string(), endpoint.port())),
+        browser_refused: proxy_refusal(aurora_proxy::rule().browser_allowed()),
+        video_refused: proxy_refusal(aurora_proxy::rule().video_allowed()),
     }
+}
+
+/// Why a media plugin may not start behind the proxy. Stricter than the
+/// Legacy Viewer, whose browser (without its HTTP proxy) and video plugin
+/// connect directly and show the real address: off while a proxy is on,
+/// unless the user turns direct media on (Preferences › Network › Proxy), and
+/// always while the proxy settings cannot be used.
+fn proxy_refusal(allowed: bool) -> Option<String> {
+    use aurora_i18n::tr;
+    (!allowed).then(|| {
+        if aurora_proxy::rule().problem.is_some() {
+            tr!("media-off-proxy-invalid").to_string()
+        } else {
+            tr!("media-off-proxy").to_string()
+        }
+    })
 }
 
 /// The profiles of the earlier builds on Linux and macOS: their cache path

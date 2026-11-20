@@ -286,6 +286,9 @@ fn item_row(
     item: &TaskItem,
     editable: bool,
 ) {
+    // the seat held by RLVa takes nothing in and lets nothing out, but its
+    // items keep their names and their scripts their switch
+    let items_editable = editable || tool.contents_items_editable(world, idx);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
@@ -350,8 +353,13 @@ fn item_row(
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7 || preview;
-            let no_open = if can_open {
+            // LLTaskInvFVBridge::buildContextMenu: the scripts and notecards
+            // of an attachment that cannot be taken off stay closed.
+            let closed = (script || item.asset_type == 7) && world.rlva_locked_attachment(idx);
+            let can_open = (script || item.asset_type == 7 || preview) && !closed;
+            let no_open = if closed {
+                aurora_i18n::tr!("rlva-blocked")
+            } else if can_open {
                 ""
             } else {
                 aurora_i18n::tr!("build-ui-contents-opening-items-inside-an-object-is-not-available-yet")
@@ -374,7 +382,7 @@ fn item_row(
                 p,
                 "pencil-filled",
                 aurora_i18n::tr!("common-rename"),
-                editable && item_modify && tool.ui.contents_selection.items.len() == 1,
+                items_editable && item_modify && tool.ui.contents_selection.items.len() == 1,
             ) {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
@@ -404,7 +412,7 @@ fn item_row(
                 } else {
                     ("player-play-filled", aurora_i18n::tr!("build-ui-contents-run"))
                 };
-                if menu::item_if(ui, p, icon, label, editable) {
+                if menu::item_if(ui, p, icon, label, items_editable) {
                     tool.set_script_running(world, idx, item.item_id, !on);
                 }
             }
@@ -417,7 +425,7 @@ fn item_row(
                 });
             } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
-            } else if editable && item_modify {
+            } else if items_editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
         }

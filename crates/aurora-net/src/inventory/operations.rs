@@ -944,8 +944,68 @@ pub(crate) fn checksum_in_folder(it: &InvItem, folder: Uuid) -> u32 {
 }
 
 pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, String> {
+    preview_attempt(http, cap, kind, asset).await.map_err(|failure| failure.message)
+}
+
+/// [`preview`] with the retries of the Legacy Viewer's asset requests
+/// (LLViewerAssetStorage over llcorehttp: HttpPolicy::stageAfterCompletion
+/// retries an HttpStatus::isRetryable failure 5 times, 1 s doubling
+/// backoff). A gesture loaded at login gave up at its first timeout or 503
+/// and stayed inactive for the session (#4178).
+pub async fn preview_retried(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, String> {
+    preview_with_retries(http, cap, kind, asset, crate::fetch::RetryPolicy::FIRESTORM).await
+}
+
+async fn preview_with_retries(
+    http: &reqwest::Client,
+    cap: &str,
+    kind: &str,
+    asset: Uuid,
+    policy: crate::fetch::RetryPolicy,
+) -> Result<Vec<u8>, String> {
+    let mut retry = 0;
+    loop {
+        match preview_attempt(http, cap, kind, asset).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(failure) if failure.retryable && retry < policy.retries => {
+                log::debug!(
+                    "asset {asset} ({kind}): {}, retry {} of {}",
+                    failure.message,
+                    retry + 1,
+                    policy.retries
+                );
+                tokio::time::sleep(policy.delay(retry, failure.retry_after)).await;
+                retry += 1;
+            }
+            Err(failure) => return Err(failure.message),
+        }
+    }
+}
+
+/// A failed attempt of [`preview`], and whether llcorehttp would try it
+/// again (HttpStatus::isRetryable).
+struct PreviewFailure {
+    message: String,
+    retryable: bool,
+    retry_after: Option<u64>,
+}
+
+impl PreviewFailure {
+    fn new(message: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            message: message.into(),
+            retryable,
+            retry_after: None,
+        }
+    }
+}
+
+async fn preview_attempt(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, PreviewFailure> {
     if kind.is_empty() || asset.is_nil() {
-        return Err(aurora_i18n::tr!("inventory-operations-this-item-has-no-viewable-contents").into());
+        return Err(PreviewFailure::new(
+            aurora_i18n::tr!("inventory-operations-this-item-has-no-viewable-contents"),
+            false,
+        ));
     }
     let url = format!("{cap}{}{kind}={asset}", if cap.contains('?') { "&" } else { "?" });
     let mut response = http
@@ -953,21 +1013,36 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| aurora_i18n::tr!("inventory-operations-could-not-load-contents").to_owned())?;
+        .map_err(|e| {
+            PreviewFailure::new(
+                aurora_i18n::tr!("inventory-operations-could-not-load-contents"),
+                crate::fetch::transport_retryable(&e),
+            )
+        })?;
+    let status = response.status().as_u16();
     if !response.status().is_success() {
-        return Err(aurora_i18n::tr!(
-            "inventory-operations-contents-unavailable-http",
-            value0 = format!("{}", response.status().as_u16())
-        ));
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok());
+        return Err(PreviewFailure {
+            message: aurora_i18n::tr!("inventory-operations-contents-unavailable-http", value0 = format!("{status}")),
+            retryable: crate::fetch::status_retryable(status),
+            retry_after,
+        });
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| aurora_i18n::tr!("inventory-operations-read-interrupted").to_owned())?
+        .map_err(|_| PreviewFailure::new(aurora_i18n::tr!("inventory-operations-read-interrupted"), true))?
     {
         if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-            return Err(aurora_i18n::tr!("inventory-operations-the-contents-exceed-the-maximum-preview-size").into());
+            return Err(PreviewFailure::new(
+                aurora_i18n::tr!("inventory-operations-the-contents-exceed-the-maximum-preview-size"),
+                false,
+            ));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -1264,14 +1339,14 @@ mod tests {
             let (url, task) = notecard_server(false, false, false, task_save).await;
             if task_save {
                 assert_eq!(
-                    save_task_notecard(&reqwest::Client::new(), &url, id(90), id(3), data.clone())
+                    save_task_notecard(&crate::test_http_client(), &url, id(90), id(3), data.clone())
                         .await
                         .expect("task note save"),
                     id(40)
                 );
             } else {
                 let saved = save_content(
-                    &reqwest::Client::new(),
+                    &crate::test_http_client(),
                     &url,
                     &format!("{url}/fetch"),
                     id(2),
@@ -1295,7 +1370,7 @@ mod tests {
         for replace in [false, true] {
             let (url, task) = notecard_server(false, false, replace, false).await;
             let saved = save_content(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &format!("{url}/fetch"),
                 id(2),
@@ -1327,7 +1402,7 @@ mod tests {
             .expect("asset");
         for (missing_asset, reject) in [(false, false), (false, true), (true, false)] {
             let (url, task) = notecard_server(missing_asset, reject, false, true).await;
-            let result = save_task_notecard(&reqwest::Client::new(), &url, id(90), id(3), data.clone()).await;
+            let result = save_task_notecard(&crate::test_http_client(), &url, id(90), id(3), data.clone()).await;
             assert_eq!(result.is_ok(), !missing_asset && !reject);
             if let Ok(asset) = result {
                 assert_eq!(asset, id(40));
@@ -1341,7 +1416,7 @@ mod tests {
             assert_eq!(requests[1].1, data);
         }
         assert!(
-            save_task_notecard(&reqwest::Client::new(), "http://127.0.0.1:1", Uuid::nil(), id(3), data)
+            save_task_notecard(&crate::test_http_client(), "http://127.0.0.1:1", Uuid::nil(), id(3), data)
                 .await
                 .is_err()
         );
@@ -1353,7 +1428,7 @@ mod tests {
         for (stale, reject) in [(true, false), (false, true)] {
             let (url, task) = notecard_server(stale, reject, false, false).await;
             assert!(
-                save_content(&reqwest::Client::new(), &url, &url, id(2), id(3), 7, data.clone())
+                save_content(&crate::test_http_client(), &url, &url, id(2), id(3), 7, data.clone())
                     .await
                     .is_err()
             );
@@ -1369,7 +1444,7 @@ mod tests {
             vec![b'a'; super::super::notecard::MAX_TEXT_BYTES + 1],
         ] {
             assert!(
-                save_content(&reqwest::Client::new(), "invalid", "invalid", id(2), id(3), 7, data)
+                save_content(&crate::test_http_client(), "invalid", "invalid", id(2), id(3), 7, data)
                     .await
                     .is_err()
             );
@@ -1465,7 +1540,7 @@ mod tests {
 
     #[tokio::test]
     async fn parent_changes_use_udp_instead_of_the_ais_patch_rejected_with_http_400() {
-        let http = reqwest::Client::new();
+        let http = crate::test_http_client();
         let (url, task) = move_server(vec![Llsd::new_map()]).await;
         let error = crate::outfits::send(http.patch(format!("{url}/item/{}", id(3))), &llsd_map! { "parent_id" => id(4) })
             .await
@@ -1506,7 +1581,7 @@ mod tests {
     async fn move_readback_waits_for_storage_without_sending_the_move_twice() {
         let (url, task) = move_server(vec![move_readback(false), move_readback(true)]).await;
         let mut moves = Vec::new();
-        let reply = mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), move_change(), |movement| {
+        let reply = mutate_with_moves(&crate::test_http_client(), &url, &url, id(2), move_change(), |movement| {
             moves.push(movement);
             std::future::ready(Ok(()))
         })
@@ -1521,7 +1596,7 @@ mod tests {
     async fn an_unconfirmed_move_never_succeeds_and_stops_retrying() {
         let (url, task) = move_server(vec![move_readback(false); 6]).await;
         let mut sent = 0;
-        let result = mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), move_change(), |_| {
+        let result = mutate_with_moves(&crate::test_http_client(), &url, &url, id(2), move_change(), |_| {
             sent += 1;
             std::future::ready(Ok(()))
         })
@@ -1534,7 +1609,7 @@ mod tests {
     #[tokio::test]
     async fn a_move_without_a_region_connection_fails_before_http_requests() {
         let mut sent = 0;
-        let result = mutate_with_moves(&reqwest::Client::new(), "invalid", "invalid", id(2), move_change(), |_| {
+        let result = mutate_with_moves(&crate::test_http_client(), "invalid", "invalid", id(2), move_change(), |_| {
             sent += 1;
             std::future::ready(Err("closed session".into()))
         })
@@ -1610,7 +1685,7 @@ mod tests {
             )
             .await;
             let reply = mutate_with_progress(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 "invalid fetch capability must not be used",
                 id(2),
@@ -1645,7 +1720,7 @@ mod tests {
         ])
         .await;
         let reply = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &url,
             id(2),
@@ -1667,9 +1742,15 @@ mod tests {
             folder_readback(name, true),
         ])
         .await;
-        let reply = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), id(2), folder_change(name))
-            .await
-            .expect("eventual creation confirmation");
+        let reply = mutate(
+            &crate::test_http_client(),
+            &url,
+            &format!("{url}/fetch"),
+            id(2),
+            folder_change(name),
+        )
+        .await
+        .expect("eventual creation confirmation");
         assert_eq!(reply.created[&id(100)], id(200));
         let requests = task.await.expect("requests");
         assert_eq!(requests.len(), 3);
@@ -1683,7 +1764,7 @@ mod tests {
         replies.extend(vec![folder_readback("Wrong folder", true); 6]);
         let (url, task) = move_server(replies).await;
         assert!(
-            mutate(&reqwest::Client::new(), &url, &url, id(2), folder_change("Expected folder"))
+            mutate(&crate::test_http_client(), &url, &url, id(2), folder_change("Expected folder"))
                 .await
                 .is_err()
         );
@@ -1719,7 +1800,7 @@ mod tests {
             ..Default::default()
         };
         let mut moves = Vec::new();
-        mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), change, |movement| {
+        mutate_with_moves(&crate::test_http_client(), &url, &url, id(2), change, |movement| {
             moves.push(movement);
             std::future::ready(Ok(()))
         })
@@ -1749,7 +1830,7 @@ mod tests {
             ..Default::default()
         };
         let mut moves = Vec::new();
-        mutate_with_moves(&reqwest::Client::new(), &url, &url, id(2), change, |movement| {
+        mutate_with_moves(&crate::test_http_client(), &url, &url, id(2), change, |movement| {
             moves.push(movement);
             std::future::ready(Ok(()))
         })
@@ -1770,7 +1851,7 @@ mod tests {
             ])
             .await;
             let result = mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 "invalid",
                 id(2),
@@ -1822,7 +1903,7 @@ mod tests {
     #[tokio::test]
     async fn item_copies_are_sent_without_waiting_for_an_empty_http_snapshot() {
         let reply = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             "invalid",
             "invalid",
             id(2),
@@ -1886,7 +1967,7 @@ mod tests {
             panic!("favorite patch");
         };
         body.insert("name", "New sound");
-        assert!(mutate(&reqwest::Client::new(), &url, &url, id(2), change).await.is_err());
+        assert!(mutate(&crate::test_http_client(), &url, &url, id(2), change).await.is_err());
         assert_eq!(task.await.expect("bounded readback").len(), 7);
     }
 
@@ -1901,7 +1982,7 @@ mod tests {
                 ])
                 .await;
                 let reply = mutate(
-                    &reqwest::Client::new(),
+                    &crate::test_http_client(),
                     &url,
                     &format!("{url}/fetch"),
                     id(2),
@@ -1943,7 +2024,7 @@ mod tests {
                 ])
                 .await;
                 let change = super::super::thumbnail::patch(id(3), folder, id(1), asset);
-                let reply = mutate(&reqwest::Client::new(), &url, &format!("{url}/legacy"), id(2), change)
+                let reply = mutate(&crate::test_http_client(), &url, &format!("{url}/legacy"), id(2), change)
                     .await
                     .expect("eventual thumbnail confirmation");
                 let snapshot = &reply.contents[0];
@@ -1983,7 +2064,7 @@ mod tests {
             responses.extend(vec![snapshot; 6]);
             let (url, task) = move_server(responses).await;
             let error = mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &format!("{url}/legacy"),
                 id(2),
@@ -2063,7 +2144,7 @@ mod tests {
         let (url, task) = move_server(responses).await;
         assert!(
             mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &format!("{url}/fetch"),
                 id(2),
@@ -2085,7 +2166,7 @@ mod tests {
         let (url, task) = server(vec![(403, Llsd::new_map())]).await;
         assert!(
             mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 "invalid fetch capability",
                 id(2),
@@ -2105,7 +2186,7 @@ mod tests {
         };
         let (url, task) = server(vec![(400, reply)]).await;
         let refusal = crate::outfits::send_detailed(
-            reqwest::Client::new().patch(format!("{url}/item/{}", id(3))),
+            crate::test_http_client().patch(format!("{url}/item/{}", id(3))),
             &llsd_map! { "desc" => "2" },
         )
         .await
@@ -2128,7 +2209,7 @@ mod tests {
         let doc = llsd_map! { "folders" => Llsd::Array(vec![llsd_map! { "folder_id" => id(1), "version" => 2, "items" => Llsd::Array(vec![llsd_map! { "item_id" => id(3), "parent_id" => id(1), "name" => "Ancien" }]) }]) };
         let (url, task) = server(vec![(200, Llsd::new_map()), (200, doc)]).await;
         let result = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &url,
             id(2),
@@ -2151,7 +2232,7 @@ mod tests {
         let (url, task) = server(vec![(403, Llsd::new_map())]).await;
         assert!(
             mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &url,
                 id(2),
@@ -2224,7 +2305,7 @@ mod tests {
             removed: vec![id(10)],
             ..Default::default()
         };
-        mutate(&reqwest::Client::new(), &url, &url, id(2), change)
+        mutate(&crate::test_http_client(), &url, &url, id(2), change)
             .await
             .expect("replaced link");
         let requests = task.await.expect("requests");
@@ -2252,8 +2333,74 @@ mod tests {
             refresh: vec![id(1)],
             ..Default::default()
         };
-        assert!(mutate(&reqwest::Client::new(), &url, &url, id(2), change).await.is_err());
+        assert!(mutate(&crate::test_http_client(), &url, &url, id(2), change).await.is_err());
         assert_eq!(task.await.expect("requests").len(), 1);
+    }
+
+    /// Answers each connection with the next status and its body, and counts
+    /// the requests it received.
+    async fn status_server(replies: Vec<(&'static str, &'static [u8])>) -> (String, tokio::task::JoinHandle<usize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let url = format!("http://{}/asset", listener.local_addr().expect("address"));
+        let task = tokio::spawn(async move {
+            let mut count = 0;
+            for (status, body) in replies {
+                // (the last replies are never asked for when the client stops)
+                let accepted = tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept()).await;
+                let Ok(Ok((mut socket, _))) = accepted else {
+                    break;
+                };
+                let mut request = Vec::new();
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let mut buffer = [0u8; 1024];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    assert!(n > 0, "complete request");
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                count += 1;
+                let head = format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len());
+                socket.write_all(head.as_bytes()).await.expect("write");
+                socket.write_all(body).await.expect("write");
+                crate::test_http::finish(socket);
+            }
+            count
+        });
+        (url, task)
+    }
+
+    const FAST: crate::fetch::RetryPolicy = crate::fetch::RetryPolicy {
+        retries: 5,
+        backoff_min: std::time::Duration::from_millis(1),
+        backoff_max: std::time::Duration::from_millis(5),
+    };
+
+    /// #4178: a gesture asset that answers 503 or 500 at first loads once
+    /// the server answers, as llcorehttp retries it; a 404 is not retried,
+    /// and a server still failing after the 5 retries gives up.
+    #[tokio::test]
+    async fn asset_previews_retry_like_the_legacy_viewer() {
+        let http = crate::test_http_client();
+        let (url, task) = status_server(vec![
+            ("503 Service Unavailable", b""),
+            ("500 Internal Server Error", b""),
+            ("200 OK", b"gesture"),
+        ])
+        .await;
+        assert_eq!(
+            preview_with_retries(&http, &url, "gesture_id", id(1), FAST).await.as_deref(),
+            Ok(&b"gesture"[..])
+        );
+        assert_eq!(task.await.expect("server"), 3);
+
+        let (url, task) = status_server(vec![("404 Not Found", b""), ("200 OK", b"gesture")]).await;
+        assert!(preview_with_retries(&http, &url, "gesture_id", id(1), FAST).await.is_err());
+        drop(http);
+        let http = crate::test_http_client();
+        let (more, more_task) = status_server(vec![("503 Service Unavailable", b""); 7]).await;
+        assert!(preview_with_retries(&http, &more, "gesture_id", id(1), FAST).await.is_err());
+        assert_eq!(more_task.await.expect("server"), 6, "the first attempt and 5 retries");
+        assert_eq!(task.await.expect("server"), 1, "a missing asset is asked once");
     }
 }
 
@@ -2358,7 +2505,7 @@ mod udp_tests {
             ..Default::default()
         };
         let reply = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             Some(&format!("{url}/create")),
             &format!("{url}/fetch"),
             Uuid::nil(),

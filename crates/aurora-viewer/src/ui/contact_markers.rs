@@ -81,7 +81,7 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (idx, o) in world.objects.avatars() {
-        if o.full_id.is_nil() || o.full_id == world.agent_id {
+        if o.full_id.is_nil() || o.full_id == world.agent_id || world.is_mirror(&o.full_id) {
             continue;
         }
         let Some(marker) = marked(world, &o.full_id) else { continue };
@@ -124,8 +124,10 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     out
 }
 
+/// The marker of a resident: none for a blocked one, none either for one
+/// whose name RLVa hides (its set would tell who stands there).
 fn marked(world: &World, id: &Uuid) -> Option<Marker> {
-    world.contact_sets.appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
+    world.rlva_contact_appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
 }
 
 /// One frame of markers. `shown` is off with the setting, in immersive mode

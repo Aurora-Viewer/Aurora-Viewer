@@ -105,6 +105,8 @@ if (Get-Command cmake -ErrorAction SilentlyContinue) {
 }
 try {
     [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
+    # the Rust version this commit names, one install at a time for the PC
+    Install-RustVersion $src
     Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer @features }
 } finally {
     [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')

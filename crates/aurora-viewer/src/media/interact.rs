@@ -210,7 +210,8 @@ impl MediaManager {
     /// and LLVOVolume::mediaNavigated only refuses the navigation it leads
     /// to (`MediaImpl::may_navigate`). Refusing the click sent it to the
     /// object's script instead: a HUD page with interaction set to nobody
-    /// closed at the first click.
+    /// closed at the first click. Under @interact no face is picked at all,
+    /// a HUD's included (`World::rlva_drops_picks`).
     fn may_touch(&self, world: &World, key: &MediaKey, position: Option<Vec3>) -> bool {
         let MediaKey::Prim { object, .. } = key else {
             return false;
@@ -219,10 +220,11 @@ impl MediaManager {
             return false;
         };
         !world.rlva.enabled()
-            || world
-                .objects
-                .get(om.idx)
-                .is_some_and(|o| world.rlva_can_touch_at(o.key.region, o.key.local_id, position))
+            || !world.rlva_drops_picks()
+                && world
+                    .objects
+                    .get(om.idx)
+                    .is_some_and(|o| world.rlva_can_touch_at(o.key.region, o.key.local_id, position))
     }
 
     /// Owner and group of the linkset of a media face, from its

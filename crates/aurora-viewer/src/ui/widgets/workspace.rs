@@ -3,10 +3,13 @@
 use super::*;
 use egui::AtomExt;
 
+/// The padding around a row's label in the user tree and object contents.
+pub(crate) const INVENTORY_LABEL_PADDING: egui::Vec2 = egui::vec2(2.0, 1.0);
+
 /// The user tree and object contents share row density and interaction styling.
 pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().button_padding = INVENTORY_LABEL_PADDING;
     ui.spacing_mut().interact_size.y = 20.0;
 }
 
@@ -540,6 +543,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -549,6 +553,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "photo" | "photo_classic" => "camera-filled",
         "controls" | "camera_controls" => "video-filled",
         "director" => "movie",
+        "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",

@@ -406,7 +406,8 @@ fn save_locked() {
 }
 
 /// One line on the start's pipelines, once the renderer is ready: how
-/// many, how long the driver took, and the slowest.
+/// many, how long the driver took (added up over the threads that compiled
+/// them at once, `pipeline_batch.rs`), and the slowest.
 pub(crate) fn log_start() {
     let s = START.lock();
     let slowest: Vec<String> = s
@@ -415,7 +416,7 @@ pub(crate) fn log_start() {
         .map(|(l, t)| format!("{l} {:.0} ms", t.as_secs_f64() * 1000.0))
         .collect();
     log::info!(
-        "pipelines at start: {} made in {:.0} ms (slowest: {})",
+        "pipelines at start: {} made, {:.0} ms of compiling in all, threads added up (slowest: {})",
         crate::start_progress::made_at_ready().unwrap_or(0),
         s.total.as_secs_f64() * 1000.0,
         slowest.join(", ")

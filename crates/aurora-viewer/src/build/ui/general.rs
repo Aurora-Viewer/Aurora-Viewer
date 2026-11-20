@@ -9,6 +9,7 @@ use crate::build::BuildTool;
 use crate::build::edits::{CLICK_ACTION_BUY, CLICK_ACTION_TOUCH, FLAGS_INCLUDE_IN_SEARCH};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_net::build::{ObjectProps, perm, perm_field};
 use egui::RichText;
 use uuid::Uuid;
@@ -166,12 +167,71 @@ fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
         .clicked()
 }
 
-fn person_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) -> bool {
-    if !world.rlva_can_name(id) {
-        text(ui, p, aurora_i18n::tr!("scene-object-hidden-person"));
-        false
+/// Which Legacy window's `@shownames` test the rows of the panel follow.
+/// Both hide the owner, and the creator only when they also own the object
+/// or stand around.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Names {
+    /// The build tools: LLPanelPermissions::refresh
+    /// (indra/newview/llpanelpermissions.cpp) asks RlvActions::canShowName,
+    /// so oneself and an `@shownames:<uuid>` exception are named.
+    Build,
+    /// The object profile: LLSidepanelTaskInfo::refreshAll
+    /// (indra/newview/llsidepaneltaskinfo.cpp) tests
+    /// `!= gAgent.getID()` alone, so an exception is hidden as anyone.
+    Profile,
+}
+
+impl Names {
+    fn of(tool: &BuildTool) -> Self {
+        if tool.ui.object_profile { Names::Profile } else { Names::Build }
+    }
+
+    fn shows(self, world: &World, scope: NameScope, id: Uuid) -> bool {
+        match self {
+            Names::Build => world.rlva_shows_name(scope, id),
+            Names::Profile => world.rlva_shows_name_but_exceptions(scope, id),
+        }
+    }
+}
+
+/// What a row of the panel shows of the resident `id` it names in `scope`,
+/// and whether it links to their profile, as RLVa's `@shownames` leaves
+/// them (`Names`). A hidden resident is their stand-in in plain text: the
+/// `rlvanonym` link, which LLUrlEntryAgentRLVAnonymizedName
+/// (indra/llui/llurlentry.cpp) labels with RlvStrings::getAnonym and
+/// LLUrlEntryAgentName::getStyle leaves unlinked. A shown one keeps the
+/// `inspect` link to their profile, the creator the world hides included.
+fn person_shown(world: &World, names: Names, scope: NameScope, id: Uuid) -> (String, bool) {
+    if names.shows(world, scope, id) {
+        (world.social.name_in(scope, &id), true)
     } else {
-        name_link(ui, p, &world.social.name_of(&id))
+        (world.rlva_anonymous(id).display_name.clone(), false)
+    }
+}
+
+/// The row of `person_shown`; returns whether its link was clicked.
+fn person_link(ui: &mut egui::Ui, p: &Palette, world: &World, names: Names, scope: NameScope, id: Uuid) -> bool {
+    match person_shown(world, names, scope, id) {
+        (name, true) => name_link(ui, p, &name),
+        (stand_in, false) => {
+            text(ui, p, &stand_in);
+            false
+        }
+    }
+}
+
+/// Opens the profile of `id`, whose link a row of the panel shows
+/// (`person_shown`). LLAgentHandler (indra/newview/llpanelprofile.cpp) opens
+/// the `inspect` link without an RLVa test: the profile of a creator the row
+/// names opens while the world hides them. `Request::Profile` opens as the
+/// world names people and would refuse that one, so it is asked as the
+/// places that name their people ask (`profile::request_open_in`).
+fn open_profile(ctx: &egui::Context, requests: &mut Vec<Request>, world: &World, id: Uuid) {
+    if world.rlva_shows_name(NameScope::World, id) {
+        requests.push(Request::Profile(id));
+    } else {
+        crate::ui::profile::request_open_in(ctx, NameScope::Roster, id);
     }
 }
 
@@ -443,8 +503,21 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ui.add_space(4.0);
 
         // ---- creator, owner, previous owner, group
-        for id in [first.creator_id, first.owner_id, first.last_owner_id] {
-            if !id.is_nil() && id != first.group_id && world.rlva_can_name(id) {
+        let names = Names::of(tool);
+        // The creator is compared with the owner of the first object, in a
+        // selection of several owners too (LLSelectMgr::selectGetOwner
+        // hands back the first one's, llselectmgr.cpp).
+        let creator_scope = NameScope::Creator { owner: first.owner_id };
+        // LLPanelPermissions::refresh: under `@shownames` the previous
+        // owner is hidden whoever they are but oneself, an exception
+        // (`@shownames:<uuid>`) included.
+        let previous_hidden = world.rlva.has("shownames") && first.last_owner_id != world.agent_id;
+        for (id, shown) in [
+            (first.creator_id, names.shows(world, creator_scope, first.creator_id)),
+            (first.owner_id, names.shows(world, NameScope::Owner, first.owner_id)),
+            (first.last_owner_id, !previous_hidden),
+        ] {
+            if !id.is_nil() && id != first.group_id && shown {
                 world.social.want_name(id);
             }
         }
@@ -453,8 +526,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if first.creator_id.is_nil() {
                 text(ui, p, aurora_i18n::tr!("status-nobody"));
-            } else if person_link(ui, p, world, first.creator_id) {
-                tool.ui.requests.push(Request::Profile(first.creator_id));
+            } else if person_link(ui, p, world, names, creator_scope, first.creator_id) {
+                open_profile(ui.ctx(), &mut tool.ui.requests, world, first.creator_id);
             }
         });
         row(ui, p, aurora_i18n::tr!("common-owner-2"), identity_width, |ui| {
@@ -465,7 +538,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if group_link(ui, p, world, first.group_id, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
-            } else if person_link(ui, p, world, first.owner_id) {
+            } else if person_link(ui, p, world, names, NameScope::Owner, first.owner_id) {
                 tool.ui.requests.push(Request::Profile(first.owner_id));
             }
         });
@@ -473,12 +546,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if !same(&|x| x.last_owner_id) || first.last_owner_id.is_nil() {
                 return;
             }
-            if first.last_owner_id == first.group_id {
+            if previous_hidden {
+                // the `rlvanonym` link of LLPanelPermissions::refresh, a
+                // group's id included
+                text(ui, p, &world.rlva_anonymous(first.last_owner_id).display_name);
+            } else if first.last_owner_id == first.group_id {
                 let name = group_name(world, first.group_id);
                 if group_link(ui, p, world, first.group_id, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
-            } else if person_link(ui, p, world, first.last_owner_id) {
+            } else if person_link(ui, p, world, names, NameScope::Owner, first.last_owner_id) {
                 tool.ui.requests.push(Request::Profile(first.last_owner_id));
             }
         });
@@ -913,6 +990,104 @@ mod tests {
             ..upload
         };
         assert!(!item_lets_export(&no_base, me), "our own, but its base has no Export");
+    }
+
+    /// LLPanelPermissions::refresh under `@shownames`: the owner is their
+    /// stand-in in plain text; the creator too when they own the object or
+    /// stand around, and otherwise keeps their name and the link to their
+    /// profile, which opens.
+    #[test]
+    fn shownames_links_the_creator_the_row_names_and_writes_the_stand_in_of_a_hidden_one() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let (maker, owner) = (Uuid::from_u128(0xF3), Uuid::from_u128(0xF1));
+        for (id, first) in [(near, "Near"), (maker, "Maker"), (owner, "Owner")] {
+            world.social.avatar_names.on_legacy(id, first, "Tester");
+        }
+        let creator = |owner| NameScope::Creator { owner };
+        assert_eq!(
+            person_shown(&world, Names::Build, creator(owner), maker),
+            ("Maker Tester".into(), true)
+        );
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "General fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        // away, on someone else's object: named and linked
+        assert_eq!(
+            person_shown(&world, Names::Build, creator(owner), maker),
+            ("Maker Tester".into(), true)
+        );
+        // the owner, the creator who owns it, the creator around us: the
+        // stand-in RlvStrings::getAnonym gives, unlinked
+        for (scope, id) in [(NameScope::Owner, owner), (creator(maker), maker), (creator(owner), near)] {
+            let (shown, linked) = person_shown(&world, Names::Build, scope, id);
+            assert!(!linked, "{scope:?}");
+            assert!(!shown.is_empty() && !shown.contains("Tester"), "{scope:?}: {shown}");
+            // not the one label every hidden resident shared before
+            for language in ["en", "fr", "ja"] {
+                assert_ne!(shown, aurora_i18n::text_in(language, "scene-object-hidden-person"), "{scope:?}");
+            }
+        }
+        // the link of the creator the world hides opens their profile, as
+        // a place that names its people asks for it
+        let ctx = egui::Context::default();
+        let mut requests = Vec::new();
+        open_profile(&ctx, &mut requests, &world, maker);
+        assert!(requests.is_empty());
+        assert_eq!(crate::ui::profile::take_open_request_in(&ctx), Some((NameScope::Roster, maker)));
+        let mut profiles = crate::ui::profile::ProfileUi::default();
+        profiles.open_in(&mut world, NameScope::Roster, maker);
+        assert_eq!(profiles.opened(), vec![(maker, NameScope::Roster)]);
+        // a resident the world names (ourselves, an exception): the usual way
+        let me = world.agent_id;
+        open_profile(&ctx, &mut requests, &world, me);
+        assert_eq!(requests, vec![Request::Profile(me)]);
+        assert_eq!(crate::ui::profile::take_open_request_in(&ctx), None);
+
+        // An `@shownames:<uuid>` exception: the build tools name them
+        // (RlvActions::canShowName), the object profile hides them as anyone
+        // (LLSidepanelTaskInfo::refreshAll tests `!= gAgent.getID()` alone).
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "General fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: format!("@shownames:{owner}=add"),
+        }));
+        world.refresh_rlva_privacy();
+        assert_eq!(
+            person_shown(&world, Names::Build, NameScope::Owner, owner),
+            ("Owner Tester".into(), true)
+        );
+        assert!(!person_shown(&world, Names::Profile, NameScope::Owner, owner).1);
+        // the creator who is that owner too
+        assert!(person_shown(&world, Names::Build, creator(owner), owner).1);
+        assert!(!person_shown(&world, Names::Profile, creator(owner), owner).1);
+        // oneself is named in both, a creator away on someone else's object too
+        for names in [Names::Build, Names::Profile] {
+            assert!(person_shown(&world, names, NameScope::Owner, me).1, "{names:?}");
+            assert!(person_shown(&world, names, creator(owner), maker).1, "{names:?}");
+        }
     }
 
     #[test]

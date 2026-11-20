@@ -193,7 +193,7 @@ impl Asset {
         if !self.path.is_file() {
             return Err(aurora_i18n::tr!("import-local-file-missing").into());
         }
-        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(|error| error.to_string())?;
+        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(files::load_error)?;
         if self.material_index >= loaded.len() {
             return Err(aurora_i18n::tr!("import-reload-material-count").into());
         }
@@ -301,6 +301,8 @@ impl Asset {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Profile {
     meshes: Vec<(Uuid, local::Target)>,
+    #[serde(default)]
+    attachments: Vec<(Uuid, super::attachments::Identity)>,
     appearances: Vec<(Uuid, Option<u8>, crate::world::objects::LocalAppearance)>,
     #[serde(default)]
     appearance_expirations: Vec<(Uuid, Option<u8>, u64)>,
@@ -347,8 +349,10 @@ pub struct State {
     last: Vec<u8>,
     observed: Option<u64>,
     next: Option<Instant>,
-    appearance_expirations: HashMap<(Uuid, Option<u8>), u64>,
-    next_expiration: u64,
+    pub(super) appearance_expirations: HashMap<(Uuid, Option<u8>), u64>,
+    pub(super) attachments: HashMap<Uuid, super::attachments::Identity>,
+    pub(super) attachment_next: Option<Instant>,
+    pub(super) next_expiration: u64,
 }
 impl Drop for State {
     fn drop(&mut self) {
@@ -386,7 +390,7 @@ fn read_registry(path: &Path) -> Result<Registry, ()> {
         return Err(());
     }
     let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| ())?;
-    if registry.version != 1 || registry.assets.len() > 512 {
+    if registry.version != 1 {
         return Err(());
     }
     let mut ids = HashSet::new();
@@ -430,20 +434,10 @@ impl Imports {
                 for profile in registry.profiles.values_mut() {
                     profile.expire_appearances(now);
                 }
-                let mut retained = 0usize;
                 let entries = registry
                     .assets
                     .iter()
-                    .map(|asset| {
-                        let entry = asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message));
-                        let bytes = entry.source.as_ref().map_or(0, Source::retained_bytes);
-                        if retained.saturating_add(bytes) > 1024 * 1024 * 1024 {
-                            asset.unavailable(aurora_i18n::tr!("import-batch-limit").into())
-                        } else {
-                            retained += bytes;
-                            entry
-                        }
-                    })
+                    .map(|asset| asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message)))
                     .collect();
                 Restored { registry, entries }
             });
@@ -487,10 +481,11 @@ impl Imports {
         };
         self.persistence.reader = None;
         match result {
-            Ok(restored) => {
+            Ok(mut restored) => {
                 self.persistence.registry = restored.registry;
                 if let Some(profile) = self.persistence.registry.profiles.get(&self.persistence.profile) {
                     self.local_targets.extend(profile.meshes.iter().cloned());
+                    self.persistence.attachments.extend(profile.attachments.iter().cloned());
                     self.local_appearance_targets.extend(
                         profile
                             .appearances
@@ -505,7 +500,8 @@ impl Imports {
                     );
                     self.persistence.next_expiration = 0;
                 }
-                self.entries.extend(restored.entries);
+                restored.entries.append(&mut self.entries);
+                self.entries = restored.entries;
                 if self.active.is_none() {
                     self.active = self.entries.iter().find(|entry| self.choice.accepts(entry)).map(|entry| entry.id);
                 }
@@ -579,6 +575,15 @@ impl Imports {
         for ((object, face), appearance) in &self.local_appearance_targets {
             (object, face, appearance, self.persistence.appearance_expirations[&(*object, *face)]).hash(&mut hash);
         }
+        let mut attachments: Vec<_> = self
+            .persistence
+            .attachments
+            .iter()
+            .filter(|(object, _)| self.local_appearance_targets.keys().any(|(id, _)| id == *object))
+            .map(|(id, identity)| (*id, identity.clone()))
+            .collect();
+        attachments.sort_by_key(|(id, _)| *id);
+        attachments.hash(&mut hash);
         let observed = hash.finish();
         if !force && self.persistence.observed == Some(observed) {
             return;
@@ -607,6 +612,7 @@ impl Imports {
             self.persistence.profile.clone(),
             Profile {
                 meshes,
+                attachments,
                 appearances,
                 appearance_expirations,
             },
@@ -719,6 +725,29 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_registry_keeps_more_than_512_materials() {
+        let files = Files::new();
+        let entry = files.entry("material-demo.gltf");
+        let template = Asset::capture(&entry);
+        let registry = Registry {
+            version: 1,
+            assets: (0..513)
+                .map(|_| {
+                    let mut asset = template.clone();
+                    asset.id = Uuid::new_v4();
+                    asset
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let path = files.0.join(FILE);
+        write_registry(&path, &serde_json::to_vec(&registry).unwrap()).unwrap();
+        let saved = read_registry(&path).expect("large local registry");
+        assert_eq!(saved.assets.len(), 513);
+        assert_eq!(saved.assets[512].id, registry.assets[512].id);
+    }
     struct Files(PathBuf);
     impl Files {
         fn new() -> Self {
@@ -1170,5 +1199,95 @@ mod tests {
         let key = profile(Uuid::from_u128(10), "https://grid.example/login");
         assert!(!key.contains("https") && !key.contains("grid.example"));
         assert_ne!(key, profile(Uuid::from_u128(11), "https://grid.example/login"));
+    }
+
+    #[test]
+    fn creator_attachment_bindings_survive_restart_and_new_object_ids() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut imports = restored(path.clone(), "account", &jobs);
+        let entry = files.entry("texture-demo.png");
+        let texture = entry.id;
+        imports.entries.push(entry);
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(event);
+        }
+        let root = world.worn_attachment(&crate::demo::worn::item_id()).unwrap();
+        let family = crate::build::family(&world, root);
+        let ids: Vec<_> = family.iter().map(|i| world.objects.get(*i).unwrap().full_id).collect();
+        for id in &ids {
+            imports.target_local(texture, *id, &[0], false);
+        }
+        imports.sync_attachment_targets(&world);
+        let deadlines = imports.persistence.appearance_expirations.clone();
+        assert_eq!(imports.persistence.attachments.len(), 2);
+        imports.flush_local_registry();
+        let mut restarted = restored(path, "account", &jobs);
+        restarted.entries[0].local_published = true;
+        for i in family {
+            world.objects.remove_idx(i);
+        }
+        let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = crate::demo::worn::events().remove(0) else {
+            panic!("objects")
+        };
+        let new_root = objects[0].local_id + 100;
+        for (n, object) in objects.iter_mut().enumerate() {
+            object.local_id += 100;
+            object.full_id = Uuid::from_u128(0xabcdef00 + n as u128);
+            if n != 0 {
+                object.parent_id = new_root;
+            }
+        }
+        let new_ids: Vec<_> = objects.iter().map(|o| o.full_id).collect();
+        objects.reverse(); // Network arrival order must not determine the part.
+        world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+        restarted.sync_attachment_targets(&world);
+        restarted.apply_appearance_targets(&mut world.objects);
+        for (old, new) in ids.iter().zip(&new_ids) {
+            assert!(!restarted.local_appearance_targets.contains_key(&(*old, Some(0))));
+            assert_eq!(
+                restarted.local_appearance_targets[&(*new, Some(0))],
+                crate::world::objects::LocalAppearance::Texture(texture)
+            );
+            assert_eq!(
+                restarted.persistence.appearance_expirations[&(*new, Some(0))],
+                deadlines[&(*old, Some(0))]
+            );
+            let object = world.objects.get(world.objects.index_of_uuid(new).unwrap()).unwrap();
+            assert_eq!(
+                object.local_texture(0, crate::world::objects::LocalTextureSlot::Diffuse),
+                Some(texture)
+            );
+            assert_ne!(object.te.as_ref().unwrap().face(0).texture, texture);
+        }
+    }
+
+    #[test]
+    fn creator_local_file_retries_after_transient_failure_without_timestamp_change() {
+        let files = Files::new();
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let ctx = egui::Context::default();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut entry = files.entry("texture-demo.png");
+        let id = entry.id;
+        let stamp = entry.watch.as_ref().unwrap().stamp.clone();
+        entry.source = None;
+        entry.status = Status::Error("Temporary file access failure".into());
+        let mut imports = Imports {
+            entries: vec![entry],
+            ..Default::default()
+        };
+        imports.tx.send(Worker::Watch(id, stamp)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while imports.entries[0].source.is_none() && Instant::now() < deadline {
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(imports.entries[0].source, Some(Source::Texture(_))));
+        assert_eq!(imports.entries[0].id, id);
+        assert!(imports.entries[0].local);
     }
 }

@@ -54,6 +54,7 @@ impl App {
     /// Each frame: turn the measures on or off with the view, and take a
     /// snapshot every half second while it shows (and is not paused).
     pub(super) fn monitor_frame(&mut self, renderer: &aurora_render::Renderer) {
+        self.poll_monitor_export();
         let live = self.panels.perf && ui::perf::is_full(&self.egui_ctx);
         if live != self.monitor_feed.live {
             self.monitor_feed.live = live;
@@ -126,7 +127,8 @@ impl App {
                 aurora_i18n::tr!("toolbar-command-destinations"),
             ),
         ];
-        for (pid, label) in pages {
+        let signup = self.signup_ui.web_process_ids().map(|pid| (pid, aurora_i18n::tr!("signup-title")));
+        for (pid, label) in pages.into_iter().chain(signup) {
             if let Some(pid) = pid {
                 out.push(MediaProcess {
                     pid,
@@ -602,7 +604,8 @@ impl App {
         let bridge = self.bridge_runtime.item();
         let (mut worn, mut huds) = (Vec::new(), Vec::new());
         for &att in world.objects.children_of(&me.key) {
-            let Some(root) = world.objects.get(att) else {
+            // (not the copies drawn from the cache, world/avatar_cache)
+            let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };
             let item = root.attachment_item_id();
@@ -721,25 +724,45 @@ impl App {
                     ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                     self.options_ui.open(ui::options::Page::Network, 0);
                 }
+                Action::Autotune(request) => self.autotune_request(request),
             }
         }
     }
 
     /// The snapshot shown, as a CSV file in the logs' folder: the
     /// subsystems with their seven columns, then the threads.
+    /// Written by a save thread (saves.rs); the status bar names the file
+    /// once it is on the disk (`poll_monitor_export`).
     fn export_monitor(&mut self) {
         let Some(s) = &self.monitor.history.last else { return };
         let text = monitor::export_csv(s);
         let stamp = crate::snapshot::local_stamp();
         let dir = crate::logging::logs_dir();
         let file = dir.join(format!("resource-monitor_{stamp}.csv"));
-        match crate::atomic_file::write(&file, text.as_bytes()) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.monitor.export = Some(rx);
+        crate::saves::replace(file.clone(), move || match crate::atomic_file::write(&file, text.as_bytes()) {
             Ok(()) => {
                 log::info!("resource monitor report written to {}", file.display());
-                self.monitor.exported = file.file_name().map(|n| n.to_string_lossy().into_owned());
+                if let Some(name) = file.file_name() {
+                    let _ = tx.send(name.to_string_lossy().into_owned());
+                }
                 crate::snapshot::gallery::reveal(&dir, Some(&file));
             }
             Err(e) => log::warn!("resource monitor report not written: {e}"),
+        });
+    }
+
+    /// The name of the report the save thread wrote, for the status bar.
+    fn poll_monitor_export(&mut self) {
+        let Some(rx) = &self.monitor.export else { return };
+        match rx.try_recv() {
+            Ok(name) => {
+                self.monitor.exported = Some(name);
+                self.monitor.export = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.monitor.export = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
 }
