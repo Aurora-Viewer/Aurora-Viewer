@@ -449,7 +449,7 @@ fn object_icon_selects_the_job_filter_and_running_choices_stay_visible() {
     };
     let mut object_rect = egui::Rect::NOTHING;
     let mut draw_types = |events| {
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -467,6 +467,7 @@ fn object_icon_selects_the_job_filter_and_running_choices_stay_visible() {
                 });
             },
         );
+        output.textures_delta.clear();
         object_rect.center()
     };
     let point = draw_types(vec![]);
