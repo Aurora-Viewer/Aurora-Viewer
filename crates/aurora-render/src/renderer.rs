@@ -4380,6 +4380,7 @@ impl Backend {
                 config.height,
                 msaa_samples,
                 &settings,
+                external,
                 refuse,
             )
         });
@@ -6233,6 +6234,7 @@ impl Backend {
         height: u32,
         samples: u32,
         s: &RenderSettings,
+        external: bool,
         refuse: bool,
     ) -> Targets {
         let (w, h) = (width.max(1), height.max(1));
@@ -6335,7 +6337,7 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let rt = crate::rt_shadows::Targets::new(device, w, h, crate::rt_shadows::traced(device, s.ray_tracing));
+        let rt = crate::rt_shadows::Targets::new(device, w, h, crate::rt_shadows::traced(device, external, s.ray_tracing));
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -6974,6 +6976,7 @@ impl Backend {
             size.1,
             self.msaa_samples,
             &self.settings,
+            self.external,
             refuse,
         );
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
@@ -7206,7 +7209,8 @@ impl Backend {
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
-            || crate::rt_shadows::traced(&self.device, s.ray_tracing) != crate::rt_shadows::traced(&self.device, self.settings.ray_tracing)
+            || crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                != crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing)
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
@@ -7277,7 +7281,7 @@ impl Backend {
     /// worker thread ([`RtBuild`]), as is what an effect turned on later
     /// needs: called again at each frame until the worker is done.
     fn follow_ray_tracing(&mut self) {
-        let options = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing);
+        let options = crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing);
         if !options.shadows {
             // (one still being made is dropped as its worker ends)
             self.rt_build = None;

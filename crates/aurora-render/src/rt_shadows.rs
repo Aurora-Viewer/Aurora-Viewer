@@ -134,10 +134,13 @@ pub(crate) fn wanted_at_open() -> bool {
     Override::from_env().opens_with_ray_queries()
 }
 
-/// What `device` traces when the settings ask `asked`: nothing on a device
-/// opened without ray queries.
-pub(crate) fn traced(device: &wgpu::Device, asked: crate::RayTracing) -> crate::RayTracing {
-    if device.features().contains(FEATURES) {
+/// What a renderer of `device` traces when the settings ask `asked`: nothing
+/// on a device opened without ray queries, and nothing in an `external`
+/// renderer (the second camera's, on the window's device): the scene traced
+/// is the window's renderer's, and a second one would build it all again.
+/// It keeps the shadow maps and the screen-space effects.
+pub(crate) fn traced(device: &wgpu::Device, external: bool, asked: crate::RayTracing) -> crate::RayTracing {
+    if !external && device.features().contains(FEATURES) {
         Override::from_env().applied(asked)
     } else {
         crate::RayTracing::default()

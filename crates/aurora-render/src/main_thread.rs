@@ -1669,7 +1669,7 @@ impl Renderer {
         // worker makes it (renderer.rs `RtBuild`). The levels a frame's
         // faces ask for are built by the one that draws it, and are not
         // asked for again while they stand.
-        let rt_on = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing).shadows && self.rt_made != 0;
+        let rt_on = crate::rt_shadows::traced(&self.device, false, self.settings.ray_tracing).shadows && self.rt_made != 0;
         if !rt_on || self.rt_made != self.rt_followed {
             // turned off, or another ray tracer: nothing is followed for
             // it, and it starts from nothing
