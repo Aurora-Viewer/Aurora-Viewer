@@ -17321,11 +17321,9 @@ impl App {
                         self.send(NetCommand::ActivateGroup(group));
                     }
                 }
-                GroupAction::SetTitle { group, role } => {
-                    if !self.world.rlva.has("setgroup") {
-                        self.world.group_data.set_title(group, role);
-                    }
-                }
+                // LLPanelGroupGeneral::apply (llpanelgroupgeneral.cpp): the
+                // title changes whatever @setgroup holds
+                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
                 GroupAction::SetFlags {
                     group,
                     accept_notices,
@@ -19762,11 +19760,7 @@ impl App {
                             self.search_ui.open_tab(crate::world::search::Tab::Groups);
                         }
                         ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
-                        ui::people::PeopleAction::GroupTitle { group, role } => {
-                            if !self.world.rlva.has("setgroup") {
-                                self.world.group_data.set_title(group, role);
-                            }
-                        }
+                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
                         ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
                             self.world.groups.set_flags(group, notices, profile)
                         }

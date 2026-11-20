@@ -93,6 +93,9 @@ pub struct GroupChats {
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The active group's name as AgentDataUpdate gave it
+    /// (LLAgent::mGroupName), cleared when that group is left.
+    pub active_name: String,
     /// The group list (AgentGroupDataUpdate) and the active group
     /// (AgentDataUpdate) arrived this session.
     pub list_received: bool,
@@ -693,6 +696,8 @@ impl World {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
                 self.groups.active_title = title.clone();
+                // LLAgent::processAgentDataUpdate: no name without a group
+                self.groups.active_name = if id.is_nil() { String::new() } else { name.clone() };
                 self.groups.active_received = true;
                 // A blank worn title leaves the name tag without a title.
                 // The Group titles window still lists that role (#3147).
@@ -704,6 +709,10 @@ impl World {
                 }
             }
             NetEvent::GroupDropped(id) => {
+                // LLAgent::processAgentDropGroup: the active group's name goes
+                if id == self.groups.active {
+                    self.groups.active_name.clear();
+                }
                 self.cancel_saved_im(id);
                 self.discard_restoring_group(id);
                 self.groups.groups.retain(|g| g.id != id);

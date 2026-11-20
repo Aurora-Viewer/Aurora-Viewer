@@ -1503,12 +1503,17 @@ fn rlva_editing_and_permissions_are_enforced_on_linksets_and_wire_commands() {
     assert!(w.rlva_can_edit(child));
     command(&mut w.rlva, B, &format!("@editobj:{id}=n"));
     assert!(!w.rlva_can_edit(child));
+    // a material dropped on it still passes (LLToolDragAndDrop::
+    // dad3dApplyToObject asks willObjectAcceptInventory alone)
+    let material = NetCommand::Build(BuildCmd::Cap {
+        handle: key.region,
+        cap: "ModifyMaterialParams".into(),
+        put: false,
+        body: aurora_llsd::Llsd::Array(vec![aurora_llsd::llsd_map! { "object_id" => id }]),
+        tag: 0,
+    });
+    assert!(!w.rlva_contents_locked(root) && w.rlva_allows_command(&material, Uuid::nil()));
     for (cap, put, body) in [
-        (
-            "ModifyMaterialParams",
-            false,
-            aurora_llsd::Llsd::Array(vec![aurora_llsd::llsd_map! { "object_id" => id }]),
-        ),
         (
             "ObjectMedia",
             false,
@@ -3710,9 +3715,11 @@ fn rlva_touchme_overrides_touchall_but_not_interact() {
     command(&mut world.rlva, A, "@touchall=n");
     assert!(touch(&world, inviting), "@touchme lifts @touchall for its own object");
     assert!(!touch(&world, plain));
+    // @interact drops the pick before RlvActions::canTouch is asked
+    // (LLViewerWindow::cursorIntersect); canTouch itself does not ask it
     command(&mut world.rlva, A, "@interact=n");
-    assert!(!touch(&world, inviting), "@interact is decided before @touchme");
-    assert!(!touch(&world, plain));
+    assert!(world.rlva_drops_picks(), "@interact is decided before @touchme, at the pick");
+    assert!(touch(&world, inviting) && !touch(&world, plain));
     assert!(world.rlva_can_touch(region, hud_local), "the HUDs stay");
     command(&mut world.rlva, A, "@interact=y");
     assert!(touch(&world, inviting));
@@ -4556,3 +4563,7 @@ fn the_second_camera_pauses_while_rlva_holds_the_view() {
     command(&mut r, A, "@tplm=n");
     assert!(!r.second_camera_blocked());
 }
+
+#[cfg(test)]
+#[path = "interaction_parity_tests.rs"]
+mod interaction_parity;

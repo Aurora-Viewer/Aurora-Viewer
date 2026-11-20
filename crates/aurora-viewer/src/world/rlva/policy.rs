@@ -30,8 +30,19 @@ impl World {
         self.rlva_can_touch_at(handle, local_id, None)
     }
 
-    /// `position` is in the viewer's region-relative world, like a picking
-    /// ray. Measure the clicked surface, not the object's bounding-box centre.
+    /// RlvActions::canTouch (indra/newview/rlvactions.cpp). `position` is in
+    /// the viewer's region-relative world, like a picking ray. Measure the
+    /// clicked surface, not the object's bounding-box centre.
+    ///
+    /// @interact is not asked here: it drops the pick
+    /// (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), which the
+    /// clicks, the hover and the Move tool meet first
+    /// (`rlva_drops_picks`, `rlva_can_interact_at`). What needs no pick
+    /// (the Touch entry of a worn object, handle_attachment_touch in
+    /// llviewermenu.cpp; the chat bar's touch, chatbar_as_cmdline.cpp; the
+    /// area search's double click, FSPanelAreaSearchList::touchObject)
+    /// asks canTouch alone, whatever @interact, @showself or
+    /// @showselfhead hold.
     pub fn rlva_can_touch_at(&self, handle: aurora_net::RegionHandle, local_id: u32, position: Option<Vec3>) -> bool {
         let r = &self.rlva;
         if !r.enabled() {
@@ -40,9 +51,6 @@ impl World {
         let Some(index) = self.objects.index_of(&super::super::objects::ObjKey { region: handle, local_id }) else {
             return false;
         };
-        if !self.rlva_object_visible(index) {
-            return false;
-        }
         let mut root = index;
         let mut wearer = None;
         for _ in 0..64 {
@@ -63,16 +71,6 @@ impl World {
         };
         let id = object.full_id.to_string();
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
-        // @interact is enforced when the object is picked
-        // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
-        // RlvActions::canTouch and its @touchme override are asked. A HUD's
-        // pick is dropped there too, by `rlva_drops_picks` where the click
-        // is read: this rule also answers the Touch entry of a worn object,
-        // which needs no pick and keeps a HUD's touch (handle_attachment_touch,
-        // llviewermenu.cpp).
-        if !hud && r.has("interact") {
-            return false;
-        }
         if r.rules_for("touchme", Uuid::nil()).any(|(source, _)| {
             let Some(mut i) = self.objects.index_of_uuid(&source) else {
                 return false;
@@ -245,6 +243,7 @@ impl World {
                         .index_of_uuid(&target.object)
                         .is_some_and(|i| self.rlva_locked_attachment(i))
             }
+            NetCommand::SaveScript { target, .. } => self.rlva_can_save_script(target.object),
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
@@ -255,7 +254,10 @@ impl World {
             NetCommand::ActivateGroup(group) => {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }
-            NetCommand::GroupTitleUpdate { .. } => !blocked("setgroup"),
+            // (a group title is changed whatever @setgroup holds:
+            // LLPanelGroupGeneral::apply, llpanelgroupgeneral.cpp, and
+            // FSFloaterGroupTitles::activateGroupTitle send
+            // sendGroupTitleUpdate without RLVa)
             // LLGroupActions::leave (llgroupactions.cpp): leaving the active
             // group would change it, which @setgroup forbids.
             NetCommand::LeaveGroup(group) => *group != self.groups.active || !blocked("setgroup"),
@@ -332,10 +334,13 @@ impl World {
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
-            // LLToolPlacer::placeObject and LLToolDragAndDrop::dropObject.
-            NetCommand::Build(aurora_net::build::BuildCmd::Add(_) | aurora_net::build::BuildCmd::RezInventory(_)) => {
-                !blocked("rez") && !blocked("interact")
-            }
+            // LLToolDragAndDrop::dropObject. A new prim is refused under
+            // @rez alone: the chat bar's platform asks RlvActions::canRez
+            // (cmdline_rezplat, chatbar_as_cmdline.cpp), and the Create tool
+            // asks @interact too before it sends (LLToolPlacer::placeObject,
+            // `rlva_can_rez`).
+            NetCommand::Build(aurora_net::build::BuildCmd::RezInventory(_)) => !blocked("rez") && !blocked("interact"),
+            NetCommand::Build(aurora_net::build::BuildCmd::Add(_)) => !blocked("rez"),
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
             NetCommand::AcceptLure { lure_id, godlike } => {
@@ -535,14 +540,13 @@ impl World {
             // (RlvHandler::processReplyCommand reads no option for
             // @getgroup and @getsitid: one given changes nothing)
             let text = match c.behaviour.as_str() {
-                "getgroup" => Some(
-                    self.groups
-                        .groups
-                        .iter()
-                        .find(|g| g.id == self.groups.active)
-                        .map_or("none", |g| g.name.as_str())
-                        .to_owned(),
-                ),
+                // gAgent.getGroupName(), the name AgentDataUpdate gave,
+                // whatever the group list holds (it may not have come yet)
+                "getgroup" => Some(if self.groups.active.is_nil() || self.groups.active_name.is_empty() {
+                    "none".to_owned()
+                } else {
+                    self.groups.active_name.clone()
+                }),
                 "getsitid" => Some(self.rlva_sit_id().to_string()),
                 name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
                 _ => Some(String::new()),
