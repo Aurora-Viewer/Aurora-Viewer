@@ -160,14 +160,41 @@ impl OutputThread {
     }
 }
 
+/// How long the engine waits for its output thread to end. The thread
+/// stops within a few milliseconds of its channel closing, but its last
+/// step, dropping the cpal stream, waits for the audio driver, which can
+/// hang (#3133: 71 s at exit, the window not answering). The microphone
+/// closes the same way (`capture.rs`, #2635).
+const STOP_WAIT: Duration = Duration::from_secs(2);
+
 impl Drop for OutputThread {
     fn drop(&mut self) {
         // Disconnecting the command channel stops the thread.
         drop(self.ctl.take());
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            join_or_detach(h, STOP_WAIT);
         }
     }
+}
+
+/// Joins `h` if it ends within `limit`, otherwise leaves it running (stuck
+/// in the audio driver) and returns. The engine is dropped on the main
+/// thread, at exit among other times, so it must not wait for the driver.
+/// Returns whether the thread was joined.
+fn join_or_detach(h: thread::JoinHandle<()>, limit: Duration) -> bool {
+    let start = Instant::now();
+    while !h.is_finished() {
+        if start.elapsed() >= limit {
+            log::warn!(
+                "audio output: the device has not closed after {} s; the audio driver is holding it, leaving it behind",
+                limit.as_secs()
+            );
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = h.join();
+    true
 }
 
 /// Starts the output thread on `device` (`None` = default) and waits until
@@ -461,6 +488,31 @@ impl OutputAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thread_that_ends_is_joined() {
+        let h = thread::spawn(|| thread::sleep(Duration::from_millis(30)));
+        assert!(join_or_detach(h, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn dropping_the_output_does_not_wait_for_a_stuck_driver() {
+        let (tx, rx) = unbounded::<OutputCmd>();
+        // A thread that, like one stuck dropping its cpal stream, does not
+        // end when its channel closes.
+        let handle = thread::spawn(move || {
+            drop(rx);
+            thread::sleep(Duration::from_secs(30));
+        });
+        let started = Instant::now();
+        drop(OutputThread {
+            ctl: Some(tx),
+            handle: Some(handle),
+        });
+        let waited = started.elapsed();
+        assert!(waited >= STOP_WAIT, "waits a moment for a clean close: {waited:?}");
+        assert!(waited < STOP_WAIT + Duration::from_secs(3), "then returns: {waited:?}");
+    }
     use crate::Channel;
     use crate::mixer::{ClipVoice, Command, SharedParams};
     use cpal::Sample;
