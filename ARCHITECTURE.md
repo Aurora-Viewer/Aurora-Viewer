@@ -4396,7 +4396,12 @@ the libgcc unwinder's frames through the signal frame, then each frame as
 the unwinder and the loader's list under an alarm (another thread that
 crashes meanwhile waits for the file); it then hands the signal
 to the standard library's overflow handler or the default action, so the
-process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
+process ends as before. Panics and failed allocations get the same stacks.
+`open_files.rs` (Linux) counts the process's open files by kind once per
+GPU loss, for the report's "Open files at the loss" row (#2970): Mesa
+reports a descriptor it could not get as "out of memory"; it opens
+`/proc/self/fd` when crash recovery starts, since none is left at the
+limit. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
