@@ -15,6 +15,7 @@
 //! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
@@ -834,11 +835,9 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     if filtering() {
         return;
     }
-    let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
-        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
-        p.muted_dim,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.ui_upper(), FontId::new(10.5, super::fonts::semibold(ui.ctx())), p.muted_dim);
     let w = if ui.is_sizing_pass() {
         (galley.size().x + PAD * 2.0).max(MIN_W)
     } else {
@@ -1219,7 +1218,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
 
 fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural

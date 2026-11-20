@@ -50,6 +50,27 @@ The looks remain Nanner Pudding's work.
 Changes: the "NP - " prefix of the file names is left out; the colours are
 stored as for the pack above (33³ tables, "Tis Autumn" 65³).
 
+## JuicyBomb
+
+`juicybomb.bin`: 30 looks by **JuicyBomb**, in three sets: Heritage and
+Retro, subtle tints for photography, and Muse, stronger colourised looks
+(Heritage - Autumn, Countryside, Editorial, Equestrian, Estate, Heirloom,
+Ivy, Monochrome, Portrait, Vintage; Muse - Angel, Blush, Champagne,
+Emerald, Frost, Honey, Lilac, Peach, Rouge, Velvet; Retro - Afterglow,
+Afterhours, Arcade, Daydream, Electric, Goldenhour, Lavender, Nightfall,
+Nostalgia, Seabreeze).
+
+JuicyBomb made them for Aurora and offered on 2026-11-19 that the viewer
+includes them. On 2026-11-20 they confirmed they made them alone and own
+all their rights, and wrote: "Created by JuicyBomb, with full permission
+granted to Aurora Viewer to include, use, and distribute these LUTs as
+part of the viewer." They asked to be credited as JuicyBomb, their blog
+name. The looks remain JuicyBomb's work.
+
+Changes: the "JB " prefix of the file names is left out (each name keeps
+its set, "Muse - Velvet"); the colours are stored as for the packs above
+(33³ tables).
+
 ## Rebuilding a pack
 
 From the creator's folder of .cube files (for Czar Fenris' pack, with
@@ -58,6 +79,7 @@ their "Old Newspaper" replaced by the version they sent):
 ```powershell
 python scripts/generate-photo-luts.py "<folder>" assets/photo-luts/czar-fenris.bin --prefix "Czar - "
 python scripts/generate-photo-luts.py "<folder>" assets/photo-luts/nanner-pudding.bin --prefix "NP - "
+python scripts/generate-photo-luts.py "<folder>" assets/photo-luts/juicybomb.bin --prefix "JB "
 ```
 
 The script also converts a pack of the older 16-bit format: give it that

@@ -7,6 +7,7 @@
 //! the human; Firestorm shows a progress bar over a snapshot.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Pos2, Rect, Shape, Vec2};
 
@@ -433,7 +434,7 @@ fn banner(
         let accent = p.violet_light.gamma_multiply(a);
         let mut job = egui::text::LayoutJob::default();
         job.append(
-            &label.to_uppercase(),
+            &label.ui_upper(),
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::proportional(11.5 * k),

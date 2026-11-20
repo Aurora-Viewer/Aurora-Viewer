@@ -15,6 +15,7 @@ use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use aurora_net::groups::{BuiltinRole, GroupMember, LastSeen, RoleChange, powers};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
@@ -548,7 +549,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         let mut format =
             crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, if on { p.muted } else { p.muted_dim });
         format.extra_letter_spacing = 0.4;
-        job.append(&label.to_uppercase(), 0.0, format);
+        job.append(&label.ui_upper(), 0.0, format);
         let galley = ui.painter().layout_job(job);
         const CARET: f32 = 9.0;
         let caret_w = if on { widgets::caret_room(CARET) } else { 0.0 };
