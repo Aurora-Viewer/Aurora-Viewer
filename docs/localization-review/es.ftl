@@ -13583,6 +13583,7 @@ bridge-object-info-result =
     Tipo de navegación: { $pathfinding }
     Punto de anclaje: { $attachment }
     Adjuntado temporalmente: { $temporary }
+    Su posición actual: { $observer }
 bridge-query-timeout = El puente no devolvió la información solicitada a tiempo. Inténtelo de nuevo.
 bridge-query-interrupted = La solicitud de información se interrumpió debido a un cambio en la región o en la conexión del puente.
 ao-bootstrap-interrupted = Ya existe una importación de AO sin terminar en #Aurora, revisa el inventario antes de volver a intentarlo.
