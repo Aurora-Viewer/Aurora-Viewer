@@ -5951,6 +5951,13 @@ impl App {
         self.world.look_at.own.set(kind, object, offset, now);
     }
 
+    /// The avatar a camera focus resolves to, as `LLAgentCamera::setLookAt`
+    /// (indra/newview/llagentcamera.cpp) leaves it: an avatar, or an object
+    /// worn by us at any depth. Another focus keeps its raw point.
+    fn focus_look_at_object(&self) -> Option<uuid::Uuid> {
+        crate::world::lookat::focus_avatar(&self.world.objects, self.camera.focus_object_id()?, self.world.agent_id)
+    }
+
     /// Where our avatar looks this frame (LLAgentCamera::updateLookAt and
     /// setFocusGlobal), and the ViewerEffect sent when it changes.
     fn update_look_at(&mut self, width: f32, height: f32) {
@@ -5988,10 +5995,15 @@ impl App {
         if self.camera.focus_point() != self.look_focus {
             self.look_focus = self.camera.focus_point();
             match (self.look_focus, self.world.main_origin()) {
-                (Some(p), Some((mx, my))) => {
-                    let g = glam::DVec3::new(mx as f64, my as f64, 0.0) + p.as_dvec3();
-                    self.set_look_at(lookat::FOCUS, None, g);
-                }
+                (Some(p), Some((mx, my))) => match self.focus_look_at_object() {
+                    // the focused object stays the look-at target: another
+                    // avatar's head, or 1 m in front for our own (focus_offset)
+                    Some(avatar) => self.set_look_at(lookat::FOCUS, Some(avatar), lookat::focus_offset(avatar, me)),
+                    None => {
+                        let g = glam::DVec3::new(mx as f64, my as f64, 0.0) + p.as_dvec3();
+                        self.set_look_at(lookat::FOCUS, None, g);
+                    }
+                },
                 _ => self.set_look_at(lookat::CLEAR, None, glam::DVec3::ZERO),
             }
         }
@@ -15020,6 +15032,35 @@ impl App {
                     let p = eyes + rot * Vec3::new(1.0, 2.5, 0.0);
                     let g = glam::DVec3::new(mx as f64 + p.x as f64, my as f64 + p.y as f64, p.z as f64);
                     self.world.look_at.own.set(crate::world::lookat::FOCUS, None, g, Instant::now());
+                }
+            }
+            // "focus": the camera in front of our face (frame 100), then
+            // focused on a point of our own face (frame 450, the Alt-focus
+            // path): our head and eyes stare 1 m in front, not at that point
+            if mode == "focus" {
+                if self.frame_count == 1 {
+                    self.panels.chat = false;
+                    self.panels.people = false;
+                    self.panels.inventory = false;
+                }
+                let now = Instant::now();
+                let me = self.world.agent_id;
+                // the camera early, so its move has settled before the focus
+                if self.frame_count == 100
+                    && let Some(eyes) = self.scene.eyes_world(&self.world, &me, now)
+                {
+                    let rot = self.world.agent.body_rotation();
+                    self.camera
+                        .set_view(eyes + rot * Vec3::X * 0.7, eyes, &mut self.world.agent, &self.settings.camera);
+                }
+                if self.frame_count == 450
+                    && let Some(idx) = self.world.objects.index_of_uuid(&me)
+                    && let (Some(face), Some(object)) = (
+                        self.scene.eyes_world(&self.world, &me, now),
+                        crate::camera::pick_focus_object(&self.world, idx, now),
+                    )
+                {
+                    self.camera.focus_own_surface(face, Some(object), None, &self.settings.camera);
                 }
             }
             if value.ends_with(",side")

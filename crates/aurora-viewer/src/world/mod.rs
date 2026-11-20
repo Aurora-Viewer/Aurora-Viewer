@@ -1466,7 +1466,7 @@ impl World {
         if Some(key.region) == self.main_region && !self.teleporting {
             return false;
         }
-        for _ in 0..16 {
+        for _ in 0..objects::MAX_PARENT_DEPTH {
             match self.objects.get(idx).and_then(|o| self.objects.parent_of(o)) {
                 Some(p) if p == own => return true,
                 Some(p) => idx = p,

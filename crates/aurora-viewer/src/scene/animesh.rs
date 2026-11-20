@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// The linkset root owns the control skeleton even when its parent is an avatar.
 /// A flag on a child cannot turn a regular attachment into an animated object.
 pub fn owner(objects: &ObjectStore, mut idx: usize) -> Option<(Uuid, usize)> {
-    for _ in 0..16 {
+    for _ in 0..crate::world::objects::MAX_PARENT_DEPTH {
         let o = objects.get(idx)?;
         if o.is_avatar() {
             return Some((o.full_id, idx));
@@ -34,7 +34,7 @@ pub fn owner(objects: &ObjectStore, mut idx: usize) -> Option<(Uuid, usize)> {
 /// Same members as keeping the descendants whose `owner` is `root`, without
 /// walking up from each one: below a member, a child belongs to another
 /// skeleton only when it is an avatar, or an animated linkset root worn by
-/// the avatar `root`; `owner` gives up beyond 16 levels.
+/// the avatar `root`; `owner` gives up beyond `MAX_PARENT_DEPTH` levels.
 pub fn members(objects: &ObjectStore, root: usize) -> Vec<usize> {
     let mut result = Vec::new();
     let Some(r) = objects.get(root) else {
