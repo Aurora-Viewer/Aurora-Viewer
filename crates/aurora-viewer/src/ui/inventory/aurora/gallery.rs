@@ -978,7 +978,7 @@ fn small_tile(
     let pill = item.and_then(|it| pill(inv, it, facts));
     let (label, worn, link) = match (item, folder) {
         (Some(it), _) => (
-            shown_name(it).to_owned(),
+            it.name.clone(),
             pill.is_some_and(|(_, worn)| worn),
             matches!(it.asset_type, 24 | 25),
         ),
