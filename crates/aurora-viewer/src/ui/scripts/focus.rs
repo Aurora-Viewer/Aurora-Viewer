@@ -93,8 +93,13 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
     {
         egui::Popup::close_all(ctx);
         crate::ui::widgets::expand_floater(ctx, &windows[index].0);
-        if search.owns(owner) && Search::focused(ctx) {
-            search.focus = true;
+        if search.owns(owner) {
+            // Ctrl+F is a toggle, including when the Find floater owns focus.
+            let restore_editor = Search::focused(ctx) && editors[index].can_edit && !editors[index].tools.processed;
+            search.close();
+            if restore_editor {
+                ctx.memory_mut(|memory| memory.request_focus(owner));
+            }
         } else {
             let e = &editors[index];
             let id = if e.tools.processed { owner.with("processed") } else { owner };

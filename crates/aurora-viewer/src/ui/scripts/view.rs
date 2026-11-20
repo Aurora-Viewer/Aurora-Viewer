@@ -570,6 +570,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                     String::new()
                 };
                 let insensitive = search.insensitive;
+                let whole_words = search.whole_words;
                 let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
                 let editable = color_editable && !e.colors.active();
                 let mut scroll = egui::ScrollArea::new([!settings.word_wrap, true]);
@@ -586,9 +587,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
                             let lua = e.lua();
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                                let mut job = e
-                                    .highlighter
-                                    .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, lua);
+                                let mut job =
+                                    e.highlighter
+                                        .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, whole_words, lua);
                                 // panel_script_ed.xml enables wrapping; only the visual rows change.
                                 job.wrap.max_width = if settings.word_wrap { wrap } else { f32::INFINITY };
                                 e.folding.sync(text.as_str());
@@ -632,6 +633,29 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
                             }
                             e.colors.draw(ui, p, text, &output, &e.highlighter.colors, color_editable);
+                            // The script highlighter already paints every result a subtle amber.
+                            // Make only the active Find result prominent, even while the Find
+                            // floater owns the keyboard focus. Match notecard search styling.
+                            if search.owns(base_id)
+                                && let Some(range) = search.active_range(text)
+                            {
+                                let color = egui::Color32::from_rgba_unmultiplied(p.amber.r(), p.amber.g(), p.amber.b(), 145);
+                                let mut shapes = Vec::new();
+                                for rect in crate::ui::chat::range_rects(&output.galley, output.galley_pos, range) {
+                                    if !rect.intersects(output.text_clip_rect) {
+                                        continue;
+                                    }
+                                    let rect = rect.intersect(output.text_clip_rect);
+                                    shapes.push(egui::Shape::rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, color));
+                                    shapes.push(egui::Shape::rect_stroke(
+                                        rect,
+                                        ui.visuals().widgets.inactive.corner_radius,
+                                        egui::Stroke::new(1.5, p.amber),
+                                        egui::StrokeKind::Inside,
+                                    ));
+                                }
+                                ui.painter().with_clip_rect(output.text_clip_rect).add(egui::Shape::Vec(shapes));
+                            }
                             if editable
                                 && (output.response.changed()
                                     || e.tools.history_cursor != output.cursor_range
@@ -954,17 +978,19 @@ pub(super) fn search(
         e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
         return;
     }
-    let (pos, overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
-    if overlap {
-        let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
-        let child = egui::LayerId::new(egui::Order::Middle, Id::unique(Search::WINDOW));
-        // Dependent ordering, as LLFloater::addDependentFloater: clicking
-        // the script keeps its search above it without covering other windows.
-        ctx.set_sublayer(owner, child);
-        let pressed = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
-        if search.focus || pressed.is_some_and(|at| ctx.layer_id_at(at) == Some(child)) || ctx.is_being_dragged(child.id.with("move")) {
-            ctx.move_to_top(owner);
-        }
+    let (pos, _overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
+    // Dependent Find follows its active script parent whether overlapping or
+    // beside it. Do not force Find over unrelated windows when the editor is inactive.
+    let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
+    let child = egui::LayerId::new(egui::Order::Middle, Id::unique(Search::WINDOW));
+    ctx.set_sublayer(owner, child);
+    // A keyboard-focused Find field can remain focused while another window
+    // is explicitly raised. Only an actual interaction with this editor/find
+    // pair (or the initial Find opening) should raise the pair again.
+    let pressed = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
+    let pressed_here = pressed.is_some_and(|at| matches!(ctx.layer_id_at(at), Some(layer) if layer == owner || layer == child));
+    if (search.focus && pressed.is_none()) || pressed_here || ctx.is_being_dragged(child.id.with("move")) {
+        ctx.move_to_top(owner);
     }
     search.show(
         ctx,

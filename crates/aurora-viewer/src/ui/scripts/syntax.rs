@@ -529,11 +529,12 @@ struct Style {
     colors: [Color32; 15],
     query: String,
     insensitive: bool,
+    whole_words: bool,
     highlight: Color32,
 }
 
 impl Style {
-    fn new(p: &Palette, font: FontId, settings: &ScriptSettings, query: &str, insensitive: bool) -> Self {
+    fn new(p: &Palette, font: FontId, settings: &ScriptSettings, query: &str, insensitive: bool, whole_words: bool) -> Self {
         Self {
             font,
             colors: [
@@ -556,6 +557,7 @@ impl Style {
             .map(|kind| settings.color(kind.role(), p)),
             query: query.into(),
             insensitive,
+            whole_words,
             highlight: p.amber.gamma_multiply(0.3),
         }
     }
@@ -577,7 +579,7 @@ pub(super) struct Highlighter {
 impl Highlighter {
     #[cfg(test)]
     pub(super) fn layout(&mut self, source: &str, p: &Palette, font: FontId) -> LayoutJob {
-        self.custom(source, p, font, &ScriptSettings::default(), "", false, false)
+        self.custom(source, p, font, &ScriptSettings::default(), "", false, false, false)
     }
 
     pub(super) fn custom(
@@ -588,9 +590,10 @@ impl Highlighter {
         settings: &ScriptSettings,
         query: &str,
         insensitive: bool,
+        whole_words: bool,
         lua: bool,
     ) -> LayoutJob {
-        let style = Style::new(p, font, settings, query, insensitive);
+        let style = Style::new(p, font, settings, query, insensitive, whole_words);
         let keywords = lsl_keywords::generation();
         if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords || self.lua != lua {
             self.keywords = keywords;
@@ -621,7 +624,7 @@ impl Highlighter {
                 }
             }
             if !query.is_empty() {
-                let ranges = super::editing::matches(source, query, insensitive);
+                let ranges = super::editing::matches_filtered(source, query, insensitive, whole_words);
                 let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
                 let mut highlights = ranges.into_iter().map(|r| boundaries[r.start]..boundaries[r.end]).peekable();
                 let mut sections = Vec::new();
@@ -695,6 +698,30 @@ mod tests {
     }
 
     #[test]
+    fn whole_word_search_highlights_only_complete_word_sections() {
+        let source = "This hi high hi_there";
+        let mut highlighter = Highlighter::default();
+        let job = highlighter.custom(
+            source,
+            &Theme::default().palette(),
+            FontId::monospace(14.0),
+            &ScriptSettings::default(),
+            "hi",
+            true,
+            true,
+            false,
+        );
+        let highlight = Theme::default().palette().amber.gamma_multiply(0.3);
+        let marks: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| section.format.background == highlight)
+            .map(|section| section.byte_range.start.0..section.byte_range.end.0)
+            .collect();
+        assert_eq!(marks, vec![5..7, 13..15]);
+    }
+
+    #[test]
     fn swatch_spacing_keeps_source_and_character_ranges_with_search_highlights() {
         let source = "vector c = <0,1,0>; vector d = <1,0,0>;";
         let mut highlighter = Highlighter::default();
@@ -704,6 +731,7 @@ mod tests {
             FontId::monospace(14.0),
             &ScriptSettings::default(),
             "0",
+            false,
             false,
             false,
         );

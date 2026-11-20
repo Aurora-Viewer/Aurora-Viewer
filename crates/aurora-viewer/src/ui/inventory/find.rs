@@ -33,6 +33,7 @@ pub(super) struct Find {
     query: String,
     replacement: String,
     insensitive: bool,
+    whole_words: bool,
     up: bool,
     /// Put the keyboard in the text to find, its text selected.
     focus: bool,
@@ -47,6 +48,7 @@ struct Cached {
     text: String,
     query: String,
     insensitive: bool,
+    whole_words: bool,
     ranges: Arc<Vec<Range<usize>>>,
 }
 
@@ -161,6 +163,10 @@ impl Find {
             if widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive")).changed() {
                 self.status.clear();
             }
+            if widgets::checkbox(ui, p, &mut self.whole_words, aurora_i18n::tr!("script-search-whole-words")).changed() {
+                self.current = None;
+                self.status.clear();
+            }
             widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             if widgets::flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
                 self.find(&ctx, editor, text);
@@ -205,16 +211,18 @@ impl Find {
         let query = plain(&self.query);
         if let Some(cached) = &self.cached
             && cached.insensitive == self.insensitive
+            && cached.whole_words == self.whole_words
             && cached.query == query
             && cached.text == text
         {
             return cached.ranges.clone();
         }
-        let ranges = Arc::new(editing::matches(text, &query, self.insensitive));
+        let ranges = Arc::new(editing::matches_filtered(text, &query, self.insensitive, self.whole_words));
         self.cached = Some(Cached {
             text: text.to_owned(),
             query,
             insensitive: self.insensitive,
+            whole_words: self.whole_words,
             ranges: ranges.clone(),
         });
         ranges
@@ -348,6 +356,34 @@ mod tests {
         text[editing::bytes(text, editing::cursor(ctx, id))].to_owned()
     }
 
+    #[test]
+    fn whole_words_filters_matches_and_refreshes_cache() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("note_whole_words");
+        let mut bar = find("hi", false);
+        let mut text = "hi high hi_there (hi)".to_owned();
+
+        // Without the option, partial-word matches are included.
+        let all = bar.matches(&text);
+        assert_eq!(all.len(), 4);
+
+        // Changing the option must invalidate cached results.
+        bar.whole_words = true;
+        let whole = bar.matches(&text);
+        assert_eq!(whole.len(), 3);
+        assert!(!Arc::ptr_eq(&all, &whole));
+
+        // Highlighting and replacement use the same filtered matches.
+        bar.publish(&ctx, id, &text);
+        assert_eq!(highlights(&ctx, id).expect("published").ranges.len(), 3);
+
+        bar.replacement = "HELLO".into();
+        assert!(bar.replace_all(&ctx, id, &mut text));
+        assert_eq!(text, "HELLO high HELLO_there (HELLO)");
+
+        bar.whole_words = false;
+        assert_eq!(bar.matches(&text).len(), 1);
+    }
     #[test]
     fn find_is_case_sensitive_by_default_and_wraps_both_ways() {
         let ctx = egui::Context::default();
