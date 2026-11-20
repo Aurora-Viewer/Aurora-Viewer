@@ -7470,10 +7470,14 @@ failure. Grid validation and any paid upload are performed by the human.
   Ctrl+T, Ctrl+W, a middle click on a tab or its cross; a middle click on a
   folder (a tab at the end, behind) and its menu's Open in new tab; each tab
   keeps its own Back / Forward and selection; an item dragged onto a tab
-  goes into its folder, held there the tab shows. `-split` opens the
+  goes into its folder, held there the tab shows. A tab dragged along the
+  strip moves (a violet line marks where); dragged away from the strip it
+  opens as a window of its own there; that window's tab dragged onto the
+  main window's strip goes back, and the window closes. `-split` opens the
   dual-panel layout with two explorers (the right one in the subfolder)
   and an item's menu with Copy / Move to the other pane; check the Undo of
-  such a move, and that the narrow panes keep their breadcrumb and columns.
+  such a move, that the narrow panes keep their breadcrumb and columns, and
+  that Tab in one pane's list gives the keyboard to the other's.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a

@@ -480,6 +480,9 @@ pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
 
 const DUAL_SIZE: Vec2 = Vec2::new(900.0, 600.0);
 
+/// A window made from a tab: an explorer at the medium width.
+const TORN_SIZE: Vec2 = Vec2::new(820.0, 560.0);
+
 fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
 }
@@ -721,6 +724,13 @@ pub struct InventoryUi {
     history: aurora::History,
     /// The explorer's tabs (`aurora::tabs`).
     tabs: aurora::Tabs,
+    /// A window made from a tab dragged out of a strip (`aurora::tabs`):
+    /// the whole inventory, as the additional window, as many as made.
+    torn_off: bool,
+    /// Where such a window opens: where its tab was dropped.
+    spawn_at: Option<egui::Pos2>,
+    /// Its last tab went to another window: the window closes.
+    tabs_emptied: bool,
     /// In the split view (the dual-panel layout), the folder the other
     /// pane's explorer shows: each pane is an explorer at any width, and
     /// the menus offer Copy / Move to it.
@@ -2872,7 +2882,7 @@ pub fn show(
     {
         st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), residents));
     }
-    if let Some(dual) = dual {
+    if let Some(dual) = dual.as_deref_mut() {
         dual.hover
             .show(p, &world.inventory, prefs, hover_images, &mut dual.wanted_hover_images);
         dual.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
@@ -2967,6 +2977,11 @@ pub fn show(
                 additional_window_pos(ctx, screen),
                 DEFAULT_SIZE,
             )
+        } else if w.state.torn_off {
+            // a tab dragged out: an explorer where it was let go
+            fetch_whole_inventory(&mut world.inventory, &mut w.state);
+            let at = w.state.spawn_at.unwrap_or(screen.center() - TORN_SIZE * 0.5);
+            super::widgets::Floater::new(&window_id, aurora_i18n::tr!("common-inventory"), at, TORN_SIZE)
         } else {
             super::widgets::Floater::new(
                 &window_id,
@@ -2979,7 +2994,7 @@ pub fn show(
         if classic {
             w.state.aurora = None;
             floater.show(ctx, p, &mut w.open, |ui| {
-                if w.additional {
+                if w.additional || w.state.torn_off {
                     inventory_contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
                 } else {
                     folder_window_contents(
@@ -3002,7 +3017,7 @@ pub fn show(
             let mut widen = false;
             let layout = aurora::Layout::of_window(ctx, &window_id);
             let mut floater = floater;
-            if w.additional {
+            if w.additional || w.state.torn_off {
                 floater = floater
                     .title_note(aurora::item_count(&world.inventory, layout))
                     .title_note_tooltip(count_tooltip(&world.inventory));
@@ -3092,6 +3107,21 @@ pub fn show(
         }
         remember_recent_filters(&mut w.state, prefs);
         spawned.append(&mut w.state.windows);
+    }
+    // A tab let go this frame: along its strip, to another window, or out
+    // to a window of its own (`aurora::tabs::settle`); a window whose last
+    // tab left closes.
+    if !classic {
+        let mut panes: Vec<&mut InventoryUi> = std::iter::once(&mut *st)
+            .chain(dual.as_deref_mut())
+            .chain(windows.iter_mut().filter(|w| w.open).map(|w| &mut *w.state))
+            .collect();
+        aurora::tabs::settle(ctx, &mut panes, prefs, &mut spawned);
+        for w in &mut windows {
+            if std::mem::take(&mut w.state.tabs_emptied) {
+                w.open = false;
+            }
+        }
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.

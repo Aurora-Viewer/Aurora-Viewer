@@ -3,10 +3,14 @@
 //! history and selection. Ctrl+T opens the folder shown in a new tab,
 //! Ctrl+W closes the tab, Ctrl+Tab / Ctrl+Shift+Tab go from one to the next
 //! (all rebindable; Cmd+T / Cmd+W on a Mac); a middle click on a folder, or
-//! its menu's "Open in new tab", opens it in a tab behind. The strip shows
-//! from two tabs on, as Dolphin's: a click shows a tab, a middle click or
-//! its cross closes it, cargo dropped on a tab goes into its folder and
-//! cargo held over one shows it. Aurora difference: the Legacy Viewer's
+//! its menu's "Open in new tab", opens it in a tab behind. The strip is
+//! always there above the explorer's toolbar, as Explorer's: a click shows
+//! a tab, a middle click or its cross closes it, cargo dropped on a tab goes
+//! into its folder and cargo held over one shows it. A tab dragged along
+//! the strip moves there; dragged onto another window's strip it moves to
+//! that window (a window whose last tab leaves closes, as Explorer's and
+//! the browsers' windows merge); dragged away from any strip it becomes a
+//! window of its own (`settle`). Aurora difference: the Legacy Viewer's
 //! inventory has no tabs (its All Items / Recent / Worn tabs are the
 //! column's shortcuts here).
 //!
@@ -86,6 +90,181 @@ fn put(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: Tab) {
     st.row_menu = None;
     st.background_menu = false;
     st.reveal = st.selected;
+}
+
+/// Takes tab `index` out of the pane. Its last tab leaves the pane empty
+/// (`tabs_emptied`): only a window that may close gives it (`loose`).
+fn detach(st: &mut InventoryUi, prefs: &InventoryPreferences, index: usize) -> Option<Tab> {
+    let count = st.tabs.len();
+    if index >= count {
+        return None;
+    }
+    if count == 1 {
+        st.tabs_emptied = true;
+        return Some(take(st));
+    }
+    if index == st.tabs.active {
+        switch(st, prefs, if index + 1 < count { index + 1 } else { index - 1 });
+    }
+    let tab = st.tabs.list.remove(index);
+    if index < st.tabs.active {
+        st.tabs.active -= 1;
+    }
+    if st.tabs.list.len() < 2 {
+        st.tabs.list.clear();
+        st.tabs.active = 0;
+    }
+    Some(tab)
+}
+
+/// `tab` comes in before tab `at`, shown.
+fn attach(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: Tab, at: usize) {
+    if st.tabs.list.is_empty() {
+        st.tabs.list.push(Tab::default());
+        st.tabs.active = 0;
+    }
+    let at = at.min(st.tabs.list.len());
+    st.tabs.list.insert(at, tab);
+    if at <= st.tabs.active {
+        st.tabs.active += 1;
+    }
+    switch(st, prefs, at);
+}
+
+/// Tab `from` moves to before tab `to` (counted before the move).
+fn reorder(st: &mut InventoryUi, from: usize, to: usize) {
+    let count = st.tabs.list.len();
+    if count < 2 || from >= count {
+        return;
+    }
+    let to = if to > from { to - 1 } else { to }.min(count - 1);
+    if to == from {
+        return;
+    }
+    let tab = st.tabs.list.remove(from);
+    st.tabs.list.insert(to, tab);
+    let active = st.tabs.active;
+    st.tabs.active = if active == from {
+        to
+    } else {
+        let mut active = active;
+        if from < active {
+            active -= 1;
+        }
+        if to <= active {
+            active += 1;
+        }
+        active
+    };
+}
+
+/// Whether the pane's window may lose its last tab and close: the
+/// additional window and the windows made from tabs, not the main window
+/// or its right pane.
+fn loose(st: &InventoryUi) -> bool {
+    st.torn_off || st.ui_id == ADDITIONAL_WINDOW
+}
+
+/// Whether the pane takes tabs from elsewhere: the whole inventory's, not a
+/// folder window's (its tabs stay under its folder).
+fn open_to_tabs(st: &InventoryUi) -> bool {
+    st.scope.is_nil()
+}
+
+/// A tab being dragged: its pane and place in the strip.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TabCargo {
+    pane: Uuid,
+    index: usize,
+}
+
+/// The dragged tab was let go at `at`, away from the strip `strip`.
+#[derive(Clone, Copy, Debug)]
+struct Ended {
+    pane: Uuid,
+    index: usize,
+    at: Pos2,
+    strip: Rect,
+}
+
+impl Default for Ended {
+    fn default() -> Self {
+        Ended {
+            pane: Uuid::nil(),
+            index: 0,
+            at: Pos2::ZERO,
+            strip: Rect::NOTHING,
+        }
+    }
+}
+
+/// The dragged tab was let go on the strip of `pane`, before its tab `at`.
+#[derive(Clone, Copy, Debug, Default)]
+struct Landing {
+    pane: Uuid,
+    at: usize,
+}
+
+fn ended_id() -> egui::Id {
+    egui::Id::unique("inventory_tab_drag_ended")
+}
+
+fn landing_id() -> egui::Id {
+    egui::Id::unique("inventory_tab_drag_landing")
+}
+
+/// Once every pane and window has drawn: the tab let go this frame moves
+/// along its strip, to the strip it landed on, or out to a window of its
+/// own (pushed to `spawned`, opening where it was let go).
+pub(crate) fn settle(
+    ctx: &egui::Context,
+    panes: &mut [&mut InventoryUi],
+    prefs: &InventoryPreferences,
+    spawned: &mut Vec<InventoryWindow>,
+) {
+    let (ended, landing) = ctx.data_mut(|d| (d.remove_temp::<Ended>(ended_id()), d.remove_temp::<Landing>(landing_id())));
+    let Some(ended) = ended else { return };
+    let Some(from) = panes.iter().position(|st| st.ui_id == ended.pane) else {
+        return;
+    };
+    match landing {
+        Some(landing) if landing.pane == ended.pane => reorder(panes[from], ended.index, landing.at),
+        Some(landing) => {
+            let Some(to) = panes.iter().position(|st| st.ui_id == landing.pane) else {
+                return;
+            };
+            let gives = (panes[from].tabs.len() > 1 || loose(panes[from])) && open_to_tabs(panes[from]);
+            if !gives || !open_to_tabs(panes[to]) || panes[to].tabs.list.len() >= LIMIT {
+                return;
+            }
+            if let Some(tab) = detach(panes[from], prefs, ended.index) {
+                attach(panes[to], prefs, tab, landing.at);
+            }
+        }
+        // away from the strips: a window of its own, unless the tab is its
+        // window's only one (dragging that is moving the window)
+        None => {
+            let away = !ended.strip.expand2(Vec2::new(0.0, 24.0)).contains(ended.at);
+            if !away || panes[from].tabs.len() < 2 || !open_to_tabs(panes[from]) {
+                return;
+            }
+            if let Some(tab) = detach(panes[from], prefs, ended.index) {
+                let mut state = InventoryUi {
+                    torn_off: true,
+                    spawn_at: Some(ended.at - Vec2::new(60.0, 16.0)),
+                    ..Default::default()
+                };
+                put(&mut state, prefs, tab);
+                spawned.push(InventoryWindow {
+                    id: Uuid::new_v4(),
+                    root: Uuid::nil(),
+                    additional: false,
+                    state: Box::new(state),
+                    open: true,
+                });
+            }
+        }
+    }
 }
 
 /// The place of tab `index`: the pane's own for the one shown.
@@ -204,7 +383,7 @@ pub(crate) fn input(ui: &egui::Ui, st: &mut InventoryUi, prefs: &InventoryPrefer
     }
 }
 
-/// The strip above the explorer's toolbar, from two tabs on.
+/// The strip above the explorer's toolbar.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn strip(
     ui: &mut egui::Ui,
@@ -215,17 +394,14 @@ pub(crate) fn strip(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    let count = st.tabs.list.len();
-    if count < 2 {
-        st.tabs.hover = None;
-        return;
-    }
+    let count = st.tabs.len();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STRIP), Sense::hover());
     let plus = Rect::from_min_size(Pos2::new(rect.right() - STRIP, rect.top()), Vec2::splat(STRIP));
     let room = (plus.left() - rect.left() - 4.0).max(0.0);
     let width = ((room - 2.0 * (count as f32 - 1.0)) / count as f32).clamp(48.0, 220.0);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let now = ui.input(|i| i.time);
+    let dragged_tab = egui::DragAndDrop::payload::<TabCargo>(ui.ctx()).map(|cargo| *cargo);
     let mut wanted = None;
     let mut closing = None;
     let mut held = None;
@@ -239,14 +415,21 @@ pub(crate) fn strip(
         }
         let place = place(st, index);
         let name = history::place_name(inv, place);
-        let response = ui.interact(cell, ui.scope_id().with(("inventory_folder_tab", index)), Sense::click());
-        let shown = index == st.tabs.active;
+        let response = ui.interact(cell, ui.scope_id().with(("inventory_folder_tab", index)), Sense::click_and_drag());
+        let shown = index == st.tabs.active || st.tabs.list.is_empty();
         let hot = response.hovered();
-        if shown || hot {
+        let moving = dragged_tab.is_some_and(|cargo| cargo.pane == st.ui_id && cargo.index == index);
+        if (shown || hot) && !moving {
             let fill = if shown { p.raised } else { p.raised.gamma_multiply(0.6) };
             ui.painter().rect_filled(cell, radius, fill);
         }
-        let ink = if shown { p.ink } else { p.muted };
+        let ink = if moving {
+            p.muted_dim
+        } else if shown {
+            p.ink
+        } else {
+            p.muted
+        };
         let close_rect = Rect::from_center_size(Pos2::new(cell.right() - 13.0, cell.center().y), Vec2::splat(18.0));
         let icon = match place.tab {
             0 => "folder-filled",
@@ -263,42 +446,81 @@ pub(crate) fn strip(
             job
         });
         widgets::paint_row_text(ui.painter(), galley, cell.left() + 26.0, cell.center().y, ink);
-        // its cross, on the tab shown or under the pointer
-        let close = ui.interact(
-            close_rect,
-            ui.scope_id().with(("inventory_folder_tab_close", index)),
-            Sense::click(),
-        );
-        if shown || hot || close.hovered() {
-            if close.hovered() {
-                ui.painter().rect_filled(close_rect, radius, p.raised.lerp_to_gamma(p.ink, 0.16));
-            }
-            widgets::paint_glyph(
-                ui.painter(),
-                "x",
-                close_rect.center(),
-                12.0,
-                if close.hovered() { p.ink } else { p.muted },
+        // its cross, on the tab shown or under the pointer; the last tab
+        // has none
+        if count > 1 {
+            let close = ui.interact(
+                close_rect,
+                ui.scope_id().with(("inventory_folder_tab_close", index)),
+                Sense::click(),
             );
+            if (shown || hot || close.hovered()) && !moving {
+                if close.hovered() {
+                    ui.painter().rect_filled(close_rect, radius, p.raised.lerp_to_gamma(p.ink, 0.16));
+                }
+                widgets::paint_glyph(
+                    ui.painter(),
+                    "x",
+                    close_rect.center(),
+                    12.0,
+                    if close.hovered() { p.ink } else { p.muted },
+                );
+            }
+            let close = close.on_hover_text(shortcuts::tip(ui.ctx(), aurora_i18n::tr!("inventory-close-tab"), Command::CloseTab));
+            if close.clicked() {
+                closing = Some(index);
+            }
         }
-        let close = close.on_hover_text(shortcuts::tip(ui.ctx(), aurora_i18n::tr!("inventory-close-tab"), Command::CloseTab));
         #[cfg(test)]
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_folder_tab", st.ui_id, index)), cell));
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, shown, &name));
-        if close.clicked() || response.middle_clicked() {
+        if response.middle_clicked() && count > 1 {
             closing = Some(index);
         } else if response.clicked() {
             wanted = Some(index);
         }
+        // the tab itself dragged: along the strip, to another window's, or
+        // away to a window of its own (`settle`)
+        if response.drag_started() && open_to_tabs(st) {
+            egui::DragAndDrop::set_payload(ui.ctx(), TabCargo { pane: st.ui_id, index });
+        }
+        if moving {
+            ghost(ui, p, &name, icon);
+        }
+        if response.drag_stopped()
+            && moving
+            && let Some(at) = ui.input(|i| i.pointer.interact_pos())
+        {
+            let ended = Ended {
+                pane: st.ui_id,
+                index,
+                at,
+                strip: rect,
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(ended_id(), ended));
+        }
         let response = response.on_hover_text(&name);
         // cargo dropped on a tab goes into its folder; held there, the tab
         // shows
-        if place.tab == 0 && inv.folders.contains_key(&place.folder) {
+        if dragged_tab.is_none() && place.tab == 0 && inv.folders.contains_key(&place.folder) {
             if !shown && response.contains_pointer() && egui::DragAndDrop::has_any_payload(ui.ctx()) {
                 held = Some(index);
             }
             drag::target(ui, p, &response, inv, place.folder, st, prefs, facts, actions);
+        }
+    }
+    // a tab let go over this strip lands before the tab under it
+    if dragged_tab.is_some()
+        && open_to_tabs(st)
+        && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+        && rect.expand2(Vec2::new(0.0, 6.0)).contains(pointer)
+    {
+        let at = (((pointer.x - rect.left()) / (width + 2.0)) + 0.5).floor().clamp(0.0, count as f32) as usize;
+        let x = (rect.left() + at as f32 * (width + 2.0) - 1.0).min(plus.left() - 2.0);
+        ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, p.violet));
+        if ui.input(|i| i.pointer.primary_released()) {
+            ui.ctx().data_mut(|d| d.insert_temp(landing_id(), Landing { pane: st.ui_id, at }));
         }
     }
     let tip = shortcuts::tip(ui.ctx(), aurora_i18n::tr!("inventory-new-tab"), Command::NewTab);
@@ -332,6 +554,30 @@ pub(crate) fn strip(
         switch(st, prefs, index);
     }
     ui.add_space(4.0);
+}
+
+/// The tab under the pointer while it is dragged.
+fn ghost(ui: &egui::Ui, p: &Palette, name: &str, icon: &str) {
+    let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) else {
+        return;
+    };
+    let painter = ui
+        .ctx()
+        .layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_tab_ghost")));
+    let galley = painter.layout_no_wrap(name.to_owned(), egui::FontId::proportional(12.5), p.ink);
+    let rect = Rect::from_min_size(
+        pointer + Vec2::new(12.0, 8.0),
+        Vec2::new((galley.size().x + 40.0).min(260.0), STRIP),
+    );
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    painter.rect_filled(rect, radius, p.raised);
+    painter.rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
+    widgets::paint_glyph(&painter, icon, Pos2::new(rect.left() + 14.0, rect.center().y), 14.0, p.ink);
+    painter.with_clip_rect(rect.shrink(4.0)).galley(
+        Pos2::new(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        p.ink,
+    );
 }
 
 #[cfg(test)]
@@ -427,5 +673,122 @@ mod tests {
         retain(&mut st, &prefs, &inv);
         assert_eq!(st.tabs.len(), 1, "every folder behind is gone");
         assert_eq!(at(&st), id(1), "the tab shown stays");
+    }
+
+    fn pane(n: u128, folder: u128) -> InventoryUi {
+        InventoryUi {
+            ui_id: id(n),
+            browse: id(folder),
+            ..Default::default()
+        }
+    }
+
+    fn folders(st: &InventoryUi) -> Vec<Uuid> {
+        (0..st.tabs.len()).map(|index| place(st, index).folder).collect()
+    }
+
+    #[test]
+    fn a_tab_dragged_along_its_strip_moves_there() {
+        let prefs = InventoryPreferences::default();
+        let mut st = pane(0, 1);
+        open(&mut st, &prefs, id(2), false);
+        open(&mut st, &prefs, id(3), false);
+        // the first (shown) to the end
+        reorder(&mut st, 0, 3);
+        assert_eq!(folders(&st), [id(2), id(3), id(1)]);
+        assert_eq!((st.tabs.active, at(&st)), (2, id(1)), "still shown");
+        // the last to the front
+        reorder(&mut st, 2, 0);
+        assert_eq!(folders(&st), [id(1), id(2), id(3)]);
+        assert_eq!(st.tabs.active, 0);
+        reorder(&mut st, 1, 3);
+        assert_eq!(folders(&st), [id(1), id(3), id(2)]);
+        assert_eq!(at(&st), id(1));
+    }
+
+    fn let_go(ctx: &egui::Context, pane: u128, index: usize, landing: Option<(u128, usize)>, at: Pos2) {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                ended_id(),
+                Ended {
+                    pane: id(pane),
+                    index,
+                    at,
+                    strip: Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, STRIP)),
+                },
+            );
+            if let Some((pane, at)) = landing {
+                d.insert_temp(landing_id(), Landing { pane: id(pane), at });
+            }
+        });
+    }
+
+    #[test]
+    fn a_tab_moves_to_another_window_and_a_window_left_empty_closes() {
+        let prefs = InventoryPreferences::default();
+        let ctx = egui::Context::default();
+        let mut main = pane(0, 1);
+        open(&mut main, &prefs, id(2), false);
+        let mut other = InventoryUi {
+            torn_off: true,
+            ..pane(7, 5)
+        };
+        let mut spawned = Vec::new();
+        // main's second tab onto the other window's strip, at its front
+        let_go(&ctx, 0, 1, Some((7, 0)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut other], &prefs, &mut spawned);
+        assert_eq!(folders(&main), [id(1)]);
+        assert_eq!(folders(&other), [id(2), id(5)]);
+        assert_eq!(at(&other), id(2), "shown where it lands");
+        // the main window keeps its last tab
+        let_go(&ctx, 0, 0, Some((7, 2)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut other], &prefs, &mut spawned);
+        assert_eq!(folders(&main), [id(1)]);
+        assert!(!main.tabs_emptied);
+        // a made window gives its tabs and closes with the last
+        let_go(&ctx, 7, 0, Some((0, 1)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut other], &prefs, &mut spawned);
+        let_go(&ctx, 7, 0, Some((0, 2)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut other], &prefs, &mut spawned);
+        assert_eq!(folders(&main), [id(1), id(2), id(5)]);
+        assert!(other.tabs_emptied, "its window closes");
+        assert!(spawned.is_empty());
+    }
+
+    #[test]
+    fn a_tab_let_go_away_from_the_strips_becomes_a_window() {
+        let prefs = InventoryPreferences::default();
+        let ctx = egui::Context::default();
+        let mut main = pane(0, 1);
+        let mut spawned = Vec::new();
+        // a pane's only tab stays
+        let_go(&ctx, 0, 0, None, Pos2::new(300.0, 300.0));
+        settle(&ctx, &mut [&mut main], &prefs, &mut spawned);
+        assert!(spawned.is_empty());
+        open(&mut main, &prefs, id(2), false);
+        // let go on the strip itself: nothing
+        let_go(&ctx, 0, 1, None, Pos2::new(300.0, 10.0));
+        settle(&ctx, &mut [&mut main], &prefs, &mut spawned);
+        assert!(spawned.is_empty());
+        // away from it: a window of its own where it was let go
+        let_go(&ctx, 0, 1, None, Pos2::new(300.0, 300.0));
+        settle(&ctx, &mut [&mut main], &prefs, &mut spawned);
+        assert_eq!(folders(&main), [id(1)]);
+        let window = spawned.pop().expect("a window");
+        assert!(window.open && window.root.is_nil() && window.state.torn_off);
+        assert_eq!(window.state.browse, id(2));
+        assert!(window.state.spawn_at.is_some_and(|at| at.y < 300.0));
+        // a folder window keeps its tabs under its folder
+        let mut folder = InventoryUi {
+            scope: id(9),
+            ..pane(8, 9)
+        };
+        open(&mut folder, &prefs, id(10), false);
+        let_go(&ctx, 8, 1, Some((0, 0)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut folder], &prefs, &mut spawned);
+        assert_eq!(folders(&folder), [id(9), id(10)]);
+        let_go(&ctx, 0, 0, Some((8, 0)), Pos2::new(10.0, 10.0));
+        settle(&ctx, &mut [&mut main, &mut folder], &prefs, &mut spawned);
+        assert_eq!(folders(&folder), [id(9), id(10)], "takes none");
     }
 }
