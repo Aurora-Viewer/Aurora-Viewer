@@ -823,6 +823,16 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// tips) leave the motion to what is behind them.
 const FSR_BLEND_ALPHA: f64 = 0.1;
 
+/// The opacity from which a blended texel is drawn into the depth the
+/// occlusion and the contact shadows read (`fs_depth_contact`): opaque to
+/// the eye, where the Legacy Viewer's shadows stop treating a face as
+/// semi-transparent (`alpha < 0.88`, shadowAlphaMaskF.glsl). From one
+/// half, as before, what stands behind a pane of glass took the pane's
+/// occlusion instead of its own wherever the glass was a little more
+/// opaque, along the texels of its streaks. The shading fades the terms in
+/// from there (`blend_screen_share`, common.wgsl).
+pub(crate) const SCREEN_BLEND_ALPHA: f64 = 0.88;
+
 /// FSR's upscale ratio under `aa`, none without FSR.
 fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
     match aa {
@@ -970,8 +980,8 @@ struct Targets {
     /// The frame groups bind GTAO's occlusion rather than the Legacy one.
     gtao_shown: bool,
     /// The depth both occlusion methods read: a copy of the prepass with the
-    /// blended faces at least half covered drawn over it (#882), when one
-    /// of them is ready.
+    /// blended faces opaque to the eye drawn over it (`SCREEN_BLEND_ALPHA`,
+    /// #882), when one of them is ready.
     ao_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
@@ -1986,7 +1996,7 @@ pub(crate) struct Backend {
     /// This frame's depth prepass writes each pixel's motion (`motion_view`):
     /// GTAO reads the mesh normals beside it, or TAA reprojects with it.
     motion_now: bool,
-    /// This frame draws the blended faces at least half covered into the
+    /// This frame draws the blended faces opaque to the eye into the
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
     bloom: crate::bloom::Bloom,
@@ -3586,8 +3596,8 @@ fn shadow_bias_legacy_now(mode: u8, now: std::time::SystemTime) -> bool {
 /// (`AURORA_BLEND_AO`, see the frame uniforms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlendAo {
-    /// Those at least half covered are in the occlusion's depth and take
-    /// it (the default, #882).
+    /// Those opaque to the eye are in the occlusion's depth and take it
+    /// (the default, #882).
     New,
     /// None takes it (#556).
     None,
@@ -5664,7 +5674,17 @@ impl Backend {
         });
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
-        let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
+        let pre_contact = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                fs: Some("fs_depth_contact"),
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
+                ..base("prepass contact", "vs_main", "fs_opaque")
+            })
+        });
         // the depth of the blended faces under the water, drawn after their
         // colour: into the single-sampled scene depth the water samples for
         // its refraction and its shallow-water fade, and with MSAA into the
@@ -5729,12 +5749,15 @@ impl Backend {
             pre_n("prepass portal normals 2s", "vs_depth_mask_normal", "fs_depth_portal_normal", None),
         ];
         let pre_contact_normal = std::array::from_fn(|side| {
-            pre_n(
-                "prepass contact normals",
-                "vs_depth_mask_normal",
-                "fs_depth_contact_normal",
-                blend_cull(side != 0),
-            )
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
+                ..base("prepass contact normals", "vs_depth_mask_normal", "fs_depth_contact_normal")
+            })
         });
         let fsr_blend_normal = std::array::from_fn(|side| {
             pipe(PipeDesc {
@@ -6191,8 +6214,8 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
-        // FSR reads it too: the blended faces at least half covered drawn
-        // there, with their motion, keep their history instead of taking
+        // FSR reads it too: the blended faces drawn there, with their
+        // motion (`fsr_blend_normal`), keep their history instead of taking
         // the motion of what lies behind them
         let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || matches!(s.aa, AntiAliasing::Fsr(_))).then(|| {
             // copied in turn for the contact shadows
@@ -8971,8 +8994,8 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
-        // AURORA_BLEND_AO=new|none|old|alt: the blended faces at least half
-        // covered drawn into the occlusion's depth and taking the
+        // AURORA_BLEND_AO=new|none|old|alt: the blended faces opaque to the
+        // eye drawn into the occlusion's depth and taking the
         // screen-space occlusion and indirect light (#882), no blended face
         // taking them (#556), all of them taking those of what lies behind
         // them, or `none` and `new` one second in two each (common.wgsl
@@ -10244,8 +10267,8 @@ impl Backend {
 
         prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
-        // ---- occlusion depth: the prepass and the blended faces at least
-        // half covered (fs_depth_contact). The many heads, bodies and hair
+        // ---- occlusion depth: the prepass and the blended faces opaque to
+        // the eye (fs_depth_contact). The many heads, bodies and hair
         // whose faces are blended though they look opaque then take the
         // occlusion like the opaque faces beside them, instead of what lies
         // behind them (#556) or none (#882: one half of a head darker)

@@ -109,7 +109,7 @@ struct Frame {
     spot_vp: array<mat4x4<f32>, 16>,
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
-    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
+    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque to the eye cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none); z: FEATURE_FACE_SELECT_SLOT; w: 1 where the volumetric clouds replace the Legacy layer (main view)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
@@ -1325,9 +1325,9 @@ const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
 // indirect light of what lies behind them, as before (AURORA_BLEND_AO=old;
 // screen_ao)
 const BLEND_SCREEN_TERMS: u32 = 0x4000u;
-// frame.light_mode.z: the occlusion's depth holds the blended faces at least
-// half covered (renderer.rs, "occlusion depth"), which then take the
-// screen-space terms (screen_surface; AURORA_BLEND_AO)
+// frame.light_mode.z: the occlusion's depth holds the blended faces opaque
+// to the eye (renderer.rs, "occlusion depth"), which then take the
+// screen-space terms (screen_share; AURORA_BLEND_AO)
 const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
@@ -1513,15 +1513,17 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
 }
 
-// Whether the fragment being shaded is the surface of the depth prepass,
-// whose contact shadows the mask holds: not a blended face.
-var<private> contact_surface: bool = true;
+// How much of the contact shadows' mask the fragment being shaded takes: 1
+// on the surface of the depth the mask was made from (the prepass, and the
+// blended faces opaque to the eye drawn over it: blend_screen_share), 0 on
+// a more transparent blended face.
+var<private> contact_share: f32 = 1.0;
 
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
-    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
+    if (frame.contact.x < 0.5 || contact_share <= 0.0 || in_reflection_pass()) {
         return 1.0;
     }
     let p = vec2<i32>(frag);
@@ -1529,7 +1531,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return 1.0;
     }
-    return 1.0 - textureLoad(contact_tex, p, 0).r;
+    return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
 }
 
 // The sun's shadow of an opaque surface of the main view: the shadow map,
@@ -1643,22 +1645,40 @@ var<private> surface_occlusion: f32 = 0.0;
 // a face they are those of what lies behind it, around a closer object a
 // dark halo (#556). The Legacy Viewer's alpha pass applies neither
 // (materialF.glsl, alphaF.glsl: no adjustIrradiance outside softenLightF).
-// A blended face at least half covered is in that depth (BLEND_SCREEN_DEPTH)
+// A blended face opaque to the eye is in that depth (BLEND_SCREEN_DEPTH)
 // and takes them like an opaque one: a head whose halves differ in alpha
-// mode no longer shows a line down the middle (#882).
-var<private> screen_surface: bool = true;
+// mode no longer shows a line down the middle (#882). 1 on an opaque
+// surface, 0 on a translucent face, blend_screen_share between.
+var<private> screen_share: f32 = 1.0;
 
-// Whether the fragment being shaded takes the screen-space terms (see
-// screen_surface).
-fn screen_terms() -> bool {
-    return screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u;
+// How much of the screen-space terms (ambient occlusion, indirect light,
+// contact shadows) a blended fragment of opacity `alpha` takes. They are
+// made from a depth that holds a blended texel from an opacity of 0.88
+// (SCREEN_BLEND_ALPHA, renderer.rs), where the Legacy Viewer's shadows
+// stop treating a face as semi-transparent (shadowAlphaMaskF.glsl): none
+// under it, where they are those of what lies behind the face, all from
+// 0.95, and a ramp between. A step drew a ragged line along the texels of
+// a glass texture whose opacity crosses it.
+fn blend_screen_share(alpha: f32) -> f32 {
+    return smoothstep(0.88, 0.95, alpha);
+}
+
+// The share of the screen-space terms the fragment being shaded takes (see
+// screen_share).
+fn screen_terms() -> f32 {
+    if ((frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u) {
+        return 1.0;
+    }
+    return screen_share;
 }
 
 fn screen_ao(frag: vec2<f32>) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if (frame.misc.x < 0.5 || in_reflection_pass() || share <= 0.0) {
         return 1.0;
     }
-    return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    let ao = max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    return mix(1.0, ao, share);
 }
 
 // The light the surfaces around bounce onto the fragment at `frag`
@@ -1671,10 +1691,11 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // as is, it lit the creases and contacts back up and the occlusion seemed
 // gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || share <= 0.0) {
         return vec3<f32>(0.0);
     }
-    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * (share * screen_ao(frag));
 }
 
 // The solid angle two spherical caps share, divided by 2 pi: caps of

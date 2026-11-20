@@ -414,3 +414,110 @@ fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0,1.0,1.0,f32(
         }
     }
 }
+
+/// The screen-space occlusion, indirect light and contact shadows of a
+/// blended face fade in with its opacity from the one at which it enters
+/// the occlusion's depth: a step there drew a ragged line along the texels
+/// of a glass texture whose opacity crosses it.
+#[test]
+fn blended_faces_take_the_screen_terms_by_their_opacity_without_a_step_on_gpu() {
+    const STEPS: u32 = 1000;
+    let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+    let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+    let start = common.find("fn blend_screen_share(").expect("production share");
+    let share = &common[start..start + common[start..].find("\n}").expect("share end") + 2];
+    // both terms of a blended face go through it
+    let shade = &object[object.find("fn shade_material(").expect("shade_material")..];
+    let shade = &shade[..shade.find("\n}").expect("shade_material end")];
+    assert!(shade.contains("blend_screen_share(m.color.a)"), "the shares of a blended fragment");
+    assert!(!shade.contains("m.color.a >="), "no step on the opacity");
+    // the opacity from which fs_depth_contact writes the face into that depth
+    let depth_alpha = crate::renderer::SCREEN_BLEND_ALPHA as f32;
+    let source = format!(
+        r#"
+{share}
+@group(0) @binding(0) var<storage,read_write> shares:array<f32>;
+@compute @workgroup_size(1) fn cs(@builtin(global_invocation_id) id:vec3<u32>) {{
+    shares[id.x]=blend_screen_share(f32(id.x)/{STEPS}.0);
+}}
+"#
+    );
+    let _gpu = crate::test_gpu::lock();
+    let instance = wgpu::Instance::default();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("share GPU device");
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("production blended share"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("blended share"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("cs"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let size = u64::from(STEPS + 1) * 4;
+    let shares = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shares"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shares readback"),
+        size: crate::readback::readback_size(size),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: shares.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(STEPS + 1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&shares, 0, &readback, 0, size);
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("shares readback"));
+    device.poll(wgpu::PollType::wait_indefinitely()).expect("shares completion");
+    // (the readback is rounded up: only the shares computed)
+    let shares = crate::readback::f32s(&readback.get_mapped_range(..).expect("shares"));
+    let shares = &shares[..=STEPS as usize];
+    let alpha = |i: usize| i as f32 / STEPS as f32;
+    for (i, share) in shares.iter().enumerate() {
+        assert!((0.0..=1.0).contains(share), "alpha {}: {share}", alpha(i));
+        if alpha(i) < depth_alpha {
+            // not in the occlusion's depth: the terms there are those of
+            // what lies behind the face (#556)
+            assert_eq!(*share, 0.0, "alpha {}", alpha(i));
+        }
+        if alpha(i) >= 0.95 {
+            // opaque to the eye: as the opaque faces beside it (#882)
+            assert!(*share > 0.99, "alpha {}: {share}", alpha(i));
+        }
+    }
+    assert_eq!(shares[STEPS as usize], 1.0);
+    for (i, pair) in shares.windows(2).enumerate() {
+        let rise = pair[1] - pair[0];
+        assert!(
+            (0.0..0.03).contains(&rise),
+            "alpha {} to {}: {} to {}",
+            alpha(i),
+            alpha(i + 1),
+            pair[0],
+            pair[1]
+        );
+    }
+}

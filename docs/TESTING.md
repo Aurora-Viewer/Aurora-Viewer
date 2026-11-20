@@ -5315,6 +5315,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]` | One translucent pane covering that part of the view (10 % by default), the rest holding no blended face: what the stochastic transparency spends outside the transparency |
 | `AURORA_DEMO_OIT_COLUMN=<tubes>[,<alpha>]` | A tall translucent column of nested tubes with a fine woven texture, left of the start view: many curved blended layers for the transparency in each anti-aliasing mode |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
+| `AURORA_DEMO_SOFT_BLEND=1` | A glass desk top and a pane of streaked glass over shelves, left of the start view: glass whose opacity varies within a face, under things that occlude it |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
 | `AURORA_DEMO_MIRROR_METAL=1` | With `AURORA_DEMO_MIRROR`: the mirror's panel in polished PBR metal, 5 cm thin (its face 2.5 cm off the probe's plane); with SSR on, the mirror must still show our avatar's front, not SSR's copy of its back (#3375) |
@@ -12502,7 +12503,7 @@ What the inventory must show with these scenarios:
 | `AURORA_ST_GUARDS=0` | The stochastic transparency's tests for a NaN left out of the alpha passes and of the resolve's samples, to measure what they cost; development builds only |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
-| `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
+| `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those opaque to the eye (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 | `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
 
@@ -13369,13 +13370,16 @@ What the inventory must show with these scenarios:
   its creator saw. `asset` keeps the order of the asset, as before, to
   compare.
 - **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
-  reads a copy of the depth prepass with the blended faces at least half
-  covered drawn over it (`fs_depth_contact`, the rule of the contact
-  shadows), and those faces take the screen-space ambient occlusion and
-  GTAO's indirect light like the opaque ones (#882: a mesh head whose two
-  halves differ in alpha mode showed a line down the middle with the
-  occlusion on); more transparent ones take neither, as the Legacy
-  Viewer's alpha pass. `none`: no blended face takes them and the
+  reads a copy of the depth prepass with the blended faces opaque to the
+  eye drawn over it (`fs_depth_contact`, the rule of the contact shadows:
+  the texels from an opacity of 0.88, where the Legacy Viewer's shadows
+  stop treating a face as semi-transparent), and those faces take the
+  screen-space ambient occlusion and GTAO's indirect light like the opaque
+  ones (#882: a mesh head whose two halves differ in alpha mode showed a
+  line down the middle with the occlusion on), fading in from 0.88 to
+  0.95; more transparent ones take neither, as the Legacy Viewer's alpha
+  pass, and what stands behind them keeps its own (see
+  `AURORA_DEMO_SOFT_BLEND`). `none`: no blended face takes them and the
   occlusion reads the prepass alone (#556 to #882); `old`: every blended
   face takes those of what lies behind it (before #556); `alt`: `none` one
   second in two. With the contact shadows on, their pass copies that depth
@@ -13422,6 +13426,23 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_DEBUG=ao`, `AURORA_BLEND_AO=none` shows the occlusion
   around the nose stopping at the middle line, the left half white;
   the default shows it whole (#882).
+- **`AURORA_DEMO_SOFT_BLEND=1`**: a set against a wall 2 m along the start
+  view and 3 m to its left (`AURORA_DEMO_POS`): a glass desk top (face
+  alpha 0.72, a texture whose alpha wanders around 0.7 with the grain of a
+  compressed picture: opacities from 0.38 to 0.70) with a screen standing
+  on it and a box on a tray of the same texture at face alpha 1 (0.53 to
+  0.97), and two shelves with balls behind a pane of streaked
+  glass (face alpha 0.66, the streaks at 0.66, the glass between them at
+  0.36). With `AURORA_GRAPHICS_PRESET=high`, `AURORA_AO=gtao:2` and
+  `AURORA_DEMO_DEBUG=ao`, a capture at frame 700: the desk top is even,
+  the occlusion around the box fades over the tray without a border, the
+  shelves and the balls keep their occlusion over the whole pane, and the
+  streaks are only a faint veil. Before, a blended texel was in the
+  occlusion's depth from an opacity of one half, and took the occlusion
+  and the contact shadows from there at once: torn patches the shape of
+  the texture's grain on the desk top, dark under the screen and white
+  beside it, and hard jagged streaks on the pane, white where the glass
+  hid the occlusion of what stands behind it.
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with
