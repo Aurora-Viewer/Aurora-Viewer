@@ -790,23 +790,16 @@ impl App {
                         editor.open = false;
                     }
                 }
-                let similar = if self.gesture_state.manager.active.contains(&item) {
-                    self.gesture_state.manager.similar(item, &save.definition)
-                } else {
-                    Vec::new()
-                };
-                for id in similar {
-                    self.gesture_active(id, false, true);
-                }
-                let effects = self.gesture_state.manager.stop(item);
-                self.gesture_effects(effects);
-                self.gesture_state.manager.entries.insert(
+                // LLPreviewGesture::onSaveComplete → replaceGesture: no other
+                // gesture is deactivated, whatever its shortcut (#4167)
+                let effects = self.gesture_state.manager.replace(
                     item,
                     Entry {
                         asset,
                         definition: save.definition,
                     },
                 );
+                self.gesture_effects(effects);
                 if self.gesture_state.manager.active.contains(&item) {
                     self.send(NetCommand::SetGestureActive { item, asset, active: true });
                 }

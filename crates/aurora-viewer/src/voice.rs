@@ -899,6 +899,7 @@ mod tests {
         use crate::settings::{AudioSettings, VoiceEar};
         let mut a: AudioSettings = serde_json::from_str("{\"mic_gain\":0.75}").expect("old preferences");
         assert_eq!(a.voice_ear, VoiceEar::Camera);
+        assert_eq!(a.media_sounds_ear, VoiceEar::Camera, "MediaSoundsEarLocation 0");
         assert_eq!(a.mic_processing(), aurora_audio::MicProcessing::default());
         assert!(
             a.lip_sync
@@ -909,6 +910,7 @@ mod tests {
                 && a.conversation_voice_indicator
         );
         a.voice_ear = VoiceEar::Avatar;
+        a.media_sounds_ear = VoiceEar::Avatar;
         a.voice_noise_suppression = 2;
         a.voice_echo_cancellation = false;
         a.lip_sync = false;

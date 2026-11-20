@@ -46,6 +46,7 @@ mod director_montage;
 mod director_render;
 mod director_thumbs;
 mod director_titles;
+mod disable_glass;
 mod disk_io;
 mod dof;
 mod editor_sync;

@@ -172,6 +172,7 @@ pub mod widgets;
 
 #[cfg(test)]
 mod uri_restore_tests;
+pub mod world_look;
 pub mod worldmap;
 
 /// Which floating panels are open.
@@ -194,6 +195,8 @@ pub struct Panels {
     /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
     /// app copies here for the toolbar's button).
     pub snapshot_pano: bool,
+    /// The World filters window (`ui/world_look.rs`).
+    pub world_look: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -303,6 +306,7 @@ impl Panels {
             wearable_favorites: false,
             snapshot: false,
             snapshot_pano: false,
+            world_look: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,

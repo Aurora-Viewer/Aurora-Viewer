@@ -96,9 +96,6 @@ pub struct ThunderInput {
     pub underwater: bool,
     /// In the world, not a silent demo.
     pub audible: bool,
-    /// The region sets the weather: its seed and the clock (Unix seconds),
-    /// which make the same strikes for every viewer there.
-    pub shared: Option<(u64, f64)>,
 }
 
 /// One strike's flash: the stepped leader's time (s: the bolt grows down
@@ -155,8 +152,6 @@ pub struct Thunder {
     played: u64,
     /// A storm was on the frame before.
     was_active: bool,
-    /// The last second drawn for a shared storm.
-    shared_slot: Option<i64>,
     /// How bright the lightning is now (0: none; about 1 for a strike a
     /// kilometre away).
     pub flash: f32,
@@ -178,7 +173,6 @@ impl Default for Thunder {
             claps: Vec::new(),
             played: 0,
             was_active: false,
-            shared_slot: None,
             flash: 0.0,
             flash_at: (Vec2::X, 0.3),
         }
@@ -315,44 +309,10 @@ impl Thunder {
         });
     }
 
-    /// A storm the region sets, second by second: each second of the clock
-    /// strikes or not by a draw from the region's seed and that second, and
-    /// a strike's distance, direction and bolt come from it too, so every
-    /// viewer there sees and hears the same strikes at the same time (give
-    /// or take how far apart their clocks are). The same mean interval as
-    /// a viewer's own storm. Seconds missed (a slow frame) are drawn late,
-    /// up to five.
-    fn shared_strikes(&mut self, seed: u64, unix_secs: f64, mean: f32, now: Instant) {
-        let slot = unix_secs.floor() as i64;
-        let first = match self.shared_slot {
-            Some(last) if last == slot => return,
-            Some(last) if last < slot && slot - last <= 5 => last + 1,
-            _ => slot,
-        };
-        let chance = 1.0 - (-1.0 / mean.max(SHORTEST_WAIT)).exp();
-        for s in first..=slot {
-            let draw = crate::weather::region::mix(seed ^ (s as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let roll = (draw >> 40) as f32 / (1u64 << 24) as f32;
-            if roll < chance {
-                // the strike's own draws from the same second
-                self.seed = crate::weather::region::mix(draw) | 1;
-                self.strike(now, None);
-            }
-        }
-        self.shared_slot = Some(slot);
-    }
-
     /// One frame: maybe a strike, the thunder due, and the flash now.
     pub fn update(&mut self, engine: Option<&AudioEngine>, input: &ThunderInput, now: Instant) {
         let active = input.enabled && input.rain >= MIN_RAIN;
-        if !active || input.shared.is_none() {
-            self.shared_slot = None;
-        }
-        if active && let Some((seed, unix_secs)) = input.shared {
-            let _ = clips();
-            self.next = None;
-            self.shared_strikes(seed, unix_secs, Self::mean_interval(input.rain, input.frequency), now);
-        } else if active {
+        if active {
             // the clips start decoding with the first storm
             let _ = clips();
             match self.next {
@@ -546,7 +506,6 @@ mod tests {
 
     fn input(rain: f32) -> ThunderInput {
         ThunderInput {
-            shared: None,
             enabled: true,
             rain,
             forward: Vec3::X,
@@ -599,39 +558,6 @@ mod tests {
             }
         }
         assert!((20..=120).contains(&strikes), "{strikes} in 10 minutes");
-    }
-
-    /// Two viewers in a region that sets the weather, their own seeds apart:
-    /// the same strikes at the same seconds, from the same way and distance,
-    /// with the same bolts; another region's seed, other strikes.
-    #[test]
-    fn a_region_storm_strikes_alike_for_every_viewer() {
-        let t0 = Instant::now();
-        let strikes = |own: u64, region: u64| {
-            let mut th = Thunder {
-                seed: own,
-                ..Thunder::default()
-            };
-            let mut all = Vec::new();
-            for s in 0..600u64 {
-                th.shared_strikes(region, 1_800_000_000.0 + s as f64, 20.0, t0 + Duration::from_secs(s));
-                for f in th.flashes.drain(..) {
-                    let bolt = f.bolt.map(|b| b.segments[3].b);
-                    all.push((s, f.from, f.distance, bolt));
-                }
-            }
-            all
-        };
-        let a = strikes(1, 42);
-        let b = strikes(0xABCD_EF01, 42);
-        assert!((10..=60).contains(&a.len()), "{} strikes in 10 minutes", a.len());
-        assert_eq!(a, b);
-        assert_ne!(a, strikes(1, 43));
-        // a slow frame: the seconds it skipped are drawn when it comes
-        let mut th = Thunder::default();
-        th.shared_strikes(42, 1_800_000_000.0, 20.0, t0);
-        th.shared_strikes(42, 1_800_000_003.0, 20.0, t0);
-        assert_eq!(th.shared_slot, Some(1_800_000_003));
     }
 
     #[test]

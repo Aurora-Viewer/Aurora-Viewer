@@ -623,9 +623,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags, item) => {
+            InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.pick_local_settings(asset, kind, Some(item));
+                    self.world.eep.request_local(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
