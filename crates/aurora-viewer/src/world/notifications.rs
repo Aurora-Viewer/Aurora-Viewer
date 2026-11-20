@@ -307,9 +307,12 @@ pub enum Data {
     /// A new version of Aurora, found by a periodic check (`updater.rs`):
     /// its button opens the update window, `ready` once downloaded. Aurora
     /// only (the Legacy Viewer checks at launch); its card wears the
-    /// aurora's colours in Aurora's notification center.
+    /// aurora's colours in Aurora's notification center. `blocked`: this
+    /// installation cannot install it (`Updater::blocked`), the button only
+    /// opens the window, which says how to update.
     Update {
         ready: bool,
+        blocked: bool,
     },
     /// Our avatar complexity, and how many people around may not see us
     /// fully (AgentComplexity / AgentComplexityWithVisibility, notifytips

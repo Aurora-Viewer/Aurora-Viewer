@@ -125,10 +125,11 @@ The viewer must own its folder: it replaces it from the folder above, and
 only the package's own entries are moved, so your own files beside it stay
 where they are. A folder it cannot write to (a system-wide installation made
 by root) or a sandbox that mounts the package read-only (Flatpak, Snap,
-AppImage) is refused rather than forced: the update window says so and links
-the release page, for the package manager or the bundle to update. Aurora
-asks for no elevation, and an installation updated by such a tool keeps
-working: the viewer only offers the new version.
+AppImage) is refused rather than forced: the update window says so as soon as
+it offers the new version, with no "Update" button, and links the release
+page, for the package manager or the bundle to update. The Automatic mode
+downloads nothing there. Aurora asks for no elevation, and an installation
+updated by such a tool keeps working: the viewer only offers the new version.
 
 ## Saved passwords
 
