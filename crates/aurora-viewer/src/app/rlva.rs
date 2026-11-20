@@ -145,6 +145,24 @@ impl App {
         self.world.rlva.apply_preferences(&self.settings.rlva, phase);
     }
 
+    /// The arrival of a teleport that keeps the camera's direction (the
+    /// @standtp return): the Legacy Viewer detached the camera when it asked
+    /// (LLAgent::doTeleportViaLocationLookAt, setFocusOnAvatar(false)), so
+    /// the arrival's resetView turns the avatar to where the camera looks
+    /// (LLAgentCamera::setFocusOnAvatar, process_teleport_local; the
+    /// region-change arrival takes the camera's at-axis,
+    /// process_agent_movement_complete). An arrival elsewhere (another
+    /// teleport, a failed one) drops it.
+    pub(super) fn keep_look_at_on_arrival(&mut self) {
+        let Some(target) = self.tp_keeps_look_at.take() else { return };
+        if self.world.agent.position.truncate().distance(target.truncate()) > 2.0 {
+            return;
+        }
+        let look = self.camera.forward();
+        self.camera.fold_orbit(&mut self.world.agent);
+        self.world.agent.set_look_at(glam::Vec3::new(look.x, look.y, 0.0));
+    }
+
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         if std::mem::take(&mut self.world.rlva.im.remember) {
@@ -237,6 +255,9 @@ impl App {
             self.send_from(command, actor);
         }
         if let Some(command) = self.world.rlva_stand_return_command(self.camera.forward()) {
+            if let NetCommand::TeleportTo { position, .. } = &command {
+                self.tp_keeps_look_at = Some(*position);
+            }
             self.send(command);
             self.world.rlva.stand_return = None;
         }
