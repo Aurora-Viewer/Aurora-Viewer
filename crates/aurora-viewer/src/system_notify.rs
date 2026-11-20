@@ -178,9 +178,9 @@ mod freedesktop {
     const PATH: &str = "/org/freedesktop/Notifications";
     /// The application name the server groups the notices by.
     const APP_NAME: &str = "Aurora Viewer";
-    /// The desktop entry's id (`aurora-viewer.desktop`), from which a server
-    /// takes the name and icon it shows and its per-application rules.
-    const DESKTOP_ENTRY: &str = "aurora-viewer";
+    // The desktop entry's id (`aurora-viewer.desktop`, the Flatpak's own
+    // inside a Flatpak), from which a server takes the name and icon it
+    // shows and its per-application rules: `crate::cli::desktop_id`.
     /// Notices whose click is still awaited: the server's id, then ours. A
     /// server tells when one closes; the bound covers one that does not.
     const KEEP: usize = 32;
@@ -247,7 +247,7 @@ mod freedesktop {
     /// (NOTIFY_URGENCY_NORMAL).
     fn hints() -> HashMap<&'static str, Value<'static>> {
         HashMap::from([
-            ("desktop-entry", Value::from(DESKTOP_ENTRY)),
+            ("desktop-entry", Value::from(crate::cli::desktop_id())),
             ("suppress-sound", Value::from(true)),
             ("urgency", Value::from(1u8)),
         ])

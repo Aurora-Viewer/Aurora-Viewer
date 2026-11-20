@@ -10038,6 +10038,7 @@ update-error-unsupported = Cette release ne permet pas l’installation automati
 update-error-protected = Aurora ne peut pas se remplacer ici : ce dossier appartient à un paquet isolé (Flatpak, Snap, AppImage) ou votre compte ne peut pas y écrire. Mettez Aurora à jour comme elle a été installée, ou téléchargez la nouvelle version depuis sa page.
 update-error-drive-root = Aurora ne peut pas se mettre à jour dans un dossier placé à la racine d’un disque, comme E:\Aurora Viewer. Déplacez le dossier d’un niveau, par exemple dans E:\Jeux\Aurora Viewer, lancez Aurora depuis cet endroit, puis mettez à jour.
 update-error-unsupported-macos = Sur macOS, une nouvelle version s’installe à la main. Téléchargez-la depuis sa page, puis remplacez Aurora Viewer dans votre dossier Applications par la nouvelle.
+update-error-unsupported-flatpak = Cet Aurora fonctionne en Flatpak. Téléchargez le nouveau fichier .flatpak depuis sa page, puis ouvrez-le avec votre logithèque ou installez-le avec « flatpak install --user ». Vos réglages sont conservés.
 update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
 update-rollback = La nouvelle version n’a pas démarré correctement. L’ancienne installation a été restaurée.
 update-rollback-install = La nouvelle version n’a pas pu être installée. L’ancienne installation a été conservée.

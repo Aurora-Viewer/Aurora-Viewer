@@ -9971,6 +9971,7 @@ update-error-unsupported = このリリースはこのフォルダから自動�
 update-error-protected = ここではAuroraを置き換えられません。このフォルダはサンドボックス化されたパッケージ（Flatpak、Snap、AppImage）に属しているか、あなたのアカウントでは書き込めません。インストールした方法で更新するか、リリースページから新しいバージョンをダウンロードしてください。
 update-error-drive-root = E:\Aurora Viewer のようにドライブ直下にあるフォルダーでは、Auroraは自動更新できません。E:\Games\Aurora Viewer など一つ下の階層にフォルダーを移動し、そこからAuroraを起動してから更新してください。
 update-error-unsupported-macos = macOSでは、新しいバージョンは手動でインストールします。リリースページからダウンロードし、アプリケーションフォルダのAurora Viewerを新しいものに置き換えてください。
+update-error-unsupported-flatpak = このAuroraビューアはFlatpakとして動作しています。リリースページから新しい.flatpakファイルをダウンロードし、ソフトウェアセンターで開くか「flatpak install --user」でインストールしてください。設定はそのまま残ります。
 update-error-startup = アップデートのヘルパーを起動できませんでした。現在のインストールは保持されています。
 update-rollback = 新しいバージョンが正しく起動しませんでした。以前のインストールを復元しました。
 update-rollback-install = 新しいバージョンをインストールできませんでした。以前のインストールはそのままです。
