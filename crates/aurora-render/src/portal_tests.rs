@@ -23,19 +23,11 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
     // the alpha threshold depth_contact reads
     let threshold = object.find("override DEPTH_CONTACT_ALPHA").unwrap();
     normal_passes.push_str(&object[threshold..threshold + object[threshold..].find('\n').unwrap() + 1]);
-    // what the occlusion's own entry point reads (sunk_depth)
-    for constant in ["const OCCLUSION_SINK:", "const OCCLUSION_SOLID:"] {
-        normal_passes.push_str(object.lines().find(|line| line.starts_with(constant)).unwrap());
-        normal_passes.push('\n');
-    }
     for name in [
         "fs_depth_portal_normal",
         "fs_depth_mask_normal",
         "depth_contact",
         "fs_depth_contact_normal",
-        "sunk_depth",
-        "occlusion_depth_of",
-        "fs_depth_occlusion_normal",
     ] {
         let start = object.find(&format!("fn {name}(")).unwrap();
         let end = start + object[start..].find("\n}").unwrap() + 2;
@@ -88,26 +80,23 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
     }
     let aperture_cases = cases.clone();
     let aperture_expected = expected.clone();
-    for pass in 1..=4 {
+    for pass in 1..=3 {
         cases.extend(aperture_cases.iter().map(|case| Case {
             flags: [flags::PORTAL_CLIP, pass, 0, 0],
             ..*case
         }));
         expected.extend_from_slice(&aperture_expected);
     }
-    // The normal contact passes (FSR's, then the occlusion's) must share
-    // the analytic portal core rather than treating the decorative quad's
-    // corners as solid depth.
-    for pass in [3, 4] {
-        for x in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
-            for y in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
-                cases.push(Case {
-                    clip: [0.0; 4],
-                    point: [x, y, 0.0, 1.0],
-                    flags: [flags::PORTAL_EFFECT, pass, 0, 0],
-                });
-                expected.push(x * x + y * y <= 1.0);
-            }
+    // The normal contact pass must share the analytic portal core rather
+    // than treating the decorative quad's corners as solid depth.
+    for x in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
+        for y in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
+            cases.push(Case {
+                clip: [0.0; 4],
+                point: [x, y, 0.0, 1.0],
+                flags: [flags::PORTAL_EFFECT, 3, 0, 0],
+            });
+            expected.push(x * x + y * y <= 1.0);
         }
     }
     let width = 64;
@@ -128,11 +117,7 @@ const PORTAL_HALF_HEIGHT:f32={PORTAL_HALF_HEIGHT:.1};
 const PORTAL_SURFACE_SCALE:f32=1.16;
 struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
 struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>}};
-struct DepthMaskOut {{clip:vec4<f32>,world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>,motion_cur:vec4<f32>,motion_prev:vec4<f32>}};
-struct OcclusionNormal {{normal:vec4<f32>,depth:f32}};
-struct Frame {{light_mode:vec4<u32>}};
-const frame=Frame(vec4<u32>(0u,0u,0x1000000u,0u));
-const BLEND_SCREEN_LAYER:u32=0x1000000u;
+struct DepthMaskOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>,motion_cur:vec4<f32>,motion_prev:vec4<f32>}};
 struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
@@ -151,11 +136,10 @@ fn water_clip(p:vec3<f32>){{}}
     let rec=DrawRecord(c.clip,c.flags,vec4<u32>(0u),vec4<f32>(1.0),vec4<f32>(0.5));
     let index=u32(p.x)+64u*u32(p.y);
     let v=VsOut(c.point.xyz,index,(c.point.xy/PORTAL_SURFACE_SCALE+vec2<f32>(1.0))*0.5,vec3<f32>(0.0,0.0,1.0));
-    let m=DepthMaskOut(vec4<f32>(p.xy,0.5,1.0),v.world_pos,v.record,v.uv,v.normal,vec4<f32>(0.0,0.0,0.0,1.0),vec4<f32>(0.0,0.0,0.0,1.0));
+    let m=DepthMaskOut(v.world_pos,v.record,v.uv,v.normal,vec4<f32>(0.0,0.0,0.0,1.0),vec4<f32>(0.0,0.0,0.0,1.0));
     if(c.flags.y==1u){{return fs_depth_portal_normal(m,true);}}
     if(c.flags.y==2u){{return fs_depth_mask_normal(m,true);}}
     if(c.flags.y==3u){{return fs_depth_contact_normal(m,true);}}
-    if(c.flags.y==4u){{return fs_depth_occlusion_normal(m,true).normal;}}
     portal_clip(rec,c.point.xyz);
     return vec4<f32>(1.0);
 }}

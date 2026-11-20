@@ -311,6 +311,10 @@ pub mod snow_spin;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Glass whose opacity crosses one half within a face, under things that
+/// occlude it (AURORA_DEMO_SOFT_BLEND).
+#[path = "demo_soft_blend.rs"]
+pub mod soft_blend;
 /// A sound passing in front of the listener, back and forth, for the
 /// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
 #[path = "demo_sound_doppler.rs"]
@@ -6724,6 +6728,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(soft_blend::events());
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(oit_column::events());
@@ -9577,6 +9582,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(pane) = blend_shadows::texture(id) {
         return Some(pane);
+    }
+    if let Some(glass) = soft_blend::texture(id) {
+        return Some(glass);
     }
     if let Some(lace) = veils::texture(id) {
         return Some(lace);

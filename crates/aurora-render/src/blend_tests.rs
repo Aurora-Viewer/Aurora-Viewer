@@ -513,9 +513,9 @@ fn evaluate(source: &str, inputs: &[[f32; 4]]) -> Option<Vec<f32>> {
 }
 
 /// A layer that fades out over a skin (a tattoo, a blush, a second skin):
-/// its texels under half covered take the occlusion and the contact shadow
-/// of the skin they lie on, whole, as those above one half do. A step there
-/// drew a line around the layer.
+/// its texels not yet solid take the occlusion and the contact shadow of
+/// the skin they lie on, whole, as the solid ones do. A step there drew a
+/// line around the layer.
 #[test]
 fn a_faint_layer_takes_the_screen_terms_of_the_surface_it_lies_on_gpu() {
     let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
@@ -524,8 +524,8 @@ fn a_faint_layer_takes_the_screen_terms_of_the_surface_it_lies_on_gpu() {
     // (here, there): the fragment and the surface in its pixel, from the
     // camera (m)
     let near = [0.0, 0.001, 0.004, 0.02, 0.029].map(|gap: f32| [2.5, 2.5 + gap, 0.0, 0.0]);
-    // in front of it or just behind (the layer's own texels at least half
-    // covered, some millimetres nearer than the skin)
+    // in front of it or just behind (under a solid texel of another layer,
+    // some millimetres nearer than the skin)
     let behind = [[2.5, 2.496, 0.0, 0.0]];
     // a pane in front of a room, a strand before a face: none (#556)
     let far = [0.07, 0.2, 5.0].map(|gap: f32| [2.5, 2.5 + gap, 0.0, 0.0]);
@@ -552,41 +552,258 @@ fn a_faint_layer_takes_the_screen_terms_of_the_surface_it_lies_on_gpu() {
     }
 }
 
-/// The same layer in the occlusion's depth: where it is half covered it is
-/// written behind itself, under the skin it lies on, and comes out of it as
-/// a slope, where it stood as a ledge the occlusion drew a line along.
+/// The same layer in the occlusion's depth: it rises out of the skin it
+/// lies on, from the skin's depth at one half to its own where it is opaque
+/// to the eye, where it stood as a ledge the occlusion drew a line along.
+/// Away from a solid surface a texel is in that depth only once opaque to
+/// the eye: the occlusion of what stands behind a pane of glass stays its
+/// own.
 #[test]
-fn a_fading_layer_slopes_out_of_the_surface_under_it_gpu() {
+fn a_fading_layer_rises_out_of_the_surface_under_it_gpu() {
+    let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
-    let source = shader_function(&object, "sunk_depth", &["DEPTH_CONTACT_ALPHA", "OCCLUSION_SINK", "OCCLUSION_SOLID"])
-        + "fn rule(v:vec4<f32>)->f32 {return sunk_depth(vec4<f32>(0.0,0.0,v.x,v.y),v.z);}";
+    let enters = crate::renderer::SCREEN_BLEND_ALPHA as f32;
+    let source = shader_function(&common, "blend_screen_share", &["SCREEN_BLEND_ALPHA", "SCREEN_SOLID_ALPHA"])
+        + &shader_function(&object, "risen_depth", &["DEPTH_CONTACT_ALPHA", "OCCLUSION_RISE"])
+        + "fn rule(v:vec4<f32>)->f32 {return risen_depth(vec4<f32>(0.0,0.0,v.x,v.y),v.w,v.z);}";
     // the main view's depth: the near plane over the distance; a fragment's
     // position holds it and one over the distance
     let (near, distance) = (0.05_f32, 2.5_f32);
-    let alphas: Vec<f32> = (0..=50).map(|step| 0.5 + step as f32 * 0.01).collect();
-    let inputs: Vec<[f32; 4]> = alphas.iter().map(|&alpha| [near / distance, 1.0 / distance, alpha, 0.0]).collect();
-    let Some(depths) = evaluate(&source, &inputs) else {
+    let alphas: Vec<f32> = (0..=500).map(|step| 0.5 + step as f32 * 0.001).collect();
+    // how far behind itself each texel is written (m), over a solid
+    // surface `gap` behind it (none: the sky)
+    let behind = |gap: Option<f32>| -> Option<Vec<f32>> {
+        let solid = gap.map_or(0.0, |gap| near / (distance + gap));
+        let inputs: Vec<[f32; 4]> = alphas
+            .iter()
+            .map(|&alpha| [near / distance, 1.0 / distance, alpha, solid])
+            .collect();
+        let depths = evaluate(&source, &inputs)?;
+        Some(
+            depths
+                .iter()
+                .map(|depth| if *depth > 0.0 { near / depth - distance } else { f32::INFINITY })
+                .collect(),
+        )
+    };
+    // a layer 4 mm over a skin: the nearer of the two is kept. From the
+    // skin where the layer is half covered to the layer where it is opaque
+    // to the eye, by less than a fiftieth of a millimetre per thousandth
+    // of alpha (4 mm at once before)
+    let Some(layer) = behind(Some(0.004)) else {
         return;
     };
-    // how far behind itself each texel is written (m)
-    let sunk: Vec<f32> = depths.iter().map(|depth| near / depth - distance).collect();
-    assert!((sunk[0] - 0.008).abs() < 1e-4, "half covered: {} m", sunk[0]);
-    for (alpha, sunk) in alphas.iter().zip(&sunk) {
-        // never nearer than the face: the entry points promise the depth
+    assert!(layer[0].is_infinite(), "half covered, not written: {}", layer[0]);
+    let kept: Vec<f32> = layer.iter().map(|behind| behind.min(0.004)).collect();
+    for (alpha, behind) in alphas.iter().zip(&kept) {
+        // never nearer than the face: the entry point promises the depth
         // test as much (`@early_depth_test(less_equal)`)
-        assert!(*sunk > -1e-5, "alpha {alpha}: {sunk} m");
-        if *alpha >= 0.95 {
-            assert!(sunk.abs() < 1e-5, "alpha {alpha}, where it is: {sunk} m");
+        assert!(*behind > -1e-5, "alpha {alpha}: {behind} m");
+        if *alpha >= enters {
+            assert!(behind.abs() < 1e-5, "alpha {alpha}, where it is: {behind} m");
         }
     }
-    // a layer 4 mm over a skin: the nearer of the two is kept. From the
-    // skin where the layer is half covered to the layer where it is solid,
-    // by less than half a millimetre per hundredth of alpha (4 mm at once
-    // before)
-    let kept: Vec<f32> = sunk.iter().map(|sunk| (sunk - 0.004).min(0.0)).collect();
-    assert_eq!(kept[0], 0.0, "the skin's depth where the layer is half covered");
-    assert!((kept[50] + 0.004).abs() < 1e-5, "the layer's where it is solid");
+    assert!(
+        (kept[1] - 0.004).abs() < 1e-5,
+        "the skin's depth where the layer starts to rise: {}",
+        kept[1]
+    );
     for pair in kept.windows(2) {
-        assert!(pair[1] <= pair[0] + 1e-5 && pair[0] - pair[1] < 0.0005, "a ledge: {pair:?}");
+        assert!(pair[1] <= pair[0] + 1e-5 && pair[0] - pair[1] < 0.00002, "a ledge: {pair:?}");
+    }
+    // a pane 25 cm or 2 cm in front of a wall, or before the sky: not
+    // written until it is opaque to the eye
+    for gap in [Some(0.25), Some(0.02), None] {
+        let pane = behind(gap).expect("the same GPU");
+        for (alpha, behind) in alphas.iter().zip(&pane) {
+            if *alpha >= enters {
+                assert!(behind.abs() < 1e-5, "{gap:?}, alpha {alpha}, where it is: {behind} m");
+            } else {
+                assert!(behind.is_infinite(), "{gap:?}, alpha {alpha}: {behind} m");
+            }
+        }
+    }
+    // between the two, a face leaving its surface: it rises less and less
+    let leaving = behind(Some(0.012)).expect("the same GPU");
+    let at = |alpha: f32| alphas.iter().position(|a| (*a - alpha).abs() < 5e-4).expect("a step");
+    assert!(
+        leaving[at(0.87)] > 0.004 && leaving[at(0.87)] < 0.008,
+        "12 mm over it: {}",
+        leaving[at(0.87)]
+    );
+}
+
+/// A blended fragment not yet solid takes the screen-space terms where it
+/// lies on a solid surface, measured against the solid depth: in the
+/// occlusion's own depth a texel between `SCREEN_BLEND_ALPHA` and
+/// `SCREEN_SOLID_ALPHA` would find itself, and a pane of glass would take
+/// them whole like a layer on a skin.
+#[test]
+fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
+    let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+    let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+    let renderer = include_str!("renderer.rs").replace("\r\n", "\n");
+    let body = |source: &str, name: &str| {
+        let from = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("production function {name}"));
+        source[from..from + source[from..].find("\n}").expect("function end")].to_owned()
+    };
+    let on_surface = body(&common, "on_occlusion_surface");
+    assert!(on_surface.contains("textureLoad(solid_depth,"), "the depth it is measured against");
+    assert!(!common.contains("var occlusion_depth"), "one depth for it");
+    let shade = body(&object, "shade_material");
+    assert!(shade.contains("on = on_occlusion_surface(in.clip.xy, in.world_pos);"));
+    assert!(shade.contains("max(share, on)"), "the larger of the two shares");
+    // the solid depth is copied between the solid texels and the others;
+    // the rising ones read it and write the depth alone
+    let pass = &renderer[renderer
+        .find("label: Some(\"occlusion depth\")")
+        .expect("the occlusion's depth pass")..];
+    let solid = pass.find("draw_sided(&mut pass, solid, rg.blend, 0);").expect("the solid texels");
+    let copy = pass.find("solid_tex.as_image_copy()").expect("the solid depth");
+    let rising = pass
+        .find("label: Some(\"occlusion depth, rising texels\")")
+        .expect("the rising texels");
+    assert!(solid < copy && copy < rising);
+    let rising = &pass[rising..];
+    let rising = &rising[..rising
+        .find("draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);")
+        .expect("their pipeline")];
+    assert!(rising.contains("color_attachments: &[],"), "no normal written");
+    assert!(
+        rising.contains("bind_mesh(&mut pass, &self.groups.blend);"),
+        "the solid depth bound"
+    );
+    assert!(body(&object, "fs_depth_occlusion").contains("risen_depth(in.clip, textureLoad(solid_depth,"));
+    for (name, limit) in [
+        ("prepass solid", "SCREEN_SOLID_ALPHA"),
+        ("prepass solid normals", "SCREEN_SOLID_ALPHA"),
+        ("prepass contact normals", "SCREEN_BLEND_ALPHA"),
+    ] {
+        let at = renderer
+            .find(&format!("base(\"{name}\""))
+            .unwrap_or_else(|| panic!("pipeline {name}"));
+        let described = &renderer[renderer[..at].rfind("pipe(PipeDesc {").expect("its description")..at + 120];
+        assert!(
+            described.contains(&format!("(\"DEPTH_CONTACT_ALPHA\", {limit})")),
+            "{name}: {described}"
+        );
+        assert!(described.contains("fs_depth_contact"), "{name}: {described}");
+    }
+    assert!(renderer.contains("pre(\"prepass contact\", \"vs_main\", Some(\"fs_depth_occlusion\"), blend_cull(side != 0))"));
+    // one value each for the renderer and the shaders
+    for (name, value) in [
+        ("SCREEN_BLEND_ALPHA", crate::renderer::SCREEN_BLEND_ALPHA),
+        ("SCREEN_SOLID_ALPHA", crate::renderer::SCREEN_SOLID_ALPHA),
+    ] {
+        assert!(common.contains(&format!("\nconst {name}: f32 = {value};\n")), "{name}");
+    }
+}
+
+/// The screen-space occlusion, indirect light and contact shadows of a
+/// blended face fade in with its opacity from the one at which it enters
+/// the occlusion's depth: a step there drew a ragged line along the texels
+/// of a glass texture whose opacity crosses it.
+#[test]
+fn blended_faces_take_the_screen_terms_by_their_opacity_without_a_step_on_gpu() {
+    const STEPS: u32 = 1000;
+    let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+    let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+    let share = shader_function(&common, "blend_screen_share", &["SCREEN_BLEND_ALPHA", "SCREEN_SOLID_ALPHA"]);
+    // both terms of a blended face go through it
+    let shade = &object[object.find("fn shade_material(").expect("shade_material")..];
+    let shade = &shade[..shade.find("\n}").expect("shade_material end")];
+    assert!(shade.contains("blend_screen_share(m.color.a)"), "the shares of a blended fragment");
+    assert!(!shade.contains("m.color.a >="), "no step on the opacity");
+    // the opacity from which fs_depth_occlusion writes the face into that
+    // depth
+    let depth_alpha = crate::renderer::SCREEN_BLEND_ALPHA as f32;
+    let source = format!(
+        r#"
+{share}
+@group(0) @binding(0) var<storage,read_write> shares:array<f32>;
+@compute @workgroup_size(1) fn cs(@builtin(global_invocation_id) id:vec3<u32>) {{
+    shares[id.x]=blend_screen_share(f32(id.x)/{STEPS}.0);
+}}
+"#
+    );
+    let _gpu = crate::test_gpu::lock();
+    let instance = wgpu::Instance::default();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("share GPU device");
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("production blended share"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("blended share"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("cs"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let size = u64::from(STEPS + 1) * 4;
+    let shares = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shares"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shares readback"),
+        size: crate::readback::readback_size(size),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: shares.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(STEPS + 1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&shares, 0, &readback, 0, size);
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("shares readback"));
+    device.poll(wgpu::PollType::wait_indefinitely()).expect("shares completion");
+    // (the readback is rounded up: only the shares computed)
+    let shares = crate::readback::f32s(&readback.get_mapped_range(..).expect("shares"));
+    let shares = &shares[..=STEPS as usize];
+    let alpha = |i: usize| i as f32 / STEPS as f32;
+    for (i, share) in shares.iter().enumerate() {
+        assert!((0.0..=1.0).contains(share), "alpha {}: {share}", alpha(i));
+        if alpha(i) < depth_alpha {
+            // not in the occlusion's depth: the terms there are those of
+            // what lies behind the face (#556)
+            assert_eq!(*share, 0.0, "alpha {}", alpha(i));
+        }
+        if alpha(i) >= crate::renderer::SCREEN_SOLID_ALPHA as f32 {
+            // solid to the eye: as the opaque faces beside it (#882)
+            assert!(*share > 0.99, "alpha {}: {share}", alpha(i));
+        }
+    }
+    assert_eq!(shares[STEPS as usize], 1.0);
+    for (i, pair) in shares.windows(2).enumerate() {
+        let rise = pair[1] - pair[0];
+        assert!(
+            (0.0..0.03).contains(&rise),
+            "alpha {} to {}: {} to {}",
+            alpha(i),
+            alpha(i + 1),
+            pair[0],
+            pair[1]
+        );
     }
 }

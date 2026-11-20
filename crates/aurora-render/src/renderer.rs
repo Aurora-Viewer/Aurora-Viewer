@@ -823,6 +823,21 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// tips) leave the motion to what is behind them.
 const FSR_BLEND_ALPHA: f64 = 0.1;
 
+/// The opacity from which a blended texel is drawn into the depth the
+/// occlusion and the contact shadows read (`fs_depth_occlusion`): opaque to
+/// the eye, where the Legacy Viewer's shadows stop treating a face as
+/// semi-transparent (`alpha < 0.88`, shadowAlphaMaskF.glsl). From one
+/// half, as before, what stands behind a pane of glass took the pane's
+/// occlusion instead of its own wherever the glass was a little more
+/// opaque, along the texels of its streaks. The shading fades the terms in
+/// from there (`blend_screen_share`, common.wgsl).
+pub(crate) const SCREEN_BLEND_ALPHA: f64 = 0.88;
+
+/// The opacity from which a blended texel is a solid surface: it takes the
+/// screen-space terms whole (`blend_screen_share`), and it is in the solid
+/// depth a blended fragment is measured against (`Targets::solid_depth`).
+pub(crate) const SCREEN_SOLID_ALPHA: f64 = 0.95;
+
 /// FSR's upscale ratio under `aa`, none without FSR.
 fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
     match aa {
@@ -970,9 +985,17 @@ struct Targets {
     /// The frame groups bind GTAO's occlusion rather than the Legacy one.
     gtao_shown: bool,
     /// The depth both occlusion methods read: a copy of the prepass with the
-    /// blended faces at least half covered drawn over it (#882), when one
-    /// of them is ready.
+    /// blended faces opaque to the eye drawn over it (`SCREEN_BLEND_ALPHA`,
+    /// #882), when one of them is ready.
     ao_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The prepass with the blended faces solid to the eye drawn over it
+    /// (`SCREEN_SOLID_ALPHA`): the occlusion's depth before the texels
+    /// between `SCREEN_BLEND_ALPHA` and that enter it. A blended fragment
+    /// reads it to know whether it lies on a surface (common.wgsl
+    /// `on_occlusion_surface`): in the occlusion's own depth such a texel
+    /// would find itself, and a layer on a skin could not be told from a
+    /// pane of glass.
+    solid_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
@@ -1130,11 +1153,20 @@ struct Pipelines {
     /// Opaque normal passes with the finite portal cut; ordinary normals
     /// retain their lean vertex path while no avatar intersects a portal.
     pre_normal_portal: [wgpu::RenderPipeline; 2],
-    /// Blended faces opaque enough to cast contact shadows, into their
-    /// depth (contact_shadows.rs).
+    /// Blended faces into the depth the contact shadows read
+    /// (contact_shadows.rs) and the occlusion's, once the solid ones are in
+    /// it: those opaque to the eye (`SCREEN_BLEND_ALPHA`), and the fainter
+    /// ones rising out of a solid surface (object.wgsl `risen_depth`).
+    /// The depth alone.
     pre_contact: SidedPipelines,
-    /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
+    /// Those opaque to the eye with GTAO's mesh normals, into the
+    /// occlusion's depth.
     pre_contact_normal: SidedPipelines,
+    /// The blended texels solid to the eye (`SCREEN_SOLID_ALPHA`), drawn
+    /// first: the solid depth is copied from the result, and `pre_contact`
+    /// reads it.
+    pre_solid: SidedPipelines,
+    pre_solid_normal: SidedPipelines,
     /// FSR only (`AURORA_FSR=1`): the blended faces covered from
     /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
     /// once the occlusion and the contact shadows have read it.
@@ -1991,7 +2023,7 @@ pub(crate) struct Backend {
     /// This frame's depth prepass writes each pixel's motion (`motion_view`):
     /// GTAO reads the mesh normals beside it, or TAA reprojects with it.
     motion_now: bool,
-    /// This frame draws the blended faces at least half covered into the
+    /// This frame draws the blended faces opaque to the eye into the
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
     bloom: crate::bloom::Bloom,
@@ -3591,12 +3623,10 @@ fn shadow_bias_legacy_now(mode: u8, now: std::time::SystemTime) -> bool {
 /// (`AURORA_BLEND_AO`, see the frame uniforms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlendAo {
-    /// Those at least half covered are in the occlusion's depth and take
-    /// it (#882); the fainter ones take it where they lie on the surface
-    /// that is (the default).
+    /// Those opaque to the eye are in the occlusion's depth and take it
+    /// (#882); the fainter ones take it where they lie on a solid surface
+    /// (the default).
     New,
-    /// `New` without the fainter ones' share, as before.
-    Step,
     /// None takes it (#556).
     None,
     /// All take that of what lies behind them (before #556).
@@ -3609,7 +3639,6 @@ impl BlendAo {
     fn from_env(value: Option<&str>) -> Self {
         match value.map(str::trim) {
             Some("none") => Self::None,
-            Some("step") => Self::Step,
             Some("old") => Self::Old,
             Some("alt") => Self::Alt,
             _ => Self::New,
@@ -3964,8 +3993,8 @@ impl Backend {
             float_tex(6),
             float_tex(7),
             tex_entry(8, wgpu::TextureSampleType::Depth),
-            // the depth the occlusion and the contact shadows were made from
-            // (common.wgsl `occlusion_depth`)
+            // the solid surfaces of the depth the occlusion and the contact
+            // shadows were made from (common.wgsl `solid_depth`)
             tex_entry(29, wgpu::TextureSampleType::Depth),
             wgpu::BindGroupLayoutEntry {
                 binding: 9,
@@ -5677,6 +5706,17 @@ impl Backend {
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_occlusion"), blend_cull(side != 0)));
+        let pre_solid = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                fs: Some("fs_depth_contact"),
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_SOLID_ALPHA)],
+                ..base("prepass solid", "vs_main", "fs_opaque")
+            })
+        });
         // the depth of the blended faces under the water, drawn after their
         // colour: into the single-sampled scene depth the water samples for
         // its refraction and its shallow-water fade, and with MSAA into the
@@ -5741,12 +5781,26 @@ impl Backend {
             pre_n("prepass portal normals 2s", "vs_depth_mask_normal", "fs_depth_portal_normal", None),
         ];
         let pre_contact_normal = std::array::from_fn(|side| {
-            pre_n(
-                "prepass contact normals",
-                "vs_depth_mask_normal",
-                "fs_depth_occlusion_normal",
-                blend_cull(side != 0),
-            )
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
+                ..base("prepass contact normals", "vs_depth_mask_normal", "fs_depth_contact_normal")
+            })
+        });
+        let pre_solid_normal = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_SOLID_ALPHA)],
+                ..base("prepass solid normals", "vs_depth_mask_normal", "fs_depth_contact_normal")
+            })
         });
         let fsr_blend_normal = std::array::from_fn(|side| {
             pipe(PipeDesc {
@@ -6042,6 +6096,8 @@ impl Backend {
             pre_normal_portal: pre_normal_portal.resolve(&mut done),
             pre_contact: pre_contact.resolve(&mut done),
             pre_contact_normal: pre_contact_normal.resolve(&mut done),
+            pre_solid: pre_solid.resolve(&mut done),
+            pre_solid_normal: pre_solid_normal.resolve(&mut done),
             fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
             pre_msaa: pre_msaa.resolve(&mut done),
             refl_sky: refl_sky.resolve(&mut done),
@@ -6203,8 +6259,8 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
-        // FSR reads it too: the blended faces at least half covered drawn
-        // there, with their motion, keep their history instead of taking
+        // FSR reads it too: the blended faces drawn there, with their
+        // motion (`fsr_blend_normal`), keep their history instead of taking
         // the motion of what lies behind them
         let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || matches!(s.aa, AntiAliasing::Fsr(_))).then(|| {
             // copied in turn for the contact shadows
@@ -6245,6 +6301,17 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
+        let solid_depth = (ao_depth.is_some() || contact.is_some()).then(|| {
+            make_view(
+                device,
+                "solid depth",
+                w,
+                h,
+                DEPTH_FORMAT,
+                1,
+                sampled | wgpu::TextureUsages::COPY_DST,
+            )
+        });
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -6289,6 +6356,7 @@ impl Backend {
             gtao,
             gtao_shown,
             ao_depth,
+            solid_depth,
             contact,
             depth_ss_tex,
             water_refl,
@@ -6484,14 +6552,9 @@ impl Backend {
             .and_then(|g| g.indirect.as_ref())
             .map(|i| &i.result)
             .unwrap_or(&dummies.black);
-        // the depth the occlusion read, else the contact shadows' own, with
-        // the same blended faces (a dummy without either: nothing reads it)
-        let occlusion = t
-            .ao_depth
-            .as_ref()
-            .map(|(_, view)| view)
-            .or_else(|| t.contact.as_ref().map(|c| c.depth_view()))
-            .unwrap_or(&dummies.depth);
+        // the solid surfaces of the depth the occlusion and the contact
+        // shadows read (a dummy without either: nothing reads it)
+        let occlusion = t.solid_depth.as_ref().map_or(&dummies.depth, |(_, view)| view);
         FrameGroups {
             mask: mk(
                 "frame mask",
@@ -9022,19 +9085,18 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
-        // AURORA_BLEND_AO=new|step|none|old|alt: the blended faces at least
-        // half covered drawn into the occlusion's depth and taking the
+        // AURORA_BLEND_AO=new|none|old|alt: the blended faces opaque to the
+        // eye drawn into the occlusion's depth and taking the
         // screen-space occlusion and indirect light (#882), the fainter
-        // ones where they lie on the surface that is; the same without the
-        // fainter ones; no blended face taking them (#556); all of them
-        // taking those of what lies behind them; or `none` and `new` one
-        // second in two each (common.wgsl BLEND_SCREEN_DEPTH,
-        // BLEND_SCREEN_LAYER, BLEND_SCREEN_TERMS)
+        // ones where they lie on a solid surface; no blended face taking
+        // them (#556); all of them taking those of what lies behind them;
+        // or `none` and `new` one second in two each (common.wgsl
+        // BLEND_SCREEN_DEPTH, BLEND_SCREEN_TERMS)
         static BLEND_AO: std::sync::OnceLock<BlendAo> = std::sync::OnceLock::new();
         let blend_ao = BLEND_AO
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
-        self.blend_ao_depth = matches!(blend_ao, BlendAo::New | BlendAo::Step);
+        self.blend_ao_depth = blend_ao == BlendAo::New;
         // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
         // of #3259 (object.wgsl LEGACY_GLARE_OFF)
         static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -9051,8 +9113,7 @@ impl Backend {
             _ => 0,
         });
         main.light_sets.mode[2] |= match blend_ao {
-            BlendAo::New => 0x1010000,
-            BlendAo::Step => 0x10000,
+            BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
             _ => 0,
         };
@@ -10298,8 +10359,8 @@ impl Backend {
 
         prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
-        // ---- occlusion depth: the prepass and the blended faces at least
-        // half covered (fs_depth_contact). The many heads, bodies and hair
+        // ---- occlusion depth: the prepass and the blended faces opaque to
+        // the eye (fs_depth_occlusion). The many heads, bodies and hair
         // whose faces are blended though they look opaque then take the
         // occlusion like the opaque faces beside them, instead of what lies
         // behind them (#556) or none (#882: one half of a head darker)
@@ -10330,13 +10391,63 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.a);
-                let pipe = if normals.is_some() {
-                    &self.pipelines.pre_contact_normal
+                let solid = if normals.is_some() {
+                    &self.pipelines.pre_solid_normal
                 } else {
-                    &self.pipelines.pre_contact
+                    &self.pipelines.pre_solid
                 };
-                draw_sided(&mut pass, pipe, rg.blend, 0);
-                draw_under(&mut pass, pipe, rg.blend_under);
+                // the texels solid to the eye first, kept apart as the
+                // solid depth: a blended fragment must not find the others
+                // when it looks for the surface it lies on
+                draw_sided(&mut pass, solid, rg.blend, 0);
+                draw_under(&mut pass, solid, rg.blend_under);
+                drop(pass);
+                if let Some((solid_tex, _)) = &self.targets.solid_depth {
+                    encoder.copy_texture_to_texture(tex.as_image_copy(), solid_tex.as_image_copy(), tex.size());
+                }
+                // then those opaque to the eye, with their normals
+                if normals.is_some() {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("occlusion depth, fading texels"),
+                        color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_sided(&mut pass, &self.pipelines.pre_contact_normal, rg.blend, 0);
+                    draw_under(&mut pass, &self.pipelines.pre_contact_normal, rg.blend_under);
+                }
+                // and the fainter ones that rise out of a solid surface,
+                // which they read (object.wgsl `risen_depth`): the depth
+                // alone, the surface keeps its normal (without normals,
+                // those opaque to the eye are drawn here too)
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("occlusion depth, rising texels"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.blend);
+                draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);
+                draw_under(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
             }
         }
         // ---- SSAO
@@ -10390,6 +10501,33 @@ impl Backend {
                     t.depth_texture().as_image_copy(),
                     self.targets.depth_ss_tex.size(),
                 );
+                // without the occlusion's depth, the solid depth is made
+                // here: the prepass and the blended texels solid to the eye
+                if let (false, true, Some((solid_tex, solid_view))) = (blend_in_ao_depth, n_blend > 0, &self.targets.solid_depth) {
+                    encoder.copy_texture_to_texture(
+                        self.targets.depth_ss_tex.as_image_copy(),
+                        solid_tex.as_image_copy(),
+                        self.targets.depth_ss_tex.size(),
+                    );
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("solid depth"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: solid_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_sided(&mut pass, &self.pipelines.pre_solid, rg.blend, 0);
+                    draw_under(&mut pass, &self.pipelines.pre_solid, rg.blend_under);
+                }
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("contact shadows depth"),
                     color_attachments: &[],
@@ -10405,7 +10543,8 @@ impl Backend {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                bind_mesh(&mut pass, &self.groups.a);
+                // (with the solid depth, which the blended texels read)
+                bind_mesh(&mut pass, &self.groups.blend);
                 if !blend_in_ao_depth {
                     draw_sided(&mut pass, &self.pipelines.pre_contact, rg.blend, 0);
                     draw_under(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
@@ -10420,6 +10559,35 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        // ---- FSR: the blended faces drawn over what lies behind them, even
+        // faint glass, give their own depth and motion, so their edges keep
+        // their history (the occlusion and the contact shadows have read
+        // that depth; GTAO those normals)
+        if let (pipe, Some((_, view)), true, true) = (
+            &self.pipelines.fsr_blend_normal,
+            &self.targets.ao_depth,
+            normals.is_some() && n_blend > 0,
+            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr blended faces motion"),
+                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, pipe, rg.blend, 0);
+            draw_under(&mut pass, pipe, rg.blend_under);
+        }
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -11758,45 +11926,6 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_SCENE_END);
-        // ---- FSR: the blended faces drawn over what lies behind them, even
-        // faint glass, give their own depth and motion, so their edges keep
-        // their history (the occlusion and the contact shadows have read
-        // that depth; GTAO those normals; and the blended faces' colour,
-        // drawn above, which reads it to know the surface the occlusion was
-        // made for: common.wgsl `on_occlusion_surface`)
-        if let (pipe, Some((_, view)), Some(motion), true) = (
-            &self.pipelines.fsr_blend_normal,
-            &self.targets.ao_depth,
-            motion_view(self.motion_now, &self.targets, self.taa.as_ref()).filter(|_| n_blend > 0),
-            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
-        ) {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fsr blended faces motion"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: motion,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            bind_mesh(&mut pass, &self.groups.a);
-            draw_sided(&mut pass, pipe, rg.blend, 0);
-            draw_under(&mut pass, pipe, rg.blend_under);
-        }
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
         if drawn_px.is_some() {
@@ -13614,7 +13743,6 @@ mod tests {
         assert_eq!(BlendAo::from_env(None), BlendAo::New);
         assert_eq!(BlendAo::from_env(Some("new")), BlendAo::New);
         assert_eq!(BlendAo::from_env(Some(" none ")), BlendAo::None);
-        assert_eq!(BlendAo::from_env(Some("step")), BlendAo::Step);
         assert_eq!(BlendAo::from_env(Some("old")), BlendAo::Old);
         assert_eq!(BlendAo::from_env(Some("alt")).now(at(10)), BlendAo::None);
         assert_eq!(BlendAo::from_env(Some("alt")).now(at(11)), BlendAo::New);
