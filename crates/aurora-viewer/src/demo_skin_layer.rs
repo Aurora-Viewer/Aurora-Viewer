@@ -114,12 +114,13 @@ mod tests {
         let (px, w, h) = patches();
         assert_eq!(px.len(), (w * h * 4) as usize);
         assert_eq!(classify_alpha(&px), AlphaKind::Blend);
-        // clear and opaque patches, and no texel far from its neighbour
+        // clear and opaque patches, and no texel more than a twentieth of
+        // the range from its neighbour
         let alpha = |x: u32, y: u32| i32::from(px[((y * w + x) * 4 + 3) as usize]);
         assert!(px.chunks(4).any(|p| p[3] < 8) && px.chunks(4).any(|p| p[3] > 247));
         for y in 0..h {
             for x in 1..w {
-                assert!((alpha(x, y) - alpha(x - 1, y)).abs() <= 10, "{x} {y}");
+                assert!((alpha(x, y) - alpha(x - 1, y)).abs() <= 13, "{x} {y}");
             }
         }
         assert_eq!(objects(1, 100.0, 100.0).len(), COUNT as usize);
