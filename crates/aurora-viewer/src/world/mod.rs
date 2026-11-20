@@ -3018,6 +3018,28 @@ impl World {
             .unwrap_or_default()
     }
 
+    /// Logged in and the login outfit restore still bringing the outfit
+    /// back: what is worn is not the outfit yet. A restore that cannot
+    /// start (arrived in a region without the inventory capability, as the
+    /// demo region) is not waited for, nor one that has put everything
+    /// on and only waits out its retry window.
+    pub fn outfit_restoring(&self) -> bool {
+        self.login.is_some()
+            && !self.outfit.is_done()
+            && !self.outfit_attachments_worn()
+            && (self.outfit.started()
+                || !self.movement_complete
+                || self.demo_outfit_region
+                || self.main().is_some_and(|r| r.caps.contains_key("FetchInventoryDescendents2")))
+    }
+
+    /// The login outfit restore has every object worn, read from the
+    /// objects worn now (the restore's own record waits for the next
+    /// outfit poll).
+    pub fn outfit_attachments_worn(&self) -> bool {
+        self.outfit.is_attaching() && self.outfit.attachments_worn(&self.outfit_attachment_items())
+    }
+
     /// Run the outfit restore and the wears waiting for their items; its
     /// network commands are left in `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {
@@ -3140,6 +3162,21 @@ impl World {
         }
         if o.full_id == self.agent_id
             && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
+        {
+            return Some(*id);
+        }
+        self.server_bake_texture(avatar_idx, te_index)
+    }
+
+    /// The bake worn, not the wearable editor's preview: our own local bake
+    /// as last sent, else the server's.
+    pub fn worn_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
+        let o = self.objects.get(avatar_idx)?;
+        if self.is_mirror(&o.full_id) {
+            return self.worn_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
+        }
+        if o.full_id == self.agent_id
+            && let Some(id) = self.local_bakes.get(&te_index)
         {
             return Some(*id);
         }

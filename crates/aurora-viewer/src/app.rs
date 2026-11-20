@@ -3648,6 +3648,7 @@ impl App {
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
+        self.scene.forget_login();
         self.world.reset();
         // the next session's network starts with the neighbours allowed
         self.neighbours_refused = false;
