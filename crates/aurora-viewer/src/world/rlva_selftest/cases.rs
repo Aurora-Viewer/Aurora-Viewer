@@ -173,8 +173,10 @@ const RULES: &[Rule] = &[
         "@interact",
         "@interact=n",
         "@interact=y",
+        // (the Create tool asks it, LLToolPlacer::placeObject; the chat
+        // bar's platform does not, `int-G6-add-under-interact`)
         "creating an object refused",
-        |w, _| can(w, &probe_add(w)),
+        |w, _| w.rlva_can_rez(None),
     ),
     // LLViewerWindow::cursorIntersect: a HUD's pick is dropped like the
     // world's, so its click and its menu go too
@@ -766,12 +768,12 @@ fn replies() -> Vec<Case> {
             "the active group, or none",
             // (the reply is a group's name: a failure does not quote it)
             test(|w, c| {
-                let expected = w
-                    .groups
-                    .groups
-                    .iter()
-                    .find(|g| g.id == w.groups.active)
-                    .map_or("none", |g| g.name.as_str());
+                // gAgent.getGroupName(): the name AgentDataUpdate gave
+                let expected = if w.groups.active.is_nil() || w.groups.active_name.is_empty() {
+                    "none"
+                } else {
+                    w.groups.active_name.as_str()
+                };
                 if reply(c)? == expected {
                     Ok(())
                 } else {
@@ -1126,5 +1128,6 @@ pub(super) fn phase1() -> Vec<Case> {
     cases.sort_by_key(|c| c.id);
     cases.extend(replies());
     cases.extend(round_trips());
+    cases.extend(super::cases_int::cases());
     cases
 }
