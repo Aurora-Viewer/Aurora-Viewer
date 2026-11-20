@@ -178,6 +178,7 @@ mod viewfinder;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
+mod world_look;
 mod worn_demo;
 
 enum Screen {
@@ -1153,6 +1154,7 @@ pub struct App {
     rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
+    avatar_cache_demo: Option<crate::demo::avatar_cache::AvatarCacheDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_MASK_255: a Mask of cutoff 255 over an alpha under opaque.
@@ -1840,6 +1842,7 @@ impl App {
             window_icon: None,
             world: {
                 let mut w = World::new(lib);
+                w.avatar_cache.set_store(Some(cache_root.clone()));
                 w.cache_dir = Some(cache_root);
                 // OmnifilterEngine::init (the demo's rules are its own)
                 match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
@@ -2264,6 +2267,7 @@ impl App {
             rez_demo: None,
             arrival_demo: None,
             outfit_restore_demo: None,
+            avatar_cache_demo: None,
             tex_refresh_demo: None,
             mask_255_demo: None,
             texture_res_demo: None,
@@ -6505,8 +6509,15 @@ impl App {
         let sounds = &mut self.scene.sounds;
         // the 3D sound for headphones (Aurora's own; off: panned)
         let binaural = crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf);
-        let listener = crate::scene::sounds::Listener::looking(
+        // the ear at the camera or the avatar (MediaSoundsEarLocation), the
+        // camera's axes either way (audio_update_listener)
+        let ear = crate::scene::sounds::ear_position(
+            self.settings.audio.media_sounds_ear,
             self.camera.position,
+            self.world.agent.position,
+        );
+        let listener = crate::scene::sounds::Listener::looking(
+            ear,
             self.camera.target - self.camera.position,
             self.camera.position.z < self.world.main_water_height(),
             binaural,
@@ -10750,6 +10761,9 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            // copies of the worn objects on their way (world/avatar_cache)
+            self.world.avatar_cache.set_enabled(self.settings.avatar_cache);
+            self.world.update_avatar_cache(Instant::now());
             // a new account's outfit: worn like the Welcome Pack's folders
             if let Some(outfit) = self.world.outfit.take_initial_outfit() {
                 self.welcome_wears
@@ -11800,6 +11814,7 @@ impl App {
                 let frame = crate::media::MediaFrame {
                     view: &cull,
                     camera: self.camera.position,
+                    ear: crate::scene::sounds::ear_position(a.media_sounds_ear, self.camera.position, self.world.agent.position),
                     settings: &self.settings.media,
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
@@ -12670,8 +12685,12 @@ impl App {
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            // the spinning cat's colours, when the photo mode shows no look
-            None => self.live_look((w, h), focus).or_else(|| self.oiia.look(w, h)),
+            // the spinning cat's colours, when the photo mode shows no look,
+            // then the world's own filters
+            None => self
+                .live_look((w, h), focus)
+                .or_else(|| self.oiia.look(w, h))
+                .or_else(|| self.world_look((w, h), focus)),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -14758,6 +14777,9 @@ impl App {
                 self.panels.appearance = true;
                 self.appearance_ui.open(2, false);
             }
+        }
+        if let Some(demo) = &mut self.avatar_cache_demo {
+            demo.tick(self.frame_count, &mut self.world, Instant::now());
         }
         if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
@@ -17701,6 +17723,9 @@ impl App {
         if !open {
             self.options_ui.cancel_capture();
         }
+        if res.open_world_look {
+            self.panels.world_look = true;
+        }
         if res.clear_cache {
             self.disk_cache.clear();
             self.net.send(NetCommand::ClearObjectCache);
@@ -18069,6 +18094,7 @@ impl App {
                 // playing, the reel's quick view) never keeps a look that was
                 // only pointed at on the live view and its film.
                 self.snapshots.ui.looks.hover = None;
+                self.snapshots.world_ui.looks.hover = None;
                 // the Director's track plays: the world alone, and the
                 // countdown of its start delay
                 if self.director_playing() {
@@ -18255,9 +18281,13 @@ impl App {
                     self.settings.contact_marker_anchor,
                     self.settings.contact_markers && !bare && (!self.interface.immersive || self.settings.immersive_name_tags),
                 );
-                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon)
-                if !self.camera.mouselook() && !bare && self.settings.tracker_beacon {
-                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
+                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon): drawn
+                // in every camera mode, mouselook included. There the pointer
+                // is captured, so the beacon is neither hovered nor clicked.
+                if !bare && self.settings.tracker_beacon {
+                    let mouselook = self.camera.mouselook();
+                    let hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered && !mouselook);
+                    self.beacon_hit = hit.filter(|_| !mouselook);
                 } else {
                     self.beacon_hit = None;
                 }
@@ -19102,7 +19132,7 @@ impl App {
                     }
                 }
                 if self.skin.layout.chat_toasts
-                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                    && (crate::demo::chat_volume_comparison() || !ui::chat::nearby_chat_shown(&ctx, &self.chat_ui, self.panels.chat))
                 {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
@@ -20363,6 +20393,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
+                self.world_look_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);
@@ -21545,6 +21576,14 @@ impl ApplicationHandler for App {
                 crate::world::radar::ANIM_AGENT_TYPE,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
+            // AURORA_DEMO_AVATAR_CACHE: the animation a worn object's
+            // script plays on us
+            if crate::demo::avatar_cache::enabled() {
+                self.scene.anims.insert(
+                    crate::demo::avatar_cache::WORN_MOTION,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
+                );
+            }
             if crate::demo::pose_stand::mode().is_some() {
                 for (id, anim) in crate::demo::pose_stand::animations() {
                     self.scene
@@ -23824,6 +23863,10 @@ impl ApplicationHandler for App {
             if let Some(demo) = &mut self.outfit_restore_demo {
                 demo.setup(&mut self.world);
                 self.panels.perf = false;
+            }
+            self.avatar_cache_demo = crate::demo::avatar_cache::AvatarCacheDemo::from_env();
+            if let Some(demo) = &mut self.avatar_cache_demo {
+                demo.setup(&mut self.world);
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.mask_255_demo = crate::demo::mask_255::Mask255Demo::from_env();

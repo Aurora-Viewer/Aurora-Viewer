@@ -487,6 +487,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the chosen one's strength and settings, the before / after line, the filter panel |
+| `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
@@ -1024,6 +1025,16 @@ filter. With `viewfinder`, the whole frame shows the filter live; with
 is drawn with it (`Posterize` with `AURORA_DEMO_SNAPSHOT_TILE=1024`: the 15
 tiles share the histogram curves, no seam along their borders). Capture
 from frame 700.
+
+`AURORA_DEMO_WORLD_LOOK` (no photo window needed): at frame 600 the world
+filters (Preferences › Graphics › Image) are switched on with those looks
+stacked in the order given with `+`, the ids of `AURORA_DEMO_PHOTO_LOOK`
+(`pack:czar-fenris/Noir`, `aurora:vhs`, `Sepia`…), the last one
+chosen; `window` opens the World filters window on that look's tab. The whole 3D
+view takes them, the interface does not; with `AURORA_DEMO_SNAPSHOT` too,
+the photo window's own looks replace them while it is open. Not saved to
+the settings. The log gives `world look demo: <looks> (window <bool>)`.
+Capture from frame 620.
 
 `AURORA_DEMO_CAMERA_PRESETS` (with `AURORA_DEMO_SNAPSHOT=viewfinder`, steps
 joined by `-`): the presets panel opens at frame 600. `save` saves three
@@ -2809,7 +2820,16 @@ Keep the picker open while changing the main inventory's name/date order,
 results must follow those options, including in the Aurora Library tab.
 The inventory image picker, AO animation/notecard pickers, Move to, Replace
 links, environment settings and covenant notecard selectors share this order.
-Local names compare without case and with numeric runs (2 before 10).
+Local files start in newest-first order; the Name A–Z option compares without
+case and with numeric runs (2 before 10). Reopen the picker to check that its
+source tab and local sort choice are remembered. A control that disallows local
+files falls back to Inventory without erasing the saved Local preference.
+For online validation, apply a local alpha TGA to an attachment, exercise None /
+Blend / Mask in both build layouts, then relog: the local file and its face
+bindings should return even when the worn object's UUID changes. Reapply any
+binding already lost before this version so its inventory identity can be saved.
+Attachment part matching waits for the complete linkset and refuses ambiguous
+child geometry/transforms; no local metadata is written to simulator objects.
 Type a search, click a result, then clear the field with its cross or with
 Ctrl+A followed by Delete or Backspace: the exact selected row must remain
 selected and scroll into view, opening its parent folders if needed. Check
@@ -3625,7 +3645,9 @@ Scene menu customization: `customize` unlocks the object menu at frame 740;
 scenarios simulate nearby voice membership without starting an audio session:
 verify the volume stays above all movable rows, including while editing, and
 does not overlap Profile. Technical actions are grouped under Display,
-Information, Reset, Moderation (with rights) and Disturbance. A clicked
+Avatar information, Reset, Moderation (with rights) and Disturbance.
+Avatar information offers Inspect all attachments; Clicked object offers
+Inspect for that object. Both use Script information for their own target. A clicked
 attachment's object actions are separate from its wearer's actions.
 `customize-hud` additionally needs
 `AURORA_DEMO_HUDS=1`. Capture at frame 820 or later. `pbr` opens the object's
@@ -6357,7 +6379,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_THUMBNAILS=bar\|top\|off` | The conversations' thumbnails beside the chat bar, at the top right or hidden, for the run (#1134) |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
-| `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: no button with `up`; `new` with three messages come in and the button back to the latest messages (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
@@ -6370,6 +6392,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
+| `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
@@ -7092,6 +7115,26 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 
 ### Import inspector layout
+
+Picker cancellation: in demo mode, open Add files (or Add folder), return to
+Aurora and close the import window. Its native picker must close too on Windows,
+macOS and Linux. On macOS the modeless panel must leave Aurora usable; on Linux,
+test both the desktop portal and the zenity fallback on a desktop without a
+file chooser portal.
+Reopen the importer: existing drafts remain and Add files is enabled. Repeat in
+a type-specific importer while another importer stays open; closing the other
+window must leave the original picker alone. Cancel in the native picker itself
+and retry, and close/reopen quickly while a selection is starting. Repeat with
+the material editor's texture upload (single-file selector). Ordinary selection
+must still load the chosen files with the same extension filters.
+`cargo test --workspace file_picker` covers ownership, stale replies, panics and
+the real floater close/reopen actions, portal request options, cancellation
+before/during the wait, and completion without a portal Response after Close.
+The portable portal implementation is also type-checked in tests on Windows.
+Native macOS/Linux UI validation still requires those desktops. On a Windows interactive desktop, run
+`cargo test --workspace file_picker_native_windows_close_after_the_dialog_is_visible -- --ignored --test-threads=1`
+alone: it opens and cancels actual multiple-file, folder and single-file dialogs
+with an automation title, without selecting or reading files.
 
 TGA texture imports: use `AURORA_DEMO_IMPORTS=type-texture` and
 `AURORA_DEMO_IMPORT_FILE` with a local `.tga`, including RLE files without a
@@ -7927,8 +7970,10 @@ failure. Grid validation and any paid upload are performed by the human.
   belongs to an account.
 - **`AURORA_DEMO_COLORBLIND=protan|deutan|tritan|mono[:strength]`**: the
   interface adapted to a colour vision deficiency for this run, as
-  Preferences › Accessibility › Colour blindness does, without touching the
-  saved settings (`:0.5` for half the strength). `14` of
+  Preferences › Accessibility › Color blindness does, without touching the
+  saved settings (`:0.5` for half the strength). English labels use American
+  spelling. In Preferences, search "color": Accent color, Color blindness,
+  Interface colors, and Color vision must all appear. `14` of
   `AURORA_DEMO_OPTIONS` opens that page, with its preview of the status
   dots. What to look for (compare with a capture without the variable):
   `protan` / `deutan` turn success and online blue, `tritan` turns warnings
@@ -7960,8 +8005,8 @@ failure. Grid validation and any paid upload are performed by the human.
   their text, icons and pictures stay solid; click a window then the world
   to see it change between active and inactive.
 - **`AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>`**: the
-  interface colours for this run, any of the three, as Preferences ›
-  Appearance › Skin › Interface colours does, without touching the saved
+  interface colors for this run, any of the three, as Preferences ›
+  Appearance › Skin › Interface colors does, without touching the saved
   settings (for example `accent:#14B8A6` for a teal accent, or
   `accent:#EC4899,surface:#3A2433,text:#FCE7F3` for a pink interface).
   What to look for: the accent on the main buttons, switches, sliders,
@@ -8205,14 +8250,14 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
   conversation), forty earlier messages come before the scenario's lines and
-  the conversation opens on its top. A button fades in over the bottom of
-  the lines, above the field: "Jump to the latest messages" with `up`;
-  with `new` the friend writes three messages once the top is shown and it
-  reads "3 new messages". A click brings the last message back against the
-  field and the button fades out; a message written then shows at once,
-  the lines following the end again. Scrolling back down by hand also hides
-  it once the end is less than half the height in sight away (with nothing
-  new).
+  the conversation opens on its top. With `up`, no latest-message button
+  appears. With `new`, the friend writes three messages once the top is
+  shown: "3 new messages" fades in above the field. A click brings the last
+  message back against the field and the button fades out; messages then
+  follow the end again. Reaching the end by hand also clears the count.
+  Scrolling up again without new arrivals must leave the button absent.
+  Repeat with the conversation detached, and with Preferences > Chat >
+  Conversations > Show the button to the latest messages disabled (always absent).
 
 - **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude|join-map|join-contact|join-fly|join-fly-blocked|join-fly-late|join-fly-custom`** (#999): removes
   Nova's nearby object and coarse location at frame 60. The online friend
@@ -8316,8 +8361,13 @@ failure. Grid validation and any paid upload are performed by the human.
   must already be available. `nearby-out` also detaches it: its own window
   stays open, the empty Conversations window closes, and "Attach to
   Conversations" reopens it on nearby chat. Opening a private conversation
-  afterwards must leave nearby chat detached. With `AURORA_DEMO_CONV_MENU=im`
-  without `AURORA_DEMO_CONV_POPOUT`, the friend's menu starts with "Detach".
+  afterwards must leave nearby chat detached. While the detached nearby
+  window is visible, nearby overlay lines stay hidden even with Conversations
+  closed or showing an IM (#2546). Hide or minimize the nearby window:
+  incoming lines appear in the overlay again. Restore it: they disappear.
+  Repeat with every chat style and with nearby chat docked.
+  With `AURORA_DEMO_CONV_MENU=im` without `AURORA_DEMO_CONV_POPOUT`, the
+  friend's menu starts with "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
   conversation holds two more messages of emoji alone: Nova's three
@@ -10851,6 +10901,30 @@ later and `outfit: 5 of 5 attachments worn` about 30 s after the requests;
 the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
+
+**`AURORA_DEMO_AVATAR_CACHE=1`** — avatars drawn from the cache while the
+region sends them (`world/avatar_cache`). The cache holds how Violet Wolf
+looked the last time it was seen (the classic look, without its pigtails
+then) and what it wore: its hat, pink then, and its orb. The demo region
+sends its appearance 2 s after the loading fade: until then the kept look
+is drawn, never a cloud, then the region's, whose pigtails grow. That
+appearance lists both objects, but the region only sends them 6 s after
+the fade: until then their copies are drawn (the pink hat), then the
+region's own (the violet hat). With `AURORA_DEMO_OUTFIT_RESTORE=warm`, the
+cache also holds the demo outfit's hair, earrings and boots, drawn visible
+for this scenario (pink, gold, brown): they show from the start instead of
+when the restore puts them back. The hair's script played an animation on
+us (the wrists tapping, as a bento tail's wag): it plays from the start
+with the hair's copy, and goes on without a restart once the restore has
+put the hair back and its script plays it again (`demo avatar cache: the
+hair's script plays its animation again`). Right-clicking a copy finds no object.
+The log says `demo avatar cache: the region sends Violet Wolf's
+appearance`, then `demo avatar cache: the region sends Violet Wolf's worn
+objects (<n> copies drawn now)`, then `avatar cache: <n> copies drawn, <n>
+handed over to the region's objects` once every copy is gone. With the
+setting off (Preferences › Graphics, "Avatars from the cache"), Violet
+Wolf is a cloud until its appearance comes, and nothing is drawn before
+the region's objects.
 
 In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from the
 texture disk cache, as after login. Reopen the showcase or select the outfit again:

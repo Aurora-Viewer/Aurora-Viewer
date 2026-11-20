@@ -444,7 +444,7 @@ The other components (ported code, native libraries, assets) are in
 | rusticata-macros 4.1.0 | MIT OR Apache-2.0 |
 | rustix 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustix 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustls 0.23.46 | Apache-2.0 OR MIT OR ISC |
+| rustls 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs 0.8.4 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types 1.15.1 | MIT OR Apache-2.0 |
 | rustls-platform-verifier 0.7.1 | MIT OR Apache-2.0 |

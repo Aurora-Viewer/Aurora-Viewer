@@ -727,6 +727,8 @@ pub struct OptionsResult {
     pub show_contacts_tab_on: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
+    /// Open the World filters window (Graphics › Image).
+    pub open_world_look: bool,
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,

@@ -679,6 +679,9 @@ pub struct Settings {
     pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// The world look (Preferences › Graphics › Image): a stack of looks of
+    /// its own on the 3D view, apart from the photos' (`snapshot::looks`).
+    pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
@@ -1818,6 +1821,10 @@ pub struct Settings {
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
+    /// Aurora's own: while an avatar's worn objects are on their way, draw
+    /// copies of the ones kept from the last time (world/avatar_cache), then
+    /// the region's own.
+    pub avatar_cache: bool,
     /// RenderAvatarComplexityMode: 0 limit everyone, 1 always show friends
     /// fully, 2 show only friends.
     pub complexity_mode: u8,
@@ -2224,6 +2231,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Where world sounds and media are heard from: the camera or the
+    /// avatar (MediaSoundsEarLocation, panel_preferences_sound.xml; camera).
+    pub media_sounds_ear: VoiceEar,
     /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
     /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
     pub doppler: f32,
@@ -2292,6 +2302,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            media_sounds_ear: VoiceEar::Camera,
             doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
@@ -2306,7 +2317,8 @@ impl Default for AudioSettings {
     }
 }
 
-/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+/// VoiceEarLocation and MediaSoundsEarLocation (panel_preferences_sound.xml):
+/// the same two choices for voice and for sounds and media.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VoiceEar {
     #[default]
@@ -2506,6 +2518,7 @@ impl Default for Settings {
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
+            world_look: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
@@ -2796,6 +2809,7 @@ impl Default for Settings {
             max_attachment_area: 1000.0,
             complexity_notice_seconds: 0,
             loading_avatars: 0,
+            avatar_cache: true,
             complexity_mode: 0,
             avatar_physics: true,
             avatar_physics_detail: 1.0,
