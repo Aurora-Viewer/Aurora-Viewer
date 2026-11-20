@@ -439,6 +439,65 @@ fn bulk_buttons_apply_once_and_close_without_restarting_or_resetting_choices() {
     assert!(tool.out.is_empty(), "Close sends no inventory request or update");
 }
 
+#[test]
+fn object_icon_selects_the_job_filter_and_running_choices_stay_visible() {
+    let (world, mut tool, _, _) = fixture();
+    let ctx = egui::Context::default();
+    let mut options = BulkPerms {
+        types: [false; 11],
+        ..Default::default()
+    };
+    let mut object_rect = egui::Rect::NOTHING;
+    let mut draw_types = |events| {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.horizontal(|ui| {
+                    for (i, t) in TYPES.into_iter().enumerate() {
+                        ui.push_id(t, |ui| {
+                            let response = type_filter(ui, &crate::theme::Theme::default().palette(), t, &mut options.types[i]);
+                            if t == 6 {
+                                object_rect = response.rect;
+                            }
+                        });
+                    }
+                });
+            },
+        );
+        object_rect.center()
+    };
+    let point = draw_types(vec![]);
+    draw_types(vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        draw_types(vec![egui::Event::PointerButton {
+            pos: point,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        }]);
+    }
+    assert!(options.includes_type(6), "clicking the cube selects Objects");
+    assert_eq!(options.types.iter().filter(|selected| **selected).count(), 1);
+    tool.ui.bulk.options = options;
+    tool.ui.bulk_perms_open = true;
+    for _ in 0..4 {
+        frame(&ctx, &mut tool, &world, vec![]);
+    }
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-apply"));
+    let submitted = tool.ui.bulk.job.as_ref().expect("started").options.clone();
+    assert!(submitted.includes_type(6) && submitted.next_modify && submitted.next_copy);
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-clear"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    assert_eq!(
+        tool.ui.bulk.options, submitted,
+        "displayed choices still describe the running operation"
+    );
+}
+
 /// The bulk permissions window keeps its size, its buttons inside it.
 #[test]
 fn bulk_permissions_keep_their_size() {

@@ -3671,7 +3671,7 @@ content-perms-starting = Envoi des demandes de modification des droits…
 content-perms-reading = Lecture du contenu des objets…
 content-perms-finished = Modifications envoyées : { $count } éléments. Objets ignorés : { $skipped }.
 content-perms-nested = Inclure les objets dans les objets
-content-perms-nested-help = Modifie aussi ce que contiennent les objets de ce contenu, jusqu’à 5 niveaux. Chaque objet est rezzé 2 m au-dessus de la prim qui le contient, ses scripts en marche sont arrêtés, son contenu modifié, ses scripts relancés, puis il est réenregistré dans le contenu et la copie rezzée est supprimée. Les objets que vous ne pouvez pas copier, transférer ou modifier restent fermés. Il faut le droit de construire là où les objets sont rezzés.
+content-perms-nested-help = Modifie aussi ce que contiennent les objets de ce contenu, jusqu’à 5 niveaux. Chaque objet est rezzé 2 m au-dessus de la prim qui le contient, ses scripts en marche sont arrêtés, son contenu modifié, ses scripts relancés, puis il est réenregistré dans le contenu. Les droits de l’objet revenu y sont réglés et vérifiés avant de supprimer la copie rezzée. Les objets que vous ne pouvez pas copier, transférer ou modifier restent fermés. Il faut le droit de construire là où les objets sont rezzés.
 content-perms-nested-preview = { $objects ->
     [one] { $objects } objet du contenu sera ouvert, ignorés : { $skipped }.
    *[other] { $objects } objets du contenu seront ouverts, ignorés : { $skipped }.
@@ -3698,6 +3698,7 @@ content-perms-nested-scripts-warning = Chaque objet est rezzé dans le monde : l
 content-perms-nested-original-kept = « { $name } » a été réenregistré, mais son élément d’origine n’a pas pu être retiré : les deux sont dans le contenu.
 content-perms-nested-copy-left = La copie rezzée de « { $name } » n’a pas pu être supprimée : supprimez-la vous-même.
 content-perms-nested-save-unconfirmed = le réenregistrement n’a pas été confirmé
+content-perms-nested-saved-perms-unconfirmed = Traitement arrêté : les droits de l’objet revenu dans son conteneur n’ont pas pu être confirmés. Les copies de travail rezzées ont été conservées ; vérifiez-les avant de les supprimer.
 content-perms-nested-timeout = le simulateur n’a pas répondu à temps
 content-perms-nested-rez-refused = Arrêté : le simulateur a refusé de rezzer « { $name } » ({ $reason }).
 content-perms-nested-rez-timeout = Arrêté : « { $name } » n’est pas apparu en 15 secondes. S’il apparaît plus tard au-dessus de la prim, supprimez-le.

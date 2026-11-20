@@ -271,7 +271,14 @@ pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem
         (Some(_), Some(new), _) => Saved::Added(new),
         (None, Some(new), _) | (None, None, Some(new)) => Saved::Replaced(new),
         (Some(_), None, Some(new)) => Saved::Unnamed(new),
-        (Some(now), None, None) if !original.asset_id.is_nil() && now.asset_id != original.asset_id => Saved::InPlace,
+        (Some(now), None, None)
+            if before
+                .iter()
+                .find(|item| item.item_id == original.item_id)
+                .is_some_and(|item| !item.asset_id.is_nil() && now.asset_id != item.asset_id) =>
+        {
+            Saved::InPlace
+        }
         (Some(_), None, None)
             if (serial_moves >= 2 || (serial_moves == 1 && quiet)) && others_unchanged(before, after, original.item_id) =>
         {
@@ -402,6 +409,8 @@ pub enum Stage {
     /// have renamed it), so that the saved item is found by its name.
     Rename,
     Save,
+    /// Update and confirm the saved inventory item in its source prim.
+    SavedPerms,
     RemoveOriginal,
     Delete,
     Recover,
@@ -558,6 +567,29 @@ fn contents_permissions_match(wanted: &TaskItem, actual: &TaskItem) -> bool {
         && actual.name == wanted.name
 }
 
+/// Save back can fold the object's masks against its contents. Only a task
+/// inventory update AFTER that save sets the returned item's final masks.
+/// Like LLSidepanelItemInfo::updatePermissions (llsidepaneliteminfo.cpp), mark
+/// object overrides so the inventory permissions survive its next rez.
+fn saved_permissions(saved: &TaskItem, original: &TaskItem, options: &BulkPerms) -> TaskItem {
+    let mut wanted = saved.clone();
+    if options.includes(saved) {
+        options.apply(&mut wanted);
+    } else {
+        // Opening an excluded object to process its contents must not change
+        // its own masks as a side effect of saving it back.
+        wanted.group_mask = original.group_mask;
+        wanted.everyone_mask = original.everyone_mask;
+        wanted.next_owner_mask = original.next_owner_mask;
+        wanted.flags = crate::world::inventory::actions::object_permission_flags(
+            wanted.flags,
+            [saved.group_mask, saved.everyone_mask, saved.next_owner_mask],
+            [wanted.group_mask, wanted.everyone_mask, wanted.next_owner_mask],
+        );
+    }
+    wanted
+}
+
 #[derive(Debug)]
 pub struct Job {
     options: BulkPerms,
@@ -581,6 +613,7 @@ pub struct Job {
     /// copy's name then.
     snapshot: Option<(Vec<TaskItem>, i16, String)>,
     saved: Option<TaskItem>,
+    saved_next: Stage,
     /// The source listing's last serial seen during a save, and since when.
     serial_seen: Option<(i16, Instant)>,
     contents_update: Option<ContentsUpdate>,
@@ -610,6 +643,7 @@ impl Job {
             gathering: None,
             snapshot: None,
             saved: None,
+            saved_next: Stage::Delete,
             serial_seen: None,
             contents_update: None,
             stopping: false,
@@ -668,7 +702,9 @@ impl Job {
             Stage::Read | Stage::Next => aurora_i18n::tr!("content-perms-reading").into(),
             Stage::Rez | Stage::Props => aurora_i18n::tr!("content-perms-nested-rezzing", name = name, level = self.level() + 1),
             Stage::Scripts | Stage::StopScripts => aurora_i18n::tr!("content-perms-nested-stopping", name = name),
-            Stage::Apply | Stage::ConfirmContents | Stage::ObjectPerms => aurora_i18n::tr!("content-perms-nested-applying", name = name),
+            Stage::Apply | Stage::ConfirmContents | Stage::ObjectPerms | Stage::SavedPerms => {
+                aurora_i18n::tr!("content-perms-nested-applying", name = name)
+            }
             Stage::RestoreScripts => aurora_i18n::tr!("content-perms-nested-restoring", name = name),
             Stage::Rename | Stage::Save | Stage::RemoveOriginal => aurora_i18n::tr!("content-perms-nested-saving", name = name),
             Stage::Delete | Stage::Recover => aurora_i18n::tr!("content-perms-nested-deleting", name = name),
@@ -769,7 +805,7 @@ impl Job {
             if !self.rez_in_flight()
                 && !matches!(
                     self.stage,
-                    Stage::Props | Stage::Save | Stage::RemoveOriginal | Stage::Delete | Stage::Recover | Stage::Done
+                    Stage::Props | Stage::Save | Stage::SavedPerms | Stage::RemoveOriginal | Stage::Delete | Stage::Recover | Stage::Done
                 )
             {
                 let next = if self.top().is_some_and(|f| f.copy.is_some()) {
@@ -866,6 +902,17 @@ impl Job {
     }
 
     fn fail(&mut self, tool: &mut BuildTool, world: &World, failure: Failure, now: Instant) {
+        if self.stage == Stage::SavedPerms {
+            // The saved item may be the only updated version inside a working
+            // ancestor. Keep the entire stack, not just this rezzed copy, for
+            // manual recovery; no deletion or parent save can follow this failure.
+            log::warn!("deep permissions: {failure:?} at SavedPerms (level {})", self.level());
+            self.report
+                .failures
+                .push(aurora_i18n::tr!("content-perms-nested-saved-perms-unconfirmed").into());
+            self.advance(Stage::Done, now);
+            return;
+        }
         let rec = recovery(&failure);
         let name = self.name();
         let reason = match &failure {
@@ -960,6 +1007,60 @@ impl Job {
         });
     }
 
+    /// Read the requested task inventory masks back, never a cached listing
+    /// from before the write. Both normal contents and the item returned by a
+    /// save use this acknowledgment before processing their parent.
+    fn confirm_update(&mut self, tool: &mut BuildTool, world: &World, object: Uuid, now: Instant) -> Result<Option<i16>, Failure> {
+        if self.contents_update.as_ref().is_some_and(|update| update.checked) {
+            if self.poll(now) {
+                if let Some(update) = self.contents_update.as_mut() {
+                    update.checked = false;
+                }
+                Self::read(tool, world, object, true)?;
+            }
+            return Ok(None);
+        }
+        let Some(inv) = Self::listing(tool, object) else {
+            Self::read(tool, world, object, false)?;
+            return Ok(None);
+        };
+        let depth = self.level();
+        let post_save = self.stage == Stage::SavedPerms;
+        let Some(update) = self.contents_update.as_mut() else {
+            return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
+        };
+        update.checked = true;
+        if serial_moves(update.serial, inv.serial).is_none() {
+            return Ok(None);
+        }
+        update.serial = inv.serial;
+        let actual: HashMap<_, _> = inv.items.iter().map(|item| (item.item_id, item)).collect();
+        let mut confirmed = true;
+        for wanted in &update.expected {
+            let item = actual.get(&wanted.item_id);
+            let matches = item.is_some_and(|item| contents_permissions_match(wanted, item));
+            if let Some(item) = item
+                && (wanted.asset_type == AT_OBJECT || !matches)
+            {
+                // Numeric masks only, including whether this readback is of
+                // the object item returned into its source container.
+                log::info!(
+                    "permission trace: readback level={depth} post_save={post_save} type={} requested_base={:#x} requested_next={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} requested_flags={:#x} returned_flags={:#x} matches={matches}",
+                    wanted.asset_type,
+                    wanted.base_mask,
+                    wanted.next_owner_mask,
+                    item.base_mask,
+                    item.owner_mask,
+                    item.next_owner_mask,
+                    wanted.flags,
+                    item.flags,
+                );
+            }
+            confirmed &= matches;
+        }
+        Ok(confirmed.then_some(inv.serial))
+    }
+
     fn preflight(world: &World, frame: &Frame) -> Result<(), Failure> {
         let at =
             Self::rez_point_of(world, frame.object).ok_or_else(|| Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()))?;
@@ -996,8 +1097,10 @@ impl Job {
         self.sent = true;
         // a listing error of the prim being read
         if let Some(errored) = self.inventory_error.take()
-            && matches!(self.stage, Stage::Read | Stage::Apply | Stage::ConfirmContents)
-            && self.top().is_some_and(|f| f.prim().id == errored)
+            && self.top().is_some_and(|f| {
+                (matches!(self.stage, Stage::Read | Stage::Apply | Stage::ConfirmContents) && f.prim().id == errored)
+                    || (self.stage == Stage::SavedPerms && f.source.is_some_and(|(id, _)| id == errored))
+            })
         {
             return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
         }
@@ -1383,59 +1486,15 @@ impl Job {
                 Ok(Some(Stage::ConfirmContents))
             }
             Stage::ConfirmContents => {
-                if self.contents_update.as_ref().is_some_and(|update| update.checked) {
-                    if self.poll(now) {
-                        if let Some(update) = self.contents_update.as_mut() {
-                            update.checked = false;
-                        }
-                        Self::read(tool, world, object, true)?;
-                    }
-                    return Ok(None);
-                }
-                let Some(inv) = Self::listing(tool, object) else {
-                    Self::read(tool, world, object, false)?;
+                let Some(serial) = self.confirm_update(tool, world, object, now)? else {
                     return Ok(None);
                 };
-                let Some(update) = self.contents_update.as_mut() else {
-                    return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
-                };
-                update.checked = true;
-                if serial_moves(update.serial, inv.serial).is_none() {
-                    return Ok(None);
+                if let Some(update) = self.contents_update.take() {
+                    self.report.updated += update.updated;
                 }
-                update.serial = inv.serial;
-                let actual: HashMap<_, _> = inv.items.iter().map(|item| (item.item_id, item)).collect();
-                let mut confirmed = true;
-                for wanted in &update.expected {
-                    let item = actual.get(&wanted.item_id);
-                    let matches = item.is_some_and(|item| contents_permissions_match(wanted, item));
-                    if let Some(item) = item
-                        && (wanted.asset_type == AT_OBJECT || !matches)
-                    {
-                        // Numeric masks only: enough to distinguish save folding,
-                        // rejected bits and missing rez overrides on a live grid.
-                        log::info!(
-                            "permission trace: readback level={depth} type={} requested_base={:#x} requested_next={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} requested_flags={:#x} returned_flags={:#x} matches={matches}",
-                            wanted.asset_type,
-                            wanted.base_mask,
-                            wanted.next_owner_mask,
-                            item.base_mask,
-                            item.owner_mask,
-                            item.next_owner_mask,
-                            wanted.flags,
-                            item.flags,
-                        );
-                    }
-                    confirmed &= matches;
-                }
-                if !confirmed {
-                    return Ok(None);
-                }
-                self.report.updated += update.updated;
                 if let Some(frame) = self.stack.last_mut() {
-                    frame.prim_mut().applied_serial = Some(inv.serial);
+                    frame.prim_mut().applied_serial = Some(serial);
                 }
-                self.contents_update = None;
                 if depth == 0 {
                     self.stack.pop();
                     return Ok(Some(self.next_prim(tool, world)));
@@ -1558,12 +1617,36 @@ impl Job {
                     }
                 }
                 if first {
-                    let (before, serial) = tool
-                        .contents
-                        .objects
+                    self.snapshot = None;
+                    self.saved = None;
+                    self.serial_seen = None;
+                    // The parent's cached listing predates the traversal of this
+                    // copy. Changes made since then must never count as evidence
+                    // of the save we are only about to send.
+                    Self::read(tool, world, source, true)?;
+                    return Ok(None);
+                }
+                if self.snapshot.is_none() {
+                    let Some(inv) = Self::listing(tool, source) else {
+                        Self::read(tool, world, source, false)?;
+                        return Ok(None);
+                    };
+                    if tool
+                        .props
                         .get(&source)
-                        .map(|inv| (inv.items.iter().filter(|i| !i.is_folder).cloned().collect(), inv.serial))
-                        .unwrap_or_default();
+                        .filter(|props| props.full)
+                        .is_some_and(|props| serial_moves(props.inventory_serial, inv.serial).is_none())
+                    {
+                        if self.poll(now) {
+                            Self::read(tool, world, source, true)?;
+                        }
+                        return Ok(None);
+                    }
+                    let before: Vec<TaskItem> = inv.items.iter().filter(|item| !item.is_folder).cloned().collect();
+                    let serial = inv.serial;
+                    if !before.iter().any(|item| item.item_id == original.item_id) {
+                        return Err(Failure::OriginalGone);
+                    }
                     // the name the saved item takes: the item's, unless a
                     // script renamed the copy again
                     let saved_as = if group {
@@ -1643,8 +1726,9 @@ impl Job {
                     };
                     if let Some(item) = saved {
                         log::info!(
-                            "permission trace: saved level={depth} original_base={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} flags={:#x}",
+                            "permission trace: saved level={depth} original_base={:#x} original_next={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} flags={:#x}",
                             original.base_mask,
+                            original.next_owner_mask,
                             item.base_mask,
                             item.owner_mask,
                             item.next_owner_mask,
@@ -1652,28 +1736,25 @@ impl Job {
                         );
                     }
                 }
-                match outcome {
+                let (saved, next) = match outcome {
                     Saved::Pending => {
                         if self.poll(now) {
                             Self::read(tool, world, source, true)?;
                         }
-                        Ok(None)
+                        return Ok(None);
                     }
-                    Saved::Added(new) => {
-                        self.report.objects += 1;
-                        self.saved = Some(new);
-                        Ok(Some(Stage::RemoveOriginal))
-                    }
+                    Saved::Added(new) => (new, Stage::RemoveOriginal),
                     Saved::Replaced(new) => {
-                        self.report.objects += 1;
                         if new.name != original.name {
                             self.rename_in_parent(new.item_id, original.name.clone());
                         }
-                        Ok(Some(Stage::Delete))
+                        (new, Stage::Delete)
                     }
                     Saved::InPlace => {
-                        self.report.objects += 1;
-                        Ok(Some(Stage::Delete))
+                        let Some(item) = items.into_iter().find(|item| item.item_id == original.item_id) else {
+                            return Err(Failure::OriginalGone);
+                        };
+                        (item, Stage::Delete)
                     }
                     Saved::Unnamed(new) => {
                         log::warn!(
@@ -1681,11 +1762,70 @@ impl Job {
                             original.name,
                             new.name
                         );
-                        self.report.objects += 1;
                         self.report.kept_next += 1;
-                        Ok(Some(Stage::Delete))
+                        (new, Stage::Delete)
                     }
+                };
+                self.saved = Some(saved);
+                self.saved_next = next;
+                Ok(Some(Stage::SavedPerms))
+            }
+            Stage::SavedPerms => {
+                let (Some((source, source_key)), Some(original), Some(saved)) = (source, copy, self.saved.as_ref()) else {
+                    return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
+                };
+                if first {
+                    if !world
+                        .objects
+                        .index_of_uuid(&source)
+                        .is_some_and(|idx| tool.contents_editable(world, idx))
+                    {
+                        return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
+                    }
+                    let serial = Self::listing(tool, source)
+                        .map(|inv| inv.serial)
+                        .ok_or_else(|| Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()))?;
+                    let before = self
+                        .snapshot
+                        .as_ref()
+                        .and_then(|(items, _, _)| items.iter().find(|item| item.item_id == original.item_id))
+                        .unwrap_or(&original);
+                    let mut wanted = saved_permissions(saved, before, &self.options);
+                    log::info!(
+                        "permission trace: request level={depth} post_save=true objects={} base={:#x} owner={:#x} previous_next={:#x} requested_next={:#x} flags={:#x}",
+                        self.options.includes(saved),
+                        wanted.base_mask,
+                        wanted.owner_mask,
+                        saved.next_owner_mask,
+                        wanted.next_owner_mask,
+                        wanted.flags,
+                    );
+                    // This targets the item IN THE SOURCE PRIM, never the
+                    // rezzed copy. Save folding has already happened.
+                    tool.send(BuildCmd::UpdateTaskInventory {
+                        handle: source_key.region,
+                        local_id: source_key.local_id,
+                        item: Box::new(wanted.clone()),
+                    });
+                    // Only the comparison retains the original rights ceiling;
+                    // do not send invented base/owner masks to the simulator.
+                    wanted.base_mask = before.base_mask;
+                    wanted.owner_mask = before.owner_mask;
+                    self.contents_update = Some(ContentsUpdate {
+                        serial,
+                        expected: vec![wanted],
+                        updated: 0,
+                        checked: false,
+                    });
+                    Self::read(tool, world, source, true)?;
+                    return Ok(None);
                 }
+                if self.confirm_update(tool, world, source, now)?.is_none() {
+                    return Ok(None);
+                }
+                self.contents_update = None;
+                self.report.objects += 1;
+                Ok(Some(self.saved_next))
             }
             Stage::RemoveOriginal => {
                 // only ever after a save matched by the original's name
@@ -1725,6 +1865,7 @@ impl Job {
                 Ok(Some(self.after_copy(tool, world)))
             }
             Stage::Delete | Stage::Recover => {
+                self.saved = None;
                 let left: Vec<(Uuid, ObjKey)> = roots
                     .iter()
                     .filter(|(id, _)| world.objects.index_of_uuid(id).is_some())

@@ -119,6 +119,28 @@ fn type_name(t: i8) -> &'static str {
     }
 }
 
+fn type_filter(ui: &mut egui::Ui, p: &Palette, t: i8, selected: &mut bool) -> egui::Response {
+    widgets::checkbox(ui, p, selected, "").on_hover_text(type_name(t));
+    let icon = if let Some(icon) = crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(t), i32::from(t), 0)) {
+        let color = crate::ui::inventory::item_icon_color(i32::from(t), i32::from(t), p);
+        ui.add(
+            egui::Image::new(&icon)
+                .fit_to_exact_size(Vec2::splat(18.0))
+                .tint(color)
+                .sense(egui::Sense::click()),
+        )
+    } else {
+        ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click()).1
+    };
+    // The icon is the checkbox's visible label: clicking either must select
+    // the same type, including the Objects cube.
+    if icon.clicked() {
+        *selected = !*selected;
+    }
+    icon.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *selected, type_name(t)));
+    icon.on_hover_text(type_name(t))
+}
+
 pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World) {
     if !tool.ui.bulk_perms_open {
         return;
@@ -193,6 +215,11 @@ pub(crate) fn controls(
     egui::ScrollArea::vertical()
         .id_salt("bulk_permission_options")
         .show(&mut body, |ui| {
+            // The running job owns a snapshot of these choices. Keep the shown
+            // choices fixed too, so they cannot describe a different operation.
+            if running {
+                ui.disable();
+            }
             let filter_width = [aurora_i18n::tr!("common-all"), aurora_i18n::tr!("common-clear")]
                 .into_iter()
                 .map(|text| {
@@ -213,16 +240,7 @@ pub(crate) fn controls(
                                 if let Some(t) = TYPES.get(i) {
                                     ui.push_id(t, |ui| {
                                         ui.horizontal(|ui| {
-                                            widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
-                                            if let Some(icon) =
-                                                crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
-                                            {
-                                                let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
-                                                ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
-                                                    .on_hover_text(type_name(*t));
-                                            } else {
-                                                ui.allocate_space(Vec2::splat(18.0));
-                                            }
+                                            type_filter(ui, p, *t, &mut b.types[i]);
                                         });
                                     });
                                 } else {

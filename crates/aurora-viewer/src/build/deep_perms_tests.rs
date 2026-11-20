@@ -1107,6 +1107,150 @@ fn without_objects_ticked_the_copies_keep_their_masks() {
 const TYPES_OBJECT_INDEX: usize = 5;
 
 #[test]
+fn saved_item_permissions_are_confirmed_in_the_container_before_cleanup() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for in_place in [false, true] {
+        let mut h = Harness::new();
+        h.sim.deep_in_place = in_place;
+        h.fold_saved_modify = true;
+        h.start(BulkPerms {
+            next_modify: true,
+            ..Default::default()
+        });
+        for _ in 0..500 {
+            h.tick();
+            if h.tool.ui.bulk.deep.as_ref().is_some_and(|job| job.stage == Stage::SavedPerms) {
+                break;
+            }
+        }
+        let job = h.tool.ui.bulk.deep.as_ref().expect("job");
+        assert_eq!(job.stage, Stage::SavedPerms);
+        let saved = job.saved.clone().expect("returned item");
+        assert_eq!(saved.next_owner_mask & perm::MODIFY, 0, "save folded Modify away");
+        let frame = job.top().expect("copy frame");
+        let (source, source_key) = frame.source.expect("container");
+        let original = frame.copy.clone().expect("original");
+        assert_ne!(source_key, frame.key, "the container is not the rezzed copy");
+        let working_copies = h.rezzed_left();
+        // Lose only the update of the returned item; its fresh readbacks keep
+        // showing the folded mask. All earlier contents updates have succeeded.
+        let captured = Arc::new(AtomicUsize::new(0));
+        let count = captured.clone();
+        h.drop = Box::new(move |cmd, _| {
+            let matches = matches!(cmd, BuildCmd::UpdateTaskInventory { handle, local_id, item }
+                if *handle == source_key.region && *local_id == source_key.local_id && item.item_id == saved.item_id);
+            if matches {
+                count.fetch_add(1, Ordering::Relaxed);
+            }
+            matches
+        });
+        let commands_before = h.sent.len();
+        for _ in 0..16 {
+            assert!(h.tick());
+        }
+        let job = h.tool.ui.bulk.deep.as_ref().expect("waiting for returned item's masks");
+        assert_eq!(job.stage, Stage::SavedPerms);
+        assert_eq!(job.report.objects, 0);
+        assert_eq!(
+            captured.load(Ordering::Relaxed),
+            1,
+            "the write targets the returned item in its container"
+        );
+        assert_eq!(h.rezzed_left(), working_copies);
+        assert!(!h.sent[commands_before..].iter().any(|cmd| matches!(
+            cmd,
+            BuildCmd::RemoveTaskInventory { .. } | BuildCmd::DeRez { .. } | BuildCmd::SetPermissions { .. }
+        )));
+        let inv = h.tool.contents.objects.get(&source).expect("container listing");
+        assert!(inv.items.iter().any(|item| item.item_id == original.item_id));
+        // Deliver that exact inventory update late, then allow its readback.
+        let wanted = job.contents_update.as_ref().expect("pending write").expected[0].clone();
+        assert_eq!(wanted.item_id, saved.item_id);
+        assert_eq!(wanted.next_owner_mask & (perm::MODIFY | perm::COPY), perm::MODIFY | perm::COPY);
+        h.drop = Box::new(|_, _| false);
+        for event in h.sim.reply(
+            &h.world,
+            &BuildCmd::UpdateTaskInventory {
+                handle: source_key.region,
+                local_id: source_key.local_id,
+                item: Box::new(wanted),
+            },
+        ) {
+            h.deliver(event);
+        }
+        for _ in 0..2000 {
+            if !h.tick() {
+                break;
+            }
+        }
+        assert!(h.tool.ui.bulk.deep.is_none());
+        assert_eq!(h.rezzed_left(), 0);
+        let items = h.chest_items();
+        let outer = named(&items, aurora_i18n::tr!("content-perms-demo-outer"))[0];
+        assert_eq!(outer.next_owner_mask & (perm::MODIFY | perm::COPY), perm::MODIFY | perm::COPY);
+    }
+}
+
+#[test]
+fn unconfirmed_saved_item_permissions_stop_and_keep_all_working_copies() {
+    let mut h = Harness::new();
+    h.fold_saved_modify = true;
+    h.start(BulkPerms {
+        next_modify: true,
+        ..Default::default()
+    });
+    for _ in 0..500 {
+        h.tick();
+        if h.tool.ui.bulk.deep.as_ref().is_some_and(|job| job.stage == Stage::SavedPerms) {
+            break;
+        }
+    }
+    assert_eq!(h.tool.ui.bulk.deep.as_ref().expect("job").stage, Stage::SavedPerms);
+    let working_copies = h.rezzed_left();
+    assert!(working_copies > 1, "include the ancestors in recovery");
+    h.drop = Box::new(|cmd, _| matches!(cmd, BuildCmd::UpdateTaskInventory { .. }));
+    let commands_before = h.sent.len();
+    for _ in 0..200 {
+        if !h.tick() {
+            break;
+        }
+    }
+    assert!(h.tool.ui.bulk.deep.is_none());
+    assert!(
+        h.tool
+            .ui
+            .bulk
+            .status
+            .contains(aurora_i18n::tr!("content-perms-nested-saved-perms-unconfirmed"))
+    );
+    assert_eq!(h.rezzed_left(), working_copies);
+    assert!(
+        !h.sent[commands_before..]
+            .iter()
+            .any(|cmd| matches!(cmd, BuildCmd::RemoveTaskInventory { .. } | BuildCmd::DeRez { .. }))
+    );
+}
+
+#[test]
+fn excluded_objects_recover_their_original_masks_after_save_folding() {
+    let mut original = object(AGENT, ALL);
+    original.next_owner_mask = perm::MOVE | perm::COPY | perm::MODIFY;
+    let mut saved = original.clone();
+    saved.item_id = Uuid::new_v4();
+    saved.next_owner_mask &= !perm::MODIFY;
+    let mut options = shared();
+    options.types[TYPES_OBJECT_INDEX] = false;
+    let wanted = saved_permissions(&saved, &original, &options);
+    assert_eq!(wanted.item_id, saved.item_id);
+    assert_eq!(wanted.base_mask, saved.base_mask);
+    assert_eq!(wanted.owner_mask, saved.owner_mask);
+    assert_eq!(wanted.group_mask, original.group_mask);
+    assert_eq!(wanted.everyone_mask, original.everyone_mask);
+    assert_eq!(wanted.next_owner_mask, original.next_owner_mask);
+    assert_ne!(wanted.flags & 0x100, 0);
+}
+
+#[test]
 fn a_renamed_copy_takes_its_item_name_back_before_the_save() {
     let mut h = Harness::new();
     h.rename_on_rez = Some("Renamed by a script".into());
@@ -1436,4 +1580,78 @@ fn a_stale_inventory_reply_never_confirms_a_pending_save() {
         assert!(!h.sent.iter().any(|c| matches!(c, BuildCmd::DeRez { destination, local_ids, .. }
             if *destination == derez::TRASH && local_ids.contains(&local))));
     }
+}
+
+#[test]
+fn source_changes_before_a_save_never_count_as_its_confirmation() {
+    let mut h = Harness::new();
+    h.drop = Box::new(|command, _| {
+        matches!(command, BuildCmd::DeRez { destination, .. }
+        if *destination == derez::SAVE_INTO_TASK_INVENTORY)
+    });
+    h.start(shared());
+    let mut target = None;
+    for _ in 0..2000 {
+        if let Some(job) = h.tool.ui.bulk.deep.as_ref()
+            && job.stage == Stage::Save
+            && !job.sent
+            && let Some(frame) = job.top()
+            && let (Some(source), Some(original)) = (frame.source, frame.copy.as_ref())
+        {
+            target = Some((source, frame.object, original.clone(), job.report.objects));
+            break;
+        }
+        assert!(h.tick(), "reach a pending save");
+    }
+    let ((source, source_key), copy, original, saved_before) = target.expect("a save is ready");
+    let cached = h.tool.contents.objects[&source].serial;
+    // The server's listing advances while the working copy is being processed.
+    // Properties announce the new serial; the cached contents stay older.
+    for _ in 0..2 {
+        for event in h.sim.reply(
+            &h.world,
+            &BuildCmd::UpdateTaskInventory {
+                handle: source_key.region,
+                local_id: source_key.local_id,
+                item: Box::new(original.clone()),
+            },
+        ) {
+            h.deliver(event);
+        }
+    }
+    assert_eq!(h.tool.contents.objects[&source].serial, cached);
+    assert_eq!(h.tool.props[&source].inventory_serial, cached.wrapping_add(2));
+    for _ in 0..8 {
+        h.tick();
+    }
+    let job = h.tool.ui.bulk.deep.as_ref().expect("save remains pending");
+    assert_eq!(
+        job.report.objects, saved_before,
+        "pre-save serial changes cannot confirm a dropped save"
+    );
+    assert!(
+        h.world.objects.index_of_uuid(&copy).is_some(),
+        "the unsaved working copy stays in world"
+    );
+}
+
+#[test]
+fn save_asset_evidence_compares_with_the_fresh_snapshot_not_the_rez_item() {
+    let original = listed(10, "Box", 100);
+    let baseline = listed(10, "Box", 200);
+    assert_eq!(
+        save_outcome(
+            std::slice::from_ref(&baseline),
+            std::slice::from_ref(&baseline),
+            &original,
+            "Box",
+            0,
+            false
+        ),
+        Saved::Pending
+    );
+    assert_eq!(
+        save_outcome(&[baseline], &[listed(10, "Box", 300)], &original, "Box", 0, false),
+        Saved::InPlace
+    );
 }

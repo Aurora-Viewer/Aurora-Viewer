@@ -3550,10 +3550,17 @@ Contents › Rights (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick
 and two skipped, with their reasons, and a warning says that the scripts'
 rez actions run before they can be stopped. Apply rezzes each box 2 m above the object
 holding it, deepest last opened first saved, and deletes every copy; nothing
-stays in world.
+stays in world. After each confirmed save, the returned object item is updated
+inside its container and its masks are read back before deleting the working
+copy or continuing the parent. If this confirmation fails, the job stops and
+keeps all working copies for manual recovery. Offline regressions fold away
+next-owner Modify on save, then delay or lose this inventory update to check
+both its destination and the cleanup order. On the grid, check the returned
+item's Copy + Modify rights in the parent's contents after completion.
 Close hides the window without applying or reverting the choices; only Apply
 starts a change. This deliberately differs from the Legacy Viewer's
 OK/Apply/Cancel controls to avoid accidentally running the operation twice.
+Type icons also toggle their checkboxes. Choices cannot change while a job runs.
 While it runs, Stop (in place of Apply) trashes the copies still in
 world and ends; the report says it was stopped.
 
@@ -3563,7 +3570,8 @@ the report. With
 `RUST_LOG=warn,aurora_viewer::build::deep_perms=info,aurora_viewer::build::ui::contents_permissions=info`,
 `bulk permissions: requested` records the applied choices and `permission trace:`
 records numeric base/owner/next-owner masks and flags before updates, on readback
-and after a save. These trace records contain no names or identifiers.
+and after a save; `post_save=true` identifies writes and readbacks of the returned
+item in its container. These trace records contain no names or identifiers.
 Expected result: 6 objects inside objects, 2 skipped; the Crate stack's two
 parts are saved back together, in one DeRezObject. `run-replace` makes the
 simulator update a saved item in place (no original to remove);

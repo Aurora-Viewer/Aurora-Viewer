@@ -3668,7 +3668,7 @@ content-perms-starting = Starting permission change requests…
 content-perms-reading = Reading object contents…
 content-perms-finished = Permission updates sent: { $count } items. Objects skipped: { $skipped }.
 content-perms-nested = Include objects inside objects
-content-perms-nested-help = Also changes what the objects in these contents hold, down to 5 levels. Each object is rezzed 2 m above the prim that holds it, its running scripts are stopped, its contents changed, its scripts started again, then it is saved back into the contents and the rezzed copy is deleted. Objects you cannot copy, transfer or modify stay closed. Needs build rights where the objects are rezzed.
+content-perms-nested-help = Also changes what the objects in these contents hold, down to 5 levels. Each object is rezzed 2 m above the prim that holds it, its running scripts are stopped, its contents changed, its scripts started again, then it is saved back into the contents. The returned object’s permissions are set and checked there before the rezzed copy is deleted. Objects you cannot copy, transfer or modify stay closed. Needs build rights where the objects are rezzed.
 content-perms-nested-preview = { $objects ->
     [one] { $objects } object in the contents will be opened, skipped: { $skipped }.
    *[other] { $objects } objects in the contents will be opened, skipped: { $skipped }.
@@ -3695,6 +3695,7 @@ content-perms-nested-scripts-warning = Each object is rezzed in world, so its sc
 content-perms-nested-original-kept = “{ $name }” was saved back, but its original item could not be removed: both are in the contents.
 content-perms-nested-copy-left = The rezzed copy of “{ $name }” could not be deleted: delete it by hand.
 content-perms-nested-save-unconfirmed = the save back was not confirmed
+content-perms-nested-saved-perms-unconfirmed = Stopped: the permissions of the object saved back into its container could not be confirmed. The rezzed working copies have been kept; check them before removing them.
 content-perms-nested-timeout = the simulator did not answer in time
 content-perms-nested-rez-refused = Stopped: the simulator refused to rez “{ $name }” ({ $reason }).
 content-perms-nested-rez-timeout = Stopped: “{ $name }” did not appear within 15 seconds. If it appears later above the prim, delete it.
