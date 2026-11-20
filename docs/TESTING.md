@@ -6370,6 +6370,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
+| `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
@@ -10851,6 +10852,30 @@ later and `outfit: 5 of 5 attachments worn` about 30 s after the requests;
 the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
+
+**`AURORA_DEMO_AVATAR_CACHE=1`** — avatars drawn from the cache while the
+region sends them (`world/avatar_cache`). The cache holds how Violet Wolf
+looked the last time it was seen (the classic look, without its pigtails
+then) and what it wore: its hat, pink then, and its orb. The demo region
+sends its appearance 2 s after the loading fade: until then the kept look
+is drawn, never a cloud, then the region's, whose pigtails grow. That
+appearance lists both objects, but the region only sends them 6 s after
+the fade: until then their copies are drawn (the pink hat), then the
+region's own (the violet hat). With `AURORA_DEMO_OUTFIT_RESTORE=warm`, the
+cache also holds the demo outfit's hair, earrings and boots, drawn visible
+for this scenario (pink, gold, brown): they show from the start instead of
+when the restore puts them back. The hair's script played an animation on
+us (the wrists tapping, as a bento tail's wag): it plays from the start
+with the hair's copy, and goes on without a restart once the restore has
+put the hair back and its script plays it again (`demo avatar cache: the
+hair's script plays its animation again`). Right-clicking a copy finds no object.
+The log says `demo avatar cache: the region sends Violet Wolf's
+appearance`, then `demo avatar cache: the region sends Violet Wolf's worn
+objects (<n> copies drawn now)`, then `avatar cache: <n> copies drawn, <n>
+handed over to the region's objects` once every copy is gone. With the
+setting off (Preferences › Graphics, "Avatars from the cache"), Violet
+Wolf is a cloud until its appearance comes, and nothing is drawn before
+the region's objects.
 
 In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from the
 texture disk cache, as after login. Reopen the showcase or select the outfit again:

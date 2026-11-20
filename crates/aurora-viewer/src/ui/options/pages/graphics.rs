@@ -572,6 +572,11 @@ fn quality(cx: &mut Cx) {
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
         );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
+        );
         cx.stepped(
             tr!("ui-options-limit-applied"),
             tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
