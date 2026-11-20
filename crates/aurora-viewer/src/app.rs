@@ -8590,6 +8590,14 @@ impl App {
             self.world.apply(NetEvent::TeleportFailed {
                 reason: aurora_i18n::tr!("rlva-blocked").into(),
             });
+        } else if !actor.is_nil() && !self.world.rlva_allows_command(&command, actor) {
+            // an @tpto by region name, refused once the map answered
+            // (RlvHandler::onTeleportCallback, LLAgent::teleportViaLocation:
+            // RlvUtil::notifyBlocked, Blocked::Teleport)
+            self.world.system_notice(
+                aurora_i18n::tr!("rlva-blocked-teleport"),
+                crate::world::notice_topics::Topic::Warning,
+            );
         } else {
             self.send_from(command, actor);
         }
@@ -9238,9 +9246,8 @@ impl App {
             i.forward |= self.mouse_walks();
         }
         i.run = temp_run;
-        if self.world.rlva.has("jump") && !self.world.agent.flying {
-            i.up = false;
-        }
+        let up_held = i.up;
+        i.up = up_sent(i.up, self.world.rlva.has("jump"), self.world.agent.flying);
         // nudge phase: the first 0.25 s of a press makes small steps
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
             if !held {
@@ -9262,7 +9269,9 @@ impl App {
         // LLAgent::setFlying, which refuses where LLAgent::canFly says no.
         // upGrabbed (llTakeControls CONTROL_UP, pass_on false) still sends
         // the hold to the script but must not start automatic fly.
-        if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
+        // (held under @jump too: agent_jump still calls setFlying, only
+        // LLAgent::moveUp refuses the jump itself)
+        if automatic_fly_held(&mut self.up_since, up_held, self.settings.automatic_fly, now)
             && !self.world.script_controls.up_grabbed()
             && self.movement_runtime.native_fly_allowed()
             && !self.world.agent.flying
@@ -10227,12 +10236,17 @@ impl App {
         for (actor, c) in self.world.maturity.take_commands() {
             if matches!(
                 c,
-                NetCommand::TeleportTo { .. }
-                    | NetCommand::TeleportToRegion { .. }
-                    | NetCommand::TeleportHome
-                    | NetCommand::TeleportLandmark(_)
-                    | NetCommand::AcceptLure { .. }
+                NetCommand::TeleportTo { .. } | NetCommand::TeleportHome | NetCommand::TeleportLandmark(_) | NetCommand::AcceptLure { .. }
             ) {
+                // LLAgent::startTeleportRequest: the pending request goes
+                // as it was let through (teleportViaLocation & co asked RLVa
+                // before it waited), whatever was locked meanwhile
+                self.world.rlva.teleport_already_checked = true;
+                self.send_from(c, actor);
+                self.world.rlva.teleport_already_checked = false;
+            } else if matches!(c, NetCommand::TeleportToRegion { .. }) {
+                // (a region name still has its map lookup to come, and the
+                // teleport it resolves to its check)
                 self.send_deferred_teleport(c, actor);
             } else {
                 self.send_from(c, actor);
@@ -18474,7 +18488,7 @@ impl App {
                     release_keys: release_keys::enabled(&self.world),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
-                    can_go_home: self.world.rlva_can_teleport_home(),
+                    can_go_home: self.world.rlva_home_button_enabled(),
                     home_entry: self.world.rlva_home_entry_enabled(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
@@ -25152,6 +25166,14 @@ fn apply_test_fps_limit(settings: &mut Settings, value: &str) {
 
 /// agent_jump (indra/newview/llviewerinput.cpp): AutomaticFly. Turning the
 /// option off clears the hold, so enabling it cannot reuse an old press.
+/// LLAgent::moveUp (indra/newview/llagent.cpp): under RLVa @jump a jump
+/// is not sent while standing; flying, up still climbs. The key stays held
+/// for agent_jump's automatic fly (`automatic_fly_held`), which LLAgent::
+/// setFlying alone may refuse.
+fn up_sent(up: bool, jump_blocked: bool, flying: bool) -> bool {
+    up && (flying || !jump_blocked)
+}
+
 fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now: Instant) -> bool {
     if !up || !enabled {
         *since = None;
@@ -25972,5 +25994,15 @@ mod tests {
         assert_eq!(actions.landmark, Some(a));
         assert_eq!(actions.gestures, vec![a, b]);
         assert!(actions.settings_changed && actions.font_changed);
+    }
+
+    /// agent_jump (indra/newview/llviewerinput.cpp): RLVa @jump stops the
+    /// jump (LLAgent::moveUp), not the automatic fly of a held key.
+    #[test]
+    fn rlva_jump_lock_keeps_the_up_key_held_for_automatic_fly() {
+        assert!(!super::up_sent(true, true, false), "no jump under @jump");
+        assert!(super::up_sent(true, true, true), "a flight still climbs");
+        assert!(super::up_sent(true, false, false));
+        assert!(!super::up_sent(false, false, true));
     }
 }

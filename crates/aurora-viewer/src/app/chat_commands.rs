@@ -164,12 +164,21 @@ impl App {
             },
             Command::SitOn(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
                 Some(o) => {
-                    let handle = o.key.region;
-                    self.send(NetCommand::RequestSit {
-                        handle,
+                    let sit = NetCommand::RequestSit {
+                        handle: o.key.region,
                         target: id,
                         offset: Vec3::ZERO,
-                    });
+                    };
+                    // cmd_line_chat asks RlvActions::canSit and, refused,
+                    // says nothing at all
+                    if !self.world.rlva_allows_command(&sit, Uuid::nil()) {
+                        return true;
+                    }
+                    // (no @standtp origin: cmd_line_chat sends AgentRequestSit
+                    // without RlvHandler::setSitSource)
+                    self.world.rlva.sitting.no_sit_source = true;
+                    self.send(sit);
+                    self.world.rlva.sitting.no_sit_source = false;
                     self.report_command(aurora_i18n::tr!(
                         "app-chat-commands-sitting-on-object-with-key",
                         id = format!("{}", id)
@@ -186,7 +195,9 @@ impl App {
             }
             Command::OfferTeleport(to) => {
                 // "Join me!" stays in English: it is what the other avatar reads.
-                self.send(NetCommand::OfferTeleport {
+                // cmd_line_chat sends its StartLure itself, past every RLVa
+                // check of the offer windows (canOfferTeleport, send_lures).
+                self.net.send(NetCommand::OfferTeleport {
                     to: vec![to],
                     message: aurora_i18n::tr!("extra-join-me").into(),
                 });
@@ -196,12 +207,12 @@ impl App {
             Command::Ground { offset } => {
                 let pos = self.world.agent.position;
                 if let Some(ground) = self.world.ground_height(pos) {
-                    self.teleport_in_region(Vec3::new(pos.x, pos.y, ground + offset));
+                    self.teleport_in_region_if_local(Vec3::new(pos.x, pos.y, ground + offset));
                 }
             }
             Command::Height(amount) => {
                 let pos = self.world.agent.position;
-                self.teleport_in_region(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
+                self.teleport_in_region_if_local(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
             }
             Command::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
@@ -290,6 +301,19 @@ impl App {
     }
 
     /// teleportViaLocation to a point of the current region.
+    /// `gtp` and `height`: cmd_line_chat asks RlvActions::canTeleportToLocal
+    /// first and, refused, does nothing and says nothing.
+    fn teleport_in_region_if_local(&mut self, pos: Vec3) {
+        let global = self
+            .world
+            .main_origin()
+            .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + pos.as_dvec3());
+        if global.is_some_and(|g| !self.world.rlva_can_teleport_local(g)) {
+            return;
+        }
+        self.teleport_in_region(pos);
+    }
+
     fn teleport_in_region(&mut self, pos: Vec3) {
         let region = self.world.region_name();
         self.teleport_to_location(region, pos);

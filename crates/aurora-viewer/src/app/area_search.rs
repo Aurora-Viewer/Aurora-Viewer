@@ -419,11 +419,16 @@ impl App {
                     self.area_search_feed.touches.push_back((start + TOUCH_SPACING * n as u32, id));
                 }
             }
-            // sitOnObject: AgentRequestSit with no offset
-            Action::Sit(id) => self.on_ctx_action(CtxAction::Sit {
-                target: id,
-                offset: Vec3::ZERO,
-            }),
+            // sitOnObject: AgentRequestSit with no offset, and no @standtp
+            // origin (it does not call RlvHandler::setSitSource)
+            Action::Sit(id) => {
+                self.world.rlva.sitting.no_sit_source = true;
+                self.on_ctx_action(CtxAction::Sit {
+                    target: id,
+                    offset: Vec3::ZERO,
+                });
+                self.world.rlva.sitting.no_sit_source = false;
+            }
             // gAgent.teleportViaLocation(getPositionGlobal())
             Action::Teleport(id) => {
                 if let Some(pos) = position(self, &id) {

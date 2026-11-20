@@ -834,7 +834,7 @@ impl WorldMapUi {
             }
             // LLFloaterWorldMap's Go Home button: greyed under RLVa @tplm + @tploc
             let home = ui
-                .add_enabled_ui(world.rlva_can_teleport_home(), |ui| {
+                .add_enabled_ui(world.rlva_home_button_enabled(), |ui| {
                     widgets::flat_button(ui, p, aurora_i18n::tr!("common-home"))
                         .on_hover_text(aurora_i18n::tr!("common-go-home"))
                         .clicked()

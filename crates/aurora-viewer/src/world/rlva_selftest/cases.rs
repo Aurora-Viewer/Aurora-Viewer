@@ -1129,5 +1129,6 @@ pub(super) fn phase1() -> Vec<Case> {
     cases.extend(super::cases_core::cases());
     cases.extend(super::cases_chat::cases());
     cases.extend(super::cases_privacy::phase1());
+    cases.extend(super::cases_move::phase1());
     cases
 }

@@ -5,6 +5,18 @@ use aurora_net::{NetCommand, control};
 use glam::Vec3;
 use uuid::Uuid;
 
+/// What RLVa makes of a double click that walks or teleports to a point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoubleClickRlva {
+    Go,
+    /// @interact: LLViewerWindow::cursorIntersect dropped the pick, the
+    /// land's included, so there is nowhere to go and nothing is said.
+    Ignored,
+    /// RlvActions::canTeleportToLocal refuses the point: the Legacy tool
+    /// says Blocked::AutoPilot.
+    Blocked,
+}
+
 impl World {
     /// Resident and group payments follow RLV `@pay`; object purchases use
     /// the independent `@buy` restriction.
@@ -152,11 +164,15 @@ impl World {
 
     /// RlvActions::canTeleportToLocal: the agent may stand up, and the
     /// place is within what @sittp and @tplocal leave, measured in 3D.
+    /// Whether a distance applies leaves out the issuer's own restriction
+    /// (hasBehaviourExcept), but the distance is the global modifier's, the
+    /// smallest of every object's (RlvBehaviourModifier::getValue), the
+    /// issuer's own included.
     fn rlva_local_teleport_allowed(&self, distance: f32, actor: Uuid) -> bool {
         let r = &self.rlva;
         !(self.agent.is_sitting() && r.has_except("unsit", actor))
-            && distance < r.distance_limit("sittp", 1.5, actor)
-            && (!r.has_except("tplocal", actor) || distance < r.distance_limit("tplocal", 1.5, actor).min(256.0))
+            && (!r.has_except("sittp", actor) || distance < r.distance_limit("sittp", 1.5, Uuid::nil()))
+            && (!r.has_except("tplocal", actor) || distance < r.distance_limit("tplocal", 1.5, Uuid::nil()).min(256.0))
     }
 
     /// RlvActions::canTeleportToLocal asked alone, whatever the distance:
@@ -172,6 +188,22 @@ impl World {
         let distance = self.agent_global().map_or(f32::INFINITY, |here| (global - here).as_vec3().length());
         self.rlva_local_teleport_allowed(distance, Uuid::nil())
     }
+    /// A double click walking or teleporting to `global`
+    /// (LLToolPie::walkToClickedLocation and teleportToClickedLocation,
+    /// lltoolpie.cpp): @interact leaves no pick; otherwise the point must
+    /// be one a local teleport may reach (@tplocal, @sittp, @unsit while
+    /// seated), however far it is, and never @tploc: the teleport itself
+    /// asks that one (LLAgent::teleportViaLocationLookAt).
+    pub fn rlva_double_click(&self, global: Option<glam::DVec3>) -> DoubleClickRlva {
+        if self.rlva_drops_picks() {
+            DoubleClickRlva::Ignored
+        } else if global.is_some_and(|g| !self.rlva_can_teleport_local(g)) {
+            DoubleClickRlva::Blocked
+        } else {
+            DoubleClickRlva::Go
+        }
+    }
+
     /// What the interface greys: the same rules as the send boundary, so a
     /// greyed entry and a refused click never disagree.
     pub fn rlva_can_teleport_home(&self) -> bool {
@@ -187,12 +219,36 @@ impl World {
         self.rlva_can_teleport_home() && !self.rlva.has("tplm") && !self.rlva.has("tploc")
     }
 
+    /// RlvActions::canTeleportToLocation (rlvactions.cpp), what the Legacy
+    /// Viewer's place windows grey their Teleport button with, whatever the
+    /// distance (LLPanelPlaces::updateVerbs, LLTeleportHistoryPanel,
+    /// FSFloaterPlaceDetails): no @tploc, and free to stand up.
+    pub fn rlva_can_teleport_location(&self) -> bool {
+        !self.rlva.enabled() || (!self.rlva.has("tploc") && !(self.agent.is_sitting() && self.rlva.has("unsit")))
+    }
+
+    /// The Home buttons of the navigation bar and of the map
+    /// (RlvUIEnabler::onToggleTp, rlvui.cpp; LLFloaterWorldMap::draw): greyed
+    /// only under both @tplm and @tploc, seated under @unsit or not.
+    pub fn rlva_home_button_enabled(&self) -> bool {
+        !self.rlva.enabled() || !(self.rlva.has("tplm") && self.rlva.has("tploc"))
+    }
+
+    /// A landmark's Teleport button (LLLandmarksPanel::isActionEnabled,
+    /// llpanellandmarks.cpp; LLPanelPlaces::updateVerbs): greyed under @tplm.
+    pub fn rlva_landmark_button_enabled(&self) -> bool {
+        !self.rlva.enabled() || !self.rlva.has("tplm")
+    }
+
     pub fn rlva_can_teleport_landmark(&self) -> bool {
         self.rlva_allows_command(&NetCommand::TeleportLandmark(Uuid::nil()), Uuid::nil())
     }
 
     /// A teleport to a global position (LLAgent::teleportViaLocation), local
-    /// or not; unknown where we stand, it counts as a distant one.
+    /// or not; unknown where we stand, it counts as a distant one. The
+    /// windows now grey as the Legacy ones do (rlva_can_teleport_location),
+    /// so only the tests still ask it.
+    #[cfg(test)]
     pub fn rlva_can_teleport_global(&self, global: glam::DVec3) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -215,7 +271,9 @@ impl World {
                 kind: aurora_net::inventory::operations::NewItem::Landmark,
                 ..
             } => !r.has("showloc"),
-            NetCommand::OfferTeleport { to, .. } => to.iter().all(|id| self.rlva_can_offer_teleport(*id)),
+            NetCommand::OfferTeleport { to, .. } => to
+                .iter()
+                .all(|id| self.rlva_answers_teleport_request(*id) || self.rlva_can_offer_teleport(*id)),
             NetCommand::PickUpdate(pick) if r.has("showloc") => self
                 .profiles
                 .picks
@@ -308,7 +366,12 @@ impl World {
                         actor,
                     )
                 } else {
-                    !blocked("tploc") && !(self.agent.is_sitting() && blocked("unsit"))
+                    // RlvForceHandler<RLV_BHVR_TPTO> (rlvhandler.cpp) asks
+                    // the map first and decides nothing before it answers:
+                    // the teleport it resolves to is checked then
+                    // (RlvHandler::onTeleportCallback, the TeleportTo the
+                    // reply becomes, `App::send_deferred_teleport`).
+                    true
                 }
             }
             NetCommand::RequestSit { target, offset, .. } => {
@@ -333,7 +396,9 @@ impl World {
             }
             NetCommand::OneShotControl(flags) => {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
-                    && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
+                    && (flags & control::SIT_ON_GROUND == 0
+                        || (*flags == control::SIT_ON_GROUND && r.sitting.ground_released(actor))
+                        || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
             // One message for every kind of run (LLAgent::sendWalkRun): it is
             // refused only when both restrictions leave nothing that may run.
@@ -348,12 +413,16 @@ impl World {
             }
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
+            // lure_callback (llviewermessage.cpp) asks RLVa nothing when the
+            // offer is accepted: @tplure and @unsit were asked when it came
+            // (LLIMProcessing::processNewMessage), and refused it there.
             NetCommand::AcceptLure { lure_id, godlike } => {
                 *godlike
-                    || self.teleport_invites.list.iter().any(|v| {
-                        matches!(v.kind, super::super::teleport_invites::InviteKind::Offer { lure, .. } if lure == *lure_id)
-                            && self.rlva_can_accept_teleport(v.from, false)
-                    })
+                    || self
+                        .teleport_invites
+                        .list
+                        .iter()
+                        .any(|v| matches!(v.kind, super::super::teleport_invites::InviteKind::Offer { lure, .. } if lure == *lure_id))
             }
             // The viewer's own bridge comes off whatever the locks
             // (FSLSLBridge::canDetach in
@@ -475,6 +544,21 @@ impl World {
                 !items.is_empty()
             }
             _ => true,
+        }
+    }
+
+    /// RlvUIEnabler::onToggleMovement (rlvui.cpp): when @fly, @alwaysrun or
+    /// @temprun comes or goes, a flight under way lands under @fly. Only
+    /// then: a flight the issuer of @fly forced itself (@fly:true=force)
+    /// goes on while its @fly=n holds.
+    pub fn rlva_movement_tick(&mut self) {
+        let rules = ["fly", "alwaysrun", "temprun"]
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| self.rlva.has(name))
+            .fold(0u8, |bits, (i, _)| bits | (1 << i));
+        if std::mem::replace(&mut self.rlva.movement_rules, rules) != rules && rules & 1 != 0 {
+            self.agent.flying = false;
         }
     }
 
@@ -659,8 +743,17 @@ impl World {
                 } else {
                     super::option_bool(&c.option)
                 };
+                // RlvForceHandler<RLV_BHVR_FLY> (rlvhandler.cpp) takes off
+                // through LLAgent::setFlying (llagent.cpp), which refuses a
+                // takeoff seated or where the land allows no flight
+                // (LLAgent::canFly: no parcel known yet is no flight), and
+                // lets a flight under way land.
                 if let Some(flying) = flying
-                    && (!flying || !self.rlva.has_except("fly", source))
+                    && flying != self.agent.flying
+                    && (!flying
+                        || (!self.rlva.has_except("fly", source)
+                            && !self.agent.is_sitting()
+                            && crate::autopilot::land_allows_flight(self, true, false)))
                 {
                     self.agent.flying = flying;
                 }
@@ -671,14 +764,25 @@ impl World {
         };
         if let Some(mut command) = command
             && self.rlva_normalize_teleport(&mut command)
-            && self.rlva_allows_command(&command, source)
         {
-            // LLAgent::teleportViaLocation: a teleport forced by @tpto
-            // cannot be cancelled (RlvHandler::setCanCancelTp(false))
-            if c.behaviour == "tpto" {
-                self.tp_cancel.lock_for_rlva();
+            if self.rlva_allows_command(&command, source) {
+                // LLAgent::teleportViaLocation: a teleport forced by @tpto
+                // to a position cannot be cancelled
+                // (RlvHandler::setCanCancelTp(false)). One to a region name
+                // starts from RlvHandler::onTeleportCallback, once the map
+                // answered, where no command is current: it can be.
+                if c.behaviour == "tpto" && matches!(command, NetCommand::TeleportTo { .. }) {
+                    self.tp_cancel.lock_for_rlva();
+                }
+                commands.push((source, command));
+            } else if c.behaviour == "tpto" {
+                // LLAgent::teleportViaLocation(LookAt): a refused teleport
+                // says so (RlvUtil::notifyBlocked, Blocked::Teleport).
+                self.system_notice(
+                    aurora_i18n::tr!("rlva-blocked-teleport"),
+                    super::super::notice_topics::Topic::Warning,
+                );
             }
-            commands.push((source, command));
         }
         true
     }

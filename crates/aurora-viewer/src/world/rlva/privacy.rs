@@ -562,8 +562,15 @@ impl World {
     /// an ineligible resident does not cancel invitations to eligible ones.
     pub fn rlva_filter_teleport_offer(&self, recipients: &mut Vec<Uuid>) {
         if self.rlva.has("showloc") {
-            recipients.retain(|id| self.rlva_can_offer_teleport(*id));
+            recipients.retain(|id| self.rlva_answers_teleport_request(*id) || self.rlva_can_offer_teleport(*id));
         }
+    }
+
+    /// teleport_request_callback (llviewermessage.cpp): the offer that
+    /// answers a teleport request we accepted goes to send_lures directly,
+    /// never through LLAvatarActions::canOfferTeleport, @showloc or not.
+    pub fn rlva_answers_teleport_request(&self, id: Uuid) -> bool {
+        self.teleport_invites.request_answers.contains(&id)
     }
 
     fn rlva_refresh_location_history(&mut self) {

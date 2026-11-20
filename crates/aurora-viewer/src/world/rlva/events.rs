@@ -127,26 +127,52 @@ impl World {
         }
     }
 
-    /// The return is delayed until the seat parent has gone, as onSitOrStand
-    /// does in the reference. A failed sit must never trigger a teleport.
-    pub fn rlva_update_stand(&mut self) {
-        if !self.rlva.has("standtp") {
-            self.rlva.stand_origin = None;
-            self.rlva.stand_return = None;
-            self.rlva.stand_seated = false;
-        } else if self.rlva.stand_origin.is_some() {
-            if self.agent.is_sitting() {
-                self.rlva.stand_seated = true;
-            } else if self.rlva.stand_seated {
-                self.rlva.stand_return = self.rlva.stand_origin.take();
-                self.rlva.stand_seated = false;
-            }
-        }
-    }
-
     pub fn rlva_can_accept_teleport(&self, sender: Uuid, request: bool) -> bool {
         self.rlva.allows(if request { "tprequest" } else { "tplure" }, &sender.to_string())
             && (request || !self.agent.is_sitting() || !self.rlva.has("unsit"))
+    }
+
+    /// RlvUtil::filterScriptQuestions (rlvcommon.cpp): the notice a question
+    /// RLVa stripped of `requested` leaves for when it is answered yes
+    /// (script_question_cb, llviewermessage.cpp); the teleport one replaces
+    /// the attach one, as the payload keeps the last.
+    pub(crate) fn rlva_permission_notice(&self, requested: i32, granted: i32, object_name: &str) -> Option<String> {
+        const ATTACH: i32 = 1 << 5;
+        const TELEPORT: i32 = 1 << 12;
+        let stripped = requested & !granted;
+        let object = object_name.to_owned();
+        if stripped & TELEPORT != 0 {
+            Some(aurora_i18n::tr!("rlva-blocked-permission-teleport", object = object))
+        } else if stripped & ATTACH != 0 {
+            Some(aurora_i18n::tr!("rlva-blocked-permission-attach", object = object))
+        } else {
+            None
+        }
+    }
+
+    /// Keeps `notice` for the answer to the question of `task`'s `item`.
+    pub(crate) fn rlva_hold_permission_notice(&mut self, task: Uuid, item: Uuid, notice: Option<String>) {
+        let held = &mut self.rlva.permission_notices;
+        held.retain(|(t, i, _)| (*t, *i) != (task, item));
+        if let Some(text) = notice {
+            if held.len() >= 16 {
+                held.remove(0);
+            }
+            held.push((task, item, text));
+        }
+    }
+
+    /// The answer to the question of `task`'s `item`: a yes shows what RLVa
+    /// stripped from it (RlvUtil::notifyBlocked), any answer forgets it.
+    pub(crate) fn rlva_answer_permission_notice(&mut self, task: Uuid, item: Uuid, granted: bool) {
+        let held = &mut self.rlva.permission_notices;
+        let Some(at) = held.iter().position(|(t, i, _)| (*t, *i) == (task, item)) else {
+            return;
+        };
+        let (_, _, text) = held.remove(at);
+        if granted {
+            self.system_notice(text, super::super::notice_topics::Topic::Warning);
+        }
     }
 
     /// Returns granted bits and whether the remaining question is eligible

@@ -30,6 +30,7 @@ mod cases;
 mod cases_core;
 mod cases_chat;
 mod cases_privacy;
+mod cases_move;
 mod cases_world;
 mod factory;
 mod guard;

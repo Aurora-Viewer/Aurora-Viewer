@@ -368,7 +368,9 @@ pub(super) fn phase2() -> Vec<Case> {
         ),
         // RlvHandler::setSitSource (rlvhandler.cpp): a sit asked under
         // @standtp keeps where the avatar stood. The rule is released before
-        // the avatar stands, so that the run never teleports it back.
+        // the avatar stands, so that the run never teleports it back: the
+        // place stays kept (RlvHandler::onSitOrStand uses it only while
+        // @standtp is held, and clears it then).
         Step::Say(Who::Controller, "@standtp=n"),
         Step::Expect(
             "@standtp is held",
@@ -403,8 +405,11 @@ pub(super) fn phase2() -> Vec<Case> {
         ),
         Step::Say(Who::Controller, "@standtp=y"),
         Step::Expect(
-            "no return is owed once @standtp is released",
-            holds(|w, c| w.rlva.stand_origin.is_none() || c.foreign_rules(w), "a return is still owed"),
+            "the place stays kept once @standtp is released, but no rule asks for it",
+            holds(
+                |w, c| w.rlva.stand_origin.is_some() && (!w.rlva.has("standtp") || c.foreign_rules(w)),
+                "the place is lost, or @standtp is still held",
+            ),
         ),
         Step::Say(Who::Controller, "@unsit=n"),
         Step::Expect("the seat is locked", holds(seat(|w, i| w.rlva_locked_seat(i)), "not locked")),

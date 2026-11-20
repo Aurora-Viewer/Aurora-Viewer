@@ -14286,6 +14286,9 @@ rlva-blocked-start-conference = Unable to start conference with [RECIPIENT] due 
 # RLVa privacy parity: names
 rlva-anonym-waiting = (Loading...)
 rlva-anonym-unknown = (Unknown)
+rlva-blocked-teleport = Unable to initiate teleport due to RLV restrictions
+rlva-blocked-permission-attach = Attempt to attach '{ $object }' was denied due to RLV restrictions
+rlva-blocked-permission-teleport = '{ $object }' was denied permission to teleport you due to RLV restrictions
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priority { $rank } of { $total }

@@ -173,21 +173,21 @@ impl App {
         if !self.world.rlva.appearance_busy && self.world.rlva.appearance.is_empty() {
             self.world.rlva.self_detach = None;
         }
-        self.world.rlva_update_stand();
         for (actor, command) in self.world.rlva_sitting_tick() {
             self.send_from(command, actor);
         }
         for (actor, command) in self.world.rlva_group_tick() {
             self.send_from(command, actor);
         }
-        if let Some((handle, position)) = self.world.rlva.stand_return {
-            self.send(NetCommand::TeleportTo {
-                handle,
-                position,
-                look_at: self.world.agent.forward(),
-            });
+        if let Some(command) = self.world.rlva_stand_return_command(self.camera.forward()) {
+            self.send(command);
             self.world.rlva.stand_return = None;
         }
+        // RlvUIEnabler::onToggleMovement (rlvui.cpp): @fly lands a flight
+        // under way (gAgent.setFlying(false)), not only refuses a takeoff.
+        // Before the forces: the rules came with them, a @fly:true=force
+        // after its own @fly=n takes off once the lock has landed us.
+        self.world.rlva_movement_tick();
         let commands = self.world.rlva_pending();
         self.rlva_environment_asset();
         self.rlva_camera_commands();
@@ -228,11 +228,6 @@ impl App {
         let changed = temprun != std::mem::replace(&mut self.rlva_temprun, temprun);
         if temprun_resync(ended, changed, self.autopilot.as_ref().is_some_and(|a| a.run)) {
             self.send(NetCommand::SetAlwaysRun(self.walk_run()));
-        }
-        // RlvUIEnabler::onToggleMovement (rlvui.cpp): @fly lands a flight
-        // under way (gAgent.setFlying(false)), not only refuses a takeoff.
-        if self.world.agent.flying && self.world.rlva.has("fly") {
-            self.world.agent.flying = false;
         }
         // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
         // leaves the selection, the temporary one of a menu excepted

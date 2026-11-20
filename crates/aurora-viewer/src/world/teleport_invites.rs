@@ -126,6 +126,12 @@ pub struct TeleportInvites {
     out: Vec<NetCommand>,
     /// Grid cells whose region was asked from the map.
     asked: std::collections::HashSet<(u32, u32)>,
+    /// The residents whose teleport request we just accepted: the offer
+    /// that answers it goes through send_lures alone
+    /// (teleport_request_callback, llviewermessage.cpp), without the
+    /// @showloc rule of LLAvatarActions::canOfferTeleport
+    /// (`World::rlva_answers_teleport_request`).
+    pub(crate) request_answers: Vec<Uuid>,
 }
 
 impl TeleportInvites {
@@ -420,15 +426,9 @@ impl World {
     /// TeleportLureRequest, declined IM_LURE_DECLINED (lure_callback). A
     /// request accepted offers a teleport with no text, followed by our
     /// location (teleport_request_callback → send_lures); refused, nothing
-    /// is sent.
+    /// is sent. RLVa is not asked again here: neither callback asks it, the
+    /// invitation was checked when it came (LLIMProcessing::processNewMessage).
     pub fn answer_teleport_invite(&mut self, invite: u64, accept: bool) -> Vec<NetCommand> {
-        if accept && let Some(v) = self.teleport_invites.list.iter().find(|v| v.id == invite) {
-            let request = matches!(v.kind, InviteKind::Request);
-            let godlike = matches!(v.kind, InviteKind::Offer { godlike: true, .. });
-            if !godlike && !self.rlva_can_accept_teleport(v.from, request) {
-                return Vec::new();
-            }
-        }
         let Some(v) = self.teleport_invites.list.iter_mut().find(|v| v.id == invite) else {
             return Vec::new();
         };
@@ -462,7 +462,12 @@ impl World {
                 message: String::new(),
                 bucket: Vec::new(),
             }],
-            (InviteKind::Request, true) => vec![self.offer_teleport(vec![from], "")],
+            (InviteKind::Request, true) => {
+                if self.teleport_invites.request_answers.len() < 16 {
+                    self.teleport_invites.request_answers.push(from);
+                }
+                vec![self.offer_teleport(vec![from], "")]
+            }
             (InviteKind::Request, false) => Vec::new(),
         }
     }

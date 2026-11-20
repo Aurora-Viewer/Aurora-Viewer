@@ -224,8 +224,8 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
 /// any other place).
 pub fn teleport_allowed(place: &Place, world: &World) -> bool {
     match &place.source {
-        Source::Landmark { .. } => world.rlva_can_teleport_landmark(),
-        _ => place.global.is_none_or(|g| world.rlva_can_teleport_global(g)),
+        Source::Landmark { .. } => world.rlva_landmark_button_enabled(),
+        _ => world.rlva_can_teleport_location(),
     }
 }
 

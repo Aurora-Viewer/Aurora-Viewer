@@ -14176,6 +14176,9 @@ rlva-blocked-start-conference = ＲＬＶの制限により、[RECIPIENT]と会�
 # RLVa privacy parity: names
 rlva-anonym-waiting = （待機中）
 rlva-anonym-unknown = （不明）
+rlva-blocked-teleport = ＲＬＶの制限により、テレポートできません。
+rlva-blocked-permission-attach = ＲＬＶの制限により、「{ $object }」の着用が拒否されました。
+rlva-blocked-permission-teleport = ＲＬＶの制限により、「{ $object }」によるテレポート操作は拒否されました。
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = 優先度{ $total }中{ $rank }
