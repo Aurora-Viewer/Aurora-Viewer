@@ -586,6 +586,9 @@ pub struct World {
     /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
     pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
+    /// The last simulator alerts with a running number, which jobs waiting
+    /// for a refusal read (`alerts` is emptied by the interface).
+    pub recent_alerts: VecDeque<(u64, String)>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
@@ -1119,6 +1122,7 @@ impl World {
             shape_preview_generation: 0,
             shape_tweens: Default::default(),
             alerts: VecDeque::new(),
+            recent_alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
             demo_outfit_region: false,
@@ -3970,6 +3974,11 @@ impl World {
                 // SystemMessageTip (process_alert_core)
                 let notice = self.notice_of(id, attention::Open::Notifications);
                 self.ask_attention(attention::Cause::Notice, notice);
+                let serial = self.recent_alerts.back().map_or(1, |(n, _)| n + 1);
+                if self.recent_alerts.len() >= 8 {
+                    self.recent_alerts.pop_front();
+                }
+                self.recent_alerts.push_back((serial, message.clone()));
                 self.alerts.push_back(message);
                 None
             }

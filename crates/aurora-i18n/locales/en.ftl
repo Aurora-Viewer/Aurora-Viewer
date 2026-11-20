@@ -3743,6 +3743,63 @@ content-perms-next-owner = Next owner:
 content-perms-starting = Starting permission change requests…
 content-perms-reading = Reading object contents…
 content-perms-finished = Permission updates sent: { $count } items. Objects skipped: { $skipped }.
+content-perms-nested = Include objects inside objects
+content-perms-nested-help = Also changes what the objects in these contents hold, down to 5 levels. Each object is rezzed 2 m above the prim that holds it, its running scripts are stopped, its contents changed, its scripts started again, then it is saved back into the contents. The returned object’s permissions are set and checked there before the rezzed copy is deleted. Objects you cannot copy, transfer or modify stay closed. Needs build rights where the objects are rezzed.
+content-perms-nested-preview = { $objects ->
+    [one] { $objects } object in the contents will be opened, skipped: { $skipped }.
+   *[other] { $objects } objects in the contents will be opened, skipped: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = {", "}
+content-perms-nested-skip-no-copy = no copy or no transfer
+content-perms-nested-skip-no-modify = no modify
+content-perms-nested-skip-depth = more than 5 levels deep
+content-perms-nested-rezzing = Rezzing “{ $name }” (level { $level })…
+content-perms-nested-stopping = Stopping the scripts of “{ $name }”…
+content-perms-nested-applying = Changing the contents of “{ $name }”…
+content-perms-nested-restoring = Starting the scripts of “{ $name }” again…
+content-perms-nested-saving = Saving “{ $name }” back…
+content-perms-nested-deleting = Deleting the rezzed copy of “{ $name }”…
+content-perms-nested-finished = Updated { $count } items in { $objects } objects inside objects, skipped { $skipped }.
+content-perms-nested-kept-next = { $kept ->
+    [one] { $kept } kept next to its original: the names differed.
+   *[other] { $kept } kept next to their originals: the names differed.
+    }
+content-perms-nested-stopped = Stopped: the rezzed copies were deleted, the original items were left as they were.
+content-perms-nested-stop-help = Deletes the rezzed copies still in world and ends: the original items stay as they are, the objects already saved back keep their changes.
+content-perms-nested-scripts-warning = Each object is rezzed in world, so its scripts' rez actions run (an explosion, a teleport, an item given…) before they can be stopped. To prevent them, turn on Disable scripts in Region / Estate first, on a region you manage, and turn it off afterwards.
+content-perms-nested-original-kept = “{ $name }” was saved back, but its original item could not be removed: both are in the contents.
+content-perms-nested-copy-left = The rezzed copy of “{ $name }” could not be deleted: delete it by hand.
+content-perms-nested-save-unconfirmed = the save back was not confirmed
+content-perms-nested-saved-perms-unconfirmed = Stopped: the permissions of the object saved back into its container could not be confirmed. The rezzed working copies have been kept; check them before removing them.
+content-perms-nested-timeout = the simulator did not answer in time
+content-perms-nested-rez-refused = Stopped: the simulator refused to rez “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Stopped: “{ $name }” did not appear within 15 seconds. If it appears later above the prim, delete it.
+content-perms-nested-not-ours = Stopped: the object rezzed for “{ $name }” does not come from these contents, it was left in world.
+content-perms-nested-unverified = Stopped: the object that appeared for “{ $name }” could not be checked as rezzed from these contents, so it was left in world.
+content-perms-nested-group-split = Stopped: “{ $name }” (several objects saved as one) came back as a single object. Its rezzed parts were kept in world: select them all and take them to make the group again.
+content-perms-nested-failed = “{ $name }” left unchanged: { $reason }.
+content-perms-nested-original-gone = “{ $name }” is kept in world: its save back was not confirmed and its original item is gone.
+content-perms-nested-gone = the object left the world
+content-perms-nested-land-denied = Stopped: you cannot build above this prim, where the objects would be rezzed.
+content-perms-nested-parcel-full = Stopped: the parcel has no room left for the rezzed copies.
+content-perms-nested-rlva = Stopped: rezzing is restricted (RLVa).
+content-perms-nested-too-many = too many scripts
+content-perms-nested-unreadable = its contents could not be read
+content-perms-demo-chest = Chest
+content-perms-demo-notes = Chest notes
+content-perms-demo-outer = Outer box
+content-perms-demo-glow = Glow script
+content-perms-demo-readme = Readme
+content-perms-demo-inner = Inner box
+content-perms-demo-inner-note = Inner note
+content-perms-demo-tiny = Tiny box
+content-perms-demo-spin = Spin script
+content-perms-demo-heirloom = Heirloom
+content-perms-demo-sealed = Sealed box
+content-perms-demo-linked = Linked box
+content-perms-demo-pebble = Pebble box
+content-perms-demo-stack = Crate stack
 build-ui-floaters-content-permissions-sent = Content permissions sent.
 ui-inventory-dialogs-duration-s = { "Duration: " }{ $value0 }s
 ui-land-dialogs-ban-duration = Ban duration

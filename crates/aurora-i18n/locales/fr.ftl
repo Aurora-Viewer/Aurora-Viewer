@@ -3746,6 +3746,63 @@ content-perms-next-owner = Prochain propriétaire :
 content-perms-starting = Envoi des demandes de modification des droits…
 content-perms-reading = Lecture du contenu des objets…
 content-perms-finished = Modifications envoyées : { $count } éléments. Objets ignorés : { $skipped }.
+content-perms-nested = Inclure les objets dans les objets
+content-perms-nested-help = Modifie aussi ce que contiennent les objets de ce contenu, jusqu’à 5 niveaux. Chaque objet est rezzé 2 m au-dessus de la prim qui le contient, ses scripts en marche sont arrêtés, son contenu modifié, ses scripts relancés, puis il est réenregistré dans le contenu. Les droits de l’objet revenu y sont réglés et vérifiés avant de supprimer la copie rezzée. Les objets que vous ne pouvez pas copier, transférer ou modifier restent fermés. Il faut le droit de construire là où les objets sont rezzés.
+content-perms-nested-preview = { $objects ->
+    [one] { $objects } objet du contenu sera ouvert, ignorés : { $skipped }.
+   *[other] { $objects } objets du contenu seront ouverts, ignorés : { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = {", "}
+content-perms-nested-skip-no-copy = ni copie ni transfert
+content-perms-nested-skip-no-modify = pas de modification
+content-perms-nested-skip-depth = plus de 5 niveaux de profondeur
+content-perms-nested-rezzing = Rez de « { $name } » (niveau { $level })…
+content-perms-nested-stopping = Arrêt des scripts de « { $name } »…
+content-perms-nested-applying = Modification du contenu de « { $name } »…
+content-perms-nested-restoring = Relance des scripts de « { $name } »…
+content-perms-nested-saving = Réenregistrement de « { $name } »…
+content-perms-nested-deleting = Suppression de la copie rezzée de « { $name } »…
+content-perms-nested-finished = { $count } éléments modifiés dans { $objects } objets contenus dans des objets, { $skipped } ignorés.
+content-perms-nested-kept-next = { $kept ->
+    [one] { $kept } gardé à côté de son original : les noms différaient.
+   *[other] { $kept } gardés à côté de leurs originaux : les noms différaient.
+    }
+content-perms-nested-stopped = Arrêté : les copies rezzées ont été supprimées, les éléments d’origine laissés tels quels.
+content-perms-nested-stop-help = Supprime les copies rezzées encore dans le monde et s’arrête : les éléments d’origine restent tels quels, les objets déjà réenregistrés gardent leurs modifications.
+content-perms-nested-scripts-warning = Chaque objet est rezzé dans le monde : les actions de ses scripts au rez se déclenchent (une explosion, une téléportation, un objet donné…) avant qu’ils puissent être arrêtés. Pour les éviter, activez d’abord Désactiver les scripts dans Région / Domaine, sur une région que vous gérez, et remettez-le comme avant ensuite.
+content-perms-nested-original-kept = « { $name } » a été réenregistré, mais son élément d’origine n’a pas pu être retiré : les deux sont dans le contenu.
+content-perms-nested-copy-left = La copie rezzée de « { $name } » n’a pas pu être supprimée : supprimez-la vous-même.
+content-perms-nested-save-unconfirmed = le réenregistrement n’a pas été confirmé
+content-perms-nested-saved-perms-unconfirmed = Traitement arrêté : les droits de l’objet revenu dans son conteneur n’ont pas pu être confirmés. Les copies de travail rezzées ont été conservées ; vérifiez-les avant de les supprimer.
+content-perms-nested-timeout = le simulateur n’a pas répondu à temps
+content-perms-nested-rez-refused = Arrêté : le simulateur a refusé de rezzer « { $name } » ({ $reason }).
+content-perms-nested-rez-timeout = Arrêté : « { $name } » n’est pas apparu en 15 secondes. S’il apparaît plus tard au-dessus de la prim, supprimez-le.
+content-perms-nested-not-ours = Arrêté : l’objet rezzé pour « { $name } » ne vient pas de ce contenu, il a été laissé dans le monde.
+content-perms-nested-unverified = Arrêté : l’origine de l’objet apparu pour « { $name } » n’a pas pu être vérifiée, il a été laissé dans le monde.
+content-perms-nested-group-split = Arrêté : « { $name } » (plusieurs objets enregistrés en un seul) est revenu sous la forme d’un seul objet. Ses parties rezzées ont été laissées dans le monde : sélectionnez-les toutes et prenez-les pour reformer le groupe.
+content-perms-nested-failed = « { $name } » laissé tel quel : { $reason }.
+content-perms-nested-original-gone = « { $name } » est gardé dans le monde : son réenregistrement n’a pas été confirmé et son élément d’origine a disparu.
+content-perms-nested-gone = l’objet a quitté le monde
+content-perms-nested-land-denied = Arrêté : vous ne pouvez pas construire au-dessus de cette prim, là où les objets seraient rezzés.
+content-perms-nested-parcel-full = Arrêté : la parcelle n’a plus de place pour les copies rezzées.
+content-perms-nested-rlva = Arrêté : le rez est restreint (RLVa).
+content-perms-nested-too-many = trop de scripts
+content-perms-nested-unreadable = son contenu n’a pas pu être lu
+content-perms-demo-chest = Coffre
+content-perms-demo-notes = Notes du coffre
+content-perms-demo-outer = Boîte extérieure
+content-perms-demo-glow = Script de lueur
+content-perms-demo-readme = Lisez-moi
+content-perms-demo-inner = Boîte intérieure
+content-perms-demo-inner-note = Note intérieure
+content-perms-demo-tiny = Petite boîte
+content-perms-demo-spin = Script de rotation
+content-perms-demo-heirloom = Héritage
+content-perms-demo-sealed = Boîte scellée
+content-perms-demo-linked = Boîte liée
+content-perms-demo-pebble = Boîte à galets
+content-perms-demo-stack = Pile de caisses
 build-ui-floaters-content-permissions-sent = Droits du contenu envoyés.
 ui-inventory-dialogs-duration-s = { "Durée : " }{ $value0 }s
 ui-land-dialogs-ban-duration = Durée de l'interdiction
