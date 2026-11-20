@@ -6093,7 +6093,6 @@ ui-chat-today-at = сегодня в { $time }
 ui-chat-yesterday-at = вчера в { $time }
 ui-chat-date-at = { $date } в { $time }
 ui-chat-new-messages = Новые
-ui-chat-latest = Перейти к последним сообщениям
 ui-chat-latest-new =
     { $count ->
         [one] { $count } новое сообщение

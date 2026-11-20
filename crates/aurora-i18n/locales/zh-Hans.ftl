@@ -5915,7 +5915,6 @@ ui-chat-today-at = 今天 { $time }
 ui-chat-yesterday-at = 昨天 { $time }
 ui-chat-date-at = { $date } { $time }
 ui-chat-new-messages = 新
-ui-chat-latest = 跳到最新消息
 ui-chat-latest-new = { $count ->
     [one] { $count } 条新消息
    *[other] { $count } 条新消息
