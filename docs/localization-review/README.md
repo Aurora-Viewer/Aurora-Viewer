@@ -1,8 +1,8 @@
 # Community localization review
 
-This directory holds importable catalogs while their wording and layout are being reviewed. The Viewer embeds files from `crates/aurora-i18n/locales/`. It loads a file from this directory only when a user explicitly imports it.
+The Viewer embeds the catalogs in [`crates/aurora-i18n/locales/`](../../crates/aurora-i18n/locales/). Spanish, Italian, Polish, Turkish, European Portuguese, Norwegian Bokmål and Ukrainian became built-in languages in [#4374](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4374).
 
-Spanish (`es`) is the first catalog in review. It contains 15,044 active messages against upstream `902a31b5`. Wording has been checked for 6,775 messages, including group chat pause, Photo filter ordering and LUT import, mesh detail and object permissions in Construction, and voice and camera preferences. Confirmed groups of repeated labels share wording review. Link and shortcut text gets an additional check before offline interface testing. Download [`es.ftl`](es.ftl), keep that filename, select **Use a language file (.ftl)** in **Preferences → Language and updates**, and restart the Viewer. To return to the selected built-in language, clear the option and restart.
+[Draft #4335](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4335) tracks the remaining language previews and provides download links. To test an import, leave its locale filename intact, select **Use a language file (.ftl)** in **Preferences → Language and updates**, and restart the Viewer. Clear that option and restart to return to a built-in language.
 
 Review one language at a time against the English catalog and the [translator guide](../TRANSLATING.md). Follow the Legacy Viewer's terminology and use formal address in interface text. Keep command names, URLs, Fluent variables and selectors intact. At each release, use `catalog_delta` to find added and changed source text and remove obsolete keys. A missing or unusable translation uses the English message.
 
@@ -21,4 +21,4 @@ The wrapper builds Aurora's `catalog_delta` once and writes one text worklist pe
 
 Before an importable catalog is proposed for bundling, finish the wording review, check the relevant screens in the offline Viewer, and record the human validation and remaining issues in the pull request.
 
-The first five community catalogs were brought into upstream Aurora in [#4315](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4315), building on [#4220](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4220). Both discussions retain the original contributor credits.
+The first five community catalogs were brought into upstream Aurora in [#4315](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4315), building on [#4220](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4220). The seven later catalogs build on four drafts from #4220 and the [Italian contribution in #4259](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4259).
