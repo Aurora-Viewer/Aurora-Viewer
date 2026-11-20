@@ -474,6 +474,7 @@ impl World {
         self.rlva_relative_tick(std::time::Instant::now());
         let mut commands = Vec::new();
         if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
+            self.rlva_answer_held_replies(&mut commands);
             return commands;
         }
         let mut pending = std::mem::take(&mut self.rlva.pending).into_iter();
@@ -502,7 +503,37 @@ impl World {
                 break;
             }
         }
+        self.rlva_answer_held_replies(&mut commands);
         commands
+    }
+
+    /// The queries and @notify lines queued behind a force that waits for an
+    /// outfit change: answered now, in their order, with the world as it is.
+    /// RlvHandler::processCommand (rlvhandler.cpp) answers a query when it
+    /// is received, while RlvForceWear::done (rlvhelper.cpp) only starts the
+    /// COF update: a query after a forced wear reads the outfit before the
+    /// change has landed. Only a query that waits for data of its own (an
+    /// inventory not loaded yet) holds the replies after it.
+    fn rlva_answer_held_replies(&mut self, commands: &mut Vec<(Uuid, NetCommand)>) {
+        if !self.rlva.pending.iter().any(|(_, c)| matches!(c.param, super::Param::Reply(_))) {
+            return;
+        }
+        let mut kept = Vec::new();
+        let mut blocked = false;
+        for (source, c) in std::mem::take(&mut self.rlva.pending) {
+            if blocked || !matches!(c.param, super::Param::Reply(_)) || !self.rlva.enabled() {
+                kept.push((source, c));
+                continue;
+            }
+            let live = self.rlva.rewind(&c);
+            let go_on = self.rlva_run_queued(source, c, &mut Vec::new().into_iter(), commands);
+            self.rlva.resume(live);
+            if !go_on {
+                blocked = true;
+                kept.append(&mut self.rlva.pending);
+            }
+        }
+        self.rlva.pending = kept;
     }
 
     /// One queued command. False stops the queue: the commands after it wait

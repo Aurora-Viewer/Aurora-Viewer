@@ -1688,17 +1688,34 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         "a folded attachment folder chooses the attachment point"
     );
     w.rlva.appearance.clear();
+    // RlvHandler::processCommand answers the query as it comes, while
+    // RlvForceWear::done has only started the COF update: the reply does not
+    // wait for the outfit change, and neither does the next one.
     command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=123");
     w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1, "the query waits for the outfit transaction");
-    assert!(w.rlva.out.is_empty());
-    w.rlva.appearance.clear();
+    assert!(w.rlva.pending.is_empty());
+    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
+    w.rlva.out.clear();
     w.rlva.appearance_busy = true;
+    command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=124,getsitid=125");
     w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1);
+    assert_eq!(w.rlva.pending.len(), 1, "only the force waits for the outfit change");
+    assert!(matches!(w.rlva.pending[0].1.param, Param::Force));
+    let channels: Vec<i32> = w
+        .rlva
+        .out
+        .iter()
+        .filter_map(|c| match c {
+            NetCommand::ChatReply { channel, .. } => Some(*channel),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(channels, vec![124, 125], "the replies keep their order");
+    w.rlva.appearance.clear();
     w.rlva.appearance_busy = false;
     w.rlva_pending();
-    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
+    assert!(w.rlva.pending.is_empty());
+    assert_eq!(w.rlva.appearance.len(), 1, "the held force runs once the outfit change is over");
 }
 
 #[test]
