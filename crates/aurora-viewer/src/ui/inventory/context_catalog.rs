@@ -279,7 +279,14 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false, false)
+    let mut c = build_mode(inv, id, st, prefs, facts, false, false);
+    // Aurora's window: New labelled at the head of every menu, into the
+    // row's folder (a folder's own, an item's parent); the Legacy-style
+    // window keeps the Legacy Viewer's place for it
+    if st.aurora.is_some() {
+        explorer::new_first(&mut c.entries);
+    }
+    c
 }
 
 /// The menu of the explorer's empty space, showing `folder`: what acts on

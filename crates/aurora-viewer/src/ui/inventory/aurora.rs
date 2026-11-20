@@ -1096,6 +1096,23 @@ mod tests {
     }
 
     #[test]
+    fn results_rows_drag_by_their_name_and_their_other_columns_draw_the_band() {
+        // Recent, Worn, Favorites and a search list results, not a folder
+        let mut h = Harness::new(WIDE_SIZE);
+        h.frames(3);
+        h.st.search = "Demo".into();
+        h.frames(6);
+        let drawn: Vec<Rect> = (8000..8300u128)
+            .filter_map(|n| rows::tests::drawn(&h.ctx, Uuid::from_u128(n)))
+            .collect();
+        let first = drawn.iter().min_by(|a, b| a.top().total_cmp(&b.top())).copied().expect("rows");
+        let from = egui::pos2(first.right() - 12.0, first.center().y);
+        let to = egui::pos2(from.x, first.bottom() + 70.0);
+        assert!(!press_and_move(&mut h, from, to), "the other columns do not carry the row");
+        assert!(h.st.selection.len() >= 3, "banded: {}", h.st.selection.len());
+    }
+
+    #[test]
     fn folder_buttons_fold_each_view_and_search_has_its_own_row() {
         for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
             for scoped in [false, true] {

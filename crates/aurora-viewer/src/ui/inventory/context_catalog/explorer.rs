@@ -45,10 +45,10 @@ pub(super) fn kept_in_background(entry: &Entry) -> bool {
         || BACKGROUND_ADDS.contains(&entry.id.as_str())
 }
 
-/// The empty space's New: a labelled "New ▸" at the head of the text,
-/// opening at its side as View and Sort do, as Explorer's and Dolphin's
-/// "New" (the "+" of the icon bar was easy to miss there). A layout the
-/// user arranged still places it.
+/// New as a labelled "New ▸" at the head of the text, opening at its side
+/// as View and Sort do, as Explorer's and Dolphin's "New" (the "+" of the
+/// icon bar was easy to miss): the empty space's menu and, in Aurora's
+/// window, every entry's. A layout the user arranged still places it.
 pub(super) fn new_first(entries: &mut Vec<Entry>) {
     let Some(at) = entries.iter().position(|e| e.id == "new" && e.zone == "top") else {
         return;

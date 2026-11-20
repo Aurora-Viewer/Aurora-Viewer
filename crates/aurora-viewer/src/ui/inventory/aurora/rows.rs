@@ -41,8 +41,16 @@ fn row_rects(ui: &egui::Ui) -> (Rect, Rect) {
 /// in Windows Explorer's Details view: a click anywhere on it selects it,
 /// and a drag from its other columns draws the rubber band
 /// (`marquee`). Elsewhere (the tree) the whole row drags, as before.
+/// Whether a row drags by its icon and name only, its other columns
+/// drawing the rubber band: the explorer's folder, and its lists of Recent,
+/// Worn, Favorites and the results at the medium and wide widths (the
+/// narrow window's tree drags by the whole row).
+fn by_name(frame: Frame) -> bool {
+    frame.explorer || frame.layout != Layout::Compact
+}
+
 fn row_sense(frame: Frame, draggable: bool) -> Sense {
-    if frame.explorer || !draggable {
+    if by_name(frame) || !draggable {
         Sense::click()
     } else {
         Sense::click_and_drag()
@@ -66,7 +74,7 @@ fn name_handle(
     folder: bool,
     draggable: bool,
 ) {
-    if !frame.explorer || !draggable {
+    if !by_name(frame) || !draggable {
         return;
     }
     let width = ui
