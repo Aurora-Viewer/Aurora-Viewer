@@ -1,5 +1,18 @@
 # Aurora Viewer architecture
 
+`imports/file_picker.rs` owns pending native selections and their import-window
+identity. Closing that window cancels and retires the request without discarding
+existing drafts; request ids reject late replies. Native dialogs run on dedicated
+threads with panic-safe completion. On Windows, `file_picker/windows.rs` installs
+a thread timer for the modal loop and posts WM_CLOSE only to native dialogs on
+that picker thread. `file_picker/macos.rs` retains a modeless NSOpenPanel and
+dispatches its cancellation to AppKit's main thread. `file_picker/linux/portal.rs`
+subscribes before OpenFile, retains the returned Request handle and calls Close
+without waiting for a Response signal on cancellation; its non-modal dialog
+keeps Aurora reachable. `file_picker/linux/zenity.rs` retains and reaps the exact
+fallback child when the portal is unavailable. No backend cancels another
+request's selector. File decoding stays off the frame thread.
+
 `imports/ui/inspector.rs` owns the draggable queue divider. Its preferred width
 is stored under each import window in the shared persisted UI layout; fitting
 a smaller window only clamps the displayed width. Double-click restores the
@@ -5050,3 +5063,5 @@ independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
 
 `build/linking.rs` follows LLSelectMgr::enableLinkObjects / linkObjects: full selection properties and effective rights are checked before sending, with permanent-object, region, owner, RLVa and animated-mesh limits shared by both layouts and the object menu. Scene mesh-header estimates are refreshed before editor input. `aurora-net::build::link_batches` retains the root in every 254-object packet; confirmation accounts for later batches preceding earlier children. OpenRegionInfo supplies the region link limit; SimulatorFeatures supplies the animated-object triangle budget.
+
+`imports/attachments.rs` keeps private texture/material preview bindings on inventory attachment identities across re-rez; child geometry and transforms disambiguate parts independently of arrival order. The saved library order drives the texture picker's newest-first sort.

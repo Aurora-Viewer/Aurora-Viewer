@@ -2809,7 +2809,16 @@ Keep the picker open while changing the main inventory's name/date order,
 results must follow those options, including in the Aurora Library tab.
 The inventory image picker, AO animation/notecard pickers, Move to, Replace
 links, environment settings and covenant notecard selectors share this order.
-Local names compare without case and with numeric runs (2 before 10).
+Local files start in newest-first order; the Name A–Z option compares without
+case and with numeric runs (2 before 10). Reopen the picker to check that its
+source tab and local sort choice are remembered. A control that disallows local
+files falls back to Inventory without erasing the saved Local preference.
+For online validation, apply a local alpha TGA to an attachment, exercise None /
+Blend / Mask in both build layouts, then relog: the local file and its face
+bindings should return even when the worn object's UUID changes. Reapply any
+binding already lost before this version so its inventory identity can be saved.
+Attachment part matching waits for the complete linkset and refuses ambiguous
+child geometry/transforms; no local metadata is written to simulator objects.
 Type a search, click a result, then clear the field with its cross or with
 Ctrl+A followed by Delete or Backspace: the exact selected row must remain
 selected and scroll into view, opening its parent folders if needed. Check
@@ -7093,6 +7102,26 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 
 ### Import inspector layout
+
+Picker cancellation: in demo mode, open Add files (or Add folder), return to
+Aurora and close the import window. Its native picker must close too on Windows,
+macOS and Linux. On macOS the modeless panel must leave Aurora usable; on Linux,
+test both the desktop portal and the zenity fallback on a desktop without a
+file chooser portal.
+Reopen the importer: existing drafts remain and Add files is enabled. Repeat in
+a type-specific importer while another importer stays open; closing the other
+window must leave the original picker alone. Cancel in the native picker itself
+and retry, and close/reopen quickly while a selection is starting. Repeat with
+the material editor's texture upload (single-file selector). Ordinary selection
+must still load the chosen files with the same extension filters.
+`cargo test --workspace file_picker` covers ownership, stale replies, panics and
+the real floater close/reopen actions, portal request options, cancellation
+before/during the wait, and completion without a portal Response after Close.
+The portable portal implementation is also type-checked in tests on Windows.
+Native macOS/Linux UI validation still requires those desktops. On a Windows interactive desktop, run
+`cargo test --workspace file_picker_native_windows_close_after_the_dialog_is_visible -- --ignored --test-threads=1`
+alone: it opens and cancels actual multiple-file, folder and single-file dialogs
+with an automation title, without selecting or reading files.
 
 TGA texture imports: use `AURORA_DEMO_IMPORTS=type-texture` and
 `AURORA_DEMO_IMPORT_FILE` with a local `.tga`, including RLE files without a

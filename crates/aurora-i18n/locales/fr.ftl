@@ -15874,3 +15874,6 @@ game-control-action-truck-right = Travelling latéral →
 game-control-action-boom-up = Grue ↑
 game-control-action-boom-down = Grue ↓
 game-control-action-escape = Échap
+
+picker-local-newest = Plus récentes
+picker-local-name = Nom A–Z

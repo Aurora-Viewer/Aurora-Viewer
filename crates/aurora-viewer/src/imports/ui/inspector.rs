@@ -499,6 +499,9 @@ pub(super) fn show(
             );
         });
     });
+    if imports.open && !open {
+        imports.cancel_file_picker(window);
+    }
     imports.open = open;
 }
 
