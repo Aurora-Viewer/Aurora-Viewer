@@ -486,6 +486,78 @@ fn valid_option(c: &Command) -> bool {
     }
 }
 
+/// What the shared folders say about a command that names one: the folder
+/// locks (`@detachallthis:<option>=n` and the other seven).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verdict {
+    /// The command may run.
+    Valid,
+    /// It names nothing: RLV_RET_FAILED_OPTION, no rule is stored.
+    Refuse,
+    /// It depends on a folder of #RLV whose contents are not loaded yet.
+    Wait(Uuid),
+}
+
+/// RlvHandler::onAddRemFolderLock and onAddRemFolderLockException
+/// (rlvhandler.cpp): the option of `@attachthis`, `@attachallthis`,
+/// `@detachthis` and `@detachallthis` is empty (the object's own folder), a
+/// shared folder path, an attachment point or a wearable type; the four
+/// `_except` forms take a shared folder path only. Anything else fails with
+/// RLV_RET_FAILED_OPTION, `=y` included. The option is read as
+/// RlvCommandOptionHelper::parseOption<RlvCommandOptionGeneric> does
+/// (rlvhelper.cpp): a wearable type, an attachment point or a UUID is taken
+/// as that before a folder is looked for.
+/// `shared` answers for a path (RlvInventory::getSharedFolder). The Legacy
+/// Viewer holds every command until its login completes, then reads the
+/// folders it has; Aurora loads #RLV on demand, so a path that cannot be
+/// told yet makes the command wait for the folders, until `expired`, and
+/// then it is kept as it was before this check (a lock stays rather than
+/// being lost).
+fn folder_verdict(c: &Command, shared: &dyn Fn(&str) -> inventory::Lookup, expired: bool) -> Verdict {
+    use inventory::Lookup;
+    let except = match canonical(&c.behaviour) {
+        "attachthis" | "attachallthis" | "detachthis" | "detachallthis" => false,
+        "attachthis_except" | "attachallthis_except" | "detachthis_except" | "detachallthis_except" => true,
+        _ => return Verdict::Valid,
+    };
+    if !matches!(c.param, Param::Add | Param::Remove) {
+        return Verdict::Valid;
+    }
+    if !valid_option(c) {
+        return Verdict::Refuse;
+    }
+    let option = c.option.as_str();
+    if option.is_empty() {
+        return if except { Verdict::Refuse } else { Verdict::Valid };
+    }
+    if inventory::layer(option).is_some() || inventory::point(option).is_some() {
+        return if except { Verdict::Refuse } else { Verdict::Valid };
+    }
+    // LLUUID::validate reads the 36-character form only.
+    if option.len() == 36 && Uuid::parse_str(option).is_ok() {
+        return Verdict::Refuse;
+    }
+    match shared(option) {
+        Lookup::Found | Lookup::Unverified => Verdict::Valid,
+        Lookup::Missing => Verdict::Refuse,
+        Lookup::Loading(_) if expired => Verdict::Valid,
+        Lookup::Loading(folder) => Verdict::Wait(folder),
+    }
+}
+
+/// How long a command waits for the folders it names to load.
+const FOLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// The most commands held at once.
+const FOLDER_WAIT_LIMIT: usize = 256;
+
+/// A command held until the shared folders it names are loaded.
+struct Deferred {
+    source: Uuid,
+    command: Command,
+    text: String,
+    since: std::time::Instant,
+}
+
 #[derive(Default)]
 pub struct Rlva {
     enabled: bool,
@@ -505,6 +577,8 @@ pub struct Rlva {
     /// command queued until they change.
     snapshot: Option<std::sync::Arc<LockSnapshot>>,
     pub pending: Vec<(Uuid, Command)>,
+    /// Folder-lock commands waiting for #RLV to load, in the order received.
+    deferred: Vec<Deferred>,
     pub out: Vec<NetCommand>,
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
     /// Attachments a forced batch asked for, not arrived yet (`rlva_force_settled`).
@@ -613,6 +687,7 @@ impl Rlva {
         self.version = Default::default();
         self.im = Default::default();
         self.pending.clear();
+        self.deferred.clear();
         self.out.clear();
         self.appearance.clear();
         self.viewer.clear();
@@ -662,6 +737,7 @@ impl Rlva {
             self.camera_values.remove("setcam_fov");
         }
         self.pending.retain(|(id, _)| *id != source);
+        self.deferred.retain(|d| d.source != source);
         self.appearance.retain(|(id, _)| *id != source);
         self.viewer.retain(|(id, _)| *id != source);
     }
@@ -746,9 +822,17 @@ impl Rlva {
             .fold(f32::INFINITY, f32::min)
     }
 
+    /// `receive_in` with every shared folder present, for the tests that
+    /// are about something else than the folders.
+    #[cfg(test)]
+    pub fn receive(&mut self, chat: &ChatMessage) -> bool {
+        self.receive_in(chat, &|_| inventory::Lookup::Found)
+    }
+
     /// Returns true for an RLVa OwnerSay, including unsupported commands:
     /// protocol traffic never becomes user chat when RLVa is enabled.
-    pub fn receive(&mut self, chat: &ChatMessage) -> bool {
+    /// `shared` tells whether a shared folder path exists (`folder_verdict`).
+    fn receive_in(&mut self, chat: &ChatMessage, shared: &dyn Fn(&str) -> inventory::Lookup) -> bool {
         if !self.enabled
             || chat.source_type != ChatSourceType::Object
             || chat.chat_type != ChatType::OwnerSay
@@ -768,17 +852,70 @@ impl Rlva {
         let message = chat.message[1..].to_ascii_lowercase();
         for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
-                let notice = self.notice(chat.source_id, &command, text);
-                let outcome = self.process(chat.source_id, command);
-                self.trace(chat.source_id, text, outcome);
-                if let Some((subject, suffix)) = notice {
-                    self.notify_command(&subject, suffix);
+                // Nothing of an issuer runs before the command it has held.
+                let verdict = if self.deferred.iter().any(|d| d.source == chat.source_id) {
+                    Verdict::Wait(Uuid::nil())
+                } else {
+                    folder_verdict(&command, shared, false)
+                };
+                if matches!(verdict, Verdict::Wait(_)) {
+                    if self.deferred.len() < FOLDER_WAIT_LIMIT {
+                        self.deferred.push(Deferred {
+                            source: chat.source_id,
+                            command,
+                            text: text.to_owned(),
+                            since: std::time::Instant::now(),
+                        });
+                    } else {
+                        self.trace(chat.source_id, text, diagnostics::Outcome::Rejected);
+                    }
+                } else {
+                    self.execute(chat.source_id, command, text, verdict);
                 }
             } else if !text.is_empty() {
                 self.trace(chat.source_id, text, diagnostics::Outcome::Rejected);
             }
         }
         true
+    }
+
+    fn execute(&mut self, source: Uuid, command: Command, text: &str, verdict: Verdict) {
+        let notice = self.notice(source, &command, text);
+        let outcome = self.process_with(source, command, verdict == Verdict::Refuse);
+        self.trace(source, text, outcome);
+        if let Some((subject, suffix)) = notice {
+            self.notify_command(&subject, suffix);
+        }
+    }
+
+    /// Runs the held commands whose shared folders are loaded now, in the
+    /// order received and each issuer behind its own first held command.
+    /// Returns the folders the rest waits for, and whether any ran.
+    fn release_deferred(&mut self, now: std::time::Instant, shared: &dyn Fn(&str) -> inventory::Lookup) -> (Vec<Uuid>, bool) {
+        let mut wanted = Vec::new();
+        let mut ran = false;
+        let mut blocked = BTreeSet::new();
+        let mut kept = Vec::new();
+        for held in std::mem::take(&mut self.deferred) {
+            if blocked.contains(&held.source) {
+                kept.push(held);
+                continue;
+            }
+            let expired = now.saturating_duration_since(held.since) >= FOLDER_WAIT;
+            match folder_verdict(&held.command, shared, expired) {
+                Verdict::Wait(folder) => {
+                    wanted.push(folder);
+                    blocked.insert(held.source);
+                    kept.push(held);
+                }
+                verdict => {
+                    self.execute(held.source, held.command, &held.text, verdict);
+                    ran = true;
+                }
+            }
+        }
+        self.deferred = kept;
+        (wanted, ran)
     }
 
     /// The rules of this moment, for a command that is queued.
@@ -838,7 +975,13 @@ impl Rlva {
         }
     }
 
+    /// `process_with` for a command whose folder option is not in question.
+    #[cfg(test)]
     fn process(&mut self, source: Uuid, c: Command) -> diagnostics::Outcome {
+        self.process_with(source, c, false)
+    }
+
+    fn process_with(&mut self, source: Uuid, c: Command, folder_refused: bool) -> diagnostics::Outcome {
         use diagnostics::Outcome;
         if self.refused(source, &c)
             || (!self.preferences.command_available(&c.behaviour) && !matches!(c.param, Param::Remove | Param::Clear))
@@ -883,7 +1026,11 @@ impl Rlva {
                 {
                     return Outcome::Rejected;
                 }
-                if !RESTRICTIONS.contains(&c.behaviour.as_str()) || (c.strict && !supports_strict(&c.behaviour)) || !valid_option(&c) {
+                if !RESTRICTIONS.contains(&c.behaviour.as_str())
+                    || (c.strict && !supports_strict(&c.behaviour))
+                    || !valid_option(&c)
+                    || folder_refused
+                {
                     return Outcome::Rejected;
                 }
                 let rule = Rule::from(&c);
@@ -1239,6 +1386,9 @@ pub fn is_emote(text: &str) -> bool {
 #[cfg(test)]
 #[path = "rlva/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod folder_option_tests;
 
 #[cfg(test)]
 #[path = "rlva/link_lock_tests.rs"]

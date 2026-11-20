@@ -113,6 +113,7 @@ impl App {
             self.appearance_ui.pending_actor = Uuid::nil();
         }
         self.world.rlva_controllers_tick(Instant::now());
+        self.world.rlva_deferred_tick(Instant::now());
         let login_locked = self.world.rlva.has("tploc") || (self.world.agent.is_sitting() && self.world.rlva.has("unsit"));
         self.rlva_login.update(
             self.settings.rlva_enabled,

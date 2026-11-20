@@ -42,6 +42,48 @@ impl Rlva {
 }
 
 impl World {
+    /// An OwnerSay command of an object, run against the shared folders the
+    /// inventory holds: a folder lock that names nothing is refused
+    /// (`folder_verdict`), one that depends on folders not loaded yet is held
+    /// and asked for. Returns what `Rlva::receive_in` does.
+    pub(crate) fn rlva_receive(&mut self, chat: &aurora_net::ChatMessage) -> bool {
+        let inventory = &self.inventory;
+        let received = self.rlva.receive_in(chat, &|path| super::inventory::lookup(inventory, path));
+        if received {
+            self.rlva_deferred_tick(std::time::Instant::now());
+        }
+        received
+    }
+
+    /// Runs the held folder-lock commands whose folders have loaded, and
+    /// asks the server for the folders the others wait for.
+    pub(crate) fn rlva_deferred_tick(&mut self, now: std::time::Instant) {
+        let inventory = &self.inventory;
+        let (wanted, ran) = self.rlva.release_deferred(now, &|path| super::inventory::lookup(inventory, path));
+        for folder in wanted {
+            self.inventory.request(folder);
+        }
+        if ran {
+            self.rlva_commands_applied();
+        }
+    }
+
+    /// What follows commands that changed the rules.
+    pub(crate) fn rlva_commands_applied(&mut self) {
+        self.rlva_resolve_sources();
+        self.eep.rlva_locked = self.rlva.has("setenv");
+        let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
+        if self.eep.rlva_locked
+            && self.rlva.environment.is_none()
+            && let Some(actor) = environment_owner
+        {
+            self.rlva.environment = Some((actor, self.eep.current().0));
+        }
+        self.inventory.rlva_preview_mask = self.rlva.preview_mask();
+        self.refresh_rlva_privacy();
+        self.rlva_watchdog_tick(std::time::Instant::now());
+    }
+
     /// After an OwnerSay stored rules: whether their issuers are known
     /// objects (`Rlva::resolve_sources`).
     pub(crate) fn rlva_resolve_sources(&mut self) {
