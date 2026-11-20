@@ -4841,7 +4841,7 @@ fn rlva_forced_offsets_go_when_the_user_picks_a_view_unless_locked() {
     assert_eq!(r.camera_view().eye_offset, None);
     assert_eq!(requested.camera_offset, [-5.0, 0.0, 2.0]);
     r.camera_force(A, &Command::parse("setcam_eyeoffset:1/2/3=force").unwrap());
-    command(&mut r, B, "@setcam_focusoffset:0/0/1=n");
+    command(&mut r, B, "@setcam_eyeoffsetscale:1=n");
     r.user_chose_camera_view();
     assert!(r.camera_view().eye_offset.is_some(), "a locked preset keeps them");
 }
