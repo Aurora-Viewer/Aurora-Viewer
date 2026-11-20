@@ -1520,11 +1520,14 @@ depth. FSR's display depth supports that copy too. Readback slots carry
 monotonic sequence numbers so a reused slot cannot deliver an older answer
 over a newer one. `renderer::part_tests` exercises the production shaders
 and shared pipeline states on the GPU; `part_pick` also tests slot reuse.
-`world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
-state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
-and the independent target modal/reminder. Bridge 1.34 adds authenticated
-attachment-to-attachment consent relay to `world/bridge/query.lsl`, using the
-existing private HTTPS query service. It sends no IM or viewer probe.
+`world/poser_consent.rs` owns the region-scoped consent we ask (request,
+accept, refuse, stop, cancel), nonces, timeouts and cooldowns, and the texts
+of the dialog. `app/poser.rs` drives the transport and the ended notice. The
+dialog itself is shown by our bridge (`world/bridge/query.lsl`, through the
+private HTTPS query service): a standard `llDialog` to the resident, answered
+with its buttons or `stop` in nearby chat, whatever viewer they use. No
+message goes to another viewer (AGENTS.md, "No data of our own in shared
+places").
 See [the local trial and validation](docs/POSER.md).
 
 Native links share `ui/chat/action_marker.rs`: a parsed action chooses its

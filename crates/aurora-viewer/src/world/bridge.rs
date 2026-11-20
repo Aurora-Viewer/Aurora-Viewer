@@ -23,7 +23,7 @@ pub const NAME: &str = "#Aurora Bridge v1.0";
 pub(crate) const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.43";
+const VERSION: &str = "1.44";
 /// The controller's and query script's owner-say tags, never shown in chat.
 /// `<auroraPortal>` is a 1.42 query script's, kept hidden until it is
 /// replaced: portals are this viewer's own and no longer relayed.

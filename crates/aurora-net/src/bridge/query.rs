@@ -1,7 +1,13 @@
-//! Query services and explicit photo-posing consent relay. Read-only services
+//! Query services and the photo-posing consent dialog. Read-only services
 //! correspond to getZOffsets/getScriptInfo in the Legacy Viewer
 //! (fsradar.cpp and fs_resources/EBEDD1D2-*.lsltxt, originally LGPL 2.1).
 //! They never consume the movement sequence or refresh its watchdog.
+//!
+//! Posing consent is asked the way any posing HUD asks it: the poser's own
+//! bridge shows the resident a standard script dialog (llDialog), whatever
+//! viewer they use, and hears their answer and their `stop` in local chat.
+//! No message goes from one viewer to another (Second Life's shared
+//! experience policy; AGENTS.md, "No data of our own in shared places").
 use super::{Endpoint, gone_failure, http, transport_failure, valid_url};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
@@ -13,40 +19,104 @@ const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
-    Pose { request: Uuid, kind: PoseKind, target: Uuid },
+    /// `ask` shows the resident the consent dialog; `None` forgets the
+    /// request or the consent (cancelled, timed out, the resident left).
+    Pose {
+        request: Uuid,
+        target: Uuid,
+        ask: Option<PoseDialog>,
+    },
     Altitudes(Vec<Uuid>),
     ScriptInfo(Uuid),
     ObjectInfo(Uuid),
 }
 
+/// The local chat channel on which a posed resident types `stop` to end
+/// their consent (`query.lsl`'s STOP_CHANNEL; the dialog names it). Not 99,
+/// which many HUDs listen to.
+pub const POSE_STOP_CHANNEL: i32 = 2525;
+/// llDialog takes a message under 512 bytes and buttons of 24 bytes; the
+/// whole query also fits `query.lsl`'s body limit (`MAX_BODY`).
+pub const POSE_MESSAGE_BYTES: usize = 360;
+pub const POSE_NOTICE_BYTES: usize = 200;
+pub const POSE_LABEL_BYTES: usize = 24;
+/// `query.lsl`'s limit on a query body.
+pub const MAX_BODY: usize = 1600;
+
+/// What the bridge tells its own viewer about a consent it asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoseKind {
-    Request,
     Accept,
     Refuse,
-    Cancel,
+    /// The resident pressed Stop or typed `stop` on [`POSE_STOP_CHANNEL`].
     Withdraw,
 }
 impl PoseKind {
     pub fn wire(self) -> &'static str {
         match self {
-            Self::Request => "request",
             Self::Accept => "accept",
             Self::Refuse => "refuse",
-            Self::Cancel => "cancel",
             Self::Withdraw => "withdraw",
         }
     }
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
-            "request" => Self::Request,
             "accept" => Self::Accept,
             "refuse" => Self::Refuse,
-            "cancel" => Self::Cancel,
             "withdraw" => Self::Withdraw,
             _ => return None,
         })
     }
+}
+
+/// The texts the poser's bridge shows the posed resident, in the poser's
+/// language: the question with Yes and No, then once accepted how to stop
+/// with a Stop button, and the line said to them when they stop.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoseDialog {
+    pub question: String,
+    pub yes: String,
+    pub no: String,
+    pub granted: String,
+    pub stop: String,
+    pub stopped: String,
+}
+impl PoseDialog {
+    /// Each text clipped to what llDialog and the query body take.
+    pub fn new(question: &str, yes: &str, no: &str, granted: &str, stop: &str, stopped: &str) -> Self {
+        Self {
+            question: clip(question, POSE_MESSAGE_BYTES),
+            yes: clip(yes, POSE_LABEL_BYTES),
+            no: clip(no, POSE_LABEL_BYTES),
+            granted: clip(granted, POSE_MESSAGE_BYTES),
+            stop: clip(stop, POSE_LABEL_BYTES),
+            stopped: clip(stopped, POSE_NOTICE_BYTES),
+        }
+    }
+    fn valid(&self) -> bool {
+        let labels = [&self.yes, &self.no, &self.stop];
+        // the bridge tells the answers apart by their label
+        labels.iter().all(|l| !l.trim().is_empty() && l.len() <= POSE_LABEL_BYTES)
+            && self.yes != self.no
+            && [&self.question, &self.granted]
+                .iter()
+                .all(|t| !t.trim().is_empty() && t.len() <= POSE_MESSAGE_BYTES)
+            && self.stopped.len() <= POSE_NOTICE_BYTES
+    }
+    fn encode(&self) -> String {
+        [&self.question, &self.yes, &self.no, &self.granted, &self.stop, &self.stopped]
+            .map(|t| STANDARD.encode(t.as_bytes()))
+            .join(",")
+    }
+}
+
+/// `text` cut to at most `bytes` bytes, on a character boundary.
+fn clip(text: &str, bytes: usize) -> String {
+    let mut end = text.len().min(bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,7 +175,12 @@ pub enum Reply {
 impl Query {
     pub fn valid(&self) -> bool {
         match self {
-            Self::Pose { request, target, .. } => !request.is_nil() && !target.is_nil(),
+            Self::Pose { request, target, ask } => {
+                !request.is_nil()
+                    && !target.is_nil()
+                    && ask.as_ref().is_none_or(PoseDialog::valid)
+                    && self.body(Uuid::nil()).len() <= MAX_BODY
+            }
             Self::Altitudes(ids) => {
                 !ids.is_empty()
                     && ids.len() <= MAX_AVATARS
@@ -117,7 +192,10 @@ impl Query {
     }
     fn body(&self, token: Uuid) -> String {
         match self {
-            Self::Pose { request, kind, target } => format!("query|{token}|pose|{},{request},{target}", kind.wire()),
+            Self::Pose { request, target, ask } => match ask {
+                Some(dialog) => format!("query|{token}|pose|ask,{request},{target},{}", dialog.encode()),
+                None => format!("query|{token}|pose|forget,{request},{target}"),
+            },
             Self::Altitudes(ids) => format!(
                 "query|{token}|altitudes|{}",
                 ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",")
@@ -277,6 +355,84 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+    fn dialog(question: &str) -> PoseDialog {
+        PoseDialog::new(question, "Yes", "No", "You can stop at any time.", "Stop", "Posing stopped.")
+    }
+    #[test]
+    fn a_pose_ask_carries_the_dialog_texts_and_fits_the_bridge() {
+        let longest = "あ".repeat(400);
+        let ask = PoseDialog::new(&longest, &"い".repeat(20), "No", &longest, &"う".repeat(20), &longest);
+        // clipped on a character boundary, within llDialog's limits
+        assert!(ask.question.len() <= POSE_MESSAGE_BYTES && ask.question.chars().all(|c| c == 'あ'));
+        assert!(ask.yes.len() <= POSE_LABEL_BYTES && ask.stop.len() <= POSE_LABEL_BYTES);
+        assert!(ask.stopped.len() <= POSE_NOTICE_BYTES);
+        let query = Query::Pose {
+            request: id(1),
+            target: id(2),
+            ask: Some(ask.clone()),
+        };
+        assert!(query.valid());
+        let body = query.body(id(100));
+        assert!(body.len() <= MAX_BODY, "{} bytes", body.len());
+        let fields: Vec<_> = body.strip_prefix(&format!("query|{}|pose|", id(100))).unwrap().split(',').collect();
+        assert_eq!(fields.len(), 9);
+        assert_eq!((fields[0], fields[1], fields[2]), ("ask", &*id(1).to_string(), &*id(2).to_string()));
+        let decoded: Vec<_> = fields[3..]
+            .iter()
+            .map(|f| String::from_utf8(STANDARD.decode(f).unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            decoded,
+            [&ask.question, &ask.yes, &ask.no, &ask.granted, &ask.stop, &ask.stopped].map(String::clone)
+        );
+        // query.lsl splits the targets on commas and refuses a '|'
+        assert_eq!(body[43..].matches('|').count(), 1);
+        assert_eq!(
+            Query::Pose {
+                request: id(1),
+                target: id(2),
+                ask: None
+            }
+            .body(id(100)),
+            format!("query|{}|pose|forget,{},{}", id(100), id(1), id(2))
+        );
+    }
+    #[test]
+    fn a_pose_ask_needs_distinct_labels_and_texts() {
+        let ask = |d: PoseDialog| {
+            Query::Pose {
+                request: id(1),
+                target: id(2),
+                ask: Some(d),
+            }
+            .valid()
+        };
+        assert!(ask(dialog("May I pose you?")));
+        assert!(!ask(dialog("  ")));
+        assert!(!ask(PoseDialog::new("Q", "Same", "Same", "G", "Stop", "")));
+        assert!(!ask(PoseDialog::new("Q", "Yes", "", "G", "Stop", "")));
+        assert!(!ask(PoseDialog::new("Q", "Yes", "No", "G", " ", "")));
+        assert!(
+            !Query::Pose {
+                request: Uuid::nil(),
+                target: id(2),
+                ask: None
+            }
+            .valid()
+        );
+        assert!(
+            !Query::Pose {
+                request: id(1),
+                target: Uuid::nil(),
+                ask: None
+            }
+            .valid()
+        );
+        assert_eq!(PoseKind::parse("request"), None, "the bridge never relays another viewer's request");
+        for kind in [PoseKind::Accept, PoseKind::Refuse, PoseKind::Withdraw] {
+            assert_eq!(PoseKind::parse(kind.wire()), Some(kind));
+        }
     }
     #[test]
     fn bounded_queries_have_no_movement_fields_and_reject_empty_duplicate_targets() {

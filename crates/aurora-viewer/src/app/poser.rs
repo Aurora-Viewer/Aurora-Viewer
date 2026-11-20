@@ -1,10 +1,6 @@
 //! Consent transport and UI remain independent of whether the editor is open.
 use super::*;
-use crate::{
-    theme::Palette,
-    ui::widgets,
-    world::{bridge::QueryState, poser_consent},
-};
+use crate::{theme::Palette, ui::widgets, world::bridge::QueryState};
 
 impl App {
     /// AURORA_DEMO_COUPLE: Nova stands beside you and accepts an Ask from
@@ -275,13 +271,6 @@ impl App {
     }
     pub(super) fn tick_poser_consent(&mut self) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
-        if consent.dirty {
-            self.settings.pose_requests = consent.preferences.clone();
-            self.settings.save();
-            consent.dirty = false;
-        } else {
-            consent.preferences.clone_from(&self.settings.pose_requests);
-        }
         consent.sync(&self.world, Instant::now());
         let bridge = match self.demo.then(|| std::env::var("AURORA_DEMO_POSER").ok()).flatten() {
             // The demo has no worn bridge: its poser fixtures stand for a
@@ -301,9 +290,11 @@ impl App {
         }
         self.world.poser_consent = consent;
     }
-    /// The posing consent's question, reminder and requests; `over_photo`
-    /// in the full-frame photo mode, where the poser window is raised to
-    /// the foreground (`over_viewfinder`) and they must stay above it.
+    /// The poser's consent requests, and the notice that one ended; the
+    /// question itself is our bridge's dialog on the resident's screen.
+    /// `over_photo` in the full-frame photo mode, where the poser window is
+    /// raised to the foreground (`over_viewfinder`) and the notice must stay
+    /// above it.
     pub(super) fn poser_consent_ui(&mut self, ctx: &egui::Context, p: &Palette, over_photo: bool) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
         // The requester sees every nearby avatar with Ask in the poser's
@@ -314,97 +305,36 @@ impl App {
                     consent.request(&self.world, peer, Instant::now());
                 }
                 crate::ik_edit::poser::Request::Cancel(peer) => consent.cancel(peer),
-                crate::ik_edit::poser::Request::OpenPrivacy => {
-                    self.panels.settings = true;
-                    self.options_ui.open(crate::ui::options::Page::Privacy, 0);
-                }
                 // The Movelock window's Repair: recompile and restart both scripts.
                 crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
             }
         }
-        // in the photo mode, both stay over the poser window it raises to
-        // the same layer (elsewhere the windows keep their usual order)
-        let mut on_top = Vec::new();
-        let mut question = None;
-        if let Some(request) = consent.incoming.front().copied() {
-            let id = egui::Id::unique(("poser-consent-block", request.id));
-            let mut block = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-            let modal = widgets::Modal::new(egui::Id::unique(("poser-consent", request.id))).show(ctx, |ui| {
-                // in the photo mode Enter is the shutter, pressed out of
-                // habit: it must not grant a resident the right to pose us,
-                // so there the answer takes a click (stricter than the
-                // dialogs' Enter rule, `modal_keys`)
-                if over_photo {
-                    widgets::enter_pressed(ui);
-                }
-                ui.set_max_width(430.0);
-                let distance = poser_consent::distance(&self.world, request.peer).unwrap_or(0.0);
-                ui.heading(aurora_i18n::tr!(
-                    "poser-consent-request",
-                    name = poser_consent::name(&self.world, request.peer),
-                    distance = format!("{distance:.0}")
-                ));
-                ui.label(aurora_i18n::tr!("poser-consent-explanation"));
-                widgets::checkbox(ui, p, &mut block, aurora_i18n::tr!("poser-consent-block"));
-                ctx.data_mut(|d| d.insert_temp(id, block));
-                ui.horizontal(|ui| {
-                    if ui.button(aurora_i18n::tr!("poser-consent-refuse")).clicked() {
-                        consent.answer(request, false, block, Instant::now());
-                    }
-                    if widgets::action_button(
-                        ui,
-                        p,
-                        "check",
-                        aurora_i18n::text("poser-consent-accept"),
-                        widgets::ActionKind::Primary,
-                        egui::vec2(0.0, 28.0),
-                    )
-                    .clicked()
-                    {
-                        consent.answer(request, true, block, Instant::now());
-                    }
-                });
-            });
-            question = Some(modal.response.layer_id);
-            on_top.push(modal.response.layer_id);
-        }
-        if !consent.granted_to.is_empty() || consent.notice.is_some() {
-            let reminder = egui::Area::new(egui::Id::unique("poser-consent-reminder"))
+        // in the photo mode, the notice stays over the poser window it
+        // raises to the same layer (elsewhere the windows keep their order)
+        let mut on_top = None;
+        if let Some(notice) = consent.notice {
+            let area = egui::Area::new(egui::Id::unique("poser-consent-notice"))
                 .order(egui::Order::Foreground)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
                 .show(ctx, |ui| {
                     widgets::overlay(ui, p, egui::Margin::same(10), |ui| {
-                        let peers: Vec<_> = consent.granted_to.keys().copied().collect();
-                        for peer in peers {
-                            ui.horizontal(|ui| {
-                                ui.label(aurora_i18n::tr!(
-                                    "poser-consent-reminder",
-                                    name = poser_consent::name(&self.world, peer)
-                                ));
-                                if ui.button(aurora_i18n::tr!("poser-consent-withdraw")).clicked() {
-                                    consent.withdraw(peer);
-                                }
-                            });
-                        }
-                        if let Some(notice) = consent.notice {
-                            ui.horizontal(|ui| {
-                                ui.label(aurora_i18n::text(notice));
-                                if ui.button(aurora_i18n::tr!("common-close")).clicked() {
-                                    consent.notice = None;
-                                }
-                            });
-                        }
+                        ui.horizontal(|ui| {
+                            ui.label(aurora_i18n::text(notice));
+                            if ui.button(aurora_i18n::tr!("common-close")).clicked() {
+                                consent.notice = None;
+                            }
+                        });
                     });
                 });
-            on_top.push(reminder.response.layer_id);
+            on_top = Some(area.response.layer_id);
         }
         // never over another dialog (the exit's question): raised each frame,
-        // they would take its place as the top modal and leave it unclickable
-        let top = ctx.memory(|m| m.top_modal_layer());
-        if over_photo && (top.is_none() || top == question) {
-            for layer in on_top {
-                ctx.move_to_top(layer);
-            }
+        // it would take its place as the top modal and leave it unclickable
+        if over_photo
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+            && let Some(layer) = on_top
+        {
+            ctx.move_to_top(layer);
         }
         self.world.poser_consent = consent;
     }
