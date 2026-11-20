@@ -501,6 +501,10 @@ pub struct Rlva {
     /// The rules of each object in the order it issued them, as
     /// RlvObject::m_Commands keeps them: what @getstatus lists.
     issued: BTreeMap<Uuid, Vec<Rule>>,
+    /// Every rule in the order it was stored, whatever its object, as
+    /// RlvHandler::addException (rlvhandler.cpp) appends to the
+    /// m_Exceptions multimap: what @redirchat walks.
+    issued_order: Vec<(Uuid, Rule)>,
     /// The rules as the last queued command found them, shared by every
     /// command queued until they change.
     snapshot: Option<std::sync::Arc<LockSnapshot>>,
@@ -605,6 +609,7 @@ impl Rlva {
         self.enabled = enabled;
         self.rules.clear();
         self.issued.clear();
+        self.issued_order.clear();
         self.snapshot = None;
         self.rename = Default::default();
         self.offers = Default::default();
@@ -655,6 +660,7 @@ impl Rlva {
         }
         self.lookups.remove(&source);
         self.issued.remove(&source);
+        self.issued_order.retain(|(id, _)| *id != source);
         if self.rules.remove(&source).is_some() {
             self.revision = self.revision.wrapping_add(1);
         }
@@ -685,6 +691,7 @@ impl Rlva {
         if self.rules.get(&source).is_some_and(BTreeSet::is_empty) {
             self.rules.remove(&source);
             self.issued.remove(&source);
+            self.issued_order.retain(|(id, _)| *id != source);
             self.lookups.remove(&source);
         }
     }
@@ -897,6 +904,7 @@ impl Rlva {
                     }
                     let added = rules.insert(rule.clone());
                     if added {
+                        self.issued_order.push((source, rule.clone()));
                         self.issued.entry(source).or_default().push(rule);
                     }
                     added
@@ -904,6 +912,9 @@ impl Rlva {
                     let removed = self.rules.get_mut(&source).is_some_and(|rules| rules.remove(&rule));
                     if removed && let Some(order) = self.issued.get_mut(&source) {
                         order.retain(|r| *r != rule);
+                    }
+                    if removed {
+                        self.issued_order.retain(|(id, r)| *id != source || *r != rule);
                     }
                     removed
                 };
@@ -929,6 +940,8 @@ impl Rlva {
                         if let Some(order) = self.issued.get_mut(&source) {
                             order.retain(|r| !rule_text(r).contains(&c.option));
                         }
+                        self.issued_order
+                            .retain(|(id, r)| *id != source || !rule_text(r).contains(&c.option));
                     }
                 }
                 self.drop_if_empty(source);
@@ -1102,6 +1115,34 @@ impl Rlva {
                 .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.option.eq_ignore_ascii_case(target)))
     }
 
+    /// `targets` for @recvchatfrom, @recvemotefrom, @recvimfrom, @sendimto
+    /// and @startimto, which RlvActions (indra/newview/rlvactions.cpp) and
+    /// RlvHandler::filterChat read through RlvHandler::isException
+    /// (indra/newview/rlvhandler.cpp): under @permissive=n, or once one of
+    /// them was set with `_sec`, every object holding the bare rule (the
+    /// null key; under `_sec` alone, a `_sec` one) must name the resident
+    /// too, or none does.
+    pub(crate) fn targets_strictly(&self, behaviour: &str, target: &str) -> bool {
+        if !self.targets(behaviour, target) {
+            return false;
+        }
+        let all_issuers = self.has("permissive");
+        let strict = all_issuers
+            || self
+                .rules
+                .values()
+                .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.strict));
+        !strict
+            || self
+                .rules
+                .values()
+                .filter(|rs| {
+                    rs.iter()
+                        .any(|r| r.behaviour == behaviour && r.option.is_empty() && (all_issuers || r.strict))
+                })
+                .all(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.option.eq_ignore_ascii_case(target)))
+    }
+
     pub fn allows_im(&self, name: &str, target: Uuid) -> bool {
         self.allows_im_at(name, target, None)
     }
@@ -1124,7 +1165,7 @@ impl Rlva {
             let d = distance.unwrap_or(f32::MAX);
             min < max && min <= d && d <= max
         });
-        (self.allows(name, &id) || within) && !self.targets(specific, &id)
+        (self.allows(name, &id) || within) && !self.targets_strictly(specific, &id)
     }
 
     pub fn nametag_visible(&self, target: Uuid, own: Uuid, distance: f32) -> bool {
@@ -1232,8 +1273,10 @@ fn option_bool(text: &str) -> Option<bool> {
     }
 }
 
+/// RlvUtil::isEmote (indra/newview/rlvcommon.h): more than the four bytes
+/// of "/me " or "/me'", so that "/me " alone is a short "/" line.
 pub fn is_emote(text: &str) -> bool {
-    text.starts_with("/me ") || text.starts_with("/me'")
+    text.len() > 4 && (text.starts_with("/me ") || text.starts_with("/me'"))
 }
 
 #[cfg(test)]

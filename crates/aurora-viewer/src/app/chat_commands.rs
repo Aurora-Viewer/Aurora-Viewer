@@ -20,7 +20,28 @@ fn random_below(n: u32) -> u32 {
     (r % u64::from(n.max(1))) as u32
 }
 
+/// FSCommon::send_message_to_script_channel (indra/newview/fscommon.cpp):
+/// the viewer's own report, whispered on a script channel, nothing on
+/// channel 0 or for an empty text.
+fn script_channel_chat(message: &str, channel: i32) -> Option<NetCommand> {
+    (channel != 0 && !message.is_empty()).then(|| NetCommand::Chat {
+        message: message.to_owned(),
+        channel,
+        chat_type: ChatType::Whisper,
+    })
+}
+
 impl App {
+    /// FSCommon::send_message_to_script_channel builds its ChatFromViewer
+    /// itself, past the chat path RLVa filters (send_chat_from_viewer):
+    /// @sendchannel, @redirchat and the chat volume rules never touch the
+    /// viewer's reports to the user's own scripts.
+    pub(super) fn send_to_script_channel(&mut self, message: &str, channel: i32) {
+        if let Some(command) = script_channel_chat(message, channel) {
+            self.net.send(command);
+        }
+    }
+
     /// Local chat typed in the chat bar or the conversations window: runs it
     /// as a command when it is one (cmd_line_chat). `true` = handled, the
     /// line must not be sent.
@@ -37,13 +58,9 @@ impl App {
     fn report_command(&mut self, text: impl Into<String>) {
         let text = text.into();
         let s = &self.settings.chat_commands;
-        if s.announce_to_channel && s.announce_channel != 0 && !text.is_empty() {
+        if s.announce_to_channel {
             let channel = s.announce_channel;
-            self.send(NetCommand::Chat {
-                message: text.clone(),
-                channel,
-                chat_type: ChatType::Whisper,
-            });
+            self.send_to_script_channel(&text, channel);
         }
         self.world.system_message(text);
     }
@@ -371,5 +388,29 @@ impl App {
                 self.key_to_name.push((id, since));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The viewer's reports to a script channel are sent as they are, and
+    /// past RLVa: a channel @sendchannel closes still gets them.
+    #[test]
+    fn rlva_viewer_reports_to_a_script_channel_skip_the_chat_rules() {
+        assert!(script_channel_chat("hello", 0).is_none());
+        assert!(script_channel_chat("", 5).is_none());
+        let command = script_channel_chat("region_restart_in:60", -42).expect("a report");
+        assert!(matches!(
+            &command,
+            NetCommand::Chat { message, channel: -42, chat_type: ChatType::Whisper } if message == "region_restart_in:60"
+        ));
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.rlva.configure(true);
+        world.rlva_console_input("@sendchannel=n");
+        // the chat path RLVa filters would have dropped it
+        assert!(world.rlva.outgoing_chat("region_restart_in:60", -42, ChatType::Whisper).is_empty());
     }
 }
