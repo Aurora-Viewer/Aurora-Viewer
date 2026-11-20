@@ -42,7 +42,7 @@ fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
         };
         locks.touch |= !world.rlva_can_touch(o.key.region, o.key.local_id);
         locks.edit |= !world.rlva_can_edit(idx);
-        locks.delete |= !world.rlva_can_delete_or_return(idx);
+        locks.delete |= !world.rlva_can_delete_or_return_object(idx);
         locks.sit |= !world.rlva_allows_command(
             &NetCommand::RequestSit {
                 handle: o.key.region,

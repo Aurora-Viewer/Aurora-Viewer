@@ -14294,6 +14294,9 @@ rlva-anonym-unknown = (Inconnu)
 rlva-blocked-teleport = Impossible d'initier la téléportation en raison des restrictions RLV
 rlva-blocked-permission-attach = La tentative d'attacher '{ $object }' a été refusée en raison de restrictions RLV.
 rlva-blocked-permission-teleport = '{ $object }' s'est vu refuser la permission de vous téléporter en raison des restrictions RLV
+rlva-blocked-view-notecard = Impossible d’ouvrir la note en raison des restrictions RLVa.
+rlva-blocked-view-script = Impossible d’ouvrir le script en raison des restrictions RLVa.
+rlva-blocked-view-texture = Impossible d’ouvrir la texture en raison des restrictions RLVa.
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }

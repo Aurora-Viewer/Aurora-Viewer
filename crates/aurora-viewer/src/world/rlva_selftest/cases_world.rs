@@ -552,7 +552,7 @@ pub(super) fn phase2() -> Vec<Case> {
         setup(),
         case(
             "W03",
-            "@rez and @interact refuse a new prim; @rez keeps its own prim",
+            "@rez and @interact refuse rezzing; @rez keeps its own prim",
             vec![
                 Step::Say(Who::Controller, "@rez=n"),
                 Step::Expect("rezzing refused", holds(|w, _| !w.rlva_can_rez(None), "still allowed")),
@@ -589,9 +589,14 @@ pub(super) fn phase2() -> Vec<Case> {
                     "rezzing refused under @interact",
                     holds(|w, _| !w.rlva_can_rez(None), "still allowed"),
                 ),
-                Step::Refused(
-                    "creating a prim is refused under @interact",
-                    make(|w, c| Cmd::send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
+                // (the Create tool asks @interact, `rlva_can_rez`; the send
+                // boundary leaves a new prim to @rez, cmdline_rezplat)
+                Step::Now(
+                    "the boundary leaves a new prim to @rez",
+                    holds(
+                        |w, c| can(w, &NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z))))),
+                        "refused",
+                    ),
                 ),
                 Step::Say(Who::Controller, "@interact=y"),
                 Step::Expect("allowed again once released", holds(|w, _| w.rlva_can_rez(None), "still refused")),

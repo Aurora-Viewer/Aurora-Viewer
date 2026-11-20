@@ -643,6 +643,8 @@ pub struct App {
     temp_run: Option<u8>,
     /// @temprun as of the last RLVa update, to catch its changes.
     rlva_temprun: bool,
+    /// @edit as of the last RLVa update, to close the build tools as it comes.
+    rlva_edit: bool,
     /// "Always run" (Ctrl+R).
     always_run: bool,
     /// The Controls window (`ui/controls.rs`), the keys its buttons and
@@ -1974,6 +1976,7 @@ impl App {
             last_tap: None,
             temp_run: None,
             rlva_temprun: false,
+            rlva_edit: false,
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
@@ -17348,11 +17351,9 @@ impl App {
                         self.send(NetCommand::ActivateGroup(group));
                     }
                 }
-                GroupAction::SetTitle { group, role } => {
-                    if !self.world.rlva.has("setgroup") {
-                        self.world.group_data.set_title(group, role);
-                    }
-                }
+                // LLPanelGroupGeneral::apply (llpanelgroupgeneral.cpp): the
+                // title changes whatever @setgroup holds
+                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
                 GroupAction::SetFlags {
                     group,
                     accept_notices,
@@ -19790,11 +19791,7 @@ impl App {
                             self.search_ui.open_tab(crate::world::search::Tab::Groups);
                         }
                         ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
-                        ui::people::PeopleAction::GroupTitle { group, role } => {
-                            if !self.world.rlva.has("setgroup") {
-                                self.world.group_data.set_title(group, role);
-                            }
-                        }
+                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
                         ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
                             self.world.groups.set_flags(group, notices, profile)
                         }

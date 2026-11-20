@@ -149,6 +149,8 @@ impl App {
                 self.key_to_name.push((id, Instant::now()));
             }
             Command::Touch(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
+                // RlvActions::canTouch refused: nothing is sent nor reported
+                Some(o) if !self.world.rlva_can_touch(o.key.region, o.key.local_id) => {}
                 Some(o) => {
                     let local_id = o.key.local_id;
                     self.send(NetCommand::Touch { local_id });
@@ -341,6 +343,10 @@ impl App {
     /// will be in a third of a second).
     fn rez_platform(&mut self, width: f32) {
         use crate::build::MIN_PRIM_SCALE;
+        // RlvActions::canRez: under @rez the command does nothing, silently
+        if self.world.rlva.enabled() && self.world.rlva.has("rez") {
+            return;
+        }
         let limits = self.world.prim_limits();
         let Some(handle) = self.world.main_region else {
             return;

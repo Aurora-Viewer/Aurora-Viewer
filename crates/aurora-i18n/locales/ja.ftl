@@ -14179,6 +14179,9 @@ rlva-anonym-unknown = （不明）
 rlva-blocked-teleport = ＲＬＶの制限により、テレポートできません。
 rlva-blocked-permission-attach = ＲＬＶの制限により、「{ $object }」の着用が拒否されました。
 rlva-blocked-permission-teleport = ＲＬＶの制限により、「{ $object }」によるテレポート操作は拒否されました。
+rlva-blocked-view-notecard = ＲＬＶａの制限により、ノートカードを開くことができません。
+rlva-blocked-view-script = ＲＬＶａの制限により、スクリプトを開くことができません。
+rlva-blocked-view-texture = ＲＬＶａの制限により、テクスチャを開くことができません。
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = 優先度{ $total }中{ $rank }

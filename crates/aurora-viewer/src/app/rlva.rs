@@ -29,10 +29,31 @@ impl HiddenMinimap {
 /// The windows @showinv, @showminimap and @showworldmap hide never show,
 /// whatever asked for them: run every frame, and again once the bars have
 /// drawn, whose buttons and menus open a window in the frame it is drawn.
+/// @edit hides the beacons window and refuses it, without a notice
+/// (RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle,
+/// rlvhandler.cpp: addGenericFloaterFilter("beacons")).
 pub(super) fn keep_windows_closed(rlva: &crate::world::rlva::Rlva, panels: &mut ui::Panels) {
     panels.inventory &= !rlva.has("showinv");
     panels.minimap &= !rlva.has("showminimap");
     panels.world_map &= !rlva.has("showworldmap");
+    panels.beacons &= !rlva.has("edit");
+}
+
+/// RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle: build mode is
+/// left as @edit comes, not while it lasts.
+fn leaves_build_mode(edit_before: bool, edit_now: bool) -> bool {
+    edit_now && !edit_before
+}
+
+/// RlvUtil::notifyBlockedViewXXX (rlvcommon.h): what is said of a preview
+/// RLVa keeps closed, by asset type (7 a notecard, 10 a script, else a
+/// texture).
+fn view_blocked_notice(asset_type: i32) -> String {
+    match asset_type {
+        7 => aurora_i18n::tr!("rlva-blocked-view-notecard").into(),
+        10 => aurora_i18n::tr!("rlva-blocked-view-script").into(),
+        _ => aurora_i18n::tr!("rlva-blocked-view-texture").into(),
+    }
 }
 
 /// RlvActions::canHighlightTransparent (rlvactions.cpp) refuses the
@@ -52,11 +73,40 @@ fn refuses_shortcut(rlva: &crate::world::rlva::Rlva, action: Action) -> bool {
         Action::Minimap => rlva.has("showminimap"),
         Action::WorldMap => rlva.has("showworldmap"),
         Action::ShowTransparency => !can_highlight_transparent(rlva),
+        Action::Beacons => rlva.has("edit"),
         _ => false,
     }
 }
 
 impl App {
+    /// RlvUIEnabler::filterFloaterViewXXX (rlvui.cpp): a preview that
+    /// @viewnote, @viewscript or @viewtexture keeps closed says so. Returns
+    /// whether it was refused.
+    pub(super) fn rlva_preview_refused(&mut self, asset_type: i32) -> bool {
+        let refused = !self.world.inventory.can_preview(asset_type);
+        if refused {
+            self.rlva_view_blocked(asset_type);
+        }
+        refused
+    }
+
+    /// RlvUtil::notifyBlockedViewXXX, also for the notecards and scripts of a
+    /// locked attachment (LLTaskNotecardBridge::openItem, LLTaskLSLBridge::
+    /// openItem, llpanelobjectinventory.cpp).
+    pub(super) fn rlva_view_blocked(&mut self, asset_type: i32) {
+        self.world
+            .system_notice(view_blocked_notice(asset_type), crate::world::notice_topics::Topic::Warning);
+    }
+
+    /// A texture library preview, as `rlva_preview_refused` lets it open.
+    pub(super) fn open_library_preview(&mut self, ctx: &egui::Context, item: Uuid) {
+        let kind = self.world.inventory.items.get(&item).map(|it| it.asset_type);
+        if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
+            return;
+        }
+        self.texture_library.open_preview(ctx, &self.world, item);
+    }
+
     pub(super) fn camera_aspect(&self) -> f32 {
         self.gfx
             .as_ref()
@@ -143,7 +193,9 @@ impl App {
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.rlva_yield_environment();
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
-        self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
+        // (@viewnote, @viewscript and @viewtexture refuse to open a preview,
+        // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp; one already open
+        // stays open and usable)
         // An outfit change is over once its detaches have landed too: the
         // COF write is acknowledged before the objects leave the avatar.
         self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some() || self.world.rlva_detach_in_flight(Instant::now());
@@ -228,6 +280,22 @@ impl App {
         let changed = temprun != std::mem::replace(&mut self.rlva_temprun, temprun);
         if temprun_resync(ended, changed, self.autopilot.as_ref().is_some_and(|a| a.run)) {
             self.send(NetCommand::SetAlwaysRun(self.walk_run()));
+        }
+        // RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle
+        // (rlvhandler.cpp): @edit leaves build mode as it comes
+        // (LLToolMgr::leaveBuildMode); the tools may open again after, as
+        // far as RlvActions::canBuild allows.
+        let edit = self.world.rlva.has("edit");
+        if leaves_build_mode(std::mem::replace(&mut self.rlva_edit, edit), edit) && self.build.open {
+            self.build.close(&mut self.world, &mut self.settings.build);
+        }
+        if self
+            .interactions
+            .contents
+            .as_ref()
+            .is_some_and(|c| !self.world.rlva_keeps_contents_open(c.target.object))
+        {
+            self.interactions.contents = None;
         }
         // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
         // leaves the selection, the temporary one of a menu excepted
@@ -1227,5 +1295,32 @@ mod tests {
         }
         let other = restricted("@showinv=n");
         assert!(can_highlight_transparent(&other));
+    }
+
+    /// RlvBehaviourToggleHandler<RLV_BHVR_EDIT>::onCommandToggle
+    /// (rlvhandler.cpp): @edit hides the beacons window and filters it
+    /// without a notice, and build mode is left once, as @edit comes.
+    #[test]
+    fn rlva_edit_closes_the_beacons_and_leaves_build_mode_as_it_comes() {
+        let free = crate::world::rlva::Rlva::default();
+        let rlva = restricted("@edit=n");
+        let mut panels = ui::Panels::from_settings(&crate::settings::Settings::default());
+        panels.beacons = true;
+        keep_windows_closed(&free, &mut panels);
+        assert!(panels.beacons && !refuses_shortcut(&free, Action::Beacons));
+        keep_windows_closed(&rlva, &mut panels);
+        assert!(!panels.beacons && refuses_shortcut(&rlva, Action::Beacons));
+        assert!(!refuses_shortcut(&restricted("@editworld=n"), Action::Beacons));
+        assert!(leaves_build_mode(false, true), "@edit comes");
+        assert!(!leaves_build_mode(true, true), "build mode opened while it lasts stays");
+        assert!(!leaves_build_mode(true, false) && !leaves_build_mode(false, false));
+    }
+
+    /// RlvUtil::notifyBlockedViewXXX: one notice per kind of preview.
+    #[test]
+    fn rlva_refused_previews_name_their_kind() {
+        assert_eq!(view_blocked_notice(7), aurora_i18n::tr!("rlva-blocked-view-notecard"));
+        assert_eq!(view_blocked_notice(10), aurora_i18n::tr!("rlva-blocked-view-script"));
+        assert_eq!(view_blocked_notice(0), aurora_i18n::tr!("rlva-blocked-view-texture"));
     }
 }

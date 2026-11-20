@@ -360,14 +360,11 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
-    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
-    // a texture preview already open closes when @viewtexture applies, as
-    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
-    if !inv.can_preview(0) {
-        st.attachment_preview = None;
-    }
+    // (@viewtexture refuses to open it, `App::open_notecard_attachment`; one
+    // already open stays: RlvUIEnabler::filterFloaterViewXXX, rlvui.cpp,
+    // validates the opening of "preview_texture" alone)
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(

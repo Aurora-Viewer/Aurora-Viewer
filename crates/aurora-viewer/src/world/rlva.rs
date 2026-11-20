@@ -37,7 +37,7 @@ pub mod modifiers;
 mod naming;
 pub(crate) mod numeric;
 pub mod offers;
-mod policy;
+pub(crate) mod policy;
 pub use policy::DoubleClickRlva;
 pub mod preferences;
 pub mod privacy;

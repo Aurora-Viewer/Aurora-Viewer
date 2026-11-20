@@ -268,7 +268,9 @@ mod tests {
             matches!(&commands[..], [(actor, NetCommand::GroupTitleUpdate { group, role })] if *actor == A && *group == G1 && *role == A)
         );
         assert!(w.rlva_allows_command(&commands[0].1, A));
-        assert!(!w.rlva_allows_command(&commands[0].1, Uuid::nil()));
+        // (a title is not the active group: LLPanelGroupGeneral::apply sends
+        // it whatever @setgroup holds)
+        assert!(w.rlva_allows_command(&commands[0].1, Uuid::nil()));
         assert!(w.rlva_group_tick().is_empty());
         assert!(
             matches!(&w.rlva_group_force(A, &command("example;Off"), now)[..], [(_, NetCommand::GroupTitleUpdate { role, .. })] if *role == B),
