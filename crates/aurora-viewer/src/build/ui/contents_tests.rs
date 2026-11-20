@@ -406,7 +406,7 @@ fn click(ctx: &egui::Context, tool: &mut BuildTool, world: &World, label: &str) 
 }
 
 #[test]
-fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
+fn bulk_buttons_apply_once_and_close_without_restarting_or_resetting_choices() {
     let (world, mut tool, object, items) = fixture();
     let ctx = egui::Context::default();
     tool.ui.bulk_perms_open = true;
@@ -418,9 +418,10 @@ fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-all"));
     assert!(tool.ui.bulk.options.types.iter().all(|on| *on));
     tool.ui.bulk.options.share = true;
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-cancel"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-close"));
     assert!(!tool.ui.bulk_perms_open);
-    assert!(!tool.ui.bulk.options.share);
+    assert!(tool.ui.bulk.options.share);
+    assert!(tool.ui.bulk.job.is_none());
     assert!(updates(&tool).is_empty());
     tool.ui.bulk_perms_open = true;
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-apply"));
@@ -431,9 +432,11 @@ fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
         tool.advance_bulk_permissions(&world, Instant::now());
     }
     assert_eq!(updates(&tool).len(), 11);
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-ok"));
+    tool.out.clear();
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-close"));
     assert!(!tool.ui.bulk_perms_open);
-    assert!(tool.ui.bulk.job.is_some(), "OK closes the panel, not the pending request");
+    assert!(tool.ui.bulk.job.is_none(), "Close never repeats the completed operation");
+    assert!(tool.out.is_empty(), "Close sends no inventory request or update");
 }
 
 /// The bulk permissions window keeps its size, its buttons inside it.
@@ -442,7 +445,7 @@ fn bulk_permissions_keep_their_size() {
     crate::ui::widgets::steady_tests::assert_window_steady(
         "bulk_perms",
         &[Vec2::new(360.0, 354.0)],
-        aurora_i18n::tr!("common-cancel"),
+        aurora_i18n::tr!("common-close"),
         || {
             let (world, mut tool, _, _) = fixture();
             tool.ui.bulk_perms_open = true;
@@ -506,7 +509,7 @@ fn bulk_permissions_keep_actions_reachable_with_long_nested_details() {
                 }
                 for label in [
                     action,
-                    aurora_i18n::tr!("common-cancel"),
+                    aurora_i18n::tr!("common-close"),
                     aurora_i18n::tr!("common-all"),
                     aurora_i18n::tr!("common-clear"),
                 ] {

@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub(super) struct State {
     options: BulkPerms,
-    original: Option<BulkPerms>,
     roots: Vec<Uuid>,
     open: bool,
     job: Option<Job>,
@@ -50,7 +49,6 @@ impl State {
             return;
         }
         self.roots = roots;
-        self.original = Some(self.options.clone());
         self.status.clear();
         self.open = true;
     }
@@ -213,7 +211,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
         return;
     }
     let mut open = true;
-    let mut response = (false, false, false);
+    let mut response = (false, false);
     let busy =
         state.job.is_some() || state.submitted || st.pending.is_some() || actions.iter().any(|action| matches!(action, InvAction::Edit(_)));
     let status = progress.as_deref().unwrap_or(&state.status);
@@ -236,21 +234,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
             None,
         );
     });
-    let (apply, accept, cancel) = response;
-    if apply || accept {
+    let (apply, close) = response;
+    if apply {
         state.start();
     }
-    if accept {
-        state.original = None;
-        open = false;
-    }
-    if cancel || !open && !accept {
-        if let Some(original) = state.original.take() {
-            state.options = original;
-        }
-        open = false;
-    }
-    state.open = open;
+    state.open = open && !close;
 }
 
 impl InventoryUi {

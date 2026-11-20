@@ -4088,9 +4088,10 @@ for agent items and task items. `build/ui/item_properties.rs` pins the source
 object/item and rechecks access before saving through UpdateTaskInventory;
 task thumbnails remain unavailable because the task protocol has no thumbnail
 field. `build/ui/contents_permissions.rs` provides the eleven bulk type
-filters, three permission columns and OK/Apply/Cancel. Its request job pins
+filters, three permission columns and Apply/Close. Its request job pins
 the selected objects/options, fetches each inventory, skips failed, expired or
-no-longer-modifiable sources, and continues after OK closes the floater.
+no-longer-modifiable sources, and continues if Close hides the floater. Close
+never submits an operation and keeps the choices for reopening.
 `build/ui/contents_tests.rs` exercises task saves and the bulk UI/request path.
 `ui/color_picker.rs` composes the shared picker (RGB / LSL / Hex, HSL,
 previews, palette of 32 slots and eyedropper); `ui/color_picker/model.rs`

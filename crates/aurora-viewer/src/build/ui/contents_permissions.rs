@@ -96,7 +96,6 @@ struct Job {
 #[derive(Default)]
 pub struct BulkState {
     pub options: BulkPerms,
-    original: Option<BulkPerms>,
     job: Option<Job>,
     pub(crate) deep: Option<crate::build::deep_perms::Job>,
     pub(crate) status: String,
@@ -134,11 +133,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         String::new()
     };
     let state = &mut tool.ui.bulk;
-    state.original.get_or_insert_with(|| state.options.clone());
     let mut open = true;
     let mut apply = false;
-    let mut accept = false;
-    let mut cancel = false;
+    let mut close = false;
     let b = &mut state.options;
     Floater::new(
         "bulk_perms",
@@ -148,7 +145,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
-        (apply, accept, cancel) = controls(
+        (apply, close) = controls(
             ui,
             p,
             b,
@@ -166,26 +163,17 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     if tool.demo_deep_start(world) {
         apply = true;
     }
-    if apply || accept {
+    if apply {
         tool.start_bulk_permissions(world);
     }
-    if accept {
-        open = false;
-        tool.ui.bulk.original = None;
-    }
-    if cancel || !open && !accept {
-        if let Some(original) = tool.ui.bulk.original.take() {
-            tool.ui.bulk.options = original;
-        }
-        open = false;
-    }
-    tool.ui.bulk_perms_open = open;
+    tool.ui.bulk_perms_open = open && !close;
 }
 
 /// Shared bulk-permission controls for object contents and agent inventory.
 /// `nested` (object contents only) shows "Include objects inside objects"
 /// with the preview of what it would open; `stop`, while such a job runs,
-/// a Stop button in place of OK and Apply.
+/// a Stop button in place of Apply. Unlike LLFloaterBulkPermission's OK,
+/// Close never starts another operation; choices remain available on reopening.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn controls(
     ui: &mut egui::Ui,
@@ -196,8 +184,8 @@ pub(crate) fn controls(
     heading: &str,
     nested: Option<&str>,
     stop: Option<&mut bool>,
-) -> (bool, bool, bool) {
-    let (mut apply, mut accept, mut cancel) = (false, false, false);
+) -> (bool, bool) {
+    let (mut apply, mut close) = (false, false);
     // Keep the actions reachable when enlarged text, a nested preview or a
     // status needs more room. Measure the footer and scroll only the options
     // above it, so neither can overlap the other.
@@ -352,15 +340,14 @@ pub(crate) fn controls(
                     .clicked();
             } else {
                 let enabled = !running && b.types.iter().any(|on| *on);
-                accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
                 apply = ui
                     .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
                     .clicked();
             }
-            cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            close = ui.button(aurora_i18n::tr!("common-close")).clicked();
         });
     });
-    (apply, accept, cancel)
+    (apply, close)
 }
 
 /// A permission column: at least `min`, or its heading and its check box's
@@ -380,6 +367,14 @@ impl BuildTool {
         if self.ui.bulk.job.is_some() || self.ui.bulk.deep.is_some() {
             return;
         }
+        log::info!(
+            "bulk permissions: requested nested={} objects={} next_modify={} next_copy={} next_transfer={}",
+            self.ui.bulk.options.nested,
+            self.ui.bulk.options.includes_type(6),
+            self.ui.bulk.options.next_modify,
+            self.ui.bulk.options.next_copy,
+            self.ui.bulk.options.next_transfer,
+        );
         if self.ui.bulk.options.nested {
             let prims = self
                 .sel_prims(world)

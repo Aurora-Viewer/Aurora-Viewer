@@ -1347,7 +1347,17 @@ impl Job {
                         continue;
                     }
                     if include {
+                        let previous_next = item.next_owner_mask;
                         self.options.apply(&mut item);
+                        if item.asset_type == AT_OBJECT {
+                            log::info!(
+                                "permission trace: request level={depth} base={:#x} owner={:#x} previous_next={previous_next:#x} requested_next={:#x} flags={:#x}",
+                                item.base_mask,
+                                item.owner_mask,
+                                item.next_owner_mask,
+                                item.flags,
+                            );
+                        }
                         updated += 1;
                     }
                     if let Some(name) = rename {
@@ -1395,11 +1405,30 @@ impl Job {
                 }
                 update.serial = inv.serial;
                 let actual: HashMap<_, _> = inv.items.iter().map(|item| (item.item_id, item)).collect();
-                if !update.expected.iter().all(|wanted| {
-                    actual
-                        .get(&wanted.item_id)
-                        .is_some_and(|item| contents_permissions_match(wanted, item))
-                }) {
+                let mut confirmed = true;
+                for wanted in &update.expected {
+                    let item = actual.get(&wanted.item_id);
+                    let matches = item.is_some_and(|item| contents_permissions_match(wanted, item));
+                    if let Some(item) = item
+                        && (wanted.asset_type == AT_OBJECT || !matches)
+                    {
+                        // Numeric masks only: enough to distinguish save folding,
+                        // rejected bits and missing rez overrides on a live grid.
+                        log::info!(
+                            "permission trace: readback level={depth} type={} requested_base={:#x} requested_next={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} requested_flags={:#x} returned_flags={:#x} matches={matches}",
+                            wanted.asset_type,
+                            wanted.base_mask,
+                            wanted.next_owner_mask,
+                            item.base_mask,
+                            item.owner_mask,
+                            item.next_owner_mask,
+                            wanted.flags,
+                            item.flags,
+                        );
+                    }
+                    confirmed &= matches;
+                }
+                if !confirmed {
                     return Ok(None);
                 }
                 self.report.updated += update.updated;
@@ -1607,6 +1636,21 @@ impl Job {
                 }
                 if outcome != Saved::Pending {
                     log::info!("deep permissions: save of {} -> {outcome:?}", original.name);
+                    let saved = match &outcome {
+                        Saved::InPlace => items.iter().find(|item| item.item_id == original.item_id),
+                        Saved::Added(item) | Saved::Replaced(item) | Saved::Unnamed(item) => Some(item),
+                        Saved::Pending => None,
+                    };
+                    if let Some(item) = saved {
+                        log::info!(
+                            "permission trace: saved level={depth} original_base={:#x} returned_base={:#x} returned_owner={:#x} returned_next={:#x} flags={:#x}",
+                            original.base_mask,
+                            item.base_mask,
+                            item.owner_mask,
+                            item.next_owner_mask,
+                            item.flags,
+                        );
+                    }
                 }
                 match outcome {
                     Saved::Pending => {

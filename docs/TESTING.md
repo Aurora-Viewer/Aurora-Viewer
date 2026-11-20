@@ -3551,13 +3551,21 @@ and two skipped, with their reasons, and a warning says that the scripts'
 rez actions run before they can be stopped. Apply rezzes each box 2 m above the object
 holding it, deepest last opened first saved, and deletes every copy; nothing
 stays in world.
-While it runs, Stop (in place of OK and Apply) trashes the copies still in
+Close hides the window without applying or reverting the choices; only Apply
+starts a change. This deliberately differs from the Legacy Viewer's
+OK/Apply/Cancel controls to avoid accidentally running the operation twice.
+While it runs, Stop (in place of Apply) trashes the copies still in
 world and ends; the report says it was stopped.
 
 `run` ticks the option and presses Apply by itself once the chest is
 selected; the log has one `deep permissions:` line per stage and ends with
-the report (6 objects inside objects, 2 skipped; the Crate stack's two
-parts are saved back together, in one DeRezObject). `run-replace` makes the
+the report. With
+`RUST_LOG=warn,aurora_viewer::build::deep_perms=info,aurora_viewer::build::ui::contents_permissions=info`,
+`bulk permissions: requested` records the applied choices and `permission trace:`
+records numeric base/owner/next-owner masks and flags before updates, on readback
+and after a save. These trace records contain no names or identifiers.
+Expected result: 6 objects inside objects, 2 skipped; the Crate stack's two
+parts are saved back together, in one DeRezObject. `run-replace` makes the
 simulator update a saved item in place (no original to remove);
 `run-refuse` makes it refuse every rez with an alert: the job stops at the
 first rez and nothing changes. What a real simulator does on a save back
