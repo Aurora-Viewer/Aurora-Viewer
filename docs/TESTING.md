@@ -13426,14 +13426,19 @@ What the inventory must show with these scenarios:
   spheres 2.5 m ahead of the start position, 0.6 and 1.4 m left of the
   view's axis, each in a grey niche open towards the camera; the nearer
   one under a shell 4 mm larger, of the same colour, whose blended texture
-  fades in and out in soft round patches; the other bare. With
-  `AURORA_DEMO_CAMERA=close,1430,900,45` in a 3200 x 1800 window and a
-  capture at frame 780, the layered sphere looks like the bare one, but
+  fades in and out in soft round patches; the other bare. Seen best
+  under a sky with a probe ambiance, where the occlusion darkens the whole
+  ambient light, and with GTAO at its highest quality
+  (`AURORA_DEMO_SKY=midday`, `AURORA_DEMO_TOD=0`, `AURORA_AO=gtao:3`),
+  the camera brought close to the nearer sphere
+  (`AURORA_DEMO_CAMERA=close,1430,900,45` in a 3200 x 1800 window, a
+  capture at frame 780): the layered sphere looks like the bare one, but
   for a thin rim around its outline, the shell's own edge standing 4 mm
   out of the sphere, there under every rule; with
-  `AURORA_BLEND_AO=step` the patches show as lighter shapes with hard
-  edges, and with `AURORA_DEMO_DEBUG=ao` as a chequer of two greys with a
-  dark line between them.
+  `AURORA_BLEND_AO=step` the patches show as shapes with hard edges all
+  over it (faint under the demo's default sky, a classic one), and with
+  `AURORA_DEMO_DEBUG=ao` as a chequer of two greys with a dark line
+  between them.
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with
