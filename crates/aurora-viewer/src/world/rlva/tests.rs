@@ -349,8 +349,10 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
     world.profiles.classifieds.insert(classified.id, classified.clone());
     assert!(world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
+    // an existing classified's "Set location" has no RLVa test
+    // (LLPanelProfileClassified::onSetLocationClick)
     classified.pos_global.x += 1.0;
-    assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified)), Uuid::nil()));
+    assert!(world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified)), Uuid::nil()));
     world.rlva.configure(false);
     world.refresh_rlva_privacy();
     assert!(world.rlva_can_name(Uuid::from_u128(99)) && !crate::ui::people::nearby(&world).is_empty());

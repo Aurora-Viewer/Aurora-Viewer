@@ -962,7 +962,7 @@ impl App {
             }
             CtxAction::OfferTeleport(id) => {
                 if self.world.rlva_can_offer_teleport(id) {
-                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_region_label());
+                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_lure_region());
                 }
             }
             CtxAction::OpenPeople(tab) => {
@@ -1031,7 +1031,7 @@ impl App {
             }
             CtxAction::OfferTeleports(ids) => {
                 let ids = ids.into_iter().filter(|id| self.world.rlva_can_offer_teleport(*id)).collect();
-                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => {

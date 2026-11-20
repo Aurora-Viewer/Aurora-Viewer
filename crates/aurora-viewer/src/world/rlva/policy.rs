@@ -212,11 +212,12 @@ impl World {
                 .picks
                 .get(&pick.id)
                 .is_some_and(|old| old.pos_global == pick.pos_global),
-            NetCommand::ClassifiedUpdate(classified) if r.has("showloc") => self
-                .profiles
-                .classifieds
-                .get(&classified.id)
-                .is_some_and(|old| old.pos_global == classified.pos_global),
+            // LLPanelProfileClassifieds::updateButtons greys New under
+            // @showloc; an existing classified's "Set location"
+            // (LLPanelProfileClassified::onSetLocationClick,
+            // llpanelprofileclassifieds.cpp) has no RLVa test, so its new
+            // place is published
+            NetCommand::ClassifiedUpdate(classified) if r.has("showloc") => self.profiles.classifieds.contains_key(&classified.id),
             NetCommand::EditInventory { request, change } => {
                 if actor == super::offers::ACTOR {
                     r.offers.permits(*request, change)
