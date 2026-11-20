@@ -255,6 +255,14 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
                 .then(|| find("nb"))
                 .flatten()
         })
+        // Portuguese outside Brazil (Portugal, Angola, Mozambique…) writes
+        // the European way: a region with no catalogue of its own reads
+        // pt-PT; `pt` alone takes the first catalogue, as below
+        .or_else(|| {
+            (candidate.eq_ignore_ascii_case("pt") && normalized.len() > candidate.len())
+                .then(|| find("pt-PT"))
+                .flatten()
+        })
         // another region of the same language before English (pt-PT reads
         // pt-BR), as the Legacy Viewer's single `pt` folder serves both;
         // Chinese scripts are chosen above, never swapped here
