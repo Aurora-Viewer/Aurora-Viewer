@@ -15745,3 +15745,6 @@ game-control-action-truck-right = トラック →
 game-control-action-boom-up = ブーム ↑
 game-control-action-boom-down = ブーム ↓
 game-control-action-escape = ESC
+
+picker-local-newest = 追加順（新しい順）
+picker-local-name = 名前順

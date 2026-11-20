@@ -5,6 +5,7 @@
 
 pub mod animation;
 pub mod animation_model;
+mod attachments;
 mod automatic;
 pub mod demo;
 pub mod files;
@@ -1347,7 +1348,7 @@ impl Imports {
                         && let Some(watch) = &mut entry.watch
                     {
                         watch.pending = false;
-                        changed = stamp != watch.stamp;
+                        changed = stamp != watch.stamp || (entry.source.is_none() && stamp.iter().all(|(_, value)| value.is_some()));
                         watch.stamp = stamp;
                     }
                     if changed {
