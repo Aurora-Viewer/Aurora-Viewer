@@ -2,7 +2,7 @@
 
 The Viewer embeds the catalogs in [`crates/aurora-i18n/locales/`](../../crates/aurora-i18n/locales/). Spanish, Italian, Polish, Turkish, European Portuguese, Norwegian Bokmål and Ukrainian became built-in languages in [#4374](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4374).
 
-[Draft #4335](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4335) tracks the remaining language previews and provides download links. To test an import, leave its locale filename intact, select **Use a language file (.ftl)** in **Preferences → Language and updates**, and restart the Viewer. Clear that option and restart to return to a built-in language.
+[#4335](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4335) adds 20 built-in catalogs and tracks their wording review, including right-to-left layout for Arabic, Hebrew, Persian and Urdu. To try a revised language file, leave its locale filename intact, select **Use a language file (.ftl)** in **Preferences → Language and updates**, and restart the Viewer. Clear that option and restart to return to the built-in catalog.
 
 Review one language at a time against the English catalog and the [translator guide](../TRANSLATING.md). Follow the Legacy Viewer's terminology and use formal address in interface text. Keep command names, URLs, Fluent variables and selectors intact. At each release, use `catalog_delta` to find added and changed source text and remove obsolete keys. A missing or unusable translation uses the English message.
 
