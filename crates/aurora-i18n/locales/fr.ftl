@@ -4157,7 +4157,7 @@ scene-particles-block-object = Bloquer les particules de cet objet
 scene-particles-block-owner = Bloquer les particules du propriétaire
 scene-particles-unknown-object = Objet { $id }
 ui-context-display-options = Affichage
-ui-context-information-options = Informations
+ui-context-information-options = Informations sur l'avatar
 ui-context-reset-options = Réinitialiser
 ui-context-moderation-options = Modération
 ui-context-clicked-object = Objet pointé
@@ -4902,6 +4902,7 @@ ui-land-general-script-info = Infos sur les scripts
 world-profiles-joined-today = Inscrit aujourd'hui
 keybinds-insert = Inser
 ui-context-inspect-2 = Inspecter
+ui-context-inspect-all-attachments = Inspecter tous les accessoires
 inspect-title = Inspecter les objets
 inspect-col-name = Nom de l'objet
 inspect-col-description = Description
@@ -6011,7 +6012,6 @@ ui-chat-today-at = aujourd'hui à { $time }
 ui-chat-yesterday-at = hier à { $time }
 ui-chat-date-at = { $date } à { $time }
 ui-chat-new-messages = Nouveaux
-ui-chat-latest = Revenir aux derniers messages
 ui-chat-latest-new = { $count ->
     [one] { $count } nouveau message
    *[other] { $count } nouveaux messages
@@ -10565,7 +10565,6 @@ ui-context-save-backup = Sauvegarde
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = Retirer des exceptions d'affichage
-ui-context-script-info = Infos sur les Scripts
 
 script-color-hint = Couleur possible : cliquer pour ouvrir le nuancier.
 script-edit-line-comment = Commenter / décommenter les lignes (Ctrl+K ou Ctrl+/)
@@ -10575,7 +10574,11 @@ script-edit-outdent = Diminuer le retrait (Maj+Tab)
 script-selection-edit-failed = Modification impossible : script trop long ou commentaire de bloc déjà présent. Utilisez // pour des commentaires imbriqués.
 script-fold-collapse = Replier le bloc
 script-fold-expand = Déplier le bloc
-script-fold-lines = lignes
+script-fold-line-count =
+    { $count ->
+        [one] { $count } ligne
+        *[other] { $count } lignes
+    }
 script-fold-all = Tout replier
 script-expand-all = Tout déplier
 loading-residents = { $count ->

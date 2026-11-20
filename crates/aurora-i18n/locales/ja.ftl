@@ -2087,7 +2087,7 @@ keybinds-numpad-4 = .（テンキー）
 keybinds-numpad-5 = /（テンキー）
 ui-options-0-hide-avatar-names = 0 = アバター名を非表示
 ui-options-0-no-chat-bubbles-above-the-chat-bar = 0 = チャットバーの上にチャットの吹き出しを表示しない
-demo-1-violet-wolf-0-2-spam-box-0-0 = { "1" }{ $value0 }{ "Violet Wolf|0\u000A2" }{ $value1 }{ "スパムボックス|0\u000A0" }{ $value2 }{ "広告看板|\u000A0" }{ $value3 }{ "グループ：" }{ $value4 }{ "|\u000A" }
+demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " スパムボックス|0\u000A0 " }{ $value2 }{ " 広告看板|\u000A0 " }{ $value3 }{ " Group:" }{ $value4 }{ "|\u000A" }
 ui-land-dialogs-1-set-a-price = ⒈価格の設定：
 build-ui-general-127-bytes-maximum = 最大１２７バイト。
 ui-land-dialogs-2-sell-the-land-to = ⒉特定の人物に販売：
@@ -4108,7 +4108,7 @@ scene-particles-block-object = このオブジェクトからのパーティク�
 scene-particles-block-owner = 所有者からのパーティクルをブロック
 scene-particles-unknown-object = オブジェクト{ $id }
 ui-context-display-options = 表示
-ui-context-information-options = 情報
+ui-context-information-options = アバター情報
 ui-context-reset-options = リセット
 ui-context-moderation-options = モデレーション
 ui-context-clicked-object = クリックしたオブジェクト
@@ -4844,6 +4844,7 @@ ui-land-general-script-info = スクリプト情報
 world-profiles-joined-today = 今日参加
 keybinds-insert = 挿入
 ui-context-inspect-2 = 調査
+ui-context-inspect-all-attachments = すべての装着物を調査
 inspect-title = オブジェクトを調査
 inspect-col-name = オブジェクト名
 inspect-col-description = 説明
@@ -5947,7 +5948,6 @@ ui-chat-today-at = 今日の{ $time }
 ui-chat-yesterday-at = 昨日の{ $time }
 ui-chat-date-at = { $date }の{ $time }
 ui-chat-new-messages = 新規
-ui-chat-latest = 最新のメッセージへ移動
 ui-chat-latest-new = { $count ->
     [one] 新着メッセージ{ $count }件
    *[other] 新着メッセージ{ $count }件
@@ -10480,7 +10480,6 @@ ui-context-save-backup = バックアップ
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = 表示の例外から削除する
-ui-context-script-info = スクリプト情報
 
 script-color-hint = 色の可能性があります：クリックでカラーピッカーを開きます。
 script-edit-line-comment = 行コメントを切り替え（Ctrl＋KまたはCtrl＋/）
@@ -10490,7 +10489,7 @@ script-edit-outdent = インデントを減らす（Shift＋Tab）
 script-selection-edit-failed = 編集できません：ソースが大きすぎるか、既存のブロックコメントがあります。入れ子のコメントには//を使ってください。
 script-fold-collapse = ブロックを折りたたむ
 script-fold-expand = ブロックを展開
-script-fold-lines = 行
+script-fold-line-count = { $count } 行
 script-fold-all = 全て折り畳む
 script-expand-all = すべて展開
 loading-residents = { $count ->

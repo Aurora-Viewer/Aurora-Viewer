@@ -19,6 +19,7 @@
 use super::*;
 use crate::world::contact_sets::appearance::{Appearance, ICON_LABELS, ICONS, MARKER_FADE_DEFAULT, MARKER_FADE_RANGE};
 use crate::world::contact_sets::{ContactSet, MarkerScope, MarkerShape, PlateSize, ResponseMode, SetResponse, Visuals};
+use aurora_i18n::UiUpper;
 use egui::{Pos2, Rect};
 
 /// The window's size when it first opens, and the preview's column.
@@ -438,7 +439,7 @@ fn tab_bar(ui: &mut egui::Ui, p: &Palette, tab: &mut EditorTab, members: usize) 
 /// A small capitals heading over a part of a tab.
 fn section(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add(egui::Label::new(
-        RichText::new(text.to_uppercase())
+        RichText::new(text.ui_upper())
             .size(10.5)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),
@@ -1267,7 +1268,7 @@ fn marker_caption(v: &Visuals) -> Option<[&'static str; 2]> {
 fn preview(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet) {
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.label(
-        RichText::new(aurora_i18n::tr!("set-editor-preview").to_uppercase())
+        RichText::new(aurora_i18n::tr!("set-editor-preview").ui_upper())
             .size(10.5)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),

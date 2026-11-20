@@ -27,6 +27,7 @@ use crate::world::World;
 use crate::world::names::NameScope;
 use crate::world::profiles::{self, Online};
 use crate::world::social::{Friend, rights};
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::{AvatarProfile, NetCommand};
 use egui::{Color32, FontId, Pos2, Rect, Response, RichText, Sense, Vec2, pos2};
@@ -1505,7 +1506,7 @@ fn card(
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
                     paint_icon(ui, icon, rect.center(), 11.0, p.muted_dim);
-                    ui.label(RichText::new(title.to_uppercase()).font(semibold(ui, 10.5)).color(p.muted_dim));
+                    ui.label(RichText::new(title.ui_upper()).font(semibold(ui, 10.5)).color(p.muted_dim));
                     if let Some(link) = link {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
