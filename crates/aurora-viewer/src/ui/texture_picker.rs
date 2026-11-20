@@ -2866,7 +2866,7 @@ pub(crate) mod tests {
         }
         click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-local-tab")]);
         assert_eq!(picker.source, 1);
-        for (materials, allowed, expected) in [(false, true, 1), (false, false, 0), (true, true, 1)] {
+        for (cycle, (materials, allowed, expected)) in [(false, true, 1), (false, false, 0), (true, true, 1)].into_iter().enumerate() {
             let mut reopened = TexturePicker::default();
             if materials {
                 reopened.open_materials("Material", Uuid::nil());
@@ -2875,7 +2875,7 @@ pub(crate) mod tests {
             }
             reopened.allow_local = allowed;
             for i in 0..4 {
-                frame(&ctx, &mut reopened, &mut world, 2.0 + i as f64 / 60.0, vec![]);
+                frame(&ctx, &mut reopened, &mut world, 2.0 + cycle as f64 + i as f64 / 60.0, vec![]);
             }
             assert_eq!(reopened.source, expected);
             assert!(reopened.take_preview().is_none());
