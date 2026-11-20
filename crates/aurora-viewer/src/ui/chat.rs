@@ -4480,16 +4480,13 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
 }
 
-/// Whether the Nearby chat window itself is visible, as in the Legacy Viewer's
-/// `LLFloaterIMNearbyChatHandler::processChat`. Keep the decision pure so the
-/// Conversations and detached-window cases share the same rule.
-pub fn nearby_chat_in_sight(main_open: bool, main_shows_nearby: bool, popped_nearby_in_sight: bool) -> bool {
-    (main_open && main_shows_nearby) || popped_nearby_in_sight
-}
-
-/// Whether a detached Nearby chat window is currently visible.
-pub fn nearby_chat_popout_in_sight(ctx: &egui::Context, st: &ChatUi) -> bool {
-    popout::in_sight(ctx, &st.popped).any(|conversation| conversation.is_none())
+/// The nearby history hides the overlay independently of its container
+/// (#2546). Reuse the detached-window visibility check; a stale main-tab
+/// selection must not hide lines while that detached window is hidden.
+/// LLFloaterIMNearbyChatHandler::processChat likewise tests the history's
+/// visibility before showing nearby chat toasts.
+pub fn nearby_chat_shown(ctx: &egui::Context, st: &ChatUi, conversations_open: bool) -> bool {
+    st.nearby_window_shown(ctx) || (conversations_open && !st.nearby_apart() && local_chat_shown(ctx, st))
 }
 
 /// A demo's window of its own for `conversation`, at `pos` (whatever the
@@ -5682,21 +5679,43 @@ mod tests {
         ));
     }
 
+    /// A detached nearby window hides the overlay independently of the
+    /// container; hidden or minimized nearby windows never do (#2546).
     #[test]
-    fn nearby_chat_visibility_controls_toast_suppression() {
-        for (main_open, main_shows_nearby, popped_nearby_in_sight, expected) in [
-            (true, true, false, true),    // Nearby tab selected in Conversations
-            (false, false, true, true),   // detached Nearby window, Conversations closed
-            (false, false, false, false), // detached window minimized or otherwise out of sight
-            (false, false, false, false), // neither window is visible
-            (true, false, false, false),  // Conversations shows a different tab
-            (false, true, false, false),  // closed Conversations cannot suppress toasts
-        ] {
-            assert_eq!(
-                nearby_chat_in_sight(main_open, main_shows_nearby, popped_nearby_in_sight),
-                expected,
-                "main_open={main_open}, main_shows_nearby={main_shows_nearby}, popped_nearby_in_sight={popped_nearby_in_sight}"
-            );
+    fn nearby_history_visibility_tracks_its_own_window() {
+        for main_open in [false, true] {
+            for main_minimized in [false, true] {
+                for contacts in [false, true] {
+                    for selected in [None, Some(uuid::Uuid::from_u128(42))] {
+                        for detached in [None, Some((false, false)), Some((true, false)), Some((false, true))] {
+                            let ctx = egui::Context::default();
+                            let mut st = ChatUi {
+                                contacts,
+                                selected,
+                                ..ChatUi::default()
+                            };
+                            if main_minimized {
+                                super::super::widgets::minimize_floater(&ctx, "conversations");
+                            }
+                            let expected = if let Some((hidden, minimized)) = detached {
+                                st.popped.pop_out(None, false, false, false);
+                                st.popped.set_hidden(None, hidden);
+                                if minimized {
+                                    super::super::widgets::minimize_floater(&ctx, &popout::floater_id(None));
+                                }
+                                !hidden && !minimized
+                            } else {
+                                main_open && !main_minimized && !contacts && selected.is_none()
+                            };
+                            assert_eq!(
+                                nearby_chat_shown(&ctx, &st, main_open),
+                                expected,
+                                "open={main_open}, minimized={main_minimized}, contacts={contacts}, selected={selected:?}, detached={detached:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 

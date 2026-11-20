@@ -8357,8 +8357,13 @@ failure. Grid validation and any paid upload are performed by the human.
   must already be available. `nearby-out` also detaches it: its own window
   stays open, the empty Conversations window closes, and "Attach to
   Conversations" reopens it on nearby chat. Opening a private conversation
-  afterwards must leave nearby chat detached. With `AURORA_DEMO_CONV_MENU=im`
-  without `AURORA_DEMO_CONV_POPOUT`, the friend's menu starts with "Detach".
+  afterwards must leave nearby chat detached. While the detached nearby
+  window is visible, nearby overlay lines stay hidden even with Conversations
+  closed or showing an IM (#2546). Hide or minimize the nearby window:
+  incoming lines appear in the overlay again. Restore it: they disappear.
+  Repeat with every chat style and with nearby chat docked.
+  With `AURORA_DEMO_CONV_MENU=im` without `AURORA_DEMO_CONV_POPOUT`, the
+  friend's menu starts with "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
   conversation holds two more messages of emoji alone: Nova's three
