@@ -429,13 +429,6 @@ impl App {
             "J3" => Some(warnings_text(50, &AssetIds::diagnostics(&self.world))),
             "J4" => Some(self.system_text(renderer)),
             "J5" => Some(tool_output_text(&AssetIds::diagnostics(&self.world))),
-            "J8" => {
-                let edit = self.ik_editor.request();
-                Some(
-                    self.world
-                        .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
-                )
-            }
             // #1492: the control skeleton of each animesh the target wears
             "J9" => Some(match self.target_avatar() {
                 Some(avatar) => crate::scene::animesh_report::text(

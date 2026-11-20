@@ -247,6 +247,17 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
         );
+        // Legacy Viewer › Sound & Media › "Hear media and sounds from"
+        // (MediaSoundsEarLocation, panel_preferences_sound.xml)
+        cx.choice(
+            tr!("ui-options-media-sounds-ear"),
+            tr!("ui-options-media-sounds-ear-help"),
+            &field!(audio.media_sounds_ear),
+            &[
+                (crate::settings::VoiceEar::Camera, tr!("common-camera"), false),
+                (crate::settings::VoiceEar::Avatar, tr!("voice-ear-avatar"), false),
+            ],
+        );
         // FSAutoUnmuteAmbient, FSAutoUnmuteSounds (panel_preferences_sound.xml)
         cx.toggle(
             tr!("ui-options-unmute-ambient-after-teleport"),

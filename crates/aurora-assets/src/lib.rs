@@ -56,6 +56,9 @@ pub enum AssetError {
     /// The input declares (or decompresses to) a size beyond our safety limits.
     #[error("asset exceeds size limit: {0}")]
     TooLarge(&'static str),
+    /// TinyGLTF's per-file limit for an external glTF buffer or image.
+    #[error("external glTF resource is {bytes} bytes; maximum is {limit} bytes")]
+    GltfResourceSize { bytes: u64, limit: u64 },
     /// zlib inflate failed.
     #[error("decompression failed: {0}")]
     Decompress(String),

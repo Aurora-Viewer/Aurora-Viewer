@@ -196,8 +196,7 @@ pub enum InvAction {
         text: String,
         close: bool,
     },
-    /// A sky, water or day for myself: its asset, flags and item.
-    Environment(Uuid, u32, Uuid),
+    Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
     ExportTextures {
         items: Vec<Uuid>,
@@ -417,7 +416,7 @@ pub struct PropertyEdit {
 impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
     fn from(it: &aurora_net::inventory::InvItem) -> Self {
         Self {
-            name: shown_name(it).to_owned(),
+            name: it.name.clone(),
             desc: it.desc.clone(),
             next: it.next_owner_mask,
             group: it.group_mask,
@@ -852,13 +851,7 @@ impl InventoryUi {
         self.selection.clear();
         self.selection.insert(id);
         self.reveal = Some(id);
-        // a coded settings item: its name without the Aurora Weather code,
-        // which the rename keeps (`finish_rename`)
-        let name = inv
-            .items
-            .get(&id)
-            .and_then(weather_coded_name)
-            .map_or_else(|| rules::name(inv, id), str::to_owned);
+        let name = rules::name(inv, id);
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
@@ -1269,36 +1262,6 @@ fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     tree::icon(ui, icons, name, p, None);
 }
 
-/// A settings item's name without its Aurora Weather code (weather/region.rs),
-/// when it has one: shown with [`weather_tag`] instead.
-pub(crate) fn weather_coded_name(it: &aurora_net::inventory::InvItem) -> Option<&str> {
-    if it.asset_type != 56 {
-        return None;
-    }
-    crate::weather::region::coded_name(&it.name)
-}
-
-/// The name an item's fields show: a coded settings item's without its
-/// code, which a rename keeps (`weather::region::keep_code`).
-pub(crate) fn shown_name(it: &aurora_net::inventory::InvItem) -> &str {
-    weather_coded_name(it).unwrap_or(&it.name)
-}
-
-/// " [Aurora Weather]" after a coded settings item's name, "Aurora" in the
-/// aurora gradient (as the Environment window's section), the rest muted.
-pub(crate) fn weather_tag(p: &Palette, job: &mut egui::text::LayoutJob, font: egui::FontId) {
-    job.append(" [", 0.0, egui::TextFormat::simple(font.clone(), p.muted));
-    let tag = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font.clone(), p.muted);
-    let start = job.text.len();
-    job.text.push_str(&tag.text);
-    for mut section in tag.sections {
-        section.byte_range = section.byte_range.start + start..section.byte_range.end + start;
-        section.leading_space = 0.0;
-        job.sections.push(section);
-    }
-    job.append("]", 0.0, egui::TextFormat::simple(font, p.muted));
-}
-
 fn item_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1329,16 +1292,12 @@ fn item_row(
         }
         let worn = facts.worn_label(inv, *id);
         let font_id = egui::FontId::proportional(13.0);
-        let coded = weather_coded_name(it);
-        let shown = coded.unwrap_or(&it.name);
+        let shown = it.name.as_str();
         let mut label = super::widgets::name_with_suffix(shown, "", font_id.clone(), p.ink);
         if worn.is_some()
             && let Some(section) = label.sections.first_mut()
         {
             super::widgets::embolden(ui, &mut section.format);
-        }
-        if coded.is_some() {
-            weather_tag(p, &mut label, font_id.clone());
         }
         let name = worn
             .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
@@ -2033,11 +1992,7 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAct
     if !rules::renameable(inv, edit.id) {
         return;
     }
-    // a coded settings item keeps its weather code (`begin_rename`)
-    let typed = rules::clean_name(&edit.name).map(|name| match inv.items.get(&edit.id).filter(|it| weather_coded_name(it).is_some()) {
-        Some(it) => crate::weather::region::keep_code(&it.name, &name),
-        None => name,
-    });
+    let typed = rules::clean_name(&edit.name);
     match typed {
         Ok(name) if name == rules::name(inv, edit.id) => return,
         Ok(name) if st.pending.is_none() => match rules::patch(inv, edit.id, aurora_llsd::llsd_map! { "name" => name }) {

@@ -813,7 +813,10 @@ impl World {
             last = time.unwrap_or(last);
             let kind = if m.from_id == Some(Uuid::nil()) || m.from.is_empty() || m.from == format::SYSTEM_FROM {
                 ChatKind::System
-            } else if m.from_id == Some(self.agent_id) || own.contains(&m.from) {
+            } else if m.from_id == Some(self.agent_id)
+                || own.contains(&m.from)
+                || (m.from_id.is_none() && self.is_own_log_name(&own, &m.from))
+            {
                 ChatKind::OWN
             } else {
                 ChatKind::Im
