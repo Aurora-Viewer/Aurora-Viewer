@@ -2761,42 +2761,40 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
     assert!(!world.rlva_can_link(&[seat, other]));
 }
 
-/// #3154: `@setenv_daytime:-1=force` and `@setenv_reset=force` go back to the
-/// shared environment, unless `@setenv=n` came before them: then they clear
+/// #3154: `@setenv_daytime:-1=force` goes back to the shared environment, unless `@setenv=n` came before them: then they clear
 /// RLVa's own sky (ENV_EDIT, RlvEnvironment::getTargetEnvironment) and the
 /// user's local environment stays.
 #[test]
 fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
-    for reset in ["setenv_daytime:-1=force", "setenv_reset=force"] {
-        for (lines, shared, held) in [
-            (vec![format!("@{reset}")], true, false),
-            (vec![format!("@{reset},setenv=n")], true, true),
-            (vec![format!("@setenv=n,{reset}")], false, false),
-            (vec!["@setenv=n".to_owned(), format!("@{reset}")], false, false),
-            (
-                vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")],
-                true,
-                false,
-            ),
-        ] {
-            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-            world.rlva.configure(true);
-            // a sky the user picked, then an RLVa sky over it: unlocked, the
-            // force writes the user's own local environment
-            world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-            world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
+    let reset = "setenv_daytime:-1=force";
+    for (lines, shared, held) in [
+        (vec![format!("@{reset}")], true, false),
+        (vec![format!("@{reset},setenv=n")], true, true),
+        (vec![format!("@setenv=n,{reset}")], false, false),
+        (vec!["@setenv=n".to_owned(), format!("@{reset}")], false, false),
+        (
+            vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")],
+            true,
+            false,
+        ),
+    ] {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        // a sky the user picked, then an RLVa sky over it: unlocked, the
+        // force writes the user's own local environment
+        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
+        world.rlva_pending();
+        assert!(world.eep.has_local() && world.rlva.environment.is_none());
+        for line in &lines {
+            world.on_chat(chat(line));
             world.rlva_pending();
-            assert!(world.eep.has_local() && world.rlva.environment.is_none());
-            for line in &lines {
-                world.on_chat(chat(line));
-                world.rlva_pending();
-            }
-            assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
-            assert_eq!(world.rlva.environment.is_some(), held, "{lines:?}: RLVa's sky (the lock's copy)");
         }
+        assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
+        assert_eq!(world.rlva.environment.is_some(), held, "{lines:?}: RLVa's sky (the lock's copy)");
     }
-    assert!(environment::supports("setenv_reset", true));
+    assert!(!environment::supports("setenv_reset", true));
     assert!(!environment::supports("getenv_reset", false));
 }
 
@@ -2818,11 +2816,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     );
 
     say(&mut world, A, "@setenv=n");
-    for cmd in [
-        "@setenv_reset=force",
-        "@setenv_daytime:-1=force",
-        "@setenv_ambient:0.2/0.4/0.6=force",
-    ] {
+    for cmd in ["@setenv_daytime:-1=force", "@setenv_ambient:0.2/0.4/0.6=force"] {
         say(&mut world, B, cmd);
         assert!(world.rlva.pending.is_empty(), "{cmd}: the other object's lock already applies");
     }
@@ -2830,7 +2824,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     world.rlva_pending();
     assert!(world.eep.has_local() && world.rlva.environment.is_none());
 
-    say(&mut world, B, "@setenv_reset=force");
+    say(&mut world, B, "@setenv_daytime:-1=force");
     say(&mut world, A, "@setenv=n");
     world.rlva_pending();
     assert!(world.eep.has_local());
@@ -2839,7 +2833,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
         Some(A),
         "the new lock also protects its sky"
     );
-    say(&mut world, A, "@setenv_reset=force");
+    say(&mut world, A, "@setenv_daytime:-1=force");
     world.rlva_pending();
     assert!(
         world.eep.has_local() && world.rlva.environment.is_none(),
@@ -2851,7 +2845,7 @@ fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
     say(&mut world, B, "@setenv_preset:midday=force");
     world.rlva_pending();
     assert!(world.rlva.environment_request.is_some());
-    say(&mut world, B, "@setenv_reset=force");
+    say(&mut world, B, "@setenv_daytime:-1=force");
     assert!(!world.rlva.pending.is_empty());
     world.reset();
     world.rlva.configure(true);
@@ -4826,4 +4820,23 @@ fn rlva_camera_focus_keeps_the_legacy_minimum_distance() {
     let request = camera::FocusRequest::parse("10/20/30;0").unwrap();
     let camera = request.camera(at, glam::Vec3::ZERO, at + glam::Vec3::X).unwrap();
     assert!((camera.distance(at) - 1e-5).abs() < 1e-6);
+}
+
+/// `@setenv_reset` is not a Legacy Viewer command (no "reset" in
+/// RlvEnvironment's registered names): it is refused like any unknown
+/// environment property, and `@getcommand` does not list it.
+#[test]
+fn rlva_setenv_reset_is_an_unknown_command_like_the_legacy_viewer() {
+    let mut world = environment_world();
+    world.eep.apply_local_sky(
+        crate::world::eep::SkyFrame::default(),
+        crate::world::eep_env::SourceRights::Flags(0),
+    );
+    for line in ["@setenv_reset=force", "@setenv_unknownthing=force"] {
+        environment_say(&mut world, A, line);
+        assert!(world.eep.has_local(), "{line}: the user's local sky stays");
+        assert!(world.rlva.pending.is_empty(), "{line}");
+    }
+    assert!(!environment::command_names(true).iter().any(|name| name == "setenv_reset"));
+    assert!(!command_list("setenv_;force").split(';').any(|name| name == "setenv_reset"));
 }

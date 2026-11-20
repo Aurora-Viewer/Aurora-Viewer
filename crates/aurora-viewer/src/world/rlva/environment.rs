@@ -75,7 +75,7 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
             || COLORS.contains(&n)
             || TEXTURES.contains(&n)
             || matches!(n, "cloudscroll" | "daytime")
-            || (set && matches!(n, "asset" | "preset" | "daycycle" | "reset"))
+            || (set && matches!(n, "asset" | "preset" | "daycycle"))
             || component(n).is_some()
     })
 }
@@ -101,7 +101,7 @@ pub fn command_names(set: bool) -> Vec<String> {
         }
     }
     if set {
-        names.extend(["asset", "preset", "daycycle", "reset"].map(|name| format!("{prefix}{name}")));
+        names.extend(["asset", "preset", "daycycle"].map(|name| format!("{prefix}{name}")));
     }
     names
 }
@@ -320,13 +320,6 @@ impl World {
         let locked = command.environment_locked;
         if set && matches!(name, "asset" | "preset" | "daycycle") {
             self.rlva.environment_request = Some((source, command.clone()));
-            return true;
-        }
-        // `@setenv_reset=force` is not in the Legacy Viewer's RLVa: it comes
-        // from the RestrainedLove viewer, where it is a synonym of
-        // `@setenv_daytime:-1=force`. Supported here as the same reset.
-        if set && name == "reset" {
-            self.rlva_reset_environment(locked);
             return true;
         }
         if name == "daytime" {
