@@ -2224,6 +2224,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Where world sounds and media are heard from: the camera or the
+    /// avatar (MediaSoundsEarLocation, panel_preferences_sound.xml; camera).
+    pub media_sounds_ear: VoiceEar,
     /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
     /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
     pub doppler: f32,
@@ -2292,6 +2295,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            media_sounds_ear: VoiceEar::Camera,
             doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
@@ -2306,7 +2310,8 @@ impl Default for AudioSettings {
     }
 }
 
-/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+/// VoiceEarLocation and MediaSoundsEarLocation (panel_preferences_sound.xml):
+/// the same two choices for voice and for sounds and media.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VoiceEar {
     #[default]

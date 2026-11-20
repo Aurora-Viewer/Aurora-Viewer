@@ -6505,8 +6505,15 @@ impl App {
         let sounds = &mut self.scene.sounds;
         // the 3D sound for headphones (Aurora's own; off: panned)
         let binaural = crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf);
-        let listener = crate::scene::sounds::Listener::looking(
+        // the ear at the camera or the avatar (MediaSoundsEarLocation), the
+        // camera's axes either way (audio_update_listener)
+        let ear = crate::scene::sounds::ear_position(
+            self.settings.audio.media_sounds_ear,
             self.camera.position,
+            self.world.agent.position,
+        );
+        let listener = crate::scene::sounds::Listener::looking(
+            ear,
             self.camera.target - self.camera.position,
             self.camera.position.z < self.world.main_water_height(),
             binaural,
@@ -11799,6 +11806,7 @@ impl App {
                 let frame = crate::media::MediaFrame {
                     view: &cull,
                     camera: self.camera.position,
+                    ear: crate::scene::sounds::ear_position(a.media_sounds_ear, self.camera.position, self.world.agent.position),
                     settings: &self.settings.media,
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
