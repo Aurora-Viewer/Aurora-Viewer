@@ -1828,6 +1828,11 @@ struct FrameGroups {
     a: wgpu::BindGroup,
     /// Scene pass B: everything.
     b: wgpu::BindGroup,
+    /// The blended faces that write the scene depth as they are drawn: `a`
+    /// with the occlusion's depth, which their faint texels read to know
+    /// whether they lie on the surface it was made for (common.wgsl
+    /// `on_occlusion_surface`).
+    blend: wgpu::BindGroup,
     /// Own uniforms: [0] water reflection, [1] mirror, [2] probe,
     /// [3]/[4] impostor pictures, [5] HUD, [6] drawn pick, [7] water exterior,
     /// [8] probe irradiance capture.
@@ -3587,8 +3592,11 @@ fn shadow_bias_legacy_now(mode: u8, now: std::time::SystemTime) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlendAo {
     /// Those at least half covered are in the occlusion's depth and take
-    /// it (the default, #882).
+    /// it (#882); the fainter ones take it where they lie on the surface
+    /// that is (the default).
     New,
+    /// `New` without the fainter ones' share, as before.
+    Step,
     /// None takes it (#556).
     None,
     /// All take that of what lies behind them (before #556).
@@ -3601,6 +3609,7 @@ impl BlendAo {
     fn from_env(value: Option<&str>) -> Self {
         match value.map(str::trim) {
             Some("none") => Self::None,
+            Some("step") => Self::Step,
             Some("old") => Self::Old,
             Some("alt") => Self::Alt,
             _ => Self::New,
@@ -3955,6 +3964,9 @@ impl Backend {
             float_tex(6),
             float_tex(7),
             tex_entry(8, wgpu::TextureSampleType::Depth),
+            // the depth the occlusion and the contact shadows were made from
+            // (common.wgsl `occlusion_depth`)
+            tex_entry(29, wgpu::TextureSampleType::Depth),
             wgpu::BindGroupLayoutEntry {
                 binding: 9,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -5664,7 +5676,7 @@ impl Backend {
         });
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
-        let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
+        let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_occlusion"), blend_cull(side != 0)));
         // the depth of the blended faces under the water, drawn after their
         // colour: into the single-sampled scene depth the water samples for
         // its refraction and its shallow-water fade, and with MSAA into the
@@ -5732,7 +5744,7 @@ impl Backend {
             pre_n(
                 "prepass contact normals",
                 "vs_depth_mask_normal",
-                "fs_depth_contact_normal",
+                "fs_depth_occlusion_normal",
                 blend_cull(side != 0),
             )
         });
@@ -6310,6 +6322,7 @@ impl Backend {
                   mirror: &wgpu::TextureView,
                   scene: &wgpu::TextureView,
                   depth: &wgpu::TextureView,
+                  occlusion: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
                   il: &wgpu::TextureView,
                   sample_water: bool,
@@ -6384,6 +6397,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 8,
                         resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 29,
+                        resource: wgpu::BindingResource::TextureView(occlusion),
                     },
                     wgpu::BindGroupEntry {
                         binding: 9,
@@ -6467,6 +6484,14 @@ impl Backend {
             .and_then(|g| g.indirect.as_ref())
             .map(|i| &i.result)
             .unwrap_or(&dummies.black);
+        // the depth the occlusion read, else the contact shadows' own, with
+        // the same blended faces (a dummy without either: nothing reads it)
+        let occlusion = t
+            .ao_depth
+            .as_ref()
+            .map(|(_, view)| view)
+            .or_else(|| t.contact.as_ref().map(|c| c.depth_view()))
+            .unwrap_or(&dummies.depth);
         FrameGroups {
             mask: mk(
                 "frame mask",
@@ -6475,6 +6500,7 @@ impl Backend {
                 &dummies.black,
                 &dummies.black,
                 &dummies.black,
+                &dummies.depth,
                 &dummies.depth,
                 &dummies.black,
                 &dummies.black,
@@ -6489,6 +6515,21 @@ impl Backend {
                 mirror,
                 &dummies.black,
                 &dummies.depth,
+                &dummies.depth,
+                contact,
+                il,
+                false,
+                true,
+            ),
+            blend: mk(
+                "frame blend",
+                frame_buffer,
+                ao,
+                water,
+                mirror,
+                &dummies.black,
+                &dummies.depth,
+                occlusion,
                 contact,
                 il,
                 false,
@@ -6502,6 +6543,7 @@ impl Backend {
                 mirror,
                 &t.scene_copy,
                 &t.depth_ss,
+                occlusion,
                 contact,
                 il,
                 true,
@@ -6516,6 +6558,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.depth,
                     &dummies.black,
                     &dummies.black,
                     false,
@@ -6528,6 +6571,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.black,
+                    &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
@@ -6542,6 +6586,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.depth,
                     &dummies.black,
                     &dummies.black,
                     false,
@@ -6554,6 +6599,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.black,
+                    &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
@@ -6568,6 +6614,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.depth,
                     &dummies.black,
                     &dummies.black,
                     false,
@@ -6580,6 +6627,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.black,
+                    &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
@@ -6594,6 +6642,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.depth,
                     &dummies.black,
                     &dummies.black,
                     false,
@@ -6607,6 +6656,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.depth,
                     &dummies.black,
                     &dummies.black,
                     false,
@@ -6619,6 +6669,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.black,
+                    &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
@@ -8971,17 +9022,19 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
-        // AURORA_BLEND_AO=new|none|old|alt: the blended faces at least half
-        // covered drawn into the occlusion's depth and taking the
-        // screen-space occlusion and indirect light (#882), no blended face
-        // taking them (#556), all of them taking those of what lies behind
-        // them, or `none` and `new` one second in two each (common.wgsl
-        // BLEND_SCREEN_DEPTH, BLEND_SCREEN_TERMS)
+        // AURORA_BLEND_AO=new|step|none|old|alt: the blended faces at least
+        // half covered drawn into the occlusion's depth and taking the
+        // screen-space occlusion and indirect light (#882), the fainter
+        // ones where they lie on the surface that is; the same without the
+        // fainter ones; no blended face taking them (#556); all of them
+        // taking those of what lies behind them; or `none` and `new` one
+        // second in two each (common.wgsl BLEND_SCREEN_DEPTH,
+        // BLEND_SCREEN_LAYER, BLEND_SCREEN_TERMS)
         static BLEND_AO: std::sync::OnceLock<BlendAo> = std::sync::OnceLock::new();
         let blend_ao = BLEND_AO
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
-        self.blend_ao_depth = blend_ao == BlendAo::New;
+        self.blend_ao_depth = matches!(blend_ao, BlendAo::New | BlendAo::Step);
         // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
         // of #3259 (object.wgsl LEGACY_GLARE_OFF)
         static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -8998,7 +9051,8 @@ impl Backend {
             _ => 0,
         });
         main.light_sets.mode[2] |= match blend_ao {
-            BlendAo::New => 0x10000,
+            BlendAo::New => 0x810000,
+            BlendAo::Step => 0x10000,
             BlendAo::Old => 0x4000,
             _ => 0,
         };
@@ -10366,35 +10420,6 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
-        // ---- FSR: the blended faces drawn over what lies behind them, even
-        // faint glass, give their own depth and motion, so their edges keep
-        // their history (the occlusion and the contact shadows have read
-        // that depth; GTAO those normals)
-        if let (pipe, Some((_, view)), true, true) = (
-            &self.pipelines.fsr_blend_normal,
-            &self.targets.ao_depth,
-            normals.is_some() && n_blend > 0,
-            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
-        ) {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fsr blended faces motion"),
-                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            bind_mesh(&mut pass, &self.groups.a);
-            draw_sided(&mut pass, pipe, rg.blend, 0);
-            draw_under(&mut pass, pipe, rg.blend_under);
-        }
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -11570,17 +11595,18 @@ impl Backend {
             }
         } else if split {
             // (the frame group without the scene copy and the depth: the
-            // depth is written here, and fs_blend reads neither)
+            // depth is written here, and fs_blend reads neither; with the
+            // occlusion's depth, which is not written here)
             match lists.blend_depth_mode {
                 // the lists could not be made: as the Legacy Viewer
                 RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
                 }
                 RiggedBlendDepth::HalfCovered => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
                     blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
                 }
@@ -11593,13 +11619,13 @@ impl Backend {
                         let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
                         let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
-                        bind_mesh(&mut pass, &self.groups.a);
+                        bind_mesh(&mut pass, &self.groups.blend);
                         blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
                     }
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
                     let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
                 }
                 RiggedBlendDepth::Split => {
@@ -11608,7 +11634,7 @@ impl Backend {
                     // behind it, then the object's fringes (#935); the glow
                     // once, with the first
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     let mut from = 0;
                     for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
                         if end <= from {
@@ -11633,7 +11659,7 @@ impl Backend {
                         let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
                         let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
-                        bind_mesh(&mut pass, &self.groups.a);
+                        bind_mesh(&mut pass, &self.groups.blend);
                         let mut from = 0;
                         for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
                             if end <= from {
@@ -11662,14 +11688,14 @@ impl Backend {
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
                     let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
                 }
                 RiggedBlendDepth::Runs => {
                     // their depth where nearly opaque, then run by run
                     // their colour and their depth where half covered (#935)
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
+                    bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, (b0, n_depth), 0);
                     let mut from = 0;
                     for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
@@ -11732,6 +11758,45 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_SCENE_END);
+        // ---- FSR: the blended faces drawn over what lies behind them, even
+        // faint glass, give their own depth and motion, so their edges keep
+        // their history (the occlusion and the contact shadows have read
+        // that depth; GTAO those normals; and the blended faces' colour,
+        // drawn above, which reads it to know the surface the occlusion was
+        // made for: common.wgsl `on_occlusion_surface`)
+        if let (pipe, Some((_, view)), Some(motion), true) = (
+            &self.pipelines.fsr_blend_normal,
+            &self.targets.ao_depth,
+            motion_view(self.motion_now, &self.targets, self.taa.as_ref()).filter(|_| n_blend > 0),
+            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr blended faces motion"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: motion,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, pipe, rg.blend, 0);
+            draw_under(&mut pass, pipe, rg.blend_under);
+        }
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
         if drawn_px.is_some() {
@@ -13549,6 +13614,7 @@ mod tests {
         assert_eq!(BlendAo::from_env(None), BlendAo::New);
         assert_eq!(BlendAo::from_env(Some("new")), BlendAo::New);
         assert_eq!(BlendAo::from_env(Some(" none ")), BlendAo::None);
+        assert_eq!(BlendAo::from_env(Some("step")), BlendAo::Step);
         assert_eq!(BlendAo::from_env(Some("old")), BlendAo::Old);
         assert_eq!(BlendAo::from_env(Some("alt")).now(at(10)), BlendAo::None);
         assert_eq!(BlendAo::from_env(Some("alt")).now(at(11)), BlendAo::New);

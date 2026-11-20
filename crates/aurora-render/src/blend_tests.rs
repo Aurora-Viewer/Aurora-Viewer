@@ -414,3 +414,179 @@ fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0,1.0,1.0,f32(
         }
     }
 }
+
+/// The source of the shader function `name`, with the comment-free
+/// constants named before it.
+fn shader_function(shader: &str, name: &str, constants: &[&str]) -> String {
+    let mut source = String::new();
+    for constant in constants {
+        let line = shader
+            .lines()
+            .find(|line| line.starts_with(&format!("const {constant}:")) || line.starts_with(&format!("override {constant}:")))
+            .unwrap_or_else(|| panic!("production constant {constant}"));
+        source.push_str(&line.replacen("override", "const", 1));
+        source.push('\n');
+    }
+    let start = shader
+        .find(&format!("fn {name}("))
+        .unwrap_or_else(|| panic!("production function {name}"));
+    let end = start + shader[start..].find("\n}").expect("function end") + 2;
+    source.push_str(&shader[start..end]);
+    source.push('\n');
+    source
+}
+
+/// `rule(v: vec4<f32>) -> f32` of `source` for each of `inputs`, run on
+/// the GPU; none without one.
+fn evaluate(source: &str, inputs: &[[f32; 4]]) -> Option<Vec<f32>> {
+    let _gpu = crate::test_gpu::lock();
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("rule GPU device");
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("production blended rule"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!(
+                "{source}
+@group(0) @binding(0) var<storage,read> inputs:array<vec4<f32>>;
+@group(0) @binding(1) var<storage,read_write> outputs:array<f32>;
+@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) id:vec3<u32>) {{
+    outputs[id.x]=rule(inputs[id.x]);
+}}"
+            )
+            .into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("production blended rule"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let given = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("rule inputs"),
+        contents: bytemuck::cast_slice(inputs),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let size = (inputs.len() * 4) as u64;
+    let [results, readback] = [
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    ]
+    .map(|usage| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rule results"),
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("rule"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: given.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: results.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(inputs.len() as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&results, 0, &readback, 0, size);
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |result| result.expect("rule readback"));
+    device.poll(wgpu::PollType::wait_indefinitely()).expect("rule completion");
+    let bytes = readback.get_mapped_range(..).expect("rule results");
+    Some(bytemuck::pod_collect_to_vec(&bytes))
+}
+
+/// A layer that fades out over a skin (a tattoo, a blush, a second skin):
+/// its texels under half covered take the occlusion and the contact shadow
+/// of the skin they lie on, whole, as those above one half do. A step there
+/// drew a line around the layer.
+#[test]
+fn a_faint_layer_takes_the_screen_terms_of_the_surface_it_lies_on_gpu() {
+    let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+    let source = shader_function(&common, "layer_on_surface", &["SCREEN_LAYER_REACH"])
+        + "fn rule(v:vec4<f32>)->f32 {return layer_on_surface(v.x,v.y);}";
+    // (here, there): the fragment and the surface in its pixel, from the
+    // camera (m)
+    let near = [0.0, 0.001, 0.004, 0.02, 0.029].map(|gap: f32| [2.5, 2.5 + gap, 0.0, 0.0]);
+    // in front of it or just behind (the layer's own texels at least half
+    // covered, some millimetres nearer than the skin)
+    let behind = [[2.5, 2.496, 0.0, 0.0]];
+    // a pane in front of a room, a strand before a face: none (#556)
+    let far = [0.07, 0.2, 5.0].map(|gap: f32| [2.5, 2.5 + gap, 0.0, 0.0]);
+    // far from the camera the reach is a hundredth of the distance
+    let distant = [[50.0, 50.4, 0.0, 0.0], [50.0, 51.0, 0.0, 0.0]];
+    // leaving the surface: no line either
+    let leaving: Vec<[f32; 4]> = (0..=130).map(|step| [2.5, 2.5 + step as f32 * 0.0005, 0.0, 0.0]).collect();
+    let inputs = [&near[..], &behind, &far, &distant, &leaving].concat();
+    let Some(shares) = evaluate(&source, &inputs) else {
+        return;
+    };
+    let (near, rest) = shares.split_at(near.len());
+    assert!(near.iter().all(|&share| share == 1.0), "on the surface: {near:?}");
+    assert_eq!(rest[0], 1.0, "just behind it");
+    assert!(rest[1..4].iter().all(|&share| share == 0.0), "away from it: {:?}", &rest[1..4]);
+    assert_eq!(rest[4..6], [1.0, 0.0], "50 m away");
+    let leaving = &rest[6..];
+    assert_eq!((leaving[0], leaving[130]), (1.0, 0.0));
+    for pair in leaving.windows(2) {
+        assert!(
+            pair[1] <= pair[0] && pair[0] - pair[1] < 0.03,
+            "half a millimetre further: {pair:?}"
+        );
+    }
+}
+
+/// The same layer in the occlusion's depth: where it is half covered it is
+/// written behind itself, under the skin it lies on, and comes out of it as
+/// a slope, where it stood as a ledge the occlusion drew a line along.
+#[test]
+fn a_fading_layer_slopes_out_of_the_surface_under_it_gpu() {
+    let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+    let source = shader_function(&object, "sunk_depth", &["DEPTH_CONTACT_ALPHA", "OCCLUSION_SINK", "OCCLUSION_SOLID"])
+        + "fn rule(v:vec4<f32>)->f32 {return sunk_depth(vec4<f32>(0.0,0.0,v.x,v.y),v.z);}";
+    // the main view's depth: the near plane over the distance; a fragment's
+    // position holds it and one over the distance
+    let (near, distance) = (0.05_f32, 2.5_f32);
+    let alphas: Vec<f32> = (0..=50).map(|step| 0.5 + step as f32 * 0.01).collect();
+    let inputs: Vec<[f32; 4]> = alphas.iter().map(|&alpha| [near / distance, 1.0 / distance, alpha, 0.0]).collect();
+    let Some(depths) = evaluate(&source, &inputs) else {
+        return;
+    };
+    // how far behind itself each texel is written (m)
+    let sunk: Vec<f32> = depths.iter().map(|depth| near / depth - distance).collect();
+    assert!((sunk[0] - 0.008).abs() < 1e-4, "half covered: {} m", sunk[0]);
+    for (alpha, sunk) in alphas.iter().zip(&sunk) {
+        // never nearer than the face: the entry points promise the depth
+        // test as much (`@early_depth_test(less_equal)`)
+        assert!(*sunk > -1e-5, "alpha {alpha}: {sunk} m");
+        if *alpha >= 0.95 {
+            assert!(sunk.abs() < 1e-5, "alpha {alpha}, where it is: {sunk} m");
+        }
+    }
+    // a layer 4 mm over a skin: the nearer of the two is kept. From the
+    // skin where the layer is half covered to the layer where it is solid,
+    // by less than half a millimetre per hundredth of alpha (4 mm at once
+    // before)
+    let kept: Vec<f32> = sunk.iter().map(|sunk| (sunk - 0.004).min(0.0)).collect();
+    assert_eq!(kept[0], 0.0, "the skin's depth where the layer is half covered");
+    assert!((kept[50] + 0.004).abs() < 1e-5, "the layer's where it is solid");
+    for pair in kept.windows(2) {
+        assert!(pair[1] <= pair[0] + 1e-5 && pair[0] - pair[1] < 0.0005, "a ledge: {pair:?}");
+    }
+}

@@ -838,33 +838,96 @@ fn water_clip(world_pos: vec3<f32>) {
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
-fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
+// (returns the texel's alpha)
+fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) -> f32 {
     let rec = records[record];
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
         if (length((uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
-        return;
+        return 1.0;
     }
     portal_clip(rec, world_pos);
     water_clip(world_pos);
-    if (sample_tex(rec.tex.x, uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (alpha < DEPTH_CONTACT_ALPHA) {
         discard;
     }
+    return alpha;
 }
 
 @fragment
 fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
-    depth_contact(in.record, in.uv, in.world_pos);
+    _ = depth_contact(in.record, in.uv, in.world_pos);
 }
 
-// fs_depth_contact with the normal, into the occlusion's depth.
+// fs_depth_contact with the normal and the motion (FSR's blended faces).
 @fragment
 fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
-    depth_contact(in.record, in.uv, in.world_pos);
+    _ = depth_contact(in.record, in.uv, in.world_pos);
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
+}
+
+// How far behind itself a blended texel half covered is written into the
+// occlusion's depth (m), and the alpha from which it is written where it
+// is.
+const OCCLUSION_SINK: f32 = 0.008;
+const OCCLUSION_SOLID: f32 = 0.95;
+
+// The depth a blended texel of `alpha` writes into the occlusion's depth,
+// from its own (`clip`, the fragment's position): its own from
+// OCCLUSION_SOLID, sinking behind it by the square of what its alpha lacks,
+// down to OCCLUSION_SINK where it is half covered. A layer that fades out
+// over the surface it lies on (a tattoo, a blush, a second skin, some
+// millimetres over the body) then leaves that surface's depth as a slope
+// instead of a ledge at the line where it is half covered, which the
+// occlusion and the contact shadows drew as a line around it. The nearer
+// depth is kept, in any order: under a layer of whatever alpha mode. A face
+// in the open air (a strand's soft edge) sinks by millimetres at most.
+// (The main view's projection has no far plane: its depth is the near
+// plane over the distance along the view.)
+fn sunk_depth(clip: vec4<f32>, alpha: f32) -> f32 {
+    let lacks = clamp((OCCLUSION_SOLID - alpha) / (OCCLUSION_SOLID - DEPTH_CONTACT_ALPHA), 0.0, 1.0);
+    let along = 1.0 / clip.w;
+    return clip.z * along / (along + OCCLUSION_SINK * lacks * lacks);
+}
+
+// `sunk_depth`, or the texel's own depth under the rule before it
+// (AURORA_BLEND_AO=step).
+fn occlusion_depth_of(clip: vec4<f32>, alpha: f32) -> f32 {
+    if ((frame.light_mode.z & BLEND_SCREEN_LAYER) == 0u) {
+        return clip.z;
+    }
+    return sunk_depth(clip, alpha);
+}
+
+struct OcclusionNormal {
+    @location(0) normal: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
+// fs_depth_contact into the occlusion's depth and the contact shadows'
+// (sunk_depth). The depth only ever moves away: what the depth test rules
+// out before the shader stays ruled out.
+@fragment
+@early_depth_test(less_equal)
+fn fs_depth_occlusion(in: VsOut, @builtin(front_facing) front: bool) -> @builtin(frag_depth) f32 {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    return occlusion_depth_of(in.clip, depth_contact(in.record, in.uv, in.world_pos));
+}
+
+// fs_depth_occlusion with GTAO's mesh normal.
+@fragment
+@early_depth_test(less_equal)
+fn fs_depth_occlusion_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> OcclusionNormal {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    let alpha = depth_contact(in.record, in.uv, in.world_pos);
+    var out: OcclusionNormal;
+    out.normal = depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
+    out.depth = occlusion_depth_of(in.clip, alpha);
+    return out;
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
@@ -1600,6 +1663,22 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // opaque enough (fs_depth_contact); a more transparent one would get
     // what lies behind it
     contact_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || (frame.contact.y > 0.5 && m.color.a >= 0.5);
+    // ...unless it lies on the surface that is in those depths: a layer
+    // fading out over a skin takes the skin's occlusion and contact shadow
+    // (common.wgsl `screen_layer`, `contact_layer`). The Legacy Viewer has
+    // neither on its alpha pass (alphaF.glsl, materialF.glsl), where a
+    // layer lights the skin back up in the same way but evenly: no line.
+    screen_layer = 0.0;
+    contact_layer = 0.0;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && m.color.a < 0.5 && (frame.light_mode.z & BLEND_SCREEN_LAYER) != 0u && !in_reflection_pass()) {
+        let screen = frame.misc.x > 0.5;
+        let contact = frame.contact.x > 0.5 && frame.contact.y > 0.5;
+        if (screen || contact) {
+            let on = on_occlusion_surface(in.clip.xy, in.world_pos);
+            screen_layer = select(0.0, on, screen);
+            contact_layer = select(0.0, on, contact);
+        }
+    }
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
     var caustic_light = vec3<f32>(0.0);

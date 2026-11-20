@@ -223,6 +223,11 @@ const PALETTE_STRIDE: u32 = 261u;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
+// The depth the occlusion and the contact shadows were made from
+// (renderer.rs, "occlusion depth"; the contact shadows' own without it):
+// the prepass and the blended faces at least half covered. Bound where the
+// blended faces are drawn (`on_occlusion_surface`); a dummy elsewhere.
+@group(0) @binding(29) var occlusion_depth: texture_depth_2d;
 @group(0) @binding(20) var water_interface: texture_depth_2d;
 @group(0) @binding(21) var water_air_color: texture_2d<f32>;
 @group(0) @binding(22) var water_air_depth: texture_depth_2d;
@@ -1329,6 +1334,10 @@ const BLEND_SCREEN_TERMS: u32 = 0x4000u;
 // half covered (renderer.rs, "occlusion depth"), which then take the
 // screen-space terms (screen_surface; AURORA_BLEND_AO)
 const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
+// frame.light_mode.z: the blended faces under half covered take the
+// screen-space terms where they lie on the surface in the occlusion's depth
+// (screen_layer; off with AURORA_BLEND_AO=step)
+const BLEND_SCREEN_LAYER: u32 = 0x800000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
@@ -1517,11 +1526,18 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
 // whose contact shadows the mask holds: not a blended face.
 var<private> contact_surface: bool = true;
 
+// The share of the contact shadow a blended fragment under half covered
+// takes, which is not in that depth: as `screen_layer`, and for the same
+// reason (the skin under a fading layer is in the shadow, the layer was
+// not, up to the line where it is half covered).
+var<private> contact_layer: f32 = 0.0;
+
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
-    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
+    let share = select(contact_layer, 1.0, contact_surface);
+    if (frame.contact.x < 0.5 || share <= 0.0 || in_reflection_pass()) {
         return 1.0;
     }
     let p = vec2<i32>(frag);
@@ -1529,7 +1545,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return 1.0;
     }
-    return 1.0 - textureLoad(contact_tex, p, 0).r;
+    return 1.0 - textureLoad(contact_tex, p, 0).r * share;
 }
 
 // The sun's shadow of an opaque surface of the main view: the shadow map,
@@ -1648,17 +1664,68 @@ var<private> surface_occlusion: f32 = 0.0;
 // mode no longer shows a line down the middle (#882).
 var<private> screen_surface: bool = true;
 
-// Whether the fragment being shaded takes the screen-space terms (see
-// screen_surface).
-fn screen_terms() -> bool {
-    return screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u;
+// The share of the screen-space terms a blended fragment under half
+// covered takes, which is not in the occlusion's depth: 1 where it lies on
+// the surface that is (`on_occlusion_surface`), 0 away from it. A soft
+// layer worn on a body (a tattoo, a blush, a second skin) fades out through
+// one half: taking none below it, over a skin that takes them, it lit the
+// skin back up as far as the line where it is half covered and stopped
+// there, a hard edge in every crease with the occlusion on.
+var<private> screen_layer: f32 = 0.0;
+
+// How far a faint blended fragment may be from the surface in the
+// occlusion's depth and still take its screen-space terms whole (m), the
+// larger of this and a hundredth of its distance from the camera; none from
+// twice as far.
+const SCREEN_LAYER_REACH: f32 = 0.03;
+
+// How much a fragment `here` from the camera lies on the surface seen
+// `there` in its pixel (m): 1 within the reach, falling smoothly to 0 at
+// twice it, so that a layer leaving its surface shows no line either. A
+// pane in front of a room is far from the wall behind it and takes none of
+// the wall's occlusion, as before (#556).
+fn layer_on_surface(here: f32, there: f32) -> f32 {
+    let reach = max(SCREEN_LAYER_REACH, 0.01 * here);
+    return 1.0 - smoothstep(reach, 2.0 * reach, abs(there - here));
+}
+
+// `layer_on_surface` of the fragment at `world_pos`, against the surface
+// the occlusion and the contact shadow of its pixel were made for.
+fn on_occlusion_surface(frag: vec2<f32>, world_pos: vec3<f32>) -> f32 {
+    let uv = screen_uv(frag);
+    let size = vec2<i32>(textureDimensions(occlusion_depth));
+    let px = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+    let depth = textureLoad(occlusion_depth, px, 0);
+    // (reversed depth: 0 is the sky)
+    if (depth <= 0.0) {
+        return 0.0;
+    }
+    // from the camera, by the view's rotation alone: region coordinates
+    // lose their millimetres far from the region's origin
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let seen = frame.inv_view_proj_rot * vec4<f32>(ndc, depth, 1.0);
+    return layer_on_surface(distance(world_pos, frame.camera_pos.xyz), length(seen.xyz / seen.w));
+}
+
+// The share of the screen-space terms the fragment being shaded takes (see
+// screen_surface and screen_layer).
+fn screen_terms() -> f32 {
+    if (screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u) {
+        return 1.0;
+    }
+    return screen_layer;
 }
 
 fn screen_ao(frag: vec2<f32>) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass() || !screen_terms()) {
+    if (frame.misc.x < 0.5 || in_reflection_pass()) {
         return 1.0;
     }
-    return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    let share = screen_terms();
+    if (share <= 0.0) {
+        return 1.0;
+    }
+    let occlusion = max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    return mix(1.0, occlusion, share);
 }
 
 // The light the surfaces around bounce onto the fragment at `frag`
@@ -1671,10 +1738,11 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // as is, it lit the creases and contacts back up and the occlusion seemed
 // gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || share <= 0.0) {
         return vec3<f32>(0.0);
     }
-    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag) * share;
 }
 
 // The solid angle two spherical caps share, divided by 2 pi: caps of

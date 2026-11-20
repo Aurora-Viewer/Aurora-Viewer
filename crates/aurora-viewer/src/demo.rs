@@ -290,6 +290,10 @@ pub mod sim_extras;
 /// (AURORA_DEMO_SIM_VERSION).
 #[path = "demo_sim_version.rs"]
 pub mod sim_version;
+/// A soft-edged blended layer over a sphere in an occluded corner, the
+/// layers worn over mesh bodies (AURORA_DEMO_BLEND_AO=layer).
+#[path = "demo_skin_layer.rs"]
+pub mod skin_layer;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
@@ -6158,6 +6162,19 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += wet_layer::COUNT;
     }
+    if skin_layer::enabled() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        for o in skin_layer::objects(id, sx, sy) {
+            add(o);
+        }
+        id += skin_layer::COUNT;
+    }
     if mirror::enabled() {
         for o in mirror::objects(id) {
             add(o);
@@ -6265,7 +6282,7 @@ pub fn events() -> Vec<NetEvent> {
     // eye), with a nose across the middle, under a wide hat brim and
     // between two curtains of hair that occlude it (issue #882: the blended
     // half took no ambient occlusion, a line down the middle of the head)
-    if std::env::var_os("AURORA_DEMO_BLEND_AO").is_some() {
+    if std::env::var_os("AURORA_DEMO_BLEND_AO").is_some() && !skin_layer::enabled() {
         let (sx, sy) = std::env::var("AURORA_DEMO_POS")
             .ok()
             .and_then(|v| {
@@ -9495,6 +9512,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
         return Some(texture);
     }
     if let Some(texture) = wet_layer::texture(id) {
+        return Some(texture);
+    }
+    if let Some(texture) = skin_layer::texture(id) {
         return Some(texture);
     }
     if let Some(texture) = mirror::texture(id) {

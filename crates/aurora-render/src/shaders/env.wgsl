@@ -3067,7 +3067,9 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // the screen-space terms (ambient occlusion, contact shadows) were
     // made from the depth under the snow: what it buries would darken it
     screen_surface = false;
+    screen_layer = 0.0;
     contact_surface = false;
+    contact_layer = 0.0;
     // "Snow settles" off: none drawn, whatever falls (it was read from the
     // puddles' switch, rain_look.x, which is the snow's only while it
     // snows: in rain or clear weather the snow melting away showed)
