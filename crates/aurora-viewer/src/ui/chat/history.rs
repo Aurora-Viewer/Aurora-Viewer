@@ -8,7 +8,7 @@
 use super::view::{Source, View};
 use super::{LineEnv, Mark, find};
 use crate::theme::Palette;
-use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript, contains_ci};
+use crate::world::chat_log::transcript::{HistorySource, Index, PAGE, Reply, Spot, Transcript, contains_ci};
 use crate::world::transcripts::LineClock;
 use crate::world::{ChatLine, World};
 use egui::RichText;
@@ -85,14 +85,14 @@ fn field_id() -> egui::Id {
 }
 
 impl HistoryUi {
-    /// Show the transcript of a conversation; `path`: its file, when the
-    /// account has one for it.
-    pub fn show_file(&mut self, title: String, path: Option<PathBuf>) {
+    /// Show the transcript of a conversation; `source` resolves and opens
+    /// lazily on the `"aurora-transcript"` thread without main-thread I/O.
+    pub fn show_source(&mut self, title: String, source: Option<HistorySource>) {
         *self = HistoryUi {
             open: true,
             title,
-            index: path.is_none().then_some(None),
-            file: path.and_then(Transcript::open),
+            index: source.is_none().then_some(None),
+            file: source.and_then(Transcript::open_source),
             searches: self.searches,
             ..Default::default()
         };
@@ -102,8 +102,8 @@ impl HistoryUi {
     }
 
     /// Show the stitched history of a direct conversation, read by the
-    /// World (`World::open_direct_preview`); `path`: its transcript file.
-    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, path: Option<PathBuf>) {
+    /// World (`World::open_direct_preview`); `source`: its transcript source.
+    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, source: Option<HistorySource>) {
         *self = HistoryUi {
             open: true,
             title,
@@ -111,7 +111,7 @@ impl HistoryUi {
             stitched: Some(Stitched {
                 resident,
                 entries: None,
-                folder: path.and_then(|p| p.parent().map(PathBuf::from)),
+                folder: source.as_ref().and_then(HistorySource::folder).map(PathBuf::from),
             }),
             ..Default::default()
         };
@@ -133,10 +133,11 @@ impl HistoryUi {
     }
 
     /// The stitched read came, oldest first: the most recent page shows.
-    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>) {
+    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>, folder: Option<PathBuf>) {
         let Some(s) = self.stitched.as_mut() else {
             return;
         };
+        s.folder = s.folder.take().or(folder);
         let messages = entries.len();
         s.entries = Some(entries);
         if messages == 0 {
@@ -178,13 +179,15 @@ impl HistoryUi {
     /// An import merged these transcripts: a page's place in the file is no
     /// longer the same, so the one shown is read again from the start.
     pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
-        let path = self.file.as_ref().map(|f| f.path.clone());
         if self.open
-            && let Some(path) = path
-            && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| changed.contains(stem))
+            && let Some(source) = self
+                .file
+                .as_ref()
+                .filter(|f| f.matches_changed(changed))
+                .map(|f| f.source().clone())
         {
             let title = std::mem::take(&mut self.title);
-            self.show_file(title, Some(path));
+            self.show_source(title, Some(source));
         }
     }
 
@@ -449,7 +452,7 @@ impl HistoryUi {
                 if let Some(dir) = self
                     .file
                     .as_ref()
-                    .and_then(|f| f.path.parent())
+                    .and_then(Transcript::folder)
                     .or_else(|| self.stitched.as_ref().and_then(|s| s.folder.as_deref()))
                     && icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("ui-options-chat-logs-open"), true)
                 {

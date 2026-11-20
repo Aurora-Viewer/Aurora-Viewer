@@ -221,6 +221,42 @@ pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::U
         .inner
 }
 
+/// What a notice says: a warning (a refusal, an error), or a question the
+/// user answers with the buttons of its body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    Warning,
+    Question,
+}
+
+/// A notice inside a page or a panel: a surface tinted by its kind, with
+/// the theme's radius and its icon at the left of `body` (the text, then
+/// any buttons below it).
+pub fn notice<R>(ui: &mut egui::Ui, p: &Palette, kind: NoticeKind, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let (tint, icon) = match kind {
+        NoticeKind::Warning => (p.warn, "alert-triangle-filled"),
+        NoticeKind::Question => (p.violet, "info-circle-filled"),
+    };
+    egui::Frame::new()
+        .fill(tint.gamma_multiply(0.16))
+        .stroke(Stroke::new(1.0, tint.gamma_multiply(0.75)))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                glyph(ui, icon, tint, 16.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    body(ui)
+                })
+                .inner
+            })
+            .inner
+        })
+        .inner
+}
+
 /// Shared presentation of the construction and inventory layout editors.
 pub(crate) fn organization_typography(ui: &mut egui::Ui) {
     let style = ui.style_mut();

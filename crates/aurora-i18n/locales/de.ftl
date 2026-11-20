@@ -11014,8 +11014,6 @@ ui-options-chat-logs-dated-help = Eine Datei pro Monat für jede Unterhaltung (N
 ui-options-chat-logs-note = Bei diesen Dateien handelt es sich um reine Textdateien, die von jedem gelesen werden können, der diesen Computer verwenden kann. Sie verbleiben auf diesem Computer, getrennt für jedes Konto und jedes Grid, und werden niemals an einen Fehlerbericht angehängt.
 ui-options-chat-logs-open = Ordner öffnen
 ui-options-chat-logs-folder-help = Die Dateien dieses Kontos werden in den neuen Ordner verschoben.
-ui-options-chat-logs-legacy-layout = Ordner des Legacy Viewers gemeinsam nutzen
-ui-options-chat-logs-legacy-layout-help = Speichert die Dateien dieses Kontos im Format des Legacy Viewers (vorname_nachname) unter dem gewählten Ordner. So können beide Viewer denselben Verlauf lesen und ergänzen. Wählen Sie oben den Protokollordner des Legacy Viewers. Aurora fügt dort nur Zeilen hinzu: Nichts wird verschoben, importiert oder gelöscht. Beim Ausschalten werden wieder Auroras eigene Dateien verwendet. Wählen Sie in beiden Viewern dieselbe Einstellung für „Datierte Dateien“. Nur für Second Life. Standardmäßig ausgeschaltet.
 ui-options-chat-logs-moved =
     { $count ->
         [one] { $count } Datei verschoben.

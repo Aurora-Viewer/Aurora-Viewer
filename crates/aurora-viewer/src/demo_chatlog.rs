@@ -27,11 +27,16 @@
 //!   History, `import:again` imports twice, `import:login` as the import at
 //!   login does, `import:same` with the folder Aurora writes to, `import:none`
 //!   with no Legacy Viewer found);
+//! - `shared`: a synthetic Legacy Viewer folder picked as the transcripts'
+//!   folder, for the run only: Preferences › Chat › History asks whether to
+//!   share it (`shared:on` answers Share at once, so Nova's conversation
+//!   shows the Legacy Viewer's lines before the new message; `shared:on:log`
+//!   opens the Conversation Log window too);
 //! - `long:<n>`: a conversation of `n` lines, nothing written (to measure
 //!   the cost of the conversation view); `long:<n>:scroll` scrolls it up
 //!   with the wheel from frame 320 to 380, through lines never laid out.
 
-use crate::world::chat_log::{format, names, store};
+use crate::world::chat_log::{conversations, format, names, store};
 use aurora_net::{InstantMessage, NetEvent};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -40,6 +45,9 @@ use uuid::Uuid;
 /// The resident of the scenario's conversation ("Nova" for the demo's name
 /// service).
 pub const PEER: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0020);
+/// A second resident of the synthetic Legacy Viewer's `conversation.log`
+/// (`shared`), listed in the Conversation Log window beside Nova.
+const LEGACY_PEER: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0021);
 
 /// Messages of the History window's transcript.
 const LONG_MESSAGES: u64 = 19_949;
@@ -55,10 +63,12 @@ pub enum Mode {
     Service,
     Restore,
     Import(ImportStage),
-    /// The Legacy layout: a synthetic Legacy Viewer folder chosen for the
-    /// session only; `on`, the option turned on too.
+    /// The Legacy layout: a synthetic Legacy Viewer folder picked for the
+    /// session only, which asks whether to share it; `on`, Share answered
+    /// at once; `log`, the Conversation Log window opened too.
     Shared {
         on: bool,
+        log: bool,
     },
     Long {
         lines: usize,
@@ -85,7 +95,10 @@ pub fn mode() -> Option<Mode> {
         "history" => Mode::History { find: arg == "find" },
         "offline" => Mode::Offline,
         "service" => Mode::Service,
-        "shared" => Mode::Shared { on: arg == "on" },
+        "shared" => Mode::Shared {
+            on: arg.split(':').any(|part| part == "on"),
+            log: arg.split(':').any(|part| part == "log"),
+        },
         "restore" => Mode::Restore,
         "import" => Mode::Import(match arg {
             "run" => ImportStage::Run,
@@ -183,15 +196,16 @@ pub fn legacy_root(dir: &Path) -> PathBuf {
     dir.with_file_name("demo-legacy-viewer")
 }
 
-/// The synthetic Legacy Viewer folder of `shared`, beside the demo's
-/// transcripts: `<root>/<account folder>/<peer>.txt` holds what the Legacy
-/// Viewer wrote, rewritten at each launch, and a file of its own that Aurora
-/// must leave as it is.
-pub fn seed_shared(root: &Path, folder: &str, own_name: &str) -> std::io::Result<()> {
+/// The synthetic Legacy Viewer of `shared`, beside the demo's transcripts:
+/// `<root>/<account folder>/<peer>.txt` holds what the Legacy Viewer wrote,
+/// rewritten at each launch, and a `conversation.log` with Nova and a second
+/// resident, Tess, that Aurora lists and leaves as it is.
+pub fn seed_shared(root: &Path, folder: &str, me: Uuid, own_name: &str) -> std::io::Result<()> {
     let _ = std::fs::remove_dir_all(root);
     let dir = root.join(folder);
     std::fs::create_dir_all(&dir)?;
     let peer = peer_name();
+    let legacy_peer = format!("Tess {}", aurora_i18n::tr!("demo-example"));
     let now = SystemTime::now();
     let day = Duration::from_secs(86_400);
     let s = sentences();
@@ -202,9 +216,37 @@ pub fn seed_shared(root: &Path, folder: &str, own_name: &str) -> std::io::Result
         text.push_str(&format::format_line(Some(&stamp), from, sentence).replace('\n', store::EOL));
         text.push_str(store::EOL);
     }
-    let path = names::file_path(&dir, &names::resident(&peer), None);
+    let stem = names::resident(&peer);
+    let path = names::file_path(&dir, &stem, None);
     std::fs::write(path.ok_or_else(|| std::io::Error::other("no file name"))?, text)?;
-    std::fs::write(dir.join("conversation.log"), "kept as written\n")
+    let legacy_stem = names::resident(&legacy_peer);
+    let legacy_stamp = format::stamp(now - day * 3, true);
+    let legacy_line = format::format_line(Some(&legacy_stamp), &legacy_peer, s[0]).replace('\n', store::EOL) + store::EOL;
+    if let Some(legacy_path) = names::file_path(&dir, &legacy_stem, None) {
+        std::fs::write(legacy_path, legacy_line)?;
+    }
+    let then = conversations::now() - 3 * 86_400;
+    let log = conversations::format_file(&[
+        conversations::Conversation {
+            time: then,
+            kind: conversations::Kind::Private,
+            name: peer,
+            history_file: stem,
+            session: conversations::private_session(me, PEER),
+            participant: PEER,
+            offline: false,
+        },
+        conversations::Conversation {
+            time: then,
+            kind: conversations::Kind::Private,
+            name: legacy_peer,
+            history_file: legacy_stem,
+            session: conversations::private_session(me, LEGACY_PEER),
+            participant: LEGACY_PEER,
+            offline: false,
+        },
+    ]);
+    std::fs::write(dir.join(conversations::FILE), log)
 }
 
 /// What a Legacy Viewer left for the demo account: the conversation Aurora

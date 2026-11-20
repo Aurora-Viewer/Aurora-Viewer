@@ -529,6 +529,25 @@ impl<'a> Cx<'a> {
         self.ui.add_space(4.0);
     }
 
+    /// A two-line status block under a row (shown on the page only): `line`
+    /// in the normal ink, `detail` muted below it.
+    pub fn status(&mut self, line: &str, detail: &str) {
+        if self.mode != Mode::Show || self.pick.is_some() {
+            return;
+        }
+        self.end_block();
+        self.end_line();
+        let x = self.ui.available_rect_before_wrap().left() + GUTTER + self.grid.indent;
+        self.ui.horizontal(|ui| {
+            ui.add_space(x - ui.cursor().left());
+            ui.vertical(|ui| {
+                ui.add(egui::Label::new(egui::RichText::new(line).size(12.0).color(self.p.ink)).wrap());
+                ui.add(egui::Label::new(egui::RichText::new(detail).size(11.5).color(self.p.muted)).wrap());
+            });
+        });
+        self.ui.add_space(4.0);
+    }
+
     /// A framed notice at the top of an experimental page: the experimental
     /// mark, then `text`, on the surface of an open cog's block (shown on
     /// the page only).

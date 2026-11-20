@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod autotune;
 pub mod backup;
+mod chat_log;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
@@ -1243,9 +1244,12 @@ pub struct Settings {
     /// (an Aurora addition): moving between the two viewers keeps the
     /// history, and a notice says what came in.
     pub log_import_at_login: bool,
-    /// The transcripts in the Legacy Viewer's own layout under the chosen
-    /// folder (`<folder>/<first_last>`), so that both viewers share them. An
-    /// Aurora addition, off by default: Aurora then only appends lines there.
+    /// The user said yes to sharing the Legacy Viewer's folder chosen as the
+    /// transcripts' folder: the account's files are then in its own layout
+    /// (`<folder>/<first_last>`), so that both viewers read and add to the
+    /// same history (an Aurora addition, off until asked and answered when
+    /// such a folder is picked). Per account, like the folder
+    /// (`settings/chat_log.rs`).
     pub log_legacy_layout: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
@@ -1874,6 +1878,17 @@ pub struct Settings {
     /// The folder holding the conversation transcripts, one folder per
     /// account inside, "" for the default one (InstantMessageLogPath).
     pub chat_log_location: String,
+    /// None keeps the former shared transcript folder & layout until the
+    /// first login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_accounts: Option<std::collections::BTreeMap<uuid::Uuid, chat_log::Preferences>>,
+    /// Former pre-split global folder & layout preserved so every account that
+    /// upgrades without an entry inherits them instead of losing the folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_legacy_default: Option<chat_log::Preferences>,
+    /// Runtime transcript folder & layout belong to this account after login.
+    #[serde(skip)]
+    pub(crate) chat_log_account: Option<uuid::Uuid>,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
@@ -2834,6 +2849,9 @@ impl Default for Settings {
             cache_size_mb: 20480,
             cache_location: String::new(),
             chat_log_location: String::new(),
+            chat_log_accounts: None,
+            chat_log_legacy_default: None,
+            chat_log_account: None,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
@@ -3813,9 +3831,12 @@ impl Settings {
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
             graphics_saved: old.graphics_saved,
-            // Reset this avatar's hover options while keeping other accounts.
+            // Reset this avatar's hover and transcript folder options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
+            chat_log_accounts: old.chat_log_accounts,
+            chat_log_account: old.chat_log_account,
+            chat_log_legacy_default: old.chat_log_legacy_default,
             ..Settings::default()
         };
     }
@@ -3842,6 +3863,7 @@ impl Settings {
     pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
         copy.remember_hover_account();
+        copy.remember_chat_log_account();
         if let Some(mut held) = copy.photo_held.take() {
             // a setting changed since the last frame is the user's too
             held.sync(&copy);
