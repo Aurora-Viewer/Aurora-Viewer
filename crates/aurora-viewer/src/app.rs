@@ -22890,7 +22890,14 @@ impl ApplicationHandler for App {
                     }
                     // the offline messages open Nova's conversation; the
                     // Chat Service's pages come through `demo_reply`
-                    Mode::Offline | Mode::Service => {}
+                    Mode::Offline => {}
+                    // service:skew: a live IM the demo service keeps too
+                    // (#4233)
+                    Mode::Service => {
+                        if chatlog::service_skew() {
+                            self.world.apply(chatlog::skewed_live_message(me));
+                        }
+                    }
                     Mode::Shared { on } => {
                         // the synthetic Legacy Viewer folder, chosen for this
                         // run only: never saved in the demo's settings, which

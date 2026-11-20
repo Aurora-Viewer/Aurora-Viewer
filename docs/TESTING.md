@@ -9657,7 +9657,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -9704,6 +9704,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     (the transcript alone) while the requests still run. Erase (Delete
     Transcripts) removes the transcripts and the service's archives; a
     failure shows the LL notice and keeps the history hidden.
+  - `service:skew` (#4233): `service` on a demo grid whose clock is 133 s
+    ahead of the computer's (the login's `seconds_since_epoch`), as the
+    reporter's computer was behind the grid. Nova also sends a live IM at
+    the start, which the demo service keeps stamped on the grid's clock.
+    What to see: that message once in her conversation, live and not
+    greyed, with no grey copy of it a little later, also after the
+    refresh 15 s after it.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving

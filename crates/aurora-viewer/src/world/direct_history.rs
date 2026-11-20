@@ -149,6 +149,14 @@ impl Env for WorldEnv<'_> {
     }
 }
 
+/// The grid's time now, in seconds (time_corrected): what the LL viewer
+/// stamps a live message's capture and recording with, so that it lands
+/// in the service row's window whatever the computer's clock says (#4233:
+/// 133 s behind, every message shown again from the service).
+fn grid_now() -> u32 {
+    unix_secs(crate::ui::bars::clock::grid_time(SystemTime::now()))
+}
+
 fn unix_secs(t: SystemTime) -> u32 {
     t.duration_since(UNIX_EPOCH)
         .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
@@ -516,9 +524,9 @@ impl World {
         if !self.chat_service.running() || self.chat_log.shared() || self.chat_log.busy() {
             return false;
         }
-        // time_corrected: Aurora reads the computer's UTC clock, as the
-        // conversation log does
-        let micros = SystemTime::now()
+        // clickTicks: the click on the grid's clock (time_corrected), so
+        // that a computer behind the grid deletes its newest rows too
+        let micros = crate::ui::bars::clock::grid_time(SystemTime::now())
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX));
         let Some(ticks) = super::chat_service::click_ticks(micros) else {
@@ -731,7 +739,9 @@ impl World {
                     message: text,
                     time: format::stamp(l.time, true),
                     datetime: format::stamp(l.time, true),
-                    timestamp: Some(capture.map_or(unix_secs(l.time), |c| c.timestamp) as i32),
+                    // the line's computer time on the grid's clock, as the
+                    // capture's (grid_now)
+                    timestamp: Some(capture.map_or(unix_secs(crate::ui::bars::clock::grid_time(l.time)), |c| c.timestamp) as i32),
                     ..HistoryMessage::default()
                 };
                 row.extra.insert(LINE_KEY.into(), aurora_llsd::Llsd::Integer(i as i32));
@@ -855,7 +865,7 @@ impl World {
         }
         let context = incoming_context(offline.then_some(raw), !offline);
         let mut timestamp = if offline { sent } else { 0 };
-        let now = unix_secs(SystemTime::now());
+        let now = grid_now();
         let context = capture_live_message(raw, &mut timestamp, &context, now);
         self.direct_capture(from, line_time, line_text, context, timestamp, now);
         let env = WorldEnv {
@@ -887,7 +897,7 @@ impl World {
     /// An outgoing IM_NOTHING_SPECIAL entered its session: its capture,
     /// then the resident's activity (sent).
     pub(super) fn direct_outgoing(&mut self, to: Uuid, context: LiveContext, line_time: SystemTime, line_text: &str) {
-        let now = unix_secs(SystemTime::now());
+        let now = grid_now();
         let mut timestamp = 0;
         let context = capture_live_message(line_text, &mut timestamp, &context, now);
         self.direct_capture(to, line_time, line_text, context, timestamp, now);
