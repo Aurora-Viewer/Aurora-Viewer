@@ -536,9 +536,13 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
         actions.push(Action::FreezeWorld(frozen));
     }
     let mut free = live.free;
-    if widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
-        .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
-        .changed()
+    if ui
+        .add_enabled_ui(!live.restricted, |ui| {
+            widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
+                .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
+                .changed()
+        })
+        .inner
     {
         actions.push(Action::Free(free));
     }

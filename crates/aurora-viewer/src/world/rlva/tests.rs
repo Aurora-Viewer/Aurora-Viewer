@@ -929,7 +929,8 @@ fn rlva_visual_effect_lifetimes_capacity_and_disable_follow_the_issuing_object()
         A,
         "@setsphere=n,setsphere_color:0.1/0.2/0.3=force,setoverlay=n,setoverlay_texture:00000000-0000-0000-0000-000000000003=force",
     );
-    assert_eq!(r.visuals.spheres[&A].sample(std::time::Instant::now()).0, [0.1, 0.2, 0.3, 0.0]);
+    // onColorChanged stores LLVector4(color, 1.0f)
+    assert_eq!(r.visuals.spheres[&A].sample(std::time::Instant::now()).0, [0.1, 0.2, 0.3, 1.0]);
     assert_eq!(r.visuals.overlays[&A].texture, TARGET);
     command(&mut r, B, "@setsphere_color:1/0/0=force");
     assert!(!r.visuals.spheres.contains_key(&B), "modifiers require an active issuing object");
@@ -1215,7 +1216,12 @@ fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
         "an offset restriction locks forced preset writes too"
     );
     r.camera_force(A, &force("setcam_fov", "1.2"));
-    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov, 1.2);
+    // B's @setcam_fovmax counts at its default under A's @setcam
+    // (RlvActions::getCameraFOVLimits, the modifier keeping A's values only)
+    assert_eq!(
+        r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov,
+        crate::camera::DEFAULT_FOV
+    );
     r.camera_force(A, &force("setcam_fov", ""));
     assert_eq!(
         r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov,
@@ -1275,7 +1281,9 @@ fn rlva_camera_preference_mutations_preserve_locked_fields_and_allow_unrelated_o
     assert_eq!(requested.zoom_time, 2.0);
     command(&mut r, A, "@setcam=n");
     r.preserve_camera_settings(&mut requested, &before);
-    assert_eq!(requested.fov, before.fov);
+    // LLZoomer and the CameraAngle setting have no RLVa check: the lens
+    // stays the user's under @setcam, bounded by the fov limits only
+    assert_eq!(requested.fov, 0.8);
     r.configure(false);
     requested.camera_offset = [-8.0, 2.0, 3.0];
     r.preserve_camera_settings(&mut requested, &before);
@@ -2754,31 +2762,38 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
 }
 
 /// #3154: `@setenv_daytime:-1=force` and `@setenv_reset=force` go back to the
-/// shared environment, unless `@setenv=n` came before them.
+/// shared environment, unless `@setenv=n` came before them: then they clear
+/// RLVa's own sky (ENV_EDIT, RlvEnvironment::getTargetEnvironment) and the
+/// user's local environment stays.
 #[test]
 fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
     for reset in ["setenv_daytime:-1=force", "setenv_reset=force"] {
-        for (lines, shared) in [
-            (vec![format!("@{reset}")], true),
-            (vec![format!("@{reset},setenv=n")], true),
-            (vec![format!("@setenv=n,{reset}")], false),
-            (vec!["@setenv=n".to_owned(), format!("@{reset}")], false),
-            (vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")], true),
+        for (lines, shared, held) in [
+            (vec![format!("@{reset}")], true, false),
+            (vec![format!("@{reset},setenv=n")], true, true),
+            (vec![format!("@setenv=n,{reset}")], false, false),
+            (vec!["@setenv=n".to_owned(), format!("@{reset}")], false, false),
+            (
+                vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")],
+                true,
+                false,
+            ),
         ] {
             let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
             world.rlva.configure(true);
-            // a sky the user picked, then an RLVa sky over it
+            // a sky the user picked, then an RLVa sky over it: unlocked, the
+            // force writes the user's own local environment
             world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
             world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
             world.rlva_pending();
-            assert!(world.rlva.environment.is_some());
+            assert!(world.eep.has_local() && world.rlva.environment.is_none());
             for line in &lines {
                 world.on_chat(chat(line));
                 world.rlva_pending();
             }
             assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
-            assert!(world.rlva.environment.is_none(), "{lines:?}: RLVa's sky stays");
+            assert_eq!(world.rlva.environment.is_some(), held, "{lines:?}: RLVa's sky (the lock's copy)");
         }
     }
     assert!(environment::supports("setenv_reset", true));
@@ -4555,4 +4570,260 @@ fn the_second_camera_pauses_while_rlva_holds_the_view() {
     let mut r = enabled();
     command(&mut r, A, "@tplm=n");
     assert!(!r.second_camera_blocked());
+}
+
+/// An environment test world: RLVa on, the issuers' lines said and run.
+fn environment_world() -> crate::world::World {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    world
+}
+
+fn environment_say(world: &mut crate::world::World, source_id: Uuid, line: &str) {
+    world.on_chat(ChatMessage { source_id, ..chat(line) });
+    world.rlva_pending();
+}
+
+fn last_reply(world: &crate::world::World) -> Option<String> {
+    world.rlva.out.iter().rev().find_map(|c| match c {
+        NetCommand::ChatReply { message, .. } => Some(message.clone()),
+        _ => None,
+    })
+}
+
+/// rlvGetColorComponentFromCharacter (rlvenvironment.cpp): r/x, g/y, b/d
+/// and i; `z` is no suffix there.
+#[test]
+fn rlva_environment_colour_suffixes_follow_the_legacy_table() {
+    for name in ["cloudd", "ambientd", "ambientb", "ambientx", "ambienti", "bluedensityy"] {
+        assert!(environment::supports(&format!("getenv_{name}"), false), "{name}");
+        assert!(environment::supports(&format!("setenv_{name}"), true), "{name}");
+    }
+    assert!(!environment::supports("setenv_ambientz", true));
+    assert!(!environment::supports("getenv_ambientz", false));
+    for set in [false, true] {
+        assert!(!environment::command_names(set).iter().any(|n| n.ends_with("ambientz")));
+    }
+}
+
+/// registerGetEnvFn("daytime"): -1 only when the target environment has no
+/// instance, 2 otherwise (ENV_LOCAL unlocked, ENV_EDIT locked).
+#[test]
+fn rlva_getenv_daytime_answers_whether_the_target_environment_exists() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("-1.000000"), "nothing local");
+    // the sky editor's preview is not ENV_LOCAL
+    world.eep.set_edit(Default::default(), Default::default());
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("-1.000000"), "an editor's preview");
+    world.eep.clear_edit();
+    // a local day is an instance too
+    world.eep.apply_local_day(crate::world::eep::DayCycle::default());
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("2.000000"), "a local day");
+    world.eep.clear_local();
+    // the lock makes ENV_EDIT
+    environment_say(&mut world, A, "@setenv=n");
+    environment_say(&mut world, A, "@getenv_daytime=2222");
+    assert_eq!(last_reply(&world).as_deref(), Some("2.000000"), "ENV_EDIT");
+}
+
+/// registerSetEnvFn("daytime") under the lock: ENV_EDIT's own day only, and
+/// the lock's copy has none, so nothing changes.
+#[test]
+fn rlva_setenv_daytime_under_the_lock_needs_a_day_of_rlva_own() {
+    let mut world = environment_world();
+    let mut day = crate::world::eep::DayCycle::default();
+    day.sky_tracks[0] = vec![(
+        0.0,
+        crate::world::eep::SkyFrame {
+            gamma: 3.0,
+            ..Default::default()
+        },
+    )];
+    world.eep.apply_local_day(day);
+    environment_say(&mut world, A, "@setenv=n");
+    let copy = world.rlva.environment.map(|(_, sky)| sky.gamma);
+    environment_say(&mut world, A, "@setenv_daytime:0.5=force");
+    assert_eq!(
+        world.rlva.environment.map(|(_, sky)| sky.gamma),
+        copy,
+        "the user's day is not ENV_EDIT's"
+    );
+}
+
+/// A force made without the lock is the user's own local environment
+/// (ENV_LOCAL): it outlives its object. ENV_EDIT goes with `@setenv=n`,
+/// which one object holds at a time (RLV_RET_FAILED_LOCK for another).
+#[test]
+fn rlva_environment_outlives_its_object_and_the_lock_copy_goes_with_its_holder() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@setenv_daytime:0.25=force,setenv_ambient:0.2/0.4/0.6=force");
+    world.rlva.release(A);
+    assert!(world.eep.has_local(), "the forced sky stays once the object is gone");
+    world.eep.clear_local();
+    environment_say(&mut world, A, "@setenv=n");
+    assert_eq!(world.rlva.environment.map(|(id, _)| id), Some(A));
+    world.rlva.release(A);
+    assert!(world.rlva.environment.is_none() && world.rlva.environment_water.is_none());
+}
+
+/// Aurora's own views that place the eye and the focus (photo free camera,
+/// Director free switch) give way while the view is RLVa's (`@setcam`) or
+/// its focus is pinned on the avatar (`@setcam_unlock`); the distance limits
+/// alone bound them instead, as the Legacy Viewer's Alt-camera.
+#[test]
+fn rlva_camera_view_is_held_by_setcam_and_setcam_unlock_only() {
+    let mut r = enabled();
+    assert!(!r.camera_view_held());
+    command(&mut r, A, "@setcam_avdistmax:5=n,setcam_fovmax:1=n");
+    assert!(!r.camera_view_held(), "limits bound the free views, they do not take them");
+    command(&mut r, A, "@setcam_unlock=n");
+    assert!(r.camera_view_held());
+    command(&mut r, A, "@clear");
+    command(&mut r, B, "@setcam=n");
+    assert!(r.camera_view_held());
+    r.configure(false);
+    assert!(!r.camera_view_held());
+}
+
+/// LLAgentCamera::changeCameraToCustomizeAvatar refuses only when the
+/// avatar may not stand up (RlvActions::canStand).
+#[test]
+fn rlva_avatar_studio_is_refused_only_while_seated_under_unsit() {
+    let mut world = environment_world();
+    environment_say(&mut world, A, "@setcam=n,setcam_avdistmax:1=n,unsit=n");
+    assert!(!world.rlva_studio_refused(), "standing: nothing refuses it");
+    world.agent.seated = true;
+    assert!(world.rlva_studio_refused());
+    environment_say(&mut world, A, "@unsit=y");
+    assert!(!world.rlva_studio_refused(), "the camera rules do not refuse it");
+}
+
+/// RlvBehaviourModifier::hasValue: under another object's `@setcam`, a held
+/// fov limit counts at its default (DEFAULT_FIELD_OF_VIEW) and a held
+/// `@setcam_avdist` gives silhouettes from 0.
+#[test]
+fn rlva_limits_of_objects_other_than_the_setcam_holder_count_at_their_default() {
+    let mut r = enabled();
+    command(&mut r, B, "@setcam=n");
+    command(&mut r, A, "@setcam_fovmin:1.2=n,setcam_avdist:4=n");
+    let (low, _) = r.camera_fov_limits(1.0).expect("a held limit counts");
+    assert!((low - crate::camera::DEFAULT_FOV).abs() < 1e-6);
+    assert_eq!(r.silhouette_distance(), Some(0.0));
+    command(&mut r, B, "@setcam=y");
+    let (low, _) = r.camera_fov_limits(1.0).unwrap();
+    assert!((low - 1.2).abs() < 1e-6, "without @setcam the value given counts");
+    assert_eq!(r.silhouette_distance(), Some(4.0));
+}
+
+/// `@setcam_fov=force` sets the lens once: the user's next zoom or
+/// CameraAngle change replaces it, under `@setcam` too.
+#[test]
+fn rlva_user_lens_changes_replace_a_forced_fov_under_setcam_too() {
+    let mut r = enabled();
+    command(&mut r, A, "@setcam=n");
+    assert!(r.camera_force(A, &Command::parse("setcam_fov:0.5=force").unwrap()));
+    let before = crate::camera::CameraSettings::default();
+    assert!((r.camera_settings(&before, 1.0).fov - 0.5).abs() < 1e-6);
+    let mut requested = before.clone();
+    requested.fov = 0.9;
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(requested.fov, 0.9);
+    assert_eq!(r.camera_value("setcam_fov"), None);
+    assert!((r.camera_settings(&requested, 1.0).fov - 0.9).abs() < 1e-6);
+    r.camera_force(A, &Command::parse("setcam_fov:0.5=force").unwrap());
+    r.user_chose_fov();
+    assert_eq!(r.camera_value("setcam_fov"), None, "the zoom keys replace it as well");
+}
+
+/// LLAgentCamera::switchCameraPreset: picking a view leaves RLVa's, and the
+/// forced offsets go, unless a rule locks the preset.
+#[test]
+fn rlva_forced_offsets_go_when_the_user_picks_a_view_unless_locked() {
+    let mut r = enabled();
+    r.camera_force(A, &Command::parse("setcam_eyeoffset:1/2/3=force").unwrap());
+    assert!(r.camera_view().eye_offset.is_some());
+    let before = crate::camera::CameraSettings::default();
+    let mut requested = before.clone();
+    requested.camera_offset = [-5.0, 0.0, 2.0];
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(r.camera_view().eye_offset, None);
+    assert_eq!(requested.camera_offset, [-5.0, 0.0, 2.0]);
+    r.camera_force(A, &Command::parse("setcam_eyeoffset:1/2/3=force").unwrap());
+    command(&mut r, B, "@setcam_focusoffset:0/0/1=n");
+    r.user_chose_camera_view();
+    assert!(r.camera_view().eye_offset.is_some(), "a locked preset keeps them");
+}
+
+/// RlvBehaviourModifier::addValue without a comparator: the first value
+/// added wins, whichever object sent it.
+#[test]
+fn rlva_eye_offsets_of_several_objects_keep_the_first_value_added() {
+    let mut r = enabled();
+    command(&mut r, B, "@setcam_eyeoffset:1/0/0=n");
+    command(&mut r, A, "@setcam_eyeoffset:2/0/0=n");
+    assert_eq!(r.camera_view().eye_offset, Some(glam::Vec3::X));
+    command(&mut r, B, "@setcam_eyeoffset:1/0/0=y");
+    assert_eq!(r.camera_view().eye_offset, Some(glam::Vec3::X * 2.0));
+    command(&mut r, B, "@setcam_eyeoffset:3/0/0=n");
+    assert_eq!(
+        r.camera_view().eye_offset,
+        Some(glam::Vec3::X * 2.0),
+        "a later value waits its turn"
+    );
+}
+
+/// The rising edges the app turns into handle_reset_view (`@setcam_unlock`)
+/// and into the RLVa view's reset (setCameraOverride → switchCameraPreset).
+#[test]
+fn rlva_camera_toggles_report_the_unlock_and_the_rlva_view_once() {
+    let mut r = enabled();
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@setcam_unlock=n");
+    assert_eq!(r.camera_toggles(), (true, false));
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@setcam_eyeoffset:1/0/0=n");
+    assert_eq!(r.camera_toggles(), (false, true));
+    assert_eq!(r.camera_toggles(), (false, false));
+    command(&mut r, A, "@clear");
+    assert_eq!(r.camera_toggles(), (false, false));
+    r.camera_force(A, &Command::parse("setcam_focusoffset:0/0/1=force").unwrap());
+    assert_eq!(r.camera_toggles(), (false, true), "a forced offset puts RLVa's view on too");
+    command(&mut r, A, "@setcam_unlock=n");
+    assert_eq!(r.camera_toggles(), (true, false));
+}
+
+/// RlvBehaviourSetCamFovHandler: the user's lens is kept at the first fov
+/// limit and given back at the last; a forced one was never persisted.
+#[test]
+fn rlva_fov_limits_give_the_user_lens_back_when_the_last_goes() {
+    let mut r = enabled();
+    let mut fov = 0.7;
+    assert!(!r.track_fov_limits(&mut fov));
+    command(&mut r, A, "@setcam_fovmin:1=n");
+    command(&mut r, B, "@setcam_fovmax:1.5=n");
+    assert!(!r.track_fov_limits(&mut fov));
+    fov = 1.2;
+    command(&mut r, A, "@setcam_fovmin:1=y");
+    assert!(!r.track_fov_limits(&mut fov), "one limit is still held");
+    command(&mut r, B, "@setcam_fovmax:1.5=y");
+    assert!(r.track_fov_limits(&mut fov));
+    assert_eq!(fov, 0.7);
+    r.camera_force(A, &Command::parse("setcam_fov:0.4=force").unwrap());
+    command(&mut r, A, "@setcam_fovmax:2=n");
+    r.track_fov_limits(&mut fov);
+    command(&mut r, A, "@clear");
+    assert!(r.track_fov_limits(&mut fov));
+    assert_eq!(fov, crate::camera::DEFAULT_FOV);
+}
+
+/// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: llmax(F_APPROXIMATELY_ZERO, dist).
+#[test]
+fn rlva_camera_focus_keeps_the_legacy_minimum_distance() {
+    let at = glam::Vec3::new(10.0, 20.0, 30.0);
+    let request = camera::FocusRequest::parse("10/20/30;0").unwrap();
+    let camera = request.camera(at, glam::Vec3::ZERO, at + glam::Vec3::X).unwrap();
+    assert!((camera.distance(at) - 1e-5).abs() < 1e-6);
 }

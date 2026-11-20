@@ -525,9 +525,28 @@ pub struct Rlva {
     /// The point each object was last seen attached to, per account.
     pub last_points: last_points::LastPoints,
     pub recovery: Vec<NetCommand>,
+    /// The ENV_EDIT instance RlvEnvironment works on while `@setenv=n` is
+    /// held (getTargetEnvironment, rlvenvironment.cpp): its holder and
+    /// fixed sky, its fixed water, its day. Without the lock RLVa writes
+    /// into the user's own local environment (`eep::rlva_local_sky`).
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,
     pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
+    /// The day of `environment_day` is held at the fixed sky of
+    /// `environment` (DayInstance::NO_ANIMATE_SKY: a sky set over a day
+    /// keeps the day in the instance, for the next `daytime`).
+    pub environment_day_sky_fixed: bool,
+    /// The user's field of view when the first `@setcam_fovmin` /
+    /// `@setcam_fovmax` came, given back when the last goes
+    /// (RlvBehaviourSetCamFovHandler's `s_nLastCameraAngle`).
+    pub fov_before_limits: Option<f32>,
+    /// `@setcam_unlock` and RLVa's own view (CAMERA_RLV_SETCAM_VIEW) as the
+    /// camera last saw them (`camera_toggles`).
+    camera_seen: (bool, bool),
+    /// When each value of the modifiers without a comparator was added
+    /// (`camera_rule`): the first one added wins.
+    modifier_order: BTreeMap<(Uuid, String, String), u64>,
+    modifier_seq: u64,
     pub environment_request: Option<(Uuid, Command)>,
     pub pseudo_sex: Option<String>,
     pub resolution_divisor: Option<u32>,
@@ -605,6 +624,7 @@ impl Rlva {
         self.enabled = enabled;
         self.rules.clear();
         self.issued.clear();
+        self.modifier_order.clear();
         self.snapshot = None;
         self.rename = Default::default();
         self.offers = Default::default();
@@ -647,16 +667,23 @@ impl Rlva {
         if self.self_detach.is_some_and(|(id, _)| id == source) {
             self.self_detach = None;
         }
-        if self.environment.is_some_and(|(id, _)| id == source) {
-            self.clear_environment();
-        }
         if self.environment_request.as_ref().is_some_and(|(id, _)| *id == source) {
             self.environment_request = None;
         }
         self.lookups.remove(&source);
         self.issued.remove(&source);
+        self.modifier_order.retain(|(id, _, _), _| *id != source);
         if self.rules.remove(&source).is_some() {
             self.revision = self.revision.wrapping_add(1);
+        }
+        // RlvBehaviourToggleHandler<RLV_BHVR_SETENV> (rlvhandler.cpp): ENV_EDIT
+        // goes with the last `@setenv=n`, not with the object that wrote it;
+        // a force made without the lock is the user's own local environment
+        // and stays
+        if !self.has("setenv") && (self.environment.is_some() || self.environment_water.is_some() || self.environment_day.is_some()) {
+            let request = self.environment_request.take();
+            self.clear_environment();
+            self.environment_request = request;
         }
         if was_fov_locked && !self.has("setcam_fovmin") && !self.has("setcam_fovmax") {
             self.camera_values.remove("setcam_fov");
@@ -897,6 +924,7 @@ impl Rlva {
                     }
                     let added = rules.insert(rule.clone());
                     if added {
+                        self.note_modifier_added(source, &rule);
                         self.issued.entry(source).or_default().push(rule);
                     }
                     added

@@ -2401,6 +2401,7 @@ LUT_3D_SIZE {n}
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
                 pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
                     image: shown.image.clone(),
@@ -2488,6 +2489,7 @@ LUT_3D_SIZE {n}
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
                 pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
                     image: shown.image.clone(),
@@ -2630,6 +2632,12 @@ LUT_3D_SIZE {n}
         if !self.panels.snapshot {
             // the next opening of the window starts on the avatar
             self.snapshots.ui.free.on = false;
+        }
+        // RLVa holds the view: the free camera ends and does not start
+        // (`Rlva::camera_view_held`)
+        if self.world.rlva.camera_view_held() {
+            self.snapshots.ui.free.on = false;
+            self.director.free = false;
         }
         // (the Director's window has the same switch, `director.free`)
         let want = ((self.panels.snapshot && self.snapshots.ui.free.on) || self.director.free) && self.in_world();
