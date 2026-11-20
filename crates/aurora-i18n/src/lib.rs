@@ -246,6 +246,23 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
     let chinese = candidate.eq_ignore_ascii_case("zh");
     find(candidate)
         .or_else(|| chinese.then(|| find("zh-Hans")).flatten())
+        // Norwegian: `no` (the macrolanguage, which some systems report) and
+        // Nynorsk read the Bokmål catalogue before English
+        .or_else(|| {
+            ["no", "nn"]
+                .iter()
+                .any(|code| candidate.eq_ignore_ascii_case(code))
+                .then(|| find("nb"))
+                .flatten()
+        })
+        // Portuguese outside Brazil (Portugal, Angola, Mozambique…) writes
+        // the European way: a region with no catalogue of its own reads
+        // pt-PT; `pt` alone takes the first catalogue, as below
+        .or_else(|| {
+            (candidate.eq_ignore_ascii_case("pt") && normalized.len() > candidate.len())
+                .then(|| find("pt-PT"))
+                .flatten()
+        })
         // another region of the same language before English (pt-PT reads
         // pt-BR), as the Legacy Viewer's single `pt` folder serves both;
         // Chinese scripts are chosen above, never swapped here
@@ -341,6 +358,33 @@ pub fn grid_language() -> &'static str {
 /// The primary subtag of a catalogue code: `zh-Hans` → `zh`, `pt-BR` → `pt`.
 pub fn grid_code(code: &str) -> &str {
     code.split(['-', '_']).next().filter(|base| !base.is_empty()).unwrap_or("en")
+}
+
+/// Upper case of an interface text in the language in use: see `upper_in`.
+pub fn upper(text: &str) -> String {
+    upper_in(language(), text)
+}
+
+/// Upper case of `text` in `language`. Turkish and Azerbaijani write the
+/// dotted `i` as `İ` in capitals (only the dotless `ı` becomes `I`), which
+/// `str::to_uppercase` does not know: "bilgi" must read "BİLGİ", not
+/// "BILGI". Every other language takes the standard mapping.
+pub fn upper_in(language: &str, text: &str) -> String {
+    match grid_code(language) {
+        "tr" | "az" => text.replace('i', "İ").to_uppercase(),
+        _ => text.to_uppercase(),
+    }
+}
+
+/// `upper` as a method, for the titles and labels shown in capitals.
+pub trait UiUpper {
+    fn ui_upper(&self) -> String;
+}
+
+impl UiUpper for str {
+    fn ui_upper(&self) -> String {
+        upper(self)
+    }
 }
 
 pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str)> {

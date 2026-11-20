@@ -32,6 +32,7 @@ use crate::world::place_details::{Place as PlaceProfile, Source as Profile, Stag
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::WorldMap;
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -204,7 +205,7 @@ fn paint_icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
 
 /// A small caps section title ("LANDMARK FOLDERS").
 fn section(ui: &egui::Ui, p: &Palette, text: &str, at: Pos2) {
-    let g = line(ui, &text.to_uppercase(), 11.0, p.muted, true, 400.0);
+    let g = line(ui, &text.ui_upper(), 11.0, p.muted, true, 400.0);
     ui.painter().galley(at, g, p.muted);
 }
 

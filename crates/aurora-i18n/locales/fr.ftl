@@ -10512,7 +10512,11 @@ script-edit-outdent = Diminuer le retrait (Maj+Tab)
 script-selection-edit-failed = Modification impossible : script trop long ou commentaire de bloc déjà présent. Utilisez // pour des commentaires imbriqués.
 script-fold-collapse = Replier le bloc
 script-fold-expand = Déplier le bloc
-script-fold-lines = lignes
+script-fold-line-count =
+    { $count ->
+        [one] { $count } ligne
+        *[other] { $count } lignes
+    }
 script-fold-all = Tout replier
 script-expand-all = Tout déplier
 loading-residents = { $count ->
