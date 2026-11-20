@@ -358,8 +358,26 @@ fn in_place_the_serial_counts_only_with_every_other_item_unchanged() {
         save_outcome(std::slice::from_ref(&before[0]), &[], &original, "Box", 2, true),
         Saved::Pending
     );
-    assert_eq!(serial_moves(7, 9), 2);
-    assert_eq!(serial_moves(i16::MAX, i16::MIN), 1);
+    assert_eq!(serial_moves(7, 9), Some(2));
+    assert_eq!(serial_moves(i16::MAX, i16::MIN), Some(1));
+}
+
+#[test]
+fn contents_serial_order_rejects_old_and_ambiguous_replies_but_allows_wraps() {
+    for (from, to, expected) in [
+        (7, 7, Some(0)),
+        (7, 9, Some(2)),
+        (i16::MAX, i16::MIN, Some(1)),
+        (i16::MAX, i16::MIN + 1, Some(2)),
+        (-1, 0, Some(1)),
+        (9, 8, None),
+        (0, -1, None),
+        (i16::MIN, i16::MAX, None),
+        (0, i16::MIN, None),
+        (i16::MIN, 0, None),
+    ] {
+        assert_eq!(serial_moves(from, to), expected, "{from} -> {to}");
+    }
 }
 
 #[test]
@@ -1189,4 +1207,61 @@ fn a_child_prim_that_comes_late_is_still_opened_before_the_save() {
     let pebble = child.iter().find(|i| i.asset_type == AT_OBJECT).expect("pebble");
     assert_eq!(pebble.everyone_mask, perm::COPY, "the late child's object was opened and saved");
     assert_eq!(h.rezzed_left(), 0);
+}
+
+#[test]
+fn a_stale_inventory_reply_never_confirms_a_pending_save() {
+    // Before the snapshot, an older asset, and a reply older than the last
+    // accepted listing but not older than the snapshot: all stay pending.
+    for (newer_first, older_asset) in [(false, false), (false, true), (true, true)] {
+        let mut h = Harness::new();
+        h.drop = Box::new(|c, _| {
+            matches!(c, BuildCmd::DeRez { destination, .. }
+            if *destination == derez::SAVE_INTO_TASK_INVENTORY)
+        });
+        h.start(shared());
+        let mut target = None;
+        for _ in 0..2000 {
+            if let Some(job) = h.tool.ui.bulk.deep.as_ref()
+                && job.stage == Stage::Save
+                && job.sent
+                && let Some((items, serial, _)) = job.snapshot.as_ref()
+                && let Some(frame) = job.top()
+                && let Some(original) = frame.copy.as_ref()
+                && let Some((source, _)) = frame.source
+            {
+                target = Some((source, frame.object, original.item_id, items.clone(), *serial, job.report.objects));
+                break;
+            }
+            if !h.tick() {
+                break;
+            }
+        }
+        let (source, copy, original, mut items, serial, saved_before) = target.expect("a save was attempted");
+        if newer_first {
+            h.deliver(NetEvent::TaskInventory {
+                object: source,
+                serial: Some(serial.wrapping_add(1)),
+                result: Ok(items.clone()),
+            });
+            h.tick();
+        }
+        if older_asset {
+            items.iter_mut().find(|i| i.item_id == original).expect("original item").asset_id = Uuid::new_v4();
+        }
+        h.deliver(NetEvent::TaskInventory {
+            object: source,
+            serial: Some(if newer_first { serial } else { serial.wrapping_sub(1) }),
+            result: Ok(items),
+        });
+        h.tick();
+        h.tick();
+        let job = h.tool.ui.bulk.deep.as_ref().expect("active job");
+        assert_eq!(job.stage, Stage::Save, "newer first: {newer_first}, older asset: {older_asset}");
+        assert_eq!(job.report.objects, saved_before, "the dropped save was not confirmed");
+        let idx = h.world.objects.index_of_uuid(&copy).expect("working copy stays in world");
+        let local = h.world.objects.get(idx).expect("working copy").key.local_id;
+        assert!(!h.sent.iter().any(|c| matches!(c, BuildCmd::DeRez { destination, local_ids, .. }
+            if *destination == derez::TRASH && local_ids.contains(&local))));
+    }
 }

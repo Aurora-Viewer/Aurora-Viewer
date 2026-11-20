@@ -292,10 +292,13 @@ pub fn others_unchanged(before: &[TaskItem], after: &[TaskItem], original: Uuid)
     others(before) == others(after)
 }
 
-/// How far a contents listing's serial moved, from `from` to `to` (it
-/// wraps).
-pub fn serial_moves(from: i16, to: i16) -> u16 {
-    (to as u16).wrapping_sub(from as u16)
+/// Forward distance on the 16-bit serial ring. A backward or ambiguous
+/// half-ring jump is stale, not evidence of a save. The Legacy Viewer's
+/// LLViewerObject::processTaskInv / processTaskInvFile likewise reject old
+/// listings (indra/newview/llviewerobject.cpp); wrapping stays valid here.
+pub fn serial_moves(from: i16, to: i16) -> Option<u16> {
+    let moves = (to as u16).wrapping_sub(from as u16);
+    (moves < 1 << 15).then_some(moves)
 }
 
 /// Why processing an object stopped.
@@ -1475,6 +1478,16 @@ impl Job {
                 let Some((before, serial, saved_as)) = self.snapshot.as_ref() else {
                     return Ok(Some(Stage::Delete));
                 };
+                // Ignore stale replies before looking at item ids/assets too:
+                // an older asset is not proof of a newly saved version.
+                let moves = serial_moves(*serial, inv.serial)
+                    .filter(|_| self.serial_seen.is_none_or(|(seen, _)| serial_moves(seen, inv.serial).is_some()));
+                let Some(moves) = moves else {
+                    if self.poll(now) {
+                        Self::read(tool, world, source, true)?;
+                    }
+                    return Ok(None);
+                };
                 let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
                 if self.serial_seen.is_none_or(|(seen, _)| seen != inv.serial) {
                     self.serial_seen = Some((inv.serial, now));
@@ -1482,7 +1495,7 @@ impl Job {
                 let quiet = self
                     .serial_seen
                     .is_some_and(|(_, since)| now.saturating_duration_since(since) >= SERIAL_QUIET);
-                let outcome = save_outcome(before, &items, &original, saved_as, serial_moves(*serial, inv.serial), quiet);
+                let outcome = save_outcome(before, &items, &original, saved_as, moves, quiet);
                 if group {
                     // the saved item must still hold several objects (in
                     // place, its record came with the serial's second move)
