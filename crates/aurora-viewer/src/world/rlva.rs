@@ -542,6 +542,10 @@ pub struct Rlva {
     /// maturity preference is in sync: LLAgent::startTeleportRequest runs a
     /// pending request without asking RLVa again (`App::update`).
     pub teleport_already_checked: bool,
+    /// What a script question RLVa stripped says once it is answered yes:
+    /// the "rlv_blocked" of process_script_question's payload
+    /// (llviewermessage.cpp), by task and item, the latest 16.
+    pub(crate) permission_notices: Vec<(Uuid, Uuid, String)>,
     inventory_fetches: BTreeMap<Uuid, (std::time::Instant, u8)>,
     pub revision: u64,
     gc: Option<std::time::Instant>,

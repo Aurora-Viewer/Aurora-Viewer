@@ -4064,7 +4064,12 @@ impl World {
                 experience,
                 region,
             } => {
+                let requested = questions;
                 let (questions, auto_accept) = self.rlva_script_permissions(task_id, questions);
+                // process_script_question keeps what RLVa stripped for the
+                // answer (RlvUtil::filterScriptQuestions, "rlv_blocked")
+                let notice = self.rlva_permission_notice(requested, questions, &object_name);
+                self.rlva_hold_permission_notice(task_id, item_id, notice);
                 if auto_accept && experience.is_nil() {
                     self.rlva.out.push(aurora_net::NetCommand::ScriptAnswer {
                         task_id,
@@ -4072,6 +4077,8 @@ impl World {
                         questions,
                         region,
                     });
+                    // forceResponse(YES): answered yes at once
+                    self.rlva_answer_permission_notice(task_id, item_id, true);
                     return None;
                 }
                 // process_script_question: an experience's question waits
@@ -5967,6 +5974,19 @@ impl World {
                 self.notifications.ask_group_fee(id);
             }
             return (Vec::new(), None);
+        }
+        // script_question_cb: a yes says what RLVa stripped from the
+        // question (RlvUtil::notifyBlocked with its "rlv_blocked")
+        if let Some(notifications::Data::Permissions { task, item, .. }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
+        {
+            self.rlva_answer_permission_notice(*task, *item, matches!(r, notifications::Response::Accept));
         }
         // notify_cautioned_script_question: the answer to a caution
         // question is told in the nearby chat
