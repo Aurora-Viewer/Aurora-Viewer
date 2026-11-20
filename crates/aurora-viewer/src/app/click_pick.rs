@@ -547,10 +547,22 @@ impl App {
                     None
                 }
             });
-        if picked.tag.is_some() || picked.particles.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
-            None
-        } else {
-            Some(picked)
+        let hud = object.map(|idx| self.world.hud_root(idx).is_some());
+        match overlay_pick(
+            picked.tag.is_some(),
+            picked.particles.is_some(),
+            hud,
+            picked.visible_point().is_some(),
+        ) {
+            OverlayPick::Keep => Some(picked),
+            OverlayPick::Drop => None,
+            // the particle stays picked, along the whole ray
+            OverlayPick::Particles => Some(Picked {
+                depth: None,
+                drawn: Default::default(),
+                tag: None,
+                ..picked
+            }),
         }
     }
 
@@ -1110,6 +1122,33 @@ impl DemoClicks {
     }
 }
 
+/// What a click keeps under an overlay that blocks the touch.
+#[derive(Debug, PartialEq)]
+enum OverlayPick {
+    Keep,
+    Drop,
+    /// The particles only: the world hit goes.
+    Particles,
+}
+
+/// LLPickInfo::fetchResults (indra/newview/llviewerwindow.cpp) under an
+/// overlay that blocks the touch: whatever the ray hit that is not a HUD
+/// attachment is dropped, the ground included (the land is a surface patch
+/// object there) and an avatar's name tag (LLPipeline::lineSegmentIntersectInWorld
+/// returns the avatar for it). The particle pick is kept: it then runs along
+/// the whole ray. `hud` is None when no object was hit, `surface` whether
+/// something was (the ground, the water).
+fn overlay_pick(tag: bool, particles: bool, hud: Option<bool>, surface: bool) -> OverlayPick {
+    if hud == Some(true) && !tag {
+        return OverlayPick::Keep;
+    }
+    match (tag || hud.is_some() || surface, particles) {
+        (false, _) => OverlayPick::Keep,
+        (true, true) => OverlayPick::Particles,
+        (true, false) => OverlayPick::Drop,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1417,5 +1456,32 @@ mod tests {
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));
         let cells: std::collections::HashSet<(u32, u32)> = places.iter().map(|(u, v)| ((u * 8.0) as u32, (v * 8.0) as u32)).collect();
         assert!(cells.len() > 56, "{} of 64 cells", cells.len());
+    }
+
+    /// LLPickInfo::fetchResults: under a blocking overlay a HUD is still
+    /// touched; objects and the ground are not; a click on the sky hit
+    /// nothing to drop.
+    #[test]
+    fn rlva_overlay_drops_ground_and_world_picks_but_not_huds() {
+        assert_eq!(overlay_pick(false, false, Some(true), true), OverlayPick::Keep, "a HUD");
+        assert_eq!(overlay_pick(false, false, Some(false), true), OverlayPick::Drop, "an object");
+        assert_eq!(overlay_pick(false, false, None, true), OverlayPick::Drop, "the ground");
+        assert_eq!(overlay_pick(false, false, None, false), OverlayPick::Keep, "the sky");
+        assert_eq!(overlay_pick(true, false, None, false), OverlayPick::Drop, "a name tag");
+    }
+
+    /// The particle pick of LLPickInfo::fetchResults is not under the
+    /// overlay's test: a particle in front of an object stays picked.
+    #[test]
+    fn rlva_overlay_keeps_the_particle_pick() {
+        assert_eq!(
+            overlay_pick(false, true, Some(false), true),
+            OverlayPick::Particles,
+            "before an object"
+        );
+        assert_eq!(overlay_pick(false, true, None, true), OverlayPick::Particles, "before the ground");
+        assert_eq!(overlay_pick(true, true, None, false), OverlayPick::Particles, "before a name tag");
+        assert_eq!(overlay_pick(false, true, None, false), OverlayPick::Keep, "against the sky");
+        assert_eq!(overlay_pick(false, true, Some(true), true), OverlayPick::Keep, "on a HUD");
     }
 }

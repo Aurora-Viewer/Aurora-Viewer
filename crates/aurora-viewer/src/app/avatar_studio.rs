@@ -50,7 +50,7 @@ impl App {
             self.world.avatar_studio = false;
             return;
         }
-        let restricted = self.world.rlva.camera_restricted();
+        let restricted = self.world.rlva_studio_refused();
         let switch = if !self.in_world() || self.world.teleporting || renderer.vr_engaged() || restricted {
             self.panels.avatar_studio = false;
             self.studio_transition.cancel();

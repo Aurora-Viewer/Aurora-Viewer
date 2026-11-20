@@ -55,12 +55,14 @@ const LEGACY: &[&str] = &[
     "cloudscroll",
 ];
 
+/// rlvGetColorComponentFromCharacter (rlvenvironment.cpp): r/x, g/y, b/d
+/// (the pre-EEP cloud "density" component) and i; `z` is not one.
 fn component(name: &str) -> Option<(&str, usize)> {
     let (base, suffix) = name.split_at_checked(name.len().checked_sub(1)?)?;
     let index = match suffix {
         "r" | "x" => 0,
         "g" | "y" => 1,
-        "b" | "z" => 2,
+        "b" | "d" => 2,
         "i" => 3,
         _ => return None,
     };
@@ -73,7 +75,7 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
             || COLORS.contains(&n)
             || TEXTURES.contains(&n)
             || matches!(n, "cloudscroll" | "daytime")
-            || (set && matches!(n, "asset" | "preset" | "daycycle" | "reset"))
+            || (set && matches!(n, "asset" | "preset" | "daycycle"))
             || component(n).is_some()
     })
 }
@@ -92,7 +94,7 @@ pub fn command_names(set: bool) -> Vec<String> {
         .map(|name| format!("{prefix}{name}"))
         .collect();
     for base in LEGACY {
-        for suffix in ["r", "g", "b", "x", "y", "z", "i"] {
+        for suffix in ["r", "g", "b", "x", "y", "d", "i"] {
             let name = format!("{prefix}{base}{suffix}");
             if supports(&name, set) {
                 names.push(name);
@@ -100,7 +102,7 @@ pub fn command_names(set: bool) -> Vec<String> {
         }
     }
     if set {
-        names.extend(["asset", "preset", "daycycle", "reset"].map(|name| format!("{prefix}{name}")));
+        names.extend(["asset", "preset", "daycycle"].map(|name| format!("{prefix}{name}")));
     }
     names
 }
@@ -261,14 +263,14 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
         if !azimuth.is_finite() || !elevation.is_finite() {
             return None;
         }
-        let rotation = Quat::from_rotation_z(azimuth) * Quat::from_rotation_y(-elevation);
+        let rotation = azimuth_altitude_quat(azimuth, elevation);
         if moon {
             s.moon_rotation = rotation;
         } else {
             s.sun_rotation = rotation;
         }
         if matches!(name, "eastangle" | "sunmoonposition") {
-            s.moon_rotation = Quat::from_rotation_z(azimuth + PI) * Quat::from_rotation_y(elevation);
+            s.moon_rotation = azimuth_altitude_quat(azimuth + PI, -elevation);
         }
     }
     Some(format!(
@@ -280,6 +282,15 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
             _ => elevation,
         }
     ))
+}
+
+/// convert_azimuth_and_altitude_to_quat (indra/llinventory/llsettingssky.cpp):
+/// the shortest rotation from +X to the direction, so that the sun and moon
+/// textures keep the Legacy Viewer's roll. Opposite +X its axis is zero and
+/// the Legacy Viewer's rotation degenerates; glam picks an axis instead.
+fn azimuth_altitude_quat(azimuth: f32, altitude: f32) -> Quat {
+    let dir = Vec3::new(azimuth.cos() * altitude.cos(), azimuth.sin() * altitude.cos(), altitude.sin());
+    Quat::from_rotation_arc(Vec3::X, dir.normalize_or(Vec3::X))
 }
 
 /// rlvGetAzimuth/ElevationFromDirectionVector uses an exact zero test and
@@ -315,57 +326,59 @@ impl World {
         if set && self.rlva.has_except("setenv", source) {
             return true;
         }
-        if set {
-            // a choice the user made just before this force comes first
-            self.rlva_yield_environment();
-        }
+        // getTargetEnvironment: ENV_EDIT while `@setenv=n` was held when the
+        // command came, the user's ENV_LOCAL otherwise
+        let locked = command.environment_locked;
         if set && matches!(name, "asset" | "preset" | "daycycle") {
             self.rlva.environment_request = Some((source, command.clone()));
             return true;
         }
-        // `@setenv_reset=force` is not in the Legacy Viewer's RLVa: it comes
-        // from the RestrainedLove viewer, where it is a synonym of
-        // `@setenv_daytime:-1=force`. Supported here as the same reset.
-        if set && name == "reset" {
-            self.rlva_reset_environment(command.environment_locked);
-            return true;
-        }
         if name == "daytime" {
             if let Param::Reply(channel) = command.param {
+                // registerGetEnvFn("daytime"): -1 when the target
+                // environment has no instance (getEnvironmentFixedSky is
+                // null), 2 otherwise, a day cycle included
+                let exists = if self.rlva.has("setenv") {
+                    self.rlva.environment.is_some() || self.rlva.environment_day.is_some()
+                } else {
+                    self.eep.has_local()
+                };
                 self.rlva.reply(
                     channel,
                     &command.behaviour,
-                    if self.rlva.environment_day.is_some() || (self.rlva.environment.is_none() && !self.eep.has_fixed_sky()) {
-                        "-1.000000"
-                    } else {
-                        "2.000000"
-                    }
-                    .to_owned(),
+                    if exists { "2.000000" } else { "-1.000000" }.to_owned(),
                 );
             } else if let Some(value) = number(&command.option) {
                 if value == -1.0 {
-                    self.rlva_reset_environment(command.environment_locked);
+                    self.rlva_reset_environment(locked);
                 } else if (0.0..=1.0).contains(&value) {
-                    let sky = self
-                        .rlva
-                        .environment_day
-                        .as_ref()
-                        .map(|d| d.sky_at(value, 1))
-                        .or_else(|| self.eep.day_sky_at(value, self.agent.position.z));
+                    // registerSetEnvFn("daytime"): ENV_EDIT's own day only
+                    // while locked, the nearest day otherwise; nothing
+                    // happens without one
+                    let sky = if locked {
+                        self.rlva.environment_day.as_ref().map(|d| d.sky_at(value, 0))
+                    } else {
+                        self.eep.rlva_daytime_sky(value)
+                    };
                     if let Some(sky) = sky {
-                        self.rlva.environment = Some((source, sky));
-                        self.rlva.environment_day = None;
+                        self.rlva_set_sky(source, sky, locked);
                     }
                 }
             }
             return true;
         }
-        let mut sky = self.rlva_environment_frames(self.eep.current()).0;
+        // a force reads the target it writes (getTargetSky), a reply the
+        // target of the moment it is asked
+        let target_locked = if set { locked } else { self.rlva.has("setenv") };
+        let mut sky = if target_locked {
+            self.rlva_environment_frames(self.eep.current()).0
+        } else {
+            self.eep.rlva_target_sky()
+        };
         let result = property(&mut sky, name, set.then_some(command.option.as_str()));
         if set {
             if result.is_some() {
-                self.rlva.environment = Some((source, sky));
-                self.rlva.environment_day = None;
+                self.rlva_set_sky(source, sky, locked);
             }
         } else if let Param::Reply(channel) = command.param {
             self.rlva.reply(channel, &command.behaviour, result.unwrap_or_default());
@@ -373,29 +386,51 @@ impl World {
         true
     }
 
+    /// A fixed sky for the target environment: ENV_EDIT while locked (over
+    /// its day, which stays for the next `daytime`), the user's ENV_LOCAL
+    /// otherwise (getTargetSky(true) and setEnvironment(fixedEnvironment_t),
+    /// rlvenvironment.cpp, llenvironment.cpp).
+    fn rlva_set_sky(&mut self, source: Uuid, sky: SkyFrame, locked: bool) {
+        if locked {
+            self.rlva.environment = Some((source, sky));
+            self.rlva.environment_day_sky_fixed = self.rlva.environment_day.is_some();
+        } else {
+            self.eep.rlva_local_sky(sky);
+        }
+    }
+
     /// RlvEnvironment's `daytime` -1: back to the shared environment, or
     /// only RLVa's sky while `@setenv=n` is held (getTargetEnvironment).
     fn rlva_reset_environment(&mut self, locked: bool) {
-        self.rlva.clear_environment();
-        if !locked {
+        if locked {
+            self.rlva.clear_environment();
+        } else {
             // a later `@setenv=n` in the same message already locked it
             let held = std::mem::replace(&mut self.eep.rlva_locked, false);
             self.eep.clear_local();
             self.eep.rlva_locked = held;
-            // RLVa's own reset is not a choice of the user's
-            self.eep.take_local_choice();
         }
     }
 
-    /// A sky forced while no `@setenv=n` is held gives way to the user's
-    /// next choice of environment, the shared one included: RlvEnvironment
-    /// writes such a force into the local environment (getTargetEnvironment:
-    /// ENV_LOCAL while canChangeEnvironment, rlvenvironment.cpp), which that
-    /// choice replaces. Under a lock nothing is chosen, and the sky stays.
-    pub fn rlva_yield_environment(&mut self) {
-        if self.eep.take_local_choice() && !self.rlva.has("setenv") {
-            self.rlva.clear_environment();
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SETENV> (rlvhandler.cpp): the
+    /// first `@setenv=n` makes ENV_EDIT a fixed copy of the sky shown, and
+    /// setEnvironment(fixedEnvironment_t) freezes the water shown with it.
+    /// Called whenever rules may have changed: on the toggle to locked only
+    /// (onCommandToggle runs for the first holder), never again while held.
+    pub fn rlva_sync_environment_lock(&mut self) {
+        let was = self.eep.rlva_locked;
+        self.eep.rlva_locked = self.rlva.has("setenv");
+        if was || !self.eep.rlva_locked {
+            return;
         }
+        let Some(holder) = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id) else {
+            return;
+        };
+        let (sky, water) = self.rlva_environment_frames(self.eep.current());
+        self.rlva.environment = Some((holder, sky));
+        self.rlva.environment_water = Some(water);
+        self.rlva.environment_day = None;
+        self.rlva.environment_day_sky_fixed = false;
     }
 
     pub fn rlva_environment_frames(
@@ -415,10 +450,11 @@ impl World {
                 super::super::eep::DEFAULT_DAY_LENGTH
             };
             let pos = super::super::eep::cycle_position(now, length, day.offset);
-            return (
-                day.sky_at(pos, day.track_for_altitude(&self.eep.altitudes(), self.agent.position.z)),
-                self.rlva.environment_water.unwrap_or_else(|| day.water_at(pos)),
-            );
+            let sky = match self.rlva.environment {
+                Some((_, sky)) if self.rlva.environment_day_sky_fixed => sky,
+                _ => day.sky_at(pos, day.track_for_altitude(&self.eep.altitudes(), self.agent.position.z)),
+            };
+            return (sky, self.rlva.environment_water.unwrap_or_else(|| day.water_at(pos)));
         }
         (
             self.rlva.environment.map_or(base.0, |(_, sky)| sky),
@@ -432,6 +468,7 @@ impl super::Rlva {
         self.environment = None;
         self.environment_water = None;
         self.environment_day = None;
+        self.environment_day_sky_fixed = false;
         self.environment_request = None;
     }
 }
@@ -440,13 +477,13 @@ impl super::Rlva {
 mod conformance_tests {
     use super::*;
 
-    /// #3762: a sky forced while no `@setenv=n` is held gives way to the
-    /// user's next choice of environment, the shared one included; a force
-    /// that comes after the choice is kept; under the lock nothing is chosen
-    /// and the sky stays.
+    /// RlvEnvironment::getTargetEnvironment (rlvenvironment.cpp): without
+    /// `@setenv=n` a force writes the user's own local environment (ENV_LOCAL),
+    /// which the user's next choice replaces and which outlives the object;
+    /// under the lock it writes ENV_EDIT, a fixed copy of the sky shown at
+    /// the toggle, that the release drops.
     #[test]
-    fn rlva_unlocked_forced_sky_yields_to_the_next_environment_choice() {
-        use crate::world::eep_env::SourceRights;
+    fn rlva_environment_forces_target_the_local_environment_unless_locked() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.rlva.configure(true);
         let say = |world: &mut World, text: &str| {
@@ -462,40 +499,32 @@ mod conformance_tests {
             });
             world.rlva_pending();
         };
-        let force = |world: &mut World| {
-            say(world, "@setenv_ambient:0.2/0.4/0.6=force");
-            assert!(world.rlva.environment.is_some());
-        };
-        // a sky of the user's own
-        force(&mut world);
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-        world.rlva_yield_environment();
-        assert!(world.rlva.environment.is_none(), "a sky picked replaces the forced one");
-        // the shared environment, with no local one left to drop
-        world.eep.clear_local();
-        world.rlva_yield_environment();
-        assert!(!world.eep.has_local());
-        force(&mut world);
-        world.eep.clear_local();
-        world.rlva_yield_environment();
-        assert!(world.rlva.environment.is_none(), "so does the shared environment");
-        // a force that follows a choice is the newer of the two
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-        force(&mut world);
-        world.rlva_yield_environment();
-        assert!(world.rlva.environment.is_some());
-        // RLVa's own reset is not a choice: the next force stays
-        say(&mut world, "@setenv_daytime:-1=force");
-        assert!(world.rlva.environment.is_none() && !world.eep.has_local());
+        // unlocked: the user's local environment, no RLVa sky of its own
         say(&mut world, "@setenv_ambient:0.2/0.4/0.6=force");
-        world.rlva_yield_environment();
-        assert!(world.rlva.environment.is_some());
-        // under the lock the choice is refused, and the sky stays
-        say(&mut world, "@setenv=n");
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        assert!(world.rlva.environment.is_none() && world.eep.has_local());
+        // the user's next choice replaces it, the shared environment included
         world.eep.clear_local();
-        world.rlva_yield_environment();
-        assert!(world.rlva.environment.is_some() && !world.eep.has_local());
+        assert!(!world.eep.has_local());
+        // RLVa's reset goes back to the shared environment too
+        say(&mut world, "@setenv_ambient:0.2/0.4/0.6=force");
+        say(&mut world, "@setenv_daytime:-1=force");
+        assert!(!world.eep.has_local());
+        // the lock copies the sky and freezes the water shown
+        say(&mut world, "@setenv=n");
+        let copy = world.rlva.environment.map(|(_, sky)| sky).expect("ENV_EDIT at the toggle");
+        assert!(world.rlva.environment_water.is_some());
+        say(&mut world, "@setenv_ambient:0.2/0.4/0.6=force");
+        let forced = world.rlva.environment.map(|(_, sky)| sky).expect("ENV_EDIT kept");
+        assert_ne!(forced.ambient, copy.ambient);
+        assert!(!world.eep.has_local(), "the user's environment is not touched under the lock");
+        // the user's choices are refused while held
+        world
+            .eep
+            .apply_local_sky(SkyFrame::default(), crate::world::eep_env::SourceRights::Flags(0));
+        assert!(!world.eep.has_local());
+        // the release drops ENV_EDIT
+        say(&mut world, "@setenv=y");
+        assert!(world.rlva.environment.is_none() && world.rlva.environment_water.is_none());
     }
 
     #[test]
@@ -558,5 +587,23 @@ mod conformance_tests {
                 assert!((actual - value.parse::<f32>().unwrap()).abs() < 1e-5, "{component}");
             }
         }
+    }
+
+    /// convert_azimuth_and_altitude_to_quat (llsettingssky.cpp): the
+    /// shortest arc from +X, so no twist about the X axis rolls the sun's or
+    /// the moon's texture.
+    #[test]
+    fn rlva_sun_and_moon_angles_turn_by_the_shortest_arc() {
+        for (azimuth, altitude) in [(0.0, 0.0), (FRAC_PI_2, PI / 4.0), (2.5, -0.7), (4.0, 1.2)] {
+            let q = azimuth_altitude_quat(azimuth, altitude);
+            let dir = Vec3::new(azimuth.cos() * altitude.cos(), azimuth.sin() * altitude.cos(), altitude.sin());
+            assert!((q * Vec3::X - dir).length() < 1e-5, "{azimuth} {altitude}");
+            // the arc's axis is X × dir: nothing along X
+            assert!(q.xyz().dot(Vec3::X).abs() < 1e-5, "{azimuth} {altitude}: a roll");
+        }
+        let mut sky = SkyFrame::default();
+        property(&mut sky, "sunazimuth", Some("1.5707963"));
+        property(&mut sky, "sunelevation", Some("0.7853982"));
+        assert!(sky.sun_rotation.xyz().dot(Vec3::X).abs() < 1e-4);
     }
 }

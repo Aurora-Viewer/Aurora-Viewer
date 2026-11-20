@@ -190,8 +190,9 @@ impl App {
             self.world.movement_complete,
             login_locked,
         );
-        self.world.eep.rlva_locked = self.world.rlva.has("setenv");
-        self.world.rlva_yield_environment();
+        self.world.rlva_sync_environment_lock();
+        self.rlva_environment_windows();
+        self.rlva_camera_toggles();
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         // (@viewnote, @viewscript and @viewtexture refuse to open a preview,
         // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp; one already open
@@ -959,71 +960,79 @@ impl App {
         self.send_from(command, actor);
     }
 
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SETENV> (rlvhandler.cpp) closes
+    /// the environment floaters and keeps them from opening while
+    /// `@setenv=n` holds: Personal Lighting (env_adjust_snapshot), the sky
+    /// and water editors, the day cycle editor and My Environments. Aurora
+    /// Weather lights the scene the same way, and goes with them.
+    pub(super) fn rlva_environment_windows_locked(&self) -> bool {
+        self.world.rlva.has("setenv")
+    }
+
+    fn rlva_environment_windows(&mut self) {
+        if !self.rlva_environment_windows_locked() {
+            return;
+        }
+        self.panels.personal_lighting = false;
+        self.env_ui.weather_open = false;
+        if self.env_editor.open {
+            self.env_editor.close();
+            self.world.eep.clear_edit();
+        }
+        if self.day_editor.open {
+            self.day_editor.close();
+            self.world.eep.clear_edit();
+        }
+    }
+
+    /// RLVa's camera toggles, once a frame: `@setcam_unlock` arriving resets
+    /// the view (RlvBehaviourToggleHandler<RLV_BHVR_SETCAM_UNLOCK>:
+    /// handle_reset_view), RLVa's view taking over puts the zoom back and the
+    /// focus on the avatar (setCameraOverride → switchCameraPreset), and the
+    /// user's field of view comes back when the last fov limit goes
+    /// (RlvBehaviourSetCamFovHandler, rlvhandler.cpp).
+    fn rlva_camera_toggles(&mut self) {
+        if !self.in_world() {
+            return;
+        }
+        let (unlock, view) = self.world.rlva.camera_toggles();
+        if view {
+            self.camera.read_rlva(&self.world.rlva);
+            self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        }
+        if unlock {
+            self.camera.read_rlva(&self.world.rlva);
+            self.reset_camera_view();
+        }
+        if self.world.rlva.track_fov_limits(&mut self.settings.camera.fov) && !self.demo {
+            self.settings.save();
+        }
+    }
+
     fn rlva_environment_asset(&mut self) {
         use crate::scene::settings::SettingsState;
-        use crate::world::{eep::Settings as Environment, env_select::SettingsKind, inventory::FetchState};
+        use crate::world::{eep::Settings as Environment, env_select::SettingsKind};
         let Some((actor, command)) = self.world.rlva.environment_request.take() else {
             return;
         };
         if !self.world.rlva.enabled() || self.world.rlva.has_except("setenv", actor) {
             return;
         }
-        // LLUUID::set (RlvEnvironment, rlvenvironment.cpp): a key, else a
-        // library preset by name.
-        let asset = if let Some(id) = crate::world::rlva::numeric::uuid_set(&command.option).filter(|id| !id.is_nil()) {
-            Some(id)
+        let kind = if command.behaviour == "setenv_daycycle" {
+            SettingsKind::Day
         } else {
-            let root = self.world.inventory.lib_root;
-            let environments = self
-                .world
-                .inventory
-                .folders
-                .values()
-                .find(|f| f.library && f.info.parent == root && f.info.name.eq_ignore_ascii_case("Environments"))
-                .map(|f| f.info.id);
-            let mut stack = environments.map_or_else(|| vec![root], |id| vec![id]);
-            let mut seen = std::collections::HashSet::new();
-            let mut loading = Vec::new();
-            let mut asset = None;
-            while let Some(id) = stack.pop() {
-                if !seen.insert(id) {
-                    continue;
-                }
-                let Some(folder) = self.world.inventory.folders.get(&id) else {
-                    continue;
-                };
-                if folder.state != FetchState::Fetched {
-                    loading.push(id);
-                }
-                if environments.is_some() {
-                    stack.extend(folder.children.iter().copied());
-                }
-                let kind = if command.behaviour == "setenv_daycycle" {
-                    SettingsKind::Day
-                } else {
-                    SettingsKind::Sky
-                };
-                asset = asset.or_else(|| {
-                    folder
-                        .items
-                        .iter()
-                        .filter_map(|id| self.world.inventory.items.get(id))
-                        .find(|it| {
-                            it.asset_type == 56
-                                && SettingsKind::from_flags(it.flags) == Some(kind)
-                                && it.name.eq_ignore_ascii_case(&command.option)
-                        })
-                        .map(|it| it.asset_id)
-                });
-            }
-            if asset.is_none() && !loading.is_empty() {
-                for id in loading.into_iter().take(16) {
+            SettingsKind::Sky
+        };
+        let asset = match rlva_environment_lookup(&self.world.inventory, &command.behaviour, &command.option, kind) {
+            EnvironmentLookup::Found(asset) => Some(asset),
+            EnvironmentLookup::Missing => None,
+            EnvironmentLookup::Loading(folders) => {
+                for id in folders.into_iter().take(16) {
                     self.world.inventory.request(id);
                 }
                 self.world.rlva.environment_request = Some((actor, command));
                 return;
             }
-            asset
         };
         let Some(asset) = asset.filter(|id| !id.is_nil()) else {
             return;
@@ -1031,19 +1040,29 @@ impl App {
         match self.scene.settings.get(asset) {
             SettingsState::Pending => self.world.rlva.environment_request = Some((actor, command)),
             SettingsState::Failed => {}
+            // LLEnvironment::setEnvironment(target, settings) by its type:
+            // the user's ENV_LOCAL without a lock, ENV_EDIT under it, where a
+            // fixed half keeps the instance's day and a day clears both
+            // fixed halves (DayInstance::clear + setDay)
+            SettingsState::Ready(settings) if !command.environment_locked => {
+                self.world.eep.rlva_local_settings(asset, settings.as_ref());
+            }
             SettingsState::Ready(settings) => {
-                let (sky, water) = self.world.rlva_environment_frames(self.world.eep.current());
-                self.world.rlva.environment = Some((actor, sky));
+                let rlva = &mut self.world.rlva;
                 match settings.as_ref() {
                     Environment::Sky(sky) => {
-                        self.world.rlva.environment = Some((actor, *sky));
-                        self.world.rlva.environment_day = None;
-                        self.world.rlva.environment_water = Some(water);
+                        rlva.environment = Some((actor, *sky));
+                        rlva.environment_day_sky_fixed = rlva.environment_day.is_some();
                     }
-                    Environment::Water(water) => self.world.rlva.environment_water = Some(*water),
+                    Environment::Water(water) => rlva.environment_water = Some(*water),
                     Environment::Day(day) => {
-                        self.world.rlva.environment_day = Some(std::sync::Arc::new(day.clone()));
-                        self.world.rlva.environment_water = None;
+                        rlva.environment_day = Some(std::sync::Arc::new(day.clone()));
+                        rlva.environment_day_sky_fixed = false;
+                        rlva.environment_water = None;
+                        if rlva.environment.is_none() {
+                            let sky = self.world.eep.current().0;
+                            self.world.rlva.environment = Some((actor, sky));
+                        }
                     }
                 }
             }
@@ -1144,9 +1163,8 @@ impl App {
                         // (refused by the camera where RLVa forbids mouselook)
                         "mouselook" => self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true),
                         "thirdperson" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
-                        "reset" | "" => self
-                            .camera
-                            .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
+                        // handle_reset_view, as Escape (ResetViewTurnsAvatar)
+                        "reset" | "" => self.reset_camera_view(),
                         _ => {}
                     }
                 }
@@ -1167,13 +1185,11 @@ impl App {
                             else {
                                 continue;
                             };
-                            let Some((position, rotation, hud)) = crate::scene::Scene::object_transform_unshifted(&self.world, i, now)
+                            let Some((position, rotation)) =
+                                rlva_focus_transform(crate::scene::Scene::object_transform_unshifted(&self.world, i, now))
                             else {
                                 continue;
                             };
-                            if hud {
-                                continue;
-                            }
                             let geom = crate::camera::FocusObject {
                                 position,
                                 rotation,
@@ -1198,6 +1214,103 @@ impl App {
                 _ => {}
             }
         }
+    }
+}
+
+/// Where `@setcam_focus` puts the focus for an object: its position as
+/// the Legacy Viewer reads it (RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>,
+/// rlvhandler.cpp: getPositionAgent), a HUD attachment included, whose
+/// position is then in the HUD's own frame (no refusal there).
+pub(super) fn rlva_focus_transform(transform: Option<(Vec3, glam::Quat, bool)>) -> Option<(Vec3, glam::Quat)> {
+    transform
+        .filter(|(position, _, _)| position.is_finite())
+        .map(|(position, rotation, _hud)| (position, rotation))
+}
+
+/// What `@setenv_asset`, `preset` and `daycycle` name.
+#[derive(Debug, PartialEq)]
+pub(super) enum EnvironmentLookup {
+    Found(Uuid),
+    Missing,
+    /// Library folders still to load before the answer is known.
+    Loading(Vec<Uuid>),
+}
+
+/// registerSetEnvFn("asset"/"preset"/"daycycle") (rlvenvironment.cpp): an
+/// id, or for preset and daycycle a settings item of that kind named so
+/// (case-insensitive) in the first Library folder called "Environments",
+/// at any depth (rlvGetLibraryEnvironmentsFolder, LLNameCategoryCollector);
+/// `asset` takes an id only (registerSetEnvFn<LLUUID>). The Legacy Viewer
+/// reads the Library it fetched in full at login; the Library here loads
+/// its folders when asked, so the folders not loaded yet are returned to
+/// be fetched first.
+pub(super) fn rlva_environment_lookup(
+    inventory: &crate::world::inventory::Inventory,
+    behaviour: &str,
+    option: &str,
+    kind: crate::world::env_select::SettingsKind,
+) -> EnvironmentLookup {
+    use crate::world::{env_select::SettingsKind, inventory::FetchState};
+    // LLUUID::set (rlvenvironment.cpp): a key in the Legacy forms only
+    if let Some(id) = crate::world::rlva::numeric::uuid_set(option).filter(|id| !id.is_nil()) {
+        return EnvironmentLookup::Found(id);
+    }
+    if behaviour == "setenv_asset" {
+        return EnvironmentLookup::Missing;
+    }
+    let root = inventory.lib_root;
+    let environments = inventory
+        .folders
+        .values()
+        .filter(|f| f.library && f.info.id != root && f.info.name.eq_ignore_ascii_case("Environments"))
+        .map(|f| f.info.id)
+        .min();
+    // the whole Library while the folder is not found, the folder after
+    let mut stack = vec![environments.unwrap_or(root)];
+    let mut seen = std::collections::HashSet::new();
+    let mut loading = Vec::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(folder) = inventory.folders.get(&id) else {
+            continue;
+        };
+        if folder.state != FetchState::Fetched {
+            loading.push(id);
+        }
+        stack.extend(folder.children.iter().copied());
+        if environments.is_none() {
+            continue;
+        }
+        let found = folder
+            .items
+            .iter()
+            .filter_map(|id| inventory.items.get(id))
+            .find(|it| it.asset_type == 56 && SettingsKind::from_flags(it.flags) == Some(kind) && it.name.eq_ignore_ascii_case(option));
+        if let Some(item) = found {
+            return EnvironmentLookup::Found(item.asset_id);
+        }
+    }
+    if loading.is_empty() {
+        EnvironmentLookup::Missing
+    } else {
+        EnvironmentLookup::Loading(loading)
+    }
+}
+
+/// Aurora Weather lights and changes the scene (rain, snow, fog, the
+/// lightning), so @setenv holds it like the rest of the environment
+/// (RlvEnvironment, indra/newview/rlvenvironment.cpp: the scene stays the
+/// holder's): the weather in effect when the lock came stays, whatever the
+/// Weather window chooses meanwhile, and the choice applies at the release.
+pub(super) fn rlva_hold_weather(
+    now: &mut crate::weather::WeatherSettings,
+    chosen: crate::weather::WeatherSettings,
+    environment_locked: bool,
+) {
+    if !environment_locked {
+        *now = chosen;
     }
 }
 
@@ -1322,5 +1435,105 @@ mod tests {
         assert_eq!(view_blocked_notice(7), aurora_i18n::tr!("rlva-blocked-view-notecard"));
         assert_eq!(view_blocked_notice(10), aurora_i18n::tr!("rlva-blocked-view-script"));
         assert_eq!(view_blocked_notice(0), aurora_i18n::tr!("rlva-blocked-view-texture"));
+    }
+
+    #[test]
+    fn rlva_setenv_holds_the_aurora_weather_in_effect() {
+        let before = crate::weather::WeatherSettings::default();
+        let mut chosen = before.clone();
+        chosen.thunder = !before.thunder;
+        let mut now = before.clone();
+        rlva_hold_weather(&mut now, chosen.clone(), true);
+        assert_eq!(now, before, "held: the window's choice waits");
+        rlva_hold_weather(&mut now, chosen.clone(), false);
+        assert_eq!(now, chosen, "released: the choice applies");
+    }
+
+    /// registerSetEnvFn (rlvenvironment.cpp) and
+    /// rlvGetLibraryEnvironmentsFolder: an id for `asset`, a name in the
+    /// Library's "Environments" folder, found at any depth, for preset and
+    /// daycycle; nothing outside that folder.
+    #[test]
+    fn rlva_environment_names_come_from_the_library_environments_folder_only() {
+        use crate::world::env_select::SettingsKind;
+        use crate::world::inventory::{FetchState, Folder, Inventory};
+        let [root, objects, environments, inside, outside, asset] = [1, 2, 3, 4, 5, 6].map(Uuid::from_u128);
+        let folder = |id, name: &str, children: Vec<Uuid>, items: Vec<Uuid>| Folder {
+            info: aurora_net::inventory::InvFolder {
+                id,
+                name: name.to_owned(),
+                ..Default::default()
+            },
+            children,
+            items,
+            state: FetchState::Fetched,
+            library: true,
+        };
+        let item = |id, asset_id| aurora_net::inventory::InvItem {
+            id,
+            asset_id,
+            asset_type: 56,
+            name: "Midday".to_owned(),
+            ..Default::default()
+        };
+        let mut inventory = Inventory {
+            lib_root: root,
+            ..Default::default()
+        };
+        inventory
+            .folders
+            .insert(root, folder(root, "Library", vec![objects], vec![outside]));
+        inventory
+            .folders
+            .insert(objects, folder(objects, "Objects", vec![environments], vec![]));
+        inventory.items.insert(outside, item(outside, Uuid::from_u128(99)));
+        let lookup = rlva_environment_lookup;
+        assert_eq!(
+            lookup(&inventory, "setenv_preset", "Midday", SettingsKind::Sky),
+            EnvironmentLookup::Missing,
+            "no Environments folder: not the Library root"
+        );
+        inventory
+            .folders
+            .insert(environments, folder(environments, "environments", vec![], vec![inside]));
+        inventory.items.insert(inside, item(inside, asset));
+        assert_eq!(
+            lookup(&inventory, "setenv_preset", "MIDDAY", SettingsKind::Sky),
+            EnvironmentLookup::Found(asset),
+            "any depth, any case"
+        );
+        assert_eq!(
+            lookup(&inventory, "setenv_daycycle", "Midday", SettingsKind::Day),
+            EnvironmentLookup::Missing,
+            "a sky is no day"
+        );
+        assert_eq!(
+            lookup(&inventory, "setenv_asset", "Midday", SettingsKind::Sky),
+            EnvironmentLookup::Missing,
+            "asset takes an id only"
+        );
+        assert_eq!(
+            lookup(&inventory, "setenv_asset", &asset.to_string(), SettingsKind::Sky),
+            EnvironmentLookup::Found(asset)
+        );
+        // a folder not loaded yet is fetched before the answer
+        inventory.folders.get_mut(&environments).expect("folder").state = FetchState::Unknown;
+        assert_eq!(
+            lookup(&inventory, "setenv_preset", "Sunset", SettingsKind::Sky),
+            EnvironmentLookup::Loading(vec![environments])
+        );
+    }
+
+    /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS> takes any object it finds, a
+    /// HUD attachment included.
+    #[test]
+    fn rlva_setcam_focus_accepts_a_hud_object() {
+        let at = glam::Vec3::new(0.1, 0.2, 0.3);
+        assert_eq!(
+            rlva_focus_transform(Some((at, glam::Quat::IDENTITY, true))),
+            Some((at, glam::Quat::IDENTITY))
+        );
+        assert_eq!(rlva_focus_transform(Some((glam::Vec3::NAN, glam::Quat::IDENTITY, false))), None);
+        assert_eq!(rlva_focus_transform(None), None);
     }
 }

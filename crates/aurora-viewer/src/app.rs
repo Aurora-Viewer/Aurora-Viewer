@@ -5397,21 +5397,24 @@ impl App {
             Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
-                if self.world.rlva.camera_owner().is_none() {
-                    let aspect = self.view_aspect();
-                    let factor = match action {
-                        Action::LensZoomIn => Some(1.0 / 1.2),
-                        Action::LensZoomOut => Some(1.2),
-                        _ => None,
-                    };
-                    let current = self.camera.flycam.as_ref().map_or(self.settings.camera.fov, |flight| flight.fov);
-                    self.settings.camera.fov = crate::camera::zoom_lens(current, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
-                    if let Some(flight) = &mut self.camera.flycam {
-                        flight.set_fov(self.settings.camera.fov);
-                    }
-                    if !self.demo {
-                        self.settings.save();
-                    }
+                // LLZoomer (indra/newview/llviewermenu.cpp): no RLVa check,
+                // the lens bounded by the fov limits only; it zooms from the
+                // lens shown, a forced one included, which it replaces
+                let aspect = self.view_aspect();
+                let factor = match action {
+                    Action::LensZoomIn => Some(1.0 / 1.2),
+                    Action::LensZoomOut => Some(1.2),
+                    _ => None,
+                };
+                let shown = self.world.rlva.camera_settings(&self.settings.camera, aspect).fov;
+                let current = self.camera.flycam.as_ref().map_or(shown, |flight| flight.fov);
+                self.settings.camera.fov = crate::camera::zoom_lens(current, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                self.world.rlva.user_chose_fov();
+                if let Some(flight) = &mut self.camera.flycam {
+                    flight.set_fov(self.settings.camera.fov);
+                }
+                if !self.demo {
+                    self.settings.save();
                 }
             }
             Action::ResetCamera => {
@@ -6618,7 +6621,9 @@ impl App {
         static HOLD: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
         let hold = *HOLD.get_or_init(|| std::env::var("AURORA_THUNDER_HOLD").ok().and_then(|v| v.parse().ok()));
         let flash = hold.unwrap_or(self.thunder.flash);
-        if flash <= 0.001 {
+        // @setenv owns the scene's light (RlvEnvironment, rlvenvironment.cpp):
+        // the flash lights nothing while it is held, its sound stays
+        if flash <= 0.001 || self.world.rlva.has("setenv") {
             return;
         }
         let lum = |c: Vec3| c.dot(Vec3::new(0.2126, 0.7152, 0.0722));
@@ -6651,7 +6656,8 @@ impl App {
     /// experience policy; AGENTS.md, "No data of our own in shared places").
     fn update_weather_now(&mut self) {
         // what the window's switches turn off is not drawn
-        self.weather_now = self.settings.weather.in_effect();
+        let chosen = self.settings.weather.in_effect();
+        rlva::rlva_hold_weather(&mut self.weather_now, chosen, self.world.rlva.has("setenv"));
     }
 
     /// Where the footprints' map is centred: my avatar (zooming the camera
@@ -16362,7 +16368,7 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
-            BarAction::AuroraWeather => self.env_ui.weather_open = true,
+            BarAction::AuroraWeather => self.env_ui.weather_open = !self.rlva_environment_windows_locked(),
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
                 kind => self.open_env_editor_snapshot(kind),
@@ -17661,7 +17667,9 @@ impl App {
         self.options_ui.selected_parcel = self.world.selected_parcel_entry();
         self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
         self.options_ui.rlva_sendim_locked = self.world.rlva.has("sendim");
-        self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
+        // the Legacy Viewer's CameraAngle is the user's under @setcam too
+        // (panel_preferences_move.xml): only bounded by the fov limits
+        self.options_ui.rlva_camera_fov_locked = false;
         self.options_ui.joystick = self.joystick.snapshot.clone();
         self.options_ui.game_control = crate::game_control::View::of(&self.game_control.engine);
         self.options_ui.flycam_active = self.joystick.active;

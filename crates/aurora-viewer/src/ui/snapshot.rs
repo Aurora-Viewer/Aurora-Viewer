@@ -212,6 +212,9 @@ pub struct View<'a> {
     pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
+    /// RLVa holds the view (`Rlva::camera_view_held`): the free camera
+    /// switch is greyed.
+    pub free_refused: bool,
     /// The photo quality is lowered to stay within the video memory.
     pub quality_reduced: bool,
     /// The last 360° panorama made, for the 360° format's preview.
@@ -860,7 +863,7 @@ impl SnapshotUi {
             }
         });
         row(ui, p, aurora_i18n::tr!("photo-free-camera"), None, |ui| {
-            widgets::switch(ui, p, &mut self.free.on);
+            ui.add_enabled_ui(!view.free_refused, |ui| widgets::switch(ui, p, &mut self.free.on));
         });
         free_camera_hint(ui, p, view.back_key.as_ref());
         if widgets::action_button(
@@ -2035,6 +2038,7 @@ mod tests {
                 loading: false,
             },
             back_key: None,
+            free_refused: false,
             quality_reduced: false,
             pano: None,
         }
