@@ -20,16 +20,19 @@ pub(super) fn object_sit_offset(world: &World, camera: &Camera, idx: usize, poin
     Some(camera.object_pick_offset(&geometry, point, ray))
 }
 
-/// What RLVa leaves of the one-click action on the prim `idx`, for the
-/// cursor and for the click alike: LLToolPie::handleHover, cursorFromObject
-/// and handleLeftClickPick (indra/newview/lltoolpie.cpp). `point` is the
-/// point under the cursor, `sit_offset` the offset a sit there would send.
-/// - no action at all on an object out of reach (RlvActions::canInteract)
-///   or that may not be touched (RlvActions::canTouch), whatever its click
-///   action: plain cursor, and the click does nothing;
+/// What RLVa leaves of the one-click action on the prim `idx` when it is
+/// clicked: LLToolPie::handleLeftClickPick (indra/newview/lltoolpie.cpp).
+/// `point` is the point under the cursor, `sit_offset` the offset a sit
+/// there would send.
+/// - no action at all on an object out of reach (RlvActions::canInteract,
+///   asked of every click action);
 /// - Sit only where RlvActions::canSit allows it;
 /// - under @buy, Buy and Pay become the touch (or the grab) the object
-///   would take without its click action, or nothing.
+///   would take without its click action, or nothing;
+/// - the touch and the grab, and they alone, ask RlvActions::canTouch: a
+///   click action other than Touch (Sit, Open, Play, Zoom…) is made
+///   whatever @touchworld, @touchall or @touchthis hold, although the hover
+///   shows the plain cursor on it (`App::hover_cursor_action`).
 ///
 /// A menu's entry is not a click action: its own facts grey it out.
 pub(super) fn rlva_click_target(
@@ -42,20 +45,22 @@ pub(super) fn rlva_click_target(
     if !world.rlva.enabled() || target.menu {
         return Some(target);
     }
-    if !world.rlva_can_interact_at(idx, point) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point) {
+    if !world.rlva_can_interact_at(idx, point) {
         return None;
     }
-    match target.action {
-        Action::Sit => world
-            .rlva_allows_command(
-                &NetCommand::RequestSit {
-                    handle: target.key.region,
-                    target: target.object,
-                    offset: sit_offset?,
-                },
-                uuid::Uuid::nil(),
-            )
-            .then_some(target),
+    let target = match target.action {
+        Action::Sit => {
+            return world
+                .rlva_allows_command(
+                    &NetCommand::RequestSit {
+                        handle: target.key.region,
+                        target: target.object,
+                        offset: sit_offset?,
+                    },
+                    uuid::Uuid::nil(),
+                )
+                .then_some(target);
+        }
         Action::Buy | Action::Pay if world.rlva.has("buy") => {
             let clicked = world.objects.get(idx)?;
             let root = interaction::root(world, idx).and_then(|(r, _)| world.objects.get(r))?;
@@ -69,21 +74,46 @@ pub(super) fn rlva_click_target(
             } else {
                 return None;
             };
-            Some(Target {
+            Target {
                 action,
                 key: target.clicked,
                 object: target.clicked_id,
                 ..target
-            })
+            }
         }
-        _ => Some(target),
+        _ => target,
+    };
+    // (what our avatar wears and @showself or @showselfhead hide is not
+    // offered to the click)
+    if matches!(target.action, Action::Touch | Action::Grab)
+        && (!world.rlva_object_visible(idx) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point))
+    {
+        return None;
     }
+    Some(target)
+}
+
+/// The cursor's half of `App::hover_cursor_action`, RLVa on.
+fn rlva_hover_action(world: &World, target: Target, idx: usize, point: Option<Vec3>, sit_offset: Option<Vec3>) -> Option<Action> {
+    if !world.rlva_object_visible(idx) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point) {
+        return None;
+    }
+    let left = rlva_click_target(world, target, idx, point, sit_offset)?;
+    if matches!(target.action, Action::Buy | Action::Pay) && left.action == Action::Grab {
+        return None;
+    }
+    Some(left.action)
 }
 
 impl App {
     /// The one-click action the cursor shows on the prim `idx` hovered at
     /// `point`: `interaction::cursor_action`, less what RLVa refuses, so
     /// that the cursor never promises a click the viewer will not make.
+    ///
+    /// LLToolPie::handleHover: the plain cursor on what RlvActions::canTouch
+    /// refuses, whatever its click action (the click itself may still act,
+    /// `rlva_click_target`); cursorFromObject under @buy shows the hand on a
+    /// prim with a touch script and the plain cursor otherwise.
     pub(super) fn hover_cursor_action(&self, idx: usize, point: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> Option<Action> {
         let action = interaction::cursor_action(&self.world, idx, &self.interactions.props)?;
         if !self.world.rlva.enabled() {
@@ -93,8 +123,7 @@ impl App {
         let sit = (action == Action::Sit)
             .then(|| point.and_then(|p| object_sit_offset(&self.world, &self.camera, idx, p, ray)))
             .flatten();
-        let left = rlva_click_target(&self.world, Target { action, ..target }, idx, point, sit)?;
-        Some(left.action)
+        rlva_hover_action(&self.world, Target { action, ..target }, idx, point, sit)
     }
 
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
@@ -684,25 +713,48 @@ mod tests {
         rlva_click_target(world, target, idx, Some(point), Some(Vec3::ZERO)).map(|t| t.action)
     }
 
+    /// The action the cursor shows on the prim hovered at `point`.
+    fn shown(world: &World, idx: usize, point: Vec3) -> Option<Action> {
+        let target = interaction::target(world, idx, &std::collections::HashMap::new()).expect("a click action");
+        rlva_hover_action(world, target, idx, Some(point), Some(Vec3::ZERO))
+    }
+
+    /// LLToolPie::handleLeftClickPick: RlvActions::canInteract (@interact,
+    /// @fartouch) blankets every click action; RlvActions::canTouch is asked
+    /// of the touch and the grab alone, so a Sit, Open or Zoom click action
+    /// still acts under @touchall, @touchworld or @touchthis. The hover
+    /// (LLToolPie::handleHover) shows the plain cursor on all of them.
     #[test]
-    fn rlva_refused_touches_leave_no_click_action() {
+    fn rlva_touch_restrictions_leave_the_other_click_actions() {
         let near = Vec3::new(100.0, 120.5, 30.0);
-        for restriction in ["@touchall=n", "@touchworld=n", "@interact=n", "@fartouch:0.2=n"] {
+        let others = [
+            (interaction::code::SIT, Action::Sit),
+            (interaction::code::OPEN, Action::Open),
+            (interaction::code::ZOOM, Action::Zoom),
+        ];
+        let this = format!("@touchthis:{}=n", crate::demo::action_id(33000));
+        for restriction in ["@touchall=n", "@touchworld=n", this.as_str()] {
             let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
             assert_eq!(left(&world, idx, near), Some(Action::Touch));
             restrict(&mut world, restriction);
             assert_eq!(left(&world, idx, near), None, "{restriction}");
-            // a restriction on touching takes every click action with it
-            // (LLToolPie::handleHover): Sit, Open, Zoom…
-            for code in [interaction::code::SIT, interaction::code::OPEN, interaction::code::ZOOM] {
+            assert_eq!(shown(&world, idx, near), None, "{restriction}");
+            for (code, action) in others {
                 world.objects.get_mut(idx).expect("prim").click_action = code;
-                assert_eq!(left(&world, idx, near), None, "{restriction}, click action {code}");
+                assert_eq!(left(&world, idx, near), Some(action), "{restriction}, click action {code}");
+                assert_eq!(shown(&world, idx, near), None, "{restriction}, cursor on click action {code}");
             }
         }
-        // @touchthis names the object itself
-        let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
-        restrict(&mut world, &format!("@touchthis:{}=n", crate::demo::action_id(33000)));
-        assert_eq!(left(&world, idx, near), None);
+        for restriction in ["@interact=n", "@fartouch:0.2=n"] {
+            let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
+            restrict(&mut world, restriction);
+            assert_eq!(left(&world, idx, near), None, "{restriction}");
+            for (code, _) in others {
+                world.objects.get_mut(idx).expect("prim").click_action = code;
+                assert_eq!(left(&world, idx, near), None, "{restriction}, click action {code}");
+                assert_eq!(shown(&world, idx, near), None, "{restriction}, cursor on click action {code}");
+            }
+        }
     }
 
     #[test]
@@ -748,6 +800,12 @@ mod tests {
             // a physical object: the grab
             world.objects.get_mut(idx).expect("prim").update_flags = flags | USE_PHYSICS;
             assert_eq!(left(&world, idx, near), Some(Action::Grab), "{action:?}");
+            // cursorFromObject: the hand needs a touch script, a physical
+            // object shows the plain cursor
+            assert_eq!(shown(&world, idx, near), None, "{action:?}");
+            world.objects.get_mut(idx).expect("prim").update_flags = flags | HANDLE_TOUCH;
+            assert_eq!(shown(&world, idx, near), Some(Action::Touch), "{action:?}");
+            world.objects.get_mut(idx).expect("prim").update_flags = flags | USE_PHYSICS;
             // a menu's Pay or Buy is not a click action: its facts grey it out
             let menu = interaction::menu_target(&world, idx, action).expect("menu target");
             assert_eq!(rlva_click_target(&world, menu, idx, None, None).map(|t| t.action), Some(action));
