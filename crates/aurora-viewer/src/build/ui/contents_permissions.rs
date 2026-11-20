@@ -15,6 +15,9 @@ use uuid::Uuid;
 
 // Column-major, matching the type picker in floater_bulk_perms.xml.
 const TYPES: [i8; 11] = [20, 13, 5, 21, 7, 6, 10, 1, 0, 56, 57];
+/// Between a type's check box and its icon, well under the columns' spacing.
+const TYPE_ICON_GAP: f32 = 4.0;
+const TYPE_COLUMN_GAP: f32 = 18.0;
 
 #[cfg(test)]
 #[path = "contents_tests.rs"]
@@ -120,7 +123,12 @@ fn type_name(t: i8) -> &'static str {
 }
 
 fn type_filter(ui: &mut egui::Ui, p: &Palette, t: i8, selected: &mut bool) -> egui::Response {
-    widgets::checkbox(ui, p, selected, "").on_hover_text(type_name(t));
+    let check = widgets::checkbox(ui, p, selected, "").on_hover_text(type_name(t));
+    // A check box without text still takes its row's width, the box at the
+    // left: draw the icon right after the box so it reads as the box's label,
+    // nearer its own box than the next column's.
+    let blank = check.rect.width() - ui.spacing().icon_width;
+    ui.add_space(TYPE_ICON_GAP - blank - ui.spacing().item_spacing.x);
     let icon = if let Some(icon) = crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(t), i32::from(t), 0)) {
         let color = crate::ui::inventory::item_icon_color(i32::from(t), i32::from(t), p);
         ui.add(
@@ -232,7 +240,7 @@ pub(crate) fn controls(
                 .fold(98.0, f32::max);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
                 egui::Grid::new("content_permission_types")
-                    .spacing(Vec2::new(12.0, 3.0))
+                    .spacing(Vec2::new(TYPE_COLUMN_GAP, 3.0))
                     .show(ui, |ui| {
                         for row in 0..3 {
                             for col in 0..4 {
