@@ -816,3 +816,21 @@ fn selftest_logout_ends_the_run_at_once() {
     assert_eq!(host.sent.len(), before, "nothing is sent once the session is gone");
     assert!(report.notes.iter().any(|n| n.contains("logged out")), "{}", report.text());
 }
+
+/// The shared inventory and wear cases (`cases_inv.rs`) run and pass on the
+/// simulated world, none skipped.
+#[test]
+fn selftest_inventory_parity_cases_pass_on_the_demo_world() {
+    let mut host = Host::new();
+    host.start(Mode::Simulated, false);
+    let report = host.run();
+    for id in [
+        "inv-G4-hind-foot-names",
+        "inv-G11-hud-group",
+        "inv-G14-folder-lock-options",
+        "inv-G1-shared-lock-keeps-items",
+        "inv-G2-rlv-keeps-its-name",
+    ] {
+        assert_eq!(verdict_of(&report, id), &Verdict::Pass, "{id}\n{}", report.text());
+    }
+}
