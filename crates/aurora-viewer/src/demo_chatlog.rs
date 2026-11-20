@@ -282,7 +282,8 @@ pub fn seed(dir: &Path, mode: Mode, own_name: &str) -> std::io::Result<()> {
     let Some(path) = names::file_path(dir, &names::resident(&peer), None) else {
         return Ok(());
     };
-    let now = SystemTime::now();
+    // on the demo grid's clock, as the service rows that cover these lines
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(scenario_now());
     let s = sentences();
     let mut text = String::new();
     let mut add = |ago: Duration, from: &str, line: &str| {
@@ -338,9 +339,7 @@ pub fn message(agent: Uuid, text: &str) -> NetEvent {
 /// What the offline message request answers: messages kept by the grid
 /// while we were away, with the time they were sent.
 pub fn offline_messages(agent: Uuid) -> Vec<NetEvent> {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as u32);
+    let now = u32::try_from(scenario_now()).unwrap_or(u32::MAX);
     vec![
         im(
             agent,
@@ -448,12 +447,21 @@ fn service_row(
     text: &str,
     n: u64,
 ) -> aurora_net::chat_service::HistoryRow {
-    let when = SystemTime::now()
-        .checked_sub(ago)
-        .unwrap_or(SystemTime::UNIX_EPOCH)
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+    let when = Duration::from_secs(scenario_now()).saturating_sub(ago);
     service_row_at(agent, resident, from, from_name, when, text, n)
+}
+
+/// The demo grid's time when the scenario first needed it, in seconds: the
+/// offline messages and the service rows count back from it, so that a row
+/// keeps its time and its id from one reply to the next, as the grid's do,
+/// and an offline message's sent time is its row's to the second (#4233:
+/// counted from each reply's own time, the offline messages showed twice).
+fn scenario_now() -> u64 {
+    static START: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *START.get_or_init(|| {
+        let skew = if service_skew() { SKEW_SECS } else { 0 };
+        u64::try_from(crate::ui::bars::clock::now_unix().saturating_add(skew)).unwrap_or(0)
+    })
 }
 
 /// A row of the service at `when` since the epoch.
@@ -617,5 +625,28 @@ pub fn service_reply(agent: Uuid, id: u64, url: &str, body: Option<&aurora_llsd:
             ok(page)
         }
         _ => not_found,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each offline message's sent time is its service row's to the second,
+    /// and the service answers the same rows every time: the history then
+    /// shows each offline message once (#4233).
+    #[test]
+    fn the_offline_messages_and_their_service_rows_share_their_second() {
+        let agent = Uuid::from_u128(1);
+        let rows = service_history(agent, PEER);
+        assert_eq!(rows, service_history(agent, PEER), "a later reply has the same rows");
+        for event in offline_messages(agent) {
+            let NetEvent::InstantMessage(im) = event else {
+                panic!("an offline message is an IM");
+            };
+            let row = rows.iter().find(|r| r.message == im.message).expect("the service keeps it");
+            let created = aurora_net::chat_service::created_at_seconds(&row.created_at).expect("a time");
+            assert_eq!(created as u32, im.timestamp, "{}", im.message);
+        }
     }
 }
