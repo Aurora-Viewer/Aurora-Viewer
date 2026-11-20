@@ -86,7 +86,11 @@ impl App {
         }
         self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
-        if !self.settings.rlva_enabled || !self.settings.rlva.im_queries {
+        // RLVa off in session (Aurora only) drops the open @list / @except
+        // questions; the IM queries option does not: it only stops new ones
+        // (RlvHandler::processIMQuery), and a question already shown still
+        // answers (RlvHandler::onIMQueryListResponse)
+        if !self.settings.rlva_enabled {
             self.world
                 .notifications
                 .list
