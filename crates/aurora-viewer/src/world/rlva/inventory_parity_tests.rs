@@ -736,3 +736,26 @@ fn a_group_force_does_not_wait_for_the_shared_folders() {
     force(&mut l, issuer, "remattach:head=force");
     assert_eq!(batch(&l).0, vec![collar]);
 }
+
+/// RlvAttachmentLocks::canAttach(const LLInventoryItem*) (rlvlocks.h): an
+/// object whose names give no point is RLV_WEAR, whatever point is saved on
+/// it or where it was last worn; a named point is checked.
+#[test]
+fn an_object_with_no_named_point_can_be_worn() {
+    let mut l = linked();
+    let (issuer, clothes) = (l.issuer, l.clothes);
+    let saved = Uuid::from_u128(0xE311);
+    let named = Uuid::from_u128(0xE312);
+    l.world.inventory.add_items(vec![
+        item(0xE311, clothes, "Bracelet", 6, 5),
+        item(0xE312, clothes, "Ring (left hand)", 6, 0),
+    ]);
+    say(&mut l.world, issuer, "@addattach:left hand=n");
+    let nil = Uuid::nil();
+    assert!(l.world.rlva_can_add(saved, 0, nil), "the saved left hand is no named point");
+    assert!(!l.world.rlva_can_add(named, 0, nil), "the named left hand is locked");
+    assert!(!l.world.rlva_can_add(saved, 5, nil), "Attach To the left hand");
+    let locks = l.world.rlva_wear_locks();
+    assert!(locks.wear(&l.world.inventory, saved, 0).replace);
+    assert!(!locks.wear(&l.world.inventory, named, 0).add);
+}

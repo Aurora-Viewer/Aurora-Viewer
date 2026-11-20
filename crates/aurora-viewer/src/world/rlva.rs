@@ -29,7 +29,6 @@ mod groups;
 mod im_queries;
 mod interaction;
 mod inventory;
-pub mod last_points;
 pub mod login;
 pub mod modifiers;
 mod naming;
@@ -549,8 +548,6 @@ pub struct Rlva {
     pub open_profiles: std::collections::HashSet<Uuid>,
     pub(crate) locked_folders: inventory::LockedFoldersCache,
     pub(crate) wear_locks: wear_locks::WearLocksCache,
-    /// The point each object was last seen attached to, per account.
-    pub last_points: last_points::LastPoints,
     pub recovery: Vec<NetCommand>,
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,

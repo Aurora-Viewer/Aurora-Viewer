@@ -610,13 +610,16 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
             library: false,
         },
     );
-    // (id, attachment point): spine, skull, left hand.
-    let items = [(41, 9), (42, 2), (43, 5)];
-    for (id, point) in items {
+    // (id, attachment point, name): spine, skull, left hand. The point is
+    // named, as RlvAttachmentLocks::canAttach reads it (rlvlocks.h): a
+    // point saved on the item alone gives RLV_WEAR.
+    let items = [(41, 9, "Tail (spine)"), (42, 2, "Hat (skull)"), (43, 5, "Ring (left hand)")];
+    for (id, point, name) in items {
         w.inventory.items.insert(
             Uuid::from_u128(id),
             InvItem {
                 id: Uuid::from_u128(id),
+                name: name.to_owned(),
                 asset_type: 6,
                 flags: point,
                 ..Default::default()
@@ -624,7 +627,7 @@ fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
         );
     }
     command(&mut w.rlva, A, "@addattach:spine=n");
-    let ids: Vec<_> = items.iter().map(|(id, _)| Uuid::from_u128(*id)).collect();
+    let ids: Vec<_> = items.iter().map(|(id, _, _)| Uuid::from_u128(*id)).collect();
     for replace_unlocked in [true, false] {
         w.rlva.preferences.replace_unlocked = replace_unlocked;
         let mut cmd = aurora_net::NetCommand::UpdateOutfit {
@@ -2263,8 +2266,8 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         );
     }
     // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
-    // jacket, shape, an object naming the chest, one naming no point and
-    // never worn, and one naming no point last worn on the chest.
+    // jacket, shape, an object naming the chest, one naming no point, and
+    // one naming no point with the chest saved on the item.
     let items = [
         (40, 5, 4, "Old shirt"),
         (41, 13, 0, "Old shape"),
@@ -2343,19 +2346,11 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
     assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
     assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
-    assert_eq!(
-        locks.wear(&w.inventory, id(47), 0),
-        locked,
-        "Wear goes to the chest it was last worn on"
-    );
-    assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
-    w.rlva.last_points.note(id(46), 1, std::time::Instant::now());
-    assert_eq!(
-        w.rlva_wear_locks().wear(&w.inventory, id(46), 0),
-        locked,
-        "without a saved point, the point it was last seen on"
-    );
-    w.rlva.last_points = Default::default();
+    // RlvAttachmentLocks::canAttach(const LLInventoryItem*) (rlvlocks.h):
+    // RlvAttachPtLookup::getAttachPoint reads the names only, so a point
+    // saved on the item gives RLV_WEAR
+    assert_eq!(locks.wear(&w.inventory, id(47), 0), all, "a saved point is no named point");
+    assert_eq!(locks.wear(&w.inventory, id(47), 1), locked, "Attach To the chest");
     assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
 
     command(&mut w.rlva, A, "@clear");
@@ -2369,9 +2364,9 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
 }
 
-/// Wear onto a point a locked attachment holds is greyed (deliberate
-/// difference, human decision of 2026-10-31), Add stays: RLV lets an object
-/// attach beside a locked one.
+/// RlvAttachmentLocks::canAttach (rlvlocks.h): Wear onto a point a locked
+/// attachment holds is greyed when the names give that point, Add stays; an
+/// object whose names give no point is RLV_WEAR, whatever its saved point.
 #[test]
 fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     use super::wear_locks::Wear;
@@ -2382,12 +2377,13 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
     }
     world.rlva.configure(true);
     let region = world.main_region.expect("demo region");
-    let (held, named, unnamed) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62));
-    for (id, flags) in [(held, 1), (named, 1), (unnamed, 0)] {
+    let (held, named, unnamed, saved) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62), Uuid::from_u128(63));
+    for (id, flags, name) in [(held, 1, ""), (named, 0, "Collar (chest)"), (unnamed, 0, ""), (saved, 1, "")] {
         world.inventory.items.insert(
             id,
             InvItem {
                 id,
+                name: name.to_owned(),
                 asset_type: 6,
                 flags,
                 owner_mask: 0x4000,
@@ -2423,11 +2419,10 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
         all,
         "no point known: it attaches where it can"
     );
-    world.rlva.last_points.note(unnamed, 1, std::time::Instant::now());
     assert_eq!(
-        world.rlva_wear_locks().wear(&world.inventory, unnamed, 0),
-        add_only,
-        "last worn on the held chest"
+        locks.wear(&world.inventory, saved, 0),
+        all,
+        "the chest saved on the item is no named point"
     );
 }
 

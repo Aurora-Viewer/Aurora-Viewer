@@ -1204,7 +1204,16 @@ impl World {
             return self.rlva_temporary_addable(item, at, actor);
         };
         if it.asset_type == 6 {
-            let at = if at == 0 { (it.flags & 0xff) as u8 } else { at };
+            // RlvAttachmentLocks::canAttach(const LLInventoryItem*)
+            // (rlvlocks.h): with no point asked, the one the names give
+            // (RlvAttachPtLookup::getAttachPoint), else RLV_WEAR; a point
+            // saved on the item does not count (point 0: only an @addattach
+            // with no point refuses it)
+            let at = if at == 0 {
+                super::collection::attachment_point(&self.inventory, item, self.rlva.preferences.legacy_naming).unwrap_or(0)
+            } else {
+                at
+            };
             if !self.rlva_point_addable(at) {
                 return false;
             }
