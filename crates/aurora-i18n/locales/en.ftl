@@ -4092,7 +4092,7 @@ scene-particles-block-object = Block particles from this object
 scene-particles-block-owner = Block particles from the owner
 scene-particles-unknown-object = Object { $id }
 ui-context-display-options = Display
-ui-context-information-options = Information
+ui-context-information-options = Avatar information
 ui-context-reset-options = Reset
 ui-context-moderation-options = Moderation
 ui-context-clicked-object = Clicked object
@@ -4834,6 +4834,7 @@ ui-land-general-script-info = Script info
 world-profiles-joined-today = Joined today
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspect
+ui-context-inspect-all-attachments = Inspect all attachments
 inspect-title = Inspect Objects
 inspect-col-name = Object Name
 inspect-col-description = Description
@@ -5943,7 +5944,6 @@ ui-chat-today-at = today at { $time }
 ui-chat-yesterday-at = yesterday at { $time }
 ui-chat-date-at = { $date } at { $time }
 ui-chat-new-messages = New
-ui-chat-latest = Jump to the latest messages
 ui-chat-latest-new = { $count ->
     [one] { $count } new message
    *[other] { $count } new messages
@@ -10507,7 +10507,6 @@ ui-context-save-backup = Backup
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = Remove from display exceptions
-ui-context-script-info = Script info
 
 script-color-hint = Possible color: click to open the color picker.
 script-edit-line-comment = Toggle line comments (Ctrl+K or Ctrl+/)
