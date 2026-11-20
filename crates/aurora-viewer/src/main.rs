@@ -381,6 +381,7 @@ fn run_viewer() -> anyhow::Result<()> {
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
     let restart_vr = app.requested_vr_restart();
+    app.leak_session_at_exit();
     drop(app);
     media::private_profile::finish(std::time::Duration::from_secs(8));
     world::tphistory::finish_writes();
