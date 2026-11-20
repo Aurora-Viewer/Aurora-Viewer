@@ -17,6 +17,7 @@ use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::World;
 use crate::world::inventory::actions::{COPY, TRANSFER};
+use aurora_i18n::UiUpper;
 use aurora_net::groups::{NoticeSummary, powers};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
@@ -466,7 +467,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 let mut format = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted_dim);
                 format.extra_letter_spacing = 0.4;
                 let mut job = egui::text::LayoutJob::default();
-                job.append(&aurora_i18n::tr!("ui-group-notices-new").to_uppercase(), 0.0, format);
+                job.append(&aurora_i18n::tr!("ui-group-notices-new").ui_upper(), 0.0, format);
                 ui.label(job);
             });
             widgets::restricted_text_field(ui, true, &mut draft.subject, widgets::TextPolicy::Ascii, |b, _| {

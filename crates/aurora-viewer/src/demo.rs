@@ -1051,6 +1051,11 @@ fn demo_raw() -> Llsd {
         let seconds = crate::ui::bars::clock::now_unix().saturating_sub(3600);
         raw.insert("seconds_since_epoch", seconds.to_string());
     }
+    // AURORA_DEMO_CHATLOG=service:skew: the computer behind the grid (#4233)
+    if chatlog::service_skew() {
+        let seconds = crate::ui::bars::clock::now_unix().saturating_add(chatlog::SKEW_SECS);
+        raw.insert("seconds_since_epoch", seconds.to_string());
+    }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
     if let Some(limit) = people::group_limit()
         && let Llsd::Map(m) = &mut raw

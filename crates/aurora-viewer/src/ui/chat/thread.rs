@@ -22,6 +22,7 @@ use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, ChatLine, Origin};
+use aurora_i18n::UiUpper;
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
 use std::collections::HashSet;
@@ -290,7 +291,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
     // beside the names: at the chat's text size
     let k = chat_size(ui.ctx(), 1.0);
     let font = egui::FontId::new(k * if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, color);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, color);
     let pad = if fill.is_some() { 5.0 } else { 0.0 };
     let size = egui::vec2(galley.size().x + 2.0 * pad, 15.0 * k);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -620,7 +621,7 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     let k = chat_size(ui.ctx(), 1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0 * k), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
-        aurora_i18n::tr!("ui-chat-new-messages").to_uppercase(),
+        aurora_i18n::tr!("ui-chat-new-messages").ui_upper(),
         egui::FontId::proportional(10.0 * k),
         p.danger,
     );

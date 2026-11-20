@@ -380,7 +380,7 @@ pub(super) fn pane(
         // the hint over the faded messages; over the pane, where `drops`
         // outlines the zone, it takes the ink
         let area = egui::Rect::from_min_size(egui::pos2(pane.left(), body_top), egui::vec2(lines_w, lines_h));
-        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ui.ctx()).is_some();
+        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::give_count(ui.ctx()).is_some();
         give_drop::hint(ui.painter(), p, give_id, area, over, &world.session_title(&id), fade);
     }
     let mut quote = None;

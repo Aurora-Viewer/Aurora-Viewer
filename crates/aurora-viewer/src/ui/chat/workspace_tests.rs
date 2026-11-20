@@ -2673,48 +2673,89 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
     }
 }
 
-/// Away from the end of a conversation, the button back to the latest
-/// messages shows and counts what came in; its click brings the end back,
-/// where the next line shows at once (#558), in both windows.
+/// Compare the whole painted text with the button disabled: any unwanted
+/// label is caught, whatever its wording or unread count.
+fn assert_no_latest_button(h: &mut Harness) {
+    let texts = |h: &mut Harness| {
+        // Scrolling and overscroll can still move the viewport after twelve
+        // frames. Compare steady frames, with no pointer tooltip appearing.
+        h.frame(vec![egui::Event::PointerGone]);
+        let mut previous = Vec::new();
+        let mut steady = 0;
+        for _ in 0..240 {
+            let current = h.frame(Vec::new()).into_iter().map(|t| t.source).collect::<Vec<_>>();
+            if current == previous {
+                steady += 1;
+                if steady >= 24 {
+                    return current;
+                }
+            } else {
+                steady = 0;
+                previous = current;
+            }
+        }
+        panic!("the conversation's painted text did not settle");
+    };
+    let shown = texts(h);
+    h.st.hide_latest = true;
+    let hidden = texts(h);
+    h.st.hide_latest = false;
+    assert_eq!(shown, hidden, "{:?}: no latest-message button should be painted", h.st.style);
+}
+
+/// Scrolling alone shows no button (#2364). New messages bring it up; its
+/// click reaches the end and clears the count, in every style and window.
 #[test]
 fn the_latest_button_brings_the_end_back() {
-    let jump = aurora_i18n::tr!("ui-chat-latest");
+    // Measure every row deterministically: a busy machine must not change
+    // which old lines are painted between the two visibility snapshots.
+    crate::ui::chat::view::measure_rows_per_frame(Some(usize::MAX));
     let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
     let count = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().filter(|t| t.source == s).count();
-    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| count(texts, s) > 0;
-    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
-        let mut h = Harness::new(style);
-        for k in 0..60 {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        for detached in [false, true] {
+            let mut h = Harness::new(style);
+            for k in 0..60 {
+                h.world
+                    .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+            }
+            h.st.selected = Some(JANE);
+            if detached {
+                h.st.demo_pop_out(&h.frames.ctx, Some(JANE), egui::pos2(40.0, 40.0), egui::vec2(420.0, 500.0));
+            }
+            h.settle();
+            assert_no_latest_button(&mut h);
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
+            assert!(
+                h.st.views[&Some(JANE)].below() > 300.0,
+                "{style:?}, detached={detached}: at the top"
+            );
+            // Our lines, notices and blocked messages do not count.
             h.world
-                .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+                .conversation_line(JANE, line("You", h.world.agent_id, ChatKind::OWN, "our line"));
+            h.world
+                .conversation_line(JANE, line("System", uuid::Uuid::nil(), ChatKind::System, "notice"));
+            let mut blocked = line("Jane", JANE, ChatKind::Im, "blocked");
+            blocked.blocked = true;
+            h.world.conversation_line(JANE, blocked);
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+            let texts = h.settle();
+            let away = count(&texts, "new 2");
+            h.click(painted(&texts, &two).rect.center());
+            let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+            assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}, detached={detached}: the end in sight");
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
+            assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}, detached={detached}");
+            // Returning to old messages must not resurrect the cleared count.
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
         }
-        h.st.selected = Some(JANE);
-        // never, not even for the frame the conversation is first shown
-        for _ in 0..8 {
-            assert!(!has(&h.frame(Vec::new()), jump), "{style:?}: at the end, no button");
-        }
-        // to the top (the demo's way)
-        h.st.demo_scroll = Some(JANE);
-        h.settle();
-        h.settle();
-        assert!(h.st.demo_scrolled, "{style:?}");
-        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert!(has(&texts, jump), "{style:?}: far from the end");
-        // two lines come in, out of sight
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
-        // (the column's entry says the last one too)
-        let texts = h.settle();
-        let away = count(&texts, "new 2");
-        let at = painted(&texts, &two).rect.center();
-        h.click(at);
-        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}: the end in sight");
-        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: the button gone");
-        // the lines follow the end again
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
-        assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}");
     }
+    crate::ui::chat::view::measure_rows_per_frame(None);
 }
 
 /// The Aurora box grows with its text up to thirty rows, its buttons level
@@ -2754,7 +2795,7 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
         text.height()
     );
     assert!(has(&texts, "old 59"), "the last message still in sight");
-    assert!(!has(&texts, aurora_i18n::tr!("ui-chat-latest")), "no button back to it");
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "still following the end");
     // the emoji button level with the first row, not centred on the box
     let emoji = h.rect(crate::ui::chat::sidebar::control_id("box-mood-smile-filled"));
     assert!((emoji.center().y - text.top()).abs() < 16.0, "{emoji:?} {text:?}");
@@ -2776,10 +2817,7 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
     *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
     let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
     assert!(has(&texts, "old 59"), "opened with a long draft: the last message in sight");
-    assert!(
-        !has(&texts, aurora_i18n::tr!("ui-chat-latest")),
-        "opened with a long draft: no button"
-    );
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "opened with a long draft: following the end");
 }
 
 /// With the button turned off (Preferences › Chat › Conversations), a
@@ -2787,7 +2825,6 @@ fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
 /// in, and the reader stays where they are, in both windows.
 #[test]
 fn the_latest_button_can_be_turned_off() {
-    let jump = aurora_i18n::tr!("ui-chat-latest");
     let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
     let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
     for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
@@ -2805,11 +2842,10 @@ fn the_latest_button_can_be_turned_off() {
         assert!(h.st.demo_scrolled, "{style:?}");
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
         assert!(has(&texts, "old 0"), "{style:?}: at the top");
-        assert!(!has(&texts, jump), "{style:?}: far from the end, no button");
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: no count either");
+        assert!(!has(&texts, &two), "{style:?}: no count either");
         assert!(has(&texts, "old 0"), "{style:?}: the reader stays at the top");
     }
 }
