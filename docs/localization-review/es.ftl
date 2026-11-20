@@ -3593,7 +3593,7 @@ build-shapes-half-cone = Medio cono
 build-shapes-half-sphere = Media esfera
 ui-environment-blue-density = Densidad del azul
 ui-environment-haze-density = Densidad de la bruma
-build-ui-features-density-in-100-kg-m-3 = { "Density in\u000A100 kg/m^3" }
+build-ui-features-density-in-100-kg-m-3 = { "Densidad en\u000A100 kg/m³" }
 ui-inventory-controls-since-last-logout = Desde el último cierre de sesión
 ui-login-latest = Último
 ui-land-covenant-last-modified = Última modificación: { $when }
@@ -5469,7 +5469,7 @@ demo-hud-masked = Masked
 ui-bars-hidden = Oculto
 build-ui-texture-material = Material
 demo-material-normals-follow = Material: los normales siguen
-world-inventory-preview-pbr-material-color-metallic-roughness-double-sided-base-color = { "PBR material\u000A\u000AColor: " }{ $value0 }{ "\u000AMetallic: " }{ $value1 }{ "\u000ARoughness: " }{ $value2 }{ "\u000ADouble-sided: " }{ $value3 }{ "\u000ABase color texture: " }{ $value4 }{ "\u000ANormal texture: " }{ $value5 }{ "\u000AMetallic / roughness texture: " }{ $value6 }{ "\u000AEmissive texture: " }{ $value7 }
+world-inventory-preview-pbr-material-color-metallic-roughness-double-sided-base-color = { "Material PBR\u000A\u000AColor: " }{ $value0 }{ "\u000AMetalizado: " }{ $value1 }{ "\u000ARugosidad: " }{ $value2 }{ "\u000ADoble cara: " }{ $value3 }{ "\u000ATextura del color base: " }{ $value4 }{ "\u000ATextura de normales: " }{ $value5 }{ "\u000ATextura de metalizado y rugosidad: " }{ $value6 }{ "\u000ATextura de emisión: " }{ $value7 }
 world-inventory-demo-demo-material = Material de demostración
 build-materials-material-rejected = { "Material rechazado: " }{ $value0 }
 ui-inventory-view-materials = Materiales
@@ -6385,63 +6385,65 @@ world-mod-redirecting-to-another-location = Redirigiendo a otra ubicación…
 ui-sound-region-restart = Reinicio de la región
 ui-sound-region-restart-opensim = Reiniciar región (OpenSim)
 region-restart-title = Reinicio de la región
-region-restart-before = Hasta el reinicio
+region-restart-before = para el reinicio
 region-restart-seconds = segundos
 region-restart-seconds-short = { $seconds } s
-region-restart-calm-title = { $region } Se reiniciará
-region-restart-calm-text = Si permaneces en la región, se cerrará tu sesión.
+region-restart-calm-title = Se reiniciará { $region }
+region-restart-calm-text = Si permanece en la región, se cerrará su sesión.
 region-restart-near-title = Queda un minuto
 region-restart-near-text =
-    Licencia { $elide ->
+    Salga de { $elide ->
        *[other] { $region }
-    } Para mantenerse conectado.
-region-restart-red-title = Sal ahora
-region-restart-red-text = { $region } Se reinicia en menos de 30 segundos.
+    } para seguir conectado.
+region-restart-red-title = Salga ahora
+region-restart-red-text = { $region } se reiniciará en menos de 30 segundos.
 region-restart-final-title = Reinicio inminente
-region-restart-final-text = Quédate en casa { $region } Y se cerrará la sesión.
-region-restart-zero-title = { $region } Se está reiniciando
-region-restart-zero-text = Si todavía estás aquí, tu conexión será cortada.
-region-restart-cancelled-title = Reinicio cancelado
+region-restart-final-text = Si permanece en { $region }, se cerrará su sesión.
+region-restart-zero-title = { $region } se está reiniciando
+region-restart-zero-text = Si sigue aquí, se interrumpirá su conexión.
+region-restart-cancelled-title = Se canceló el reinicio
 region-restart-cancelled-text =
-    Un gerente canceló el reinicio de { $elide ->
+    Un administrador canceló el reinicio de { $elide ->
        *[other] { $region }
     }.
-region-restart-left-title = Te fuiste. { $region }
-region-restart-left-text = Llegada: { $arrival }. La alerta se cierra.
+region-restart-left-title = Ha salido de { $region }
+region-restart-left-text = Ha llegado a { $arrival }. Se cerrará el aviso.
 region-restart-minimize = Minimizar
-region-restart-show = Mostrar la alerta
-region-restart-search = Buscar un punto de referencia…
+region-restart-show = Mostrar el aviso
+region-restart-search = Buscar un hito…
 region-restart-recent = Recientes
-region-restart-no-landmark = No se encontró ningún punto de referencia
-region-restart-neighbour = Región vecino: { $region }
-region-restart-suggestion = Sugerencia
-region-restart-last-place = Último puesto: { $place }
-region-restart-all-landmarks = Todos los lugares de interés…
-region-restart-manager = Usted gestiona esta región
+region-restart-no-landmark = No se encontraron hitos
+region-restart-neighbour = Región vecina: { $region }
+region-restart-suggestion = sugerencia
+region-restart-last-place = Último lugar: { $place }
+region-restart-all-landmarks = Todos los hitos…
+region-restart-manager = Usted administra esta región
 region-restart-cancel = Cancelar el reinicio
-region-restart-region-estate = Región / propiedad ›
-region-restart-cancel-confirm-title = Cancelar el reinicio?
-region-restart-cancel-confirm-text = { $region } No se reiniciará, y los residentes allí serán informados.
+region-restart-region-estate = Región/Finca ›
+region-restart-cancel-confirm-title = ¿Cancelar el reinicio?
+region-restart-cancel-confirm-text = Se cancelará el reinicio de { $region } y se avisará a los residentes que estén allí.
 region-restart-keep = Mantener el reinicio
-region-restart-pinned = pined
-region-restart-chat = La región en la que se encuentra ahora está a punto de reiniciar, si permanece en esta región se cerrará su sesión.
+region-restart-pinned = fijado
+region-restart-chat = La región en la que se encuentra está a punto de reiniciarse. Si permanece aquí, se cerrará su sesión.
 region-restart-chat-zero = La región se está reiniciando.
-region-restart-chat-cancelled = El reinicio de la región fue cancelado.
+region-restart-chat-cancelled = Se canceló el reinicio de la región.
 region-restart-toast-minutes =
-    La región "{ $region }" se reiniciará en { $count } { $count ->
-        [one] Minuto
+    La región «{ $region }» se reiniciará en { $count } { $count ->
+        [one] minuto
        *[other] minutos
-    }. Si permaneces en esta región cuando se apague, se cerrará tu sesión.
+    }. Si permanece en la región cuando se apague, se cerrará su sesión.
 region-restart-toast-seconds =
-    La región "{ $region }" se reiniciará en { $count } { $count ->
+    La región «{ $region }» se reiniciará en { $count } { $count ->
         [one] segundo
        *[other] segundos
-    }. Si permaneces en esta región cuando se apague, se cerrará tu sesión.
-region-restart-disconnected = { $region } Reiniciado: la conexión se cerró.
-region-restart-legacy-text = La región en la que se encuentra ahora ({ $region }2019-05-18T13:47:06+00If YouIf you stay in this region you will be logged out.If you leave this region, you will not be locked out.
-region-restart-legacy-seconds = Segundos hasta el reinicio
-region-restart-legacy-landmarks = Mis puntos de referencia
-region-restart-legacy-teleport = Teletransportarse a Landmark
+    }. Si permanece en la región cuando se apague, se cerrará su sesión.
+region-restart-disconnected = { $region } se reinició y se cerró la conexión.
+region-restart-legacy-text =
+    La región en la que se encuentra ({ $region }) está a punto de reiniciarse.
+    Si permanece aquí, se cerrará su sesión.
+region-restart-legacy-seconds = Segundos para el reinicio
+region-restart-legacy-landmarks = Mis hitos
+region-restart-legacy-teleport = Teleportarse al hito
 ui-options-planar-scene-reflection-high-and-ultra-are-costly = Reflejos planos de la escena. Los niveles Alta y Ultra consumen más recursos.
 ui-options-reflections = Reflejos
 ui-options-water-reflections = Reflejos del agua
@@ -9498,7 +9500,7 @@ status-loading-3 = { "  (cargando…)" }
 status-terrain-objects-textures = { $value0 }{ "  ·  terreno " }{ $value1 }{ " %  ·  " }{ $value2 }{ " Objetos  ·  texturas " }{ $value3 }/{ $value4 }
 status-v-version-available = v{ $version }{ " disponibles" }
 status-second-life-beta-aditi = Segunda vida Beta (Aditi)
-status-name-distance-d-m = { $name }{ "\u000A(Distance: " }{ $d }{ " m)" }
+status-name-distance-d-m = { $name }{ "\u000A(Distancia: " }{ $d }{ " m)" }
 status-budget-mb = { $budget } MB
 status-fps = { " fps" }
 status-urls = URL
