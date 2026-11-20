@@ -13,9 +13,11 @@
 //!   (FSFloaterIM::getVisible: a torn-off floater is visible on its own):
 //!   its lines are read while it is drawn, not minimized.
 //! - Nearby chat's docking and visibility are restored at the next login;
-//!   IM sessions are not. While it lives, the window keeps its
-//!   place; a new one opens where the last one was, cascaded from the
-//!   windows already open (floater_fs_im_session.xml, save_rect).
+//!   IM sessions are not. Its place and size follow
+//!   floater_fs_nearby_chat.xml (`save_rect`), in a cascade group of its
+//!   own so an IM cannot overwrite them. A torn-off IM opens where the
+//!   last one was, cascaded from the windows already open
+//!   (floater_fs_im_session.xml, save_rect).
 //! - An entry of the list dragged out of the Conversations window pops its
 //!   conversation out where it is let go (#910, `reorder.rs`).
 //! - The nearby chat in its own window: the chat island's button shows and
@@ -433,11 +435,12 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
             .action("login-2", aurora_i18n::tr!("ui-chat-attach-to-conversations"), &mut dock)
             .attention(unread > 0)
             .steady_size();
-        // Nearby chat has one stable instance across sessions. A new
-        // conversation's cascade would overwrite its saved position/size.
-        if w.conversation.is_some() {
-            floater = floater.cascade(crate::ui::widgets::CascadeGroup::Conversation);
-        }
+        // Nearby chat keeps its own save_rect (floater_fs_nearby_chat.xml),
+        // not Conversation's: an IM must not overwrite its place and size.
+        floater = floater.cascade(match w.conversation {
+            Some(_) => crate::ui::widgets::CascadeGroup::Conversation,
+            None => crate::ui::widgets::CascadeGroup::Nearby,
+        });
         if style.workspace() {
             floater = floater.flush_body();
         }
@@ -606,6 +609,105 @@ mod tests {
             assert!((before.min - after.min).length() < 1.0, "{style:?}: {before:?} -> {after:?}");
             assert!((before.size() - after.size()).length() < 1.0, "{style:?}: {before:?} -> {after:?}");
         }
+    }
+
+    /// Nearby's save_rect alone restores size when egui's AreaState was lost
+    /// (the case that fell back to the default 394 × 332 without CascadeGroup::Nearby).
+    #[test]
+    fn nearby_save_rect_restores_size_without_area_state() {
+        use crate::settings::{NearbyChatWindow, Settings};
+        let p = crate::theme::Theme::default().palette();
+        let wanted = egui::vec2(460.0, 380.0);
+        let mut kit = Kit::new(ChatStyle::Aurora);
+        kit.st = ChatUi::from_settings(&Settings {
+            nearby_chat_window: NearbyChatWindow::Detached,
+            ..Settings::default()
+        });
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        crate::ui::widgets::place_floater(&frames.ctx, &floater_id(None), egui::pos2(72.0, 110.0), wanted);
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        let saved_id = egui::Id::unique(("inventory_cascade_rect", crate::ui::widgets::CascadeGroup::Nearby));
+        let rect = frames
+            .ctx
+            .data_mut(|d| d.get_persisted::<egui::Rect>(saved_id))
+            .expect("Nearby save_rect");
+        assert!((rect.size() - wanted).length() < 1.0, "{rect:?}");
+        let mut settings = Settings::default();
+        kit.st.remember_layout(&mut settings);
+        kit.st = ChatUi::from_settings(&settings);
+        // Fresh memory: only the Nearby rect, no AreaState for the floater.
+        let mut next = crate::ui::widgets::elide_tests::Frames::new();
+        next.ctx.data_mut(|d| d.insert_persisted(saved_id, rect));
+        for _ in 0..6 {
+            next.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        let after = next
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(floater_id(None))))
+            .expect("nearby window");
+        assert!(
+            (after.size() - wanted).length() < 1.0,
+            "expected {wanted:?}, got {:?}",
+            after.size()
+        );
+        assert!((after.min - rect.min).length() < 1.0, "pos {after:?} vs {rect:?}");
+    }
+
+    /// Cold start before a Nearby save_rect exists: egui keeps pivot_pos but
+    /// drops size. Cascade must not shove the window to the work-area centre.
+    #[test]
+    fn nearby_cold_start_keeps_persisted_place_without_save_rect() {
+        use crate::settings::{NearbyChatWindow, Settings};
+        let p = crate::theme::Theme::default().palette();
+        let place = egui::pos2(120.0, 180.0);
+        let mut kit = Kit::new(ChatStyle::Aurora);
+        kit.st = ChatUi::from_settings(&Settings {
+            nearby_chat_window: NearbyChatWindow::Detached,
+            ..Settings::default()
+        });
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        crate::ui::widgets::place_floater(&frames.ctx, &floater_id(None), place, egui::vec2(520.0, 400.0));
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        let key = egui::Id::unique(floater_id(None));
+        let before = frames.ctx.memory(|m| m.area_rect(key)).unwrap();
+        // Like egui's disk restore: keep pivot_pos, drop size and save_rect.
+        let pivot = egui::AreaState::load(&frames.ctx, key).and_then(|s| s.pivot_pos).expect("pivot");
+        let mut settings = Settings::default();
+        kit.st.remember_layout(&mut settings);
+        kit.st = ChatUi::from_settings(&settings);
+        let mut next = crate::ui::widgets::elide_tests::Frames::new();
+        next.ctx.memory_mut(|m| {
+            m.areas_mut().set_state(
+                egui::LayerId::new(egui::Order::Middle, key),
+                egui::AreaState {
+                    pivot_pos: Some(pivot),
+                    ..Default::default()
+                },
+            );
+        });
+        for _ in 0..6 {
+            next.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+        let after = next.ctx.memory(|m| m.area_rect(key)).unwrap();
+        assert!(
+            (after.min - before.min).length() < 2.0,
+            "place must survive without save_rect: before={before:?} after={after:?}"
+        );
+        let center = crate::ui::layout::work_area(&next.ctx).center() - DEFAULT_SIZE * 0.5;
+        assert!(
+            (after.min - center).length() > 40.0,
+            "must not jump to the default centre ({center:?}), got {after:?}"
+        );
     }
 
     const JANE: Uuid = Uuid::from_u128(0xA);

@@ -17,6 +17,9 @@ pub(crate) enum Group {
     Gesture,
     /// A conversation in its own window (floater_fs_im_session.xml).
     Conversation,
+    /// Detached nearby chat (floater_fs_nearby_chat.xml, save_rect). Its own
+    /// rect, apart from Conversation: an IM must not overwrite it.
+    Nearby,
     Inventory(i32),
 }
 
@@ -35,11 +38,11 @@ impl Group {
     }
 
     fn saves_rect(self) -> bool {
-        // The corresponding Firestorm XUI files use save_rect="true".
+        // The corresponding Legacy Viewer XUI files use save_rect="true".
         // Resource sizes have their own human-requested preferences.
         matches!(
             self,
-            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation
+            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation | Self::Nearby
         )
     }
 
@@ -81,6 +84,8 @@ pub(super) struct Opening {
 /// keep their position, including when raised/restored or the UI is hidden.
 pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect) -> Option<Opening> {
     let frame = ctx.cumulative_frame_nr();
+    // Read before data_mut: AreaState lives in Memory, not data.
+    let area = egui::AreaState::load(ctx, id).filter(|s| s.pivot_pos.is_some());
     ctx.data_mut(|data| {
         let saved = group.saves_rect().then(|| data.get_persisted::<Rect>(group.saved_id())).flatten();
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -95,6 +100,31 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         }
         let anchor = windows.0.iter().rev().find(|w| w.group == group && w.visible && !w.minimized);
         let primary = anchor.is_none();
+        // egui persists AreaState.pivot_pos across sessions but deliberately
+        // drops AreaState.size. save_rect fills that gap. Until a group's
+        // rect exists, do not force default.min: that wiped Nearby's place
+        // on every cold start and then wrote the centered default back as
+        // save_rect.
+        if primary
+            && saved.is_none()
+            && let Some(area) = area
+        {
+            let size = area.size.unwrap_or(default.size()).min(work.size());
+            let pos = super::fit_in(work, area.left_top_pos(), size);
+            windows.0.push(Window {
+                id,
+                group,
+                rect: Rect::from_min_size(pos, size),
+                frame,
+                born: frame,
+                opening: false,
+                target: pos,
+                primary: true,
+                visible: true,
+                minimized: false,
+            });
+            return None;
+        }
         let size = saved.map_or(default.size(), |r| r.size()).min(work.size());
         let target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
         let pos = super::fit_in(work, target, size);
@@ -169,7 +199,7 @@ pub(super) fn forget(ctx: &Context, id: Id) {
 pub(super) fn forget_saved(ctx: &Context) {
     use Group::*;
     ctx.data_mut(|data| {
-        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation] {
+        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation, Nearby] {
             debug_assert!(group.saves_rect());
             data.remove::<Rect>(group.saved_id());
         }
