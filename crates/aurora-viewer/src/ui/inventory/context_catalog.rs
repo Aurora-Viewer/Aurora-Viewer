@@ -288,6 +288,12 @@ pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &Invento
 pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
     let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
     c.entries.retain(explorer::kept_in_background);
+    // Recent, Worn and Favorites show no folder of their own: what acts on
+    // one goes
+    if st.tab != 0 {
+        c.entries
+            .retain(|e| !matches!(e.id.as_str(), "paste" | "paste-link" | "reload" | "properties" | "show-window"));
+    }
     explorer::new_first(&mut c.entries);
     c
 }
@@ -367,12 +373,22 @@ fn build_mode(
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
-    let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
+    // the empty space of Recent, Worn or Favorites lists no folder: New
+    // goes to its type's own folder (a nil parent, `App::apply_inventory_
+    // action`), as the Legacy Viewer's creation with no real folder
+    // selected (LLPanelMainInventory, findCategoryUUIDForType)
+    let shortcut = background && st.tab != 0;
+    let to = if shortcut {
+        Some(Uuid::nil())
+    } else {
+        folder.map(|_| id).or_else(|| rules::parent(inv, id))
+    };
     let trash_root = folder.is_some_and(|f| f.info.type_default == 14);
     let can_create = ready
-        && single
-        && !trash
-        && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16));
+        && (shortcut
+            || single
+                && !trash
+                && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16)));
     let new = c.group(
         "new",
         "top",
@@ -1268,7 +1284,11 @@ pub(super) fn execute(
     match command {
         Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
-        Command::Folder(id) => submit(rules::create_folder(id, crate::text_validation::default_name("common-new-folder"))),
+        // nil: from Recent, Worn or Favorites, at the top
+        Command::Folder(id) => submit(rules::create_folder(
+            if id.is_nil() { inv.root } else { id },
+            crate::text_validation::default_name("common-new-folder"),
+        )),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {

@@ -7477,7 +7477,12 @@ failure. Grid validation and any paid upload are performed by the human.
   dual-panel layout with two explorers (the right one in the subfolder)
   and an item's menu with Copy / Move to the other pane; check the Undo of
   such a move, that the narrow panes keep their breadcrumb and columns, and
-  that Tab in one pane's list gives the keyboard to the other's.
+  that Tab in one pane's list gives the keyboard to the other's. In any
+  explorer: Ctrl-drag of an item copies it (a log line `inventory drop:`
+  names the mode and the keys held); a right-click in the empty space of a
+  folder, Recent, Worn or Favorites opens New at the side (in Recent, Worn
+  or Favorites a new notecard lands in Notecards, a folder at the top), and
+  the rubber band works in those lists too.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a

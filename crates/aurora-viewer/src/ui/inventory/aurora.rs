@@ -617,9 +617,13 @@ fn explorer_list(
         std::mem::swap(&mut st.plain, &mut st.flat);
         out
     } else {
-        in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+        // Recent, Worn, Favorites and the results take the band too
+        marquee::begin(ui, st, list_rect);
+        let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
             list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false)
-        })
+        });
+        marquee::end(ui, p, st, list_rect, out.id, out.inner_rect);
+        out
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
     type_ahead_label(ui, p, st, list_rect);

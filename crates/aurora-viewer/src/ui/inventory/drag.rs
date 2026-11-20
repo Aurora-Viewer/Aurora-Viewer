@@ -377,7 +377,7 @@ pub(super) fn target(
                 .into_iter()
                 .any(|mode| plan_allows(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts))
         } else {
-            plan.as_ref().as_ref().is_ok_and(|p| !p.operations.is_empty())
+            plan.as_ref().as_ref().is_ok_and(changes)
         };
     ui.ctx().data_mut(|d| {
         d.insert_temp(
@@ -462,6 +462,12 @@ pub(super) fn drop_cargo(
     }
 }
 
+/// Whether a drop's plan changes anything: an item's copy travels in
+/// `copies`, not in `operations`, so a Ctrl-drag of items was refused.
+pub(super) fn changes(plan: &Mutation) -> bool {
+    !plan.operations.is_empty() || !plan.copies.is_empty()
+}
+
 fn plan_allows(
     ctx: &egui::Context,
     inv: &Inventory,
@@ -471,10 +477,7 @@ fn plan_allows(
     prefs: &InventoryPreferences,
     facts: &Facts,
 ) -> bool {
-    plan(ctx, inv, ids, to, mode, prefs, facts)
-        .as_ref()
-        .as_ref()
-        .is_ok_and(|p| !p.operations.is_empty())
+    plan(ctx, inv, ids, to, mode, prefs, facts).as_ref().as_ref().is_ok_and(changes)
 }
 
 /// The folders a drag that may copy or link carries (Ctrl, Alt, or the

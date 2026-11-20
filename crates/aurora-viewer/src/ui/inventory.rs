@@ -3113,7 +3113,7 @@ pub fn show(
     // tab left closes.
     if !classic {
         let mut panes: Vec<&mut InventoryUi> = std::iter::once(&mut *st)
-            .chain(dual.as_deref_mut())
+            .chain(dual)
             .chain(windows.iter_mut().filter(|w| w.open).map(|w| &mut *w.state))
             .collect();
         aurora::tabs::settle(ctx, &mut panes, prefs, &mut spawned);

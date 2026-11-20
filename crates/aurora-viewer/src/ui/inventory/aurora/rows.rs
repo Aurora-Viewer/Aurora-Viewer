@@ -437,9 +437,8 @@ pub(in super::super) fn item(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
-    if frame.explorer {
-        super::marquee::record(st, id, rect);
-    }
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
     if st.selected == Some(id) {
         st.selected_rect = Some(rect);
     }
@@ -591,9 +590,8 @@ pub(in super::super) fn folder(
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
-    if frame.explorer {
-        super::marquee::record(st, id, rect);
-    }
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
     if st.selected == Some(id) {
         st.selected_rect = Some(rect);
     }

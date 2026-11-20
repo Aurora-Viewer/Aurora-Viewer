@@ -475,6 +475,14 @@ impl App {
             InvAction::Drop(change) => self.edit_inventory(change, true, editor),
             InvAction::History { undo } => self.inventory_history(undo, editor),
             InvAction::Create { parent, kind, name } => {
+                // nil: New from the empty space of Recent, Worn or
+                // Favorites, into the type's own folder
+                let parent = if parent.is_nil() {
+                    let inv = &self.world.inventory;
+                    rules::system(inv, kind.types().0.into()).unwrap_or(inv.root)
+                } else {
+                    parent
+                };
                 if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
