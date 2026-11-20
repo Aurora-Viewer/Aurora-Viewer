@@ -203,6 +203,11 @@ impl WorldMapUi {
         open: &mut bool,
     ) -> Vec<WorldMapAction> {
         let mut actions = Vec::new();
+        // RlvUIEnabler::onToggleShowWorldMap (rlvui.cpp) closes the floater
+        // and its generic floater filter (filterFloaterGeneric) refuses to
+        // show it while @showworldmap holds, whatever asked for it: no frame
+        // is drawn and no map item is asked for.
+        *open &= !world.rlva.has("showworldmap");
         if !*open {
             self.was_open = false;
             self.focus_search = false;
@@ -2058,5 +2063,96 @@ mod focus_tests {
         bench.frame(false, vec![]);
         bench.frame(true, vec![]);
         assert!(bench.ctx.memory(|memory| memory.has_focus(overlay::search_id())));
+    }
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use crate::ui::widgets::elide_tests::Frames;
+    use std::sync::Arc;
+
+    #[test]
+    fn the_world_map_is_neither_drawn_nor_asks_items_under_showworldmap() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.rlva.configure(true);
+        restrict(&mut world, "@showworldmap=n");
+        assert!(world.rlva.has("showworldmap"));
+        let (mut map, mut tiles, mut opts) = (WorldMapUi::default(), MapTiles::new(), MapSettings::default());
+        let cam = MapCamera {
+            pos: glam::Vec3::new(128.0, 128.0, 30.0),
+            dir: glam::Vec3::X,
+            hfov: 1.2,
+            far: 128.0,
+        };
+        let images = HashMap::new();
+        let pictures = MapPictures {
+            images: &images,
+            avatars: &images,
+        };
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = Frames::new();
+        let mut open = true;
+        let texts = frames.run(vec![], |ui| {
+            map.show(
+                ui.ctx(),
+                &p,
+                &mut world,
+                &mut tiles,
+                &cam,
+                &mut opts,
+                WorldMapStyle::Legacy,
+                &pictures,
+                &mut open,
+            );
+        });
+        assert!(!open, "the window closes whoever opened it");
+        assert!(texts.is_empty(), "nothing of the map is drawn");
+        assert!(
+            !world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::MapItemRequest { .. })),
+            "no map item is asked for"
+        );
+        restrict(&mut world, "@showworldmap=y");
+        let mut open = true;
+        frames.run(vec![], |ui| {
+            map.show(
+                ui.ctx(),
+                &p,
+                &mut world,
+                &mut tiles,
+                &cam,
+                &mut opts,
+                WorldMapStyle::Legacy,
+                &pictures,
+                &mut open,
+            );
+        });
+        assert!(open, "the released map opens again");
+        assert!(
+            world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::MapItemRequest { .. })),
+            "the opened map asks its items"
+        );
+    }
+    fn restrict(world: &mut World, command: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: command.into(),
+        }));
     }
 }

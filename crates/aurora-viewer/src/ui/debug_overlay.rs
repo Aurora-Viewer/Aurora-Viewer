@@ -199,6 +199,27 @@ fn lod_labels(
     out
 }
 
+/// Whether the debug text of object `idx` shows: LLViewerObject::setDebugText
+/// (indra/newview/llviewerobject.cpp) writes it in the object's LLHUDText,
+/// which LLHUDText::setString (llhudtext.cpp) empties when
+/// RlvActions::canShowHoverText refuses the object (@showhovertextall,
+/// @showhovertextworld or @showhovertexthud, @showhovertext:<object>).
+fn debug_text_shown(world: &World, idx: usize, hud: bool) -> bool {
+    world.objects.get(idx).is_none_or(|o| world.rlva.hover_visible(o.full_id, hud))
+}
+
+/// The bounds (centre, radius) of the drawn objects (`idx`, centre, radius,
+/// on the HUD) whose debug text RLVa hides (`debug_text_shown`).
+fn hidden_debug_texts(world: &World, drawn: impl Iterator<Item = (usize, Vec3, f32, bool)>) -> Vec<(Vec3, f32)> {
+    if !world.rlva.enabled() {
+        return Vec::new();
+    }
+    drawn
+        .filter(|&(idx, _, _, hud)| !debug_text_shown(world, idx, hud))
+        .map(|(_, center, radius, _)| (center, radius))
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
@@ -222,7 +243,9 @@ pub fn draw(
     if dv.lod_info {
         let pointer = ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| ctx.content_rect().center());
         let font = egui::FontId::proportional(11.0);
-        for (at, info, count) in lod_labels(lod, pointer, LOD_REACH, LOD_LABELS, |p| proj.project(p).map(|(p, _)| p)) {
+        let hidden = hidden_debug_texts(world, scene.gpu.iter().enumerate().map(|(i, g)| (i, g.center, g.radius, g.hud)));
+        let lod: Vec<LodInfo> = lod.iter().filter(|i| !hidden.contains(&(i.at, i.bounds))).copied().collect();
+        for (at, info, count) in lod_labels(&lod, pointer, LOD_REACH, LOD_LABELS, |p| proj.project(p).map(|(p, _)| p)) {
             let text = lod_text(&info, count);
             // (a dark copy under it: the label is read over any scene)
             let shadow = Color32::from_black_alpha(200);
@@ -300,7 +323,7 @@ pub fn draw(
                 None => (GREY, ""),
             };
             lines.screen_circle(g.center, g.radius, eye, color);
-            if !why.is_empty() && g.center.distance(eye) < 24.0 {
+            if !why.is_empty() && g.center.distance(eye) < 24.0 && debug_text_shown(world, idx, false) {
                 lines.label(g.center, why, color);
             }
         }
@@ -324,7 +347,7 @@ pub fn draw(
             );
             lines.cross(g.center, 6.0, c);
             lines.sphere(g.center, l.radius, c.gamma_multiply(0.7));
-            if g.center.distance(eye) < 24.0 {
+            if g.center.distance(eye) < 24.0 && debug_text_shown(world, idx, false) {
                 lines.label(
                     g.center,
                     &aurora_i18n::tr!(
@@ -472,5 +495,36 @@ mod tests {
         let small = info(400.0, 3, 3, 5.0, false);
         let first = lod_labels(&[small, large], egui::pos2(380.0, 100.0), 150.0, 1, on_plane);
         assert_eq!(first[0].1.shown, 1);
+    }
+    /// The debug texts go where the floating text goes
+    /// (LLViewerObject::setDebugText): an object @showhovertext names, then
+    /// every world object under @showhovertextworld, loses them; a HUD's
+    /// stays under @showhovertextworld.
+    #[test]
+    fn debug_texts_are_hidden_with_the_floating_texts() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let objects: Vec<(usize, uuid::Uuid)> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| !o.is_avatar())
+            .take(2)
+            .map(|(i, o)| (i, o.full_id))
+            .collect();
+        let [(a, id), (b, _)] = objects[..] else {
+            panic!("the demo has objects");
+        };
+        let drawn = || [(a, Vec3::X, 1.0, false), (b, Vec3::Y, 2.0, false), (b, Vec3::Z, 3.0, true)].into_iter();
+        assert!(hidden_debug_texts(&world, drawn()).is_empty());
+        world.rlva.configure(true);
+        world.rlva_console_input(&format!("@showhovertext:{id}=n"));
+        assert_eq!(hidden_debug_texts(&world, drawn()), vec![(Vec3::X, 1.0)]);
+        assert!(!debug_text_shown(&world, a, false) && debug_text_shown(&world, b, false));
+        world.rlva_console_input("@showhovertextworld=n");
+        assert_eq!(hidden_debug_texts(&world, drawn()), vec![(Vec3::X, 1.0), (Vec3::Y, 2.0)]);
+        world.rlva_console_input("@showhovertexthud=n");
+        assert_eq!(hidden_debug_texts(&world, drawn()).len(), 3);
     }
 }
