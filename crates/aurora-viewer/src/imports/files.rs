@@ -15,7 +15,7 @@ pub(super) mod texture_names;
 pub(super) use folder::load as load_folder;
 
 enum Selection {
-    Files,
+    Files(Option<Choice>),
     Folder,
     Paths(Vec<PathBuf>),
 }
@@ -618,7 +618,7 @@ impl Imports {
     /// normal inspector, including its price confirmation and retries.
     pub(crate) fn choose_material_map_upload(
         &mut self,
-        jobs: &crate::scene::jobs::Jobs,
+        _jobs: &crate::scene::jobs::Jobs,
         ctx: &egui::Context,
         options: import_texture::Options,
     ) -> Option<Uuid> {
@@ -628,6 +628,11 @@ impl Imports {
         let request = Uuid::new_v4();
         let entry_id = Uuid::new_v4();
         self.pending_files = Some(request);
+        let cancellation = file_picker::Cancellation::default();
+        self.pending_picker = Some(file_picker::Pending {
+            owner: Some(Choice::Bulk),
+            cancellation: cancellation.clone(),
+        });
         self.open(Choice::Texture);
         self.active = Some(entry_id);
         for entry in &mut self.entries {
@@ -636,21 +641,21 @@ impl Imports {
         let prefs = self.load_preferences.clone();
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        jobs.execute(move || {
+        file_picker::spawn(request, tx, wake, move || {
             let mut entries = Vec::new();
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title(aurora_i18n::tr!("import-title"))
-                .add_filter(Choice::Texture.label(), &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"])
-                .pick_file()
-            {
+            if let Some(path) = cancellation.pick(|| {
+                rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("import-title"))
+                    .add_filter(Choice::Texture.label(), &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"])
+                    .pick_file()
+            }) {
                 entries = load(&path, Choice::Texture, options, 30, &prefs, false)
                     .unwrap_or_else(|reason| vec![Entry::new(path, Err(reason.to_string()), options)]);
                 for entry in &mut entries {
                     entry.id = entry_id;
                 }
             }
-            let _ = tx.send(Worker::Loaded(request, entries));
-            wake.request_repaint();
+            entries
         });
         Some(entry_id)
     }
@@ -765,7 +770,16 @@ impl Imports {
         });
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
-        self.choose_type_files(jobs, ctx, options, self.choice);
+        if !self.busy() {
+            self.load_files(
+                jobs,
+                ctx,
+                options,
+                self.choice,
+                self.choice == Choice::Local,
+                Selection::Files(Some(Choice::Bulk)),
+            );
+        }
     }
 
     pub fn choose_type_files(
@@ -778,7 +792,7 @@ impl Imports {
         if self.busy() {
             return;
         }
-        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files);
+        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files(Some(choice)));
     }
     pub fn choose_folder(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
         if self.busy() || self.pending_files.is_some() {
@@ -802,7 +816,7 @@ impl Imports {
             return;
         }
         let choice = if materials { Choice::Material } else { Choice::Texture };
-        self.load_files(jobs, ctx, options, choice, true, Selection::Files);
+        self.load_files(jobs, ctx, options, choice, true, Selection::Files(None));
         self.picker_files = true;
     }
     /// The Local tab's "Upload" (onBtnUpload): the importer opens on the
@@ -840,20 +854,31 @@ impl Imports {
         self.pending_files = Some(request);
         self.picker_files = false;
         self.pending_file_choice = Some(if local { Choice::Local } else { choice });
+        let native = !matches!(selection, Selection::Paths(_));
+        let cancellation = file_picker::Cancellation::default();
+        if native {
+            self.pending_picker = Some(file_picker::Pending {
+                owner: match selection {
+                    Selection::Files(owner) => owner,
+                    _ => Some(Choice::Bulk),
+                },
+                cancellation: cancellation.clone(),
+            });
+        }
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let filters = self.type_filters;
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        jobs.execute(move || {
-            let paths = match selection {
+        let work = move || {
+            let select = || match selection {
                 Selection::Paths(paths) => paths,
                 Selection::Folder => rfd::FileDialog::new()
                     .set_title(aurora_i18n::tr!("import-choose-folder"))
                     .pick_folder()
                     .into_iter()
                     .collect(),
-                Selection::Files => {
+                Selection::Files(_) => {
                     let filter: &[&str] = match choice {
                         Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
                         Choice::Sound => &["wav"],
@@ -872,16 +897,17 @@ impl Imports {
                         .unwrap_or_default()
                 }
             };
+            let paths = if native { cancellation.pick(select) } else { select() };
             if paths.len() == 1 && paths[0].is_dir() {
-                let entries = load_folder(&paths[0], &prefs, options, sound_limit);
-                let _ = tx.send(Worker::Loaded(request, entries));
-                wake.request_repaint();
-                return;
+                return load_folder(&paths[0], &prefs, options, sound_limit);
             }
-            let entries = load_paths(paths, choice, options, sound_limit, &prefs, local, filters);
-            let _ = tx.send(Worker::Loaded(request, entries));
-            wake.request_repaint();
-        });
+            load_paths(paths, choice, options, sound_limit, &prefs, local, filters)
+        };
+        if native {
+            file_picker::spawn(request, tx, wake, work);
+        } else {
+            jobs.execute(move || file_picker::complete(request, tx, wake, work));
+        }
     }
 }
 

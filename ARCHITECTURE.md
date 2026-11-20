@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`imports/file_picker.rs` owns pending native selections and their import-window
+identity. Closing that window cancels and retires the request without discarding
+existing drafts; request ids reject late replies. Native dialogs run on dedicated
+threads with panic-safe completion. On Windows, `file_picker/windows.rs` installs
+a thread timer for the modal loop and posts WM_CLOSE only to native dialogs on
+that picker thread. Other platforms retain rfd's dialog until manual dismissal,
+but the retired result is ignored. File decoding stays off the frame thread.
+
 `imports/ui/inspector.rs` owns the draggable queue divider. Its preferred width
 is stored under each import window in the shared persisted UI layout; fitting
 a smaller window only clamps the displayed width. Double-click restores the
