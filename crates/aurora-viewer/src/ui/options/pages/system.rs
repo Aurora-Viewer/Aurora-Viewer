@@ -85,17 +85,26 @@ pub fn page(cx: &mut Cx) {
         );
     });
     cx.group(tr!("update-settings"), |cx| {
+        // the package manager installs the updates: the mode and the interval
+        // change nothing. The channel stays: the launch check reads the
+        // minimum version to sign in from that channel's latest release.
+        let packaged = crate::updater::packaged();
+        if packaged {
+            cx.note(tr!("update-packaged-settings"));
+        }
         use crate::updater::Mode;
-        cx.combo(
-            tr!("update-settings"),
-            tr!("update-settings-help"),
-            &field!(update_mode),
-            &[
-                (Mode::Disabled, tr!("update-mode-disabled")),
-                (Mode::Ask, tr!("update-mode-ask")),
-                (Mode::Automatic, tr!("update-mode-auto")),
-            ],
-        );
+        if !packaged {
+            cx.combo(
+                tr!("update-settings"),
+                tr!("update-settings-help"),
+                &field!(update_mode),
+                &[
+                    (Mode::Disabled, tr!("update-mode-disabled")),
+                    (Mode::Ask, tr!("update-mode-ask")),
+                    (Mode::Automatic, tr!("update-mode-auto")),
+                ],
+            );
+        }
         use aurora_updater::feed::Channel;
         cx.combo(
             tr!("update-channel"),
@@ -107,6 +116,9 @@ pub fn page(cx: &mut Cx) {
             ],
         );
         use crate::updater::Interval;
+        if packaged {
+            return;
+        }
         cx.combo(
             tr!("update-interval"),
             tr!("update-interval-help"),

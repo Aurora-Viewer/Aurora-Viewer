@@ -6306,6 +6306,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]` | The updated viewer of this test starts slowly, moving on or stuck |
+| `AURORA_PACKAGED=1` | A distribution package's launcher: its package manager installs the updates |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
@@ -8736,11 +8737,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the files built into the viewer. The demo and the update test
   installation never download the news, even with this
   variable.
-- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace`**, with `AURORA_DEMO=1`: offer
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace|protected|packaged`**, with `AURORA_DEMO=1`: offer
   of a synthetic version, download at 42% or download finished; `beta`
   offers a nightly beta (`0.7.7-beta.20261025.1`), as a viewer on the Beta
   channel sees it; `grace` is the offer below a new minimum version during
   its grace period (12 h left): "Sign in anyway" and "Update", no "Skip".
+  `protected` is the offer on an installation that cannot replace itself
+  (a folder this account cannot write, a sandbox): the reason in red and
+  "Open the release page" instead of "Update" (here it only closes the
+  window); `packaged` is the one of a package manager's installation
+  (`AURORA_PACKAGED`): "update through your package manager", "Skip this
+  version" and "Later" only.
   "Update" animates a simulated progress; "Cancel" goes back to the
   offer. No download and no file replacement. Login
   is inert and the login preferences stay intact.
@@ -8750,6 +8757,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_PACKAGED=1`**: set by a distribution package's launcher, whose
+  package manager installs Aurora's updates (`docs/LINUX.md`, *Updates*).
+  The viewer still checks at launch: a release it needs to sign in opens
+  the update window, which says to update through the package manager,
+  with no "Update" and no link to the download. No other release opens the
+  window or a notice, no periodic check runs (changing the channel checks
+  once), the Automatic mode downloads
+  nothing, and Preferences › Language and updates shows a note instead of
+  the update mode and interval (the channel stays). A manual "Check for updates" still shows what is
+  out. `0` or an empty value is the same as unset. To try it on a real
+  release check, run `scripts/test-update-linux.py --packaged`.
 - **`AURORA_DEMO_UPDATE_NOTICE=1|ready`**, with `AURORA_DEMO=1`: the notice a
   periodic update check shows in the world (made-up version 9.9.9), at frame
   700; `ready` is the one of a version already downloaded (Automatic mode).
