@@ -479,7 +479,18 @@ impl World {
             self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
             return;
         }
-        let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        // A conference we started and whose start reply has not come yet has
+        // no speaker yet in the Legacy Viewer: LLIMModel::LLIMSession starts
+        // with an empty LLIMSpeakerMgr (llimview.cpp, llspeakers.cpp) that
+        // only sessionInitReplyReceived, agent list updates and arriving
+        // chatters fill. FSFloaterIM::sendMsg (fsfloaterim.cpp) checks
+        // @sendim against that list for an ad-hoc session, so a line queued
+        // before init finds no one to refuse and leaves unchanged.
+        let text = if self.calls.conferences.contains_key(&session) {
+            text.to_owned()
+        } else {
+            self.rlva_outgoing_im_text(session, true, text).into_owned()
+        };
         self.send_session_text(session, text, false);
     }
 

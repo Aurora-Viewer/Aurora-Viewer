@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn rlva_rechecks_pending_conference_text_for_invitees_and_actual_participants() {
+    fn rlva_never_filters_conference_text_queued_before_the_start_reply() {
         let other = Uuid::from_u128(77);
         let unexpected = Uuid::from_u128(78);
         for when in ["before typing", "at ack", "on new participant", "at dispatch"] {
@@ -368,16 +368,13 @@ mod tests {
                 .into_iter()
                 .filter(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }));
             let mut command = delivered.next().unwrap();
-            // FSFloaterIM::sendMsg decides the text when the line is queued;
-            // sessionInitReplyReceived sends it with no check again
+            // FSFloaterIM::sendMsg decides the text when the line is queued,
+            // against a speaker list still empty before init (even with an
+            // invitee already refused); sessionInitReplyReceived sends it
+            // with no check again
             assert_eq!(w.rlva_send_boundary(&mut command, Uuid::nil()), Boundary::Send, "{when}");
-            let expected = if when == "before typing" {
-                remote(Remote::BlockedSendIm)
-            } else {
-                "private draft"
-            };
             assert!(
-                matches!(&command, NetCommand::SendImDialog { to, id, message, .. } if *to == SESSION && *id == SESSION && message == expected),
+                matches!(&command, NetCommand::SendImDialog { to, id, message, .. } if *to == SESSION && *id == SESSION && message == "private draft"),
                 "{when}: {command:?}"
             );
             assert!(delivered.next().is_none());
