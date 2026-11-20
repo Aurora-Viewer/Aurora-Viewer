@@ -13,6 +13,7 @@
 use super::{OptionsResult, OptionsUi, Page};
 use crate::settings::Settings;
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Rect, Sense, Shape, Vec2, pos2, vec2};
 
 /// What the rows do in this pass.
@@ -876,7 +877,7 @@ impl<'a> Cx<'a> {
     fn group_title(&mut self, title: &str) {
         let p = self.p;
         let font = egui::FontId::new(11.0, crate::ui::fonts::semibold(self.ui.ctx()));
-        let galley = self.ui.painter().layout_no_wrap(title.to_uppercase(), font, p.muted);
+        let galley = self.ui.painter().layout_no_wrap(title.ui_upper(), font, p.muted);
         let (rect, _) = self.ui.allocate_exact_size(vec2(self.ui.available_width(), 26.0), Sense::hover());
         let text_left = rect.left() + 4.0;
         crate::ui::widgets::paint_row_text(self.ui.painter(), galley.clone(), text_left, rect.center().y, p.muted);

@@ -352,6 +352,33 @@ pub fn grid_code(code: &str) -> &str {
     code.split(['-', '_']).next().filter(|base| !base.is_empty()).unwrap_or("en")
 }
 
+/// Upper case of an interface text in the language in use: see `upper_in`.
+pub fn upper(text: &str) -> String {
+    upper_in(language(), text)
+}
+
+/// Upper case of `text` in `language`. Turkish and Azerbaijani write the
+/// dotted `i` as `İ` in capitals (only the dotless `ı` becomes `I`), which
+/// `str::to_uppercase` does not know: "bilgi" must read "BİLGİ", not
+/// "BILGI". Every other language takes the standard mapping.
+pub fn upper_in(language: &str, text: &str) -> String {
+    match grid_code(language) {
+        "tr" | "az" => text.replace('i', "İ").to_uppercase(),
+        _ => text.to_uppercase(),
+    }
+}
+
+/// `upper` as a method, for the titles and labels shown in capitals.
+pub trait UiUpper {
+    fn ui_upper(&self) -> String;
+}
+
+impl UiUpper for str {
+    fn ui_upper(&self) -> String {
+        upper(self)
+    }
+}
+
 pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str)> {
     SOURCES.iter().map(|&(code, source)| {
         let name = source

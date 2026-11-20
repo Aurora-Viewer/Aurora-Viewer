@@ -1,4 +1,4 @@
-use aurora_i18n::{SOURCES, resolve_language};
+use aurora_i18n::{SOURCES, resolve_language, upper_in};
 use fluent_syntax::ast;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -358,4 +358,13 @@ fn japanese_falls_back_to_english_only_for_unknown_keys() {
         aurora_i18n::text_in("en", "language-system")
     );
     assert_eq!(aurora_i18n::text_in("ja", "unknown-key"), "unknown-key");
+}
+
+#[test]
+fn turkish_capitals_keep_the_dot_of_i() {
+    assert_eq!(upper_in("tr", "bilgi"), "BİLGİ");
+    assert_eq!(upper_in("tr", "ışık"), "IŞIK");
+    assert_eq!(upper_in("az", "iki"), "İKİ");
+    assert_eq!(upper_in("en", "info"), "INFO");
+    assert_eq!(upper_in("de", "straße"), "STRASSE");
 }
