@@ -2686,6 +2686,9 @@ pub fn show(
     st.other_pane = dual.as_deref().filter(|_| !classic).map(|dual| dual.browse);
     if let Some(dual) = dual.as_deref_mut() {
         dual.other_pane = (!classic).then_some(st.browse);
+        if !classic {
+            clipboard::split_tab(ctx, st, dual);
+        }
         if !*open {
             dual.pending_delete = None;
         }

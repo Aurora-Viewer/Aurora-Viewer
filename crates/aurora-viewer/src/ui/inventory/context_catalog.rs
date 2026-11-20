@@ -288,6 +288,7 @@ pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &Invento
 pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
     let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
     c.entries.retain(explorer::kept_in_background);
+    explorer::new_first(&mut c.entries);
     c
 }
 

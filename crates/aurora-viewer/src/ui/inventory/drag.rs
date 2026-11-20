@@ -411,6 +411,15 @@ pub(super) fn target(
     }
     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
         egui::DragAndDrop::clear_payload(ui.ctx());
+        let m = ui.input(|i| i.modifiers);
+        log::info!(
+            "inventory drop: {mode:?} of {} entries (allowed {allowed}; Ctrl {}, Shift {}, Alt {}, Command {})",
+            cargo.ids().len(),
+            m.ctrl,
+            m.shift,
+            m.alt,
+            m.command
+        );
         // Revalidate on release: permissions, pending requests and inventory
         // may have changed while the cursor was held still over a folder.
         if st.pending.is_some() {

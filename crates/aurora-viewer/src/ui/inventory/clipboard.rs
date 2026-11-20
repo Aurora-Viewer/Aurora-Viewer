@@ -151,15 +151,39 @@ fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
     st.list_focus_frame = Some(ctx.cumulative_frame_nr());
     ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
-        m.set_focus_lock_filter(
-            focus_id(st),
-            egui::EventFilter {
-                vertical_arrows: true,
-                horizontal_arrows: true,
-                ..Default::default()
-            },
-        );
+        m.set_focus_lock_filter(focus_id(st), list_filter(st));
     });
+}
+
+/// The keys the focused list keeps from egui's focus moves: the arrows, and
+/// Tab in the split view (`split_tab`).
+fn list_filter(st: &InventoryUi) -> egui::EventFilter {
+    egui::EventFilter {
+        vertical_arrows: true,
+        horizontal_arrows: true,
+        tab: st.other_pane.is_some(),
+        ..Default::default()
+    }
+}
+
+/// The split view: Tab (or Shift+Tab) in one pane's list gives the keyboard
+/// to the other's, as in Dolphin's split view and the two-panel file
+/// managers, rather than to the next widget.
+pub(super) fn split_tab(ctx: &egui::Context, a: &mut InventoryUi, b: &mut InventoryUi) {
+    let (fa, fb) = (focus_id(a), focus_id(b));
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(fa, list_filter(a));
+        m.set_focus_lock_filter(fb, list_filter(b));
+    });
+    let (in_a, in_b) = ctx.memory(|m| (m.has_focus(fa), m.has_focus(fb)));
+    if !(in_a || in_b) || a.rename.is_some() || b.rename.is_some() {
+        return;
+    }
+    let pressed =
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) | i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+    if pressed {
+        request_focus_ctx(ctx, if in_a { b } else { a });
+    }
 }
 
 fn list_focused_id() -> egui::Id {

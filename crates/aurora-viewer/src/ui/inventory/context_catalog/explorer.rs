@@ -45,6 +45,23 @@ pub(super) fn kept_in_background(entry: &Entry) -> bool {
         || BACKGROUND_ADDS.contains(&entry.id.as_str())
 }
 
+/// The empty space's New: a labelled "New ▸" at the head of the text, as
+/// Explorer's and Dolphin's "New" (the "+" of the icon bar was easy to
+/// miss there). A layout the user arranged still places it.
+pub(super) fn new_first(entries: &mut Vec<Entry>) {
+    let Some(at) = entries.iter().position(|e| e.id == "new" && e.zone == "top") else {
+        return;
+    };
+    let mut new = entries.remove(at);
+    new.zone = TEXT.into();
+    new.slot = None;
+    if let Kind::Group { direction, .. } = &mut new.kind {
+        *direction = Direction::Vertical;
+    }
+    let first_text = entries.iter().position(|e| e.zone == TEXT).unwrap_or(entries.len());
+    entries.insert(first_text, new);
+}
+
 /// The entries only the empty space's menu shows (and the editor).
 const BACKGROUND_ADDS: &[&str] = &["explorer-view", "explorer-sort", "select-all", "invert-selection", "undo", "redo"];
 
