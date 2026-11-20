@@ -117,6 +117,7 @@ const BEFORE: &[&str] = &[
     "update_mode",
     "ui_scale",
     "use_pie_menu",
+    "pie_menu_on_press",
     "snap_windows",
     "windows_stop_left",
     "windows_stop_right",

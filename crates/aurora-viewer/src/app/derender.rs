@@ -279,6 +279,7 @@ impl App {
                         },
                         pie_path: Vec::new(),
                         pie_input_frame: None,
+                        held: false,
                     });
                 }
             }

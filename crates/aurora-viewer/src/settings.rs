@@ -806,6 +806,11 @@ pub struct Settings {
     pub ui_scale: f32,
     /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
     pub use_pie_menu: bool,
+    /// The pie opens as the right button goes down, and its release over a
+    /// slice chooses it: LLToolPie::handleRightMouseDown (lltoolpie.cpp)
+    /// opens the menu on the press. Off by default, where a right drag
+    /// orbits the camera and the menu opens on the release.
+    pub pie_menu_on_press: bool,
     /// Independent arrangements for land, objects, avatars, attachments and HUDs.
     pub world_context_menus: crate::ui::context::Preferences,
     pub particle_filters: crate::world::particle_filters::ParticleFilters,
@@ -2452,6 +2457,7 @@ impl Default for Settings {
             max_texture_resolution: MAX_TEXTURE_RESOLUTION,
             ui_scale: 1.0,
             use_pie_menu: false,
+            pie_menu_on_press: false,
             world_context_menus: Default::default(),
             particle_filters: Default::default(),
             snap_windows: true,

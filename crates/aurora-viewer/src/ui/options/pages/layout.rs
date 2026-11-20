@@ -148,6 +148,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(use_pie_menu),
                     &[(false, tr!("ui-options-list-menu")), (true, tr!("ui-options-pie-menu"))],
                 );
+                let off = !cx.s.use_pie_menu;
+                cx.subs(off, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-pie-menu-on-press"),
+                        tr!("ui-options-pie-menu-on-press-help"),
+                        &field!(pie_menu_on_press),
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-loading-backdrop"),
                     tr!("ui-options-loading-and-teleport-screens-show-your-last-view-blurred"),

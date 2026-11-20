@@ -2,7 +2,9 @@
 //! (Firestorm indra/newview/piemenu.cpp, originally LGPL 2.1) and menu_pie_*.xml.
 //! Eight fixed directions, clockwise screen coordinates reversed to match SL,
 //! disabled slices, click-through submenus. Aurora keeps its extra actions in
-//! "More" and adds a center back button; it does not warp the system pointer.
+//! "More" and adds a center back button. The system pointer is moved to the
+//! centre only for a pie opened on the press that an edge of the window
+//! pushed aside (`center`, app/cursor_hold.rs `warp_cursor`).
 //! At the user's request, right-click goes back instead of selecting a slice.
 
 use super::entries::{Entry, Kind};
@@ -180,6 +182,12 @@ fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
     (center, radius)
 }
 
+/// Where the disc of a pie asked at `pos` is drawn: moved inside `screen`
+/// near its edges (PieMenu::show).
+pub fn center(screen: Rect, pos: Pos2) -> Pos2 {
+    geometry(screen, pos).0
+}
+
 fn sector(offset: Vec2, inner: f32, outer: f32) -> Option<usize> {
     let distance = offset.length();
     if distance <= inner || distance > outer {
@@ -282,7 +290,15 @@ pub(super) fn show(
     let scale = radius / OUTER;
     let inner = INNER * scale;
     let offset = ctx.input(|i| i.pointer.interact_pos()).map(|pos| pos - center);
-    let hovered = offset.and_then(|offset| sector(offset, inner, radius));
+    // The press that opened the pie was let go before it showed (its pick
+    // waited for the depth): the pie stays open, as after a plain click.
+    if menu.held && !ctx.input(|i| i.pointer.secondary_down() || i.pointer.button_released(egui::PointerButton::Secondary)) {
+        menu.held = false;
+    }
+    // While that press is held, a slice reaches past the outer edge, so a
+    // quick flick still lands on it (PieMenu::handleHover with mFirstClick).
+    let reach = if menu.held { f32::INFINITY } else { radius };
+    let hovered = offset.and_then(|offset| sector(offset, inner, reach));
     let hot = hovered.filter(|&index| current.get(index).is_some_and(|e| e.enabled));
     let mut primary_released = false;
     let mut secondary_released = false;
@@ -407,13 +423,17 @@ pub(super) fn show(
     } else if back {
         menu.pie_path.pop();
     } else if (primary_released || secondary_released) && menu.pie_input_frame.is_some_and(|frame| frame != ctx.cumulative_frame_nr()) {
-        if secondary_released {
+        // The release of the press that opened the pie chooses the slice
+        // under it; anywhere else the pie stays open for a click
+        // (PieMenu::handleMouseButtonUp, mFirstClick).
+        let first = secondary_released && std::mem::take(&mut menu.held);
+        if secondary_released && !first {
             if menu.pie_path.pop().is_none() {
                 *open = false;
             }
-        } else if offset.is_none_or(|o| o.length() > radius) {
+        } else if !first && offset.is_none_or(|o| o.length() > radius) {
             *open = false;
-        } else if offset.is_some_and(|o| o.length() <= inner) {
+        } else if !first && offset.is_some_and(|o| o.length() <= inner) {
             if menu.pie_path.pop().is_none() {
                 *open = false;
             }
@@ -498,7 +518,99 @@ mod tests {
             target,
             pie_path: Vec::new(),
             pie_input_frame: None,
+            held: false,
         })
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    /// A pie opened by a right press (`pie_menu_on_press`), the button
+    /// still down, then let go at `release`.
+    fn hold_and_release(target: Target, release: Pos2) -> (egui::Context, Option<ContextMenu>) {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(target);
+        menu.as_mut().expect("new menu").held = true;
+        frame(&ctx, &mut menu, &facts, button(egui::pos2(400.0, 400.0), true));
+        frame(&ctx, &mut menu, &facts, vec![egui::Event::PointerMoved(release)]);
+        assert!(menu.as_ref().expect("still open").held);
+        frame(&ctx, &mut menu, &facts, button(release, false));
+        (ctx, menu)
+    }
+
+    #[test]
+    fn a_held_press_chooses_the_slice_it_is_let_go_on() {
+        let (ctx, menu) = hold_and_release(Target::Ground, egui::pos2(500.0, 400.0));
+        assert!(menu.is_none());
+        assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::AboutLand(_)]));
+        // past the outer edge, the slice in that direction
+        let (ctx, menu) = hold_and_release(Target::Ground, egui::pos2(1000.0, 400.0));
+        assert!(menu.is_none());
+        assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::AboutLand(_)]));
+        // a submenu opens, and the next release is an ordinary click
+        let (ctx, menu) = hold_and_release(
+            Target::Object {
+                key: crate::world::objects::ObjKey { region: 1, local_id: 2 },
+                full_id: uuid::Uuid::nil(),
+                offset: Vec3::ZERO,
+            },
+            egui::pos2(400.0, 500.0),
+        );
+        let menu = menu.expect("More open");
+        assert_eq!(menu.pie_path, vec![6]);
+        assert!(!menu.held);
+        assert!(super::super::take_requests(&ctx).is_empty());
+    }
+
+    #[test]
+    fn a_held_press_let_go_on_the_center_keeps_the_pie_open() {
+        let (ctx, mut menu) = hold_and_release(Target::Ground, egui::pos2(400.0, 400.0));
+        assert!(!menu.as_ref().expect("still open").held);
+        assert!(super::super::take_requests(&ctx).is_empty());
+        // then a right click goes back as usual: at the root it closes
+        click(
+            &ctx,
+            &mut menu,
+            &Facts::default(),
+            egui::pos2(500.0, 400.0),
+            egui::PointerButton::Secondary,
+        );
+        assert!(menu.is_none());
+        assert!(super::super::take_requests(&ctx).is_empty());
+    }
+
+    #[test]
+    fn a_press_let_go_before_the_pie_shows_leaves_it_open() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        menu.as_mut().expect("new menu").held = true;
+        frame(&ctx, &mut menu, &facts, vec![egui::Event::PointerMoved(egui::pos2(500.0, 400.0))]);
+        assert!(!menu.as_ref().expect("still open").held);
+        click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Secondary);
+        assert!(menu.is_none());
+        assert!(super::super::take_requests(&ctx).is_empty());
+    }
+
+    #[test]
+    fn a_pie_asked_near_an_edge_is_moved_inside_the_window() {
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
+        // away from the edges it opens under the pointer: nothing to move
+        assert_eq!(center(screen, egui::pos2(400.0, 400.0)), egui::pos2(400.0, 400.0));
+        // near them the disc keeps its whole radius inside (PieMenu::show);
+        // the pointer is taken to this centre (app/cursor_hold.rs)
+        assert_eq!(center(screen, egui::pos2(5.0, 400.0)), egui::pos2(OUTER, 400.0));
+        assert_eq!(center(screen, egui::pos2(1275.0, 890.0)), egui::pos2(1280.0 - OUTER, 900.0 - OUTER));
     }
 
     #[test]

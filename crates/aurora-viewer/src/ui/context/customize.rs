@@ -436,6 +436,7 @@ mod tests {
             point: Vec3::ZERO,
             pie_path: Vec::new(),
             pie_input_frame: None,
+            held: false,
         }
     }
 
