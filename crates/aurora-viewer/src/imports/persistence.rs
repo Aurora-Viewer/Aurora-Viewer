@@ -193,7 +193,7 @@ impl Asset {
         if !self.path.is_file() {
             return Err(aurora_i18n::tr!("import-local-file-missing").into());
         }
-        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(|error| error.to_string())?;
+        let mut loaded = files::load(&self.path, choice, options, 30, &prefs, true).map_err(files::load_error)?;
         if self.material_index >= loaded.len() {
             return Err(aurora_i18n::tr!("import-reload-material-count").into());
         }
@@ -386,7 +386,7 @@ fn read_registry(path: &Path) -> Result<Registry, ()> {
         return Err(());
     }
     let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| ())?;
-    if registry.version != 1 || registry.assets.len() > 512 {
+    if registry.version != 1 {
         return Err(());
     }
     let mut ids = HashSet::new();
@@ -430,20 +430,10 @@ impl Imports {
                 for profile in registry.profiles.values_mut() {
                     profile.expire_appearances(now);
                 }
-                let mut retained = 0usize;
                 let entries = registry
                     .assets
                     .iter()
-                    .map(|asset| {
-                        let entry = asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message));
-                        let bytes = entry.source.as_ref().map_or(0, Source::retained_bytes);
-                        if retained.saturating_add(bytes) > 1024 * 1024 * 1024 {
-                            asset.unavailable(aurora_i18n::tr!("import-batch-limit").into())
-                        } else {
-                            retained += bytes;
-                            entry
-                        }
-                    })
+                    .map(|asset| asset.restore(&prefs).unwrap_or_else(|message| asset.unavailable(message)))
                     .collect();
                 Restored { registry, entries }
             });
@@ -719,6 +709,29 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_registry_keeps_more_than_512_materials() {
+        let files = Files::new();
+        let entry = files.entry("material-demo.gltf");
+        let template = Asset::capture(&entry);
+        let registry = Registry {
+            version: 1,
+            assets: (0..513)
+                .map(|_| {
+                    let mut asset = template.clone();
+                    asset.id = Uuid::new_v4();
+                    asset
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let path = files.0.join(FILE);
+        write_registry(&path, &serde_json::to_vec(&registry).unwrap()).unwrap();
+        let saved = read_registry(&path).expect("large local registry");
+        assert_eq!(saved.assets.len(), 513);
+        assert_eq!(saved.assets[512].id, registry.assets[512].id);
+    }
     struct Files(PathBuf);
     impl Files {
         fn new() -> Self {

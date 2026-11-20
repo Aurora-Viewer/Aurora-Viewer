@@ -208,7 +208,6 @@ impl Editor {
         let other = &couple.other;
         let request = ik::EditRequest {
             active: true,
-            suppress_script_ik: true,
             animations: self.clip.waiting_sample(),
             suppress_live: true,
             goals: other
@@ -218,7 +217,6 @@ impl Editor {
                 .cloned()
                 .collect(),
             joints: other.authoring.request(&other.goals, &other.disabled),
-            released: (0..world.avatar_lib.rig.len()).collect(),
         };
         Some((couple.waiting(world.agent_id), request))
     }
@@ -739,7 +737,6 @@ mod tests {
         let mut editor = couple_editor(&lib);
         let elbow = rig.names["mElbowLeft"];
         editor.goals = vec![Goal {
-            follow: None,
             weight: 1.0,
             bone: elbow,
             root: elbow,
