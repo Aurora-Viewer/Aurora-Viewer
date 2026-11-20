@@ -421,7 +421,9 @@ impl App {
         if a.mouse_dx == 0.0 && a.mouse_dy == 0.0 {
             return;
         }
-        let Some(window) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else { return };
+        let Some(window) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
+            return;
+        };
         let size = window.inner_size();
         // round(DX · 1200 · dt); +DY is up on the stick, down on the screen
         let dx = (a.mouse_dx * CURSOR_SPEED * dt).round();
@@ -429,8 +431,7 @@ impl App {
         let x = (self.cursor_pos.0 + dx).clamp(0.0, size.width as f32);
         let y = (self.cursor_pos.1 + dy).clamp(0.0, size.height as f32);
         if (x, y) != self.cursor_pos {
-            let _ = window
-                .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+            let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
             self.cursor_pos = (x, y);
             self.last_input = now;
         }
