@@ -1,0 +1,11 @@
+# Community localization review
+
+This directory holds importable catalogs while their wording and layout are being reviewed. The Viewer embeds files from `crates/aurora-i18n/locales/`. It loads a file from this directory only when a user explicitly imports it.
+
+Spanish (`es`) is the first catalog in review. Download [`es.ftl`](es.ftl), keep that filename, select **Use a language file (.ftl)** in **Preferences → Language and updates**, and restart the Viewer. To return to the selected built-in language, clear the option and restart.
+
+Review one language at a time against the English catalog and the [translator guide](../TRANSLATING.md). Follow the Legacy Viewer's terminology and use formal address in interface text. Keep command names, URLs, Fluent variables and selectors intact. At each release, use `catalog_delta` to find added and changed source text and remove obsolete keys. A missing or unusable translation uses the English message.
+
+Before an importable catalog is proposed for bundling, finish the wording review, check the relevant screens in the offline Viewer, and record the human validation and remaining issues in the pull request.
+
+The first five community catalogs were brought into upstream Aurora in [#4315](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4315), building on [#4220](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4220). Both discussions retain the original contributor credits.
