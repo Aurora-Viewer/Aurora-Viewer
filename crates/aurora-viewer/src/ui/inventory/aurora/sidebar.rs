@@ -438,7 +438,7 @@ pub(super) fn show(
                 "Inv_FolderOpen" => "folder-open-filled",
                 _ => "folder-filled",
             };
-            let color = folder_colors::tint(prefs, row.id);
+            let color = folder_colors::tint(prefs, inv, row.id);
             let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color);
             #[cfg(test)]
             st.side.drawn.insert(row.id, response.rect);
