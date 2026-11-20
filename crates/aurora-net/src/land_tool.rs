@@ -63,7 +63,7 @@ fn base_params(agent_id: Uuid, secure_session_id: Uuid) -> Map {
     let mut p = Map::new();
     p.insert("agentId".into(), agent_id.to_string().into());
     p.insert("secureSessionId".into(), secure_session_id.to_string().into());
-    p.insert("language".into(), aurora_i18n::language().into());
+    p.insert("language".into(), aurora_i18n::grid_language().into());
     p
 }
 

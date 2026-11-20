@@ -641,6 +641,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
             }
@@ -768,6 +769,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1055,6 +1057,7 @@ mod tests {
                             origin: crate::world::Origin::Live,
                             blocked: false,
                             beyond_range: false,
+                            speaker: Default::default(),
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1168,6 +1171,7 @@ mod tests {
                     origin: crate::world::Origin::Live,
                     blocked: false,
                     beyond_range: false,
+                    speaker: Default::default(),
                 },
             );
             kit.main_open = true;

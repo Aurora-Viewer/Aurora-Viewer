@@ -631,7 +631,7 @@ fn build_mode(
                         "sun-filled",
                         aurora_i18n::tr!("common-apply-to-myself-only"),
                         single && !it.asset_id.is_nil(),
-                        InvAction::Environment(it.asset_id, it.flags, it.id),
+                        InvAction::Environment(it.asset_id, it.flags),
                     );
                 }
             }

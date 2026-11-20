@@ -3,7 +3,8 @@
 //! Firestorm project): LLViewerObject::setAttachedSound, process_sound_trigger,
 //! LLAudioEngine / LLAudioSource (priority by distance) and the FMOD Studio
 //! 3D settings LL uses (inverse rolloff, factor 1, 5 under water; minimum
-//! distance 1 m), the listener being the camera (MediaSoundsEarLocation 0).
+//! distance 1 m), the listener being the camera or the avatar
+//! (MediaSoundsEarLocation, [`ear_position`]).
 //!
 //! Sounds are Ogg Vorbis assets fetched from the ViewerAsset capability,
 //! cached on disk and decoded off the main thread.
@@ -202,6 +203,19 @@ impl Listener {
             underwater,
             binaural,
         }
+    }
+}
+
+/// Where world sounds and media are heard from (MediaSoundsEarLocation):
+/// the camera, or the agent's position (audio_update_listener,
+/// llvieweraudio.cpp; LLAudioSourceVO::isInCutOffRadius,
+/// llaudiosourcevo.cpp; LLViewerMediaImpl::calculateInterest,
+/// llviewermedia.cpp). Only the position moves: the listener keeps the
+/// camera's axes and its underwater test, as there.
+pub fn ear_position(ear: crate::settings::VoiceEar, camera: Vec3, agent: Vec3) -> Vec3 {
+    match ear {
+        crate::settings::VoiceEar::Camera => camera,
+        crate::settings::VoiceEar::Avatar => agent,
     }
 }
 
@@ -1700,6 +1714,33 @@ mod tests {
         sounds.update(None, &world, &listener, now + Duration::from_millis(10));
         assert!(sounds.sources[&object].playing.is_none());
         assert!(sounds.triggered[0].playing.is_some());
+    }
+
+    #[test]
+    fn sounds_are_heard_from_the_camera_or_the_avatar() {
+        use crate::settings::VoiceEar;
+        let world = hud_world();
+        let object = object_id(&world, 101);
+        let now = Instant::now();
+        let idx = world.objects.index_of_uuid(&object).unwrap();
+        let pos = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        // the camera 10 m away, the avatar 1 m from the sound
+        let (camera, agent) = (pos + Vec3::X * 10.0, pos + Vec3::Y);
+        assert_eq!(ear_position(VoiceEar::Camera, camera, agent), camera);
+        assert_eq!(ear_position(VoiceEar::Avatar, camera, agent), agent);
+        let sound = Uuid::from_u128(1);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-ear-sound-tests"));
+        sounds.insert(sound, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.set_attached(None, object, sound, 0.6, FLAG_LOOP);
+        // a 2 m cut-off radius, measured from the ear
+        // (LLAudioSourceVO::isInCutOffRadius)
+        sounds.set_radius(object, 2.0);
+        let listener = |ear: VoiceEar| Listener::looking(ear_position(ear, camera, agent), -Vec3::X, false, false);
+        sounds.update(None, &world, &listener(VoiceEar::Camera), now);
+        assert!(sounds.sources[&object].playing.is_none(), "out of the radius at the camera");
+        let at_avatar = listener(VoiceEar::Avatar);
+        sounds.update(None, &world, &at_avatar, now + Duration::from_millis(10));
+        assert_gain(sounds.sources[&object].playing, SoundManager::gains(&at_avatar, pos, 0.6));
     }
 
     #[test]

@@ -234,6 +234,10 @@ pub struct FloaterState {
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
     pub reveal_faces: bool,
+    /// The panel is the object profile's, not the build tools': its names
+    /// follow LLSidepanelTaskInfo::refreshAll under RLVa's `@shownames`
+    /// (`general::Names`).
+    pub object_profile: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,
@@ -689,7 +693,8 @@ impl BuildTool {
             let n = self.num_faces(world, idx) as i32;
             let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
             let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
-            let f = if all && next {
+            // A sole selected face is already the cursor, not a bulk selection.
+            let f = if all && next && (n > 1 || self.selection.len() > 1) {
                 0
             } else if next {
                 cur + 1
@@ -697,10 +702,12 @@ impl BuildTool {
                 cur - 1
             };
             if (0..n).contains(&f) {
-                let entry = self.faces.entry(key).or_default();
                 if !include {
-                    entry.clear();
+                    let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
+                    self.deselect(world, &others);
+                    self.faces.clear();
                 }
+                let entry = self.faces.entry(key).or_default();
                 if !entry.contains(&(f as u8)) {
                     entry.push(f as u8);
                 }
@@ -723,7 +730,11 @@ impl BuildTool {
             .collect();
         let Some(pos) = list.iter().position(|&i| i == idx) else { return };
         let n = list.len();
-        let target = if next { list[(pos + 1) % n] } else { list[(pos + n - 1) % n] };
+        // LLToolsSelectNextPartFace skips selected links when extending a selection.
+        let target = (1..=n)
+            .map(|step| list[if next { (pos + step) % n } else { (pos + n - step) % n }])
+            .find(|&idx| !include || world.objects.get(idx).is_some_and(|o| !self.is_selected(&o.key)));
+        let Some(target) = target else { return };
         let Some(unit) = world.objects.get(target).map(|o| o.key) else {
             return;
         };

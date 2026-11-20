@@ -140,6 +140,8 @@ pub(crate) struct FramePacket {
     /// A small picture of this frame's 3D view, tagged (thumbnail.rs;
     /// answered a few frames later, never waited for).
     pub thumbnail: Option<u64>,
+    /// The second camera's view, drawn after this frame (second_view.rs).
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
     /// How far every position moved since the last frame (m, x and y): a

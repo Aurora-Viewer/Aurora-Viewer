@@ -499,6 +499,19 @@ impl AvatarNames {
         !self.rlva_private || scope.shows(id, self.rlva_allowed.contains(id), || self.rlva_nearby.contains(id))
     }
 
+    /// `id` stands in a region around while names are private
+    /// (`set_rlva_nearby`).
+    pub fn rlva_around(&self, id: &Uuid) -> bool {
+        self.rlva_nearby.contains(id)
+    }
+
+    /// `shows` for the Legacy windows that test `mID != gAgent.getID()`
+    /// where the others ask RlvActions::canShowName: `me` alone is named,
+    /// an `@shownames:<uuid>` exception is hidden as anyone.
+    pub fn shows_but_exceptions(&self, scope: NameScope, id: &Uuid, me: &Uuid) -> bool {
+        !self.rlva_private || scope.shows(id, id == me, || self.rlva_nearby.contains(id))
+    }
+
     /// Canonical data for privacy filtering; never a display accessor.
     pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
         self.cache.get(id)

@@ -174,9 +174,14 @@ outside the installed folder. It waits for the end of the parent (a Windows
 handle, or the parent's `/proc` entry on Linux, with its start time so that a
 reused PID is not taken for it), takes a lock, moves the old package entries
 into the backup and puts the new ones in place. The arguments are kept. The
-new instance signals a presented frame; the backup is then deleted. If it
-exits or shows nothing for 90 seconds, the old version is restored and
-restarted with a message. The errors offer the release page.
+new instance signals a presented frame; the backup is then deleted. While
+it starts, it also signals each step (a pipeline compiled, the next phase):
+if it exits, goes 90 seconds without a step, or shows no frame after 15
+minutes, the old version is restored and restarted with a message. A new
+version that does not signal its steps gets 90 seconds in all, as before.
+The rule is the helper's, a copy of the version being updated: it applies
+from the updates made by a version that has it. The errors offer the
+release page.
 
 Where the folder cannot be replaced, the viewer does not try: a sandbox owns
 it as a read-only package (Flatpak, Snap, AppImage), or the account cannot

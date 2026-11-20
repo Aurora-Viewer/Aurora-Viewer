@@ -864,6 +864,14 @@ fn preview_panel(
             }
         });
     }
+    // What an outfit holds is an Aurora addition to the gallery. The Legacy
+    // Viewer shows it in the "My Outfits" list alone, which @showinv
+    // disables (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>,
+    // indra/newview/rlvhandler.cpp): the items and their copied list follow
+    // it, the gallery keeps its outfits.
+    if world.rlva.has("showinv") {
+        return;
+    }
     ui.add_space(8.0);
     contents(ui, p, world, st, id, actions);
     ui.add_space(8.0);

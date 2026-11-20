@@ -1061,9 +1061,11 @@ fn replies(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsU
             ResponseMode::Autorespond => aurora_i18n::tr!("ui-contacts-set-response-autorespond"),
             ResponseMode::NonFriends => aurora_i18n::tr!("ui-contacts-set-response-nonfriends"),
         };
-        // greyed under RLVa @sendim, like Preferences' do not disturb text
-        // (the world does not send it then)
-        let locked = mode == ResponseMode::Busy && world.rlva.has("sendim");
+        // RLVa @sendim locks none of them: FSFloaterContactSetConfiguration
+        // (indra/newview/fsfloatercontactsetconfiguration.cpp) enables each
+        // editor from its own checkbox alone, and the set's do not disturb
+        // text is still sent (`World::dnd_response_to`). Only Preferences'
+        // global text is greyed (LLFloaterPreference::refreshEnabledState).
         let mut enabled = cfg.response(mode).enabled;
         let mut toggled = false;
         egui::Frame::new()
@@ -1075,9 +1077,7 @@ fn replies(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsU
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(label).size(13.0).color(p.ink));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        toggled = ui
-                            .add_enabled_ui(!locked, |ui| widgets::switch(ui, p, &mut enabled).changed())
-                            .inner;
+                        toggled = widgets::switch(ui, p, &mut enabled).changed();
                     });
                 });
                 let Some((_, texts)) = st.response_edit.as_mut() else {
@@ -1085,8 +1085,7 @@ fn replies(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsU
                 };
                 if enabled {
                     ui.add_space(8.0);
-                    let field = ui.add_enabled(
-                        !locked,
+                    let field = ui.add(
                         egui::TextEdit::multiline(&mut texts[i])
                             .desired_rows(2)
                             .desired_width(f32::INFINITY),
@@ -1604,5 +1603,59 @@ mod tests {
         assert_eq!(reply(&world, "B").as_deref(), Some(""), "nothing written to B");
         assert_eq!(st.config.as_deref(), Some("B"));
         assert_eq!(st.rename, "B");
+    }
+
+    /// FSFloaterContactSetConfiguration (indra/newview/
+    /// fsfloatercontactsetconfiguration.cpp) tests no RLVa restriction: under
+    /// @sendim the set's do not disturb reply is typed like the others.
+    #[test]
+    fn rlva_sendim_leaves_the_sets_do_not_disturb_reply_editable() {
+        use crate::ui::widgets::elide_tests::Frames;
+        /// One frame of the Auto-replies tab; where the reply is painted
+        /// while it reads as saved.
+        fn draw(frames: &mut Frames, world: &mut World, st: &mut ContactsUi, events: Vec<egui::Event>) -> Option<Pos2> {
+            let p = crate::theme::Theme::default().palette();
+            let cfg = world.contact_sets.set("A").expect("the set").clone();
+            let texts = frames.run(events, |ui| replies(ui, &p, world, st, "A", &cfg));
+            texts.iter().find(|t| t.source == "Busy here").map(|t| t.rect.center())
+        }
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.contact_sets.add_set("A");
+        let reply = SetResponse {
+            enabled: true,
+            text: "Busy here".into(),
+        };
+        world.contact_sets.set_response("A", ResponseMode::Busy, reply);
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: String::new(),
+            source_id: Uuid::from_u128(9000),
+            owner_id: Uuid::from_u128(1),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@sendim=n".into(),
+        }));
+        assert!(world.rlva.has("sendim"));
+        let mut st = ContactsUi::default();
+        let mut frames = Frames::new();
+        draw(&mut frames, &mut world, &mut st, Vec::new());
+        let point = draw(&mut frames, &mut world, &mut st, Vec::new()).expect("the reply is painted");
+        for pressed in [true, false] {
+            let click = egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            draw(&mut frames, &mut world, &mut st, vec![egui::Event::PointerMoved(point), click]);
+        }
+        draw(&mut frames, &mut world, &mut st, vec![egui::Event::Text("!".into())]);
+        let typed = st.response_edit.as_ref().map(|(_, texts)| texts[0].clone());
+        assert!(
+            typed.as_deref().is_some_and(|t| t.len() == "Busy here!".len() && t.contains('!')),
+            "the field took no text: {typed:?}"
+        );
     }
 }
