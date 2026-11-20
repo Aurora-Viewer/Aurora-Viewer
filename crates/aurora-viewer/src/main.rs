@@ -349,8 +349,11 @@ fn run_headless() -> anyhow::Result<()> {
         cli::get().offscreen_gpu,
         cli::get().mcp_port.unwrap_or(3847)
     );
-    while running.load(std::sync::atomic::Ordering::Relaxed) && app.tick_headless() {
+    while running.load(std::sync::atomic::Ordering::Relaxed) && !headless_stop_requested() && app.tick_headless() {
         std::thread::sleep(std::time::Duration::from_millis(33));
+    }
+    if app.mcp_shutdown_requested() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     app.shutdown_headless();
     slurl_handoff::release();
@@ -358,6 +361,25 @@ fn run_headless() -> anyhow::Result<()> {
     saves::wait(std::time::Duration::from_secs(5));
     drop(app);
     Ok(())
+}
+
+#[cfg(unix)]
+static HEADLESS_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_headless_stop(_sig: libc::c_int) {
+    HEADLESS_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn headless_stop_requested() -> bool {
+    #[cfg(unix)]
+    {
+        HEADLESS_STOP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
@@ -380,7 +402,33 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Resu
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        let _ = running;
+        HEADLESS_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            // SAFETY: plain sigaction calls on zeroed structs we own; the
+            // handler only writes an atomic bool.
+            unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, std::ptr::null(), &mut old) != 0 {
+                    return Err(format!("sigaction read failed for signal {signal}"));
+                }
+                if old.sa_sigaction == libc::SIG_IGN {
+                    continue;
+                }
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = on_headless_stop as extern "C" fn(libc::c_int) as libc::sighandler_t;
+                action.sa_flags = 0;
+                libc::sigemptyset(&mut action.sa_mask);
+                if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                    return Err(format!("sigaction install failed for signal {signal}"));
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = running;
         Ok(())

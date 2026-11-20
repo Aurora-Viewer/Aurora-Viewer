@@ -262,6 +262,8 @@ pub struct McpBridge {
     pub sse_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub last_voice_speaking: HashMap<Uuid, bool>,
     session_lindens_spent: i32,
+    pub(crate) shutdown_requested: bool,
+    pub(crate) shutdown_completed: bool,
 }
 
 impl McpBridge {
@@ -2167,7 +2169,7 @@ impl App {
                     "message": "Viewer clean shutdown initiated."
                 }))));
                 if crate::cli::get().headless {
-                    self.shutdown_headless();
+                    self.mcp_bridge.shutdown_requested = true;
                 } else {
                     self.exit_prompt.request();
                     self.confirm_exit(crate::ui::exit::Action::Quit);

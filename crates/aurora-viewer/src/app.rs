@@ -7153,7 +7153,15 @@ impl App {
     }
 
     pub(crate) fn shutdown_headless(&mut self) {
+        if self.mcp_bridge.shutdown_completed {
+            return;
+        }
+        self.mcp_bridge.shutdown_completed = true;
         self.shutdown_inner(None);
+    }
+
+    pub(crate) fn mcp_shutdown_requested(&self) -> bool {
+        self.mcp_bridge.shutdown_requested
     }
 
     fn shutdown_inner(&mut self, event_loop: Option<&ActiveEventLoop>) {
@@ -10373,7 +10381,10 @@ impl App {
     }
 
     pub(crate) fn tick_headless(&mut self) -> bool {
-        self.frame_inner(None)
+        if !self.frame_inner(None) {
+            return false;
+        }
+        !self.mcp_bridge.shutdown_requested
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
