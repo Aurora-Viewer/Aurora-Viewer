@@ -14303,6 +14303,9 @@ rlva-hide-layers-hint = Report a clothing layer as absent when it cannot be remo
 rlva-add-prefix = Folder prefix for adding
 rlva-replace-prefix = Folder prefix for replacing
 rlva-prefix-hint = Override scripted wear mode for folders starting with this text. Empty disables it; hidden-folder prefixes such as .name are ignored.
+rlva-tools-retained = Retained until login
+rlva-read-at-login = Changes take effect at the next login.
+rlva-debug-commands-chat = Each command also gets a line in nearby chat, under the object's name: what it executes, what fails and why, what waits for the login.
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priority { $rank } of { $total }

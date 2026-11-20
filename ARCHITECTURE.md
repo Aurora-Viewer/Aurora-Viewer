@@ -1632,7 +1632,14 @@ before the action guard. Current large regions retain their local coordinates;
 remote destinations use the native 256-metre tile. The no-angle look field
 uses local position plus X; explicit headings remain unit vectors.
 `rlva/naming.rs` handles balanced attachment-name blocks and legacy folder
-syntax. `collection.rs` is shared by forced wear and worn-inventory queries:
+syntax. `rlva/numeric.rs` reads every number and key of a command as the
+Legacy Viewer does (`std::stoi`, `std::stof`, LLStringUtil::convertTo*,
+`sscanf` vectors, LLUUID::set and parseUUID); the places that compute with a
+value keep their own guards against `inf` and `nan`. `rlva/dictionary.rs` is
+the Legacy behaviour dictionary in registration order, which @getcommand
+lists. `rlva/startup.rs` keeps the settings RLVa reads once when it starts
+(at the login) and retains the commands received before the login completes.
+`collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
 asynchronous fetching. Query counts use one ancestry walk per collected item.

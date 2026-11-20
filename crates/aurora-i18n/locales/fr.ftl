@@ -14308,6 +14308,9 @@ rlva-hide-layers-hint = Indiquer une couche absente lorsqu’elle ne peut pas ê
 rlva-add-prefix = Préfixe de dossier pour ajouter
 rlva-replace-prefix = Préfixe de dossier pour remplacer
 rlva-prefix-hint = Imposer ce mode de port aux dossiers commençant par ce texte. Vide le désactive ; les préfixes de dossiers cachés comme .nom sont ignorés.
+rlva-tools-retained = Retenue jusqu’à la connexion
+rlva-read-at-login = Les changements s’appliquent à la prochaine connexion.
+rlva-debug-commands-chat = Chaque commande donne aussi une ligne dans le chat local, au nom de l’objet : ce qu’il exécute, ce qui échoue et pourquoi, ce qui attend la connexion.
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }

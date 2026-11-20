@@ -2409,8 +2409,7 @@ impl App {
         if self.blender_live.local_command(&cmd, &self.world) {
             return;
         }
-        self.world.rlva_configure(self.settings.rlva_enabled);
-        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        self.rlva_sync_settings();
         if !self.settings.rlva_enabled {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();
@@ -8518,8 +8517,7 @@ impl App {
 
     /// RlvActions::canTeleport*: reject before UI and demo side effects.
     fn user_teleport_allowed(&mut self, command: &NetCommand) -> bool {
-        self.world.rlva_configure(self.settings.rlva_enabled);
-        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        self.rlva_sync_settings();
         if self.world.rlva_allows_command(command, uuid::Uuid::nil()) {
             true
         } else {
@@ -20859,8 +20857,8 @@ impl App {
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
-                if rlva_actions.closed {
-                    self.world.rlva.close_console();
+                if rlva_actions.console_closed {
+                    self.world.rlva.close_console(self.world.agent_id);
                 }
                 if rlva_actions.clear_log {
                     self.world.rlva.diagnostics.entries.clear();
@@ -20869,8 +20867,7 @@ impl App {
                     self.world.land.group_name(&group, &self.world.groups.groups);
                 }
                 if let Some(input) = rlva_actions.input {
-                    self.world.rlva_configure(self.settings.rlva_enabled);
-                    self.world.rlva.preferences.clone_from(&self.settings.rlva);
+                    self.rlva_sync_settings();
                     self.world.rlva_console_input(&input);
                 }
                 ui::sim_console::show(
