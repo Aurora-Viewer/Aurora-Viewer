@@ -19296,7 +19296,11 @@ impl App {
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
-                    browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media),
+                    browser: crate::media::browser_settings(
+                        &crate::settings::cache_dir(),
+                        aurora_i18n::grid_language(),
+                        &self.settings.media,
+                    ),
                     volume,
                 });
                 // who hears the nearby chat, and who of them types (the
@@ -20412,7 +20416,8 @@ impl App {
                 }
                 // the "Feed" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();
-                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
+                let browser =
+                    crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
                 let cookie = self.media.openid.cookie();
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
