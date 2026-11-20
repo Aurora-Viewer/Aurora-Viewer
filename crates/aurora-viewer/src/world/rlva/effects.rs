@@ -174,6 +174,12 @@ fn vector<const N: usize>(text: &str) -> Option<[f32; N]> {
     values.try_into().ok()
 }
 
+/// RlvBehaviourInfo::processModifier (rlvhelper.cpp): a modifier given no
+/// option calls its handler with none, which puts the default back.
+fn or_default<const N: usize>(option: &str, default: [f32; N], parse: impl Fn(&str) -> Option<[f32; N]>) -> Option<[f32; N]> {
+    if option.is_empty() { Some(default) } else { parse(option) }
+}
+
 fn format_values(values: &[f32]) -> String {
     values.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join("/")
 }
@@ -240,11 +246,15 @@ impl Visuals {
         if let Some(modifier) = c.behaviour.strip_prefix("setoverlay_") {
             let effect = self.overlays.get_mut(&source)?;
             match modifier {
+                // no option: the handler's default (onTextureChanged clears
+                // the image, c_DefaultAlpha, c_DefaultColor; rlveffects.cpp)
                 "texture" => {
                     if query {
                         return Some(effect.texture.to_string());
                     }
-                    if let Ok(texture) = Uuid::parse_str(&c.option) {
+                    if c.option.is_empty() {
+                        effect.texture = Uuid::nil();
+                    } else if let Ok(texture) = Uuid::parse_str(&c.option) {
                         effect.texture = texture;
                     }
                 }
@@ -252,15 +262,15 @@ impl Visuals {
                     if query {
                         return Some(format_values(&effect.alpha.to));
                     }
-                    if let Some(value) = scalar(&c.option) {
-                        effect.alpha.set([value], 0.0, now);
+                    if let Some(value) = or_default(&c.option, [1.0], |o| scalar(o).map(|v| [v])) {
+                        effect.alpha.set(value, 0.0, now);
                     }
                 }
                 "tint" => {
                     if query {
                         return Some(format_values(&effect.tint.to));
                     }
-                    if let Some(value) = vector(&c.option) {
+                    if let Some(value) = or_default(&c.option, [1.0; 3], vector) {
                         effect.tint.set(value, 0.0, now);
                     }
                 }
@@ -270,17 +280,20 @@ impl Visuals {
         }
         let modifier = c.behaviour.strip_prefix("setsphere_")?;
         let effect = self.spheres.get_mut(&source)?;
+        // no option: the handler's default (c_SphereDefault*, rlveffects.cpp)
         match modifier {
             "mode" | "origin" | "distextend" => {
-                let (value, max) = match modifier {
-                    "mode" => (&mut effect.mode, 4),
-                    "origin" => (&mut effect.origin, 1),
-                    _ => (&mut effect.extend, 3),
+                let (value, max, default) = match modifier {
+                    "mode" => (&mut effect.mode, 4, 0),
+                    "origin" => (&mut effect.origin, 1, 0),
+                    _ => (&mut effect.extend, 3, 1),
                 };
                 if query {
                     return Some(value.to_string());
                 }
-                if let Ok(new) = c.option.parse::<u32>()
+                if c.option.is_empty() {
+                    *value = default;
+                } else if let Ok(new) = c.option.parse::<u32>()
                     && new <= max
                 {
                     *value = new;
@@ -290,10 +303,12 @@ impl Visuals {
                 if query {
                     return Some(format_values(&effect.params.to[..if modifier == "color" { 3 } else { 4 }]));
                 }
+                // onColorChanged: LLVector4(color, 1.0f); the default
+                // (c_SphereDefaultColor) is all zero
                 let value = if modifier == "color" {
-                    vector::<3>(&c.option).map(|[r, g, b]| [r, g, b, 0.0])
+                    or_default(&c.option, [0.0; 4], |o| vector::<3>(o).map(|[r, g, b]| [r, g, b, 1.0]))
                 } else {
-                    vector(&c.option)
+                    or_default(&c.option, [0.0; 4], vector)
                 };
                 if let Some(value) = value {
                     effect.params.set(value, effect.duration, now);
@@ -301,23 +316,23 @@ impl Visuals {
             }
             "distmin" | "distmax" | "valuemin" | "valuemax" => {
                 let i = usize::from(modifier.ends_with("max"));
-                let value = if modifier.starts_with("dist") {
-                    &mut effect.distance[i]
+                let (value, default) = if modifier.starts_with("dist") {
+                    (&mut effect.distance[i], 0.0)
                 } else {
-                    &mut effect.value[i]
+                    (&mut effect.value[i], 1.0)
                 };
                 if query {
                     return Some(format_values(&value.to));
                 }
-                if let Some(new) = scalar(&c.option) {
-                    value.set([new], effect.duration, now);
+                if let Some(new) = or_default(&c.option, [default], |o| scalar(o).map(|v| [v])) {
+                    value.set(new, effect.duration, now);
                 }
             }
             "tween" => {
                 if query {
                     return Some(format_values(&[effect.duration]));
                 }
-                if let Some(value) = scalar(&c.option) {
+                if let Some([value]) = or_default(&c.option, [0.0], |o| scalar(o).map(|v| [v])) {
                     effect.duration = value.max(0.0);
                 }
             }
@@ -325,6 +340,14 @@ impl Visuals {
         }
         None
     }
+}
+
+/// The priority is 256 minus the link number, the highest drawn first
+/// (RlvBehaviourHandler<RLV_BHVR_SETOVERLAY>, rlvhandler.cpp; LLVfxManager's
+/// cmpEffect, llvisualeffect.cpp): the root first, the higher links over it.
+fn overlay_draw_order<T>(mut overlays: Vec<(usize, T)>) -> Vec<T> {
+    overlays.sort_by_key(|(link, _)| *link);
+    overlays.into_iter().map(|(_, frame)| frame).collect()
 }
 
 impl super::super::World {
@@ -362,7 +385,7 @@ impl super::super::World {
             return Vec::new();
         };
         let active_root = self.rlva_overlay_root(*first).map(|(root, _)| root);
-        let mut overlays: Vec<_> = self
+        let overlays: Vec<_> = self
             .rlva
             .visuals
             .overlay_order
@@ -388,14 +411,22 @@ impl super::super::World {
                 })
             })
             .collect();
-        overlays.sort_by_key(|(link, _)| std::cmp::Reverse(*link));
-        overlays.into_iter().map(|(_, frame)| frame).collect()
+        overlay_draw_order(overlays)
     }
 
     pub fn rlva_sphere_frames(&self, camera: glam::Vec3, now: Instant) -> Vec<aurora_render::SphereEffect> {
         if !self.rlva.enabled() {
             return Vec::new();
         }
+        // RlvSphereEffect::setShaderUniforms: the avatar's render position
+        // (LLVOAvatar::getRenderPosition), where it is drawn, seated or not
+        let avatar = self
+            .objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, now))
+            .map(|(position, _, _)| position)
+            .filter(|p| p.is_finite())
+            .unwrap_or(self.agent.position);
         self.rlva
             .visuals
             .sphere_order
@@ -404,7 +435,7 @@ impl super::super::World {
                 let sphere = self.rlva.visuals.spheres.get(id)?;
                 let (params, range) = sphere.sample(now);
                 Some(aurora_render::SphereEffect {
-                    origin: if sphere.origin == 1 { camera } else { self.agent.position },
+                    origin: if sphere.origin == 1 { camera } else { avatar },
                     mode: sphere.mode,
                     extend: sphere.extend,
                     params,
@@ -446,5 +477,60 @@ mod tests {
         visuals.forget(a);
         assert!(visuals.overlays.contains_key(&b));
         assert!(!visuals.spheres.contains_key(&a));
+    }
+
+    /// RlvBehaviourInfo::processModifier: no option puts each modifier's
+    /// default back (rlveffects.cpp), and a colour is opaque (w = 1).
+    #[test]
+    fn rlva_visual_modifiers_without_an_option_reset_and_colours_are_opaque() {
+        let a = Uuid::from_u128(1);
+        let now = Instant::now();
+        let mut visuals = Visuals::default();
+        visuals.activate(a, "setoverlay", true);
+        visuals.activate(a, "setsphere", true);
+        let run = |visuals: &mut Visuals, text: &str| {
+            visuals.command(a, &Command::parse(text).unwrap(), now);
+        };
+        for text in [
+            "setoverlay_texture:00000000-0000-0000-0000-000000000003=force",
+            "setoverlay_alpha:0.25=force",
+            "setoverlay_tint:0.5/0.5/0.5=force",
+            "setsphere_mode:2=force",
+            "setsphere_origin:1=force",
+            "setsphere_distextend:3=force",
+            "setsphere_distmin:2=force",
+            "setsphere_valuemax:0.5=force",
+        ] {
+            run(&mut visuals, text);
+        }
+        run(&mut visuals, "setsphere_color:0.1/0.2/0.3=force");
+        assert_eq!(visuals.spheres[&a].params.to, [0.1, 0.2, 0.3, 1.0]);
+        for text in [
+            "setoverlay_texture=force",
+            "setoverlay_alpha=force",
+            "setoverlay_tint=force",
+            "setsphere_mode=force",
+            "setsphere_origin=force",
+            "setsphere_distextend=force",
+            "setsphere_distmin=force",
+            "setsphere_valuemax=force",
+            "setsphere_color=force",
+        ] {
+            run(&mut visuals, text);
+        }
+        let overlay = &visuals.overlays[&a];
+        assert!(overlay.texture.is_nil());
+        assert_eq!(overlay.color(now), [1.0; 4]);
+        let sphere = &visuals.spheres[&a];
+        assert_eq!((sphere.mode, sphere.origin, sphere.extend), (0, 0, 1));
+        assert_eq!(sphere.sample(now), ([0.0; 4], [1.0, 0.0, 1.0, 0.0]));
+    }
+
+    #[test]
+    fn rlva_overlays_of_a_linkset_draw_the_higher_links_over_the_root() {
+        assert_eq!(
+            overlay_draw_order(vec![(3, "link 3"), (1, "root"), (2, "link 2")]),
+            ["root", "link 2", "link 3"]
+        );
     }
 }
