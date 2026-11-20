@@ -9,6 +9,7 @@ pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
 mod native;
+mod open_files;
 mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -202,6 +203,9 @@ pub fn start() {
 }
 
 fn start_inner() -> anyhow::Result<()> {
+    // the census of open files at a GPU loss needs its directory opened
+    // while descriptors are still free (open_files.rs, #2970)
+    open_files::prime();
     std::fs::create_dir_all(root())?;
     recover();
     let settings = crate::settings::Settings::load();
@@ -369,6 +373,13 @@ pub fn gpu_lost() {
     mark_gpu_lost(b"");
 }
 
+/// The viewer noticed a device loss (app/gpu_stall.rs), once per loss: an
+/// open-file limit reached looks like video memory out (#2970), so the
+/// log says what held the descriptors, for the crash report.
+pub fn open_files_at_loss() {
+    open_files::log_at_loss();
+}
+
 /// The renderer reported a confirmed device loss, including one the viewer
 /// may recover from. Keep only the first loss snapshot for this session.
 pub fn gpu_loss_snapshot() {
@@ -425,6 +436,7 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    open_files_at_loss();
     gpu_loss_snapshot();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
