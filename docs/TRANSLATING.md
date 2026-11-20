@@ -147,6 +147,52 @@ Japanese, beyond the plural:
   or `.`: Fluent reads it as a variant. Reword it (Japanese often starts
   with the Markdown bold of the English, `**…**`).
 
+Every language addresses the user **formally**: vous in French, Sie in
+German, вы in Russian, 您 in Chinese (各位 for several people, never 您们),
+você in Brazilian Portuguese (the usual polite form of its software), the
+です／ます form in Japanese. Buttons and menu items take the usual short
+form of the language's software (the infinitive in French, German, Russian
+and Portuguese: "Speichern", "Сохранить", "Salvar"). The only informal texts
+are what people and objects say in the offline demo and in the built-in
+gestures (the simulated residents' chat, IMs, toasts and chat logs): residents
+talk to each other informally.
+
+The community catalogues use the Second Life terms of the Legacy Viewer's
+interface in their language (`xui/de`, `xui/pt`, `xui/ru`, `xui/zh`), as
+Japanese does. The main ones, to look up before choosing another word:
+
+- **German** (`de`): Landmarke, Parzelle, Grundbesitz (estate), Vertrag
+  (covenant), Land-Info, Zuhause, Auswahlen (picks), Unterhaltung, Chat in
+  der Nähe, IM, Voice, Kontakt-Set, Leute, Blockierliste, Bannliste, Foto,
+  Erlebnis (experience), Einwohner (resident), Objekt (item), Eigentümer,
+  Ersteller, Inventar, Einstellungen, Umgebung, Papierkorb, Fundbüro,
+  Visitenkarte, Anziehen / Ausziehen, Anhang, Nehmen / Kopie nehmen, rezzen,
+  Bearbeiten / Kopieren / Transferieren, Grid (the build grid is Raster).
+- **Brazilian Portuguese** (`pt-BR`): Inventário, landmark (feminine),
+  parcela, região, propriedade (estate), convênio (covenant), Sobre o
+  terreno, Destaques (picks), Teleportar / teleporte, Casa (home), Buscar,
+  chat / Chat local, IM, visual / Meus visuais (outfits), Vestir / Tirar,
+  Anexar / Desanexar, notecard, prim, face, Impacto no terreno, Pegar / Pegar
+  cópia, rezzar, Lixeira, Achados e perdidos, Cartão de visita, Captura,
+  Lista de bloqueio, Denunciar abuso, Modificar / Copiar / Transferir.
+- **Russian** (`ru`): Инвентарь, Закладка (feminine), Участок, Регион,
+  Землевладение (estate), Соглашение (covenant), О земле, Житель (resident),
+  Подборки (picks), Телепорт, Миникарта, Общий чат (nearby chat), ЛС (IM),
+  Разговор (masculine), Внешность, Комплект (outfit), Надеть / Снять,
+  Присоединить / Отсоединить, Фигура (shape), Прим, Взять / Взять копию,
+  Корзина, Найденные вещи, Список заблокированных, Пожаловаться, Приключения
+  (experiences), Окружающая среда, Дальность прорисовки, Изменять /
+  Копировать / Передавать.
+- **Chinese** (`zh-Hans` / `zh-Hant`): 库存 / 庫存, 地标 / 地標, 地块 / 地塊,
+  区域 / 區域, 领地 / 領地 (estate), 瞬间传送 / 瞬間傳送, 元素 (prim), 垃圾桶,
+  违规检举 / 違規檢舉, 取得 / 取得副本, 穿上 / 脫下, 卸下, 装扮 / 裝扮
+  (outfit), 好友, 对话 / 對話, 封锁 / 封鎖, 权限 / 權限, 居民. zh-Hant follows
+  the Legacy Viewer's Traditional (Taiwan) terms and Taiwan software words
+  (重設, 自訂, 工具列, 取得, 帳號, 套用, 清單); zh-Hans uses their Simplified
+  form, with the mainland word where the Taiwan one would read oddly (脚本,
+  搜索, 偏好设置, 联系人, 添加). Product names stay in Latin letters (Second
+  Life, Aurora Viewer, L$), with a space between Chinese and Latin text.
+
 `tr!` borrows labels without variables from the cache; a message with
 variables returns a `String`. `Localized<T>` caches an array of labels for
 each language, so that a change also applies to the menus already open.
