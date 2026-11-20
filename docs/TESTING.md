@@ -7970,8 +7970,10 @@ failure. Grid validation and any paid upload are performed by the human.
   belongs to an account.
 - **`AURORA_DEMO_COLORBLIND=protan|deutan|tritan|mono[:strength]`**: the
   interface adapted to a colour vision deficiency for this run, as
-  Preferences › Accessibility › Colour blindness does, without touching the
-  saved settings (`:0.5` for half the strength). `14` of
+  Preferences › Accessibility › Color blindness does, without touching the
+  saved settings (`:0.5` for half the strength). English labels use American
+  spelling. In Preferences, search "color": Accent color, Color blindness,
+  Interface colors, and Color vision must all appear. `14` of
   `AURORA_DEMO_OPTIONS` opens that page, with its preview of the status
   dots. What to look for (compare with a capture without the variable):
   `protan` / `deutan` turn success and online blue, `tritan` turns warnings
@@ -8003,8 +8005,8 @@ failure. Grid validation and any paid upload are performed by the human.
   their text, icons and pictures stay solid; click a window then the world
   to see it change between active and inactive.
 - **`AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>`**: the
-  interface colours for this run, any of the three, as Preferences ›
-  Appearance › Skin › Interface colours does, without touching the saved
+  interface colors for this run, any of the three, as Preferences ›
+  Appearance › Skin › Interface colors does, without touching the saved
   settings (for example `accent:#14B8A6` for a teal accent, or
   `accent:#EC4899,surface:#3A2433,text:#FCE7F3` for a pink interface).
   What to look for: the accent on the main buttons, switches, sliders,
