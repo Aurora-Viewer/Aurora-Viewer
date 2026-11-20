@@ -207,6 +207,9 @@ fn another_region_of_the_language_comes_before_english() {
     assert_eq!(resolve_language("default", "pt-BR", &["en", "pt-BR", "pt-PT"]), "pt-BR");
     assert_eq!(resolve_language("default", "es-MX", &["en", "es"]), "es");
     assert_eq!(resolve_language("default", "nb-NO", &["en", "da"]), "en");
+    assert_eq!(resolve_language("default", "no-NO", &["en", "nb"]), "nb");
+    assert_eq!(resolve_language("default", "nn-NO", &["en", "nb"]), "nb");
+    assert_eq!(resolve_language("default", "no", &["en", "da"]), "en");
 }
 
 #[test]

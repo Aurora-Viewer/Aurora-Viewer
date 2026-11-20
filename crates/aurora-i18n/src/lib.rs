@@ -246,6 +246,15 @@ fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clo
     let chinese = candidate.eq_ignore_ascii_case("zh");
     find(candidate)
         .or_else(|| chinese.then(|| find("zh-Hans")).flatten())
+        // Norwegian: `no` (the macrolanguage, which some systems report) and
+        // Nynorsk read the Bokmål catalogue before English
+        .or_else(|| {
+            ["no", "nn"]
+                .iter()
+                .any(|code| candidate.eq_ignore_ascii_case(code))
+                .then(|| find("nb"))
+                .flatten()
+        })
         // another region of the same language before English (pt-PT reads
         // pt-BR), as the Legacy Viewer's single `pt` folder serves both;
         // Chinese scripts are chosen above, never swapped here
