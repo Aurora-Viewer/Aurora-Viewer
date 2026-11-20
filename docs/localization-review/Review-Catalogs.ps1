@@ -2,13 +2,18 @@
 param(
     [Parameter(Mandatory)][string]$PreviousEnglish,
     [Parameter(Mandatory)][string]$CatalogDirectory,
-    [Parameter(Mandatory)][string]$ReportDirectory
+    [Parameter(Mandatory)][string]$ReportDirectory,
+    [string]$CurrentEnglish
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $previous = (Resolve-Path -LiteralPath $PreviousEnglish).Path
-$current = Join-Path $repo 'crates/aurora-i18n/locales/en.ftl'
+$current = if ($CurrentEnglish) {
+    (Resolve-Path -LiteralPath $CurrentEnglish).Path
+} else {
+    Join-Path $repo 'crates/aurora-i18n/locales/en.ftl'
+}
 $catalogs = @(Get-ChildItem -LiteralPath $CatalogDirectory -Filter '*.ftl' -File |
     Where-Object { $_.BaseName -ne 'en' } | Sort-Object Name)
 if ($catalogs.Count -eq 0) {
