@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# LOCAL ONLY (task rt-shadows, step 0): the local wgpu fork keeps its own workspace.
+exclude = [".scratch"]
 
 [workspace.package]
 version = "0.1.0"
@@ -92,15 +94,17 @@ type_complexity = "allow"
 # wgpu-hal), pinned by `rev`; never delete or rewrite that branch. The whole
 # family comes from it, so the crates keep sharing one `wgpu-types` and one
 # `naga`. Remove this section with the upgrade.
+# LOCAL ONLY (task rt-shadows, step 0): the fork with the TLAS instance flags,
+# from .scratch/wgpu (branch aurora/rt-instance-flags). Not for a commit.
 [patch.crates-io]
-naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
-wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+naga = { path = ".scratch/wgpu/naga" }
+naga-types = { path = ".scratch/wgpu/naga-types" }
+wgpu = { path = ".scratch/wgpu/wgpu" }
+wgpu-core = { path = ".scratch/wgpu/wgpu-core" }
+wgpu-core-deps-apple = { path = ".scratch/wgpu/wgpu-core/platform-deps/apple" }
+wgpu-core-deps-emscripten = { path = ".scratch/wgpu/wgpu-core/platform-deps/emscripten" }
+wgpu-core-deps-wasm = { path = ".scratch/wgpu/wgpu-core/platform-deps/wasm" }
+wgpu-core-deps-windows-linux-android = { path = ".scratch/wgpu/wgpu-core/platform-deps/windows-linux-android" }
+wgpu-hal = { path = ".scratch/wgpu/wgpu-hal" }
+wgpu-naga-bridge = { path = ".scratch/wgpu/wgpu-naga-bridge" }
+wgpu-types = { path = ".scratch/wgpu/wgpu-types" }

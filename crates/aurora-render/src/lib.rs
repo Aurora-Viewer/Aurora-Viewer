@@ -63,6 +63,8 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+#[cfg(test)]
+mod rt_flags_tests;
 mod rt_light_changes;
 mod rt_shadows;
 pub mod second_view;
