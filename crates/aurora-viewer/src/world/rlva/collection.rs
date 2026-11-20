@@ -2,14 +2,24 @@
 //! originally LGPL 2.1), including folded folders and single-level folder links.
 use super::{naming, preferences::Preferences};
 use crate::world::inventory::{Inventory, actions};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub(super) struct Entry {
+    /// The original item.
     pub item: Uuid,
-    /// Logical parent after point-folder and folder-link folding.
+    /// The inventory entry collected: the item itself, or the link to it.
+    /// RlvForceWear::forceFolder checks the wear locks on it
+    /// (`gRlvAttachmentLocks.canAttach(pRlvItem)`), so a link's folder is
+    /// the one that counts.
+    pub entry: Uuid,
+    /// Logical parent after point-folder and folder-link folding
+    /// (RlvWearableItemCollector::getFoldedParent).
     pub folder: Uuid,
-    pub point: u8,
+    /// The point the item or its folder names (RlvAttachPtLookup::getAttachPoint);
+    /// none for an object that names none.
+    pub point: Option<u8>,
+    /// The wear action of the entry's folder (RlvWearableItemCollector::getWearAction).
     pub replace: bool,
 }
 
@@ -82,128 +92,182 @@ pub(super) fn strippable(inv: &Inventory, id: Uuid, legacy: bool) -> bool {
     true
 }
 
+/// The wear action a folder's own prefix sets, if any: the part of
+/// RlvWearableItemCollector::getWearActionNormal that reads the name.
+fn prefixed(prefs: &Preferences, name: &str, base: bool) -> Option<bool> {
+    (prefs.replace(name, base) != base).then_some(!base)
+}
+
+/// Port of RlvWearableItemCollector (rlvinventory.cpp) run by
+/// LLInventoryModel::collectDescendentsIf with folder links followed
+/// (llinventorymodel.cpp): every folder under `base` is walked, sub-folders
+/// before the folder's own items, and the folder links found anywhere in it
+/// are followed once its items are done. The entries come in that order,
+/// which RlvForceWear::forceFolder wears them in.
 pub(super) fn collect(inv: &Inventory, base: Uuid, all: bool, attach: bool, replace: bool, prefs: &Preferences) -> Collection {
-    struct Frame {
-        id: Uuid,
-        parent: Uuid,
-        linked: bool,
-        folded: bool,
-        replace: bool,
+    enum Step {
+        /// onCollectFolder, then the folder's contents.
+        Folder(Uuid, bool),
+        /// The folder's sub-folders, then its items, then (when following)
+        /// its folder links.
+        Contents(Uuid, bool),
+        Items(Uuid),
+        Links(Uuid),
     }
     let mut result = Collection::default();
-    let mode = inv.folders.get(&base).map_or(replace, |f| prefs.replace(&f.info.name, replace));
-    let mut stack = vec![Frame {
-        id: base,
-        parent: base,
-        linked: false,
-        folded: false,
-        replace: mode,
-    }];
-    let mut seen = HashSet::new();
-    let mut items = HashSet::new();
-    while let Some(frame) = stack.pop() {
-        if !seen.insert(frame.id) {
-            continue;
-        }
-        let Some(folder) = inv.folders.get(&frame.id) else {
-            result.missing.push(frame.id);
-            continue;
-        };
-        if !crate::world::appearance::loaded(inv, frame.id) {
-            result.missing.push(frame.id);
-            continue;
-        }
-        for child in folder
-            .children
-            .iter()
-            .rev()
-            .filter(|_| !frame.folded)
-            .filter_map(|id| inv.folders.get(id))
-        {
-            let folded = naming::folded(&child.info.name, prefs.legacy_naming);
-            if folded {
-                if !crate::world::appearance::loaded(inv, child.info.id) {
-                    result.missing.push(child.info.id);
-                    continue;
-                }
-                let objects = child
-                    .items
-                    .iter()
-                    .filter_map(|id| actions::original(inv, *id))
-                    .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6))
-                    .count();
-                if attach && objects != 1 {
-                    continue;
-                }
-            } else if !all || frame.linked || child.info.name.is_empty() || child.info.name.starts_with('.') {
-                continue;
+    let Some(base_folder) = inv.folders.get(&base) else {
+        result.missing.push(base);
+        return result;
+    };
+    // The constructor: a prefix on the base folder overrides the command's action.
+    let action = prefixed(prefs, &base_folder.info.name, replace).unwrap_or(replace);
+    let mut wearable = HashSet::from([base]);
+    let mut folded_set = HashSet::new();
+    let mut linked = HashSet::new();
+    // m_FoldingMap: a folded folder to its parent, a linked folder to the link's folder
+    let mut folding = HashMap::new();
+    let mut actions_map = HashMap::from([(base, action)]);
+    // RlvWearableItemCollector::getWearAction
+    let wear_action = |actions_map: &HashMap<Uuid, bool>, mut id: Uuid| {
+        let mut seen = HashSet::new();
+        loop {
+            if let Some(found) = actions_map.get(&id) {
+                return *found;
             }
-            stack.push(Frame {
-                id: child.info.id,
-                parent: if folded { frame.parent } else { child.info.id },
-                linked: frame.linked,
-                folded,
-                replace: if folded {
-                    frame.replace
-                } else {
-                    prefs.replace(&child.info.name, mode)
-                },
-            });
+            match inv.folders.get(&id) {
+                Some(f) if f.info.parent != inv.root && seen.insert(id) => id = f.info.parent,
+                _ => return action,
+            }
         }
-        for offered in folder.items.iter().filter_map(|id| inv.items.get(id)) {
-            if offered.asset_type == 25 {
-                // Never descend through a second link, an outfit, or back into
-                // the operation's own subtree.
-                if frame.linked || actions::under(inv, offered.asset_id, base) {
+    };
+    let folded_parent = |folding: &HashMap<Uuid, Uuid>, mut id: Uuid| {
+        let mut seen = HashSet::new();
+        while let Some(parent) = folding.get(&id) {
+            if !seen.insert(id) {
+                break;
+            }
+            id = *parent;
+        }
+        id
+    };
+    let mut entries = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut stack = vec![Step::Contents(base, true)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Folder(id, follow) => {
+                let Some(folder) = inv.folders.get(&id) else {
+                    result.missing.push(id);
+                    continue;
+                };
+                let name = folder.info.name.as_str();
+                let is_linked = linked.contains(&id);
+                // onCollectFolder
+                if (is_linked || wearable.contains(&folder.info.parent)) && !name.is_empty() {
+                    if !is_linked && naming::folded(name, prefs.legacy_naming) {
+                        if !crate::world::appearance::loaded(inv, id) {
+                            result.missing.push(id);
+                            continue;
+                        }
+                        let objects = folder
+                            .items
+                            .iter()
+                            .filter_map(|item| actions::original(inv, *item))
+                            .filter(|item| inv.items.get(item).is_some_and(|it| it.asset_type == 6))
+                            .count();
+                        if !attach || objects == 1 {
+                            folded_set.insert(id);
+                            folding.insert(id, folder.info.parent);
+                        }
+                    } else if !name.starts_with('.') && (all || is_linked) && !linked.contains(&folder.info.parent) {
+                        wearable.insert(id);
+                        // getWearActionNormal: the folder's prefix, else its parent's action
+                        let own = prefixed(prefs, name, action).unwrap_or_else(|| wear_action(&actions_map, folder.info.parent));
+                        actions_map.insert(id, own);
+                    }
+                }
+                stack.push(Step::Contents(id, follow));
+            }
+            Step::Contents(id, follow) => {
+                if !visited.insert(id) {
                     continue;
                 }
-                if inv
-                    .folders
-                    .get(&offered.asset_id)
-                    .is_some_and(|f| f.info.type_default == 47 || f.info.name.is_empty() || f.info.name.starts_with('.'))
-                {
+                let Some(folder) = inv.folders.get(&id) else {
+                    result.missing.push(id);
+                    continue;
+                };
+                if !crate::world::appearance::loaded(inv, id) {
+                    result.missing.push(id);
                     continue;
                 }
-                stack.push(Frame {
-                    id: offered.asset_id,
-                    parent: frame.parent,
-                    linked: true,
-                    folded: false,
-                    replace: frame.replace,
-                });
-                continue;
-            }
-            let Some(id) = actions::original(inv, offered.id) else {
-                if offered.asset_type == 24 {
-                    result.missing_items.push(offered.asset_id);
+                if follow {
+                    stack.push(Step::Links(id));
                 }
-                continue;
-            };
-            let Some(item) = inv.items.get(&id) else {
-                continue;
-            };
-            let point = attachment_point(inv, offered.id, prefs.legacy_naming);
-            if !attach && !strippable(inv, offered.id, prefs.legacy_naming) {
-                continue;
+                stack.push(Step::Items(id));
+                stack.extend(folder.children.iter().rev().map(|child| Step::Folder(*child, follow)));
             }
-            let eligible = match item.asset_type {
-                13 if !attach => false,
-                5 | 13 => !frame.folded || (attach && strippable(inv, offered.id, prefs.legacy_naming)),
-                6 => !attach || point.is_some() || prefs.shared_wear,
-                21 => !frame.folded,
-                _ => false,
-            };
-            if eligible && items.insert(id) {
-                result.items.push(Entry {
-                    item: id,
-                    folder: frame.parent,
-                    point: if item.asset_type == 6 {
-                        point.unwrap_or((item.flags & 0xff) as u8)
-                    } else {
-                        0
-                    },
-                    replace: frame.replace,
-                });
+            Step::Items(id) => {
+                let Some(folder) = inv.folders.get(&id) else { continue };
+                for offered in folder.items.iter().filter_map(|id| inv.items.get(id)) {
+                    if offered.asset_type == 25 {
+                        // onCollectItem, AT_LINK_FOLDER: never an outfit, never
+                        // a folder of the operation's own subtree
+                        if inv.folders.get(&offered.asset_id).is_some_and(|f| f.info.type_default != 47)
+                            && !actions::under(inv, offered.asset_id, base)
+                        {
+                            folding.insert(offered.asset_id, offered.parent);
+                            linked.insert(offered.asset_id);
+                        }
+                        continue;
+                    }
+                    let Some(item_id) = actions::original(inv, offered.id) else {
+                        if offered.asset_type == 24 {
+                            result.missing_items.push(offered.asset_id);
+                        }
+                        continue;
+                    };
+                    let Some(item) = inv.items.get(&item_id) else {
+                        continue;
+                    };
+                    if !attach && !strippable(inv, offered.id, prefs.legacy_naming) {
+                        continue;
+                    }
+                    let parent = offered.parent;
+                    let in_wearable = wearable.contains(&parent);
+                    let in_folded = folded_set.contains(&parent);
+                    let point = attachment_point(inv, offered.id, prefs.legacy_naming);
+                    let eligible = match item.asset_type {
+                        13 if !attach => false,
+                        5 | 13 => in_wearable || (attach && in_folded && strippable(inv, offered.id, prefs.legacy_naming)),
+                        6 => (in_wearable || in_folded) && (!attach || point.is_some() || prefs.shared_wear),
+                        21 => in_wearable,
+                        _ => false,
+                    };
+                    if eligible && entries.insert(offered.id) {
+                        result.items.push(Entry {
+                            item: item_id,
+                            entry: offered.id,
+                            folder: folded_parent(&folding, parent),
+                            point: if item.asset_type == 6 { point } else { None },
+                            replace: wear_action(&actions_map, parent),
+                        });
+                    }
+                }
+            }
+            Step::Links(id) => {
+                let Some(folder) = inv.folders.get(&id) else { continue };
+                // collectDescendentsIf follows every folder link but those to
+                // an outfit, one level deep
+                stack.extend(
+                    folder
+                        .items
+                        .iter()
+                        .rev()
+                        .filter_map(|id| inv.items.get(id))
+                        .filter(|it| it.asset_type == 25)
+                        .filter(|it| inv.folders.get(&it.asset_id).is_none_or(|f| f.info.type_default != 47))
+                        .map(|it| Step::Folder(it.asset_id, false)),
+                );
             }
         }
     }
@@ -331,7 +395,7 @@ mod tests {
             result
                 .items
                 .iter()
-                .any(|entry| entry.item == folded_object && entry.point == 1 && entry.folder == base)
+                .any(|entry| entry.item == folded_object && entry.point == Some(1) && entry.folder == base)
         );
         assert!(result.items.iter().any(|entry| entry.item == extra && !entry.replace));
         let prefs = Preferences {

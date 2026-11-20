@@ -86,15 +86,21 @@ impl WearLocks {
             }
     }
 
-    /// Wearing `item` (an original) at `point` (0: its own point).
-    pub fn wear(&self, inv: &Inventory, item: Uuid, point: u8) -> Wear {
+    /// Wearing `entry` (an item, or a link to it) at `point` (0: its own
+    /// point). The add lock is the one of the entry's own folder
+    /// (RlvAttachmentLocks::canAttach, RlvWearableLocks::canWear on the item
+    /// clicked, rlvlocks.h): a link in a locked folder cannot be worn, its
+    /// original elsewhere can.
+    pub fn wear(&self, inv: &Inventory, entry: Uuid, point: u8) -> Wear {
         if !self.active {
             return Wear::ALL;
         }
+        let item = crate::world::inventory::actions::original(inv, entry).unwrap_or(entry);
         let Some(it) = inv.items.get(&item) else {
             return Wear::ALL;
         };
-        if self.folders.no_add.contains(&it.parent) {
+        let folder = inv.items.get(&entry).map_or(it.parent, |e| e.parent);
+        if self.folders.no_add.contains(&folder) {
             return Wear::LOCKED;
         }
         match it.asset_type {
@@ -112,7 +118,7 @@ impl WearLocks {
                 let at = if point != 0 {
                     Some(point)
                 } else {
-                    super::collection::attachment_point(inv, item, self.legacy_naming)
+                    super::collection::attachment_point(inv, entry, self.legacy_naming)
                         .or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))
                         .or_else(|| self.last_points.get(&item).copied())
                 };

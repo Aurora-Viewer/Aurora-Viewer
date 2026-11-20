@@ -48,6 +48,7 @@ pub mod watchdog;
 mod wear_locks;
 
 pub use boundary::Boundary;
+pub(crate) use inventory::shared_folder_exists;
 pub use inventory::{LAYERS, POINTS};
 pub use wear_locks::WearLocks;
 
@@ -439,6 +440,21 @@ fn canonical(name: &str) -> &str {
     }
 }
 
+/// The folder locks and their exceptions (`@attachthis`, `@detachallthis_except`…).
+fn folder_lock(name: &str) -> bool {
+    matches!(
+        name,
+        "attachthis"
+            | "attachallthis"
+            | "attachthis_except"
+            | "attachallthis_except"
+            | "detachthis"
+            | "detachallthis"
+            | "detachthis_except"
+            | "detachallthis_except"
+    )
+}
+
 fn valid_option(c: &Command) -> bool {
     if matches!(c.behaviour.as_str(), "camzoommin" | "camzoommax") {
         return c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v > 0.0);
@@ -451,7 +467,18 @@ fn valid_option(c: &Command) -> bool {
         | "detachthis"
         | "detachallthis"
         | "detachthis_except"
-        | "detachallthis_except" => !c.option.split('/').any(|v| matches!(v, "." | "..")),
+        | "detachallthis_except" => {
+            // RlvHandler::onAddRemFolderLock and onAddRemFolderLockException
+            // (rlvhandler.cpp) read the option with the generic parser: a
+            // lock takes nothing, a layer, a point or a shared folder, never
+            // a UUID; an exception takes a shared folder only. Whether the
+            // folder exists is asked by `receive_with`, which sees the
+            // inventory.
+            let named = inventory::layer(&c.option).is_some() || inventory::point(&c.option).is_some();
+            !c.option.split('/').any(|v| matches!(v, "." | ".."))
+                && Uuid::parse_str(&c.option).is_err()
+                && (!c.behaviour.ends_with("_except") || (!c.option.is_empty() && !named))
+        }
         "notify" => events::notification_option(&c.option).is_some(),
         "setcam_fovmin" | "setcam_fovmax" | "setcam_eyeoffsetscale" => c.option.parse::<f32>().is_ok_and(f32::is_finite),
         "setcam_avdist" | "setcam_avdistmin" | "setcam_avdistmax" | "setcam_origindistmin" | "setcam_origindistmax" => {
@@ -537,6 +564,10 @@ pub struct Rlva {
     pub stand_return: Option<(aurora_net::RegionHandle, glam::Vec3)>,
     stand_seated: bool,
     inventory_fetches: BTreeMap<Uuid, (std::time::Instant, u8)>,
+    /// The inventory entry (a link, or the item) last asked to be worn for
+    /// an item, with its folder: the wear locks read that folder
+    /// (`rlva_can_add_in`).
+    pub(crate) wear_entries: std::collections::HashMap<Uuid, (Uuid, std::time::Instant)>,
     pub revision: u64,
     gc: Option<std::time::Instant>,
     lookups: BTreeMap<Uuid, (bool, u8)>,
@@ -633,6 +664,7 @@ impl Rlva {
         self.stand_return = None;
         self.stand_seated = false;
         self.inventory_fetches.clear();
+        self.wear_entries.clear();
         self.lookups.clear();
         self.gc = None;
         self.revision = self.revision.wrapping_add(1);
@@ -747,8 +779,19 @@ impl Rlva {
     }
 
     /// Returns true for an RLVa OwnerSay, including unsupported commands:
-    /// protocol traffic never becomes user chat when RLVa is enabled.
+    /// protocol traffic never becomes user chat when RLVa is enabled. The
+    /// chat handler passes the shared folders (`receive_with`).
+    #[cfg(test)]
     pub fn receive(&mut self, chat: &ChatMessage) -> bool {
+        self.receive_with(chat, None)
+    }
+
+    /// `receive`, with `shared_folder` answering whether a path names a
+    /// folder under #RLV: a folder lock or exception naming a folder that
+    /// does not exist is refused when it is issued, set or released
+    /// (RlvCommandOptionGeneric::isSharedFolder in onAddRemFolderLock and
+    /// onAddRemFolderLockException, rlvhandler.cpp).
+    pub fn receive_with(&mut self, chat: &ChatMessage, shared_folder: Option<&dyn Fn(&str) -> bool>) -> bool {
         if !self.enabled
             || chat.source_type != ChatSourceType::Object
             || chat.chat_type != ChatType::OwnerSay
@@ -768,6 +811,17 @@ impl Rlva {
         let message = chat.message[1..].to_ascii_lowercase();
         for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
+                if let Some(exists) = shared_folder
+                    && matches!(command.param, Param::Add | Param::Remove)
+                    && folder_lock(canonical(&command.behaviour))
+                    && !command.option.is_empty()
+                    && inventory::layer(&command.option).is_none()
+                    && inventory::point(&command.option).is_none()
+                    && !exists(&command.option)
+                {
+                    self.trace(chat.source_id, text, diagnostics::Outcome::Rejected);
+                    continue;
+                }
                 let notice = self.notice(chat.source_id, &command, text);
                 let outcome = self.process(chat.source_id, command);
                 self.trace(chat.source_id, text, outcome);
@@ -1247,3 +1301,7 @@ pub(crate) mod link_lock_tests;
 #[cfg(test)]
 #[path = "rlva/outfit_swap_tests.rs"]
 mod outfit_swap_tests;
+
+#[cfg(test)]
+#[path = "rlva/inventory_parity_tests.rs"]
+mod inventory_parity_tests;

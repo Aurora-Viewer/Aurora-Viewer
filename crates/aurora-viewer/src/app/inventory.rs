@@ -1115,6 +1115,8 @@ impl App {
                 | crate::world::appearance::Action::SaveIn(..)
                 | crate::world::appearance::Action::ImportJson { .. }
         );
+        // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
+        self.world.rlva_note_wear_request(&action);
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
