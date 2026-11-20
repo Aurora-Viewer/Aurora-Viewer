@@ -1423,7 +1423,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // rain prototype: the puddles' rings in the waves themselves, so they
     // bend the reflection and the refraction and ride the waves
     let rain_footprint = max(length(dpdx(in.world_pos.xy)), length(dpdy(in.world_pos.xy)));
-    wavef = vec3<f32>(wavef.xy + rain_water_rings(in.world_pos, rain_footprint), wavef.z);
+    let rain = rain_on_water(in.world_pos, rain_footprint, view_vec.z);
+    wavef = vec3<f32>(wavef.xy + rain.xy, wavef.z);
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
     let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
@@ -1438,7 +1439,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)) {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
-        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
+        // the rain's slope keeps its own strength: scaled with the waves
+        // (x 0.18), a downpour hardly showed on enhanced water
+        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x)); }
     // waterF.glsl: the reflection follows the waves scaled by the EEP normal
     // scale (wave_ibl), the sun glint the unscaled waves flattened with
@@ -1620,6 +1623,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             radiance = mix(radiance, hit.rgb, hit.a);
         }
     }
+    // a downpour's rough surface blurs the reflection into its overall light
+    radiance = mix(radiance, rain_mist_color(), rain.z * 0.3);
     if (!water_fx_on(512u)) { radiance *= df2.y; }
     if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
 
@@ -1630,6 +1635,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var rough=clamp(frame.water_params.w,0.02,1.0);
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
+    rough=mix(rough,max(rough,0.16),rain.z);
     let gn = select(n, legacy_glint_n, legacy_water);
     // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
     // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
@@ -1678,6 +1684,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         }
         color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
     }
+    color = mix(color, rain_mist_color(), rain.w);
     // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
     // surface never goes past white before the exposure, and a value that is
     // not a number does not spread through the bloom.
@@ -2395,11 +2402,34 @@ fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
     return rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
 }
 
+// The chop of a downpour: four short waves (15 to 27 cm) at odd angles,
+// none along the world's axes, each moving its own way and bent by slow
+// noise, so that their crests never line up into a lattice (sines along x
+// and y crossed into a plaid). Each direction is a unit vector; `.z` is the
+// wave number (rad/m), `.w` how fast its phase runs (rad/s).
+const RAIN_CHOP = array<vec4<f32>, 4>(
+    vec4<f32>(0.956, 0.292, 41.0, 8.3),
+    vec4<f32>(-0.375, 0.927, 33.0, -9.1),
+    vec4<f32>(-0.719, -0.695, 27.0, 7.4),
+    vec4<f32>(0.454, -0.891, 23.0, -6.7),
+);
+
+fn rain_chop(xy: vec2<f32>, time: f32) -> vec2<f32> {
+    let bend = vec2<f32>(water_fx_noise(xy * 1.9 + time * 0.3), water_fx_noise(xy * 1.9 + vec2<f32>(5.2, 1.3) - time * 0.3)) * 7.0;
+    var slope = vec2<f32>(0.0);
+    for (var i = 0; i < 4; i++) {
+        let w = RAIN_CHOP[i];
+        slope += w.xy * cos(dot(w.xy, xy) * w.z + time * w.w + bend[i & 1]);
+    }
+    return slope;
+}
+
 // A surface of standing water in rain of strength `heavy`: the rings get
 // denser as it rains harder (two more layers of them, smaller and quicker,
 // come in), and a downpour churns it (a fine, fast chop), so that its
-// reflections break up instead of staying a mirror. `detail`: what the
-// pixels can show of it (`rain_ring_detail`).
+// reflections break up instead of staying a mirror. In a downpour the
+// rings give way to the chop: so many drops land that no single ring
+// stands out. `detail`: what the pixels can show of it (`rain_ring_detail`).
 fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f32> {
     // the layers the Weather quality draws: one at Low, two at Medium
     let quality = rain_quality();
@@ -2410,12 +2440,23 @@ fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f
     if (quality >= 2 && heavy > 0.55) {
         slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu) * smoothstep(0.55, 0.95, heavy);
     }
-    let t = time * 9.0;
-    let chop = vec2<f32>(
-        sin(xy.x * 37.0 + t + sin(xy.y * 23.0 - t * 0.7) * 2.0) + sin(xy.y * 29.0 - t * 1.3),
-        sin(xy.y * 41.0 - t + sin(xy.x * 19.0 + t * 0.8) * 2.0) + sin(xy.x * 31.0 + t * 1.1));
-    slope += chop * 0.18 * heavy * heavy;
+    slope *= 1.0 - 0.5 * smoothstep(0.6, 1.0, heavy);
+    slope += rain_chop(xy, time) * 0.2 * heavy * heavy;
     return slope * detail;
+}
+
+// The mist of a downpour over standing water: the splashes of the drops
+// whiten a thin layer above it, seen the more the flatter it is looked
+// across (the longer the path through it). 0 in light rain.
+fn rain_splash_mist(heavy: f32, view_up: f32) -> f32 {
+    let h = smoothstep(0.35, 1.0, heavy);
+    let path = 0.1 / max(abs(view_up), 0.05);
+    return (1.0 - exp(-path * 2.0 * h)) * 0.25;
+}
+
+// The splash mist's colour: the overcast's light, a little grey.
+fn rain_mist_color() -> vec3<f32> {
+    return frame.sky_horizon.rgb * 0.45 + frame.sky_zenith.rgb * 0.15;
 }
 
 // The screen position of `p` and how far behind what the depth prepass
@@ -2811,6 +2852,9 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // judged over the area: the blobs' shapes, not the triangles', make the
     // edges; water runs off bumps (a rock's top) and gathers in dips
     var puddle = 0.0;
+    // how far inside the puddle's edge a point is, in the pattern's units
+    // (0 at the edge, about 0.1 a hand's width in): the ice's rim
+    var inside = 0.0;
     let terrain = rain_terrain(world.xy);
     // in snow the switch is the lying snow's: the puddles left are ice,
     // with the Ice setting
@@ -2824,7 +2868,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let ts = rain_terrain_shape(world.xy, terrain);
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
-        puddle = smoothstep(pool_level, pool_level + 0.05, shape + clamp(ts.x * 5.0, -0.3, 0.3)) * flat_ground;
+        inside = shape + clamp(ts.x * 5.0, -0.3, 0.3) - pool_level;
+        puddle = smoothstep(0.0, 0.05, inside) * flat_ground;
         puddle *= smoothstep(0.15, 0.4, open);
     } else {
         // on a build (a floor, a road, a roof): the screen's rules
@@ -2832,7 +2877,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let dip = clamp(-area.w * 4.0, 0.0, 0.15);
         let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w))
             * smoothstep(0.985, 0.996, build_level);
-        puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
+        inside = shape + dip - pool_level;
+        puddle = smoothstep(0.0, 0.05, inside) * flat_area;
         puddle *= smoothstep(0.15, 0.4, open);
     }
 
@@ -2871,19 +2917,38 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     var color = deeper + sheen + glints;
 
     if (puddle > 0.01 && puddles_frozen()) {
-        // ice: a still, glassy sheet, sharp reflections a little whitened
-        // and bluish, frost at its edges and in patches (its surface rough
-        // there), the lamps in it sharp
-        let frost_n = vec2<f32>(snow_noise(world.xy * 31.0) - 0.5, snow_noise(world.xy * 29.0 + 7.0) - 0.5);
-        let frost = clamp((1.0 - puddle) * 1.6 + smoothstep(0.55, 0.85, snow_noise(world.xy * 4.0)) * 0.6, 0.0, 1.0);
-        let ni = normalize(vec3<f32>(frost_n * 0.05 * (0.3 + frost), 1.0));
+        // ice: a milky, frosted sheet rather than a mirror. Frost grows
+        // from the rim, where the ice is thin and froze first, and thins
+        // toward the middle; over all of it fine feathery crystals, streaks
+        // at two angles (never blots of a coarse noise). The light it
+        // scatters clouds what lies under it; its reflections are faint
+        // but for the grazing ones, the lamps in it soft.
+        let along = max(abs(view.z), 0.05);
+        let footprint = dist * 1.15 * frame.screen.w / along;
+        let fine = 1.0 - smoothstep(0.006, 0.03, footprint);
+        let q = world.xy;
+        let qa = vec2<f32>(dot(q, vec2<f32>(0.809, 0.588)), dot(q, vec2<f32>(-0.588, 0.809)));
+        let qb = vec2<f32>(dot(q, vec2<f32>(-0.276, 0.961)), dot(q, vec2<f32>(-0.961, -0.276)));
+        let streak = max(snow_noise(qa * vec2<f32>(7.0, 46.0)), snow_noise(qb * vec2<f32>(7.0, 46.0) + 13.0));
+        // the crystals gather in drifts (a soft noise a metre or two
+        // across), thickest near the rim
+        let drifts = smoothstep(0.35, 0.85, snow_noise(qa * 0.6 + 4.0));
+        let feather = mix(0.3, smoothstep(0.62, 0.97, streak), fine) * (0.25 + 0.75 * drifts);
+        let rim = 1.0 - smoothstep(0.0, 0.14, inside);
+        let frost = clamp(0.12 + rim * 0.75 + feather * (0.25 + 0.4 * rim), 0.0, 1.0);
+        let frost_n = vec2<f32>(snow_noise(q * 31.0) - 0.5, snow_noise(q * 29.0 + 7.0) - 0.5) * fine;
+        let ni = normalize(vec3<f32>(frost_n * 0.08 * (0.3 + frost), 1.0));
         let r = reflect(-view, ni);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(ni, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let ice_tint = vec3<f32>(0.9, 0.95, 1.0);
-        let glass = mix(base * 0.4, mirrored, 0.3 + fresnel * 0.6) * ice_tint + rain_wet_lamps(world, clip, ni, view, 0.015, 0.03);
-        let rime = (frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4) * 0.85;
-        let ice = mix(glass, rime, frost * 0.7);
+        let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
+        // the clouded ice: what is under it, lightened by the light the ice
+        // scatters back
+        let milky = mix(base * 0.55, sky_light * 0.7, 0.35) * ice_tint;
+        let glass = mix(milky, mirrored * ice_tint, 0.08 + fresnel * 0.55) + rain_wet_lamps(world, clip, ni, view, 0.04, 0.08) * 0.6;
+        let rime = sky_light * 0.85 + base * 0.15;
+        let ice = mix(glass, rime, frost * 0.8);
         color = mix(color, ice, puddle);
     } else if (puddle > 0.01) {
         let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
@@ -2894,7 +2959,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 0.025, 0.06 + 0.14 * raining);
-        color = mix(color, pool, puddle);
+        color = mix(color, mix(pool, rain_mist_color(), rain_splash_mist(raining, view.z)), puddle);
     }
     let a = reach * max(smoothstep(0.0, 0.15, heavy), puddle);
     return vec4<f32>(color * a, a);
@@ -3399,15 +3464,24 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
 }
 
 // ------------------------------------------------- rain on water (prototype)
-// The puddles' rings (`rain_ripples`) as a slope added to the water's waves
-// (`water_pixel`): open to the sky, within reach, above the water.
-fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
+// The rain on the water (`water_pixel`), open to the sky: xy the puddles'
+// rings and chop (`rain_water_churn`) as a slope added to its waves, within
+// reach; z how rough a downpour makes it (0..1), farther out; w its splash
+// mist (`rain_splash_mist`). Light rain draws rings on a clear surface; a
+// downpour roughens and greys it, as rain on a lake does.
+fn rain_on_water(world: vec3<f32>, footprint: f32, view_up: f32) -> vec4<f32> {
     let heavy = rain_liquid();
-    if (heavy <= 0.0) { return vec2<f32>(0.0); }
-    let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
-    if (reach <= 0.0) { return vec2<f32>(0.0); }
-    let open = 1.0 - rain_sheltered_slanted(world + vec3<f32>(0.0, 0.0, 0.1));
-    return rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
+    if (heavy <= 0.0) { return vec4<f32>(0.0); }
+    let dist = distance(world, frame.camera_pos.xyz);
+    let far = 1.0 - smoothstep(120.0, 200.0, dist);
+    if (far <= 0.0) { return vec4<f32>(0.0); }
+    let open = (1.0 - rain_sheltered_slanted(world + vec3<f32>(0.0, 0.0, 0.1))) * far;
+    let reach = 1.0 - smoothstep(30.0, 45.0, dist);
+    var slope = vec2<f32>(0.0);
+    if (reach > 0.0) {
+        slope = rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
+    }
+    return vec4<f32>(slope, smoothstep(0.35, 1.0, heavy) * open, rain_splash_mist(heavy, view_up) * open);
 }
 
 

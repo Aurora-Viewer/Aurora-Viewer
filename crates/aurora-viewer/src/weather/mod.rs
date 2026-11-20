@@ -197,7 +197,8 @@ impl WeatherSettings {
         if !self.touched
             && let Some(v) = env_rain()
         {
-            return v;
+            // AURORA_SNOW_AFTER: the rain stops when the snow starts
+            return if env_snow_now().is_some() { 0.0 } else { v };
         }
         match self.precipitation {
             Precipitation::Rain => self.amount.clamp(0.0, 1.0),
@@ -208,7 +209,7 @@ impl WeatherSettings {
 
     /// Snow is chosen (the menu's, or `AURORA_SNOW` until the menu is used).
     pub fn snowing(&self) -> bool {
-        if !self.touched && env_snow().is_some() {
+        if !self.touched && env_snow_now().is_some() {
             return true;
         }
         self.precipitation == Precipitation::Snow
@@ -218,7 +219,7 @@ impl WeatherSettings {
     /// pass draws.
     pub fn fall(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow()
+            && let Some(v) = env_snow_now()
         {
             return v;
         }
@@ -232,7 +233,7 @@ impl WeatherSettings {
     /// the menu is used.
     pub fn rain_or_amount(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow().or_else(env_rain)
+            && let Some(v) = env_snow_now().or_else(env_rain)
         {
             return v;
         }
@@ -447,6 +448,23 @@ impl Wind {
     pub fn speed(&self) -> f32 {
         self.now.length()
     }
+}
+
+/// `AURORA_SNOW` once `AURORA_SNOW_AFTER=<s>` seconds have passed since
+/// launch (at once without it): before, `AURORA_RAIN` falls, so that a
+/// capture shows the puddles it left frozen.
+fn env_snow_now() -> Option<f32> {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static AFTER: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    let after = *AFTER.get_or_init(|| {
+        std::env::var("AURORA_SNOW_AFTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0)
+    });
+    env_snow().filter(|_| start.elapsed().as_secs_f32() >= after)
 }
 
 /// `AURORA_SNOW=<0..1>`: snow of this strength until the menu is used
