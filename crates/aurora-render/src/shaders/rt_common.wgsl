@@ -319,10 +319,21 @@ const OWN_REACH: f32 = 4.0;
 // (Such a ray is traced with RAY_FLAG_FORCE_NO_OPAQUE, so the opaque faces
 // come here too.)
 fn shadows(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool) -> bool {
+    return shadows_but(c, posed, dir, curved, 0.0);
+}
+
+// `shadows`, but a face of object `own` never does: the prim a lamp shines
+// from, on the last stretch of its rays (rt_light.wgsl `blocked_at`).
+// `own` is the object's index plus one (`CullFace::object`, as a float:
+// rt_shadows.rs `traced_lights`), 0 for none.
+fn shadows_but(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, own: f32) -> bool {
     if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
         return false;
     }
     let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    if (own > 0.5 && f32(cull_faces[h.record].object + 1u) == own) {
+        return false;
+    }
     let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
     if (curved && s.back && c.t < OWN_REACH) {
         return false;

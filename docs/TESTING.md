@@ -12573,6 +12573,7 @@ What the inventory must show with these scenarios:
 | `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
 | `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
 | `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
+| `AURORA_RT_EMITTER=sphere` | A lamp's traced rays stop at the sphere around its prim instead of passing that prim alone |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13104,7 +13105,14 @@ What the inventory must show with these scenarios:
   whatever the setting says: turned on later, the ray tracer is made on a
   worker thread and the picture goes on (`AURORA_DEMO_RT_SWITCH`).
   `AURORA_RT_SHADOWS=0` opens the device without them, as on a card that
-  has none: nothing is traced in that launch, whatever the setting. With
+  has none: nothing is traced in that launch, whatever the setting. A
+  lamp's own prim (its bulb, its shade, a strip light's tube) does not
+  shadow it: a ray goes the fast way up to the sphere around that prim,
+  then on to the light past every face but the prim's, so that what stands
+  inside that sphere beside the prim still casts.
+  **`AURORA_RT_EMITTER=sphere`** stops the rays at the sphere instead, as
+  the first version did, to compare the picture and the lights pass's GPU
+  time (`rt lights:`). With
   `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
   (the faces posed, the levels built and the trace on the GPU, the faces
   placed, and the render thread's time), `rt lights:`, `rt gi:` and

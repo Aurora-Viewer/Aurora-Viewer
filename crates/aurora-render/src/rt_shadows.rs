@@ -71,13 +71,23 @@ pub(crate) struct Override {
     indirect: Option<bool>,
     reflections: Option<bool>,
     cull: Cull,
+    /// `AURORA_RT_EMITTER=sphere`: a lamp's rays stop at the sphere that
+    /// holds its prim, as before its prim alone was passed
+    /// (rt_lights.wgsl `light_blocked`), for a comparison.
+    emitter_sphere: bool,
 }
 
 impl Override {
     /// From the four variables' values: `0` or `off` forces an option off,
     /// anything else on (`both` and `back`, the shadow rays with that
     /// culling, [`Cull`]); unset or empty leaves it to the settings.
-    fn parse(shadows: Option<&str>, lights: Option<&str>, indirect: Option<&str>, reflections: Option<&str>) -> Self {
+    fn parse(
+        shadows: Option<&str>,
+        lights: Option<&str>,
+        indirect: Option<&str>,
+        reflections: Option<&str>,
+        emitter: Option<&str>,
+    ) -> Self {
         let forced = |value: Option<&str>| match value?.trim() {
             "" => None,
             "0" | "off" => Some(false),
@@ -93,6 +103,7 @@ impl Override {
                 Some("back") => Cull::Back,
                 _ => Cull::Front,
             },
+            emitter_sphere: emitter.map(str::trim) == Some("sphere"),
         }
     }
 
@@ -105,6 +116,7 @@ impl Override {
                 var("AURORA_RT_LIGHTS").as_deref(),
                 var("AURORA_RT_GI").as_deref(),
                 var("AURORA_RT_REFLECTIONS").as_deref(),
+                var("AURORA_RT_EMITTER").as_deref(),
             )
         })
     }
@@ -3096,8 +3108,9 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 /// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
 fn source(parts: &[&str]) -> String {
     let mut src = format!(
-        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\n{}\n",
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\nconst EMITTER_SPHERE: bool = {};\n{}\n",
         Override::from_env().cull.ray_flags(),
+        Override::from_env().emitter_sphere,
         include_str!("shaders/rt_common.wgsl")
     );
     for part in parts {
@@ -4563,6 +4576,13 @@ impl Lights {
     }
 }
 
+/// The object a light shines from as rt_common.wgsl `shadows_but` compares
+/// it with a face's (`CullFace::object` plus one, `PointLight::source_id`):
+/// a float, exact up to 2^24 objects; 0 (none) beyond.
+fn emitter_key(source_id: u32) -> f32 {
+    if source_id < 1 << 24 { source_id as f32 } else { 0.0 }
+}
+
 /// The frame's lights as rt_lights.wgsl reads them, in the frame uniform's
 /// order; `places` is where each was last frame, then where it is.
 fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>) -> Vec<TracedLightU> {
@@ -4583,7 +4603,7 @@ fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, 
                     l.source_radius,
                     if l.projector.is_some() { 1.0 } else { 0.0 },
                     if moved.is_finite() { moved } else { 0.0 },
-                    0.0,
+                    emitter_key(l.source_id),
                 ],
             }
         })
@@ -6520,38 +6540,45 @@ mod tests {
             ..Default::default()
         };
         // no variable: the settings, and nothing without the sun's shadows
-        let none = Override::parse(None, None, None, None);
+        let none = Override::parse(None, None, None, None, None);
         assert_eq!(none, Override::default());
         assert_eq!(none.applied(all), all);
         assert_eq!(none.applied(sun), sun);
         assert_eq!(none.applied(RayTracing { shadows: false, ..all }), RayTracing::default());
         // empty is unset
-        assert_eq!(Override::parse(Some(""), Some(" "), None, None), none);
+        assert_eq!(Override::parse(Some(""), Some(" "), None, None, None), none);
         // the device has its ray queries from the start, the settings on or
         // off, but in a launch that forces the sun's shadows off
         assert!(none.opens_with_ray_queries());
-        assert!(Override::parse(Some("1"), None, None, None).opens_with_ray_queries());
-        assert!(Override::parse(None, Some("0"), Some("0"), Some("0")).opens_with_ray_queries());
-        assert!(!Override::parse(Some("0"), None, None, None).opens_with_ray_queries());
-        assert!(!Override::parse(Some("off"), Some("1"), None, None).opens_with_ray_queries());
+        assert!(Override::parse(Some("1"), None, None, None, None).opens_with_ray_queries());
+        assert!(Override::parse(None, Some("0"), Some("0"), Some("0"), None).opens_with_ray_queries());
+        assert!(!Override::parse(Some("0"), None, None, None, None).opens_with_ray_queries());
+        assert!(!Override::parse(Some("off"), Some("1"), None, None, None).opens_with_ray_queries());
         // forced on, over settings that are off; the others stay theirs
-        let on = Override::parse(Some("1"), Some("1"), None, None);
+        let on = Override::parse(Some("1"), Some("1"), None, None, None);
         assert_eq!(on.applied(RayTracing::default()), RayTracing { lights: true, ..sun });
         assert_eq!(on.applied(all), all);
         // forced off, over settings that are on
-        assert_eq!(Override::parse(Some("0"), None, None, None).applied(all), RayTracing::default());
         assert_eq!(
-            Override::parse(Some("off"), Some("1"), Some("1"), Some("1")).applied(all),
+            Override::parse(Some("0"), None, None, None, None).applied(all),
             RayTracing::default()
         );
-        assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0")).applied(all), sun);
+        assert_eq!(
+            Override::parse(Some("off"), Some("1"), Some("1"), Some("1"), None).applied(all),
+            RayTracing::default()
+        );
+        assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0"), None).applied(all), sun);
         // the culling comes with the sun's shadows: #3895's rule unless
         // asked otherwise
-        assert_eq!(Override::parse(None, None, None, None).cull, Cull::Front);
-        assert_eq!(Override::parse(Some("1"), None, None, None).cull, Cull::Front);
-        let both = Override::parse(Some("both"), None, None, None);
+        assert_eq!(Override::parse(None, None, None, None, None).cull, Cull::Front);
+        assert_eq!(Override::parse(Some("1"), None, None, None, None).cull, Cull::Front);
+        let both = Override::parse(Some("both"), None, None, None, None);
         assert_eq!((both.cull, both.applied(RayTracing::default())), (Cull::None, sun));
-        assert_eq!(Override::parse(Some(" back "), None, None, None).cull, Cull::Back);
+        assert_eq!(Override::parse(Some(" back "), None, None, None, None).cull, Cull::Back);
+        // a lamp's rays pass its prim alone unless asked otherwise
+        assert!(!none.emitter_sphere);
+        assert!(Override::parse(None, None, None, None, Some(" sphere ")).emitter_sphere);
+        assert!(!Override::parse(None, None, None, None, Some("prim")).emitter_sphere);
     }
 
     #[test]
@@ -6591,6 +6618,10 @@ mod tests {
         traced_lights(&[lamp(0, 6.0)], &mut places);
         let back = traced_lights(&[lamp(7, 4.0)], &mut places);
         assert_eq!(back[0].source[2], 0.0);
+        // and its object, whose faces its rays pass (none of no prim)
+        assert_eq!([first[0].source[3], first[1].source[3]], [7.0, 0.0]);
+        assert_eq!(emitter_key((1 << 24) - 1), 16_777_215.0);
+        assert_eq!(emitter_key(1 << 24), 0.0);
     }
 
     #[test]

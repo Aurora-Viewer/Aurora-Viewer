@@ -51,9 +51,14 @@
 // it (rt_history.wgsl `smooth_normal`), as the shading lights them; the
 // rays of a triangle turned from its light take rt_common.wgsl `shadows`.
 //
-// A light's rays stop where they enter its own prim (`source.x` about its
-// centre), so its bulb or its lamp's body does not shadow it. Projectors
-// keep their shadow maps.
+// A light's own prim does not shadow it (its bulb, its lamp's body, a strip
+// light's tube): a ray goes the opaque way up to the sphere about the
+// light that holds its prim (`source.x`), then on to the light past every
+// face but those of its prim (`source.w`, rt_common.wgsl `shadows_but`),
+// so what stands inside that sphere beside the prim still casts. With
+// `EMITTER_SPHERE` (`AURORA_RT_EMITTER=sphere`, rt_shadows.rs `source`)
+// the rays stop at the sphere, for a comparison. Projectors keep their
+// shadow maps.
 
 // After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
 // wgpu_ray_query's enable (rt_shadows.rs `source`).
@@ -333,15 +338,25 @@ fn light_blocked(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> f3
     let toward = centre + (side * cos(phi) + up * sin(phi)) * r;
     let span = length(toward);
     let dir = toward / max(span, 1e-6);
-    // up to where the ray enters the light's own prim
+    // up to where the ray enters the sphere that holds the light's own
+    // prim, then (`EMITTER_SPHERE` aside) on to the light past that prim
+    // alone, short of the light's point by a centimetre
     let body = max(lt.source.x, max(size, 0.05));
     let along = dot(centre, dir);
     let beside = dot(centre, centre) - along * along;
     let reach = min(along - sqrt(max(body * body - beside, 0.0)), span);
-    if (reach <= 0.0) {
-        return -1.0;
+    let posed = params.mode.y > 0.5;
+    let curved = dot(flat, dir) <= 0.0;
+    var t = -1.0;
+    if (reach > 0.0) {
+        t = blocked_at(origin, dir, 0.0, reach, posed, curved, 0.0);
     }
-    let t = blocked_at(origin, dir, reach, params.mode.y > 0.5, dot(flat, dir) <= 0.0);
+    let near = max(reach, 0.0);
+    let last = span - 0.01;
+    let own = lt.source.w;
+    if (t < 0.0 && !EMITTER_SPHERE && own > 0.5 && last > near) {
+        t = blocked_at(origin, dir, near, last, posed, curved, own);
+    }
     if (t < 0.0) {
         return -1.0;
     }
