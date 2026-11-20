@@ -9051,7 +9051,7 @@ impl Backend {
             _ => 0,
         });
         main.light_sets.mode[2] |= match blend_ao {
-            BlendAo::New => 0x810000,
+            BlendAo::New => 0x1010000,
             BlendAo::Step => 0x10000,
             BlendAo::Old => 0x4000,
             _ => 0,

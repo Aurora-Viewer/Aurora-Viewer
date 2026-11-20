@@ -1337,7 +1337,7 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 // frame.light_mode.z: the blended faces under half covered take the
 // screen-space terms where they lie on the surface in the occlusion's depth
 // (screen_layer; off with AURORA_BLEND_AO=step)
-const BLEND_SCREEN_LAYER: u32 = 0x800000u;
+const BLEND_SCREEN_LAYER: u32 = 0x1000000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
