@@ -35,27 +35,30 @@ pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_96779
 /// Default specular map.
 pub const DEFAULT_SPECULAR: Uuid = Uuid::from_u128(0x87e0e8f7_8729_1ea8_cfc9_8915773009db);
 
-/// "Bumpiness" (bump codes 0..17).
+/// "Bumpiness" (bump codes 0..17), the items of the Legacy Viewer's
+/// "combobox bumpiness" (panel_tools_texture.xml): Brightness, Darkness,
+/// woodgrain, bark, bricks, checker, concrete, crustytile, cutstone, discs,
+/// gravel, petridish, siding, stonetile, stucco, suction, weave.
 fn bumps() -> [&'static str; 18] {
     [
         aurora_i18n::tr!("common-none"),
-        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("build-ui-texture-brightness"),
         aurora_i18n::tr!("build-ui-texture-darkness"),
         aurora_i18n::tr!("build-ui-texture-wood-grain"),
         aurora_i18n::tr!("build-ui-texture-bark"),
-        "briques",
-        "damier",
+        aurora_i18n::tr!("build-ui-texture-bricks"),
+        aurora_i18n::tr!("build-ui-texture-checker"),
         aurora_i18n::tr!("build-ui-texture-concrete"),
         aurora_i18n::tr!("build-ui-texture-crusty"),
         aurora_i18n::tr!("build-ui-texture-cut-stone"),
-        "disques",
-        "gravier",
-        aurora_i18n::tr!("build-ui-texture-trouble"),
-        "bardage",
+        aurora_i18n::tr!("build-ui-texture-discs"),
+        aurora_i18n::tr!("build-ui-texture-gravel"),
+        aurora_i18n::tr!("build-ui-texture-petri-dish"),
+        aurora_i18n::tr!("build-ui-texture-siding"),
         aurora_i18n::tr!("build-ui-texture-stone-tiles"),
-        "stuc",
-        "aspiration",
-        "trame",
+        aurora_i18n::tr!("build-ui-texture-stucco"),
+        aurora_i18n::tr!("build-ui-texture-suction"),
+        aurora_i18n::tr!("build-ui-texture-weave"),
     ]
 }
 /// Index of "Use texture" (BUMPY_TEXTURE / SHINY_TEXTURE).
@@ -280,12 +283,19 @@ impl BuildTool {
     fn edit_legacy(&mut self, env: &Env, world: &World, sel: &[Sel], f: impl Fn(&mut LegacyMaterial)) {
         let mut puts = Vec::new();
         for s in sel {
-            let default = default_legacy(env, &s.te);
+            let default = default_legacy_for_face(env, world, s);
             let mut m = self
                 .face_legacy(env, world, s.idx, s.face, &s.te)
                 .unwrap_or_else(|| default.clone());
             f(&mut m);
-            let empty = m == default;
+            // A local diffuse can have alpha while the server texture is opaque.
+            // Keep an explicit mode: removing it would restore auto detection
+            // of the local image and make None transparent again.
+            let local_diffuse = world.objects.get(s.idx).is_some_and(|o| {
+                o.local_texture(s.face as usize, crate::world::objects::LocalTextureSlot::Diffuse)
+                    .is_some()
+            });
+            let empty = m == default && !local_diffuse;
             let m = (!empty).then_some(m);
             if let Some(o) = world.objects.get(s.idx) {
                 self.ui.legacy_pending.insert((o.full_id, s.face), (s.te.material_id, m.clone()));
@@ -397,6 +407,16 @@ pub(super) fn default_legacy(env: &Env, te: &TextureFace) -> LegacyMaterial {
         diffuse_alpha_mode: env.scene.textures.default_alpha_mode(&te.texture),
         ..Default::default()
     }
+}
+
+/// LLPanelFace::createDefaultMaterial uses the diffuse currently displayed,
+/// including a local bitmap (LLLocalBitmap::updateUserPrims).
+pub(super) fn default_legacy_for_face(env: &Env, world: &World, selected: &Sel) -> LegacyMaterial {
+    let te = world
+        .objects
+        .get(selected.idx)
+        .map_or(selected.te, |o| o.visual_texture_face(selected.face as usize));
+    default_legacy(env, &te)
 }
 
 /// The selected faces of modifiable volume prims.
@@ -1152,7 +1172,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         .map(|x| {
             let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
             if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
-                let value = material.get_or_insert_with(|| default_legacy(env, &x.te));
+                let value = material.get_or_insert_with(|| default_legacy_for_face(env, world, x));
                 appearance.apply_legacy(value);
             }
             material
@@ -1990,5 +2010,69 @@ mod tests {
         assert_eq!(te_st_axes(0), (0, 1));
         assert_eq!(te_st_axes(2), (1, 2));
         assert_eq!(te_st_axes(7), (0, 1));
+    }
+}
+
+#[cfg(test)]
+mod local_alpha_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn creator_local_alpha_uses_displayed_texture_and_none_is_sent_explicitly() {
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(event);
+        }
+        let index = world.worn_attachment(&crate::demo::worn::item_id()).unwrap();
+        let local = Uuid::from_u128(0xcfea);
+        let object = world.objects.get_mut(index).unwrap();
+        let id = object.full_id;
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].texture = aurora_prim::te::BLANK_TEXTURE;
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = Uuid::nil();
+        object
+            .render
+            .local_appearance
+            .insert(Some(0), crate::world::objects::LocalAppearance::Texture(local));
+        let te = *object.te.as_ref().unwrap().face(0);
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        scene.textures.alpha_channel_by_slot.resize(1, false);
+        scene
+            .textures
+            .register_local_image(local, 0, crate::scene::jobs::AlphaKind::Blend, true);
+        let images = HashMap::new();
+        let mut media = crate::media::MediaManager::default();
+        let mut lines = false;
+        let env = Env {
+            images: &images,
+            media: &mut media,
+            scene: &mut scene,
+            zoom_fraction: 0.0,
+            property_lines: &mut lines,
+            demo: true,
+        };
+        let selected = [Sel { idx: index, face: 0, te }];
+        assert_eq!(default_legacy(&env, &te).diffuse_alpha_mode, alpha_mode::NONE);
+        assert_eq!(
+            default_legacy_for_face(&env, &world, &selected[0]).diffuse_alpha_mode,
+            alpha_mode::BLEND
+        );
+        let mut tool = BuildTool::default();
+        for mode in [alpha_mode::NONE, alpha_mode::MASK, alpha_mode::BLEND] {
+            tool.edit_legacy(&env, &world, &selected, |m| m.diffuse_alpha_mode = mode);
+            assert_eq!(tool.ui.legacy_pending[&(id, 0)].1.as_ref().unwrap().diffuse_alpha_mode, mode);
+            let command = tool.out.last().unwrap();
+            let aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { body, .. }) = command else {
+                panic!("material PUT")
+            };
+            let body = crate::scene::legacy_mat::unzip_llsd(body.get("Zipped").as_binary()).unwrap();
+            let material = body.get("FullMaterialsPerFace").as_array()[0].get("Material");
+            assert!(material.as_map().is_some(), "explicit alpha must not remove the material");
+            assert_eq!(material.get("DiffuseAlphaMode").as_i32(), i32::from(mode));
+        }
+        assert_eq!(world.objects.get(index).unwrap().te.as_ref().unwrap().face(0).texture, te.texture);
     }
 }

@@ -3144,13 +3144,7 @@ impl Scene {
         // environment selector's items)
         for id in world.eep.wanted_settings() {
             match self.settings.get(id) {
-                settings::SettingsState::Ready(s) => {
-                    // its Aurora Weather, from its name, before it applies
-                    if let settings::MapState::Ready(map) = self.settings.map(id) {
-                        world.eep.note_asset_weather(id, crate::weather::region::of_settings(&map));
-                    }
-                    world.eep.on_settings(id, Some(s));
-                }
+                settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
                 settings::SettingsState::Failed => world.eep.on_settings(id, None),
                 settings::SettingsState::Pending => {}
             }
@@ -6173,11 +6167,6 @@ impl Scene {
                 }
             };
             shape_dz.push((owner, dz));
-            motions.ik.targets = if !control && preview.is_none() {
-                ik::targets(world, idx, dz, now)
-            } else {
-                Vec::new()
-            };
             for frame in [&mut motions.ground, &mut motions.legacy_ground].into_iter().flatten() {
                 let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
                 frame.to_world.w_axis.z += dz - previous;
@@ -6239,7 +6228,6 @@ impl Scene {
                 |point| native_frame.and_then(|frame| self.legacy_ground_surface(world, frame, point)),
             );
             if motions.poser.is_none()
-                && !motions.ik.has_external_targets()
                 && let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref())
             {
                 job.run(physics_rig, &rig, now, chunk);
@@ -6262,65 +6250,6 @@ impl Scene {
         });
         drop(jobs);
         drop(chunks);
-        // Resolve cross-avatar references from one shared first-pass snapshot.
-        // Each dependent avatar gets at most one additional parallel solve at
-        // the same animation clock, without an iterative inter-avatar loop.
-        if work.iter().any(|(_, m, _, _, _, _)| m.ik.has_external_targets()) {
-            for (owner, slot) in &posed {
-                let start = *slot * anim::PALETTE_JOINTS;
-                if let Some(src) = pal.get(start..start + rig.len()) {
-                    let dst = world.avatar_poses.entry(*owner).or_default();
-                    dst.clear();
-                    dst.extend(
-                        src.iter()
-                            .zip(&rig.default_world_inv)
-                            .map(|(m, inv)| Mat4::from_cols_array_2d(m) * *inv),
-                    );
-                }
-            }
-            for (_, motions, _, _, _, _) in &mut work {
-                if motions.ik.has_external_targets() {
-                    motions.ik.refresh_external_targets(world, now);
-                }
-            }
-            let mut chunks: Vec<_> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
-            let mut jobs: Vec<_> = work
-                .iter_mut()
-                .filter(|(_, m, _, _, _, _)| m.ik.has_external_targets())
-                .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
-                .collect();
-            frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
-                let frame = motions.ground;
-                let native_frame = motions.legacy_ground;
-                motions.evaluate_with_support(
-                    &rig,
-                    *pose_now,
-                    Some(base),
-                    chunk,
-                    |point| frame.and_then(|frame| self.ground_surface(world, frame, point, now)),
-                    |point| native_frame.and_then(|frame| self.legacy_ground_surface(world, frame, point)),
-                );
-                // Advance body physics only once, from the final constrained pose.
-                if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
-                    job.run(physics_rig, &rig, now, chunk);
-                }
-                if neutral_owner == Some(*owner) {
-                    let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
-                    for (dst, matrix) in chunk.iter_mut().zip(neutral) {
-                        *dst = matrix.to_cols_array_2d();
-                    }
-                }
-                if let Some((_, local)) = couple_local.filter(|(id, _)| id == owner) {
-                    shift_display_pose(local, chunk);
-                }
-                if *owner == world.agent_id {
-                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
-                    if world.avatar_studio {
-                        avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
-                    }
-                }
-            });
-        }
         self.palettes = pal;
         for (_, motions, _, owner, _, physics) in work.drain(..) {
             if owner == world.agent_id {

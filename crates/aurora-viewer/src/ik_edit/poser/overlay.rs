@@ -1,6 +1,6 @@
 //! Real-joint selection and manipulation. No project, binding or virtual-node pass.
 use super::*;
-use crate::ik_edit::segments::{self, Source};
+use crate::ik_edit::segments;
 
 impl Editor {
     pub(in crate::ik_edit) fn select_pose_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
@@ -321,7 +321,7 @@ impl Editor {
         let Some(segment) = segments::pick(&segments, pointer) else {
             return;
         };
-        let Source::Bone(bone) = segment.source else { return };
+        let bone = segment.bone;
         // From the geometry: the shaft's area only exists once hovered.
         self.poser.pointer_owned = true;
         self.poser.marker_hover = true;

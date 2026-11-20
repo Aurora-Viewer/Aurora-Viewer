@@ -10,6 +10,7 @@
 use crate::theme::Palette;
 use crate::ui::{presence, widgets};
 use crate::world::World;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Shape, Vec2};
 use uuid::Uuid;
 
@@ -917,7 +918,7 @@ pub fn person_head(ui: &mut egui::Ui, p: &Palette, width: f32, name: &str, mid: 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
     let (mid_x, exp_x) = columns(rect.right());
     for (text, x) in [(name, rect.left() + NAME_X), (mid, mid_x), (exp, exp_x)] {
-        let g = ui.painter().layout_job(semibold(ui, &text.to_uppercase(), 10.5, p.muted_dim));
+        let g = ui.painter().layout_job(semibold(ui, &text.ui_upper(), 10.5, p.muted_dim));
         let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
         ui.painter().galley(at, g, p.muted_dim);
     }

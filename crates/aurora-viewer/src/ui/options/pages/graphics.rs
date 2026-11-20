@@ -11,10 +11,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => quality(cx),
         1 => light(cx),
-        2 => {
-            environment(cx);
-            weather(cx);
-        }
+        // the weather's settings are all in the Aurora Weather window
+        2 => environment(cx),
         3 => reflections_and_water(cx),
         4 => image(cx),
         5 => {
@@ -97,117 +95,6 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-confirm-no-transfer-settings-help"),
             &field!(confirm_no_transfer_settings),
         );
-    });
-}
-
-/// Graphics › Sky and environment › Weather: what the weather costs
-/// and what it lets regions do (the weather itself, what falls and how hard,
-/// is the Aurora Weather window's).
-fn weather(cx: &mut Cx) {
-    use crate::weather::{PUDDLE_DISTANCE, WeatherQuality};
-    use aurora_i18n::tr;
-    cx.group(tr!("ui-weather"), |cx| {
-        cx.choice(
-            tr!("ui-weather-quality"),
-            tr!("ui-weather-quality-tip"),
-            &field!(weather.quality),
-            &[
-                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
-                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
-                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
-            ],
-        );
-        // the puddles, and behind their cog how far the wet ground goes
-        // and whether they freeze
-        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
-        let no_puddles = !cx.s.weather.puddles;
-        cx.subs(no_puddles, |cx| {
-            // live with the puddles off: the wet ground is drawn in any rain
-            // (env.wgsl `rain_wet_surface`; the switch gates only the
-            // puddles), and it goes as far as this
-            cx.live(true).slider_whole(
-                tr!("ui-weather-distance"),
-                tr!("ui-weather-distance-tip"),
-                &field!(weather.puddle_distance),
-                PUDDLE_DISTANCE,
-                " m",
-            );
-            cx.toggle(tr!("ui-weather-ice"), tr!("ui-weather-ice-tip"), &field!(weather.ice));
-        });
-        // the snow lying, and behind its cog how far it is drawn
-        cx.toggle(
-            tr!("ui-weather-snow-settles"),
-            tr!("ui-weather-snow-settles-tip"),
-            &field!(weather.snow_settles),
-        );
-        let no_snow = !cx.s.weather.snow_settles;
-        cx.subs(no_snow, |cx| {
-            cx.slider_whole(
-                tr!("ui-weather-snow-distance"),
-                tr!("ui-weather-snow-distance-tip"),
-                &field!(weather.snow_distance),
-                crate::weather::SNOW_DISTANCE,
-                " m",
-            );
-            cx.toggle(
-                tr!("ui-weather-footprints"),
-                tr!("ui-weather-footprints-tip"),
-                &field!(weather.snow_footprints),
-            );
-            // parallax through the snow: costly, still being tuned
-            cx.experimental().toggle(
-                tr!("ui-weather-deep-snow"),
-                tr!("ui-weather-deep-snow-tip"),
-                &field!(weather.snow_deep),
-            );
-            // right under it, greyed while it is off: a cog behind a cog
-            // is not how the other options read
-            let no_deep = !cx.s.weather.snow_deep;
-            cx.greyed(no_deep);
-            cx.slider_whole(
-                tr!("ui-weather-deep-snow-reach"),
-                tr!("ui-weather-deep-snow-reach-tip"),
-                &field!(weather.snow_deep_reach),
-                crate::weather::DEEP_SNOW_REACH,
-                " m",
-            );
-            cx.greyed(false);
-        });
-        cx.toggle(
-            tr!("ui-weather-avatar-snow"),
-            tr!("ui-weather-avatar-snow-tip"),
-            &field!(weather.snow_on_avatars),
-        );
-        cx.toggle(
-            tr!("ui-weather-region"),
-            tr!("ui-weather-region-tip"),
-            &field!(weather.region_weather),
-        );
-        // the region's wind, and behind its cog the direction used instead
-        cx.toggle(
-            tr!("ui-weather-wind-follow-region"),
-            tr!("ui-weather-wind-follow-region-tip"),
-            &field!(weather.wind_follow_region),
-        );
-        let follow = cx.s.weather.wind_follow_region;
-        cx.subs(follow, |cx| {
-            cx.row(
-                tr!("ui-weather-wind-from"),
-                tr!("ui-weather-wind-from-tip"),
-                &field!(weather.wind_from),
-                |ui, s| {
-                    ui.spacing_mut().slider_width = super::super::SLIDER_W;
-                    ui.add(
-                        egui::Slider::new(&mut s.weather.wind_from, 0.0..=355.0)
-                            .step_by(5.0)
-                            .custom_formatter(|v, _| format!("{v:.0}° {}", crate::ui::environment::compass_point(v as f32)))
-                            .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok())
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-        });
     });
 }
 
@@ -685,6 +572,11 @@ fn quality(cx: &mut Cx) {
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
         );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
+        );
         cx.stepped(
             tr!("ui-options-limit-applied"),
             tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
@@ -1151,7 +1043,43 @@ fn image(cx: &mut Cx) {
             },
         );
     });
+    world_look(cx);
     depth_of_field(cx);
+}
+
+/// The world's own filters (`snapshot::looks::WorldLook`): switched on here,
+/// chosen in their window (`ui/world_look.rs`). Aurora's own.
+fn world_look(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-world-look"), |cx| {
+        cx.keywords("LUT look filter colour grading").toggle(
+            tr!("ui-options-world-look-on"),
+            tr!("ui-options-world-look-on-help"),
+            &field!(world_look.on),
+        );
+        let p = cx.p;
+        cx.row_with(
+            tr!("ui-options-world-look-choose"),
+            tr!("ui-options-world-look-choose-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                use crate::ui::widgets::{ActionKind, action_button};
+                if action_button(
+                    ui,
+                    &p,
+                    "color-filter",
+                    tr!("ui-options-world-look-open"),
+                    ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    r.open_world_look = true;
+                }
+                false
+            },
+        );
+    });
 }
 
 /// Depth of field (panel_preferences_graphics1.xml, "DOF panel":

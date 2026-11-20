@@ -10,7 +10,6 @@ pub mod swim;
 mod tests;
 pub mod water_float;
 pub mod water_jump;
-pub mod water_volume;
 pub mod water_walk;
 use crate::agent::MoveInput;
 use aurora_net::bridge::Motion;

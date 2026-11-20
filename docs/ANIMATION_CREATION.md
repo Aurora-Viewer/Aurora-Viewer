@@ -18,9 +18,8 @@ ticked), then four pages:
 
 Playback, scrubbing and key navigation are in the timeline window, which
 opens with the editor; once closed, **Timeline** in the editor reopens it.
-**Return to IK contacts** restores the existing contact definitions and
-their enable states (it is not offered when the editor was opened from
-Avatar Studio).
+**Return to IK Edit** goes back to the IK Edit pose and its limb switches
+(it is not offered when the editor was opened from Avatar Studio).
 
 ## The timeline window
 
@@ -126,10 +125,10 @@ or the turn ten times finer, in the Poser and in the animation editor.
 
 ## Record keys
 
-The initial frame records the rest skeleton with your IK contacts solved on
+The initial frame records the rest skeleton with your IK Edit goals solved on
 it. An animation is built from there: what plays on the avatar is not part of
 it, and while creating, the avatar shows the rest skeleton and your keys. Manual
-joint edits made in the contact editor stay there; pose them here. Choose a
+joint edits made in IK Edit stay there; pose them here. Choose a
 frame in the timeline, pick a bone, pose the avatar, then record it:
 
 - **Key this bone** records the selected joint. When its IK chain is being
@@ -214,11 +213,10 @@ the file and validates the complete result before saving or preparing import.
 
 ## Reuse an IK pose and keep drafts
 
-Return to IK contacts to adjust prim targets, bone targets or virtual
-controls. In Animations, choose the destination **Frame (.anim)** and
-**Capture current IK pose** to add your contacts, solved on the rest skeleton,
-to the current draft. This bakes the real skeletal pose; the LSL companion
-supplies live target following during play.
+Return to IK Edit to adjust its goals. In Animations, choose the destination
+**Frame (.anim)** and **Capture current IK pose** to add the IK Edit goals,
+solved on the rest skeleton, to the current draft. This bakes the real
+skeletal pose.
 
 Creating another animation, or opening a file, retains the previous draft in
 the draft selector. Up to sixteen drafts remain available during the viewer
