@@ -23496,6 +23496,9 @@ impl ApplicationHandler for App {
                         | "aurora-explorer-split"
                 );
                 if configured_view {
+                    // the demo's settings outlive a run: each scenario
+                    // states the dual-panel layout (the split view's) itself
+                    self.panels.inventory_dual = view == "aurora-explorer-split";
                     crate::world::inventory::demo::seed_view(
                         &mut self.world.inventory,
                         self.world.agent_id,
@@ -23613,7 +23616,6 @@ impl ApplicationHandler for App {
                             }
                             if view == "aurora-explorer-split" {
                                 // the split view: two explorers side by side
-                                self.panels.inventory_dual = true;
                                 self.dual_inventory_ui.demo_explorer("aurora-explorer-split-right");
                             }
                             // the column lists a pin once its folder is there
