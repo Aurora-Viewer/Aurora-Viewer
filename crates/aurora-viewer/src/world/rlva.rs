@@ -30,6 +30,7 @@ mod im_queries;
 mod interaction;
 mod inventory;
 pub mod last_points;
+pub(crate) mod legacy_strings;
 pub mod login;
 pub mod modifiers;
 mod naming;

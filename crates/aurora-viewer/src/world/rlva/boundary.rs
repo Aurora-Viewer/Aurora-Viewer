@@ -32,6 +32,14 @@ impl World {
         if let NetCommand::OfferTeleport { to, .. } = command {
             self.rlva_filter_teleport_offer(to);
         }
+        if actor.is_nil() && self.rlva_take_decided(command) {
+            return Boundary::Send;
+        }
+        // callback_script_dialog (llviewermessage.cpp): the answer of a
+        // dialog on channel 0, shown before @sendchat, is dropped silently
+        if actor.is_nil() && matches!(command, NetCommand::ScriptDialogReply { channel: 0, .. }) && self.rlva.has("sendchat") {
+            return Boundary::Dropped;
+        }
         let im_placeholder = actor.is_nil() && self.rlva_prepare_outgoing_im(command);
         if !im_placeholder && !self.rlva_allows_command(command, actor) {
             return Boundary::Refused;

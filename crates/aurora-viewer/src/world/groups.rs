@@ -480,6 +480,13 @@ impl World {
             return;
         }
         let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        self.send_session_text(session, text, false);
+    }
+
+    /// A line of a session, its RLVa text already chosen; `decided`: it was
+    /// queued before the conference started and leaves as it was decided
+    /// then (`rlva_send_as_decided`).
+    pub(super) fn send_session_text(&mut self, session: Uuid, text: String, decided: bool) {
         if self.calls.conferences.contains_key(&session) {
             if let Some(info) = self.groups.sessions.get_mut(&session) {
                 info.pending_messages.push(text);
@@ -489,6 +496,9 @@ impl World {
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
+            if decided {
+                self.rlva_send_as_decided(session, dialog::SESSION_SEND, part);
+            }
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
         let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());
