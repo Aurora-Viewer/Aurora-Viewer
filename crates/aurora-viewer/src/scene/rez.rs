@@ -944,10 +944,15 @@ impl Scene {
         let loaded = if u.avatar {
             // (ours, and a new look: its bakes downloaded and shown too)
             let complete = u.id == f.world.agent_id || u.outfit;
+            // (one drawn from the cache shows as it is once out of its
+            // cloud: no grid over what is real while its copies are not,
+            // world/avatar_cache)
+            let cached = f.world.avatar_cache.draws(&u.id);
             !self.loading.indices.contains(&root)
                 && self.gpu.get(root).is_some_and(|g| !g.faces.is_empty())
-                && (!complete || self.avatar_complete(f.world, root) && !self.holds_bake(&u.id))
-                && self.members_loaded(u.members.get(1..).unwrap_or_default())
+                && (cached
+                    || (!complete || self.avatar_complete(f.world, root) && !self.holds_bake(&u.id))
+                        && self.members_loaded(u.members.get(1..).unwrap_or_default()))
         } else {
             self.members_loaded(&u.members)
         };
@@ -1218,6 +1223,15 @@ impl Scene {
                 let Some(avatar) = parent.filter(|&p| world.objects.get(p).is_some_and(|a| a.is_avatar())) else {
                     continue;
                 };
+                // (the region's object of a copy drawn from the cache takes
+                // its place as it is: it was on the screen already)
+                if world
+                    .objects
+                    .get(avatar)
+                    .is_some_and(|a| world.avatar_cache.replaced_by(&a.full_id, o.full_id, o.attachment_item_id()))
+                {
+                    continue;
+                }
                 let settled = world
                     .objects
                     .get(avatar)

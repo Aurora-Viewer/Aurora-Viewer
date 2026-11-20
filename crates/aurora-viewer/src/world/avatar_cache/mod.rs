@@ -204,6 +204,23 @@ impl AvatarCache {
         self.looks.remove(avatar).map(|(a, _)| a)
     }
 
+    /// Whether `avatar` is drawn from the cache now: its kept look, or
+    /// copies of what it wears (until the region's objects are drawn). The rez effect shows it as it
+    /// is, with no grid over the rest (scene/rez.rs).
+    pub fn draws(&self, avatar: &Uuid) -> bool {
+        self.looks.contains_key(avatar) || self.copies.get(avatar).is_some_and(|v| !v.is_empty())
+    }
+
+    /// Whether a copy of `avatar`'s stands for the region's object
+    /// `object` (worn from `item`): that object takes the copy's place,
+    /// with no rez effect of its own.
+    pub fn replaced_by(&self, avatar: &Uuid, object: Uuid, item: Option<Uuid>) -> bool {
+        self.copies.get(avatar).is_some_and(|v| {
+            v.iter()
+                .any(|c| c.root_id == object || item.is_some_and(|i| !i.is_nil() && c.item_id == i))
+        })
+    }
+
     /// Give a set read elsewhere (the demo, the tests).
     pub fn insert_set(&mut self, avatar: Uuid, set: KeptAvatar) {
         self.sets.insert(avatar, Some(Arc::new(set)));
@@ -482,14 +499,18 @@ impl World {
         root
     }
 
-    /// Take a copy away, with its prims.
+    /// Take a copy away, with its prims. Not as a kill: the region's object
+    /// takes its place where it stood, with no derez in between.
     fn remove_worn_copy(&mut self, root: ObjKey) {
         let Some(idx) = self.objects.index_of(&root) else {
             return;
         };
-        let subtree = self.objects.subtree(idx);
-        let keys: Vec<ObjKey> = subtree.iter().filter_map(|&i| self.objects.get(i).map(|o| o.key)).collect();
-        self.objects.killed.push(subtree);
+        let keys: Vec<ObjKey> = self
+            .objects
+            .subtree(idx)
+            .iter()
+            .filter_map(|&i| self.objects.get(i).map(|o| o.key))
+            .collect();
         for key in keys {
             self.objects.remove(&key);
             self.gltf_overrides.remove(&key);

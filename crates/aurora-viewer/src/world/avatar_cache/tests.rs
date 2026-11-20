@@ -467,3 +467,55 @@ fn the_store_stays_for_the_next_login() {
     assert!(world.avatar_cache.io.is_some(), "the next login reads the same store");
     assert!(world.avatar_cache.kept_look(&OTHER).is_none(), "nothing of the last session");
 }
+
+#[test]
+fn the_rez_effect_knows_what_the_cache_draws() {
+    let (mut world, handle, avatar) = setup();
+    outfit_links(&mut world, &[HAT_ITEM]);
+    let hat = worn(&avatar, avatar.local_id, 80_001, 900, 2, Some(HAT_ITEM));
+    world.avatar_cache.insert_set(
+        ME,
+        KeptAvatar {
+            saved_at: unix_now(),
+            objects: vec![WornObject {
+                root_id: Uuid::from_u128(900),
+                item_id: Uuid::from_u128(HAT_ITEM),
+                point: 2,
+                prims: hat
+                    .iter()
+                    .map(|u| file::WornPrim {
+                        update_flags: 0,
+                        data: aurora_net::objects::encode_compressed(u),
+                        overrides: Vec::new(),
+                    })
+                    .collect(),
+            }],
+            look: None,
+        },
+    );
+    assert!(!world.avatar_cache.draws(&ME));
+    world.update_avatar_cache(Instant::now());
+    assert!(world.avatar_cache.draws(&ME));
+    assert!(!world.avatar_cache.draws(&OTHER));
+    // the region's hat, another object id this login: matched by its item
+    let mut real = worn(&avatar, avatar.local_id, 80_101, 990, 2, Some(HAT_ITEM));
+    real.truncate(1);
+    assert!(
+        world
+            .avatar_cache
+            .replaced_by(&ME, Uuid::from_u128(990), Some(Uuid::from_u128(HAT_ITEM)))
+    );
+    assert!(
+        !world
+            .avatar_cache
+            .replaced_by(&ME, Uuid::from_u128(990), Some(Uuid::from_u128(502)))
+    );
+    assert!(!world.avatar_cache.replaced_by(&ME, Uuid::from_u128(990), Some(Uuid::nil())));
+    // a copy goes without a derez: the region's object takes its place
+    world.objects.killed.clear();
+    world.apply(NetEvent::ObjectUpdates { handle, objects: real });
+    world.avatar_cache.set_enabled(false);
+    world.update_avatar_cache(Instant::now());
+    assert!(world.objects.killed.is_empty());
+    assert!(!world.avatar_cache.draws(&ME));
+}
