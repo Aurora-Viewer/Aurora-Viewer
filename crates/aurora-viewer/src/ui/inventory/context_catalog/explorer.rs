@@ -45,10 +45,11 @@ pub(super) fn kept_in_background(entry: &Entry) -> bool {
         || BACKGROUND_ADDS.contains(&entry.id.as_str())
 }
 
-/// New as a labelled "New ▸" at the head of the text, opening at its side
+/// New as a labelled "New ▸" among the text entries, opening at its side
 /// as View and Sort do, as Explorer's and Dolphin's "New" (the "+" of the
 /// icon bar was easy to miss): the empty space's menu and, in Aurora's
-/// window, every entry's. A layout the user arranged still places it.
+/// window, every entry's. It goes first among the entries the menu layout
+/// has not ranked, so after the ranked ones; the menu editor moves it.
 pub(super) fn new_first(entries: &mut Vec<Entry>) {
     let Some(at) = entries.iter().position(|e| e.id == "new" && e.zone == "top") else {
         return;

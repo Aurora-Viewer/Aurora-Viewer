@@ -7482,7 +7482,7 @@ failure. Grid validation and any paid upload are performed by the human.
   names the mode and the keys held); a right-click in the empty space of a
   folder, Recent, Worn or Favorites opens New at the side (in Recent, Worn
   or Favorites a new notecard lands in Notecards, a folder at the top), an
-  entry's menu has New at its head too (into the row's folder), and the
+  entry's menu has New too (into the row's folder), and the
   rubber band works in those lists too, from a row's Type or Date columns.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
