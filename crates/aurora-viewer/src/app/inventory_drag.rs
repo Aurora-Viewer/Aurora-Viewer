@@ -823,7 +823,7 @@ impl App {
     /// DT_AVATAR → dad3dGiveInventory): `texture_library_drag_input` yields
     /// while they are the target.
     fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
-        let ids = ui::inventory::drag::carried_ids(ctx)?;
+        let ids = ui::inventory::drag::give_ids(ctx)?;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
             return None;
         }
