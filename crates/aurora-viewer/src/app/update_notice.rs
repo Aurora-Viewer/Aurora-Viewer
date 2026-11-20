@@ -9,6 +9,12 @@ impl App {
     /// The new version a periodic check found: its notice in the world, the
     /// update window elsewhere (the login screen has no notifications).
     pub(super) fn update_notice(&mut self) {
+        // a probe that timed out when the card was raised, then a later
+        // check that found the folder protected: the card's button says
+        // so too, not only its action
+        if self.updater.blocked.is_some() {
+            mark_cards_blocked(&mut self.world.notifications.list);
+        }
         let Some(notice) = self.updater.take_notice().or_else(|| self.demo_update_notice()) else {
             return;
         };
@@ -34,9 +40,15 @@ impl App {
                 ),
             )
         };
-        self.world
-            .notifications
-            .push(Kind::Info, title, body, Data::Update { ready: notice.ready });
+        self.world.notifications.push(
+            Kind::Info,
+            title,
+            body,
+            Data::Update {
+                ready: notice.ready,
+                blocked: self.updater.blocked.is_some(),
+            },
+        );
     }
 
     /// AURORA_DEMO_UPDATE_NOTICE=1|ready: the notice of a made-up version,
@@ -58,8 +70,8 @@ impl App {
     /// close button leave it until the next launch. The card itself goes
     /// with the usual answer (`World::respond_notification`).
     pub(super) fn update_notice_answer(&mut self, id: u64, r: &Response) {
-        let Some(ready) = self.world.notifications.list.iter().find_map(|n| match n.data {
-            Data::Update { ready, .. } if n.id == id => Some(ready),
+        let Some((ready, blocked)) = self.world.notifications.list.iter().find_map(|n| match n.data {
+            Data::Update { ready, blocked } if n.id == id => Some((ready, blocked)),
             _ => None,
         }) else {
             return;
@@ -68,10 +80,89 @@ impl App {
             return;
         }
         self.notif_ui.open = false;
-        if ready || !matches!(self.updater.state, crate::updater::State::Offer) {
+        if notice_opens_window(
+            ready,
+            blocked,
+            self.updater.blocked.is_some(),
+            matches!(self.updater.state, crate::updater::State::Offer),
+        ) {
             self.updater.open = true;
         } else {
             self.updater.download(self.net.runtime());
         }
+    }
+}
+
+/// Whether the notice's Update opens the update window instead of starting
+/// the download. A card raised while the folder could still be written
+/// (`card_blocked` false) checks the updater's own answer too: a slow probe
+/// may have found the folder protected since.
+fn notice_opens_window(ready: bool, card_blocked: bool, updater_blocked: bool, offer: bool) -> bool {
+    ready || card_blocked || updater_blocked || !offer
+}
+
+/// Marks the waiting update cards blocked, so that their button reads
+/// "How to update…" once the updater knows this installation cannot
+/// install the release.
+fn mark_cards_blocked(list: &mut [crate::world::notifications::Notification]) {
+    for n in list {
+        if let Data::Update { ready: false, blocked } = &mut n.data {
+            *blocked = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mark_cards_blocked, notice_opens_window};
+    use crate::world::notifications::{Data, Kind, Notifications};
+
+    #[test]
+    fn a_card_raised_before_the_folder_was_found_protected_says_how_to_update() {
+        let mut notifications = Notifications::default();
+        notifications.push(
+            Kind::Info,
+            "v9.9.9",
+            "",
+            Data::Update {
+                ready: false,
+                blocked: false,
+            },
+        );
+        notifications.push(
+            Kind::Info,
+            "v9.9.9",
+            "",
+            Data::Update {
+                ready: true,
+                blocked: false,
+            },
+        );
+        mark_cards_blocked(&mut notifications.list);
+        let flags: Vec<_> = notifications
+            .list
+            .iter()
+            .filter_map(|n| match n.data {
+                Data::Update { ready, blocked } => Some((ready, blocked)),
+                _ => None,
+            })
+            .collect();
+        // the offer's card turns; a downloaded update's Install stays
+        assert!(flags.contains(&(false, true)));
+        assert!(flags.contains(&(true, false)));
+    }
+
+    #[test]
+    fn the_notice_downloads_only_an_offer_this_installation_can_install() {
+        // an ordinary offer downloads from the card
+        assert!(!notice_opens_window(false, false, false, true));
+        // a card raised for a protected folder opens the window
+        assert!(notice_opens_window(false, true, true, true));
+        // a card raised before the probe found the folder protected opens
+        // the window too, never the download
+        assert!(notice_opens_window(false, false, true, true));
+        // a downloaded update, or no offer any more, opens the window
+        assert!(notice_opens_window(true, false, false, true));
+        assert!(notice_opens_window(false, false, false, false));
     }
 }
