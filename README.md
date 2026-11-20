@@ -415,7 +415,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In fifteen languages** (English, French, Japanese, German, Spanish,
+- **In sixteen languages** (English, French, Japanese, Korean, German, Spanish,
   Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
   Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
@@ -726,7 +726,7 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in sixteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
@@ -788,7 +788,7 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The viewer ships English, French, Japanese (日本語), Simplified Chinese
+The viewer ships English, French, Japanese (日本語), Korean (한국어), Simplified Chinese
 (简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
 Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
 (Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
