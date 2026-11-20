@@ -2031,7 +2031,7 @@ keybinds-numpad-4 = .（テンキー）
 keybinds-numpad-5 = /（テンキー）
 ui-options-0-hide-avatar-names = 0 = アバター名を非表示
 ui-options-0-no-chat-bubbles-above-the-chat-bar = 0 = チャットバーの上にチャットの吹き出しを表示しない
-demo-1-violet-wolf-0-2-spam-box-0-0 = { "1" }{ $value0 }{ "Violet Wolf|0\u000A2" }{ $value1 }{ "スパムボックス|0\u000A0" }{ $value2 }{ "広告看板|\u000A0" }{ $value3 }{ "グループ：" }{ $value4 }{ "|\u000A" }
+demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " スパムボックス|0\u000A0 " }{ $value2 }{ " 広告看板|\u000A0 " }{ $value3 }{ " Group:" }{ $value4 }{ "|\u000A" }
 ui-land-dialogs-1-set-a-price = ⒈価格の設定：
 build-ui-general-127-bytes-maximum = 最大１２７バイト。
 ui-land-dialogs-2-sell-the-land-to = ⒉特定の人物に販売：
@@ -10433,7 +10433,7 @@ script-edit-outdent = インデントを減らす（Shift＋Tab）
 script-selection-edit-failed = 編集できません：ソースが大きすぎるか、既存のブロックコメントがあります。入れ子のコメントには//を使ってください。
 script-fold-collapse = ブロックを折りたたむ
 script-fold-expand = ブロックを展開
-script-fold-lines = 行
+script-fold-line-count = { $count } 行
 script-fold-all = 全て折り畳む
 script-expand-all = すべて展開
 loading-residents = { $count ->

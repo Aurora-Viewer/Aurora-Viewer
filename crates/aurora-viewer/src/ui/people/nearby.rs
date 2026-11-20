@@ -14,6 +14,7 @@ use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, presence, widgets};
 use crate::world::World;
 use crate::world::radar::{ChatRanges, chat_ranges};
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -659,7 +660,7 @@ fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
 pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
+        title.ui_upper(),
         FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
         p.muted_dim,
     );

@@ -13,6 +13,7 @@ use crate::snapshot::Settings;
 use crate::snapshot::knobs::{self, Kind, Knob};
 use crate::snapshot::looks::{self, Entry, Layer, MAX_LAYERS, Mode, Tab, WorldLook};
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{RichText, Vec2};
 
 /// The stack the editor changes, with the settings of its Aurora looks:
@@ -82,7 +83,7 @@ fn keep_keys(resp: &egui::Response) {
 /// A section's title: small, muted, in capitals.
 fn heading(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(4.0);
-    ui.label(RichText::new(text.to_uppercase()).size(10.5).color(p.muted));
+    ui.label(RichText::new(text.ui_upper()).size(10.5).color(p.muted));
 }
 
 impl LooksUi {
@@ -279,7 +280,7 @@ impl LooksUi {
         for (creator, entries) in looks::pack_list() {
             ui.add_space(4.0);
             ui.label(
-                RichText::new(aurora_i18n::tr!("photo-lut-pack", creator = creator).to_uppercase())
+                RichText::new(aurora_i18n::tr!("photo-lut-pack", creator = creator).ui_upper())
                     .size(10.5)
                     .color(p.muted),
             )
