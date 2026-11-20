@@ -117,6 +117,7 @@ mod land_moderation;
 mod land_rights;
 mod link_health;
 mod login_favorites;
+mod login_start;
 mod marketplace_listings;
 mod media_pack;
 mod money_tracker;
@@ -152,6 +153,7 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod second_camera;
 mod selection_turn;
 mod settings_backup;
 mod shape_editor;
@@ -173,7 +175,6 @@ mod uninstall;
 mod update_notice;
 mod viewer_stats;
 mod viewfinder;
-mod water_volumes;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
@@ -454,10 +455,6 @@ pub struct App {
     movement_ui: ui::movement::MovementUi,
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
-    /// Prim water around our avatar (#2008), and the water height the last
-    /// movement frame used (a volume's top, else the region's).
-    water_volumes: water_volumes::Detector,
-    movement_water: Option<f32>,
     pass_wall_at: Option<Instant>,
     /// The fly override's first-use caution is up (ui::fly_override).
     fly_override_caution: bool,
@@ -677,10 +674,6 @@ pub struct App {
     particle_inject: particle_editor::Inject,
     portal_drop: Option<portals::landmark::Pending>,
     portal_journey: Option<portals::Journey>,
-    /// A non-friend portal's first crossing waits for this question.
-    portal_ask: Option<ui::portals::CrossingAsk>,
-    /// A peer contains a full World; keep it off the Windows startup stack.
-    portal_demo_peer: Option<Box<portals::demo::Peer>>,
     follow_recovery: Option<follow::Recovery>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
@@ -813,18 +806,9 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
-    /// The weather in effect this frame: the settings, or what the region's
-    /// environment sets over them when regions may (`update_weather_now`).
+    /// The weather in effect this frame: the settings (`update_weather_now`;
+    /// the demo's snow spin may change it after).
     weather_now: crate::weather::WeatherSettings,
-    /// The region weather read from the environment in effect, keyed by its
-    /// day cycle (held, compared by identity: a pointer alone could come
-    /// back as another region's day), sky track, length and offset (parsed
-    /// again only when one changes).
-    #[allow(clippy::type_complexity)]
-    region_weather: Option<(Arc<aurora_llsd::Llsd>, usize, f64, f64, Option<crate::weather::region::RegionDay>)>,
-    /// How deep a region's snow lies so far (its history played again), and
-    /// when that was worked out (again every ten seconds).
-    snow_lying: (f32, Option<Instant>),
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -911,6 +895,13 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The second camera (app/second_camera.rs): its framing and where it
+    /// is, its window, the picture that window showed last frame, and the
+    /// view asked of the renderer this frame.
+    second_camera: crate::camera::second::SecondCamera,
+    second_camera_ui: ui::second_camera::SecondCameraUi,
+    second_camera_picture: Option<ui::second_camera::Picture>,
+    second_camera_job: Option<aurora_render::second_view::SecondViewJob>,
     /// Mark ▸ Custom color… of the radar and mini-map menus, and the last
     /// colour it gave this session.
     avatar_mark_ui: Option<ui::avatar_marks::CustomMark>,
@@ -1046,6 +1037,8 @@ pub struct App {
     music_status: ui::audio::MusicStatus,
     /// Stations whose failure was told in the local chat this session.
     music_error_said: std::collections::HashSet<String>,
+    /// Stations played under a failed certificate, told this session.
+    music_certificate_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -1509,6 +1502,17 @@ fn wanted_high_contrast(settings: &Settings) -> bool {
     settings.high_contrast
 }
 
+/// Whether the interface skips its glass: the preferences', or in demo
+/// mode `AURORA_DEMO_GLASS` (a capture's, never saved).
+fn wanted_disable_glass(settings: &Settings) -> bool {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(on) = crate::disable_glass::demo_override()
+    {
+        return on;
+    }
+    settings.disable_glass
+}
+
 /// The interface colours: the preferences', or in demo mode
 /// `AURORA_DEMO_COLORS` (a capture's, never saved).
 fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::InterfaceColors {
@@ -1773,6 +1777,7 @@ impl App {
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
+        crate::disable_glass::set(wanted_disable_glass(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
         ui::surface_opacity::set(wanted_opacity(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
@@ -1854,8 +1859,6 @@ impl App {
             movement_ui: Default::default(),
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
-            water_volumes: Default::default(),
-            movement_water: None,
             pass_wall_at: None,
             fly_override_caution: false,
             force_agent_update: false,
@@ -2044,8 +2047,6 @@ impl App {
             weather_saved: Default::default(),
             weather_wind: Default::default(),
             weather_now: Default::default(),
-            region_weather: None,
-            snow_lying: (0.0, None),
             thunder: Default::default(),
             thunder_demo_done: false,
             stuck_watch: None,
@@ -2101,6 +2102,10 @@ impl App {
             experience_profile_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            second_camera: Default::default(),
+            second_camera_ui: Default::default(),
+            second_camera_picture: None,
+            second_camera_job: None,
             avatar_mark_ui: None,
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
@@ -2118,8 +2123,6 @@ impl App {
             particle_inject: Default::default(),
             portal_drop: None,
             portal_journey: None,
-            portal_ask: None,
-            portal_demo_peer: None,
             follow_recovery: None,
             report_abuse: Default::default(),
             dof_focus: Default::default(),
@@ -2189,6 +2192,7 @@ impl App {
             parcel_music: Default::default(),
             music_status: Default::default(),
             music_error_said: Default::default(),
+            music_certificate_said: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -3390,39 +3394,37 @@ impl App {
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
         // then a SLURL given from outside (LLStartUp::getStartSLURL)
-        let slurl = if let Some(l) = self.login_form.start_slurl.as_ref() {
-            let name = match crate::grids::resolve(&self.settings, None, &l.target()) {
-                Ok(name) => name,
+        let slurl = self.login_form.start_slurl.clone();
+        // then a favourite chosen in the account's start menu
+        // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
+        let favorite = if reconnect.is_some() || slurl.is_some() {
+            None
+        } else {
+            self.chosen_start_favorite().map(|f| f.start_location())
+        };
+        // then the region field, read like the Legacy Viewer's location
+        // combo: a SLURL, "Region/x/y/z" or a bare name
+        // (FSPanelLogin::onLocationSLURL → LLStartUp::setStartSLURL → LLSLURL)
+        let typed = (reconnect.is_none() && slurl.is_none() && favorite.is_none())
+            .then(|| login_start::region(&self.settings.start_location, &self.settings.start_region))
+            .flatten();
+        let start = if let Some(place) = reconnect {
+            place
+        } else if let Some(location) = slurl.as_ref().or(typed.as_ref()) {
+            match login_start::start(&self.settings, location) {
+                Ok(start) => start,
                 Err(error) => {
                     self.login_form.error = Some(error.text().to_owned());
                     return;
                 }
-            };
-            Some(StartLocation::Region {
-                name,
-                x: l.pos.x.round() as u32,
-                y: l.pos.y.round() as u32,
-                z: l.pos.z.round() as u32,
-            })
+            }
+        } else if let Some(favorite) = favorite {
+            favorite
+        } else if self.settings.start_location == "home" {
+            StartLocation::Home
         } else {
-            None
+            StartLocation::Last
         };
-        // then a favourite chosen in the account's start menu
-        // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
-        let favorite = self.chosen_start_favorite().map(|f| f.start_location());
-        let start = reconnect
-            .or(slurl)
-            .or(favorite)
-            .unwrap_or_else(|| match self.settings.start_location.as_str() {
-                "home" => StartLocation::Home,
-                "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
-                    name: self.settings.start_region.trim().to_owned(),
-                    x: 128,
-                    y: 128,
-                    z: 30,
-                },
-                _ => StartLocation::Last,
-            });
         let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         let login_agent = self
             .login_form
@@ -3545,8 +3547,6 @@ impl App {
         self.particle_inject = Default::default();
         self.portal_drop = None;
         self.portal_journey = None;
-        self.portal_ask = None;
-        self.portal_demo_peer = None;
         // its teleport belongs to the session that held it
         self.suitcase_ask = None;
         self.follow_recovery = None;
@@ -3720,11 +3720,10 @@ impl App {
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
-            if self.bridge_services.owns(request) || self.world.portals.owns(request) {
+            if self.bridge_services.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
             }
-            self.world.portals.reply(request, &result, Instant::now());
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
@@ -3865,13 +3864,6 @@ impl App {
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
             if self.script_recovery_saved(request, item, &result) {
-                return;
-            }
-            if self.ik_editor.project_saving(request) {
-                if let Ok(saved) = &result {
-                    self.world.inventory.add_items(vec![saved.clone()]);
-                }
-                self.ik_editor.project_saved(&result);
                 return;
             }
             if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {
@@ -4026,9 +4018,6 @@ impl App {
             self.local_bakes.loaded(*item, *asset, result);
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
-            if self.ik_editor.project_preview(&self.world, item, &result) {
-                return;
-            }
             if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
                 self.settings.save();
             }
@@ -4199,8 +4188,6 @@ impl App {
                 } else {
                     self.area_search_feed.on_closed_properties(&props);
                 }
-                self.world.ik_targets.on_properties(&props);
-                self.water_volumes.on_properties(&self.world, &props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);
@@ -5072,7 +5059,7 @@ impl App {
                 self.panels.environment = true;
                 self.panels.personal_lighting = lighting;
             }
-            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind, None),
+            Step::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
             Step::Next(kind) => {
                 let view = self.world.eep.local_view();
                 let shown = match kind {
@@ -5082,7 +5069,7 @@ impl App {
                 };
                 let list = self.env_ui.catalog().list(kind);
                 if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
-                    self.pick_local_settings(asset, kind, None);
+                    self.world.eep.request_local(asset, kind);
                 }
             }
             Step::Shared => {
@@ -5444,7 +5431,19 @@ impl App {
             Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
-            Action::Appearance => ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance),
+            // The shortcut of Me › Appearance (menu_viewer.xml's "Outfits"),
+            // which LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp)
+            // greys while RlvActions::canStand refuses: a greyed entry's
+            // shortcut does nothing.
+            Action::Appearance => {
+                let held = self.world.agent.is_sitting()
+                    && !self
+                        .world
+                        .rlva_allows_command(&NetCommand::OneShotControl(control::STAND_UP), uuid::Uuid::nil());
+                if !held {
+                    ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
+                }
+            }
             Action::Quit => self.request_exit(),
             Action::TextureLibrary => ui::widgets::toggle_floater(
                 &self.egui_ctx,
@@ -6571,26 +6570,6 @@ impl App {
         }
     }
 
-    /// The seed of the region's thunder while the region sets the weather
-    /// (its day's weather seed for this region): None for my own weather,
-    /// a sky applied to myself or an editor's preview, whose strikes are
-    /// this viewer's own.
-    fn region_thunder_seed(&self) -> Option<u64> {
-        if self.env_ui.weather_source != crate::weather::WeatherSource::Region {
-            return None;
-        }
-        let Some((.., Some(day))) = &self.region_weather else {
-            return None;
-        };
-        let region = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(uuid::Uuid::nil(), |i| i.region_id);
-        // apart from the rain's draws from the same seed
-        Some(crate::weather::region::mix(day.schedule.seed_for(region) ^ 0x0074_6875_6E64_6572))
-    }
-
     /// Weather: thunder and lightning in heavy rain (the flash is lit in
     /// the frame, `thunder_light`).
     fn update_thunder(&mut self) {
@@ -6599,13 +6578,6 @@ impl App {
             enabled: self.weather_now.thunder,
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
-            // the region's storm, the same strikes for everyone there
-            shared: self.region_thunder_seed().map(|seed| {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0.0, |d| d.as_secs_f64());
-                (seed, secs)
-            }),
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -6661,95 +6633,13 @@ impl App {
         fp.sky.blue_horizon += white * k * 0.12;
     }
 
-    /// The weather in effect: the Weather settings; or an environment
-    /// editor's preview of a sky's Aurora Weather; or, when regions may set
-    /// it ("Let regions set the weather") and the environment in effect (the
-    /// parcel's, else the region's) carries Aurora Weather on the camera's
-    /// sky track, what its day gives now (weather/region.rs). Every viewer
-    /// with the same environment and clock shows the same weather.
+    /// The weather in effect: the Weather window's settings, drawn for this
+    /// viewer only. Aurora Weather reads nothing from an environment and
+    /// writes nothing in one: the codes once carried in EEP names and in the
+    /// low bits of a sky's numbers were taken out (Second Life's shared
+    /// experience policy; AGENTS.md, "No data of our own in shared places").
     fn update_weather_now(&mut self) {
-        use crate::weather::region::{RegionDay, SkyWeather};
-        let own = &self.settings.weather;
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64());
-        let region = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(uuid::Uuid::nil(), |i| i.region_id);
-        // the editors' preview: this sky's weather, on this viewer only
-        let preview = self
-            .env_editor
-            .weather_preview
-            .filter(|_| self.env_editor.open)
-            .or_else(|| self.day_editor.weather_preview());
-        use crate::weather::WeatherSource;
-        if let Some((weather, falling)) = preview {
-            self.weather_now = RegionDay::fixed(weather).apply(own, region, secs, falling);
-            self.env_ui.weather_source = WeatherSource::Preview;
-            return;
-        }
-        // a sky or day applied to myself with Aurora Weather: mine, whatever
-        // the regions may set
-        // the snow a day's weather has left so far, every ten seconds
-        let due = self.snow_lying.1.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(10));
-        if let Some(day) = self.world.eep.local_weather() {
-            if due {
-                self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
-            }
-            self.weather_now = day.apply(own, region, secs, false);
-            self.env_ui.weather_source = WeatherSource::MySky;
-            return;
-        }
-        let mut now = None;
-        if own.region_weather
-            && self.in_world()
-            && let Ok((day, length, offset)) = self.world.eep.day_settings(true)
-        {
-            let altitudes = self.world.eep.altitudes();
-            // the agent's altitude, as LLEnvironment::calculateSkyTrackForAltitude
-            // takes it (not the camera's); 0-based
-            let z = self.world.agent.position.z;
-            let track = match altitudes.iter().position(|a| z <= *a) {
-                Some(0) => 0,
-                None => 3,
-                Some(i) => i.min(4) - 1,
-            };
-            let fresh = !matches!(&self.region_weather,
-                Some((d, t, l, o, _)) if Arc::ptr_eq(d, &day) && *t == track && *l == length && *o == offset);
-            if fresh {
-                let read = RegionDay::read_named(&day, &self.world.eep.day_names(true), track, length, offset);
-                if read.is_some() {
-                    log::info!("region weather on sky track {}", track + 1);
-                }
-                self.region_weather = Some((day, track, length, offset, read));
-            }
-            if let Some((_, _, _, _, Some(day))) = &self.region_weather {
-                if due {
-                    self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
-                }
-                now = Some(day.apply(own, region, secs, false));
-            }
-        }
-        if now.is_none() {
-            // my own weather: what I have seen fall (the renderer's memory)
-            self.snow_lying = (0.0, None);
-        }
-        self.env_ui.weather_source = if now.is_some() {
-            WeatherSource::Region
-        } else if own.region_weather && self.in_world() {
-            // the region decides, and where it sets none the sky is clear and
-            // calm, as its sky is its own: my settings apply only once I use
-            // my own (they rained on in a region with none, "Restore to region
-            // settings" seeming to do nothing). What lay melts as after any
-            // weather (no snow so far is replayed)
-            now = Some(RegionDay::fixed(SkyWeather::CLEAR).apply(own, region, secs, false));
-            WeatherSource::RegionClear
-        } else {
-            WeatherSource::Mine
-        };
-        self.weather_now = now.unwrap_or_else(|| own.clone());
+        self.weather_now.clone_from(&self.settings.weather);
     }
 
     /// Where the footprints' map is centred: my avatar (zooming the camera
@@ -7057,7 +6947,7 @@ impl App {
         // StreamTitleDisplay: metadata follows the actual connection, never the
         // radio toggle. Leave the offline title scenario's metadata in place.
         let title = match status {
-            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
+            aurora_audio::StreamStatus::Playing { title, .. } if !self.stream_url.is_empty() => title,
             _ => None,
         };
         if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
@@ -7085,6 +6975,16 @@ impl App {
         {
             self.world
                 .system_message(aurora_i18n::tr!("music-error-notice", status = self.music_status.text()));
+        }
+        // A station played under a failed certificate says so once, as a
+        // warning; the radio's tooltip keeps it while it plays.
+        if let Some(issue) = self.music_status.certificate()
+            && parcel_music::first_error_notice(&mut self.music_certificate_said, self.parcel_music.station())
+        {
+            self.world.system_notice(
+                aurora_i18n::tr!("music-error-notice", status = ui::audio::certificate_warning(issue)),
+                crate::world::notice_topics::Topic::Warning,
+            );
         }
     }
 
@@ -7761,11 +7661,19 @@ impl App {
                 );
             } else {
                 // the name is a link to the resident, as in the Legacy Viewer's chat;
-                // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
+                // checked for keywords as nearby chat (FSRadar::radarAlertMsg).
+                // Under RLVa's `@shownames` the line is from
+                // FSRadarEntry::getRadarName, everyone's stand-in, and the
+                // chat writes it as plain text (`mRlvNamesFiltered`).
                 let name = ui::people::radar_name(&self.world, &id, s.name_format);
                 self.world
                     .keyword_alert(id, &name, &text, true, crate::world::attention::Open::NearbyChat);
-                self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
+                let line = if self.world.rlva.has("shownames") {
+                    format!("{name} {text}")
+                } else {
+                    format!("secondlife:///app/agent/{id}/about {text}")
+                };
+                self.world.system_message(line);
             }
         }
     }
@@ -8232,38 +8140,19 @@ impl App {
             self.sample_texture();
             return true;
         }
-        if self.ik_editor.open && !self.alt {
-            if self.ik_editor.picking {
-                let Some(picked) = self.click_pick() else {
-                    return true;
-                };
-                let (_, target) = self.scene.left_selection_pick(
-                    &self.world,
-                    picked.ray,
-                    picked.depth,
-                    true,
-                    self.settings.build.select_probes,
-                    self.settings.draw_distance,
-                );
-                if let Some(target) = target {
-                    self.ik_editor.picked_prim(&self.world, &self.build, target);
-                }
-                return true;
-            }
-            if !self.build.open {
-                // A worn HUD takes the press, unless a poser handle drawn over
-                // it does: the Legacy Viewer's poser window leaves HUDs to the
-                // pie tool, and only its visual manipulators take scene clicks
-                // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
-                // World presses stay the editor's.
-                let hud = self.ik_editor.posing()
-                    && !self.ik_editor.poser_owns_pointer()
-                    && self.huds_shown()
-                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
-                // its click leaves the poser's selection as it is
-                self.ik_editor.press_on_hud = hud;
-                return !hud;
-            }
+        if self.ik_editor.open && !self.alt && !self.build.open {
+            // A worn HUD takes the press, unless a poser handle drawn over
+            // it does: the Legacy Viewer's poser window leaves HUDs to the
+            // pie tool, and only its visual manipulators take scene clicks
+            // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
+            // World presses stay the editor's.
+            let hud = self.ik_editor.posing()
+                && !self.ik_editor.poser_owns_pointer()
+                && self.huds_shown()
+                && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
+            // its click leaves the poser's selection as it is
+            self.ik_editor.press_on_hud = hud;
+            return !hud;
         }
         // Report Abuse's object picker takes the click (LLToolObjPicker)
         if self.report_abuse.picking {
@@ -8381,6 +8270,20 @@ impl App {
                 _ => None,
             }
         };
+        // LLToolSelect::handleObjectSelection (lltoolselect.cpp): under
+        // @fartouch, a click on a surface within 1.5 m of an object whose
+        // own place is too far leaves the build tools (leaveBuildMode); on a
+        // farther surface it selects nothing and the tools stay.
+        if let (Some(idx), Some(point)) = (target, hit)
+            && self.build.tool == crate::build::Tool::Edit
+            && crate::build::selectable_within(&self.world, idx)
+            && !self.world.rlva_within_fartouch(idx)
+            && point.distance(self.world.agent.position) <= 1.5
+        {
+            self.build.close(&mut self.world, &mut self.settings.build);
+            self.flush_build();
+            return true;
+        }
         let used = self.build.mouse_down(
             &mut self.world,
             &mut self.settings.build,
@@ -9494,7 +9397,11 @@ impl App {
     fn poll_names(&mut self) {
         let s = &self.settings;
         let options = crate::world::names::NameOptions {
-            use_display_names: s.use_display_names,
+            // RLVa's `@shownames` forces display names on, so that both
+            // forms of a name are known to its filter
+            // (LLAvatarNameCache::setForceDisplayNames in the toggle handler
+            // of RLV_BHVR_SHOWNAMES, indra/newview/rlvhandler.cpp)
+            use_display_names: s.use_display_names || self.world.rlva.has("shownames"),
             show_usernames: s.show_usernames,
             legacy_format: s.legacy_username_format,
             trim_resident: s.trim_resident,
@@ -10869,7 +10776,6 @@ impl App {
                 subjects: self.settings.group_notice_subjects_in_chat,
             };
             self.world.group_titles = self.settings.group_titles;
-            self.world.portal_sources = self.portal_sources();
             self.world.show_back_slurl = self.settings.show_back_slurl;
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
@@ -11124,8 +11030,13 @@ impl App {
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
-            self.world
-                .advance_motion(world_now(), &self.net.stats.simulators.lock(), |key| build.is_selected(key));
+            let scene = &self.scene;
+            self.world.advance_motion(
+                world_now(),
+                &self.net.stats.simulators.lock(),
+                |key| build.is_selected(key),
+                |idx| scene.drawable_damping_view(idx),
+            );
             if self.demo && self.demo_link_cfg.is_some() {
                 // offline through a simulated link, as on a grid
                 self.drive_demo_link(ml, dt);
@@ -11194,6 +11105,7 @@ impl App {
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
                 follow_joint_offset: None,
+                head_offset: self.scene.head_offset(&self.world, &self.world.agent_id),
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
@@ -11320,19 +11232,8 @@ impl App {
         self.update_bridge();
         self.update_rlva_selftest();
         self.update_region_restart();
-        if self.demo
-            && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| {
-                std::env::var("AURORA_DEMO_IK_EDIT").and_then(|m| {
-                    if m.starts_with("poser") {
-                        Err(std::env::VarError::NotPresent)
-                    } else {
-                        Ok("1".into())
-                    }
-                })
-            })
-        {
-            crate::demo::hand_ik::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
-            if self.frame_count == 350 {
+        if self.demo && self.frame_count == 350 && std::env::var("AURORA_DEMO_IK_EDIT").is_ok_and(|m| !m.starts_with("poser")) {
+            {
                 self.camera.demo_orbit(0.6, 0.15, Some(3.5), &self.settings.camera);
                 self.panels.chat = false;
                 self.panels.people = false;
@@ -11355,122 +11256,6 @@ impl App {
                 }
             } else {
                 self.ik_editor.demo_tick(&self.world, self.frame_count, &mode);
-            }
-            if mode.starts_with("build-") && self.frame_count == 450 {
-                // Exercise the actual menu transitions in both opening orders.
-                self.handle_actions(
-                    UiActions {
-                        bar: BarAction::Build(1),
-                        ..Default::default()
-                    },
-                    event_loop,
-                );
-                self.settings.build.edit_linked = true;
-                let root = crate::demo::action_id(crate::demo::hand_ik::ROOT);
-                if let Some(index) = self.world.objects.index_of_uuid(&root)
-                    && let Some(object) = self.world.objects.get_mut(index)
-                {
-                    object.update_flags |= ui::context::flags::OBJECT_MOVE | ui::context::flags::OBJECT_MODIFY;
-                }
-                for (local, name) in [(crate::demo::hand_ik::LEFT, "Left"), (crate::demo::hand_ik::RIGHT, "Right")] {
-                    let id = crate::demo::action_id(local);
-                    self.build.props.insert(
-                        id,
-                        aurora_net::build::ObjectProps {
-                            object_id: id,
-                            name: name.into(),
-                            ..Default::default()
-                        },
-                    );
-                }
-                if let Some(index) = self
-                    .world
-                    .objects
-                    .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::LEFT))
-                {
-                    self.build.click_select(&mut self.world, &self.settings.build, Some(index), false);
-                    if mode == "build-moved" {
-                        let p = crate::scene::Scene::object_transform(&self.world, index, Instant::now(), 0).map(|t| t.0);
-                        self.build.set_transform(
-                            &mut self.world,
-                            &self.settings.build,
-                            p.map(|p| p + Vec3::Z * 0.08),
-                            None,
-                            None,
-                            true,
-                        );
-                    }
-                }
-                if mode == "build-before" {
-                    for _ in 0..2 {
-                        self.handle_actions(
-                            UiActions {
-                                bar: BarAction::IkEdit,
-                                ..Default::default()
-                            },
-                            event_loop,
-                        );
-                    }
-                }
-                if mode == "build-pick"
-                    && let Some(index) = self
-                        .world
-                        .objects
-                        .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::RIGHT))
-                {
-                    self.ik_editor.picking = true;
-                    self.ik_editor.picked_prim(&self.world, &self.build, index);
-                }
-                crate::ui::widgets::place_floater(
-                    &self.egui_ctx,
-                    "build_tools_inspector_c3",
-                    egui::pos2(self.egui_ctx.content_rect().right() - 370.0, 80.0),
-                    egui::vec2(344.0, 684.0),
-                );
-            }
-            if mode.starts_with("build-") && self.frame_count == 600 {
-                log::info!(
-                    "demo concurrent IK/build: ik={}, build={}, selected={}",
-                    self.ik_editor.open,
-                    self.build.open,
-                    self.build.selection.len()
-                );
-            }
-        }
-        self.world.hand_contacts.relay_required = !self.demo;
-        if self.in_world()
-            && let Some(key) = self
-                .world
-                .update_ik_targets(self.ik_editor.link_target_definition(), &self.build.props, Instant::now())
-        {
-            for command in self.build.prim_properties_query(&self.world, key) {
-                if self.demo {
-                    for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, "") {
-                        match event {
-                            NetEvent::ObjectProperties(props) => {
-                                self.world.ik_targets.on_properties(&props);
-                                self.build.on_properties(&self.world, props);
-                            }
-                            event => {
-                                self.world.apply(event);
-                            }
-                        }
-                    }
-                } else {
-                    self.send(command);
-                }
-            }
-        }
-        if self.in_world()
-            && let Some(command) = self.world.update_hand_contacts(Instant::now())
-        {
-            if self.demo {
-                let mode = std::env::var("AURORA_DEMO_IK_EDIT").unwrap_or_default();
-                for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, &mode) {
-                    self.world.apply(event);
-                }
-            } else {
-                self.send(command);
             }
         }
         if self.demo
@@ -11545,6 +11330,10 @@ impl App {
             texture_aspect,
             camera_fast,
         );
+        // what the second camera sees is listed too (its terrain, water and
+        // blended faces: our avatar's hair seen from the front)
+        self.second_camera_frame(now, dt);
+        cull.second = self.second_camera_planes();
         // The experimental XR worker can look in any direction after these
         // CPU lists are prepared; per-eye GPU culling still uses the real frusta.
         if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
@@ -11668,7 +11457,6 @@ impl App {
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
             }
-            self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
             self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             let partner = self.ik_editor.couple_partner();
@@ -11975,6 +11763,7 @@ impl App {
                     texture_aspect,
                     camera_fast,
                 );
+                cull.second = self.second_camera_planes();
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
@@ -12528,8 +12317,6 @@ impl App {
         self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
-            // prim water (#2008): its bubbles and splashes too
-            self.scene.set_water_volumes(self.water_volumes.near());
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
@@ -12839,14 +12626,14 @@ impl App {
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
                 // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
-                // (demo captures of deep snow, which takes minutes to gather);
-                // else a region's snow so far. Neither with "Snow settles"
-                // off: the region's floor laid it again every frame (#3642)
+                // (demo captures of deep snow, which takes minutes to gather).
+                // Not with "Snow settles" off: the floor laid it again every
+                // frame (#3642)
                 snow_lying: if self.weather_now.snow_settles {
                     static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
                     LYING
                         .get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse().ok()))
-                        .unwrap_or(self.snow_lying.0)
+                        .unwrap_or(0.0)
                 } else {
                     0.0
                 },
@@ -13277,10 +13064,6 @@ impl App {
         if self.capture.is_none() {
             self.layout_autosave.after_pass(&ctx, Instant::now());
         }
-        if self.ik_editor.take_binding_paste_request() {
-            let text = egui_state.clipboard_text().unwrap_or_default();
-            self.ik_editor.paste_binding(&self.world, &text);
-        }
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // interface sounds of the widgets; the sounds are SL assets, loaded
@@ -13540,17 +13323,20 @@ impl App {
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
-            // a new colour blindness, contrast or interface colour: the
-            // palette again, at once
+            // a new colour blindness, contrast, glass or interface colour:
+            // the palette again, at once
             let vision = wanted_vision(&self.settings);
             let high_contrast = wanted_high_contrast(&self.settings);
+            let disable_glass = wanted_disable_glass(&self.settings);
             let interface_colors = wanted_interface_colors(&self.settings);
             if vision != crate::colorblind::current()
                 || high_contrast != crate::high_contrast::current()
+                || disable_glass != crate::disable_glass::current()
                 || interface_colors != crate::interface_colors::current()
             {
                 crate::colorblind::set(vision);
                 crate::high_contrast::set(high_contrast);
+                crate::disable_glass::set(disable_glass);
                 crate::interface_colors::set(interface_colors);
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
@@ -13741,6 +13527,8 @@ impl App {
         if !self.exit_prompt.quitting() {
             gfx.renderer.set_rain_surfaces(raining);
         }
+        // the second camera's view, drawn after this frame
+        gfx.renderer.second_view = self.second_camera_job;
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
@@ -17510,7 +17298,11 @@ impl App {
                 }
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
-                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::Activate(group) => {
+                    if self.world.rlva_can_change_group() {
+                        self.send(NetCommand::ActivateGroup(group));
+                    }
+                }
                 GroupAction::SetTitle { group, role } => {
                     if !self.world.rlva.has("setgroup") {
                         self.world.group_data.set_title(group, role);
@@ -19150,17 +18942,6 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
-                if !self.ik_editor.posing() {
-                    self.ik_editor.request_object_data(&mut self.world, Instant::now());
-                    self.build.out.extend(self.ik_editor.take_prim_requests());
-                    self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
-                    if self
-                        .ik_editor
-                        .apply_prim_edit(&mut self.world, &mut self.build, &mut self.settings.build)
-                    {
-                        self.settings.save();
-                    }
-                }
                 for prepared in self.ik_editor.take_clip_imports() {
                     self.imports.authored_animation(
                         &self.world,
@@ -19754,6 +19535,7 @@ impl App {
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = Some(to);
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -20212,7 +19994,6 @@ impl App {
                 {
                     self.answer_suitcase(ask, yes);
                 }
-                self.portal_crossing_question(&ctx, &p);
                 if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
@@ -20540,6 +20321,7 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
+                self.second_camera_window(&ctx, &p);
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);
@@ -20757,6 +20539,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                let mut shown = std::mem::take(&mut self.world.rlva.open_profiles);
+                self.profile_ui
+                    .open_residents(&ctx, &self.world, self.settings.classic_profiles, &mut shown);
+                self.world.rlva.open_profiles = shown;
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
                 self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
@@ -20792,6 +20578,7 @@ impl App {
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
+                            self.inventory_ui.share_in_session = None;
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first
@@ -21407,7 +21194,7 @@ impl ApplicationHandler for App {
             Err(e) => {
                 log::error!("cannot create window: {e}");
                 crate::splash::close();
-                graphics_start::report(&e.to_string(), capture);
+                graphics_start::report(&e.to_string(), false, capture);
                 event_loop.exit();
                 return;
             }
@@ -21441,7 +21228,8 @@ impl ApplicationHandler for App {
                 }
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
-                graphics_start::report(&e.to_string(), capture);
+                let memory_full = matches!(e, aurora_render::RenderError::VideoMemoryFull);
+                graphics_start::report(&e.to_string(), memory_full, capture);
                 event_loop.exit();
                 return;
             }

@@ -374,8 +374,8 @@ are planned or in progress: they are not in the viewer yet.
   whole-pose actions. Save poses to a library, export them as BVH or import
   them as an animation, with Ctrl+Z / Ctrl+Y as you go. The pose is seen by
   you only ([details](docs/POSER.md)).
-- **An IK workbench**: reusable pose projects that keep chosen bones on their
-  targets, with contacts that compatible viewers apply to nearby avatars
+- **An IK workbench**: pose your own skeleton bone by bone, with IK chains,
+  limb holds and animation layers, as a base for the animation creator
   ([details](docs/IK_EDIT.md)).
 - **Build tools that stay out of the way**: a compact editor you can arrange
   yourself, larger material previews for Blinn-Phong and PBR, a live preview
@@ -543,7 +543,7 @@ are planned or in progress: they are not in the viewer yet.
   credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
-  motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
+  motion, sounds…), with a button on the login screen. A high-contrast palette, a setting that turns off the glass, the OpenDyslexic font, and
   volume sliders that follow your ear are a click away, and the chat can
   have a text size of its own.
 - **Your colours**: pick the accent, window background and text colours in
@@ -575,10 +575,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
   history or search results, and walk, run or fly through it to teleport.
-  A portal opens where you may build, like rezzing an object. Other Aurora
-  users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in. The portal back home
-  is yours alone on land where you may not build.
+  A portal opens where you may build, like rezzing an object, and only you
+  see it; a portal that opens on you never pulls you in. The way back opens
+  behind you when you arrive.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -670,7 +669,7 @@ frame on your own PC.
   to the body/HUD.
 - **Posing** — a [poser](docs/POSER.md) for yourself, your animesh and
   consenting nearby avatars, with a pose library, BVH export and animation
-  import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
+  import; an [IK workbench](docs/IK_EDIT.md) for local skeleton posing.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
@@ -678,8 +677,8 @@ frame on your own PC.
   on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
-  walk-through portals shared with other Aurora users, with friend/group
-  access and protection against portals appearing on top of someone;
+  walk-through portals of your own, with a way back and protection against
+  a portal opening on top of you;
   parcel content isolation, a grid status window, and a live particle
   editor; OpenSim grids and the Hypergrid, with a grid manager, avatars
   baked by the viewer where the grid does not bake, large regions, and
@@ -731,7 +730,7 @@ frame on your own PC.
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
-  palette, custom interface colours, text up to twice the size and the
+  palette, a setting that turns off the glass, custom interface colours, text up to twice the size and the
   OpenDyslexic font.
 - **Updates in place** (Windows and Linux) — release checks, cancellable
   verified downloads, installation and restart with rollback. The prompt
@@ -1257,10 +1256,7 @@ its own task in its own git worktree:
 - [docs/BRANDING.md](docs/BRANDING.md) — palette, logos, icons and UI rules
 - [docs/TESTING.md](docs/TESTING.md) — test switches (demo scenarios,
   captures, diagnostics) and profiling
-- [docs/HAND_CONTACTS.md](docs/HAND_CONTACTS.md) — local motorcycle wrist
-  contact prototype and the creator's LSL script
-- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
-  offsets and general bone-contact authoring for LSL
+- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor
 
 Pull requests follow the [pull request template](.github/pull_request_template.md):
 a check lists what a description is missing, and maintainers review a PR

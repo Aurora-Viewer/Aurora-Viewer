@@ -199,14 +199,17 @@ impl TeleportHistory {
         self.items.get(self.current + 1)
     }
 
-    /// Where the Back arrow leads, when it leads somewhere: a place @showloc
-    /// hid is no destination (`go_to`).
+    /// The place the Back arrow leads to, None when there is none before
+    /// this one. LLNavigationBar::onTeleportHistoryChanged
+    /// (indra/newview/llnavigationbar.cpp) enables the arrows from the
+    /// current index alone: a place @showloc hid keeps its arrow, under the
+    /// name it was given (`TpEntry::hidden`).
     pub fn back_name(&self) -> Option<String> {
-        self.previous().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
+        self.previous().map(|e| e.region.clone())
     }
 
     pub fn forward_name(&self) -> Option<String> {
-        self.next().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
+        self.next().map(|e| e.region.clone())
     }
 
     /// Start travelling back; returns the destination.
@@ -218,15 +221,19 @@ impl TeleportHistory {
         self.go_to(self.current + 1)
     }
 
-    /// LLTeleportHistory::goToItem: start travelling to the place `i` of
-    /// the list; none for the place we are in or past the end, nor for a
-    /// place @showloc hid (the Legacy Viewer asks for a teleport to the
-    /// global position zero, which the grid refuses).
+    /// LLTeleportHistory::goToItem (indra/newview/llteleporthistory.cpp):
+    /// start travelling to the place `i` of the list; none for the place we
+    /// are in or past the end. A place @showloc hid is asked for like
+    /// another: goToItem hands its zeroed global position to
+    /// LLAgent::teleportViaLocation (indra/newview/llagent.cpp), which sends
+    /// a TeleportLocationRequest for the region handle 0 at the position
+    /// zero. The grid refuses it, and the failure leaves the list where it
+    /// was (`failed`).
     pub fn go_to(&mut self, i: usize) -> Option<TpEntry> {
         if i == self.current {
             return None;
         }
-        let e = self.items.get(i).filter(|e| !e.is_hidden()).cloned()?;
+        let e = self.items.get(i).cloned()?;
         self.pending = Some(i);
         Some(e)
     }
@@ -763,9 +770,10 @@ mod tests {
     }
 
     /// LLTeleportHistory::updateCurrentLocation under @showloc: however many
-    /// teleports, the session holds one hidden place, which leads nowhere.
+    /// teleports, the session holds one hidden place; its arrow asks for the
+    /// zeroed place it keeps (LLTeleportHistory::goToItem).
     #[test]
-    fn rlva_hidden_arrivals_share_one_place_with_no_way_back() {
+    fn rlva_hidden_arrivals_share_one_place_that_leads_nowhere() {
         let mut h = TeleportHistory::default();
         h.arrived(e("A"));
         h.arrived(e("B"));
@@ -795,10 +803,19 @@ mod tests {
         let s = h.session();
         assert_eq!((s.items.len(), s.current, s.items[0].region.as_str()), (2, 0, "A"));
         assert!(!s.items[0].is_hidden());
-        // the hidden place ahead is shown, and is no destination
+        // the hidden place ahead keeps its arrow (LLNavigationBar::
+        // onTeleportHistoryChanged looks at the index alone), and the click
+        // asks for what it holds: the region handle 0 at the position zero
         assert!(h.next().is_some_and(TpEntry::is_hidden));
-        assert!(h.forward_name().is_none());
-        assert!(h.go_forward().is_none() && h.go_to(1).is_none());
+        assert_eq!(h.forward_name().as_deref(), Some("(Hidden)"));
+        for asked in [h.go_forward(), h.go_to(1)] {
+            let asked = asked.expect("a hidden place is asked for like another");
+            assert_eq!((asked.handle, asked.position, asked.grid), (0, Vec3::ZERO, None));
+            // the grid refuses it: we are still at A, the list as it was
+            h.failed();
+            let s = h.session();
+            assert_eq!((s.items.len(), s.current, s.items[0].region.as_str()), (2, 0, "A"));
+        }
         h.arrived(TpEntry::hidden("(Hidden)", 5));
         // that arrival was no trip in the list: it takes the place of A
         let s = h.session();

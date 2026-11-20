@@ -31,7 +31,7 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
     world
         .objects
         .index_of_uuid(&object)
-        .is_some_and(|idx| tool.contents_editable(world, idx))
+        .is_some_and(|idx| tool.contents_modifiable(world, idx))
         // allowOperation(PERM_MODIFY, …, GOD_LIKE): a god edits any item
         && (world.god_level > 0
             || (!item.group_owned && item.owner_id == world.agent_id)

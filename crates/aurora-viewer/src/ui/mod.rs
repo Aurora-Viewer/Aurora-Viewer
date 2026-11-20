@@ -137,6 +137,7 @@ pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
+pub mod second_camera;
 pub mod shape;
 pub mod sheet;
 pub mod signup;
@@ -163,6 +164,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod weather_window;
 pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
@@ -255,6 +257,9 @@ pub struct Panels {
     pub quick_prefs: bool,
     /// The Director (toolbar `director`): its window and its timeline.
     pub director: bool,
+    /// The second camera (View › Second camera, toolbar `second_camera`):
+    /// our avatar seen by a camera of its own (ui/second_camera.rs).
+    pub second_camera: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// The pose stand (toolbar `pose_stand`).
@@ -342,6 +347,7 @@ impl Panels {
             destinations: false,
             quick_prefs: false,
             director: false,
+            second_camera: false,
             voice_controls: false,
             pose_stand: false,
             omnifilter: false,

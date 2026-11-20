@@ -401,6 +401,7 @@ mod tests {
             origin,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 

@@ -1,4 +1,4 @@
-//! Native file selection and bounded loading, off the frame thread.
+//! Native file selection and validated loading, off the frame thread.
 
 use super::*;
 use aurora_assets::{
@@ -39,18 +39,40 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
 }
 
 fn read_mesh(path: &Path) -> Result<Vec<u8>, AssetError> {
+    read_document(path, false)
+}
+
+fn read_document(path: &Path, external: bool) -> Result<Vec<u8>, AssetError> {
     let mut file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
     let size = file
         .metadata()
         .ok()
         .and_then(|m| usize::try_from(m.len()).ok())
         .ok_or(AssetError::TooLarge("mesh file"))?;
+    if external {
+        aurora_assets::import_gltf::check_external_size(size as u64)?;
+    }
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(size)
         .map_err(|_| AssetError::TooLarge("mesh file memory"))?;
-    file.read_to_end(&mut bytes).map_err(|_| AssetError::invalid("file read failed"))?;
+    if external {
+        // Check before allocation and after reading: a source can grow meanwhile.
+        file.take(aurora_assets::import_gltf::MAX_EXTERNAL_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| AssetError::invalid("file read failed"))?;
+        aurora_assets::import_gltf::check_external_size(bytes.len() as u64)?;
+    } else {
+        file.read_to_end(&mut bytes).map_err(|_| AssetError::invalid("file read failed"))?;
+    }
     Ok(bytes)
+}
+
+pub(super) fn load_error(error: AssetError) -> String {
+    match error {
+        AssetError::GltfResourceSize { bytes, limit } => aurora_i18n::tr!("import-gltf-resource-limit", bytes = bytes, limit = limit),
+        error => error.to_string(),
+    }
 }
 
 fn decode_uri(uri: &str) -> Result<String, AssetError> {
@@ -86,7 +108,7 @@ fn relative_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
     Ok(target)
 }
 fn relative(root: &Path, uri: &str) -> Result<Vec<u8>, AssetError> {
-    read(&relative_path(root, uri)?)
+    read_document(&relative_path(root, uri)?, true)
 }
 fn collada_image_path(root: &Path, uri: &str) -> Result<PathBuf, AssetError> {
     // LLDAELoader accepts both relative texture paths and exporter file URIs.
@@ -177,7 +199,7 @@ pub(super) fn mesh_scene(
     } else {
         let doc = match document {
             Some(doc) => doc,
-            None => Document::parse_mesh(data, |uri| read_mesh(&relative_path(&root, uri)?))?,
+            None => Document::parse_mesh(data, |uri| relative(&root, uri))?,
         };
         let mut scene = aurora_assets::import_mesh::gltf::parse_with_options(&doc, &skeleton, model_limit)?;
         for key in ["buffers", "images"] {
@@ -251,7 +273,7 @@ pub(super) fn load(
             .ok_or_else(|| AssetError::invalid("asset directory"))?
             .canonicalize()
             .map_err(|_| AssetError::invalid("asset directory"))?;
-        Some(Document::parse_mesh(&data, |uri| read_mesh(&relative_path(&root, uri)?))?)
+        Some(Document::parse_mesh(&data, |uri| relative(&root, uri))?)
     } else {
         None
     };
@@ -458,7 +480,8 @@ pub(super) fn load(
                     63,
                 );
                 entry.material_index = index;
-                entry.selected = choice != Choice::Material || index == 0;
+                // Keep every material checked, as do_bulk_upload does for
+                // each model material (indra/newview/llviewermenufile.cpp).
                 entry.local = choice == Choice::Local;
                 if entry.local {
                     entry.watch = Some(local::Watch::new(dependencies(&doc, &root, path)));
@@ -513,12 +536,7 @@ fn load_selected(
                 .any(|entry| matches!(&entry.source, Some(Source::Mesh(draft)) if draft.scene.materials.len() > 1))
             {
                 match load(path, Choice::Material, options, sound_limit, prefs, local) {
-                    Ok(mut materials) => {
-                        for material in &mut materials {
-                            material.selected = true;
-                        }
-                        entries.extend(materials);
-                    }
+                    Ok(materials) => entries.extend(materials),
                     Err(error) => entries.push(Entry::new(path.to_owned(), Err(error.to_string()), options)),
                 }
             }
@@ -604,7 +622,7 @@ impl Imports {
         ctx: &egui::Context,
         options: import_texture::Options,
     ) -> Option<Uuid> {
-        if self.pending_files.is_some() || self.busy() || self.entries.len() >= 512 {
+        if self.pending_files.is_some() || self.busy() {
             return None;
         }
         let request = Uuid::new_v4();
@@ -824,14 +842,6 @@ impl Imports {
         self.pending_file_choice = Some(if local { Choice::Local } else { choice });
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
-        let mut retained = self
-            .entries
-            .iter()
-            .filter_map(|e| e.source.as_ref())
-            .filter(|source| !matches!(source, Source::Mesh(_)))
-            .map(Source::retained_bytes)
-            .sum::<usize>();
-        let existing = self.entries.len();
         let filters = self.type_filters;
         let tx = self.tx.clone();
         let wake = ctx.clone();
@@ -863,49 +873,139 @@ impl Imports {
                 }
             };
             if paths.len() == 1 && paths[0].is_dir() {
-                let entries = load_folder(&paths[0], &prefs, options, sound_limit, existing, retained);
+                let entries = load_folder(&paths[0], &prefs, options, sound_limit);
                 let _ = tx.send(Worker::Loaded(request, entries));
                 wake.request_repaint();
                 return;
             }
-            let mut entries = Vec::new();
-            for (index, path) in paths.into_iter().enumerate() {
-                if index >= 256 || existing + entries.len() >= 512 {
-                    entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
-                    break;
-                }
-                match load_selected(&path, choice, options, sound_limit, &prefs, local, filters) {
-                    Ok(mut loaded) => {
-                        let size = loaded
-                            .iter()
-                            .filter_map(|e| e.source.as_ref())
-                            .filter(|source| !matches!(source, Source::Mesh(_)))
-                            .map(Source::retained_bytes)
-                            .sum::<usize>();
-                        // Preserve a failed row instead of silently truncating
-                        // the selection or allowing the draft to exhaust RAM.
-                        if retained.saturating_add(size) > 1024 * 1024 * 1024 || existing + entries.len() + loaded.len() > 512 {
-                            entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
-                            break;
-                        }
-                        retained += size;
-                        entries.append(&mut loaded);
-                    }
-                    Err(error) => entries.push(Entry::new(path, Err(error.to_string()), options)),
-                }
-            }
-            if local {
-                localize(&mut entries, &prefs);
-            }
+            let entries = load_paths(paths, choice, options, sound_limit, &prefs, local, filters);
             let _ = tx.send(Worker::Loaded(request, entries));
             wake.request_repaint();
         });
     }
 }
 
+/// do_bulk_upload / LLMaterialEditor::loadMaterial: accept all materials in
+/// each selected document. A decoded-memory budget must not reject valid files
+/// after their images have already been allocated (#4211).
+pub(super) fn load_paths(
+    paths: Vec<PathBuf>,
+    choice: Choice,
+    options: import_texture::Options,
+    sound_limit: u32,
+    prefs: &Preferences,
+    local: bool,
+    filters: [bool; 5],
+) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    for path in paths {
+        match load_selected(&path, choice, options, sound_limit, prefs, local, filters) {
+            Ok(mut loaded) => entries.append(&mut loaded),
+            Err(error) => entries.push(Entry::new(path, Err(load_error(error)), options)),
+        }
+    }
+    if local {
+        localize(&mut entries, prefs);
+    }
+    let bytes: usize = entries
+        .iter()
+        .filter_map(|entry| entry.source.as_ref())
+        .map(Source::retained_bytes)
+        .sum();
+    log::info!("import sources loaded: {} assets, {} decoded bytes", entries.len(), bytes);
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_file_and_folder_imports_keep_more_than_256_files_and_512_entries() {
+        let root = std::env::temp_dir().join(format!("aurora-material-batch-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths: Vec<_> = (0..257)
+            .map(|index| {
+                let path = root.join(format!("material-{index}.gltf"));
+                std::fs::write(&path, br#"{"asset":{"version":"2.0"},"materials":[{},{},{}]}"#).unwrap();
+                path
+            })
+            .collect();
+        let prefs = Preferences::default();
+        let entries = load_paths(paths.clone(), Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
+        assert_eq!(entries.len(), 771);
+        assert!(entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(entries.iter().all(|entry| entry.selected));
+        let material_only = load_paths(
+            paths,
+            Choice::Bulk,
+            prefs.texture(),
+            30,
+            &prefs,
+            false,
+            [false, false, false, true, false],
+        );
+        assert_eq!(material_only.len(), entries.len());
+        assert!(material_only.iter().all(|entry| entry.selected));
+        let folder = load_folder(&root, &prefs, prefs.texture(), 30);
+        assert_eq!(folder.len(), entries.len());
+        assert!(folder.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+        assert!(folder.iter().all(|entry| entry.selected));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_external_resource_is_rejected_before_reading_with_measured_size() {
+        let path = std::env::temp_dir().join(format!("aurora-gltf-external-{}.bin", Uuid::new_v4()));
+        let bytes = aurora_assets::import_gltf::MAX_EXTERNAL_BYTES + 1;
+        // A sparse file exercises the metadata guard without a multi-GiB allocation.
+        let file = File::create(&path).unwrap();
+        file.set_len(bytes).unwrap();
+        drop(file);
+        let error = read_document(&path, true).unwrap_err();
+        assert!(matches!(
+            error,
+            AssetError::GltfResourceSize {
+                bytes: 2147483648,
+                limit: 2147483647
+            }
+        ));
+        assert_eq!(
+            load_error(error),
+            aurora_i18n::tr!(
+                "import-gltf-resource-limit",
+                bytes = bytes,
+                limit = aurora_assets::import_gltf::MAX_EXTERNAL_BYTES
+            )
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "loads the large local material fixture named by AURORA_DEMO_IMPORT_FILE"]
+    fn large_material_fixture_passes_the_ordinary_file_import() {
+        let path = PathBuf::from(std::env::var_os("AURORA_DEMO_IMPORT_FILE").expect("local material fixture"));
+        let prefs = Preferences::default();
+        let started = std::time::Instant::now();
+        let entries = load_paths(vec![path], Choice::Material, prefs.texture(), 30, &prefs, false, [true; 5]);
+        assert!(
+            entries.iter().all(|entry| matches!(entry.source, Some(Source::Material { .. }))),
+            "every material loaded"
+        );
+        assert!(entries.iter().all(|entry| entry.selected), "every imported material checked");
+        let bytes: usize = entries
+            .iter()
+            .filter_map(|entry| entry.source.as_ref())
+            .map(Source::retained_bytes)
+            .sum();
+        assert!(bytes > 1024 * 1024 * 1024, "fixture must exercise the former decoded-pixel cap");
+        eprintln!(
+            "Loaded {} materials, {} decoded bytes in {:.2}s",
+            entries.len(),
+            bytes,
+            started.elapsed().as_secs_f64()
+        );
+    }
 
     #[test]
     fn add_files_gltf_respects_material_and_mesh_choices_and_explicit_windows() {

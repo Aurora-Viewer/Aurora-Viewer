@@ -439,7 +439,7 @@ fn picture(
         thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
         return;
     }
-    let id = line.source;
+    let id = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
     if !id.is_nil() {
         wanted_pics.insert(id);
     }
@@ -493,6 +493,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -795,8 +796,9 @@ mod tests {
 
     /// Under RLVa's `@shownames` and `@showloc` the on-screen chat hides who
     /// speaks and shows what they typed as typed; what an object says is
-    /// rewritten (`ChatKind::text_in`; LLFloaterIMNearbyChatHandler::
-    /// processChat filters only when the source is not an avatar).
+    /// rewritten (LLFloaterIMNearbyChatHandler::processChat filters only
+    /// when the source is not an avatar). Both are decided when the line
+    /// arrives (`World::rlva_freeze_line`), and drawn as they were kept.
     #[test]
     fn rlva_keeps_what_a_resident_typed_and_rewrites_what_an_object_says() {
         let ctx = egui::Context::default();
@@ -825,18 +827,27 @@ mod tests {
         }));
         world.refresh_rlva_privacy();
         let text = "Near Tester waits in Secret Region";
-        let job = |kind: ChatKind, source: uuid::Uuid, from: &str| {
-            let mut l = line(kind, from, 0);
-            l.source = source;
-            l.text = text.into();
-            line_job(&ctx, &l, &p, &world, &mut HashSet::new(), 800.0, TEXT, false, JobLook::Line)
+        let mut job = |source_type, source_id: uuid::Uuid, from: &str| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: from.into(),
+                source_id,
+                owner_id: me,
+                source_type,
+                chat_type: ChatType::Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.into(),
+            }));
+            let l = world.chat.back().expect("the line");
+            assert_eq!(l.source, source_id);
+            line_job(&ctx, l, &p, &world, &mut HashSet::new(), 800.0, TEXT, false, JobLook::Line)
                 .job
                 .text
         };
-        let said = job(ChatKind::Local(ChatType::Normal), near, "Near Tester");
+        let said = job(aurora_net::ChatSourceType::Agent, near, "Near Tester");
         assert!(said.ends_with(text), "the text as typed: {said}");
         assert!(!said[..said.len() - text.len()].contains("Tester"), "the speaker hidden: {said}");
-        let object = job(ChatKind::Object(ChatType::Normal), uuid::Uuid::from_u128(0xB0C5), "Box");
+        let object = job(aurora_net::ChatSourceType::Object, uuid::Uuid::from_u128(0xB0C5), "Box");
         assert!(!object.contains("Tester") && !object.contains("Secret Region"), "{object}");
     }
 

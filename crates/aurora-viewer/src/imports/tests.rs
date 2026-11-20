@@ -1211,7 +1211,9 @@ fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
 #[test]
 fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
     let mut draft = mesh_fixture();
+    // Select the budget-driven method explicitly; Legacy keeps this box whole.
     for lod in &mut draft.lods[..3] {
+        lod.source = mesh::LodSource::Auto;
         lod.error = 0.0;
     }
     let prepared = mesh::prepare(&draft).expect("prepare");

@@ -158,8 +158,6 @@ pub mod group;
 /// (AURORA_DEMO_GROUP_REGION).
 #[path = "demo_group_region.rs"]
 pub mod group_region;
-#[path = "demo_hand_ik.rs"]
-pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
@@ -247,9 +245,6 @@ pub mod plants;
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]
 pub mod presence;
-/// A raised pool whose water is a phantom prim (AURORA_DEMO_PRIM_WATER).
-#[path = "demo_prim_water.rs"]
-pub mod prim_water;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;
@@ -1528,6 +1523,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1767,6 +1763,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1790,6 +1787,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             origin: crate::world::Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1953,6 +1951,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -3934,12 +3933,6 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
-        }
-        aurora_net::NetCommand::RequestObjectProperties { object, .. } if prim_water::props(*object).is_some() => {
-            prim_water::props(*object)
-                .map(|props| NetEvent::ObjectProperties(vec![props]))
-                .into_iter()
-                .collect()
         }
         // the other objects' names for the hover tips (AURORA_DEMO_HOVER_TIPS)
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if hover_tips::scenario().is_some() => {

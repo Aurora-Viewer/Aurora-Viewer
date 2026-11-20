@@ -66,6 +66,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 

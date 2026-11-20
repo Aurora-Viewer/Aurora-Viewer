@@ -647,6 +647,8 @@ pub struct Settings {
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
+    /// What the second camera frames (View › Second camera, Aurora's own).
+    pub second_camera_framing: crate::camera::second::Framing,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
     /// None keeps the former shared hover options until the first login.
@@ -669,8 +671,6 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
-    /// Swimming in prims named as water (#2008), for every account.
-    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -1430,9 +1430,6 @@ pub struct Settings {
     /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
     /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
     pub use_bridge: bool,
-    /// Preferences › Aurora › Behavior: whose portals the bridge shows. Friends
-    /// by default; our own portals and returns are always shown.
-    pub portal_sources: crate::world::portals::Sources,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -1481,6 +1478,11 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Accessibility › Vision: skip the glass of windows,
+    /// bars, menus and dialogs (`crate::disable_glass`), off by default.
+    /// Surfaces stay opaque, without frosting the world. High contrast
+    /// already does this.
+    pub disable_glass: bool,
     /// Preferences › Appearance › Skin: the accent, background and text
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
@@ -2376,6 +2378,7 @@ impl Default for Settings {
             game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
+            second_camera_framing: Default::default(),
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
             hover_height_account: None,
@@ -2501,7 +2504,6 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
-            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
@@ -2668,7 +2670,6 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             use_bridge: true,
-            portal_sources: Default::default(),
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
@@ -2686,6 +2687,7 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
