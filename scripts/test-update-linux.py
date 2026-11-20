@@ -67,10 +67,17 @@ def free_port():
 
 
 class Quiet(SimpleHTTPRequestHandler):
-    """The feed's files under the test's root, without a line per request."""
+    """The feed's files under the test's root, without a line per request,
+    except the release check and the archive: whether the viewer checked,
+    and whether it downloaded."""
 
     def log_message(self, *args):
         pass
+
+    def do_GET(self):
+        if self.path.endswith((".tar.gz", "releases.json")):
+            print(f"feed: GET {self.path}", flush=True)
+        super().do_GET()
 
 
 def serve(feed_dir):
@@ -164,6 +171,14 @@ def main():
         action="store_true",
         help="the release is made by hand on GitHub, without signatures: never offered",
     )
+    parser.add_argument(
+        "--automatic", action="store_true", help="the Automatic update mode (downloads without asking)"
+    )
+    parser.add_argument(
+        "--protected",
+        action="store_true",
+        help="the folder above the installation is read-only, as a system package's",
+    )
     options = parser.parse_args()
 
     repo = Path(
@@ -230,6 +245,7 @@ def main():
                 "language": options.language,
                 "draw_distance": 300,
                 "update_channel": "Beta" if options.beta else "Stable",
+                "update_mode": "Automatic" if options.automatic else "Ask",
             }
         ),
         encoding="utf-8",
@@ -280,17 +296,30 @@ def main():
 
     environment = os.environ | {"AURORA_UPDATE_TEST_ROOT": str(root)}
     environment.pop("AURORA_DEMO", None)
+    if options.protected:
+        # what the viewer writes under the test's root exists beforehand;
+        # nothing new can be made beside the installation
+        for name in ("logs", "media-plugins"):
+            (root / name).mkdir(exist_ok=True)
     arguments = [str(install / EXE), "--title", options.title, "--language", options.language]
     if options.fps_limit is not None:
         arguments += ["--fps-limit", str(options.fps_limit)]
-    viewer = subprocess.Popen(arguments, cwd=install, env=environment)
-    print(f"Test installation: {root}", flush=True)
-    print(f"Viewer: {viewer.pid}; local feed: {base}", flush=True)
+    viewer = None
     try:
+        if options.protected:
+            root.chmod(0o555)
+        viewer = subprocess.Popen(arguments, cwd=install, env=environment)
+        print(f"Test installation: {root}", flush=True)
+        print(f"Viewer: {viewer.pid}; local feed: {base}", flush=True)
         return follow(root, install, viewer)
     except KeyboardInterrupt:
+        if viewer is None:
+            return 130
         viewer.terminate()
         return viewer.wait()
+    finally:
+        if options.protected:
+            root.chmod(0o755)  # or the test's folder cannot be deleted
 
 
 if __name__ == "__main__":

@@ -731,9 +731,11 @@ pub(super) fn card(
                 }
                 // Update downloads it in the update window; once downloaded,
                 // Install opens that window, which says what installing does
-                Data::Update { ready, .. } => {
+                Data::Update { ready, blocked } => {
                     let primary = if *ready {
                         aurora_i18n::tr!("update-notice-install")
+                    } else if *blocked {
+                        aurora_i18n::tr!("update-notice-how")
                     } else {
                         aurora_i18n::tr!("update-install")
                     };
