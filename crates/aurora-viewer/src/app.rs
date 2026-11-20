@@ -10425,7 +10425,7 @@ impl App {
         // (a lure accepted for `lure`), once settled
         if self.demo
             && self.frame_count == 700
-            && let Some(scene) = crate::demo::teleport_access_scene()
+            && let Some((scene, _)) = crate::demo::teleport_access_scene()
             && let Some(main) = self.world.main_region
         {
             if scene == "lure" {
@@ -10441,6 +10441,25 @@ impl App {
                     look_at: Vec3::X,
                 };
                 self.request_user_teleport(teleport, aurora_i18n::tr!("demo-teleport-access-neighbour").into(), true);
+            }
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS=…:accept: the prompt's first button
+        if self.demo
+            && self.frame_count == 760
+            && crate::demo::teleport_access_scene().is_some_and(|(_, accept)| accept)
+            && let Some(id) = self
+                .world
+                .notifications
+                .list
+                .iter()
+                .rev()
+                .find(|n| matches!(n.data, crate::world::notifications::Data::MaturityChange { .. }))
+                .map(|n| n.id)
+        {
+            log::info!("demo: the rating prompt accepted");
+            let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+            for c in commands {
+                self.send(c);
             }
         }
         // AURORA_DEMO_HOME=<outcome>:set: World › Set Home to Here, once settled

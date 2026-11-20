@@ -3453,6 +3453,11 @@ impl World {
                     self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
+                // LLAgent::handleTeleportFinished, once the arrival is known
+                // (LLViewerParcelMgr's teleport finished callback)
+                if self.teleporting {
+                    self.teleport_access_ended(true);
+                }
                 if self.teleporting || !self.arrived_once {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -3902,7 +3907,6 @@ impl World {
                 // including landing. Destination restrictions still take effect
                 // on arrival (land_if_fly_blocked).
                 self.agent.flying = flying || self.fly_after_teleport;
-                self.teleport_access_ended(true);
                 Some(NetEvent::TeleportFinished { handle, flying })
             }
             NetEvent::TeleportLocal { flying } => {

@@ -2319,11 +2319,16 @@ pub fn maturity_reply(asked: u8) -> Option<u8> {
     }
 }
 
-/// AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure: the demo's neighbouring
-/// regions are adult, and refuse a teleport while the preference excludes
-/// them (`world/teleport_access.rs`).
-pub fn teleport_access_scene() -> Option<String> {
-    std::env::var("AURORA_DEMO_TELEPORT_ACCESS").ok()
+/// AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure[:accept]: the demo's
+/// neighbouring regions are adult, and refuse a teleport while the
+/// preference excludes them (`world/teleport_access.rs`); `:accept` answers
+/// the prompt by its first button. The scene, and whether to accept.
+pub fn teleport_access_scene() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_ACCESS").ok()?;
+    Some(match value.split_once(':') {
+        Some((scene, answer)) => (scene.to_owned(), answer == "accept"),
+        None => (value, false),
+    })
 }
 
 /// The demo server's refusal of a teleport away from our region, while the
@@ -2331,7 +2336,7 @@ pub fn teleport_access_scene() -> Option<String> {
 /// RegionTPAccessBlocked for `region`.
 pub fn teleport_access_refusal(preferred: u8) -> Option<aurora_net::teleport_access::AccessBlocked> {
     use aurora_net::teleport_access::{ENTRY_ACCESS_BLOCKED, REGION_TP_ACCESS_BLOCKED};
-    let code = match teleport_access_scene()?.as_str() {
+    let code = match teleport_access_scene()?.0.as_str() {
         "region" => REGION_TP_ACCESS_BLOCKED,
         _ => ENTRY_ACCESS_BLOCKED,
     };

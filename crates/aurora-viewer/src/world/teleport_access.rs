@@ -199,9 +199,15 @@ impl World {
                 String::from(aurora_i18n::tr!("world-teleport-access-out-of-sync")),
                 notifications::Data::MaturityChange { rating, prompt },
             ),
+            // the dialog's two lines: where we go, then what Allow does
             Prompt::Allow => (
-                aurora_i18n::tr!("world-teleport-access-rated", rating = name.to_owned()),
-                aurora_i18n::tr!("world-teleport-access-allow", rating = name.to_owned()),
+                String::from(aurora_i18n::tr!("world-teleport-access-blocked-title")),
+                format!(
+                    "{}
+{}",
+                    aurora_i18n::tr!("world-teleport-access-rated", rating = name.to_owned()),
+                    aurora_i18n::tr!("world-teleport-access-allow", rating = name.to_owned())
+                ),
                 notifications::Data::MaturityChange { rating, prompt },
             ),
             Prompt::NotOnAccount => (
@@ -210,7 +216,14 @@ impl World {
                 notifications::Data::None,
             ),
         };
-        self.notifications.push(notifications::Kind::Alert, title, body, data);
+        // a question about the teleport looks like the teleport offers'
+        // "Change and Continue"; a refusal with nothing to answer is an alert
+        let kind = if matches!(data, notifications::Data::MaturityChange { .. }) {
+            notifications::Kind::Teleport
+        } else {
+            notifications::Kind::Alert
+        };
+        self.notifications.push(kind, title, body, data);
         true
     }
 
@@ -354,6 +367,16 @@ mod tests {
         }
     }
 
+    /// The restarted teleport's arrival (handleTeleportFinished).
+    fn arrive(w: &mut World) {
+        w.begin_teleport(true);
+        w.apply(aurora_net::NetEvent::AgentMovementComplete {
+            handle: 1 << 40,
+            position: glam::Vec3::new(128.0, 128.0, 30.0),
+            look_at: glam::Vec3::X,
+        });
+    }
+
     /// The session's two events for a refusal.
     fn refuse(w: &mut World, code: &str, rating: u8) {
         w.apply(aurora_net::NetEvent::TeleportAccessBlocked(blocked(code, rating)));
@@ -399,10 +422,7 @@ mod tests {
         assert!(matches!(w.maturity.take_commands()[..], [(_, NetCommand::TeleportTo { .. })]));
         // PreferredMaturityChanged once it arrives
         let before = w.notifications.list.len();
-        w.apply(aurora_net::NetEvent::TeleportFinished {
-            handle: 1 << 40,
-            flying: false,
-        });
+        arrive(&mut w);
         assert_eq!(w.notifications.list.len(), before + 1);
         assert!(w.teleport_access.changed_during_teleport.is_none());
     }
@@ -458,10 +478,7 @@ mod tests {
         w.apply(aurora_net::NetEvent::MaturityPreference(Some(SIM_ACCESS_ADULT)));
         assert!(matches!(w.maturity.take_commands()[..], [(_, NetCommand::TeleportHome)]));
         let before = w.notifications.list.len();
-        w.apply(aurora_net::NetEvent::TeleportFinished {
-            handle: 1 << 40,
-            flying: false,
-        });
+        arrive(&mut w);
         assert_eq!(w.notifications.list.len(), before);
     }
 
