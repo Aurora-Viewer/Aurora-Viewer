@@ -1520,7 +1520,7 @@ inventory-smart-chip-not = 非：{ $rule }
 inventory-smart-worn = 已穿戴
 inventory-smart-link = 是联结
 inventory-smart-coalesced = 合并物件
-inventory-smart-since-logout = 自上次注销以来
+inventory-smart-since-logout = 自上次退出登录以来
 inventory-smart-age-newer = 新于
 inventory-smart-age-older = 旧于
 inventory-smart-hours = { $hours } 小时
@@ -1798,9 +1798,9 @@ script-recovery-demo-name = 演示门脚本
 exit-title = 关闭 Aurora Viewer？
 exit-world-body = 退出查看器还是返回登录界面？
 exit-login-body = 要退出 Aurora Viewer 吗？
-exit-waiting = 正在注销…
-exit-logout = 注销
-exit-logout-hint = 注销并返回登录界面。
+exit-waiting = 正在退出登录…
+exit-logout = 退出登录
+exit-logout-hint = 退出登录并返回登录界面。
 exit-quit = 退出
 bug-browser-mode = 在我的浏览器中
 bug-direct-mode = 从 Aurora 发送
@@ -2589,7 +2589,7 @@ app-gpu-stall =
     • 关闭其他程序的叠加层（Discord、Steam、MSI Afterburner…）；
     • 下次启动时，选择 Aurora 将提供的安全图形模式。
 
-    继续等待？选择“是”继续等待；选择“否”关闭 Aurora（会正常注销）。
+    继续等待？选择“是”继续等待；选择“否”关闭 Aurora（会正常退出登录）。
 app-gpu-recovered-title = 显卡已被重置
 app-gpu-recovered = 显卡驱动被重置（绘制耗时过长、显存已满，或显卡被其他程序占用）。Aurora 已在显卡上重新打开窗口：您仍保持登录，世界稍后会重新载入。
 app-gpu-recovered-safe = 显卡驱动在几分钟内再次被重置。Aurora 已以安全图形（“极低”级别）重新打开窗口，以免再次发生：您仍保持登录。您的图形设置会保留，登录界面可将其恢复。
@@ -2598,7 +2598,7 @@ app-vr-runtime-closed = 您的 VR 软件（例如 SteamVR）已关闭。Aurora �
 app-vr-runtime-closed-at-start = 您的 VR 软件（例如 SteamVR）已关闭。Aurora 已在不使用它的情况下重新打开窗口：您仍保持登录，世界稍后会重新载入。下次启动 Aurora 时 VR 会恢复。Aurora 每次启动都会加载您的 VR 软件：如需停止，请关闭“偏好设置 › 相机 › VR › 启动时初始化 VR”。
 app-gpu-lost-title = Aurora Viewer：显卡已丢失
 app-gpu-lost =
-    显卡已停止为 Aurora 工作：其驱动被重置（绘制一帧耗时过长，或显存已满），或显卡被移除、被其他程序占用。已无法绘制任何内容：按下“确定”后 Aurora 将关闭（会正常注销）。
+    显卡已停止为 Aurora 工作：其驱动被重置（绘制一帧耗时过长，或显存已满），或显卡被移除、被其他程序占用。已无法绘制任何内容：按下“确定”后 Aurora 将关闭（会正常退出登录）。
 
     可尝试：
     • 更新显卡驱动程序；
@@ -2741,7 +2741,7 @@ grids-connection = 连接
 grids-pages = 网页
 grids-manual-hint = 自动获取服务器设置，或在下方手动填写。
 grids-description = 添加服务器、获取其信息，或编辑其登录与网址。
-grids-logout-to-edit = 请先注销以添加、编辑或移除服务器。
+grids-logout-to-edit = 请先退出登录以添加、编辑或移除服务器。
 grids-service = 服务器地址
 grids-nickname = 简称
 grids-login = 登录 URI
@@ -3545,7 +3545,7 @@ build-shapes-half-sphere = 半球体
 ui-environment-blue-density = 蓝色密度
 ui-environment-haze-density = 雾霭密度
 build-ui-features-density-in-100-kg-m-3 = { "密度，单位\u000A100 千克/立方米" }
-ui-inventory-controls-since-last-logout = 自上次注销以来
+ui-inventory-controls-since-last-logout = 自上次退出登录以来
 ui-login-latest = 最新
 ui-land-covenant-last-modified = 最后修改：{ $when }
 ui-login-last-location = 上次位置
@@ -3738,9 +3738,9 @@ ui-options-typing-bubbles-hint = 正在输入的居民气泡中显示三个点
 ui-options-chat-bubble-opacity = 名牌与聊天气泡不透明度
 ui-options-toasts = 弹出通知
 ui-options-toast-friends-online = 好友上线 / 下线
-ui-options-toast-friends-online-hint = 好友登录或注销时弹出通知
+ui-options-toast-friends-online-hint = 好友登录或退出登录时弹出通知
 ui-options-friends-online-in-chat = 在附近聊天中显示好友上线 / 下线
-ui-options-friends-online-in-chat-hint = 好友登录或注销时也在附近聊天中显示一行提示
+ui-options-friends-online-in-chat-hint = 好友登录或退出登录时也在附近聊天中显示一行提示
 ui-options-toast-friends-position = 上线 / 下线通知的位置
 ui-options-toast-friends-position-hint = 紧邻工具栏且绝不覆盖；当通知铃铛的卡片或列表开启时，其将在右上角驻留等待
 ui-options-toast-friends-position-legacy = 传统查看器的弹出通知会将其显示在单独的堆叠中（偏好设置 › Aurora › 通知）
@@ -3838,7 +3838,7 @@ ui-perf-decoding = 解码
 ui-profile-disconnected = 已断开
 app-disconnected = { "已断开：" }{ $reason }
 app-disconnected-lost = { "已断开：" }{ $reason } 请重新登录以回到原处。
-app-logging-out = 正在注销…
+app-logging-out = 正在退出登录…
 build-ui-object-profile-cut-begin-end = 剖面切割（起点/终点）
 build-ui-object-path-cut-begin-end = 路径切割（起点/终点）
 dev-toolbox-title = 开发工具箱
@@ -5234,7 +5234,7 @@ media-filter-remember-domain = 始终允许 { $domain }
 media-filter-remember-url = 始终允许此确切地址
 media-filter-allow = 允许
 media-filter-deny = 拒绝
-media-filter-not-now = 以后再说：此媒体在您注销前保持关闭
+media-filter-not-now = 以后再说：此媒体在您退出登录前保持关闭
 media-filter-turn-off = 不过滤媒体
 world-inventory-demo-link-to-object = 物件的联结
 ui-inventory-controls-links-only = 仅联结
@@ -5349,7 +5349,7 @@ ui-minimap-markers = 标记
 ui-minimap-custom-marker = 自定义颜色…
 ui-avatar-mark-title = 标记颜色
 ui-avatar-mark-many = { $count } 位居民
-ui-avatar-mark-private = 只有您能看到标记。注销后即消失。
+ui-avatar-mark-private = 只有您能看到标记。退出登录后即消失。
 build-ui-texture-masking = 遮罩
 build-ui-texture-alpha-masking = Alpha 遮罩
 demo-mask-50-cutoff = 遮罩（50% 截断）
@@ -5473,7 +5473,7 @@ build-ui-texture-alpha-mode = 透明度模式
 demo-alpha-mode-none = 透明度模式：无
 build-demo-sim-instructions = 说明
 app-demo-mode-no-grid-connection = 演示模式：无服务器连接。
-app-demo-login-pending-logout = 系统正在将您注销。请稍等一分钟再尝试重新登录。
+app-demo-login-pending-logout = 系统正在为您退出登录。请稍等一分钟再尝试重新登录。
 voice-demo-mode-no-voice-server-the-microphone-drives-the = 演示模式：无语音服务器（麦克风会驱动名牌动画）
 demo-offline-demo-mode-no-network-connection = 离线演示模式：无网络连接。
 ui-appearance-items-modify = 修改
@@ -5729,7 +5729,7 @@ world-inventory-demo-non-transferable-object = 不可转让物件
 ui-sound-object-offered = 物件赠送
 ui-sound-object-taken = 已取得物件
 ui-appearance-temporary-object = 临时物件
-ui-appearance-temporary-tip = 由体验或脚本附着，库存中没有对应项目：注销后不会保留。
+ui-appearance-temporary-tip = 由体验或脚本附着，库存中没有对应项目：退出登录后不会保留。
 common-object-2 = { "物件 " }{ $value0 }
 common-objects = 物件
 ui-options-objects-with-glow = 带光晕的物件
@@ -6312,7 +6312,7 @@ region-restart-before = 距重启
 region-restart-seconds = 秒
 region-restart-seconds-short = { $seconds } 秒
 region-restart-calm-title = { $region } 即将重启
-region-restart-calm-text = 如果您留在该区域，将会被注销。
+region-restart-calm-text = 如果您留在该区域，将被强制退出登录。
 region-restart-near-title = 还剩一分钟
 region-restart-near-text = 离开 { $elide ->
        *[other] { $region }
@@ -6320,7 +6320,7 @@ region-restart-near-text = 离开 { $elide ->
 region-restart-red-title = 立即离开
 region-restart-red-text = { $region } 将在不到 30 秒内重启。
 region-restart-final-title = 即将重启
-region-restart-final-text = 留在 { $region } 将被注销。
+region-restart-final-text = 留在 { $region } 将被强制退出登录。
 region-restart-zero-title = { $region } 正在重启
 region-restart-zero-text = 如果您仍在此处，连接将被切断。
 region-restart-cancelled-title = 重启已取消
@@ -6345,21 +6345,21 @@ region-restart-cancel-confirm-title = 取消重启？
 region-restart-cancel-confirm-text = { $region } 不会重启，并会通知那里的居民。
 region-restart-keep = 不取消重启
 region-restart-pinned = 已固定
-region-restart-chat = 您当前所在的区域即将重启。如果您留在此区域，将会被注销。
+region-restart-chat = 您当前所在的区域即将重启。如果您留在此区域，将被强制退出登录。
 region-restart-chat-zero = 区域正在重启。
 region-restart-chat-cancelled = 区域重启已取消。
 region-restart-toast-minutes = 区域“{ $region }”将在 { $count } { $count ->
         [one] 分钟
        *[other] 分钟
-    }后重启。若关闭时您仍留在此区域，将会被注销。
+    }后重启。若关闭时您仍留在此区域，将被强制退出登录。
 region-restart-toast-seconds = 区域“{ $region }”将在 { $count } { $count ->
         [one] 秒
        *[other] 秒
-    }后重启。若关闭时您仍留在此区域，将会被注销。
+    }后重启。若关闭时您仍留在此区域，将被强制退出登录。
 region-restart-disconnected = { $region } 已重启：连接已关闭。
 region-restart-legacy-text =
     您当前所在的区域（{ $region }）即将重启。
-    如果您留在此区域，将会被注销。
+    如果您留在此区域，将被强制退出登录。
 region-restart-legacy-seconds = 距离重启剩余秒数
 region-restart-legacy-landmarks = 我的地标
 region-restart-legacy-teleport = 瞬间传送到地标
@@ -6603,7 +6603,7 @@ demo-game-rules-french = 游戏规则（法语）
 common-recent = 最近
 ui-inventory-controls-recent-since-your-last-logout-24-hours-on-first = 最近：自上次退出登录以来；首次启动时默认为 24 小时。
 ui-inventory-recent-period = “最近”标签页显示
-ui-inventory-recent-period-help = “最近”标签页回溯的范围：自上次注销以来收到的项目，或在设定的天数与小时数内的项目。
+ui-inventory-recent-period-help = “最近”标签页回溯的范围：自上次退出登录以来收到的项目，或在设定的天数与小时数内的项目。
 ui-inventory-recent-set-period = 设定时段
 ui-inventory-recent-note-period = 最近：过去 { $days } 天 { $hours } 小时。
 ui-land-general-reclaim-land = 收回土地
@@ -8810,7 +8810,7 @@ ui-display-name-at-slt = { $m }/{ $d }/{ $y }{ " " }{ $value0 }:{ $value1 }{ " S
 world-mod-accepted-your-friendship = { $from }{ " 接受了您的好友请求" }
 world-mod-accepted-your-teleport-offer = { $from }{ " 接受了您的瞬间传送邀请" }
 world-set-home-here = 把这里设为我的家
-world-home-position-set = 家园位置已设置。
+world-home-position-set = 家的位置已设置。
 world-home-cant-set-in-region = 此区域不允许您将家设在这里。
 world-home-valid-locations = 您只能将家设在您自己的土地上或大陆信息中心。
 world-home-reset-not-legal = 原位置已不再允许设为家，因此您的家已被重置。
@@ -12386,8 +12386,8 @@ group-ability-land-allow-create = 始终允许“创建物件”
 group-ability-land-allow-create-help = 拥有此权限的角色中的成员可在群组拥有的地块上创建物件，即使已在“土地信息 > 选项”标签页中关闭。
 group-ability-land-allow-direct-teleport = 忽略着陆点
 group-ability-land-allow-direct-teleport-help = 拥有此权限的角色中的成员可直接瞬间传送到群组拥有的地块，即使已在“土地信息 > 选项”标签页中设置着陆点。
-group-ability-land-allow-set-home = 允许在群组土地上“设此处为家园”
-group-ability-land-allow-set-home-help = 拥有此权限的角色中的成员可在已转让给此群组的地块上使用“世界”菜单中的“设此处为家园”。
+group-ability-land-allow-set-home = 允许在群组土地上“把这里设为我的家”
+group-ability-land-allow-set-home-help = 拥有此权限的角色中的成员可在已转让给此群组的地块上使用“世界”菜单中的“把这里设为我的家”。
 group-ability-land-allow-host-event = 允许在群组土地上“举办活动”
 group-ability-land-allow-host-event-help = 拥有此权限的角色中的成员在举办活动时可将群组拥有的地块选为场地。
 group-abilities-parcel-access = 地块访问权
@@ -13521,7 +13521,7 @@ poser-policy-everyone = 所有人
 poser-policy-friends = 好友
 poser-policy-nobody = 无人
 poser-consent-request = { $name }，距离 { $distance } m，想要为您的化身摆姿势
-poser-consent-explanation = 只有他们能看到该姿势。他们可能会拍摄处于该姿势的您。任一方离开区域或注销时同意即结束，您也可随时撤回。请求在 60 秒后过期。
+poser-consent-explanation = 只有他们能看到该姿势。他们可能会拍摄处于该姿势的您。任一方离开区域或退出登录时同意即结束，您也可随时撤回。请求在 60 秒后过期。
 poser-consent-block = 停止此居民的请求
 poser-consent-refuse = 拒绝
 poser-consent-accept = 本次会话接受
@@ -14149,7 +14149,7 @@ anti-spam-chat = 附近聊天
 anti-spam-sound-multiplier = 声音允许次数倍率
 anti-spam-preload-multiplier = 声音预加载允许次数倍率
 anti-spam-multiplier-hint = 为此类别的事件次数乘以倍数，因为声音更频繁。
-anti-spam-session-hint = 封锁持续到注销或重置。更改这些设置会清除计数与封锁。永久封锁列表单独管理。
+anti-spam-session-hint = 封锁持续到退出登录或重置。更改这些设置会清除计数与封锁。永久封锁列表单独管理。
 anti-spam-session-blocks = 对话封锁
 anti-spam-reset = 重置计数与封锁
 anti-spam-unblock = 解除封锁
@@ -14987,7 +14987,7 @@ ui-context-unfreeze = 解冻
 ui-context-eject-question = 将 { $name } 踢出您的土地？
 ui-context-eject-and-ban = 踢出并封锁
 ui-context-estate-kick = 从领地踢出
-ui-context-estate-teleport-home = 送回其家园位置
+ui-context-estate-teleport-home = 送回其家
 ui-context-estate-ban = 从领地封锁
 ui-context-estate-kick-question = 将 { $name } 从此领地踢出？
 ui-context-estate-teleport-home-question = 将 { $name } 送回家？
@@ -15518,7 +15518,7 @@ conversation-log-friends-first = 好友排在前
 conversation-log-show-blocked = 显示已封锁
 conversation-log-nearby-transcript = 查看附近聊天记录…
 conversation-log-remove = 移除此条目
-conversation-log-offline = 您注销期间收到的消息
+conversation-log-offline = 您退出登录期间收到的消息
 conversation-log-disabled-empty = 未开始记录对话。若要开始记录，请在“偏好设置 › 聊天 › 历史”中开启“保留对话记录”。
 conversation-log-disabled-not-empty = 不再记录对话。若要恢复记录，请在“偏好设置 › 聊天 › 历史”中开启“保留对话记录”。
 conversation-log-enabled-empty = 还没有已记录的对话。您联系某人或某人联系您之后，此处会显示记录条目。
