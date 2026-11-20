@@ -7,7 +7,9 @@
 //! - the other bare, the control.
 //!
 //! The shell is the colour of the sphere: where the patches fade nothing
-//! should show, with the ambient occlusion on as with it off.
+//! should show, with the ambient occlusion on as with it off. (Around the
+//! sphere's outline the shell's own edge stands out of it, a thin rim under
+//! every rule: not what the scene is for.)
 
 use super::{floor_at, prim, shape, te};
 use aurora_net::objects::ObjectUpdate;
