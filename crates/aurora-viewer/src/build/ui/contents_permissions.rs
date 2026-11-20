@@ -190,134 +190,157 @@ pub(crate) fn controls(
     stop: Option<&mut bool>,
 ) -> (bool, bool, bool) {
     let (mut apply, mut accept, mut cancel) = (false, false, false);
-    ui.horizontal_top(|ui| {
-        egui::Grid::new("content_permission_types")
-            .spacing(Vec2::new(12.0, 3.0))
-            .show(ui, |ui| {
-                for row in 0..3 {
-                    for col in 0..4 {
-                        let i = col * 3 + row;
-                        if let Some(t) = TYPES.get(i) {
-                            ui.push_id(t, |ui| {
-                                ui.horizontal(|ui| {
-                                    widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
-                                    if let Some(icon) =
-                                        crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
-                                    {
-                                        let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
-                                        ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
-                                            .on_hover_text(type_name(*t));
-                                    } else {
-                                        ui.allocate_space(Vec2::splat(18.0));
-                                    }
-                                });
-                            });
-                        } else {
-                            ui.label("");
+    // Keep the actions reachable when enlarged text, a nested preview or a
+    // status needs more room. Measure the footer and scroll only the options
+    // above it, so neither can overlap the other.
+    let (mut body, footer) = widgets::above_footer(ui);
+    egui::ScrollArea::vertical()
+        .id_salt("bulk_permission_options")
+        .show(&mut body, |ui| {
+            ui.horizontal_top(|ui| {
+                egui::Grid::new("content_permission_types")
+                    .spacing(Vec2::new(12.0, 3.0))
+                    .show(ui, |ui| {
+                        for row in 0..3 {
+                            for col in 0..4 {
+                                let i = col * 3 + row;
+                                if let Some(t) = TYPES.get(i) {
+                                    ui.push_id(t, |ui| {
+                                        ui.horizontal(|ui| {
+                                            widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
+                                            if let Some(icon) =
+                                                crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
+                                            {
+                                                let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
+                                                ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
+                                                    .on_hover_text(type_name(*t));
+                                            } else {
+                                                ui.allocate_space(Vec2::splat(18.0));
+                                            }
+                                        });
+                                    });
+                                } else {
+                                    ui.label("");
+                                }
+                            }
+                            ui.end_row();
                         }
+                    });
+                ui.vertical(|ui| {
+                    if ui
+                        .add_sized(
+                            [98.0, 25.0],
+                            egui::Button::new(aurora_i18n::tr!("common-all")).wrap_mode(egui::TextWrapMode::Extend),
+                        )
+                        .clicked()
+                    {
+                        b.types.fill(true);
                     }
-                    ui.end_row();
-                }
+                    if ui
+                        .add_sized(
+                            [98.0, 25.0],
+                            egui::Button::new(aurora_i18n::tr!("common-clear")).wrap_mode(egui::TextWrapMode::Extend),
+                        )
+                        .clicked()
+                    {
+                        b.types.fill(false);
+                    }
+                });
             });
-        ui.vertical(|ui| {
-            if ui
-                .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-all")))
-                .clicked()
-            {
-                b.types.fill(true);
-            }
-            if ui
-                .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-clear")))
-                .clicked()
-            {
-                b.types.fill(false);
-            }
-        });
-    });
-    section(ui, p, heading);
-    // the columns' widths, wider than the layout's when a larger text size
-    // would wrap their words ("Shar/e")
-    let group_width = column_width(ui, p, 82.0, aurora_i18n::tr!("common-group-2"), aurora_i18n::tr!("common-share"));
-    let anyone_width = column_width(
-        ui,
-        p,
-        90.0,
-        aurora_i18n::tr!("content-perms-anyone"),
-        aurora_i18n::tr!("common-copy-2"),
-    );
-    ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(Vec2::new(group_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(group_width);
-            label(ui, p, aurora_i18n::tr!("common-group-2"));
-            if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("common-share"), true) {
-                b.share = v;
-            }
-        });
-        ui.allocate_ui_with_layout(Vec2::new(anyone_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(anyone_width);
-            label(ui, p, aurora_i18n::tr!("content-perms-anyone"));
-            if let Some(v) = check(ui, p, b.everyone_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
-                b.everyone_copy = v;
-            }
-        });
-        ui.vertical(|ui| {
-            label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
-            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
-                b.next_modify = v;
-            }
-            if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
-                b.next_copy = v;
-            }
-            if !b.next_copy {
-                b.next_transfer = true;
-            }
-            if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), b.next_copy) {
-                b.next_transfer = v;
-            }
-        });
-    });
-    ui.add_space(8.0);
-    if let Some(preview) = nested {
-        ui.add_enabled_ui(!running, |ui| {
-            widgets::checkbox(ui, p, &mut b.nested, aurora_i18n::tr!("content-perms-nested"))
-                .on_hover_text(aurora_i18n::tr!("content-perms-nested-help"));
-        });
-        if b.nested && !running && !preview.is_empty() {
-            small(ui, p, preview);
-        }
-        // scripts react to their own rez on the simulator, before any viewer
-        // can stop them: RezObject has no way to rez with scripts off
-        if b.nested && !running {
-            ui.label(
-                egui::RichText::new(aurora_i18n::tr!("content-perms-nested-scripts-warning"))
-                    .size(11.0)
-                    .color(p.warn),
+            section(ui, p, heading);
+            // the columns' widths, wider than the layout's when a larger text size
+            // would wrap their words ("Shar/e")
+            let group_width = column_width(ui, p, 82.0, aurora_i18n::tr!("common-group-2"), aurora_i18n::tr!("common-share"));
+            let anyone_width = column_width(
+                ui,
+                p,
+                90.0,
+                aurora_i18n::tr!("content-perms-anyone"),
+                aurora_i18n::tr!("common-copy-2"),
             );
-        }
-        ui.add_space(4.0);
-    }
-    if !status.is_empty() {
-        small(ui, p, status);
-    }
-    // the buttons under the rest, laid out in the flow: the fixed window
-    // takes the height of its content, so a longer status or the nested
-    // option's preview make it taller instead of running under the
-    // buttons (a footer pinned to the window's last height did)
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if let Some(stop) = stop {
-            *stop = ui
-                .button(aurora_i18n::tr!("common-stop"))
-                .on_hover_text(aurora_i18n::tr!("content-perms-nested-stop-help"))
-                .clicked();
-        } else {
-            let enabled = !running && b.types.iter().any(|on| *on);
-            accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
-            apply = ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
-                .clicked();
-        }
-        cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            let next_width = column_width(
+                ui,
+                p,
+                100.0,
+                aurora_i18n::tr!("content-perms-next-owner"),
+                aurora_i18n::tr!("common-transfer"),
+            )
+            .max(column_width(ui, p, 0.0, "", aurora_i18n::tr!("common-edit")))
+            .max(column_width(ui, p, 0.0, "", aurora_i18n::tr!("common-copy-2")));
+            // Preserve complete words in every permission column; larger text
+            // moves a column to the next row instead of squeezing the last one.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                ui.allocate_ui_with_layout(Vec2::new(group_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(group_width);
+                    label(ui, p, aurora_i18n::tr!("common-group-2"));
+                    if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("common-share"), true) {
+                        b.share = v;
+                    }
+                });
+                ui.allocate_ui_with_layout(Vec2::new(anyone_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(anyone_width);
+                    label(ui, p, aurora_i18n::tr!("content-perms-anyone"));
+                    if let Some(v) = check(ui, p, b.everyone_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
+                        b.everyone_copy = v;
+                    }
+                });
+                ui.allocate_ui_with_layout(Vec2::new(next_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(next_width);
+                    label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
+                    if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
+                        b.next_modify = v;
+                    }
+                    if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
+                        b.next_copy = v;
+                    }
+                    if !b.next_copy {
+                        b.next_transfer = true;
+                    }
+                    if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), b.next_copy) {
+                        b.next_transfer = v;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            if let Some(preview) = nested {
+                ui.add_enabled_ui(!running, |ui| {
+                    widgets::checkbox(ui, p, &mut b.nested, aurora_i18n::tr!("content-perms-nested"))
+                        .on_hover_text(aurora_i18n::tr!("content-perms-nested-help"));
+                });
+                if b.nested && !running && !preview.is_empty() {
+                    small(ui, p, preview);
+                }
+                // scripts react to their own rez on the simulator, before any viewer
+                // can stop them: RezObject has no way to rez with scripts off
+                if b.nested && !running {
+                    ui.label(
+                        egui::RichText::new(aurora_i18n::tr!("content-perms-nested-scripts-warning"))
+                            .size(11.0)
+                            .color(p.warn),
+                    );
+                }
+                ui.add_space(4.0);
+            }
+            if !status.is_empty() {
+                small(ui, p, status);
+            }
+        });
+    footer.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if let Some(stop) = stop {
+                *stop = ui
+                    .button(aurora_i18n::tr!("common-stop"))
+                    .on_hover_text(aurora_i18n::tr!("content-perms-nested-stop-help"))
+                    .clicked();
+            } else {
+                let enabled = !running && b.types.iter().any(|on| *on);
+                accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
+                apply = ui
+                    .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
+                    .clicked();
+            }
+            cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+        });
     });
     (apply, accept, cancel)
 }

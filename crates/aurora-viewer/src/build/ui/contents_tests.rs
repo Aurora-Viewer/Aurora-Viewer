@@ -395,3 +395,80 @@ fn bulk_permissions_keep_their_size() {
         |(world, tool), ctx, p| show(ctx, p, tool, world),
     );
 }
+
+#[test]
+fn bulk_permissions_keep_actions_reachable_with_long_nested_details() {
+    for running in [false, true] {
+        let action = if running {
+            aurora_i18n::tr!("common-stop")
+        } else {
+            aurora_i18n::tr!("common-apply")
+        };
+        let details = aurora_i18n::tr!("content-perms-nested-scripts-warning").repeat(8);
+        let draw = |(options, pressed): &mut (BulkPerms, bool), ctx: &egui::Context, p: &Palette| {
+            Floater::new("bulk_perms", "Permissions", egui::pos2(40.0, 40.0), Vec2::new(360.0, 354.0))
+                .fixed()
+                .show(ctx, p, &mut true, |ui| {
+                    let response = controls(
+                        ui,
+                        p,
+                        options,
+                        &details,
+                        running,
+                        aurora_i18n::tr!("content-perms-adjust"),
+                        Some(&details),
+                        running.then_some(&mut *pressed),
+                    );
+                    if !running {
+                        *pressed = response.0;
+                    }
+                });
+        };
+        crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+            "bulk_perms",
+            &[Vec2::new(360.0, 354.0), Vec2::new(360.0, 700.0)],
+            &[(1.0, 1.0), (1.5, 1.0), (1.0, 2.0)],
+            || {
+                (
+                    BulkPerms {
+                        nested: true,
+                        ..Default::default()
+                    },
+                    false,
+                )
+            },
+            draw,
+            |frames, state, case, window, texts| {
+                if window.height() > 600.0 {
+                    let group = crate::ui::widgets::elide_tests::painted(texts, aurora_i18n::tr!("common-group-2"));
+                    let next = crate::ui::widgets::elide_tests::painted(texts, aurora_i18n::tr!("content-perms-next-owner"));
+                    assert!(
+                        next.rect.height() <= group.rect.height() + 0.5,
+                        "{case}: the next-owner heading stays on one line"
+                    );
+                    assert!(window.contains_rect(next.rect), "{case}: the last column stays inside the window");
+                }
+                for label in [action, aurora_i18n::tr!("common-cancel")] {
+                    let text = crate::ui::widgets::elide_tests::painted(texts, label);
+                    assert!(window.contains_rect(text.rect), "{case}: {label} stays inside the window");
+                }
+                let pos = crate::ui::widgets::elide_tests::painted(texts, action).rect.center();
+                for down in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: down,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        |ui| draw(state, ui.ctx(), &crate::theme::Theme::default().palette()),
+                    );
+                }
+                assert!(state.1, "{case}: {action} can be clicked below the scrolling details");
+            },
+        );
+    }
+}
