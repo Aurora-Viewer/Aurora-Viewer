@@ -511,7 +511,9 @@ fn end_in_background(mut child: Child, stream: Option<TcpStream>, grace: Duratio
         let _ = child.kill();
         let _ = child.wait();
     });
-    spawned.map_err(|e| log::warn!("media: no thread to end the plugin process: {e}")).ok()
+    spawned
+        .map_err(|e| log::warn!("media: no thread to end the plugin process: {e}"))
+        .ok()
 }
 
 /// `LD_LIBRARY_PATH` of the plugin process on Linux: SLPlugin's folder
@@ -974,7 +976,11 @@ mod tests {
     /// reaped).
     #[cfg(unix)]
     fn exists(pid: u32) -> bool {
-        Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
     }
 
     #[cfg(unix)]
@@ -999,12 +1005,21 @@ mod tests {
     fn the_exit_thread_waits_out_the_grace_then_kills() {
         let quick = Command::new("sleep").arg("0.1").spawn().expect("sleep");
         let started = Instant::now();
-        end_in_background(quick, None, Duration::from_secs(20)).expect("thread").join().expect("join");
-        assert!(started.elapsed() < Duration::from_secs(10), "a process that quits by itself is not waited for the whole grace");
+        end_in_background(quick, None, Duration::from_secs(20))
+            .expect("thread")
+            .join()
+            .expect("join");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "a process that quits by itself is not waited for the whole grace"
+        );
 
         let stuck = Command::new("sleep").arg("30").spawn().expect("sleep");
         let pid = stuck.id();
-        end_in_background(stuck, None, Duration::from_millis(200)).expect("thread").join().expect("join");
+        end_in_background(stuck, None, Duration::from_millis(200))
+            .expect("thread")
+            .join()
+            .expect("join");
         assert!(!exists(pid), "killed once the grace is over");
     }
 }
