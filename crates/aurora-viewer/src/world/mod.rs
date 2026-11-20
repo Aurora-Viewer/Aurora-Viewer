@@ -1278,8 +1278,11 @@ impl World {
         let fly_override = self.fly_override;
         // the rules are the computer's, not the session's
         let omnifilter = std::mem::take(&mut self.omnifilter);
+        // the avatar cache's store, which the next login reads
+        let avatar_cache = self.avatar_cache.next_login();
         *self = World::new(lib);
         self.omnifilter = omnifilter;
+        self.avatar_cache = avatar_cache;
         self.chat_log = chat_log;
         self.chat_service = chat_service;
         self.cache_dir = cache_dir;

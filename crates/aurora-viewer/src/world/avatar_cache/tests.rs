@@ -446,3 +446,24 @@ fn a_kept_look_goes_with_the_setting_and_an_empty_one_is_not_drawn() {
     world.update_avatar_cache(Instant::now());
     assert!(world.avatar_cache.kept_look(&OTHER).is_none());
 }
+
+#[test]
+fn the_store_stays_for_the_next_login() {
+    let (mut world, _, _) = setup();
+    world
+        .avatar_cache
+        .set_store(Some(std::env::temp_dir().join("aurora-avatar-cache-next-login-test")));
+    world.avatar_cache.insert_set(
+        OTHER,
+        KeptAvatar {
+            saved_at: unix_now(),
+            objects: Vec::new(),
+            look: Some(capture::look_of(&shaped(OTHER, 40, 0xBA4E))),
+        },
+    );
+    world.update_avatar_cache(Instant::now());
+    assert!(world.avatar_cache.kept_look(&OTHER).is_some());
+    world.reset();
+    assert!(world.avatar_cache.io.is_some(), "the next login reads the same store");
+    assert!(world.avatar_cache.kept_look(&OTHER).is_none(), "nothing of the last session");
+}

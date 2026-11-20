@@ -169,6 +169,17 @@ impl AvatarCache {
         self.enabled = on;
     }
 
+    /// What the next login keeps (back to the login screen,
+    /// `World::reset`): the store and its thread, which write what is
+    /// queued before they read anything for it; nothing of this session.
+    pub fn next_login(&mut self) -> AvatarCache {
+        AvatarCache {
+            enabled: self.enabled,
+            io: self.io.take(),
+            ..AvatarCache::default()
+        }
+    }
+
     /// Copies drawn now, for all avatars.
     pub fn copy_count(&self) -> usize {
         self.copies.values().map(Vec::len).sum()
@@ -337,9 +348,11 @@ impl World {
                 todo.push(capture::appearance_of(id, look));
             }
         }
+        if !todo.is_empty() {
+            log::info!("avatar cache: {} kept looks drawn until their appearance comes", todo.len());
+        }
         for a in todo {
             let id = a.avatar_id;
-            log::debug!("avatar cache: the look kept for {id} is drawn until its appearance comes");
             self.appearance_counter += 1;
             self.avatar_cache.looks.insert(id, (a, self.appearance_counter));
             self.mark_avatar_materials_dirty(&id);
@@ -603,6 +616,9 @@ impl World {
                 self.avatar_cache.sets.insert(id, Some(Arc::new(set)));
                 written += 1;
             }
+        }
+        if written > 0 {
+            log::info!("avatar cache: {written} avatars kept");
         }
     }
 
