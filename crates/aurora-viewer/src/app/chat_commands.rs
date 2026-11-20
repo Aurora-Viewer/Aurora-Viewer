@@ -32,6 +32,31 @@ impl App {
         self.run_chat_command(cmd)
     }
 
+    /// `/zoffset…` (cmd_line_chat): the hover height, changed like its slider
+    /// in Appearance (which leaves the automatic height) and silently, so a
+    /// gesture can step it; `/zoffset` alone says the current height.
+    fn z_offset(&mut self, change: cmdline::ZOffset) {
+        use cmdline::ZOffset;
+        if !self.world.hover_height_available() || !self.world.hover_height.ready() {
+            self.report_command(aurora_i18n::tr!("hover-height-unavailable"));
+            return;
+        }
+        let target = match change {
+            ZOffset::By(by) => self.world.hover_height.value() + by,
+            ZOffset::Set(to) => to,
+            ZOffset::Show => {
+                let value = format!("{:+.2}", self.world.hover_height.value());
+                self.report_command(aurora_i18n::tr!("cmdline-zoffset-now", value = value));
+                return;
+            }
+        };
+        if std::mem::replace(&mut self.settings.auto_hover_height, false) {
+            self.settings.save();
+        }
+        self.world.hover_height.preview(target);
+        self.world.hover_height.commit();
+    }
+
     /// FSCommon::report_cmdline_result: a line in the local chat, also
     /// whispered on the announce channel when that option is on.
     fn report_command(&mut self, text: impl Into<String>) {
@@ -87,7 +112,7 @@ impl App {
                     self.report_command(l);
                 }
             }
-            Command::Unavailable(text) => self.report_command(text),
+            Command::ZOffset(change) => self.z_offset(change),
             Command::TeleportLocal { x, y, z } => {
                 let z = z.unwrap_or(self.world.agent.position.z);
                 self.teleport_in_region(Vec3::new(x, y, z));
