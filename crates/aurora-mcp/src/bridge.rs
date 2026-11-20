@@ -456,6 +456,12 @@ pub enum ViewerRequest {
         paths: Vec<String>,
         choice: Option<String>,
         include_textures: Option<bool>,
+        #[serde(default)]
+        include_skin_weights: Option<bool>,
+        #[serde(default)]
+        include_joint_positions: Option<bool>,
+        #[serde(default)]
+        lock_scale: Option<bool>,
         /// clear / upload: only these importer entries (status lists their ids)
         entry_ids: Vec<String>,
     },
@@ -609,6 +615,8 @@ pub enum ViewerRequest {
         friction: Option<f32>,
         restitution: Option<f32>,
         gravity_multiplier: Option<f32>,
+        #[serde(default)]
+        animated_mesh: Option<bool>,
     },
     PrimSetMetadata {
         local_id: u32,

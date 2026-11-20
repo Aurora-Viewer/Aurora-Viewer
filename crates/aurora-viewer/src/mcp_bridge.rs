@@ -257,6 +257,7 @@ pub struct McpBridge {
     pending_notecard_drops: VecDeque<PendingNotecardDrop>,
     lsd_stores: HashMap<Uuid, LinksetDataStore>,
     mcp_poses: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
+    mesh_textures_configured: HashSet<Uuid>,
     local_mesh_auto_reload: bool,
     pub sse_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub last_voice_speaking: HashMap<Uuid, bool>,
@@ -703,8 +704,18 @@ impl App {
         }
     }
 
-    fn progress_mcp_state_machines(&mut self, _renderer: Option<&mut Renderer>) {
+    fn progress_mcp_state_machines(&mut self, renderer: Option<&mut Renderer>) {
         let now = Instant::now();
+
+        // Headless or pre-World sessions skip `App::show_imports`, so drive pending importer workers here.
+        if (renderer.is_none() || !self.in_world()) && (self.imports.pending_files.is_some() || !self.imports.entries.is_empty()) {
+            let commands = self
+                .imports
+                .poll(&self.egui_ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
+            for command in commands {
+                self.send(command);
+            }
+        }
 
         // 1. Progress pending PrimRezNew transactions
         if !self.mcp_bridge.build_tx_mgr.pending_rez.is_empty() {
@@ -1922,9 +1933,21 @@ impl App {
                 paths,
                 choice,
                 include_textures,
+                include_skin_weights,
+                include_joint_positions,
+                lock_scale,
                 entry_ids,
             } => {
-                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures, entry_ids);
+                let resp = self.handle_mcp_asset_upload(
+                    &action,
+                    paths,
+                    choice.as_deref(),
+                    include_textures,
+                    include_skin_weights,
+                    include_joint_positions,
+                    lock_scale,
+                    entry_ids,
+                );
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::InventoryRezObject { item_id, position, select } => {
@@ -2161,6 +2184,7 @@ impl App {
                 friction,
                 restitution,
                 gravity_multiplier,
+                animated_mesh,
             } => {
                 let resp = self.handle_mcp_prim_set_physics_properties(
                     local_id,
@@ -2172,6 +2196,7 @@ impl App {
                     friction,
                     restitution,
                     gravity_multiplier,
+                    animated_mesh,
                 );
                 let _ = reply_tx.send(resp);
             }
@@ -2305,6 +2330,46 @@ impl App {
                 let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or("inventory");
                 let open = arguments.get("open").and_then(|v| v.as_bool()).unwrap_or(true);
                 self.set_floater_open(name, open)
+            }
+            ("Aurora.Build", "set_animated_mesh" | "setanimatedmesh") => {
+                let raw_id = arguments
+                    .get("local_id")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?;
+                let local_id = u32::try_from(raw_id).map_err(|_| McpError::InvalidParams(format!("local_id out of range: {raw_id}")))?;
+                let enabled = arguments
+                    .get("enabled")
+                    .or_else(|| arguments.get("animated_mesh"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                self.handle_mcp_set_animated_mesh(local_id, enabled)
+            }
+            ("Aurora.Imports", "set_mesh_options" | "setmeshoptions") => {
+                let raw_ids: Vec<String> = match arguments.get("entry_ids") {
+                    None | Some(Value::Null) => Vec::new(),
+                    Some(Value::Array(arr)) => {
+                        let mut ids = Vec::with_capacity(arr.len());
+                        for item in arr {
+                            let s = item
+                                .as_str()
+                                .ok_or_else(|| McpError::InvalidParams("entry_ids must be an array of UUID strings".into()))?;
+                            ids.push(s.to_owned());
+                        }
+                        ids
+                    }
+                    Some(_) => {
+                        return Err(McpError::InvalidParams("entry_ids must be an array of UUID strings".into()));
+                    }
+                };
+                let ids = self.parse_import_entry_ids(&raw_ids)?;
+                self.apply_mesh_upload_options(
+                    &ids,
+                    arguments.get("include_textures").and_then(|v| v.as_bool()),
+                    arguments.get("include_skin_weights").and_then(|v| v.as_bool()),
+                    arguments.get("include_joint_positions").and_then(|v| v.as_bool()),
+                    arguments.get("lock_scale").and_then(|v| v.as_bool()),
+                );
+                self.handle_mcp_mesh_upload_status()
             }
             _ => Err(McpError::InvalidParams(format!(
                 "Unknown viewer_call '{api}.{operation}'. Call viewer_api_inspect to list supported operations."
@@ -2679,6 +2744,7 @@ impl App {
                         "attachment_point": attach_pt,
                         "attachment_point_name": attach_name,
                         "is_mesh": o.volume.is_mesh(),
+                        "animated_mesh": object_is_animated_mesh(o),
                         "owner_id": owner_id.to_string(),
                     }),
                 ))
@@ -4136,24 +4202,66 @@ impl App {
         })))
     }
 
+    fn parse_import_entry_ids(&self, entry_ids: &[String]) -> Result<Vec<Uuid>, McpError> {
+        validate_import_entry_ids(&self.imports, entry_ids)
+    }
+
+    fn apply_mesh_upload_options(
+        &mut self,
+        entry_ids: &[Uuid],
+        include_textures: Option<bool>,
+        include_skin_weights: Option<bool>,
+        include_joint_positions: Option<bool>,
+        lock_scale: Option<bool>,
+    ) {
+        let picked = |id: Uuid| entry_ids.is_empty() || entry_ids.contains(&id);
+        for entry in &mut self.imports.entries {
+            if !picked(entry.id) {
+                continue;
+            }
+            if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
+                let prev = draft.options.clone();
+                if let Some(v) = include_textures {
+                    draft.options.textures = v;
+                    self.mcp_bridge.mesh_textures_configured.insert(entry.id);
+                }
+                if let Some(v) = include_skin_weights {
+                    draft.options.skin = v && draft.inspector.avatar.valid();
+                }
+                if let Some(v) = include_joint_positions {
+                    draft.options.joints = v && draft.options.skin;
+                }
+                if let Some(v) = lock_scale {
+                    draft.options.lock_scale = v && draft.options.joints;
+                }
+                if !draft.options.skin {
+                    draft.options.joints = false;
+                    draft.options.lock_scale = false;
+                }
+                if !draft.options.joints {
+                    draft.options.lock_scale = false;
+                }
+                draft.preview_weights = draft.options.skin;
+                draft.show_overrides = draft.options.joints;
+                draft.finish_edit(&prev, false);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn handle_mcp_asset_upload(
         &mut self,
         action: &str,
         paths: Vec<String>,
         choice_str: Option<&str>,
         include_textures: Option<bool>,
+        include_skin_weights: Option<bool>,
+        include_joint_positions: Option<bool>,
+        lock_scale: Option<bool>,
         entry_ids: Vec<String>,
     ) -> Result<ViewerResponse, McpError> {
         let act = action.trim().to_ascii_lowercase();
-        let wanted: Vec<Uuid> = entry_ids.iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect();
-        if wanted.len() != entry_ids.len() {
-            return Err(McpError::InvalidParams(
-                "entry_ids must be entry ids from asset_upload status".into(),
-            ));
-        }
-        if let Some(missing) = wanted.iter().find(|id| self.imports.entries.iter().all(|e| e.id != **id)) {
-            return Err(McpError::InvalidParams(format!("no staged entry {missing}")));
-        }
+        let wanted = self.parse_import_entry_ids(&entry_ids)?;
         let picked = |id: Uuid| wanted.is_empty() || wanted.contains(&id);
         let parse_choice = |s: Option<&str>, first_path: Option<&str>| -> crate::imports::Choice {
             match s.unwrap_or("").trim().to_ascii_lowercase().as_str() {
@@ -4208,14 +4316,33 @@ impl App {
                 );
             }
             "quote" | "calculate_fees" => {
-                let inc_tex = include_textures.unwrap_or(true);
+                if include_textures.is_some() {
+                    self.apply_mesh_upload_options(&wanted, include_textures, include_skin_weights, include_joint_positions, lock_scale);
+                } else {
+                    let default_tex_ids: Vec<Uuid> = self
+                        .imports
+                        .entries
+                        .iter()
+                        .filter(|e| {
+                            picked(e.id)
+                                && matches!(&e.source, Some(crate::imports::Source::Mesh(_)))
+                                && !self.mcp_bridge.mesh_textures_configured.contains(&e.id)
+                        })
+                        .map(|e| e.id)
+                        .collect();
+                    if !default_tex_ids.is_empty() {
+                        self.apply_mesh_upload_options(&default_tex_ids, Some(true), None, None, None);
+                    }
+                    if include_skin_weights.is_some() || include_joint_positions.is_some() || lock_scale.is_some() {
+                        self.apply_mesh_upload_options(&wanted, None, include_skin_weights, include_joint_positions, lock_scale);
+                    }
+                }
                 let mut ids = Vec::new();
-                for entry in &mut self.imports.entries {
+                for entry in &self.imports.entries {
                     if !picked(entry.id) {
                         continue;
                     }
-                    if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
-                        draft.options.textures = inc_tex;
+                    if matches!(&entry.source, Some(crate::imports::Source::Mesh(_))) {
                         ids.push(entry.id);
                     }
                 }
@@ -4231,6 +4358,10 @@ impl App {
                         entry.selected = wanted.contains(&entry.id);
                     }
                 }
+                if include_textures.is_some() || include_skin_weights.is_some() || include_joint_positions.is_some() || lock_scale.is_some()
+                {
+                    self.apply_mesh_upload_options(&wanted, include_textures, include_skin_weights, include_joint_positions, lock_scale);
+                }
                 // the builder's rule: nothing is sent before its fee and land
                 // impact have been read
                 if let Some(e) = self.imports.entries.iter().find(|e| {
@@ -4242,13 +4373,6 @@ impl App {
                         "'{}' has no quote yet: run asset_upload quote, read upload_price_l$ and land_impact in status, then upload",
                         e.name
                     )));
-                }
-                if let Some(inc_tex) = include_textures {
-                    for entry in &mut self.imports.entries {
-                        if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
-                            draft.options.textures = inc_tex;
-                        }
-                    }
                 }
                 let prices = if self.demo {
                     aurora_net::inventory::upload::Prices {
@@ -4275,6 +4399,7 @@ impl App {
                 for index in (0..self.imports.entries.len()).rev() {
                     if picked(self.imports.entries[index].id) && !self.imports.entries[index].local {
                         let entry = self.imports.entries.remove(index);
+                        self.mcp_bridge.mesh_textures_configured.remove(&entry.id);
                         self.scene.jobs.discard(entry);
                     }
                 }
@@ -4692,6 +4817,14 @@ impl App {
                 }
                 obj.insert("scale".into(), json!(draft.options.scale));
                 obj.insert("include_textures".into(), json!(draft.options.textures));
+                obj.insert("include_skin_weights".into(), json!(draft.options.skin));
+                obj.insert("include_joint_positions".into(), json!(draft.options.joints));
+                obj.insert("lock_scale".into(), json!(draft.options.lock_scale));
+                obj.insert("has_skin".into(), json!(draft.inspector.avatar.has_skin));
+                obj.insert("skin_valid".into(), json!(draft.inspector.avatar.valid()));
+                obj.insert("skin_unknown_joints".into(), json!(draft.inspector.avatar.unknown));
+                obj.insert("skin_too_many_joints".into(), json!(draft.inspector.avatar.too_many));
+                obj.insert("skin_joint_count".into(), json!(draft.inspector.avatar.joints.len()));
                 obj.insert("warnings".into(), json!(draft.scene.warnings));
                 if let Some(quote) = &draft.quote {
                     obj.insert(
@@ -4918,9 +5051,9 @@ impl App {
         } else if p.ends_with("/blender_live/stop") {
             let _ = self.handle_mcp_livemesh_control("stop", None)?;
         } else if p.ends_with("/calculate_fees") {
-            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None, Vec::new())?;
+            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None, None, None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/import") {
-            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None, Vec::new())?;
+            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None, None, None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/cancel") {
             self.imports.cancel_remaining();
         } else if let Some(floater_name) = p.strip_prefix("/main_view/floaters/")
@@ -4961,7 +5094,7 @@ impl App {
         if (path.contains("local_mesh") || path.contains("import"))
             && let Some(choice_str) = value.as_str()
         {
-            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None, Vec::new());
+            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None, None, None, None, Vec::new());
         }
         Ok(ViewerResponse::Json(json!({
             "ok": true,
@@ -5667,6 +5800,23 @@ impl App {
 
     // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
 
+    fn handle_mcp_set_animated_mesh(&mut self, local_id: u32, enabled: bool) -> Result<ViewerResponse, McpError> {
+        let (region_handle, new_flags) = toggle_animated_mesh_in_world(&mut self.world, local_id, enabled)?;
+        self.send(NetCommand::Build(BuildCmd::SetExtraParam {
+            handle: region_handle,
+            local_id,
+            param_type: aurora_prim::extra::PARAMS_EXTENDED_MESH,
+            in_use: true,
+            data: aurora_prim::extra::pack_extended_mesh(new_flags),
+        }));
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "animated_mesh": enabled,
+        })))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn handle_mcp_prim_set_physics_properties(
         &mut self,
         local_id: u32,
@@ -5678,6 +5828,7 @@ impl App {
         friction: Option<f32>,
         restitution: Option<f32>,
         gravity_multiplier: Option<f32>,
+        animated_mesh: Option<bool>,
     ) -> Result<ViewerResponse, McpError> {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
@@ -5693,6 +5844,21 @@ impl App {
         let phys_flag = physics.unwrap_or(f & crate::build::edits::FLAGS_USE_PHYSICS != 0);
         let temp_flag = temporary.unwrap_or(f & crate::build::edits::FLAGS_TEMPORARY_ON_REZ != 0);
         let phan_flag = phantom.unwrap_or(f & crate::build::edits::FLAGS_PHANTOM != 0);
+
+        let has_physics_params =
+            shape_type.is_some() || density.is_some() || friction.is_some() || restitution.is_some() || gravity_multiplier.is_some();
+        let any_phys_or_flag = physics.is_some() || temporary.is_some() || phantom.is_some() || has_physics_params;
+
+        if let Some(enabled) = animated_mesh {
+            let _ = self.handle_mcp_set_animated_mesh(local_id, enabled)?;
+            if !any_phys_or_flag {
+                return Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "local_id": local_id,
+                    "animated_mesh": enabled,
+                })));
+            }
+        }
 
         // Update local object representation
         if let Some(obj_mut) = self.world.objects.get_mut(idx) {
@@ -5714,9 +5880,6 @@ impl App {
             }
             obj_mut.update_flags = updated_flags;
         }
-
-        let has_physics_params =
-            shape_type.is_some() || density.is_some() || friction.is_some() || restitution.is_some() || gravity_multiplier.is_some();
 
         let shape_type_u8 = if let Some(st) = shape_type {
             match st.to_ascii_lowercase().as_str() {
@@ -5754,6 +5917,8 @@ impl App {
             }));
         }
 
+        let animated_flag = self.world.objects.get(idx).is_some_and(object_is_animated_mesh);
+
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "local_id": local_id,
@@ -5761,6 +5926,7 @@ impl App {
             "temporary": temp_flag,
             "phantom": phan_flag,
             "shape_type": shape_type.unwrap_or(if shape_type_u8 == 2 { "convex_hull" } else if shape_type_u8 == 1 { "none" } else { "prim" }),
+            "animated_mesh": animated_flag,
         })))
     }
 
@@ -6658,6 +6824,61 @@ fn landing_type_name(landing_type: i32) -> &'static str {
     }
 }
 
+fn object_is_animated_mesh(obj: &crate::world::objects::Object) -> bool {
+    obj.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0
+}
+
+fn toggle_animated_mesh_in_world(world: &mut crate::world::World, local_id: u32, enabled: bool) -> Result<(u64, u32), McpError> {
+    let Some(handle) = world.main_region else {
+        return Err(McpError::NotInWorld);
+    };
+    let Some(idx) = world.objects.index_of(&crate::world::objects::ObjKey { region: handle, local_id }) else {
+        return Err(McpError::InvalidParams(format!(
+            "Object with local_id {local_id} not found in region"
+        )));
+    };
+    let (is_root_mesh, region_handle, cur_flags) = {
+        let obj = world
+            .objects
+            .get(idx)
+            .ok_or_else(|| McpError::InvalidParams(format!("prim with local_id {local_id} not found")))?;
+        (
+            obj.parent_id == 0 && obj.volume.is_mesh(),
+            obj.key.region,
+            obj.extra.extended_mesh_flags.unwrap_or(0),
+        )
+    };
+    if !is_root_mesh {
+        return Err(McpError::InvalidParams(format!(
+            "prim {local_id} must be a linkset root mesh to toggle Animated Mesh"
+        )));
+    }
+    let new_flags = if enabled {
+        cur_flags | aurora_prim::extra::EXTENDED_MESH_ANIMATED
+    } else {
+        cur_flags & !aurora_prim::extra::EXTENDED_MESH_ANIMATED
+    };
+    if let Some(obj_mut) = world.objects.get_mut(idx) {
+        obj_mut.extra.extended_mesh_flags = Some(new_flags);
+        obj_mut.material_dirty = true;
+        obj_mut.render.needs_records = true;
+    }
+    Ok((region_handle, new_flags))
+}
+
+fn validate_import_entry_ids(imports: &crate::imports::Imports, entry_ids: &[String]) -> Result<Vec<Uuid>, McpError> {
+    let wanted: Vec<Uuid> = entry_ids.iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect();
+    if wanted.len() != entry_ids.len() {
+        return Err(McpError::InvalidParams(
+            "entry_ids must be entry ids from asset_upload status".into(),
+        ));
+    }
+    if let Some(missing) = wanted.iter().find(|id| imports.entries.iter().all(|e| e.id != **id)) {
+        return Err(McpError::InvalidParams(format!("no staged entry {missing}")));
+    }
+    Ok(wanted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6713,5 +6934,78 @@ mod tests {
         assert_eq!(walk, uuid::uuid!("6ed24bd8-91aa-4b12-ccc7-c97c857ab4e0"));
         assert_eq!(stand, uuid::uuid!("2408fe9e-df1d-1d7d-f4ff-1384fa7b350f"));
         assert_ne!(wave, stand);
+    }
+
+    #[test]
+    fn animesh_toggle_and_validation_on_demo_world() {
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
+            world.apply(ev);
+        }
+
+        fn lookup(w: &crate::world::World, local_id: u32) -> &crate::world::objects::Object {
+            let idx = w
+                .objects
+                .index_of(&crate::world::objects::ObjKey {
+                    region: crate::demo::HANDLE,
+                    local_id,
+                })
+                .expect("demo object present");
+            w.objects.get(idx).expect("object slot")
+        }
+
+        assert!(object_is_animated_mesh(lookup(&world, 9200)));
+        assert!(!object_is_animated_mesh(lookup(&world, 9204)));
+        assert!(!object_is_animated_mesh(lookup(&world, 9202)));
+
+        assert_eq!(
+            toggle_animated_mesh_in_world(&mut world, 9200, false).expect("disable animesh"),
+            (crate::demo::HANDLE, 0)
+        );
+        assert!(!object_is_animated_mesh(lookup(&world, 9200)));
+
+        assert_eq!(
+            toggle_animated_mesh_in_world(&mut world, 9200, true).expect("enable animesh"),
+            (crate::demo::HANDLE, aurora_prim::extra::EXTENDED_MESH_ANIMATED)
+        );
+        assert!(object_is_animated_mesh(lookup(&world, 9200)));
+
+        for non_root_mesh in [9204_u32, 9202_u32] {
+            match toggle_animated_mesh_in_world(&mut world, non_root_mesh, true) {
+                Err(McpError::InvalidParams(msg)) => {
+                    assert!(msg.contains("must be a linkset root mesh"), "unexpected message: {msg}");
+                }
+                other => panic!("expected InvalidParams for {non_root_mesh}, got {other:?}"),
+            }
+        }
+
+        assert!(matches!(
+            toggle_animated_mesh_in_world(&mut world, 999_999, true),
+            Err(McpError::InvalidParams(_))
+        ));
+    }
+
+    #[test]
+    fn validate_import_entry_ids_rejects_malformed_and_missing() {
+        let mut imports = crate::imports::Imports::default();
+        let entry = crate::imports::Entry::new("test.glb".into(), Err("stub".into()), Default::default());
+        let entry_id = entry.id;
+        imports.entries.push(entry);
+
+        assert_eq!(validate_import_entry_ids(&imports, &[]).unwrap(), Vec::<Uuid>::new());
+        assert_eq!(
+            validate_import_entry_ids(&imports, &[entry_id.to_string()]).unwrap(),
+            vec![entry_id]
+        );
+        assert!(matches!(
+            validate_import_entry_ids(&imports, &["not-a-uuid".into()]),
+            Err(McpError::InvalidParams(_))
+        ));
+        match validate_import_entry_ids(&imports, &[Uuid::new_v4().to_string()]) {
+            Err(McpError::InvalidParams(msg)) => {
+                assert!(msg.contains("no staged entry"), "unexpected message: {msg}");
+            }
+            other => panic!("expected no staged entry error, got {other:?}"),
+        }
     }
 }

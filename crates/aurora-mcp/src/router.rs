@@ -1448,6 +1448,9 @@ impl McpRouter {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let include_textures = args.get("include_textures").and_then(Value::as_bool);
+                let include_skin_weights = args.get("include_skin_weights").and_then(Value::as_bool);
+                let include_joint_positions = args.get("include_joint_positions").and_then(Value::as_bool);
+                let lock_scale = args.get("lock_scale").and_then(Value::as_bool);
                 let entry_ids: Vec<String> = args
                     .get("entry_ids")
                     .and_then(Value::as_array)
@@ -1461,6 +1464,9 @@ impl McpRouter {
                             paths,
                             choice,
                             include_textures,
+                            include_skin_weights,
+                            include_joint_positions,
+                            lock_scale,
                             entry_ids,
                         },
                         25_000,
@@ -1875,6 +1881,7 @@ impl McpRouter {
                 let friction = args.get("friction").and_then(Value::as_f64).map(|v| v as f32);
                 let restitution = args.get("restitution").and_then(Value::as_f64).map(|v| v as f32);
                 let gravity_multiplier = args.get("gravity_multiplier").and_then(Value::as_f64).map(|v| v as f32);
+                let animated_mesh = args.get("animated_mesh").and_then(Value::as_bool);
 
                 let resp = self
                     .send_to_viewer(
@@ -1889,6 +1896,7 @@ impl McpRouter {
                             friction,
                             restitution,
                             gravity_multiplier,
+                            animated_mesh,
                         },
                         5_000,
                     )
@@ -2435,12 +2443,28 @@ fn inspect_viewer_api(api: &str, operation: Option<&str>) -> Value {
             }
         },
         "Aurora.Build": {
-            "description": "Async-correlated in-world prim rezzing, transforms, linking, LSL and Linkset Data",
+            "description": "Async-correlated in-world prim rezzing, transforms, linking, LSL, Animesh, and Linkset Data",
             "operations": {
                 "rezNew": { "args": { "position": [128.0, 130.0, 25.0], "scale": [1.0, 1.0, 1.0] }, "readonly": false },
                 "transform": { "args": { "local_id": 1, "scale": [2.0, 2.0, 0.5] }, "readonly": false },
+                "set_animated_mesh": { "args": { "local_id": 1, "enabled": true }, "readonly": false },
                 "lsdInspect": { "args": { "object_local_id": 1 }, "readonly": true },
                 "lsdMutate": { "args": { "object_local_id": 1, "operations": [] }, "readonly": false }
+            }
+        },
+        "Aurora.Imports": {
+            "description": "Mesh importer upload options (textures, skin weights, joint positions, lock scale)",
+            "operations": {
+                "set_mesh_options": {
+                    "args": {
+                        "entry_ids": [],
+                        "include_textures": true,
+                        "include_skin_weights": true,
+                        "include_joint_positions": false,
+                        "lock_scale": false
+                    },
+                    "readonly": false
+                }
             }
         }
     });
@@ -2545,7 +2569,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "viewer_api_inspect".into(),
-            description: "Inspect available viewer APIs and operations (LLAppViewer, LLViewerControl, LLAgent, LLWorld, LLCamera, Aurora.RLVa, Aurora.Poser, Aurora.Build).".into(),
+            description: "Inspect available viewer APIs and operations (LLAppViewer, LLViewerControl, LLAgent, LLWorld, LLCamera, Aurora.RLVa, Aurora.Poser, Aurora.Build, Aurora.Imports).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3482,7 +3506,23 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "enum": ["mesh", "texture", "sound", "animation", "material", "bulk", "local"]
                     },
-                    "include_textures": { "type": "boolean", "default": true },
+                    "include_textures": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Include embedded textures when quoting/uploading a mesh (defaults to true on quote unless previously configured via Aurora.Imports.set_mesh_options)"
+                    },
+                    "include_skin_weights": {
+                        "type": "boolean",
+                        "description": "Include skin weights for rigged mesh uploads (requires a valid skeleton rig)"
+                    },
+                    "include_joint_positions": {
+                        "type": "boolean",
+                        "description": "Include joint position overrides for rigged mesh uploads (requires include_skin_weights)"
+                    },
+                    "lock_scale": {
+                        "type": "boolean",
+                        "description": "Lock scale when joint position overrides are enabled (requires include_joint_positions)"
+                    },
                     "entry_ids": { "type": "array", "items": { "type": "string" }, "description": "clear / upload / quote: only these entries (ids from status); upload deselects every other entry" }
                 }
             }),
@@ -3824,7 +3864,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "prim_set_physics_properties".into(),
-            description: "Modify physics flags (physical, temporary, phantom) and simulator physics collision shape parameters (prim, convex hull, none, density, friction, restitution) for a primitive or linkset.".into(),
+            description: "Modify physics flags (physical, temporary, phantom), simulator physics collision shape parameters (prim, convex hull, none, density, friction, restitution), and the Animated Mesh (Animesh) extended mesh flag on root mesh prims.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3836,7 +3876,8 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                     "density": { "type": "number", "description": "Material density in kg/m^3 (default 1000.0)" },
                     "friction": { "type": "number", "description": "Surface friction coefficient [0.0 .. 1.0] (default 0.6)" },
                     "restitution": { "type": "number", "description": "Restitution / bounciness [0.0 .. 1.0] (default 0.0)" },
-                    "gravity_multiplier": { "type": "number", "description": "Gravity multiplier (default 1.0)" }
+                    "gravity_multiplier": { "type": "number", "description": "Gravity multiplier (default 1.0)" },
+                    "animated_mesh": { "type": "boolean", "description": "Enable or disable Animated Mesh (Animesh) extended mesh flag on a root mesh prim" }
                 },
                 "required": ["local_id"]
             }),
@@ -4471,6 +4512,211 @@ mod tests {
                     t.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn asset_upload_and_physics_schemas_include_rigged_and_animesh_fields() {
+        let defs = all_tool_definitions();
+
+        let asset_upload = defs.iter().find(|d| d.name == "asset_upload").expect("asset_upload tool missing");
+        let asset_props = &asset_upload.input_schema["properties"];
+        for field in [
+            "include_textures",
+            "include_skin_weights",
+            "include_joint_positions",
+            "lock_scale",
+            "entry_ids",
+        ] {
+            assert!(asset_props.get(field).is_some(), "asset_upload schema missing '{field}'");
+        }
+
+        let physics = defs
+            .iter()
+            .find(|d| d.name == "prim_set_physics_properties")
+            .expect("prim_set_physics_properties tool missing");
+        assert!(
+            physics.input_schema["properties"].get("animated_mesh").is_some(),
+            "prim_set_physics_properties schema missing 'animated_mesh'"
+        );
+    }
+
+    #[test]
+    fn viewer_api_inspect_exposes_animesh_and_import_mesh_options() {
+        let catalog = inspect_viewer_api("", None);
+        let apis = &catalog["available_apis"];
+
+        let animesh = &apis["Aurora.Build"]["operations"]["set_animated_mesh"];
+        assert_eq!(animesh.get("readonly").and_then(Value::as_bool), Some(false));
+        assert!(animesh["args"].get("local_id").is_some());
+        assert!(animesh["args"].get("enabled").is_some());
+
+        let mesh_opts = &apis["Aurora.Imports"]["operations"]["set_mesh_options"];
+        assert_eq!(mesh_opts.get("readonly").and_then(Value::as_bool), Some(false));
+        for field in [
+            "entry_ids",
+            "include_textures",
+            "include_skin_weights",
+            "include_joint_positions",
+            "lock_scale",
+        ] {
+            assert!(
+                mesh_opts["args"].get(field).is_some(),
+                "Aurora.Imports.set_mesh_options args missing '{field}'"
+            );
+        }
+
+        assert!(
+            ViewerRequest::ViewerCall {
+                api: "Aurora.Build".into(),
+                operation: "set_animated_mesh".into(),
+                arguments: json!({ "local_id": 1, "enabled": true }),
+            }
+            .requires_lease()
+        );
+        assert!(
+            ViewerRequest::ViewerCall {
+                api: "Aurora.Imports".into(),
+                operation: "set_mesh_options".into(),
+                arguments: json!({ "include_textures": false }),
+            }
+            .requires_lease()
+        );
+    }
+
+    #[tokio::test]
+    async fn router_forwards_rigged_upload_and_animesh_fields() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let router = McpRouter::new(tx, McpProfile::All);
+
+        let lease_res = router
+            .call_tool("control_acquire", json!({ "label": "test-suite", "seconds": 60 }))
+            .await;
+        assert_eq!(lease_res.get("isError").and_then(Value::as_bool), Some(false));
+        let lease_text = lease_res["content"][0]["text"].as_str().expect("lease text");
+        let lease_json: Value = serde_json::from_str(lease_text).expect("lease json");
+        let lease_id = lease_json["lease"]["lease_id"].as_str().expect("lease_id").to_owned();
+
+        let responder = tokio::spawn(async move {
+            let mut recorded = Vec::new();
+            while let Some(env) = rx.recv().await {
+                recorded.push(env.request);
+                let _ = env.reply_tx.send(Ok(ViewerResponse::Json(json!({ "ok": true }))));
+            }
+            recorded
+        });
+
+        let upload_res = router
+            .call_tool(
+                "asset_upload",
+                json!({
+                    "lease_id": lease_id,
+                    "action": "quote",
+                    "include_textures": false,
+                    "include_skin_weights": true,
+                    "include_joint_positions": true,
+                    "lock_scale": true,
+                    "entry_ids": ["11111111-1111-1111-1111-111111111111"],
+                }),
+            )
+            .await;
+        assert_eq!(upload_res.get("isError").and_then(Value::as_bool), Some(false));
+
+        let phys_res = router
+            .call_tool(
+                "prim_set_physics_properties",
+                json!({
+                    "lease_id": lease_id,
+                    "local_id": 42,
+                    "animated_mesh": true,
+                }),
+            )
+            .await;
+        assert_eq!(phys_res.get("isError").and_then(Value::as_bool), Some(false));
+
+        drop(router);
+        let recorded = responder.await.expect("responder join");
+        assert_eq!(recorded.len(), 2);
+
+        match &recorded[0] {
+            ViewerRequest::AssetUpload {
+                action,
+                include_textures,
+                include_skin_weights,
+                include_joint_positions,
+                lock_scale,
+                entry_ids,
+                ..
+            } => {
+                assert_eq!(action, "quote");
+                assert_eq!(*include_textures, Some(false));
+                assert_eq!(*include_skin_weights, Some(true));
+                assert_eq!(*include_joint_positions, Some(true));
+                assert_eq!(*lock_scale, Some(true));
+                assert_eq!(entry_ids, &vec!["11111111-1111-1111-1111-111111111111".to_owned()]);
+            }
+            other => panic!("expected AssetUpload, got {other:?}"),
+        }
+
+        match &recorded[1] {
+            ViewerRequest::PrimSetPhysicsProperties {
+                local_id, animated_mesh, ..
+            } => {
+                assert_eq!(*local_id, 42);
+                assert_eq!(*animated_mesh, Some(true));
+            }
+            other => panic!("expected PrimSetPhysicsProperties, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn viewer_request_deserializes_without_new_default_fields() {
+        let legacy_upload: ViewerRequest = serde_json::from_value(json!({
+            "AssetUpload": {
+                "action": "quote",
+                "paths": [],
+                "choice": null,
+                "include_textures": true,
+                "entry_ids": []
+            }
+        }))
+        .expect("legacy AssetUpload should deserialize");
+        match legacy_upload {
+            ViewerRequest::AssetUpload {
+                include_skin_weights,
+                include_joint_positions,
+                lock_scale,
+                ..
+            } => {
+                assert_eq!(include_skin_weights, None);
+                assert_eq!(include_joint_positions, None);
+                assert_eq!(lock_scale, None);
+            }
+            other => panic!("expected AssetUpload, got {other:?}"),
+        }
+
+        let legacy_physics: ViewerRequest = serde_json::from_value(json!({
+            "PrimSetPhysicsProperties": {
+                "local_id": 7,
+                "physics": null,
+                "temporary": null,
+                "phantom": null,
+                "shape_type": null,
+                "density": null,
+                "friction": null,
+                "restitution": null,
+                "gravity_multiplier": null
+            }
+        }))
+        .expect("legacy PrimSetPhysicsProperties should deserialize");
+        match legacy_physics {
+            ViewerRequest::PrimSetPhysicsProperties {
+                local_id, animated_mesh, ..
+            } => {
+                assert_eq!(local_id, 7);
+                assert_eq!(animated_mesh, None);
+            }
+            other => panic!("expected PrimSetPhysicsProperties, got {other:?}"),
         }
     }
 }

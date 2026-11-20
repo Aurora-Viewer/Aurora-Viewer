@@ -58,9 +58,9 @@ flowchart LR
     - *Bento IK Poser (3):* `poser_inspect` (inspects 359 bones), `poser_set_bones` (Euler overrides with automatic rollback), `poser_reset`.
     - *Vision & Viewport Capture (1):* `viewport_capture` (`color_rgb` and `depth_normalized` with Kaolin/Three.js-ready calibration).
     - *Inventory & Appearance (4):* `inventory_browse`, `inventory_rez_object`, `appearance_get_worn`, `appearance_mutate` (serialized COF queue).
-    - *Asset Pipeline & LiveMesh (2):* `asset_upload`, `livemesh_control` (headless streaming of LODs and textures directly into the importer).
+    - *Asset Pipeline & LiveMesh (2):* `asset_upload` (stage/quote/upload/clear with `include_textures`, `include_skin_weights`, `include_joint_positions`, `lock_scale`, and `entry_ids`, plus `viewer_call` `Aurora.Imports.set_mesh_options`), `livemesh_control` (headless streaming of LODs and textures directly into the importer).
     - *Linkset Data Suite (3):* `lsd_inspect`, `lsd_mutate`, `lsd_stress_test` (128 KiB quota, HMAC passphrase protection).
-    - *Object Building & Manipulation (8):* `prim_rez_new`, `prim_transform`, `prim_set_shape`, `prim_link`, `prim_delete`, `object_take_or_derez`, `prim_set_physics_properties` (phantom, physical, temporary, collision shape types), `prim_set_metadata` (name and description).
+    - *Object Building & Manipulation (8):* `prim_rez_new`, `prim_transform`, `prim_set_shape`, `prim_link`, `prim_delete`, `object_take_or_derez`, `prim_set_physics_properties` (phantom, physical, temporary, collision shape types, and `animated_mesh` / `viewer_call` `Aurora.Build.set_animated_mesh` Animesh toggle), `prim_set_metadata` (name and description).
     - *Material & Particle Systems (2):* `prim_set_material` (PBR/Blinn-Phong face texturing), `prim_set_particles` (real-time particle system generation and script injection).
     - *Interaction & Seating (2):* `object_touch` (raycast face/UV/ST grabs), `avatar_sit` (prim seating and stand up).
     - *Task & User Notecards (2):* `notecard_read`, `notecard_write` (enforces modify/copy permissions and RLVa `@viewnote`).
