@@ -1775,7 +1775,11 @@ notecard-saving = Guardando…
 notecard-save-failed = No se pudo guardar: { $reason }
 notecard-save-unconfirmed = El servidor guardó la tarjeta de notas, pero la retrolectura no confirmó el nuevo activo.Reintente o vuelva a abrir la tarjeta.
 notecard-demo-save-error = El servidor demo rechaza este guardado.
-notecard-demo-text = 2018, Aurora is a beautiful girl who loves to play with her friends. She loves the forest and is very happy to be in it.ThisAccentsThis notecard can be edited and saved. Emoji: 🐺Welcome to Aurora!This noteCardThis note CardCan beedited and saveDiscuss: This notecardCan be editedand savedEmoji: #ThisThisThisAccessThisThisNotecardThis noteCartThis noteCertificateThis note cardCan be edit and saveThis noteCategory:AccessoriesThis note:This noteAccessoryThis noteThis noteBookThis noteThese notesThis noteCan be savedThis noteAbout this noteThis cardThis noteNoticeThis noteNoteCardThis cardAccentThis noteActuallyThis noteI'm not sureWhat is happening.This note is not happeningThis note has been added to my collectionThis note was added to our collectionThis item was removed from our collectionAccent:This itemThis itemAccentAccent This itemThis articleThis item This itemAccessAccesThis itemThese itemsThis noteIt isAccessThese pointsThis noteContentThis noteAddressThis pageThis pageAccentThese itemThis noteActionThis noteIn this noteAccentThat noteAccess This noteAcceptThis noteAll notesThis card This noteThis accommodationThis noteApproximately 3 years agoThis note.This accentThis accessionThis noteCharacterThis accompanying noteThis notesThis notesAccentthis noteThis actionThis noteYour noteThis NoteCardThis acCompleteThis noteCheckThis noteClick hereThis acCompleteThis noteViewThis noteDisplayThis noteShowThis noteDetailThis acAccent.This
+notecard-demo-text =
+    ¡Le damos la bienvenida a Aurora!
+
+    Esta nota se puede editar y guardar.
+    Acentos: café, árbol. Emoji: 🐺
 notecard-demo-description = Notas e instrucciones para este artículo
 notecard-demo-edit = { "\u000A" }Texto añadido durante la prueba.
 script-save-unconfirmed = El servidor no confirmó que el script se haya guardado.
@@ -2618,7 +2622,16 @@ app-graphics-start-failed =
 
     Registro de este inicio: { $log }
 app-gpu-stall-title = Aurora Viewer: la tarjeta gráfica no responde
-app-gpu-stall = La tarjeta gráfica no ha terminado una imagen para { $seconds } the card responds again, Aurora will reset itself. If you are logged in to your account, you will see this message: “Aurora is not running properly” or “The graphics card driver has been reset”. If you have a graphics cards driver that is not working properly, you can try the following steps:• restart the computer;• reboot the PC;• check the graphics driver;• if the card answers again after a few seconds, you should be able to start Aurora again. If it does not respond, you may need to restart your PC.What to doWhat to tryWhat to attemptWhat to testWhat to fixWhat to avoidWhat to checkWhat to repairWhat to findWhat to buyWhat to installWhat to changeWhat to replaceWhat to removeWhat to reinstallWhat to updateWhat to deleteWhat to addWhat to editWhat to modifyWhat to hideWhat to storeWhat to saveWhat to keepWhat to useWhat to disableWhat to restoreWhat to make newWhat to improveWhat to preventWhat to resolveWhat to look forWhat to readWhat to learnWhat to helpHow to fixWhich to try:• Keep waiting? Yes Keep awaitingWhat to proveWhat to tellWhat to sayWhat to askWhat to answerWhat to suggestWhat to talkWhat to thinkWhat to writeWhat to explainWhat to discussWhat to recommendWhat to considerWhat to reviewWhat to knowWhat to get what informationWhat to seeWhat to hearWhat to watchWhat to eatWhat to wearWhat to chooseWhat to purchaseWhat to searchWhat to solveWhat to rememberWhat to treatWhat to take careWhat to stopWhat to repeatWhich things to doWhich issues to fix What to tryWhich problems to fixHow to resolveWhich errors to fixWho to contactWhat to
+app-gpu-stall =
+    La tarjeta gráfica lleva { $seconds } segundos sin terminar un fotograma. Aurora sigue funcionando, incluidos el mundo, el audio y el chat. La imagen volverá a actualizarse cuando la tarjeta responda.
+
+    Qué puede probar:
+    • espere unos segundos, ya que el controlador puede tardar en restablecerse;
+    • actualice el controlador de la tarjeta gráfica;
+    • desactive las superposiciones de otros programas, como Discord, Steam o MSI Afterburner;
+    • la próxima vez que abra Aurora, elija los ajustes gráficos seguros que se le ofrecerán.
+
+    ¿Desea seguir esperando? Sí mantiene la espera. No cierra la sesión correctamente y sale de Aurora.
 app-gpu-recovered-title = Se reinició la tarjeta gráfica
 app-gpu-recovered = Se reinició el controlador gráfico. Puede deberse a que una imagen tardó demasiado, se agotó la memoria de vídeo o la tarjeta quedó ocupada por otro programa. Aurora volvió a abrir la ventana y mantuvo tu sesión. El mundo se recargará en unos instantes.
 app-gpu-recovered-safe = El controlador gráfico volvió a reiniciarse en pocos minutos. Aurora abrió la ventana con los gráficos mínimos para evitar otro cierre y mantuvo tu sesión. Puedes recuperar tus ajustes gráficos en la pantalla de inicio de sesión.
@@ -2626,7 +2639,14 @@ app-vr-runtime-closed-title = Software VR cerrado
 app-vr-runtime-closed = Tu software de VR (SteamVR, por ejemplo) se cerró y Aurora volvió a abrir su ventana sin él: permaneciste conectado y el mundo se recargó en un instante. La VR vuelve al siguiente inicio de Aurora.
 app-vr-runtime-closed-at-start = Tu software de VR (SteamVR, por ejemplo) se cerró. Aurora volvió a abrir su ventana sin él: permaneciste conectado y el mundo se recargó en un instante. VR vuelve al siguiente inicio de Aurora. Aurora carga tu software VR cada vez que se inicia: para detener esto, desactiva Preferencias › Cámara › VR › Configurar VR al inicio.
 app-gpu-lost-title = Aurora Viewer: se perdió la tarjeta gráfica
-app-gpu-lost = you press OK, Aurora closes. If the driver is not reset, Aurora will continue drawing until it is completely reset. If you are logged in to your Aurora account, you will see a message saying that the graphics card has stopped working for Aurora. If this is the case, you can try the following steps:• remove the driver from your computer;• reinstall the driver;• restart the computer. If Aurora does not start up automatically, you may have to reboot the computer and try again.If Aurora stops drawing, you might need to re-start the computer again.What to doWhat to tryWhat to testWhat to checkWhat to findWhat to fixWhat to helpHow to fixWhy does Aurora stop workingWhat to attemptWhat to makeWhat to getWhat to buyWhat to repairWhat to installWhat to replaceWhat to changeWhat to removeWhat to reinstallWhat to restoreWhat to deleteWhat to addWhat to modifyWhat to updateWhat to improveWhat to avoidWhat to preventWhat to resolveWhat to look forWhat to readWhat to learnWhat to useWhat to knowWhat to correctWhat to troubleshootWhat to tell aboutWhat to thinkWhat to sayWhat to askWhat to discussWhat to talkWhat to suggestWhat to recommendWhat to answerWhat to explainWhat to showWhat to teachWhat to writeWhat to shareWhat to considerWhich to doWhy do you want to do What to doHow to dowhat to doWho to contactWhat to contactWhy should I go to the customer serviceWhat to seekWhat to searchWhat to seeWhat to chooseWhat to be doneWhat to treatWhat to eatWhat to wearWhat to take awayWhat to performWhat to solveWhat to addressWhat to dealWhat to workWhat to manageWhat to controlWhat to reviewWhat to handleWhat to
+app-gpu-lost =
+    Aurora perdió el acceso a la tarjeta gráfica. Es posible que el controlador se haya restablecido porque tardó demasiado en dibujar un fotograma o se agotó la memoria de vídeo. También es posible que se haya desconectado la tarjeta o que la esté usando otro programa. Aurora ya no puede dibujar la imagen. Al pulsar Aceptar, cerrará la sesión correctamente y saldrá.
+
+    Qué puede probar:
+    • actualice el controlador de la tarjeta gráfica;
+    • reduzca el tamaño de las fotos grandes o baje la calidad gráfica;
+    • cierre otros programas que hagan un uso intensivo de la tarjeta gráfica;
+    • la próxima vez que abra Aurora, elija los ajustes gráficos seguros que se le ofrecerán.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora aún no tiene un reemplazo de animación (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajusta la altura del cursor de tu avatar a través de Apariencia → Altura del Cursor.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recomienda no abrir este enlace, ya que si te pide iniciar sesión o pagar, es muy probable que sea una estafa: nunca le des tu contraseña ni información de pago.
@@ -13542,23 +13562,27 @@ bridge-object-info-region = La información del objeto solo está disponible par
 bridge-object-info-failed = Información del objeto no disponible: { $reason }
 bridge-object-info-group-owned = Propiedad del grupo
 bridge-object-info-result =
-    Información del objeto para “{ $name }= “Object ID”ObjectID:ObjectObjectId:ObjektObjekteObjekObjektsObjektesObjektsequenz:ObjetosObjetoObjetoObjetivoObjetivosObjetivaObjetivasObjetividadesObjeciónObjecciónObjeObObObjecionesObjectiveObject ObjectObjecionObjectionObject { $object }
+    Información de «{ $name }»:
+    ID del objeto: { $object }
     Descripción: { $description }
-    Raíz prim: { $root }
-    Recuento de Prim: { $prims }
-    Impacto en la tierra: { $impact }
-    Artículos de inventario: { $inventory }
-    Velocidad: { $velocity } 2018.\tPoSiPosition:Positions:PosPosiciones:PosisPosición:PoPosicion:PoSPos. { $position } ({ $distance } s de la función AutoRoRoRoReRoRoRaRoRo RoRoRo { $rotation } ({ $degrees }idad angular (Angular speed)Angular velocity:Angular Velocity:Angural velocityVelocidadesAngularAngular { $angular } 1000::CreCCre CCCC,Creator:Creature:Criteria:Client:Customer:Controller:User:Users:Username:UserName:UserID:UserPassword:UserPassword:Usuario:UserCreationCCcCCCoCCConCreateCreativeCreatedCreatingCreatCreaterCreationsCreatorsCreatesCreatsCreatiCreatieCreateurCreatioCreatoreCreatoCreatoriCCReCreACC { $creator }
+    Prim raíz: { $root }
+    Número de prims: { $prims }
+    Impacto en el terreno: { $impact }
+    Artículos del inventario: { $inventory }
+    Velocidad: { $velocity } m/s
+    Posición: { $position } ({ $distance } m)
+    Rotación: { $rotation } ({ $degrees }°)
+    Velocidad angular: { $angular } rad/s
+    Creador: { $creator }
     Propietario: { $owner }
-    El propietario anterior: { $previous }
-    Reseñado por: { $rezzer }
+    Propietario anterior: { $previous }
+    Puesto en el mundo por: { $rezzer }
     Grupo: { $group }
-    Tiempo de creación: { $created }
-    Tiempo de corte: { $rezzed }
-    Tipo de búsqueda: { $pathfinding }
-    Punto de fijación: { $attachment }
-    Temporalmente adjunto: { $temporary }
-    Su posición actual: { $observer }
+    Hora de creación: { $created }
+    Hora de aparición en el mundo: { $rezzed }
+    Tipo de navegación: { $pathfinding }
+    Punto de anclaje: { $attachment }
+    Adjuntado temporalmente: { $temporary }
 bridge-query-timeout = El puente no devolvió la información solicitada a tiempo. Inténtelo de nuevo.
 bridge-query-interrupted = La solicitud de información se interrumpió debido a un cambio en la región o en la conexión del puente.
 ao-bootstrap-interrupted = Ya existe una importación de AO sin terminar en #Aurora, revisa el inventario antes de volver a intentarlo.
