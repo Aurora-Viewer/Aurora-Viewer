@@ -487,6 +487,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the chosen one's strength and settings, the before / after line, the filter panel |
+| `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
@@ -1024,6 +1025,16 @@ filter. With `viewfinder`, the whole frame shows the filter live; with
 is drawn with it (`Posterize` with `AURORA_DEMO_SNAPSHOT_TILE=1024`: the 15
 tiles share the histogram curves, no seam along their borders). Capture
 from frame 700.
+
+`AURORA_DEMO_WORLD_LOOK` (no photo window needed): at frame 600 the world
+filters (Preferences › Graphics › Image) are switched on with those looks
+stacked in the order given with `+`, the ids of `AURORA_DEMO_PHOTO_LOOK`
+(`pack:czar-fenris/Noir`, `aurora:vhs`, `Sepia`…), the last one
+chosen; `window` opens the World filters window on that look's tab. The whole 3D
+view takes them, the interface does not; with `AURORA_DEMO_SNAPSHOT` too,
+the photo window's own looks replace them while it is open. Not saved to
+the settings. The log gives `world look demo: <looks> (window <bool>)`.
+Capture from frame 620.
 
 `AURORA_DEMO_CAMERA_PRESETS` (with `AURORA_DEMO_SNAPSHOT=viewfinder`, steps
 joined by `-`): the presets panel opens at frame 600. `save` saves three
