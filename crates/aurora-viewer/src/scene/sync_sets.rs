@@ -171,7 +171,7 @@ fn parking() -> bool {
 }
 
 /// Parent chains longer than this are cut (as `Scene::object_transform`).
-pub const MAX_DEPTH: u8 = 16;
+pub const MAX_DEPTH: u8 = crate::world::objects::MAX_PARENT_DEPTH;
 
 /// World transform of an object: position, rotation, HUD attachment.
 pub type Xf = (Vec3, Quat, bool);

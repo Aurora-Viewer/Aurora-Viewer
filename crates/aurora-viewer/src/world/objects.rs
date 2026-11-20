@@ -27,6 +27,10 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 /// Private namespace for render-only Blender attachments, never a grid handle.
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
+/// Parent chains longer than this are cut: a guard against malformed or
+/// cyclic data, not a real linkset depth (a linkset is flat).
+pub const MAX_PARENT_DEPTH: u8 = 16;
+
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 mod local_duplicates;
@@ -1176,7 +1180,7 @@ impl ObjectStore {
     /// avatar or a link of the chain is unknown.
     fn seat_root(&self, avatar: &Object) -> Option<usize> {
         let mut idx = self.parent_of(avatar)?;
-        for _ in 0..16 {
+        for _ in 0..MAX_PARENT_DEPTH {
             let o = self.get(idx)?;
             if o.is_avatar() {
                 return None;
@@ -1926,7 +1930,7 @@ impl ObjectStore {
     /// The root of the linkset of `idx`: the prim whose parent is an avatar
     /// (an attachment) or nothing.
     pub fn linkset_root(&self, mut idx: usize) -> usize {
-        for _ in 0..16 {
+        for _ in 0..MAX_PARENT_DEPTH {
             let Some(parent) = self.get(idx).and_then(|o| self.parent_of(o)) else {
                 break;
             };
@@ -1941,7 +1945,7 @@ impl ObjectStore {
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
     pub fn worn_on_hud(&self, mut idx: usize) -> bool {
-        for _ in 0..16 {
+        for _ in 0..MAX_PARENT_DEPTH {
             let Some(o) = self.get(idx) else {
                 return false;
             };

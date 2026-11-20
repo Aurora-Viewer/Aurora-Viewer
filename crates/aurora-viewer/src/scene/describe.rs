@@ -117,7 +117,7 @@ fn linkset(world: &World, root: usize) -> Vec<usize> {
 /// The root of the linkset of a prim: the prim whose parent is an avatar
 /// (an attachment) or nothing.
 fn linkset_root(world: &World, mut idx: usize) -> usize {
-    for _ in 0..16 {
+    for _ in 0..super::sync_sets::MAX_DEPTH {
         let Some(parent) = world.objects.get(idx).and_then(|o| world.objects.parent_of(o)) else {
             break;
         };
