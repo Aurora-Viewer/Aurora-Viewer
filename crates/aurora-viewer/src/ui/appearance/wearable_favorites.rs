@@ -293,7 +293,8 @@ fn folder_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Appearan
             aurora_i18n::tr!("wearable-favorites-new-folder-tip"),
             root.is_some(),
         ) {
-            fav.dialog = Some(Dialog::New(aurora_i18n::tr!("wearable-favorites-new-folder-default").into()));
+            let name = crate::text_validation::default_name("wearable-favorites-new-folder-default");
+            fav.dialog = Some(Dialog::New(name.into()));
             fav.focus = true;
         }
         // folder_action_enabled: a subfolder, never All Favorites

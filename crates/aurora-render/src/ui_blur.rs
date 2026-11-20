@@ -1,15 +1,36 @@
 //! Live modal backdrop: scene and lower UI layers are blurred on the GPU;
 //! the modal and higher layers are painted afterwards at full resolution.
 //! This presentation is an explicit Aurora UI choice, requested by the user.
+//!
+//! Preferences › Accessibility › Disable glass turns the GPU blur off
+//! (`set_ui_blur`); high contrast already skips glass by making surfaces
+//! opaque.
 
 use crate::pipeline_cache::CachedPipelines;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Whether windows, bars, menus and modal backdrops sample a GPU blur of
+/// the scene. On by default; Preferences › Accessibility › Disable glass
+/// turns it off.
+pub fn set_ui_blur(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+}
+
+pub(crate) fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
 
 struct Boundary;
 
 /// Place this before painting a modal on its layer. The marker survives
 /// tessellation, so even meshes with the same texture cannot straddle it.
 pub fn blurred_backdrop(ctx: &egui::Context, layer: egui::LayerId) {
+    if !enabled() {
+        return;
+    }
     ctx.layer_painter(layer).add(egui::PaintCallback {
         rect: ctx.content_rect(),
         callback: Arc::new(Boundary),

@@ -114,6 +114,7 @@ impl Imports {
             .into_iter()
             .collect();
         self.local_appearance_targets.clear();
+        self.persistence.attachments.clear();
         self.clear_appearance_targets(objects, &ids, None);
         self.save_local_registry(true);
     }
@@ -493,7 +494,12 @@ impl Imports {
                 continue;
             }
             watch.pending = true;
-            watch.next = now + Duration::from_secs_f32(self.load_preferences.local_reload_seconds.clamp(0.1, 3600.0));
+            watch.next = now
+                + Duration::from_secs_f32(
+                    self.load_preferences
+                        .local_reload_seconds
+                        .clamp(if entry.source.is_none() { 5.0 } else { 0.1 }, 3600.0),
+                );
             let paths = watch.paths.clone();
             let id = entry.id;
             let tx = self.tx.clone();

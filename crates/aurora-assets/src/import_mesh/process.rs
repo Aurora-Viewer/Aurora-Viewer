@@ -6,12 +6,17 @@ use super::*;
 use parry3d::{math::Vector, transformation::try_convex_hull};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+mod adaptive;
+pub use adaptive::base_hull as adaptive_base_hull;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Auto,
     Reliable,
     Precise,
     Fast,
+    /// The Legacy Viewer's own automatic chain, part by part (`legacy_lod`).
+    Legacy,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct LodOptions {
@@ -116,9 +121,177 @@ fn simplify_shadow(indices: &[u32], vertices: &[Vertex], target: usize, error: f
     .collect()
 }
 
+/// The passes of LLModelPreview::genMeshOptimizerPerModel
+/// (indra/newview/llmodelpreview.cpp): `eSimplificationMode`.
+#[derive(Clone, Copy, PartialEq)]
+enum LegacyPass {
+    Full,
+    NoNormals,
+    NoUvs,
+    NoTopology,
+}
+
+/// Port of LLModelPreview::genMeshOptimizerPerModel (llmodelpreview.cpp,
+/// LGPL 2.1): the faces of `model` simplified together as one index list,
+/// then each triangle given back to the face of its first corner. NoNormals
+/// and NoUvs simplify through a shadow index list that welds the corners
+/// with the same position (and UV), as meshopt_generateShadowIndexBufferMulti
+/// does there: the first corner listed stands for the others. The reduced
+/// model and its ratio (indices before / after), or `None` where the Legacy
+/// function returns -1.
+fn legacy_per_model(model: &Model, decimator: f32, error: f32, pass: LegacyPass) -> Option<(Model, f32)> {
+    let size_indices = model.faces.iter().map(|face| face.indices.len()).sum::<usize>();
+    if size_indices < 3 {
+        return None;
+    }
+    let mut vertices = Vec::new();
+    let mut combined = Vec::with_capacity(size_indices);
+    let mut ranges = Vec::with_capacity(model.faces.len());
+    for face in &model.faces {
+        let start = vertices.len() as u32;
+        combined.extend(face.indices.iter().map(|index| start + index));
+        vertices.extend_from_slice(&face.vertices);
+        ranges.push((start, vertices.len() as u32));
+    }
+    let source = if matches!(pass, LegacyPass::NoNormals | LegacyPass::NoUvs) {
+        let mut first = std::collections::HashMap::new();
+        combined
+            .iter()
+            .map(|index| {
+                let vertex = &vertices[*index as usize];
+                let uv = if pass == LegacyPass::NoNormals {
+                    vertex.uv.map(f32::to_bits)
+                } else {
+                    [0; 2]
+                };
+                *first.entry((vertex.position.map(f32::to_bits), uv)).or_insert(*index)
+            })
+            .collect()
+    } else {
+        combined
+    };
+    let target = if decimator > 0.0 {
+        ((size_indices as f32 / decimator).floor() as usize).clamp(3, size_indices)
+    } else {
+        3
+    };
+    let output = if pass == LegacyPass::NoTopology {
+        meshopt::simplify_sloppy_decoder(&source, &vertices, target, error, None)
+    } else {
+        meshopt::simplify_decoder(&source, &vertices, target, error, meshopt::SimplifyOptions::None, None)
+    };
+    if output.len() < 3 {
+        return None;
+    }
+    // A triangle goes to the face of its first corner; a welded corner may
+    // stand in from another face, and its vertex is copied in, as there.
+    let mut reduced = model.clone();
+    let mut valid = 0;
+    for (face, (start, end)) in reduced.faces.iter_mut().zip(&ranges) {
+        let mut copied = std::collections::HashMap::new();
+        face.vertices.clear();
+        face.indices.clear();
+        for triangle in output.as_chunks::<3>().0 {
+            if !(*start..*end).contains(&triangle[0]) {
+                continue;
+            }
+            for index in triangle {
+                let slot = *copied.entry(*index).or_insert_with(|| {
+                    face.vertices.push(vertices[*index as usize].clone());
+                    face.vertices.len() as u32 - 1
+                });
+                face.indices.push(slot);
+            }
+        }
+        if face.indices.len() >= 3 {
+            valid += 1;
+        }
+    }
+    (valid > 0).then(|| (reduced, size_indices as f32 / output.len() as f32))
+}
+
+/// Port of the MESH_OPTIMIZER_AUTO branch of
+/// LLModelPreview::genMeshOptimizerLODs (llmodelpreview.cpp, LGPL 2.1), for
+/// one model: the precise pass, then without normals, then without UVs,
+/// each kept unless it misses the target by more than 1.8 times; then the
+/// sloppy pass, with its correction and the return to the first decimator
+/// as written there; the precise pass again if sloppy does worse.
+fn legacy_lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Model, AssetError> {
+    let source_triangles = model.triangles().max(1);
+    // genMeshOptimizerLODs: base triangles / limit, or 0 for an error threshold
+    let (decimator, error) = if options.error_only {
+        (0.0, options.error)
+    } else {
+        (source_triangles as f32 / options.triangles.max(1) as f32, 1.0)
+    };
+    let mut current: Option<Model> = None;
+    let mut run = |decimator: f32, pass: LegacyPass| -> Result<f32, AssetError> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AssetError::invalid("cancelled"));
+        }
+        Ok(match legacy_per_model(model, decimator, error, pass) {
+            Some((reduced, ratio)) => {
+                current = Some(reduced);
+                ratio
+            }
+            None => -1.0,
+        })
+    };
+    let drift = 1.8;
+    let mut precise = run(decimator, LegacyPass::Full)?;
+    if precise < 0.0 || precise * drift < decimator {
+        precise = run(decimator, LegacyPass::NoNormals)?;
+    }
+    if precise < 0.0 || precise * drift < decimator {
+        precise = run(decimator, LegacyPass::NoUvs)?;
+    }
+    if precise < 0.0 || precise * drift < decimator {
+        let mut last_working_decimator = 0.0;
+        let mut last_working_ratio = f32::MAX;
+        let mut sloppy = run(decimator, LegacyPass::NoTopology)?;
+        if sloppy > 0.0 {
+            last_working_decimator = decimator;
+            last_working_ratio = sloppy;
+        }
+        // Sloppy tends to undershoot the target: a partial correction.
+        if !options.error_only && (sloppy > decimator * 1.4 || sloppy < 0.0) {
+            let corrected = decimator * (decimator / sloppy + 1.0) / 2.0;
+            sloppy = run(corrected, LegacyPass::NoTopology)?;
+        }
+        if last_working_decimator > 0.0 && sloppy < last_working_ratio {
+            sloppy = run(decimator, LegacyPass::NoTopology)?;
+        }
+        if sloppy < 0.0 {
+            let step = 3.0f32.sqrt();
+            let mut smaller = decimator / step;
+            while sloppy < 0.0 && smaller > precise && smaller > 1.0 {
+                sloppy = run(smaller, LegacyPass::NoTopology)?;
+                smaller /= step;
+            }
+        }
+        if sloppy < 0.0 || sloppy < precise {
+            if precise < 0.0 {
+                current = Some(model.clone());
+            } else {
+                run(decimator, LegacyPass::Full)?;
+            }
+        }
+    }
+    let mut reduced = current.unwrap_or_else(|| model.clone());
+    if let Some(angle) = options.crease_angle {
+        for face in &mut reduced.faces {
+            normals(face, angle)?;
+        }
+    }
+    Ok(reduced)
+}
+
 pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Model, AssetError> {
     if !options.error.is_finite() || !(0.0..=1.0).contains(&options.error) {
         return Err(AssetError::invalid("LOD error threshold"));
+    }
+    if options.method == Method::Legacy {
+        return legacy_lod(model, options, cancel);
     }
     let source_triangles = model.triangles().max(1);
     let mut reduced = model.clone();
@@ -225,7 +398,7 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
         };
         let flags = match options.method {
             Method::Reliable => meshopt::SimplifyOptions::LockBorder,
-            Method::Auto | Method::Precise => meshopt::SimplifyOptions::None,
+            Method::Auto | Method::Precise | Method::Legacy => meshopt::SimplifyOptions::None,
             Method::Fast => meshopt::SimplifyOptions::Permissive | meshopt::SimplifyOptions::Prune,
         };
         face.indices = if target == 0 && !options.error_only {

@@ -1,4 +1,5 @@
-//! Portal creator and depth-occluded destination labels.
+//! Portal creator and depth-occluded destination labels. Portals are this
+//! viewer's own: nobody else sees them (`world/portals.rs`).
 use super::{
     hud::Projector,
     widgets::{self, Floater},
@@ -8,19 +9,16 @@ use crate::{
     theme::Palette,
     world::{World, portals},
 };
-use aurora_net::bridge::portal::{Access, Destination, Portal};
 use glam::Vec3;
-use uuid::Uuid;
 
 #[derive(Default)]
 pub struct PortalUi {
     pub open: bool,
     pub destination: String,
-    pub access: Access,
     pub demo_seeded: bool,
     pub notice: Option<String>,
     #[cfg(test)]
-    rects: [Option<egui::Rect>; 2],
+    create_rect: Option<egui::Rect>,
 }
 
 #[derive(Default)]
@@ -30,7 +28,7 @@ pub struct Actions {
 }
 
 impl PortalUi {
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &World, ready: bool) -> Actions {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &World) -> Actions {
         let mut actions = Actions::default();
         if !self.open {
             return actions;
@@ -39,7 +37,7 @@ impl PortalUi {
             "portals",
             aurora_i18n::tr!("portal-title"),
             egui::pos2(70.0, 150.0),
-            egui::vec2(400.0, 350.0),
+            egui::vec2(400.0, 260.0),
         )
         .show(ctx, p, &mut self.open, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -50,60 +48,19 @@ impl PortalUi {
                     .hint_text(aurora_i18n::tr!("portal-destination-hint")),
             );
             ui.add_space(8.0);
-            ui.label(aurora_i18n::tr!("portal-access"));
-            widgets::radio_value(ui, p, &mut self.access, Access::Everyone, aurora_i18n::tr!("portal-everyone"));
-            widgets::radio_value(ui, p, &mut self.access, Access::Friends, aurora_i18n::tr!("portal-friends"));
-            let selected_group = match self.access {
-                Access::Group(id) => id,
-                _ => Uuid::nil(),
-            };
-            let first_group = world.groups.groups.first().map_or(Uuid::nil(), |group| group.id);
-            let mut group_only = matches!(self.access, Access::Group(_));
-            let group_radio = widgets::radio(ui, p, group_only, aurora_i18n::tr!("portal-group"));
-            #[cfg(test)]
-            {
-                self.rects[0] = Some(group_radio.rect);
-            }
-            if group_radio.clicked() {
-                group_only = true;
-                self.access = Access::Group(if selected_group.is_nil() { first_group } else { selected_group });
-            }
-            if group_only {
-                let mut selected = if let Access::Group(id) = self.access { id } else { Uuid::nil() };
-                egui::ComboBox::from_id_salt("portal-group")
-                    .selected_text(
-                        world
-                            .groups
-                            .groups
-                            .iter()
-                            .find(|group| group.id == selected)
-                            .map_or(aurora_i18n::tr!("portal-select-group"), |group| group.name.as_str()),
-                    )
-                    .show_ui(ui, |ui| {
-                        for group in &world.groups.groups {
-                            ui.selectable_value(&mut selected, group.id, &group.name);
-                        }
-                    });
-                self.access = Access::Group(selected);
-            }
-            ui.add_space(8.0);
             ui.label(egui::RichText::new(aurora_i18n::tr!("portal-help")).color(p.muted));
-            if !ready {
-                ui.label(egui::RichText::new(aurora_i18n::tr!("portal-bridge-required")).color(p.warn));
-            }
             if let Some(notice) = &self.notice {
                 ui.label(egui::RichText::new(notice).color(p.warn));
             }
-            let valid = slurl::parse(&self.destination).is_some_and(|location| location.grid.is_none())
-                && !matches!(self.access, Access::Group(id) if id.is_nil());
+            let valid = slurl::parse(&self.destination).is_some_and(|location| location.grid.is_none());
             ui.add_space(8.0);
-            ui.add_enabled_ui(ready && valid && !world.teleporting, |ui| {
+            ui.add_enabled_ui(valid && !world.teleporting, |ui| {
                 let create =
                     widgets::primary_button_sized(ui, p, aurora_i18n::tr!("portal-create"), egui::vec2(ui.available_width(), 30.0));
                 actions.create = create.clicked();
                 #[cfg(test)]
                 {
-                    self.rects[1] = Some(create.rect);
+                    self.create_rect = Some(create.rect);
                 }
             });
             if let Some(own) = world.portals.own() {
@@ -118,114 +75,18 @@ impl PortalUi {
 
 fn label_text(world: &World, entry: &portals::Entry, unix: u64) -> String {
     let timer = aurora_i18n::tr!("portal-expires", seconds = entry.portal.expires.saturating_sub(unix).to_string());
-    let authorized = entry.allowed(world);
-    if !authorized {
-        return format!(
-            "{}\n{}\n{timer}",
-            aurora_i18n::tr!("portal-private"),
-            aurora_i18n::tr!("portal-restricted")
-        );
-    }
-    let details = entry.details.as_ref().filter(|_| authorized);
-    let destination = match details {
-        None => aurora_i18n::tr!("portal-private").to_string(),
-        Some(details) => destination_text(world, &details.destination),
-    };
-    let access = match details.map(|details| details.access) {
-        Some(Access::Everyone) => aurora_i18n::tr!("portal-everyone"),
-        Some(Access::Friends) => aurora_i18n::tr!("portal-friends"),
-        Some(Access::Group(_)) => aurora_i18n::tr!("portal-group"),
-        None => aurora_i18n::tr!("portal-private"),
+    let destination = if world.rlva.has("showloc") {
+        aurora_i18n::tr!("portal-destination-hidden").to_string()
+    } else {
+        let at = entry.portal.position;
+        format!("{} ({:.0}, {:.0}, {:.0})", entry.portal.destination, at[0], at[1], at[2])
     };
     let status = if entry.waiting_for_clearance() {
         aurora_i18n::tr!("portal-step-away")
     } else {
         aurora_i18n::tr!("portal-walk-through")
     };
-    let name = label_name(world, entry);
-    format!("{destination}\n{name} · {access}\n{timer}\n{status}")
-}
-
-fn destination_text(world: &World, destination: &Destination) -> String {
-    if world.rlva.has("showloc") {
-        return aurora_i18n::tr!("portal-destination-hidden").to_string();
-    }
-    format!(
-        "{} ({:.0}, {:.0}, {:.0})",
-        destination.region, destination.position[0], destination.position[1], destination.position[2]
-    )
-}
-
-/// The resident the label names: the relay, unless the creator was seen.
-fn label_name(world: &World, entry: &portals::Entry) -> String {
-    let name = world
-        .person_name(&entry.label_owner())
-        .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
-    world.rlva_hover_privacy.apply(&name).to_string()
-}
-
-/// The first crossing of a portal from someone who is not our friend waits
-/// for this answer (`portals::State::ask_before_crossing`).
-pub struct CrossingAsk {
-    pub owner: Uuid,
-    pub portal: Portal,
-    name: String,
-    destination: String,
-}
-
-impl CrossingAsk {
-    pub fn new(world: &World, entry: &portals::Entry, portal: Portal) -> Self {
-        Self {
-            owner: entry.owner,
-            name: label_name(world, entry),
-            destination: destination_text(
-                world,
-                &Destination {
-                    region: portal.destination.clone(),
-                    position: portal.position,
-                },
-            ),
-            portal,
-        }
-    }
-
-    pub fn text(&self) -> String {
-        aurora_i18n::tr!(
-            "portal-cross-text",
-            name = self.name.clone(),
-            destination = self.destination.clone()
-        )
-    }
-}
-
-/// Some(true) goes, Some(false) cancels; Escape or a click away cancels too.
-pub fn crossing_confirm(ctx: &egui::Context, p: &Palette, ask: &CrossingAsk) -> Option<bool> {
-    use egui::RichText;
-    let mut answer = None;
-    let modal = widgets::Modal::new(egui::Id::unique(("portal_crossing_confirm", ask.owner, ask.portal.id))).show(ctx, |ui| {
-        ui.set_width(340.0);
-        ui.label(
-            RichText::new(aurora_i18n::tr!("portal-cross-title"))
-                .size(15.0)
-                .strong()
-                .color(p.ink),
-        );
-        ui.add_space(6.0);
-        ui.label(RichText::new(ask.text()).size(12.5).color(p.muted));
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if widgets::default_button(widgets::flat_button(ui, p, aurora_i18n::tr!("portal-cross-go"))).clicked() {
-                answer = Some(true);
-            }
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                answer = Some(false);
-            }
-        });
-    });
-    if modal.should_close() && answer.is_none() {
-        answer = Some(false);
-    }
-    answer
+    format!("{destination}\n{timer}\n{status}")
 }
 
 pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Projector) {

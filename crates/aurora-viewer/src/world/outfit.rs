@@ -222,6 +222,13 @@ pub fn cof_objects(inv: &Inventory, cof: Uuid) -> Vec<Uuid> {
     out
 }
 
+/// The objects the Current Outfit folder links to ([`cof_objects`]), once
+/// the folder is fetched; none before (or while it is fetched again).
+pub fn current_outfit_objects(inv: &Inventory) -> Option<Vec<Uuid>> {
+    let cof = find_cof(inv)?;
+    (inv.folders.get(&cof)?.state == FetchState::Fetched).then(|| cof_objects(inv, cof))
+}
+
 /// The Current Outfit folder of the agent's inventory.
 fn find_cof(inv: &Inventory) -> Option<Uuid> {
     inv.folders

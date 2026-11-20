@@ -1,9 +1,10 @@
 //! The Aurora Weather window: the weather drawn for this viewer only
 //! (Aurora's own: the Legacy Viewer has none). A summary of the sky shown
-//! now, with whether regions may set it, then cards in two columns: what
+//! now with the main switch on its right, then cards in two columns: what
 //! falls and what it leaves on the ground on the left; the wind (with its
 //! compass), thunder and the northern lights (with their preview) on the
-//! right; the quality and the clean-up and snow-fill actions at the foot.
+//! right, each switch on its title row greying its card; the quality and
+//! the clean-up and snow-fill actions at the foot.
 //!
 //! The settings are those of [`WeatherSettings`], unchanged: this module is
 //! their window only.
@@ -11,17 +12,13 @@
 use super::environment::{colour_names, compass_point};
 use super::widgets;
 use crate::theme::Palette;
-use crate::weather::{
-    AuroraColours, DEEP_SNOW_REACH, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings, WeatherSource,
-};
+use crate::weather::{AuroraColours, DEEP_SNOW_REACH, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings};
 use egui::{Align, Layout, RichText, Sense, Stroke, Vec2};
 
 /// The window's width: two columns of cards.
 pub const WINDOW_W: f32 = 700.0;
 /// The side of the summary's picture of the sky.
 const SKY_TILE: f32 = 72.0;
-/// The width of the summary's "Let regions set the weather" box.
-const REGION_BOX_W: f32 = 236.0;
 /// The side of the wind's compass.
 const COMPASS: f32 = 112.0;
 /// The height of the northern lights' preview.
@@ -44,24 +41,23 @@ pub struct WeatherActions {
     pub fill: bool,
 }
 
-/// The window's body: the summary, the cards and the foot. `source` says
-/// who sets the weather now: anything but my own settings greys the cards
-/// (they are kept and wait).
-pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, source: WeatherSource) -> WeatherActions {
+/// The window's body: the summary, the cards and the foot.
+pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherActions {
     let before = w.clone();
     let mut actions = WeatherActions::default();
     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-    summary(ui, p, w, source);
+    summary(ui, p, w);
     ui.add_space(4.0);
-    let mine = source == WeatherSource::Mine;
-    ui.add_enabled_ui(mine, |ui| {
+    // the main switch off, every card is greyed, its settings kept
+    ui.add_enabled_ui(w.enabled, |ui| {
         ui.columns(2, |cols| {
             let [left, right] = cols else { return };
             left.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
             right.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
             precipitation_card(left, p, w);
             left.add_space(4.0);
-            ground_card(left, p, w);
+            // what falls leaves it: greyed with the "Falling" card
+            left.add_enabled_ui(w.precipitation_on, |ui| ground_card(ui, p, w));
             wind_card(right, p, w);
             right.add_space(4.0);
             thunder_card(right, p, w);
@@ -70,7 +66,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, source: Wea
         });
     });
     ui.add_space(4.0);
-    foot(ui, p, w, mine, &mut actions);
+    foot(ui, p, w, &mut actions);
     if *w != before {
         w.take_over(&before);
         w.touched = true;
@@ -141,85 +137,67 @@ fn wind_summary(w: &WeatherSettings) -> String {
     format!("{} · {from}", wind_word(w.wind_max))
 }
 
-fn sky_now(p: &Palette, w: &WeatherSettings, source: WeatherSource) -> SkyNow {
-    match source {
-        WeatherSource::Region => SkyNow {
-            icon: "map-pin-filled",
-            color: p.teal,
-            title: aurora_i18n::tr!("ui-weather-now-region"),
-        },
-        WeatherSource::RegionClear => SkyNow {
-            icon: "sun-filled",
-            color: p.amber,
+/// The sky `w` draws (its settings [`WeatherSettings::in_effect`]).
+fn sky_now(p: &Palette, w: &WeatherSettings) -> SkyNow {
+    let amount = w.rain_or_amount();
+    let snow = w.snowing();
+    if !w.enabled {
+        SkyNow {
+            icon: "cloud-off",
+            color: p.muted,
+            title: aurora_i18n::tr!("ui-weather-now-off"),
+        }
+    } else if amount <= 0.0 {
+        SkyNow {
+            icon: "moon-filled",
+            color: p.violet_pale,
             title: aurora_i18n::tr!("ui-weather-now-clear"),
-        },
-        WeatherSource::MySky => SkyNow {
-            icon: "cloud-filled",
-            color: p.violet_pale,
-            title: aurora_i18n::tr!("ui-weather-now-my-sky"),
-        },
-        WeatherSource::Preview => SkyNow {
-            icon: "cloud-filled",
-            color: p.violet_pale,
-            title: aurora_i18n::tr!("ui-weather-now-preview"),
-        },
-        WeatherSource::Mine => {
-            let amount = w.rain_or_amount();
-            let snow = w.snowing();
-            if amount <= 0.0 {
-                SkyNow {
-                    icon: "moon-filled",
-                    color: p.violet_pale,
-                    title: aurora_i18n::tr!("ui-weather-now-clear"),
-                }
-            } else if stormy(w) {
-                SkyNow {
-                    icon: "cloud-storm",
-                    color: p.amber,
-                    title: aurora_i18n::tr!("ui-weather-now-storm"),
-                }
-            } else if snow {
-                SkyNow {
-                    icon: "snowflake",
-                    color: p.ink,
-                    title: amount_word(true, amount),
-                }
-            } else {
-                SkyNow {
-                    icon: "cloud-rain",
-                    color: p.indigo_light,
-                    title: amount_word(false, amount),
-                }
-            }
+        }
+    } else if stormy(w) {
+        SkyNow {
+            icon: "cloud-storm",
+            color: p.amber,
+            title: aurora_i18n::tr!("ui-weather-now-storm"),
+        }
+    } else if snow {
+        SkyNow {
+            icon: "snowflake",
+            color: p.ink,
+            title: amount_word(true, amount),
+        }
+    } else {
+        SkyNow {
+            icon: "cloud-rain",
+            color: p.indigo_light,
+            title: amount_word(false, amount),
         }
     }
 }
 
 /// The top of the window: the sky shown now (its picture, its name and a
-/// few chips), and on its right whether regions may set it, with who does.
-fn summary(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, source: WeatherSource) {
+/// few chips), and on its right the main switch.
+fn summary(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     widgets::surface(ui, p, |ui| {
         ui.set_min_width(ui.available_width());
         ui.horizontal_top(|ui| {
-            let now = sky_now(p, w, source);
+            // what is drawn, not what the greyed cards still hold
+            let drawn = w.in_effect();
+            let now = sky_now(p, &drawn);
             let (tile, _) = ui.allocate_exact_size(Vec2::splat(SKY_TILE), Sense::hover());
             ui.painter().rect_filled(tile, ui.visuals().window_corner_radius, p.bar);
             widgets::paint_glyph(ui.painter(), now.icon, tile.center(), SKY_TILE * 0.58, now.color);
             let gap = ui.spacing().item_spacing.x;
-            let text_w = (ui.available_width() - REGION_BOX_W - gap * 2.0).max(120.0);
+            let text_w = (ui.available_width() - widgets::SWITCH_SIZE.x - gap).max(120.0);
             ui.allocate_ui_with_layout(Vec2::new(text_w, SKY_TILE), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(text_w);
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.label(RichText::new(aurora_i18n::tr!("ui-weather-now")).size(VALUE_SIZE).color(p.muted));
                 ui.add(egui::Label::new(RichText::new(now.title).font(widgets::control_font(ui, 20.0)).strong().color(p.ink)).wrap());
                 ui.add_space(2.0);
-                if source == WeatherSource::Mine {
-                    chips(ui, p, w);
-                }
+                chips(ui, p, &drawn);
             });
-            ui.allocate_ui_with_layout(Vec2::new(REGION_BOX_W, SKY_TILE), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(REGION_BOX_W);
-                region_box(ui, p, w, source);
+            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                widgets::switch(ui, p, &mut w.enabled).on_hover_text(aurora_i18n::tr!("ui-weather-enabled-tip"));
             });
         });
     });
@@ -227,18 +205,25 @@ fn summary(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, source: Weat
 
 /// The chips under the sky's name: the wind, and what else the weather
 /// brings now (lightning, puddles, snow on the ground, the northern lights).
+/// `w`: what is drawn ([`WeatherSettings::in_effect`]).
 fn chips(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
+    if !w.enabled {
+        return;
+    }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-        chip(ui, p, "wind", p.teal, &wind_summary(w));
-        let raining = !w.snowing() && w.rain_or_amount() > 0.0;
+        if w.wind_on {
+            chip(ui, p, "wind", p.teal, &wind_summary(w));
+        }
+        let falling = w.rain_or_amount() > 0.0;
+        let raining = !w.snowing() && falling;
         if stormy(w) {
             chip(ui, p, "bolt-filled", p.amber, aurora_i18n::tr!("ui-weather-chip-lightning"));
         }
         if raining && w.puddles {
             chip(ui, p, "droplet-filled", p.indigo_light, aurora_i18n::tr!("ui-weather-puddles"));
         }
-        if w.snowing() && w.snow_settles {
+        if w.snowing() && falling && w.snow_settles {
             chip(ui, p, "mountain-filled", p.ink, aurora_i18n::tr!("ui-weather-chip-snow-lying"));
         }
         if w.aurora {
@@ -265,46 +250,11 @@ fn chip(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: egui::Color32, text: &
     widgets::paint_row_text(ui.painter(), galley, rect.left() + 27.0, rect.center().y, p.ink);
 }
 
-/// "Let regions set the weather", and who sets it now when not my own
-/// settings (with the way back to them when it is a region).
-fn region_box(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, source: WeatherSource) {
-    egui::Frame::new()
-        .fill(p.bar.gamma_multiply(0.7))
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(8)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 4.0;
-            widgets::switch_labeled_wrapped(
-                ui,
-                p,
-                &mut w.region_weather,
-                RichText::new(aurora_i18n::tr!("ui-weather-region")).size(LABEL_SIZE).color(p.ink),
-            )
-            .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
-            let (text, color) = match source {
-                WeatherSource::Mine => (aurora_i18n::tr!("ui-weather-region-note"), p.muted),
-                WeatherSource::Preview => (aurora_i18n::tr!("ui-weather-source-preview"), p.violet_pale),
-                WeatherSource::MySky => (aurora_i18n::tr!("ui-weather-source-my-sky"), p.violet_pale),
-                WeatherSource::Region => (aurora_i18n::tr!("ui-weather-source-region"), p.teal),
-                // the region decides, and sets none here: clear
-                WeatherSource::RegionClear => (aurora_i18n::tr!("ui-weather-source-none"), p.teal),
-            };
-            ui.add(egui::Label::new(RichText::new(text).size(VALUE_SIZE).color(color)).wrap());
-            if matches!(source, WeatherSource::Region | WeatherSource::RegionClear)
-                && widgets::flat_button(ui, p, aurora_i18n::tr!("ui-weather-source-use-mine")).clicked()
-            {
-                w.region_weather = false;
-            }
-        });
-}
-
-/// The switch on a card's title row, on its right: what it turns on, its
-/// tip, and a word before it (none: the switch alone).
+/// The switch on a card's title row, on its right: what it turns on and
+/// its tip.
 struct Head<'a> {
     on: &'a mut bool,
     tip: &'a str,
-    word: Option<&'a str>,
 }
 
 /// A card: its icon and title, its switch on the right of the title
@@ -328,9 +278,6 @@ fn card<R>(
             if let Some(head) = head {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     widgets::switch(ui, p, head.on).on_hover_text(head.tip);
-                    if let Some(word) = head.word {
-                        ui.label(RichText::new(word).size(VALUE_SIZE).color(p.muted));
-                    }
                 });
                 on = *head.on;
             }
@@ -403,83 +350,101 @@ fn slider_row(
 /// "Precipitation": rain or snow as two tiles, how hard it falls and, in
 /// snow, how big the flakes are.
 fn precipitation_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    card(ui, p, "cloud-rain", aurora_i18n::tr!("ui-weather-precipitation"), None, |ui, _| {
-        // AURORA_SNOW shows as snow until the window is used
-        let snowing = w.snowing();
-        let (rain_line, snow_line) = (aurora_i18n::tr!("ui-weather-rain-sub"), aurora_i18n::tr!("ui-weather-snow-sub"));
-        // both as tall as the taller: a line that wraps in one language
-        // keeps the pair even
-        let column = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-        let height = tile_height(ui, rain_line, column).max(tile_height(ui, snow_line, column));
-        ui.columns(2, |tiles| {
-            let [rain, snow] = tiles else { return };
-            if tile(
-                rain,
-                p,
-                "cloud-rain",
-                aurora_i18n::tr!("ui-weather-rain"),
-                (rain_line, height),
-                !snowing,
-            ) {
-                w.precipitation = Precipitation::Rain;
-            }
-            if tile(
-                snow,
-                p,
-                "snowflake",
-                aurora_i18n::tr!("ui-weather-snow"),
-                (snow_line, height),
-                snowing,
-            ) {
-                w.precipitation = Precipitation::Snow;
-            }
-        });
-        let snowing = w.snowing();
-        let mut amount = w.rain_or_amount();
-        let ends = if snowing {
-            (
-                aurora_i18n::tr!("ui-weather-now-flurries"),
-                aurora_i18n::tr!("ui-weather-now-blizzard"),
-            )
-        } else {
-            (
-                aurora_i18n::tr!("ui-weather-now-drizzle"),
-                aurora_i18n::tr!("ui-weather-now-downpour"),
-            )
-        };
-        if slider_row(
-            ui,
+    let mut on = w.precipitation_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-precipitation-on-tip"),
+    };
+    card(
+        ui,
+        p,
+        "cloud-rain",
+        aurora_i18n::tr!("ui-weather-precipitation"),
+        Some(head),
+        |ui, on| {
+            w.precipitation_on = on;
+            ui.add_enabled_ui(on, |ui| precipitation_rows(ui, p, w));
+        },
+    );
+}
+
+/// The "Falling" card's rows, under its switch.
+fn precipitation_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    // AURORA_SNOW shows as snow until the window is used
+    let snowing = w.snowing();
+    let (rain_line, snow_line) = (aurora_i18n::tr!("ui-weather-rain-sub"), aurora_i18n::tr!("ui-weather-snow-sub"));
+    // both as tall as the taller: a line that wraps in one language
+    // keeps the pair even
+    let column = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
+    let height = tile_height(ui, rain_line, column).max(tile_height(ui, snow_line, column));
+    ui.columns(2, |tiles| {
+        let [rain, snow] = tiles else { return };
+        if tile(
+            rain,
             p,
-            (aurora_i18n::tr!("ui-weather-amount"), aurora_i18n::tr!("ui-weather-amount-tip")),
-            amount_word(snowing, amount),
-            Some(ends),
-            egui::Slider::new(&mut amount, 0.0..=1.0),
-        )
-        .changed()
-        {
-            w.amount = amount;
+            "cloud-rain",
+            aurora_i18n::tr!("ui-weather-rain"),
+            (rain_line, height),
+            !snowing,
+        ) {
+            w.precipitation = Precipitation::Rain;
         }
-        if snowing {
-            let size = if w.snow_size < 0.33 {
-                aurora_i18n::tr!("ui-weather-flake-fine")
-            } else if w.snow_size < 0.67 {
-                aurora_i18n::tr!("ui-weather-flake-medium")
-            } else {
-                aurora_i18n::tr!("ui-weather-flake-big")
-            };
-            slider_row(
-                ui,
-                p,
-                (
-                    aurora_i18n::tr!("ui-weather-flake-size"),
-                    aurora_i18n::tr!("ui-weather-flake-size-tip"),
-                ),
-                size,
-                Some((aurora_i18n::tr!("ui-weather-flake-fine"), aurora_i18n::tr!("ui-weather-flake-big"))),
-                egui::Slider::new(&mut w.snow_size, 0.0..=1.0),
-            );
+        if tile(
+            snow,
+            p,
+            "snowflake",
+            aurora_i18n::tr!("ui-weather-snow"),
+            (snow_line, height),
+            snowing,
+        ) {
+            w.precipitation = Precipitation::Snow;
         }
     });
+    let snowing = w.snowing();
+    let mut amount = w.rain_or_amount();
+    let ends = if snowing {
+        (
+            aurora_i18n::tr!("ui-weather-now-flurries"),
+            aurora_i18n::tr!("ui-weather-now-blizzard"),
+        )
+    } else {
+        (
+            aurora_i18n::tr!("ui-weather-now-drizzle"),
+            aurora_i18n::tr!("ui-weather-now-downpour"),
+        )
+    };
+    if slider_row(
+        ui,
+        p,
+        (aurora_i18n::tr!("ui-weather-amount"), aurora_i18n::tr!("ui-weather-amount-tip")),
+        amount_word(snowing, amount),
+        Some(ends),
+        egui::Slider::new(&mut amount, 0.0..=1.0),
+    )
+    .changed()
+    {
+        w.amount = amount;
+    }
+    if snowing {
+        let size = if w.snow_size < 0.33 {
+            aurora_i18n::tr!("ui-weather-flake-fine")
+        } else if w.snow_size < 0.67 {
+            aurora_i18n::tr!("ui-weather-flake-medium")
+        } else {
+            aurora_i18n::tr!("ui-weather-flake-big")
+        };
+        slider_row(
+            ui,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-flake-size"),
+                aurora_i18n::tr!("ui-weather-flake-size-tip"),
+            ),
+            size,
+            Some((aurora_i18n::tr!("ui-weather-flake-fine"), aurora_i18n::tr!("ui-weather-flake-big"))),
+            egui::Slider::new(&mut w.snow_size, 0.0..=1.0),
+        );
+    }
 }
 
 /// The line under a tile's name, wrapped to a tile `width` wide.
@@ -657,69 +622,81 @@ fn deep_snow_row(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
-/// "Wind": its compass (where it comes from: click or drag on it) beside
-/// its lulls, its gusts and its direction; on the title's right, whether it
-/// blows the region's way.
+/// "Wind": its switch on the title's right; whether it blows the region's
+/// way, then its compass (where it comes from: click or drag on it) beside
+/// its lulls, its gusts and its direction.
 fn wind_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    let mut follow = w.wind_follow_region;
+    let mut on = w.wind_on;
     let head = Head {
-        on: &mut follow,
-        tip: aurora_i18n::tr!("ui-weather-wind-follow-region-tip"),
-        word: Some(aurora_i18n::tr!("ui-weather-wind-region")),
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-wind-on-tip"),
     };
-    card(ui, p, "wind", aurora_i18n::tr!("ui-weather-wind"), Some(head), |ui, follow| {
-        w.wind_follow_region = follow;
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.add_enabled_ui(!w.wind_follow_region, |ui| compass(ui, p, w));
-                let summary = wind_summary(w);
-                ui.allocate_ui_with_layout(Vec2::new(COMPASS, 16.0), Layout::top_down(Align::Center), |ui| {
-                    ui.label(RichText::new(summary).size(ENDS_SIZE).color(p.muted));
-                });
+    card(ui, p, "wind", aurora_i18n::tr!("ui-weather-wind"), Some(head), |ui, on| {
+        w.wind_on = on;
+        ui.add_enabled_ui(on, |ui| wind_rows(ui, p, w));
+    });
+}
+
+/// The "Wind" card's rows, under its switch.
+fn wind_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    switch_row(
+        ui,
+        p,
+        "map-pin-filled",
+        aurora_i18n::tr!("ui-weather-wind-follow-region"),
+        aurora_i18n::tr!("ui-weather-wind-follow-region-tip"),
+        &mut w.wind_follow_region,
+    );
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| compass(ui, p, w));
+            let summary = wind_summary(w);
+            ui.allocate_ui_with_layout(Vec2::new(COMPASS, 16.0), Layout::top_down(Align::Center), |ui| {
+                ui.label(RichText::new(summary).size(ENDS_SIZE).color(p.muted));
             });
-            ui.vertical(|ui| {
-                // the wind wanders between its lulls and its gusts;
-                // dragging one past the other takes it along
-                let lulls = wind_word(w.wind_min);
-                if slider_row(
+        });
+        ui.vertical(|ui| {
+            // the wind wanders between its lulls and its gusts;
+            // dragging one past the other takes it along
+            let lulls = wind_word(w.wind_min);
+            if slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-lulls"), aurora_i18n::tr!("ui-weather-wind-tip")),
+                lulls,
+                None,
+                egui::Slider::new(&mut w.wind_min, 0.0..=1.0),
+            )
+            .changed()
+            {
+                w.wind_max = w.wind_max.max(w.wind_min);
+            }
+            let gusts = wind_word(w.wind_max);
+            if slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-gusts"), aurora_i18n::tr!("ui-weather-gusts-tip")),
+                gusts,
+                None,
+                egui::Slider::new(&mut w.wind_max, 0.0..=1.0),
+            )
+            .changed()
+            {
+                w.wind_min = w.wind_min.min(w.wind_max);
+            }
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| {
+                let from = format!("{} · {:.0}°", compass_point(w.wind_from), w.wind_from);
+                slider_row(
                     ui,
                     p,
-                    (aurora_i18n::tr!("ui-weather-lulls"), aurora_i18n::tr!("ui-weather-wind-tip")),
-                    lulls,
+                    (
+                        aurora_i18n::tr!("ui-weather-wind-from"),
+                        aurora_i18n::tr!("ui-weather-wind-from-tip"),
+                    ),
+                    &from,
                     None,
-                    egui::Slider::new(&mut w.wind_min, 0.0..=1.0),
-                )
-                .changed()
-                {
-                    w.wind_max = w.wind_max.max(w.wind_min);
-                }
-                let gusts = wind_word(w.wind_max);
-                if slider_row(
-                    ui,
-                    p,
-                    (aurora_i18n::tr!("ui-weather-gusts"), aurora_i18n::tr!("ui-weather-gusts-tip")),
-                    gusts,
-                    None,
-                    egui::Slider::new(&mut w.wind_max, 0.0..=1.0),
-                )
-                .changed()
-                {
-                    w.wind_min = w.wind_min.min(w.wind_max);
-                }
-                ui.add_enabled_ui(!w.wind_follow_region, |ui| {
-                    let from = format!("{} · {:.0}°", compass_point(w.wind_from), w.wind_from);
-                    slider_row(
-                        ui,
-                        p,
-                        (
-                            aurora_i18n::tr!("ui-weather-wind-from"),
-                            aurora_i18n::tr!("ui-weather-wind-from-tip"),
-                        ),
-                        &from,
-                        None,
-                        egui::Slider::new(&mut w.wind_from, 0.0..=355.0).step_by(f64::from(DIRECTION_STEP)),
-                    );
-                });
+                    egui::Slider::new(&mut w.wind_from, 0.0..=355.0).step_by(f64::from(DIRECTION_STEP)),
+                );
             });
         });
     });
@@ -795,15 +772,14 @@ fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 }
 
 /// "Thunder": the switch, then how often lightning strikes. It comes with
-/// heavy rain: greyed while it snows.
+/// heavy rain: greyed while it snows, or while nothing falls.
 fn thunder_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let snowing = w.snowing();
     let mut on = w.thunder;
-    ui.add_enabled_ui(!snowing, |ui| {
+    ui.add_enabled_ui(!snowing && w.precipitation_on, |ui| {
         let head = Head {
             on: &mut on,
             tip: aurora_i18n::tr!("ui-weather-thunder-tip"),
-            word: None,
         };
         card(
             ui,
@@ -865,7 +841,6 @@ fn northern_lights_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings)
     let head = Head {
         on: &mut on,
         tip: aurora_i18n::tr!("ui-weather-northern-lights-tip"),
-        word: None,
     };
     card(
         ui,
@@ -1057,31 +1032,31 @@ fn curtain(
 }
 
 /// The foot of the window: the quality on the left; on the right the
-/// clean-up (whoever sets the weather: a region's or a sky's snow is
-/// cleared too) and, in snow, the snow fill.
-fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, mine: bool, actions: &mut WeatherActions) {
+/// clean-up and, in snow, the snow fill.
+/// The main switch off greys all but the clean-up: what the weather left
+/// can still go at once.
+fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut WeatherActions) {
+    let on = w.enabled;
     ui.horizontal(|ui| {
-        ui.add_enabled_ui(mine, |ui| {
-            ui.horizontal(|ui| {
-                widgets::glyph(ui, "adjustments-horizontal-filled", p.muted, 15.0);
-                ui.label(RichText::new(aurora_i18n::tr!("ui-weather-quality")).size(LABEL_SIZE).color(p.ink))
-                    .on_hover_text(aurora_i18n::tr!("ui-weather-quality-tip"));
-                let low = aurora_i18n::tr!("ui-weather-quality-low");
-                let medium = aurora_i18n::tr!("ui-weather-quality-medium");
-                let high = aurora_i18n::tr!("ui-weather-quality-high");
-                let mut i = match w.quality {
-                    WeatherQuality::Low => 0,
-                    WeatherQuality::Medium => 1,
-                    WeatherQuality::High => 2,
+        ui.add_enabled_ui(on, |ui| {
+            widgets::glyph(ui, "adjustments-horizontal-filled", p.muted, 15.0);
+            ui.label(RichText::new(aurora_i18n::tr!("ui-weather-quality")).size(LABEL_SIZE).color(p.ink))
+                .on_hover_text(aurora_i18n::tr!("ui-weather-quality-tip"));
+            let low = aurora_i18n::tr!("ui-weather-quality-low");
+            let medium = aurora_i18n::tr!("ui-weather-quality-medium");
+            let high = aurora_i18n::tr!("ui-weather-quality-high");
+            let mut i = match w.quality {
+                WeatherQuality::Low => 0,
+                WeatherQuality::Medium => 1,
+                WeatherQuality::High => 2,
+            };
+            if widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]) {
+                w.quality = match i {
+                    0 => WeatherQuality::Low,
+                    1 => WeatherQuality::Medium,
+                    _ => WeatherQuality::High,
                 };
-                if widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]) {
-                    w.quality = match i {
-                        0 => WeatherQuality::Low,
-                        1 => WeatherQuality::Medium,
-                        _ => WeatherQuality::High,
-                    };
-                }
-            });
+            }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let size = Vec2::new(0.0, 24.0);
@@ -1106,7 +1081,7 @@ fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, mine: bool, act
                     aurora_i18n::tr!("ui-weather-snow-fill"),
                     widgets::ActionKind::Flat,
                     size,
-                    mine && w.snow_settles,
+                    on && w.precipitation_on && w.snow_settles,
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-weather-snow-fill-tip"))
                 .clicked()

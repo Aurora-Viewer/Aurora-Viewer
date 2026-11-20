@@ -15,7 +15,7 @@ use aurora_llsd::{Llsd, llsd_map};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
     Auto,
@@ -23,6 +23,14 @@ pub enum LodSource {
     Fast,
     Reliable,
     Above,
+    /// The Legacy Viewer's automatic chain, part by part.
+    Legacy,
+}
+/// Lowest, Low, Medium and High targets, following
+/// LLModelPreview::genMeshOptimizerLODs (indra/newview/llmodelpreview.cpp):
+/// base triangles / 3^(3 - level), truncated and at least one triangle.
+pub fn default_lod_targets(high_triangles: usize) -> [usize; 4] {
+    std::array::from_fn(|level| (high_triangles / 3usize.pow((3 - level) as u32)).max(1))
 }
 #[derive(Clone)]
 pub struct Lod {
@@ -158,16 +166,17 @@ impl Draft {
     }
     pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
+        let targets = default_lod_targets(triangles);
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         let mut draft = Self {
             inspector: inspector::Inspector::new(&scene),
             scene,
             images,
             lods: std::array::from_fn(|i| Lod {
-                source: if i == 3 { LodSource::File } else { LodSource::Auto },
+                source: if i == 3 { LodSource::File } else { LodSource::Legacy },
                 file: None,
                 path: None,
-                triangles: (triangles / 4usize.pow((3 - i) as u32)).max(1),
+                triangles: targets[i],
                 error: 0.01,
                 error_mode: false,
             }),
@@ -402,6 +411,12 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
         return Err(AssetError::invalid("mesh scale or linkset size"));
     }
     let total = draft.scene.models.iter().map(Model::triangles).sum::<usize>().max(1);
+    let mut hull_scales = vec![Vec::new(); draft.scene.models.len()];
+    for instance in &draft.scene.instances {
+        if let Some(scales) = hull_scales.get_mut(instance.model) {
+            scales.push(instance.transform.to_scale_rotation_translation().0.abs());
+        }
+    }
     let mut prepared = Prepared {
         lods: Vec::new(),
         physics: Vec::new(),
@@ -449,6 +464,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                             method: match method {
                                 LodSource::Auto => process::Method::Auto,
                                 LodSource::Reliable => process::Method::Reliable,
+                                LodSource::Legacy => process::Method::Legacy,
                                 LodSource::Fast => process::Method::Fast,
                                 _ => process::Method::Precise,
                             },
@@ -473,7 +489,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 // (indra/newview/llmeshrepository.cpp) also supplies a base
                 // hull for split models whose instance collision is None.
                 let hulls = process::Physics {
-                    base: Some(process::base_hull(hull_source(None, &lods, high))?),
+                    base: Some(process::adaptive_base_hull(
+                        hull_source(None, &lods, high),
+                        &hull_scales[index],
+                        &draft.cancel,
+                    )?),
                     hulls: Vec::new(),
                 };
                 return Ok((lods, None, hulls));
@@ -527,7 +547,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?
             } else {
                 process::Physics {
-                    base: Some(process::base_hull(hull_source(physics.as_ref(), &lods, high))?),
+                    base: Some(if physics.is_none() {
+                        process::adaptive_base_hull(hull_source(None, &lods, high), &hull_scales[index], &draft.cancel)?
+                    } else {
+                        process::base_hull(hull_source(physics.as_ref(), &lods, high))?
+                    }),
                     hulls: Vec::new(),
                 }
             };
@@ -561,13 +585,13 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     Ok(prepared)
 }
 
-/// The model the base hull is made from: the collision model, else the low
-/// LOD, else the medium, else the high, as LLMeshUploadThread::generateHulls
-/// (indra/newview/llmeshrepository.cpp) picks it. The high LOD alone gives a
-/// flat hull for a part whose collision file has volume (#4213). A model
-/// reduced to no triangle is passed over: no hull is made from it.
+/// Custom collision comes first, as LLMeshUploadThread::generateHulls
+/// (indra/newview/llmeshrepository.cpp) requires for volumetric physics files
+/// on flat visual parts (#4213). The human-requested adaptive default starts
+/// at Lowest, then falls back through Low, Medium and High.
+/// This deliberately differs from the Legacy Viewer's Low-first default.
 fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
-    [physics, lods[1].as_ref(), lods[2].as_ref()]
+    [physics, lods[0].as_ref(), lods[1].as_ref(), lods[2].as_ref()]
         .into_iter()
         .flatten()
         .find(|model| model.triangles() > 0)
@@ -595,10 +619,10 @@ pub fn request(
     }
     let meshes = prepared
         .lods
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(i, lods)| {
-            encode::asset(
+            encode::upload_asset(
                 lods,
                 prepared.physics[i].as_ref(),
                 &prepared.hulls[i],

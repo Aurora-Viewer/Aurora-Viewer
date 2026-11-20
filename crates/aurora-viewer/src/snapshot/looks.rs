@@ -449,6 +449,32 @@ pub fn frame_look(layers: &[(Resolved, u8)], place: Placement, compare: Option<f
     })
 }
 
+/// The world's look (Preferences › Graphics › Image › World look, and its
+/// window `ui/world_look.rs`): a stack of its own, with its own settings,
+/// drawn on the 3D view, under the interface. Aurora's own: the Legacy
+/// Viewer has looks only in its snapshot window.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorldLook {
+    /// Drawn (off: the stack is kept for later).
+    pub on: bool,
+    pub looks: Vec<Layer>,
+    /// The settings of its Aurora looks by id, apart from the photos'.
+    pub look_settings: Settings,
+}
+
+/// The world look's stack for this frame. The photo window and the
+/// Director (`photo_looks_shown`) draw their own stack, the one of the
+/// photos and films they take, so the world's is not drawn under it. Off,
+/// only a look pointed at in its window is tried (`tried`), so that the
+/// list can be browsed before the look is switched on.
+pub fn world_stack(look: &WorldLook, pointed: Option<Option<&str>>, mode: Mode, selected: usize, photo_looks_shown: bool) -> Vec<Layer> {
+    if photo_looks_shown || (!look.on && pointed.is_none()) {
+        return Vec::new();
+    }
+    tried(&look.looks, pointed, mode, selected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,5 +601,34 @@ mod tests {
             choose(&mut stack, "aurora:pixel", Mode::Add, 0);
         }
         assert_eq!(stack.len(), MAX_LAYERS);
+    }
+
+    #[test]
+    fn the_world_look_is_drawn_when_on_and_gives_way_to_the_photo_looks() {
+        let mut world = WorldLook {
+            on: true,
+            looks: vec![Layer::new("pack:czar-fenris/Noir")],
+            ..Default::default()
+        };
+        let ids = |stack: Vec<Layer>| stack.into_iter().map(|l| l.id).collect::<Vec<_>>();
+        assert_eq!(ids(world_stack(&world, None, Mode::Replace, 0, false)), ["pack:czar-fenris/Noir"]);
+        // the photo window or the Director draws its own stack
+        assert!(world_stack(&world, None, Mode::Replace, 0, true).is_empty());
+        assert!(world_stack(&world, Some(Some("Sepia")), Mode::Replace, 0, true).is_empty());
+        // a look pointed at in its window is tried, the stack unchanged
+        assert_eq!(
+            ids(world_stack(&world, Some(Some("Sepia")), Mode::Add, 0, false)),
+            ["pack:czar-fenris/Noir", "Sepia"]
+        );
+        assert!(world_stack(&world, Some(None), Mode::Replace, 0, false).is_empty());
+        assert_eq!(world.looks.len(), 1);
+        // off: nothing, unless a look is pointed at
+        world.on = false;
+        assert!(world_stack(&world, None, Mode::Replace, 0, false).is_empty());
+        assert_eq!(ids(world_stack(&world, Some(Some("Sepia")), Mode::Replace, 0, false)), ["Sepia"]);
+        // a setting saved before the world look keeps working: empty and off
+        let read: WorldLook = serde_json::from_str("{}").expect("reads");
+        assert_eq!(read, WorldLook::default());
+        assert!(!read.on && read.looks.is_empty());
     }
 }
