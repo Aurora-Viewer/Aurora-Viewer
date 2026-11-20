@@ -466,6 +466,7 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
         st.path_edit = None;
         enter(st, parent);
         st.folder_filter = Some(name);
+        st.folder_filter_at = Some(parent);
         clipboard::request_focus(ui, st);
         return;
     }

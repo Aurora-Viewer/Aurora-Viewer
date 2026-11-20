@@ -612,6 +612,13 @@ fn explorer_list(
         let browse = st.browse;
         std::mem::swap(&mut st.plain, &mut st.flat);
         st.plain.set_tiles(gallery::tiles(shown));
+        // another folder starts with an empty filter (the bar stays open)
+        if st.folder_filter_at.is_some_and(|at| at != browse)
+            && let Some(text) = &mut st.folder_filter
+        {
+            text.clear();
+        }
+        st.folder_filter_at = Some(browse);
         st.plain.set_filter(st.folder_filter.as_deref().unwrap_or_default());
         // the Details list's groups (the tiles keep their own order)
         let group = if shown == view::ExplorerView::List {
@@ -913,10 +920,24 @@ mod tests {
             "the text is asked for"
         );
         // as the app answers
-        h.facts.pane_texts = std::sync::Arc::new([(note, PaneText::Text("Hello from the notecard".into()))].into());
+        let key = crate::ui::inventory::pane_key(&h.inv, note, 0).expect("a notecard");
+        h.facts.pane_texts = std::sync::Arc::new([(key, PaneText::Text("Hello from the notecard".into()))].into());
         h.frames(2);
         let shown = h.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("inventory_preview_text")));
         assert_eq!(shown.as_deref(), Some("Hello from the notecard"));
+        // RLVa's @viewnote turns on: the text read before is not shown again
+        h.inv.rlva_preview_mask = 2;
+        h.ctx
+            .data_mut(|d| d.remove_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        h.actions.clear();
+        h.frames(2);
+        let shown = h.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("inventory_preview_text")));
+        assert_eq!(shown, None, "@viewnote hides the text kept");
+        assert!(
+            h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note)),
+            "asked again under the new terms"
+        );
+        h.inv.rlva_preview_mask = 0;
         // a texture asks for its picture, unless RLVa's @viewtexture hides it
         let texture = Uuid::from_u128(8104);
         h.st.selection.clear();
@@ -1257,9 +1278,15 @@ mod tests {
                 .data(|d| d.get_temp::<Rect>(egui::Id::unique("inventory_folder_filter")))
                 .is_some()
         );
+        // everything selected, as Ctrl+A
+        h.st.selection = h.st.flat.order.iter().copied().collect();
         h.run(vec![egui::Event::Text("demo OBJ".into())]);
         h.frames(3);
         assert_eq!(h.st.folder_filter.as_deref(), Some("demo OBJ"), "the field has the keyboard");
+        assert!(
+            !h.st.selection.is_empty() && h.st.selection.iter().all(|id| h.st.flat.order.contains(id)),
+            "what the filter hides leaves the selection"
+        );
         let names: Vec<String> =
             h.st.flat
                 .order
@@ -1281,6 +1308,14 @@ mod tests {
         h.run(vec![egui::Event::Text("zzz".into())]);
         h.frames(3);
         assert!(h.st.flat.order.is_empty() && h.st.flat.filtered_out == all);
+        // another folder: the bar stays open, its text goes
+        let here = h.st.browse;
+        h.st.browse = h.inv.root;
+        h.frames(2);
+        assert_eq!(h.st.folder_filter.as_deref(), Some(""), "emptied in another folder");
+        h.st.browse = here;
+        h.frames(2);
+        assert_eq!(h.st.flat.order.len(), all);
         h.run(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
         h.frames(3);
         assert_eq!(h.st.folder_filter, None, "Esc closes the bar");

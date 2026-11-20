@@ -271,9 +271,9 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<PaneKey, PaneText>>,
     /// The creator column's names by creator and owner (`None`: not known
     /// yet), RLVa's `@shownames` stand-ins included.
-    pub pane_texts: std::sync::Arc<std::collections::HashMap<Uuid, PaneText>>,
     pub creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
     /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
     /// the field that shows them (`resident_scopes`): it opens no profile.
@@ -573,13 +573,16 @@ pub struct InventoryUi {
     /// keeps, `None` while its bar is closed.
     folder_filter: Option<String>,
     focus_folder_filter: bool,
+    /// The folder the filter's text was typed for (`None`: the one about to
+    /// be shown): another folder empties the text, as Dolphin's unlocked bar.
+    folder_filter_at: Option<Uuid>,
     /// Alt+P was pressed: the preview pane turns on or off.
     toggle_preview: bool,
     /// Ctrl+Shift+1…6 was pressed: the view it gives (`aurora::set_view`).
     view_key: Option<u8>,
     /// The notecards' texts the preview pane asked for, the main window's
     /// for every pane (`Facts::pane_texts`).
-    pub pane_texts: std::sync::Arc<std::collections::HashMap<Uuid, PaneText>>,
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<PaneKey, PaneText>>,
     bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
@@ -615,6 +618,13 @@ pub struct InventoryUi {
     /// for the creator column, by inventory generation.
     creator_keys: Vec<(Uuid, Uuid)>,
     creator_keys_generation: Option<u64>,
+    /// The creator column's names, built again when the inventory or RLVa's
+    /// `@shownames` changes, soon while some are unknown, and every few
+    /// seconds for the renames (`CREATOR_NAMES_REFRESH`).
+    creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
+    creator_names_at: Option<(u64, u64, std::time::Instant)>,
+    /// The sort context given to the lists, and the worn items it was made for.
+    sort_context: Option<(view::SortContext, HashSet<Uuid>)>,
     /// What each details column showed, for the fit of its divider.
     pub(super) column_fit: aurora::ColumnFit,
     fetch_poll: Option<std::time::Instant>,
@@ -969,8 +979,6 @@ impl InventoryUi {
         self.reveal_path.clear();
     }
 
-    /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
-    /// filters on, their list open.
     /// Demo: `id` selected and scrolled to in the folder that holds it.
     pub fn demo_reveal(&mut self, id: Uuid) {
         self.selection.clear();
@@ -982,8 +990,11 @@ impl InventoryUi {
     /// The demo's folder filter (`AURORA_DEMO_INVENTORY=aurora-explorer-filter`).
     pub fn demo_folder_filter(&mut self, text: &str) {
         self.folder_filter = Some(text.to_owned());
+        self.folder_filter_at = None;
     }
 
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
+    /// filters on, their list open.
     pub fn demo_type_filters(&mut self, types: u32) {
         self.filters = view::Filters {
             types,
@@ -1238,6 +1249,29 @@ pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, cr
     use crate::world::names::NameScope;
     let owner = if it.group_owned { Uuid::nil() } else { it.owner };
     [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
+}
+
+/// How often the creator column's names are read again, for the renames,
+/// and while some are still unknown.
+const CREATOR_NAMES_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+const CREATOR_NAMES_PENDING: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What a notecard's text in the preview pane was read for: the notecard
+/// (the link's original), its asset, and whether the agent may read it
+/// now (`world::inventory::preview::can_read`, RLVa's @viewnote included).
+/// A save gives a new asset and a change of rights or of RLVa a new key, so
+/// the pane never shows a text read under other terms.
+pub type PaneKey = (Uuid, Uuid, bool);
+
+/// The pane's key for `item`, `None` when it is no notecard.
+pub fn pane_key(inv: &crate::world::inventory::Inventory, item: Uuid, god_level: u8) -> Option<PaneKey> {
+    let original = crate::world::inventory::actions::original(inv, item)?;
+    let it = inv.items.get(&original).filter(|it| it.asset_type == 7)?;
+    Some((
+        original,
+        it.asset_id,
+        crate::world::inventory::preview::can_read(inv, original, god_level),
+    ))
 }
 
 /// A notecard's text for the preview pane.
@@ -2738,19 +2772,41 @@ pub fn show(
             st.creator_keys = keys.into_iter().collect();
             st.creator_keys_generation = Some(world.inventory.generation);
         }
-        let mut names = std::collections::HashMap::with_capacity(st.creator_keys.len());
-        for &(creator, owner) in &st.creator_keys {
-            let name = creator_label(world, creator, owner);
-            if name.is_none() {
-                world.social.want_name(creator);
+        let now = std::time::Instant::now();
+        let complete = st.creator_names.values().all(Option::is_some);
+        let privacy = world.social.avatar_names.privacy_key();
+        let stale = st.creator_names_at.is_none_or(|(generation, was_private, at)| {
+            generation != world.inventory.generation
+                || was_private != privacy
+                || now.duration_since(at) >= if complete { CREATOR_NAMES_REFRESH } else { CREATOR_NAMES_PENDING }
+        });
+        if stale {
+            let mut names = std::collections::HashMap::with_capacity(st.creator_keys.len());
+            for &(creator, owner) in &st.creator_keys {
+                let name = creator_label(world, creator, owner);
+                if name.is_none() {
+                    world.social.want_name(creator);
+                }
+                names.insert((creator, owner), name);
             }
-            names.insert((creator, owner), name);
+            if *st.creator_names != names {
+                st.creator_names = std::sync::Arc::new(names);
+            }
+            st.creator_names_at = Some((world.inventory.generation, privacy, now));
         }
-        facts.creator_names = std::sync::Arc::new(names);
+        facts.creator_names = st.creator_names.clone();
     }
     if sorts_by(view::SortColumn::Creator) || sorts_by(view::SortColumn::Worn) || by_creator {
-        let worn = facts.worn.iter().chain(&facts.active_gestures).copied().collect();
-        let context = view::SortContext::new(facts.creator_names.clone(), worn);
+        let worn: HashSet<Uuid> = facts.worn.iter().chain(&facts.active_gestures).copied().collect();
+        // made again only when the names or the worn items change
+        let same = st
+            .sort_context
+            .as_ref()
+            .is_some_and(|(context, was_worn)| std::sync::Arc::ptr_eq(&context.creators, &facts.creator_names) && *was_worn == worn);
+        if !same {
+            st.sort_context = Some((view::SortContext::new(facts.creator_names.clone(), worn.clone()), worn));
+        }
+        let context = st.sort_context.as_ref().map(|(context, _)| context.clone()).unwrap_or_default();
         for state in std::iter::once(&mut *st).chain(dual.as_deref_mut()) {
             state.view.set_context(context.clone());
             for window in &mut state.windows {

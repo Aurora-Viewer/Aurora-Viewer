@@ -437,6 +437,7 @@ pub(super) fn folder_preview(inv: &Inventory, id: Uuid, max: usize) -> Vec<Uuid>
             .and_then(|id| inv.items.get(&id))
             .filter(|it| it.asset_type == 0 && !it.asset_id.is_nil())
             .map(|it| it.asset_id)
+            && textures.len() < max
             && !textures.contains(&texture)
         {
             textures.push(texture);

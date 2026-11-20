@@ -495,26 +495,29 @@ impl App {
             // (`ui::inventory::PaneText`), read under the window's rule
             InvAction::PaneText(id) => {
                 use crate::ui::inventory::PaneText;
-                if self.inventory_ui.pane_texts.contains_key(&id) {
+                let Some(key) = crate::ui::inventory::pane_key(&self.world.inventory, id, self.world.god_level) else {
+                    return;
+                };
+                if self.inventory_ui.pane_texts.contains_key(&key) {
                     return;
                 }
-                let readable = crate::world::inventory::preview::can_read(&self.world.inventory, id, self.world.god_level);
-                let item = self.world.inventory.items.get(&id).cloned();
+                let (original, asset, readable) = key;
+                let item = self.world.inventory.items.get(&original).cloned();
                 let texts = std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts);
                 if texts.len() >= 32 {
                     texts.clear();
                 }
                 match item {
-                    Some(it) if readable && it.asset_id.is_nil() => {
-                        texts.insert(id, PaneText::Text(String::new()));
+                    Some(_) if readable && asset.is_nil() => {
+                        texts.insert(key, PaneText::Text(String::new()));
                     }
                     Some(it) if readable => {
-                        texts.insert(id, PaneText::Loading);
+                        texts.insert(key, PaneText::Loading);
                         self.send(NetCommand::PreviewInventoryItem(it));
                     }
                     _ => {
                         texts.insert(
-                            id,
+                            key,
                             PaneText::Unavailable(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
                         );
                     }
@@ -872,7 +875,8 @@ impl App {
         if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
             return;
         }
-        if self.inventory_ui.pane_texts.get(&item) == Some(&crate::ui::inventory::PaneText::Loading) {
+        let key = (item, asset, true);
+        if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
             use crate::ui::inventory::PaneText;
             let text = match &result {
                 Ok(data) => {
@@ -880,7 +884,7 @@ impl App {
                 }
                 Err(reason) => PaneText::Unavailable(reason.clone()),
             };
-            std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).insert(item, text);
+            std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).insert(key, text);
         }
         if self.env_editor.loading == Some(item) {
             self.env_editor_asset(item, result);

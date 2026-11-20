@@ -236,7 +236,11 @@ pub(super) fn resize(
         let response = ui
             .interact(hit, ui.scope_id().with(("inventory_column_resize", id)), Sense::click_and_drag())
             .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-            .on_hover_text(aurora_i18n::tr!("inventory-resize-columns"));
+            .on_hover_text(if index == 0 {
+                aurora_i18n::tr!("inventory-resize-columns-first")
+            } else {
+                aurora_i18n::tr!("inventory-resize-columns")
+            });
         #[cfg(test)]
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_column_handle", index)), hit));

@@ -362,9 +362,9 @@ pub(super) fn show_quick(
     }
 }
 
-/// The name of the creator of `it` (its original's for a link) as the
-/// creator column shows it, from `Facts::creator_names`; `None` while it is
-/// not known.
+/// The key of `it`'s name in the creator column (`Facts::creator_names`):
+/// its creator and owner, its original's for a link, no owner when a
+/// group owns it.
 pub(in super::super) fn creator_key(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> (Uuid, Uuid) {
     let original = rules::original(inv, it.id).and_then(|id| inv.items.get(&id)).unwrap_or(it);
     let owner = if original.group_owned { Uuid::nil() } else { original.owner };

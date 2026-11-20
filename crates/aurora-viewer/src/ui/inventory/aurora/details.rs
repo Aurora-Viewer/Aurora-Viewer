@@ -610,7 +610,8 @@ fn preview(
             true
         }
         7 => {
-            let text = facts.pane_texts.get(&original.id);
+            let key = crate::ui::inventory::pane_key(inv, original.id, facts.god_level);
+            let text = key.and_then(|key| facts.pane_texts.get(&key));
             if text.is_none() {
                 actions.push(InvAction::PaneText(original.id));
             }

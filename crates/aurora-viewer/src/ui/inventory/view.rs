@@ -805,8 +805,8 @@ pub enum ExplorerView {
     Tiles,
 }
 
-/// The folders whose view is kept, at most: the oldest entries go first
-/// (by id, a cheap stand-in; the map stays small).
+/// The folders whose view is kept, at most: past it, the entry of the
+/// smallest id goes (a cheap choice, not the oldest; the map stays small).
 pub const FOLDER_VIEWS: usize = 500;
 
 impl InventoryPreferences {

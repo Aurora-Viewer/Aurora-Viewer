@@ -135,6 +135,9 @@ pub struct PlainTree {
     pub groups: Vec<(String, usize)>,
     /// The groups closed, by name.
     closed_groups: HashSet<String>,
+    /// The filter or a closed group hid entries since the list was last
+    /// drawn: the selection drops what is no longer shown (`take_hidden`).
+    hid: bool,
 }
 
 impl PlainTree {
@@ -143,6 +146,7 @@ impl PlainTree {
     pub fn set_filter(&mut self, text: &str) {
         let words: Vec<String> = text.to_lowercase().split_whitespace().map(str::to_owned).collect();
         if words != self.filter {
+            self.hid |= !words.is_empty();
             self.filter = words;
             self.revision = self.revision.wrapping_add(1);
         }
@@ -153,6 +157,10 @@ impl PlainTree {
     pub fn set_group(&mut self, by: super::groups::GroupBy, context: u64) {
         let context = if by == super::groups::GroupBy::Creator { context } else { 0 };
         if self.group != (by, context) {
+            // another grouping opens every group (their names may repeat)
+            if self.group.0 != by {
+                self.closed_groups.clear();
+            }
             self.group = (by, context);
             self.revision = self.revision.wrapping_add(1);
         }
@@ -162,8 +170,14 @@ impl PlainTree {
     pub fn toggle_group(&mut self, name: &str) {
         if !self.closed_groups.remove(name) {
             self.closed_groups.insert(name.to_owned());
+            self.hid = true;
         }
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Whether entries were hidden since the last call.
+    pub fn take_hidden(&mut self) -> bool {
+        std::mem::take(&mut self.hid)
     }
 
     /// Whether the folder filter keeps `id`.
@@ -488,7 +502,10 @@ pub(super) fn scroll(
     if st.ui_id.is_nil() && !st.aurora.is_some_and(|frame| frame.explorer) {
         st.plain.persist(ui.ctx(), egui::Id::unique("inventory_open_folders"));
     }
-    st.view.prepare(inv, prefs.sort_for(st.tab));
+    // the Legacy style sorts as the Legacy Viewer: by name or date, the
+    // explorer's columns and reversed orders staying in the Aurora style
+    let sort = prefs.sort_for(st.tab);
+    st.view.prepare(inv, if st.aurora.is_some() { sort } else { sort.legacy() });
     let collapsed = st.expand_all.take().is_some_and(|open| {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
         !open
@@ -508,6 +525,15 @@ pub(super) fn scroll(
     // The ancestors of a revealed row open until it is shown.
     st.plain.open_all(st.reveal_path.iter().copied());
     st.plain.prepare(&st.view, inv, root, show_root, prefs.show_library);
+    // what the filter or a closed group hides leaves the selection: a
+    // Delete after Ctrl+A acts only on what is shown
+    if st.plain.take_hidden() {
+        let shown: HashSet<Uuid> = st.plain.order.iter().copied().collect();
+        st.selection.retain(|id| shown.contains(id));
+        if st.selected.is_some_and(|id| !shown.contains(&id)) {
+            st.selected = None;
+        }
+    }
     let navigated = keyboard::navigate(ui, inv, st, false);
     let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
