@@ -3645,7 +3645,9 @@ Scene menu customization: `customize` unlocks the object menu at frame 740;
 scenarios simulate nearby voice membership without starting an audio session:
 verify the volume stays above all movable rows, including while editing, and
 does not overlap Profile. Technical actions are grouped under Display,
-Information, Reset, Moderation (with rights) and Disturbance. A clicked
+Avatar information, Reset, Moderation (with rights) and Disturbance.
+Avatar information offers Inspect all attachments; Clicked object offers
+Inspect for that object. Both use Script information for their own target. A clicked
 attachment's object actions are separate from its wearer's actions.
 `customize-hud` additionally needs
 `AURORA_DEMO_HUDS=1`. Capture at frame 820 or later. `pbr` opens the object's
