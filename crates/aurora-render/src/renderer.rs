@@ -9267,12 +9267,16 @@ impl Backend {
         if let Some((x, y, _)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
+            // (its group binds no soft shadow mask)
+            u.soft[0] = 0.0;
             u.view_proj = (narrow * main_vp).to_cols_array_2d();
             u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
             self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
         }
         if let Some(view) = lists.hud_view {
             let mut hud = main;
+            // (its group binds no soft shadow mask)
+            hud.soft[0] = 0.0;
             hud.view_proj = view.matrix().to_cols_array_2d();
             // (HUD records are in screen space: nothing to take away)
             hud.eye_view_proj = hud.view_proj;

@@ -12965,7 +12965,7 @@ What the inventory must show with these scenarios:
   or without the soft shadows; 1 is as before) override the settings.
   **`AURORA_SOFT_PROJECTORS=0`** keeps the 5 taps of the projectors' shadows
   while the sun's are soft (the projectors' soft shadows search their map
-  and filter 32 taps, only under the projectors' cones). `g_soft` of `perf
+  and filter 12 taps, only under the projectors' cones). `g_soft` of `perf
   summary` is the mask's GPU time. To measure (the protocol of the PR):
   `AURORA_DEMO=1 AURORA_DEMO_CROWD=40 AURORA_AUTO_EXPOSURE=0
   AURORA_PROFILE=1`, a 2560 × 1369 window, five alternated runs of main,
