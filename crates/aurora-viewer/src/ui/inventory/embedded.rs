@@ -125,6 +125,8 @@ pub(super) fn editor(
     let code_background = markdown
         .filter(|rendered| !rendered.code_blocks.is_empty())
         .map(|_| ui.painter().add(egui::Shape::Noop));
+    // The open find bar's matches, behind the text too (find.rs).
+    let find = super::find::highlights(ui.ctx(), id).map(|found| (found, ui.painter().add(egui::Shape::Noop)));
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
@@ -239,6 +241,27 @@ pub(super) fn editor(
                     .collect(),
             ),
         );
+    }
+    if let Some((found, slot)) = find {
+        let clip = output.text_clip_rect.translate(-output.galley_pos.to_vec2());
+        let focused = output.response.has_focus();
+        let shapes = super::find::rects(&output.galley, &found, clip.top(), clip.bottom())
+            .into_iter()
+            .map(|(rect, current)| {
+                // the match the bar went to stands out while the bar has the
+                // keyboard; with the keyboard here, egui's selection shows it
+                let wash = p.amber.gamma_multiply(if current && !focused { 0.6 } else { 0.28 });
+                egui::Shape::rect_filled(rect.translate(output.galley_pos.to_vec2()), egui::CornerRadius::ZERO, wash)
+            })
+            .collect();
+        ui.painter()
+            .with_clip_rect(output.text_clip_rect)
+            .set(slot, egui::Shape::Vec(shapes));
+    }
+    if super::find::take_scroll(ui.ctx(), id) {
+        let cursor = output.state.cursor.char_range().unwrap_or_default().primary;
+        let rect = output.galley.pos_from_cursor(cursor).translate(output.galley_pos.to_vec2());
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
     }
     let mut result = EditorResult {
         changed: output.response.changed(),
