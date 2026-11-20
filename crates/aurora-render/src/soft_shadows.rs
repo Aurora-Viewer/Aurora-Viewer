@@ -34,7 +34,7 @@
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 
 /// Tangent of the light's half angle per unit of softness: a softness of 1
 /// is a light 2.3 degrees across, the real sun (0.53 degrees) about 0.23.
@@ -221,8 +221,8 @@ impl Override {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ParamsU {
     cascade_vp: [[[f32; 4]; 4]; 3],
-    inv_view_proj: [[f32; 4]; 4],
-    camera: [f32; 4],
+    from_clip: [[f32; 4]; 4],
+    pixel: [f32; 4],
     splits: [f32; 4],
     light: [f32; 4],
     size: [u32; 4],
@@ -234,9 +234,10 @@ pub(crate) struct Frame {
     pub cascades: [Mat4; 3],
     /// The far distance of each cascade from the camera.
     pub splits: [f32; 3],
-    /// The depth prepass's clip space to the world (jittered as it was drawn).
-    pub inv_view_proj: Mat4,
-    pub camera: Vec3,
+    /// The projection (jittered as it was drawn) and the view of the depth
+    /// prepass.
+    pub proj: Mat4,
+    pub view: Mat4,
     pub softness: f32,
     /// The frame's step of the noise (0: the same every frame).
     pub phase: u32,
@@ -600,10 +601,11 @@ impl SoftShadows {
     /// The constants of the frame, before the encoder runs.
     pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, f: &Frame) {
         let origin = tile_origin(f.tile, t.size);
+        let from_clip = crate::renderer::inv_view_proj_rot(f.proj, f.view);
         let u = ParamsU {
-            cascade_vp: f.cascades.map(|m| m.to_cols_array_2d()),
-            inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
-            camera: f.camera.extend(pixel_angle(f.inv_view_proj, t.size.1)).to_array(),
+            cascade_vp: f.cascades.map(|m| from_camera(m, f.view).to_cols_array_2d()),
+            from_clip: from_clip.to_cols_array_2d(),
+            pixel: [pixel_angle(from_clip, t.size.1), 0.0, 0.0, 0.0],
             splits: [f.splits[0], f.splits[1], f.splits[2], (f.phase % 64) as f32],
             light: [
                 light_tan(f.softness),
@@ -646,6 +648,15 @@ impl SoftShadows {
     }
 }
 
+/// A cascade's matrix for positions counted from the camera of `view`
+/// (along the world's axes), as the shader rebuilds them from the depth
+/// (soft_shadows.wgsl `seen_at`). In double precision: far from the region's
+/// origin the camera's place swamps the cascade's own in single.
+fn from_camera(cascade: Mat4, view: Mat4) -> Mat4 {
+    let camera = view.as_dmat4().inverse().w_axis.truncate();
+    (cascade.as_dmat4() * glam::DMat4::from_translation(camera)).as_mat4()
+}
+
 /// The angle between the rays of two neighbouring pixels at the centre of
 /// the view, which the blur turns into metres.
 fn pixel_angle(inv_view_proj: Mat4, height: u32) -> f32 {
@@ -663,6 +674,7 @@ fn pixel_angle(inv_view_proj: Mat4, height: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec3;
 
     #[test]
     fn the_light_is_2_3_degrees_across_at_a_softness_of_one() {
@@ -904,6 +916,31 @@ mod tests {
     }
 
     #[test]
+    fn a_cascade_from_the_camera_keeps_its_millimetres_at_skybox_height() {
+        let origin = Vec3::new(134.0, 126.0, 2020.0);
+        let radius = 6.0f32;
+        let sun = Vec3::new(1.0, 0.3, -1.0).normalize();
+        let cascade = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, 2.0 * radius + 100.0)
+            * glam::camera::rh::view::look_at_mat4(origin - sun * (radius + 50.0), origin, Vec3::Z);
+        let view = glam::camera::rh::view::look_at_mat4(origin + Vec3::new(0.3, -0.4, 1.6), origin, Vec3::Z);
+        let camera = view.as_dmat4().inverse().w_axis.truncate();
+        let relative = from_camera(cascade, view);
+        let (mut worst, mut region) = (0f64, 0f64);
+        for step in 0..100 {
+            // points of the ground a quarter of a millimetre apart
+            let seen = glam::DVec3::new(-0.3 + f64::from(step) * 0.00025, 0.4, -1.6);
+            let exact = cascade.as_dmat4().project_point3(camera + seen);
+            let apart = |got: Vec3| f64::from(radius) * (got.as_dvec3() - exact).abs().max_element();
+            worst = worst.max(apart(relative.project_point3(seen.as_vec3())));
+            region = region.max(apart(cascade.project_point3((camera + seen).as_vec3())));
+        }
+        // in metres of the cascade: a hundredth of a millimetre from the
+        // camera, a tenth of one and more in region coordinates
+        assert!(worst < 1e-5, "{worst}");
+        assert!(region > 1e-4, "{region}");
+    }
+
+    #[test]
     fn the_pixel_angle_holds_far_from_the_origin() {
         // a projection of 60 degrees, the camera at the origin and at skybox
         // altitude: the angle between neighbouring pixels' rays is the same
@@ -1030,6 +1067,26 @@ mod tests {
             mid.2,
             pinpoint.2
         );
+    }
+
+    #[test]
+    fn gpu_the_mask_is_the_same_at_skybox_height() {
+        let Some(gpu) = GpuScene::new() else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        // a close-up of the penumbra of the slab 3 m up, a quarter of a
+        // millimetre of the ground to the pixel, looking 45 degrees down
+        let view = (Vec3::new(4.0, -0.1, 0.1), Vec3::new(4.0, 0.0, 0.0), Vec3::Z);
+        let ground = gpu.mask(3.0, 2.0, view, Vec3::ZERO);
+        let high = gpu.mask(3.0, 2.0, view, Vec3::new(134.0, 126.0, 2020.0));
+        let penumbra = ground.iter().filter(|l| **l > 0.1 && **l < 0.9).count();
+        let apart = ground.iter().zip(&high).map(|(a, b)| (a - b).abs()).sum::<f32>() / ground.len() as f32;
+        eprintln!("penumbra pixels {penumbra}, mean difference {apart}");
+        assert!(penumbra > ground.len() / 4, "the view holds the penumbra: {penumbra}");
+        // (0.0046 with the positions in region coordinates: horizontal lines
+        // across the penumbra)
+        assert!(apart < 0.001, "the same light at both heights: {apart}");
     }
 
     /// A ground plane seen from 10 m above, a 2 m square slab at some
@@ -1168,14 +1225,50 @@ mod tests {
         /// `height` metres up: (light far past the edge, light under the slab,
         /// width in metres between 90 % and 10 % of the light).
         fn edge(&self, height: f32, softness: f32) -> (f32, f32, f32) {
+            let mask = self.mask(height, softness, (Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y), Vec3::ZERO);
+            // the middle row: the ground's light along x (the image's x), with
+            // the ground seen from 10 m over 50 degrees, 9.3 m wide
+            let row = VIEW / 2;
+            let visible = |x: u32| mask[(row * VIEW + x) as usize];
+            let metres = 2.0 * 10.0 * (25.0_f32.to_radians()).tan() / VIEW as f32;
+            // the slab spans x in -1..1 (its top hides the ground), the shadow
+            // of a 45 degree sun ends at 1 + height: look just past the slab
+            let edge_x = 1.0 + height;
+            let pixel_of = |x: f32| (VIEW as f32 / 2.0 + x / metres) as u32;
+            let lit = visible(pixel_of(edge_x + 0.5));
+            // (past the slab's own top, which hides the ground for x < 1)
+            let umbra = visible(pixel_of((edge_x - 0.3).max(1.1)));
+            let (mut hi, mut lo) = (None, None);
+            for x in pixel_of((edge_x - 0.5).max(1.1))..pixel_of(edge_x + 0.5) {
+                let v = visible(x);
+                if v >= 0.1 && lo.is_none() {
+                    lo = Some(x);
+                }
+                if v >= 0.9 && lo.is_some() && hi.is_none() {
+                    hi = Some(x);
+                }
+            }
+            let width = match (lo, hi) {
+                (Some(lo), Some(hi)) => (hi - lo) as f32 * metres,
+                _ => 0.0,
+            };
+            (lit, umbra, width)
+        }
+
+        /// The light of every pixel of the scene (row by row) seen by a
+        /// camera at `eye` looking at `look`, the whole scene moved to
+        /// `origin`: the depths are the same wherever it stands, the
+        /// matrices of the frame are those of that place.
+        fn mask(&self, height: f32, softness: f32, (eye, look, up): (Vec3, Vec3, Vec3), origin: Vec3) -> Vec<f32> {
             let (device, queue) = (&self.device, &self.queue);
             // the sun travels towards +x and down, 45 degrees
             let dir = Vec3::new(1.0, 0.0, -1.0).normalize();
             let radius = 6.0;
-            let eye = -dir * (radius + 50.0);
-            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Z);
+            let sun = -dir * (radius + 50.0);
+            let view = glam::camera::rh::view::look_at_mat4(sun, Vec3::ZERO, Vec3::Z);
             let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, 2.0 * radius + 100.0);
             let cascade = proj * view;
+            let cascade_there = proj * glam::camera::rh::view::look_at_mat4(sun + origin, origin, Vec3::Z);
             let inverse = cascade.inverse();
             // the atlas: two tiles wide, one tall; the slab's depth in the first
             let (aw, ah) = (2 * TILE, TILE);
@@ -1212,12 +1305,13 @@ mod tests {
                 view_formats: &[],
             });
             self.upload_depth(&shadow, &atlas, aw, ah);
-            // the camera 10 m over the origin looking down, reversed infinite depth
-            let cam = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+            // reversed infinite depth
+            let cam = glam::camera::rh::view::look_at_mat4(eye, look, up);
+            let cam_there = glam::camera::rh::view::look_at_mat4(eye + origin, look + origin, up);
             let cam_proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(50.0_f32.to_radians(), 1.0, 0.1);
             let vp = cam_proj * cam;
             let inv_vp = vp.inverse();
-            // the ground (z = 0) seen from above, and the slab's top where it hides it
+            // the ground (z = 0), and the slab's top where it hides it
             let mut depth = vec![0.0f32; (VIEW * VIEW) as usize];
             for y in 0..VIEW {
                 for x in 0..VIEW {
@@ -1265,10 +1359,10 @@ mod tests {
                 queue,
                 &targets,
                 &Frame {
-                    cascades: [cascade; 3],
+                    cascades: [cascade_there; 3],
                     splits,
-                    inv_view_proj: inv_vp,
-                    camera: Vec3::new(0.0, 0.0, 10.0),
+                    proj: cam_proj,
+                    view: cam_there,
                     softness,
                     phase: 0,
                     photo: false,
@@ -1310,37 +1404,15 @@ mod tests {
             slice.map_async(wgpu::MapMode::Read, |r| r.expect("map"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             let data = slice.get_mapped_range().expect("mapped");
-            // the middle row: the ground's light along x (the image's x), with
-            // the ground seen from 10 m over 50 degrees, 9.3 m wide
-            let row = VIEW / 2;
-            let visible = |x: u32| {
-                let at = (row * bytes_per_row + x * 4) as usize;
-                let word = u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
-                (word & 1023) as f32 / 1023.0
-            };
-            let metres = 2.0 * 10.0 * (25.0_f32.to_radians()).tan() / VIEW as f32;
-            // the slab spans x in -1..1 (its top hides the ground), the shadow
-            // of a 45 degree sun ends at 1 + height: look just past the slab
-            let edge_x = 1.0 + height;
-            let pixel_of = |x: f32| (VIEW as f32 / 2.0 + x / metres) as u32;
-            let lit = visible(pixel_of(edge_x + 0.5));
-            // (past the slab's own top, which hides the ground for x < 1)
-            let umbra = visible(pixel_of((edge_x - 0.3).max(1.1)));
-            let (mut hi, mut lo) = (None, None);
-            for x in pixel_of((edge_x - 0.5).max(1.1))..pixel_of(edge_x + 0.5) {
-                let v = visible(x);
-                if v >= 0.1 && lo.is_none() {
-                    lo = Some(x);
-                }
-                if v >= 0.9 && lo.is_some() && hi.is_none() {
-                    hi = Some(x);
+            let mut mask = Vec::with_capacity((VIEW * VIEW) as usize);
+            for y in 0..VIEW {
+                for x in 0..VIEW {
+                    let at = (y * bytes_per_row + x * 4) as usize;
+                    let word = u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+                    mask.push((word & 1023) as f32 / 1023.0);
                 }
             }
-            let width = match (lo, hi) {
-                (Some(lo), Some(hi)) => (hi - lo) as f32 * metres,
-                _ => 0.0,
-            };
-            (lit, umbra, width)
+            mask
         }
     }
 }

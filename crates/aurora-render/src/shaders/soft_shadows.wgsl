@@ -15,9 +15,9 @@
 // `mm_build0` and `mm_build` (the atlas's minimum depths).
 
 struct Params {
-    cascade_vp: array<mat4x4<f32>, 3>,
-    inv_view_proj: mat4x4<f32>,
-    camera: vec4<f32>,      // xyz: the camera; w: the angle between two neighbouring pixels' rays
+    cascade_vp: array<mat4x4<f32>, 3>,  // from a position from the camera (below)
+    from_clip: mat4x4<f32>, // the depth prepass's clip space to the position from the camera
+    pixel: vec4<f32>,       // x: the angle between two neighbouring pixels' rays
     splits: vec4<f32>,      // the three cascades' far distances; w: the frame's noise phase
     light: vec4<f32>,       // x: tan of the light's half angle, y: largest filter radius (m), z: filter taps, w: blocker gathers
     size: vec4<u32>,        // x, y: the target's size; z, w: its first pixel in the whole photo (0 outside a tile)
@@ -85,11 +85,16 @@ fn depth_at(px: vec2<i32>) -> f32 {
     return textureLoad(depth_tex, clamp(px, vec2<i32>(0), vec2<i32>(p.size.xy) - vec2<i32>(1)), 0);
 }
 
-fn world_of(px: vec2<i32>, depth: f32) -> vec3<f32> {
+// The surface at a pixel, from the camera (along the world's axes). Every
+// position here is one: in region coordinates a position rebuilt from the
+// depth loses its millimetres far from the region's origin (a skybox 2 km
+// up), the normal taken from two neighbours then turns from one row of
+// pixels to the next, and a penumbra seen close shows horizontal lines.
+fn seen_at(px: vec2<i32>, depth: f32) -> vec3<f32> {
     let size = vec2<f32>(p.size.xy);
     let c = vec2<f32>(clamp(px, vec2<i32>(0), vec2<i32>(p.size.xy) - vec2<i32>(1)));
     let ndc = vec2<f32>((c.x + 0.5) / size.x * 2.0 - 1.0, 1.0 - (c.y + 0.5) / size.y * 2.0);
-    let w = p.inv_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
+    let w = p.from_clip * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
     return w.xyz / w.w;
 }
 
@@ -103,10 +108,10 @@ fn normal_at(px: vec2<i32>, depth: f32, pos: vec3<f32>) -> vec3<f32> {
     let d = depth_at(px + vec2<i32>(0, 1));
     let sx = select(1, -1, abs(l - depth) < abs(r - depth));
     let sy = select(1, -1, abs(u - depth) < abs(d - depth));
-    let dx = (world_of(px + vec2<i32>(sx, 0), select(r, l, sx < 0)) - pos) * f32(sx);
-    let dy = (world_of(px + vec2<i32>(0, sy), select(d, u, sy < 0)) - pos) * f32(sy);
+    let dx = (seen_at(px + vec2<i32>(sx, 0), select(r, l, sx < 0)) - pos) * f32(sx);
+    let dy = (seen_at(px + vec2<i32>(0, sy), select(d, u, sy < 0)) - pos) * f32(sy);
     let c = cross(dx, dy);
-    let to_camera = p.camera.xyz - pos;
+    let to_camera = -pos;
     // (a degenerate step, on the ring of the target's edge or a flat
     // depth, leaves the view direction)
     var n = select(normalize(to_camera), c * inverseSqrt(max(dot(c, c), 1e-30)), dot(c, c) > 1e-20);
@@ -117,8 +122,8 @@ fn normal_at(px: vec2<i32>, depth: f32, pos: vec3<f32>) -> vec3<f32> {
 }
 
 // Uv of a point in a cascade's tile (y down) and its depth along the light.
-fn light_space(world_pos: vec3<f32>, cascade: u32) -> vec3<f32> {
-    let lp = p.cascade_vp[cascade] * vec4<f32>(world_pos, 1.0);
+fn light_space(pos: vec3<f32>, cascade: u32) -> vec3<f32> {
+    let lp = p.cascade_vp[cascade] * vec4<f32>(pos, 1.0);
     let ndc = lp.xyz / lp.w;
     return vec3<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, ndc.z);
 }
@@ -165,7 +170,7 @@ fn legacy_filter(uv: vec2<f32>, depth: f32, radius: f32, texel: f32, tile: vec2<
 // metres and the share of the filter of before in it (1: all of it); the
 // light is -1 outside its tile, so that the other cascade of a blend can
 // take over (`cascade_shadow`).
-fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> vec3<f32> {
+fn cascade_soft(pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> vec3<f32> {
     let m = p.cascade_vp[cascade];
     let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
     let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
@@ -174,7 +179,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     let radius = 1.0 / max(length(row_x), 1e-6);
     let depth_per_metre = length(row_z);
     let bias_n = n * (0.02 + 0.04 * f32(cascade));
-    let q = light_space(world_pos + bias_n, cascade);
+    let q = light_space(pos + bias_n, cascade);
     let uv = q.xy;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || q.z < 0.0 || q.z > 1.0) {
         return vec3<f32>(-1.0, 0.0, 1.0);
@@ -320,7 +325,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
 // else dithered into it (one evaluation a pixel, the blur averages the
 // dither), and the fade at the far end of the last cascade. With the radius
 // of the filter.
-fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u32>) -> vec2<f32> {
+fn soft_factor(pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u32>) -> vec2<f32> {
     let splits = p.splits;
     if (view_depth > splits.z) {
         return vec2<f32>(1.0, 0.0);
@@ -339,15 +344,15 @@ fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u
             pick = cascade + 1u;
         }
     }
-    var s = cascade_soft(world_pos, n, pick, frag);
+    var s = cascade_soft(pos, n, pick, frag);
     let other = select(cascade + 1u, cascade, pick != cascade);
     // in the band, a point outside one tile takes the other (cascade_shadow)
     if (s.x < 0.0 && t > 0.0) {
-        s = cascade_soft(world_pos, n, other, frag);
+        s = cascade_soft(pos, n, other, frag);
     } else if (t > 0.0 && s.z >= 1.0) {
         // both cascades with the filter of before: mixed by the band, as
         // in `shadow_factor`
-        let o = cascade_soft(world_pos, n, other, frag);
+        let o = cascade_soft(pos, n, other, frag);
         if (o.x >= 0.0 && o.z >= 1.0) {
             let near = select(o.x, s.x, pick == cascade);
             let far = select(s.x, o.x, pick == cascade);
@@ -396,8 +401,8 @@ fn soft(@builtin(global_invocation_id) id: vec3<u32>) {
         store(id.xy, 1.0, -1.0, 0.0);
         return;
     }
-    let pos = world_of(px, depth);
-    let view_depth = distance(pos, p.camera.xyz);
+    let pos = seen_at(px, depth);
+    let view_depth = length(pos);
     if (view_depth > p.splits.z) {
         store(id.xy, 1.0, view_depth, 0.0);
         return;
@@ -428,7 +433,7 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
     let size = vec2<i32>(p.size.xy) - vec2<i32>(1);
     let spread = 0.4 * radius;
     // under a quarter of a pixel's width in metres no neighbour counts
-    if (spread < 0.25 * c.y * p.camera.w) {
+    if (spread < 0.25 * c.y * p.pixel.x) {
         store(id.xy, c.x, c.y, radius);
         return;
     }
@@ -440,7 +445,7 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
             continue;
         }
         let s = unpack(textureLoad(in_tex, clamp(px + axis * i, vec2<i32>(0), size), 0).x);
-        let a = f32(i) * p.camera.w;
+        let a = f32(i) * p.pixel.x;
         let apart = (s.y - c.y) * (s.y - c.y) + s.y * c.y * a * a;
         let w = exp(-0.125 * f32(i * i) + sharp * apart) * select(0.0, 1.0, s.y >= 0.0);
         sum += s.x * w;
