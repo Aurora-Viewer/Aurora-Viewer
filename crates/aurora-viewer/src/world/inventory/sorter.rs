@@ -719,6 +719,50 @@ fn without_permissions(words: Vec<String>) -> Vec<String> {
     words.into_iter().zip(keep).filter_map(|(w, k)| k.then_some(w)).collect()
 }
 
+/// In a dual-rendering title, a bare Legacy names the old material
+/// format. Keep separately stated body fits and version-independent names.
+fn rendering_legacy(words: &[String], at: usize, clothing: bool) -> bool {
+    let before = at.checked_sub(1).and_then(|i| words.get(i)).map(String::as_str);
+    let after = words.get(at + 1).map(String::as_str);
+    if matches!(before, Some("for" | "fits" | "fit"))
+        || matches!(
+            after,
+            Some("f" | "m" | "male" | "body" | "perky" | "pinup" | "men" | "mens" | "boy")
+        )
+    {
+        return false;
+    }
+    let connector = |word| matches!(word, Some("and" | "or" | "plus"));
+    let version = before
+        .and_then(|word| word.strip_prefix('v'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()));
+    !clothing && version
+        || connector(before) && at.checked_sub(2).is_some_and(|i| words[i] == "pbr")
+        || connector(after) && words.get(at + 2).is_some_and(|word| word == "pbr")
+}
+
+fn body_for_product(words: &[String], name: &str, category: Option<Category>, allow_weak: bool) -> Option<Body> {
+    let fit = clothing_fit_label(name, category);
+    if !has(words, "pbr") || !has(words, "legacy") {
+        return body(words, fit, allow_weak);
+    }
+    let clothing = clothing_fit_category(category);
+    let with_connectors;
+    let words = if name.contains('&') {
+        with_connectors = without_permissions(self::words(&name.replace('&', " and ")));
+        with_connectors.as_slice()
+    } else {
+        words
+    };
+    let mut body_words = words.to_vec();
+    for (at, word) in body_words.iter_mut().enumerate() {
+        if word == "legacy" && rendering_legacy(words, at, clothing) {
+            word.clear();
+        }
+    }
+    body(&body_words, fit, allow_weak)
+}
+
 fn body(words: &[String], fit_label: Option<&str>, allow_weak: bool) -> Option<Body> {
     let bodies = &VOCABULARY.bodies;
     let strong: Vec<&'static BodyWords> = bodies
@@ -956,7 +1000,7 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     let body = if matches!(category, Some(Category::Makeup | Category::Heads)) {
         None
     } else {
-        body(&words, clothing_fit_label(name, category), !head_named)
+        body_for_product(&words, name, category, !head_named)
     };
     // A body skin says which body and how it looks, not what it is:
     // `The "Harbor Body" for eBody Reborn (Porcelain)`.
@@ -4728,9 +4772,9 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
     }
     let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
     let mut counted = 0;
-    let mut bulk_type = None;
+    let mut bulk_types = HashSet::new();
     let mut bulk_count = 0;
-    let mut mixed_bulk = false;
+    let mut unsupported_bulk = false;
     let mut scripts = 0;
     let mut notecards = 0;
     let mut landmarks = 0;
@@ -4745,17 +4789,17 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
             if !matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) {
                 match it.asset_type {
                     0 | 1 | 12 | 18 | 19 | 56 | 57 => {
-                        let category = Category::of_asset(it.asset_type, it.flags);
-                        mixed_bulk |= bulk_type.is_some() && bulk_type != category;
-                        bulk_type = category;
-                        bulk_count += 1;
+                        if let Some(category) = Category::of_asset(it.asset_type, it.flags) {
+                            bulk_types.insert(category);
+                            bulk_count += 1;
+                        }
                     }
                     // These can accompany a product or be the pack itself.
                     3 => landmarks += 1,
                     7 => notecards += 1,
                     4 | 10 | 11 => scripts += 1,
                     24 | 25 => {}
-                    _ => mixed_bulk = true,
+                    _ => unsupported_bulk = true,
                 }
                 continue;
             }
@@ -4779,9 +4823,18 @@ fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences, shop: O
         }
         stack.extend(f.children.iter().copied());
     }
-    if counted == 0 && !mixed_bulk {
+    if counted == 0 && !unsupported_bulk {
         let kind = match (bulk_count, scripts, notecards, landmarks) {
-            (2.., _, _, _) => bulk_type,
+            (2.., _, _, _) if bulk_types.len() == 1 => bulk_types.iter().copied().next(),
+            // PBR deliveries can include bitmap fallbacks for older renderers.
+            (2.., _, _, _)
+                if bulk_types.len() == 2
+                    && bulk_types.contains(&Category::Materials)
+                    && bulk_types.contains(&Category::Textures)
+                    && inv.folders.get(&folder).is_some_and(|root| has(&words(&root.info.name), "pbr")) =>
+            {
+                Some(Category::Materials)
+            }
             // A script kit can also ship installation notes or landmarks.
             (0, 2.., _, _) => Some(Category::Scripts),
             (0, 0, 2.., 0) => Some(Category::Notecards),
@@ -5076,20 +5129,37 @@ fn plan_with(
                     .map(String::as_str);
                 let to = target_classified(&name, found, prefs.stores, &prefs.store_hints, creator, observed_store);
                 let named_set = folder && found.category == Some(Category::Outfits) && !names_an_outfit(&name);
+                let surface = found
+                    .category
+                    .filter(|category| folder && matches!(category, Category::Textures | Category::Materials) && has(&words(&name), "pbr"))
+                    .map(category_folder);
                 let shop = match &to {
                     Some(Dest::Path(path)) if path.first() == Some(&stores_root) => path.get(1).map(String::as_str),
-                    Some(Dest::Path(path)) if named_set => {
-                        let end = path.len() - usize::from(found.squish || found.waifus);
+                    Some(Dest::Path(path)) if named_set || surface.is_some() => {
+                        let has_variant = (found.squish || found.waifus) && found.category != Some(Category::Materials);
+                        let end = path.len() - usize::from(has_variant);
+                        let category = surface.as_ref().unwrap_or(&outfits_root);
                         path[..end]
                             .iter()
-                            .position(|part| *part == outfits_root)
+                            .position(|part| part == category)
                             .and_then(|at| path[..end].get(at + 1))
                             .map(String::as_str)
                     }
                     _ => None,
                 };
-                if folder && (to.is_none() || shop.is_some() || named_set) && product_folder_in(inv, id, &reserved) {
-                    target_from_items(inv, id, prefs, shop, named_set).or(to)
+                if folder && (to.is_none() || shop.is_some() || named_set || surface.is_some()) && product_folder_in(inv, id, &reserved) {
+                    let inferred = target_from_items(inv, id, prefs, shop, named_set);
+                    if surface.is_some() && to.is_some() {
+                        inferred
+                            .filter(|dest| {
+                                matches!(dest, Dest::Path(path) if path.first().is_some_and(|part| {
+                                    *part == category_folder(Category::Textures) || *part == category_folder(Category::Materials)
+                                }))
+                            })
+                            .or(to)
+                    } else {
+                        inferred.or(to)
+                    }
                 } else {
                     to
                 }

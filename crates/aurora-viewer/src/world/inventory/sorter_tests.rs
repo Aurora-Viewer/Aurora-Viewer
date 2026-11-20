@@ -4780,6 +4780,40 @@ fn numbered_same_product_style_folders_use_the_named_primary_object() {
 }
 
 #[test]
+fn pbr_material_deliveries_keep_their_legacy_texture_fallbacks() {
+    let mut inv = fixture(&[]);
+    for (folder_id, title) in [
+        (70, "Aster PBR and Legacy Serein Pack (unpacked)"),
+        (71, "[Aster] Slate Tile Texture PBR & Legacy Pack (unpacked)"),
+        (72, "Other Render Resources [unpacked]"),
+    ] {
+        add_folder(&mut inv, folder_id, OBJECTS, title);
+        add_typed(&mut inv, folder_id * 10, folder_id, "Fog Silver", 0, 57);
+        add_typed(&mut inv, folder_id * 10 + 1, folder_id, "Forest Canvas", 0, 0);
+    }
+    let none = HashSet::new();
+    let prefs = Preferences::default();
+    for result in [
+        plan_whole(&inv, &prefs, &none, &none),
+        plan(&inv, id(OBJECTS), &prefs, &none, &none),
+    ] {
+        assert_eq!(result.moves.len(), 2);
+        assert!(result.moves.iter().all(|item| {
+            [id(70), id(71)].contains(&item.id) && item.folder && item.to == Dest::Path(vec![category_folder(Category::Materials)])
+        }));
+        assert!(result.unknown.iter().any(|name| name == "Other Render Resources [unpacked]"));
+    }
+    let with_stores = Preferences { stores: true, ..prefs };
+    let result = plan_whole(&inv, &with_stores, &none, &none);
+    assert!(
+        result
+            .moves
+            .iter()
+            .any(|item| { item.id == id(71) && item.to == Dest::Path(vec![category_folder(Category::Materials), "Aster".into()]) })
+    );
+}
+
+#[test]
 fn modular_floor_packs_use_matching_physical_tiles_and_keep_variants_together() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 70, OBJECTS, "Nookery Star Floor [Black & White Pack]");

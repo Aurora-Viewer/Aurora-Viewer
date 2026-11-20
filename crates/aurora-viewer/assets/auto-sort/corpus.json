@@ -2,6 +2,51 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
+   "name": "MedBootsC PBR Legacy Brown2",
+   "type": 6,
+   "expect": "Legacy"
+  },
+  {
+   "name": "PBR & Legacy Dress [Reborn]",
+   "type": 6,
+   "expect": "Reborn/{dresses}"
+  },
+  {
+   "name": "PBR & Legacy Serein Pack (unpacked)",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Sandy Beach V2 (Legacy) and V3.01 [PBR]",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "Sandy Beach Building Set V3.01 [PBR]",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Slate Tile Texture v2 PBR & Legacy",
+   "type": -1,
+   "expect": "{textures}"
+  },
+  {
+   "name": "PBR Dress [Legacy F]",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
+   "name": "Legacy F PBR Dress",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
+   "name": "PBR & Legacy Dress [Legacy F]",
+   "type": 6,
+   "expect": "Legacy/{dresses}"
+  },
+  {
    "name": "Isola Pathway [Limestone]",
    "type": -1,
    "expect": "{decor}"
