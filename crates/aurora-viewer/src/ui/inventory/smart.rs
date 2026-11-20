@@ -218,6 +218,20 @@ impl SmartQuery {
         self.root.uses(field)
     }
 
+    /// Search inventory for likely counterparts of a rezzed object.
+    /// Match by name without restricting the creator.
+    pub fn for_world_object(name: &str) -> Option<Self> {
+        let stem = name_stem(name);
+        if stem.is_empty() {
+            return None;
+        }
+
+        let mut query = Self::default();
+        query.root.nodes.push(Node::Rule(Rule::text(Field::Name, Op::Contains, &stem)));
+
+        Some(query)
+    }
+
     /// The advanced search a quick search stands for, so switching keeps
     /// what was typed: `a+b` is all of its words, `"word"` a whole word,
     /// the All field any of the text fields.
@@ -659,5 +673,27 @@ mod tests {
         assert_eq!(name_stem("Hair_04"), "hair");
         assert_eq!(name_stem("Plain hat"), "plain hat");
         assert_eq!(name_stem("2024"), "2024");
+    }
+
+    #[test]
+    fn world_object_search_matches_name_only() {
+        let query = SmartQuery::for_world_object("Velvet Jacket v2.1").expect("valid object name");
+        let matcher = Matcher::new(&query, &HashMap::new(), 0, 0);
+
+        // A matching name is accepted regardless of creator.
+        let mut item = subject("velvet jacket v3.0");
+        item.creator = Uuid::from_u128(99);
+        assert!(matcher.matches(&item));
+
+        // Unrelated names must still be excluded.
+        item.name = "velvet shoes";
+        assert!(!matcher.matches(&item));
+
+        let name_only = SmartQuery::for_world_object("Chair").expect("valid object name");
+        let matcher = Matcher::new(&name_only, &HashMap::new(), 0, 0);
+        assert!(matcher.matches(&subject("chair (copy)")));
+
+        // An empty name must not search the entire inventory.
+        assert!(SmartQuery::for_world_object("  ").is_none());
     }
 }

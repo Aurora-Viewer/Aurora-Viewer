@@ -15609,6 +15609,7 @@ ui-options-proxy-direct-media-warning = メディアはプロキシを迂回し�
 ui-options-proxy-direct-media-confirm-title = プロキシを使わずにメディアを再生しますか？
 ui-options-proxy-direct-media-confirm-text = 動画と、HTTP プロキシの対象外の Web ページはプロキシを経由しません。このコンピュータから直接接続するため、区画やオブジェクトのメディアを設定した人に実際の IP アドレスが見えます。その他の通信はすべてプロキシを経由したままです。変更はビューアの再起動後に有効になります。
 ui-options-proxy-direct-media-confirm = メディアを直接再生する
+ui-context-find-in-inventory = インベントリ内を検索
 
 game-control-title = ゲームコントロール
 game-control-about = モードごとにゲームコントローラーの入力をアクションに割り当て、リージョンのスクリプトに送信します。

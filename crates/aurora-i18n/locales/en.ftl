@@ -15736,6 +15736,7 @@ ui-options-proxy-direct-media-warning = Media connects directly, around the prox
 ui-options-proxy-direct-media-confirm-title = Play media without the proxy?
 ui-options-proxy-direct-media-confirm-text = Video, and web pages the HTTP proxy does not cover, do not go through the proxy. They connect directly from this computer, so whoever chose the media of a parcel or an object can see your real IP address. Everything else keeps going through the proxy. This takes effect after you restart the viewer.
 ui-options-proxy-direct-media-confirm = Play media directly
+ui-context-find-in-inventory = Find in Inventory
 
 game-control-title = Game Controls
 game-control-about = Map a game controller's inputs to actions in each mode, and send them to scripts in the region.
