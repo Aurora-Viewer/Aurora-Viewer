@@ -976,15 +976,10 @@ impl PlacesUi {
     /// its position (LLPanelPlaces, LLTeleportHistoryPanel:
     /// canTeleportToLocation), a landmark under @tplm (LLLandmarksPanel).
     fn teleport_allowed(world: &World, key: Key, place: &Place) -> bool {
-        if let Key::Visit(i) = key
-            && let Some(entry) = world.tp_storage.items.get(i)
-        {
-            return world.rlva_can_teleport_global(entry.global);
-        }
-        if place.item.is_some() {
-            world.rlva_can_teleport_landmark()
+        if matches!(key, Key::Landmark(_)) && place.item.is_some() {
+            world.rlva_landmark_button_enabled()
         } else {
-            place.global.is_none_or(|g| world.rlva_can_teleport_global(g))
+            world.rlva_can_teleport_location()
         }
     }
 

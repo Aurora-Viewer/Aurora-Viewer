@@ -35,6 +35,7 @@ pub mod modifiers;
 mod naming;
 pub mod offers;
 mod policy;
+pub use policy::DoubleClickRlva;
 pub mod preferences;
 pub mod privacy;
 mod relative;
@@ -535,7 +536,12 @@ pub struct Rlva {
     pub self_detach: Option<(Uuid, Uuid)>,
     pub stand_origin: Option<(aurora_net::RegionHandle, glam::Vec3)>,
     pub stand_return: Option<(aurora_net::RegionHandle, glam::Vec3)>,
-    stand_seated: bool,
+    /// @fly, @alwaysrun and @temprun as last seen (`rlva_movement_tick`).
+    movement_rules: u8,
+    /// A teleport the boundary already let through, sent again once the
+    /// maturity preference is in sync: LLAgent::startTeleportRequest runs a
+    /// pending request without asking RLVa again (`App::update`).
+    pub teleport_already_checked: bool,
     inventory_fetches: BTreeMap<Uuid, (std::time::Instant, u8)>,
     pub revision: u64,
     gc: Option<std::time::Instant>,
@@ -631,7 +637,7 @@ impl Rlva {
         self.self_detach = None;
         self.stand_origin = None;
         self.stand_return = None;
-        self.stand_seated = false;
+        self.movement_rules = 0;
         self.inventory_fetches.clear();
         self.lookups.clear();
         self.gc = None;
@@ -1247,3 +1253,7 @@ pub(crate) mod link_lock_tests;
 #[cfg(test)]
 #[path = "rlva/outfit_swap_tests.rs"]
 mod outfit_swap_tests;
+
+#[cfg(test)]
+#[path = "rlva/movement_tests.rs"]
+mod movement_tests;

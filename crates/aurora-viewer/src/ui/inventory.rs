@@ -346,7 +346,8 @@ impl Facts {
                     )
                 }),
             rlva: world.rlva_wear_locks(),
-            landmark_blocked: !world.rlva_can_teleport_landmark(),
+            // (LLLandmarksPanel::isActionEnabled: @tplm only)
+            landmark_blocked: !world.rlva_landmark_button_enabled(),
             opensim: world.home_grid.is_some(),
         }
     }

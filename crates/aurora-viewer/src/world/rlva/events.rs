@@ -103,23 +103,6 @@ impl World {
         }
     }
 
-    /// The return is delayed until the seat parent has gone, as onSitOrStand
-    /// does in the reference. A failed sit must never trigger a teleport.
-    pub fn rlva_update_stand(&mut self) {
-        if !self.rlva.has("standtp") {
-            self.rlva.stand_origin = None;
-            self.rlva.stand_return = None;
-            self.rlva.stand_seated = false;
-        } else if self.rlva.stand_origin.is_some() {
-            if self.agent.is_sitting() {
-                self.rlva.stand_seated = true;
-            } else if self.rlva.stand_seated {
-                self.rlva.stand_return = self.rlva.stand_origin.take();
-                self.rlva.stand_seated = false;
-            }
-        }
-    }
-
     pub fn rlva_can_accept_teleport(&self, sender: Uuid, request: bool) -> bool {
         self.rlva.allows(if request { "tprequest" } else { "tplure" }, &sender.to_string())
             && (request || !self.agent.is_sitting() || !self.rlva.has("unsit"))

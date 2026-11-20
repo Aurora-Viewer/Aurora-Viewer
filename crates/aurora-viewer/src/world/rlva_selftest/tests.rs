@@ -205,10 +205,10 @@ impl Host {
             self.send(command, crate::world::rlva::watchdog::ACTOR);
         }
         self.world.rlva.collect(now, |id| self.world.objects.index_of_uuid(&id).is_some());
-        self.world.rlva_update_stand();
         for (actor, command) in self.world.rlva_sitting_tick() {
             self.send(command, actor);
         }
+        self.world.rlva_movement_tick();
         let commands = self.world.rlva_pending();
         for (_, c) in std::mem::take(&mut self.world.rlva.viewer) {
             if let Param::Reply(channel) = c.param

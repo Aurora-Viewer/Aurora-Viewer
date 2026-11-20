@@ -1754,6 +1754,8 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
 fn rlva_queued_force_reads_the_rules_it_was_received_under() {
     let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     w.rlva.configure(true);
+    // (a takeoff the land allows: LLAgent::canFly)
+    w.fly_override = true;
     command(&mut w.rlva, B, "@fly=n");
     command(&mut w.rlva, A, "@fly=force");
     command(&mut w.rlva, B, "@fly=y");
@@ -1794,12 +1796,13 @@ fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() 
     command(&mut w.rlva, A, "@standtp=n,tploc=n");
     let origin = (42, glam::Vec3::new(100.0, 100.0, 30.0));
     w.rlva.stand_origin = Some(origin);
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
+    w.rlva_sitting_tick();
     assert!(w.rlva.stand_return.is_none(), "an unanswered sit is not a stand");
     w.agent.ground_sit = true;
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
     w.agent.ground_sit = false;
-    w.rlva_update_stand();
+    w.rlva_sitting_tick();
     assert_eq!(w.rlva.stand_return, Some(origin));
     let c = NetCommand::TeleportTo {
         handle: 42,
@@ -3823,6 +3826,7 @@ fn rlva_force_fly_reads_numbers_and_words() {
     }
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     world.rlva.configure(true);
+    world.fly_override = true;
     let fly = |world: &mut crate::world::World, source: Uuid, option: &str| {
         command(&mut world.rlva, source, &format!("@fly{option}=force"));
         assert!(world.rlva_pending().is_empty());

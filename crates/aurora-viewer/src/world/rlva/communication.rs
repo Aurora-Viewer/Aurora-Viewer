@@ -135,8 +135,11 @@ impl World {
         }
     }
 
+    /// LLIMProcessing::processNewMessage (llimprocessing.cpp): an offer or
+    /// a request is censored under @recvim from its sender or @showloc; a
+    /// god's lure (IM_GODLIKE_LURE_USER) never is.
     pub(crate) fn rlva_teleport_message(&self, message: &str, sender: Uuid, godlike: bool) -> String {
-        if !self.rlva_allows_im("recvim", sender) || (!godlike && self.rlva.has("showloc")) {
+        if !godlike && (!self.rlva_allows_im("recvim", sender) || self.rlva.has("showloc")) {
             aurora_i18n::tr!("rlva-hidden-generic").into()
         } else {
             message.replace('\r', "")
