@@ -643,12 +643,16 @@ impl Imports {
         let wake = ctx.clone();
         file_picker::spawn(request, tx, wake, move || {
             let mut entries = Vec::new();
-            if let Some(path) = cancellation.pick(|| {
-                rfd::FileDialog::new()
-                    .set_title(aurora_i18n::tr!("import-title"))
-                    .add_filter(Choice::Texture.label(), &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"])
-                    .pick_file()
-            }) {
+            if let Some(path) = cancellation
+                .select(
+                    file_picker::Kind::File,
+                    aurora_i18n::tr!("import-title"),
+                    Choice::Texture.label(),
+                    &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
+                )
+                .into_iter()
+                .next()
+            {
                 entries = load(&path, Choice::Texture, options, 30, &prefs, false)
                     .unwrap_or_else(|reason| vec![Entry::new(path, Err(reason.to_string()), options)]);
                 for entry in &mut entries {
@@ -871,13 +875,9 @@ impl Imports {
         let tx = self.tx.clone();
         let wake = ctx.clone();
         let work = move || {
-            let select = || match selection {
+            let paths = match selection {
                 Selection::Paths(paths) => paths,
-                Selection::Folder => rfd::FileDialog::new()
-                    .set_title(aurora_i18n::tr!("import-choose-folder"))
-                    .pick_folder()
-                    .into_iter()
-                    .collect(),
+                Selection::Folder => cancellation.select(file_picker::Kind::Folder, aurora_i18n::tr!("import-choose-folder"), "", &[]),
                 Selection::Files(_) => {
                     let filter: &[&str] = match choice {
                         Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
@@ -890,14 +890,9 @@ impl Imports {
                         ],
                         Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
                     };
-                    rfd::FileDialog::new()
-                        .set_title(aurora_i18n::tr!("import-title"))
-                        .add_filter(choice.label(), filter)
-                        .pick_files()
-                        .unwrap_or_default()
+                    cancellation.select(file_picker::Kind::Files, aurora_i18n::tr!("import-title"), choice.label(), filter)
                 }
             };
-            let paths = if native { cancellation.pick(select) } else { select() };
             if paths.len() == 1 && paths[0].is_dir() {
                 return load_folder(&paths[0], &prefs, options, sound_limit);
             }

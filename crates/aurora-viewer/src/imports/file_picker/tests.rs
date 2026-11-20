@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn file_picker_wait_cancels_only_its_owned_panel_and_finishes_without_a_callback() {
+    let cancellation = Cancellation::default();
+    let worker_cancel = cancellation.clone();
+    let (_tx, rx) = crossbeam_channel::bounded::<Vec<PathBuf>>(1);
+    let (closed_tx, closed_rx) = crossbeam_channel::bounded(1);
+    let worker = std::thread::spawn(move || wait_for_selection(&rx, &worker_cancel, || closed_tx.send(()).unwrap()));
+    cancellation.cancel();
+    closed_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(worker.join().unwrap().is_none());
+    assert!(closed_rx.try_recv().is_err());
+}
+
+#[test]
+fn file_picker_wait_keeps_a_completed_selection_and_closes_on_callback_failure() {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    tx.send(vec![PathBuf::from("selected.png")]).unwrap();
+    assert_eq!(
+        wait_for_selection(&rx, &Cancellation::default(), || panic!("already closed")),
+        Some(vec![PathBuf::from("selected.png")])
+    );
+    drop(tx);
+    let closed = std::cell::Cell::new(false);
+    assert!(wait_for_selection(&rx, &Cancellation::default(), || closed.set(true)).is_none());
+    assert!(closed.get());
+}
+
+#[test]
 fn file_picker_cancel_before_start_skips_the_native_dialog() {
     let cancellation = Cancellation::default();
     cancellation.cancel();
@@ -116,14 +143,16 @@ fn file_picker_native_windows_close_after_the_dialog_is_visible() {
         let worker = std::thread::spawn(move || {
             // SAFETY: no arguments; identifies only this test-owned thread.
             started_tx.send(unsafe { GetCurrentThreadId() }).unwrap();
-            let result = worker_cancel.pick(|| {
-                let dialog = rfd::FileDialog::new().set_title("Aurora import-picker-cancel [AUTOMATION - DO NOT TOUCH]");
+            let result = worker_cancel.select(
                 match kind {
-                    0 => dialog.pick_files().unwrap_or_default(),
-                    1 => dialog.pick_folder().into_iter().collect(),
-                    _ => dialog.pick_file().into_iter().collect(),
-                }
-            });
+                    0 => Kind::Files,
+                    1 => Kind::Folder,
+                    _ => Kind::File,
+                },
+                "Aurora import-picker-cancel [AUTOMATION - DO NOT TOUCH]",
+                "Images",
+                &["png"],
+            );
             done_tx.send(result).unwrap();
         });
         let thread = started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
