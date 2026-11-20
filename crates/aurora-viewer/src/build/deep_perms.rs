@@ -43,7 +43,7 @@ use crate::world::inventory::actions::{task_agent_mask, task_rez_allowed};
 use crate::world::objects::ObjKey;
 use aurora_net::build::{BuildCmd, TaskItem, derez, perm, perm_field};
 use glam::{Quat, Vec3};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -67,9 +67,9 @@ const GROUP_SETTLE: Duration = Duration::from_secs(2);
 /// A save in place whose serial moved once counts after this long with no
 /// other move.
 const SERIAL_QUIET: Duration = Duration::from_secs(4);
-/// The simulator may refuse a mask the object's base does not allow: the
-/// masks are sent, then the job goes on.
-const PERMS_WAIT: Duration = Duration::from_secs(10);
+/// A script can keep renaming the copy; the saved item is renamed again
+/// in its parent's contents, where its masks are also confirmed.
+const NAME_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_secs(2);
 const MAX_SCRIPTS: usize = 256;
 const AT_OBJECT: i8 = 6;
@@ -395,6 +395,7 @@ pub enum Stage {
     Rez,
     Props,
     Apply,
+    ConfirmContents,
     ObjectPerms,
     RestoreScripts,
     /// The copy takes its item's name back before the save (a script may
@@ -419,6 +420,8 @@ struct Prim {
     scripts: Vec<(Uuid, Option<bool>)>,
     /// Items saved back here under another name: their original name.
     renames: Vec<(Uuid, String)>,
+    /// Serial of the contents whose requested masks were read back.
+    applied_serial: Option<i16>,
 }
 
 impl Prim {
@@ -429,6 +432,7 @@ impl Prim {
             pending: VecDeque::new(),
             scripts: Vec::new(),
             renames: Vec::new(),
+            applied_serial: None,
         }
     }
 }
@@ -521,6 +525,40 @@ pub struct Report {
 }
 
 #[derive(Debug)]
+struct ContentsUpdate {
+    serial: i16,
+    expected: Vec<TaskItem>,
+    updated: usize,
+    /// A mismatching listing is checked once, then requested again at POLL.
+    checked: bool,
+}
+
+/// Compare only the managed bits the original item can carry. The hierarchy
+/// and forced transfer for no-copy items follow LLPermissions::fix/fixFairUse
+/// (indra/llinventory/llpermissions.cpp). An unexpected loss of base rights in
+/// the reply must not make an unconfirmed requested bit disappear from this check.
+fn contents_permissions_match(wanted: &TaskItem, actual: &TaskItem) -> bool {
+    let base = wanted.base_mask;
+    let mut shared = base & wanted.owner_mask;
+    if base & perm::TRANSFER == 0 && !wanted.group_owned {
+        shared &= !perm::COPY;
+    }
+    let group = shared & (perm::COPY | perm::MODIFY | perm::MOVE);
+    let everyone = shared & perm::COPY;
+    let next = base & (perm::COPY | perm::MODIFY | if base & perm::COPY != 0 { perm::TRANSFER } else { 0 });
+    let overrides = if wanted.asset_type == AT_OBJECT {
+        wanted.flags & (0x100 | 0x040000 | 0x080000)
+    } else {
+        0
+    };
+    actual.group_mask & group == wanted.group_mask & group
+        && actual.everyone_mask & everyone == wanted.everyone_mask & everyone
+        && actual.next_owner_mask & next == wanted.next_owner_mask & next
+        && actual.flags & overrides == overrides
+        && actual.name == wanted.name
+}
+
+#[derive(Debug)]
 pub struct Job {
     options: BulkPerms,
     prims: VecDeque<Uuid>,
@@ -545,6 +583,7 @@ pub struct Job {
     saved: Option<TaskItem>,
     /// The source listing's last serial seen during a save, and since when.
     serial_seen: Option<(i16, Instant)>,
+    contents_update: Option<ContentsUpdate>,
     stopping: bool,
     /// Stop pressed, and taken into account.
     stop_requested: bool,
@@ -572,6 +611,7 @@ impl Job {
             snapshot: None,
             saved: None,
             serial_seen: None,
+            contents_update: None,
             stopping: false,
             stop_requested: false,
             user_stopped: false,
@@ -628,7 +668,7 @@ impl Job {
             Stage::Read | Stage::Next => aurora_i18n::tr!("content-perms-reading").into(),
             Stage::Rez | Stage::Props => aurora_i18n::tr!("content-perms-nested-rezzing", name = name, level = self.level() + 1),
             Stage::Scripts | Stage::StopScripts => aurora_i18n::tr!("content-perms-nested-stopping", name = name),
-            Stage::Apply | Stage::ObjectPerms => aurora_i18n::tr!("content-perms-nested-applying", name = name),
+            Stage::Apply | Stage::ConfirmContents | Stage::ObjectPerms => aurora_i18n::tr!("content-perms-nested-applying", name = name),
             Stage::RestoreScripts => aurora_i18n::tr!("content-perms-nested-restoring", name = name),
             Stage::Rename | Stage::Save | Stage::RemoveOriginal => aurora_i18n::tr!("content-perms-nested-saving", name = name),
             Stage::Delete | Stage::Recover => aurora_i18n::tr!("content-perms-nested-deleting", name = name),
@@ -744,12 +784,7 @@ impl Job {
         let elapsed = now.saturating_duration_since(self.entered);
         // soft limits: the change was sent, the job goes on
         match self.stage {
-            Stage::ObjectPerms if elapsed > PERMS_WAIT => {
-                log::warn!("deep permissions: masks of {} not confirmed, going on", self.name());
-                self.advance(Stage::RestoreScripts, now);
-                return;
-            }
-            Stage::Rename if elapsed > PERMS_WAIT => {
+            Stage::Rename if elapsed > NAME_WAIT => {
                 log::warn!("deep permissions: the name of {} not confirmed, saving anyway", self.name());
                 self.advance(Stage::Save, now);
                 return;
@@ -858,6 +893,7 @@ impl Job {
         self.gathering = None;
         self.snapshot = None;
         self.saved = None;
+        self.contents_update = None;
         if rec.stop {
             self.stopping = true;
             if self.report.stopped.is_none() {
@@ -960,7 +996,7 @@ impl Job {
         self.sent = true;
         // a listing error of the prim being read
         if let Some(errored) = self.inventory_error.take()
-            && matches!(self.stage, Stage::Read | Stage::Apply)
+            && matches!(self.stage, Stage::Read | Stage::Apply | Stage::ConfirmContents)
             && self.top().is_some_and(|f| f.prim().id == errored)
         {
             return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
@@ -1298,9 +1334,12 @@ impl Job {
                 if !Self::read(tool, world, object, first)? {
                     return Ok(None);
                 }
+                let serial = Self::listing(tool, object).map_or(0, |inv| inv.serial);
                 let items: Vec<TaskItem> = Self::listing(tool, object)
                     .map(|inv| inv.items.iter().filter(|i| !i.is_folder).cloned().collect())
                     .unwrap_or_default();
+                let mut expected = Vec::new();
+                let mut updated = 0;
                 for mut item in items {
                     let rename = renames.iter().find(|(id, _)| *id == item.item_id).map(|r| r.1.clone());
                     let include = self.options.includes(&item);
@@ -1309,7 +1348,7 @@ impl Job {
                     }
                     if include {
                         self.options.apply(&mut item);
-                        self.report.updated += 1;
+                        updated += 1;
                     }
                     if let Some(name) = rename {
                         item.name = name;
@@ -1317,10 +1356,57 @@ impl Job {
                     tool.send(BuildCmd::UpdateTaskInventory {
                         handle: key.region,
                         local_id: key.local_id,
-                        item: Box::new(item),
+                        item: Box::new(item.clone()),
                     });
+                    expected.push(item);
                 }
-                tool.contents_changed(object);
+                self.contents_update = Some(ContentsUpdate {
+                    serial,
+                    expected,
+                    updated,
+                    checked: false,
+                });
+                // Reliable messages can still be processed out of order. Read
+                // back every contents change before the object's own masks or
+                // its save: saving can fold its contents' restrictive masks.
+                Self::read(tool, world, object, true)?;
+                Ok(Some(Stage::ConfirmContents))
+            }
+            Stage::ConfirmContents => {
+                if self.contents_update.as_ref().is_some_and(|update| update.checked) {
+                    if self.poll(now) {
+                        if let Some(update) = self.contents_update.as_mut() {
+                            update.checked = false;
+                        }
+                        Self::read(tool, world, object, true)?;
+                    }
+                    return Ok(None);
+                }
+                let Some(inv) = Self::listing(tool, object) else {
+                    Self::read(tool, world, object, false)?;
+                    return Ok(None);
+                };
+                let Some(update) = self.contents_update.as_mut() else {
+                    return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-unreadable").into()));
+                };
+                update.checked = true;
+                if serial_moves(update.serial, inv.serial).is_none() {
+                    return Ok(None);
+                }
+                update.serial = inv.serial;
+                let actual: HashMap<_, _> = inv.items.iter().map(|item| (item.item_id, item)).collect();
+                if !update.expected.iter().all(|wanted| {
+                    actual
+                        .get(&wanted.item_id)
+                        .is_some_and(|item| contents_permissions_match(wanted, item))
+                }) {
+                    return Ok(None);
+                }
+                self.report.updated += update.updated;
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.prim_mut().applied_serial = Some(inv.serial);
+                }
+                self.contents_update = None;
                 if depth == 0 {
                     self.stack.pop();
                     return Ok(Some(self.next_prim(tool, world)));
@@ -1343,6 +1429,11 @@ impl Job {
                 let (group, everyone, next) = object_masks(&self.options);
                 let local_ids: Vec<u32> = linkset.iter().map(|(_, k)| k.local_id).collect();
                 if first {
+                    // A cached pre-contents ObjectProperties is not an
+                    // acknowledgment of this object's final permission change.
+                    for (id, _) in &linkset {
+                        tool.props.remove(id);
+                    }
                     for (field, set, mask) in permission_changes(&self.options) {
                         tool.send(BuildCmd::SetPermissions {
                             handle: root_key.region,
@@ -1359,14 +1450,20 @@ impl Job {
                         local_ids,
                     });
                 }
-                let done = linkset.iter().all(|(id, _)| {
-                    tool.props.get(id).is_some_and(|p| {
-                        let base = p.base_mask;
-                        let g = perm::COPY | perm::MODIFY | perm::MOVE;
-                        let n = perm::MODIFY | perm::COPY | perm::TRANSFER;
-                        p.group_mask & g & base == group & g & base
-                            && p.everyone_mask & perm::COPY & base == everyone & perm::COPY & base
-                            && p.next_owner_mask & n & base == next & n & base
+                let done = self.top().is_some_and(|frame| {
+                    frame.prims.iter().all(|prim| {
+                        tool.props.get(&prim.id).is_some_and(|p| {
+                            let contents_current = prim
+                                .applied_serial
+                                .is_some_and(|serial| serial_moves(serial, p.inventory_serial).is_some());
+                            let base = p.base_mask;
+                            let g = perm::COPY | perm::MODIFY | perm::MOVE;
+                            let n = perm::MODIFY | perm::COPY | perm::TRANSFER;
+                            contents_current
+                                && p.group_mask & g & base == group & g & base
+                                && p.everyone_mask & perm::COPY & base == everyone & perm::COPY & base
+                                && p.next_owner_mask & n & base == next & n & base
+                        })
                     })
                 });
                 Ok(done.then_some(Stage::RestoreScripts))

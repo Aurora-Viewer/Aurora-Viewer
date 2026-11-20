@@ -49,6 +49,7 @@ impl Default for BulkPerms {
 
 impl BulkPerms {
     pub(crate) fn apply(&self, item: &mut TaskItem) {
+        let before = [item.group_mask, item.everyone_mask, item.next_owner_mask];
         item.group_mask = if self.share { perm::COPY | perm::MODIFY | perm::MOVE } else { 0 };
         item.everyone_mask = if self.everyone_copy { perm::COPY } else { 0 };
         item.next_owner_mask = perm::MOVE;
@@ -61,6 +62,13 @@ impl BulkPerms {
         // LLFloaterBulkPermission::onCommitCopy: no-copy remains transferable.
         if self.next_transfer || !self.next_copy {
             item.next_owner_mask |= perm::TRANSFER;
+        }
+        if item.asset_type == 6 {
+            item.flags = crate::world::inventory::actions::object_permission_flags(
+                item.flags,
+                before,
+                [item.group_mask, item.everyone_mask, item.next_owner_mask],
+            );
         }
     }
 

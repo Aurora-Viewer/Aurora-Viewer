@@ -477,6 +477,8 @@ struct Harness {
     /// A rez's child prims kept back, delivered by the test.
     hold_children: bool,
     held_children: Vec<NetEvent>,
+    /// Model the next-owner Modify bit being reduced when an object is saved.
+    fold_saved_modify: bool,
 }
 
 impl Harness {
@@ -503,6 +505,7 @@ impl Harness {
             held: Vec::new(),
             hold_children: false,
             held_children: Vec::new(),
+            fold_saved_modify: false,
         };
         let idx = h.world.objects.index_of_uuid(&chest).expect("chest");
         h.tool.open_build(Tool::Edit);
@@ -548,6 +551,29 @@ impl Harness {
                     continue;
                 }
                 self.sent.push(command.clone());
+                if self.fold_saved_modify
+                    && let BuildCmd::DeRez {
+                        handle,
+                        local_ids,
+                        destination,
+                        ..
+                    } = &command
+                    && *destination == derez::SAVE_INTO_TASK_INVENTORY
+                {
+                    // The saved item's mask can be reduced by its contents.
+                    // Its parent must apply and confirm the requested mask
+                    // after this save before the parent itself is saved.
+                    self.sim.reply(
+                        &self.world,
+                        &BuildCmd::SetPermissions {
+                            handle: *handle,
+                            local_ids: local_ids.clone(),
+                            field: perm_field::NEXT_OWNER,
+                            set: false,
+                            mask: perm::MODIFY,
+                        },
+                    );
+                }
                 let events = self.sim.reply(&self.world, &command);
                 let rezzed: Vec<(u64, u32)> = events
                     .iter()
@@ -723,6 +749,152 @@ fn shared() -> BulkPerms {
 
 fn named<'a>(items: &'a [TaskItem], name: &str) -> Vec<&'a TaskItem> {
     items.iter().filter(|i| i.name == name).collect()
+}
+
+#[test]
+fn contents_confirmation_requires_the_requested_grantable_masks() {
+    let mut wanted = object(AGENT, ALL);
+    let options = BulkPerms {
+        next_modify: true,
+        ..shared()
+    };
+    options.apply(&mut wanted);
+    assert!(contents_permissions_match(&wanted, &wanted));
+    let mut missing_override = wanted.clone();
+    missing_override.flags &= !0x100;
+    assert!(!contents_permissions_match(&wanted, &missing_override));
+    for field in [perm_field::GROUP, perm_field::EVERYONE, perm_field::NEXT_OWNER] {
+        let mut actual = wanted.clone();
+        match field {
+            perm_field::GROUP => actual.group_mask &= !perm::COPY,
+            perm_field::EVERYONE => actual.everyone_mask &= !perm::COPY,
+            _ => {
+                actual.next_owner_mask &= !perm::MODIFY;
+                actual.base_mask &= !perm::MODIFY;
+            }
+        }
+        assert!(!contents_permissions_match(&wanted, &actual));
+    }
+    // A legitimately restricted item cannot grant the unavailable bits.
+    wanted.base_mask &= !(perm::COPY | perm::MODIFY);
+    wanted.owner_mask = wanted.base_mask;
+    let mut actual = wanted.clone();
+    actual.group_mask &= actual.base_mask;
+    actual.everyone_mask = 0;
+    actual.next_owner_mask = perm::MOVE | perm::TRANSFER;
+    assert!(contents_permissions_match(&wanted, &actual));
+    actual.name = "Unexpected rename".into();
+    assert!(!contents_permissions_match(&wanted, &actual));
+}
+
+#[test]
+fn unconfirmed_changes_never_save_a_copy_over_its_original() {
+    for drop_contents in [true, false] {
+        let mut h = Harness::new();
+        let before = h.chest_items();
+        h.drop = Box::new(move |command, _| {
+            if drop_contents {
+                matches!(command, BuildCmd::UpdateTaskInventory { .. })
+            } else {
+                matches!(command, BuildCmd::SetPermissions { .. })
+            }
+        });
+        let report = h.run(BulkPerms {
+            next_modify: true,
+            ..shared()
+        });
+        assert!(report.contains(&*aurora_i18n::tr!("content-perms-nested-timeout")), "{report}");
+        assert_eq!(h.rezzed_left(), 0);
+        assert_eq!(
+            h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. }
+            if *destination == derez::SAVE_INTO_TASK_INVENTORY)),
+            0
+        );
+        if drop_contents {
+            assert_eq!(h.count(|c| matches!(c, BuildCmd::SetPermissions { .. })), 0);
+        }
+        let after = h.chest_items();
+        for item in before {
+            let kept = after.iter().find(|kept| kept.item_id == item.item_id).expect("original remains");
+            assert_eq!(kept.asset_id, item.asset_id);
+        }
+    }
+}
+
+#[test]
+fn contents_are_confirmed_before_object_permissions_and_save() {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    for in_place in [false, true] {
+        let mut h = Harness::new();
+        h.sim.deep_in_place = in_place;
+        h.fold_saved_modify = true;
+        let holding = Arc::new(AtomicBool::new(true));
+        let held = Arc::new(Mutex::new(Vec::new()));
+        let (gate, pending) = (holding.clone(), held.clone());
+        h.drop = Box::new(move |command, _| {
+            if gate.load(Ordering::Relaxed) && matches!(command, BuildCmd::UpdateTaskInventory { .. }) {
+                pending.lock().unwrap().push(command.clone());
+                return true;
+            }
+            false
+        });
+        h.start(BulkPerms {
+            next_modify: true,
+            next_copy: true,
+            ..Default::default()
+        });
+        for _ in 0..500 {
+            h.tick();
+            if !held.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+        assert!(!held.lock().unwrap().is_empty(), "a contents update is in flight");
+        for _ in 0..24 {
+            h.tick();
+        }
+        assert_eq!(
+            h.count(|c| matches!(c, BuildCmd::SetPermissions { .. })),
+            0,
+            "do not change the object's masks before its contents changes are confirmed"
+        );
+        assert_eq!(
+            h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. }
+            if *destination == derez::SAVE_INTO_TASK_INVENTORY)),
+            0
+        );
+
+        holding.store(false, Ordering::Relaxed);
+        for command in std::mem::take(&mut *held.lock().unwrap()) {
+            for event in h.sim.reply(&h.world, &command) {
+                h.deliver(event);
+            }
+        }
+        for _ in 0..2000 {
+            if !h.tick() {
+                break;
+            }
+        }
+        assert!(h.tool.ui.bulk.deep.is_none(), "the job completes after confirmation");
+        assert_eq!(h.rezzed_left(), 0);
+        let mut items = h.chest_items();
+        for name in ["content-perms-demo-outer", "content-perms-demo-inner", "content-perms-demo-tiny"] {
+            let item = named(&items, aurora_i18n::text(name))[0];
+            assert_eq!(
+                item.next_owner_mask & (perm::COPY | perm::MODIFY),
+                perm::COPY | perm::MODIFY,
+                "{} keeps Copy + Modify after being saved into its parent",
+                item.name
+            );
+            assert_ne!(item.flags & 0x100, 0, "the next rez must apply the saved item's corrected masks");
+            items = h.sim.stored(item.item_id).expect("saved nested contents").clone();
+        }
+        assert!(items.iter().all(|item| item.next_owner_mask & perm::MODIFY != 0));
+    }
 }
 
 #[test]

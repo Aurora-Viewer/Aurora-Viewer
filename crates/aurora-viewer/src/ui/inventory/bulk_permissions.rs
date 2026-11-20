@@ -157,18 +157,11 @@ impl Job {
                     "group_mask" => group as i32, "everyone_mask" => everyone as i32, "next_owner_mask" => next as i32
                 };
                 let body = if item.asset_type == 6 {
-                    // LLSidepanelItemInfo::updatePermissions: stored objects
-                    // must carry these overrides so rez applies the new masks.
-                    let mut flags = item.flags;
-                    if next != item.next_owner_mask {
-                        flags |= 0x100;
-                    }
-                    if group != item.group_mask {
-                        flags |= 0x040000;
-                    }
-                    if everyone != item.everyone_mask {
-                        flags |= 0x080000;
-                    }
+                    let flags = crate::world::inventory::actions::object_permission_flags(
+                        item.flags,
+                        [item.group_mask, item.everyone_mask, item.next_owner_mask],
+                        [group, everyone, next],
+                    );
                     llsd_map! { "permissions" => masks, "flags" => flags as i32 }
                 } else {
                     llsd_map! { "permissions" => masks }

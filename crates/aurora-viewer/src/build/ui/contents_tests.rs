@@ -58,6 +58,62 @@ fn updates(tool: &BuildTool) -> Vec<&TaskItem> {
 }
 
 #[test]
+fn stored_object_permission_changes_keep_the_rez_overrides() {
+    let mut item = TaskItem {
+        asset_type: 6,
+        flags: 0x20,
+        ..Default::default()
+    };
+    let options = BulkPerms {
+        share: true,
+        everyone_copy: true,
+        next_modify: true,
+        ..Default::default()
+    };
+    options.apply(&mut item);
+    assert_eq!(item.flags, 0x20 | 0x100 | 0x040000 | 0x080000);
+    item.flags = 0x20;
+    options.apply(&mut item);
+    assert_eq!(item.flags, 0x20, "unchanged masks require no new flags");
+    for (options, expected) in [
+        (
+            BulkPerms {
+                share: false,
+                ..options.clone()
+            },
+            0x040000,
+        ),
+        (
+            BulkPerms {
+                everyone_copy: false,
+                ..options.clone()
+            },
+            0x080000,
+        ),
+        (
+            BulkPerms {
+                next_modify: false,
+                ..options.clone()
+            },
+            0x100,
+        ),
+    ] {
+        let mut changed = item.clone();
+        options.apply(&mut changed);
+        assert_eq!(changed.flags, 0x20 | expected);
+    }
+    for asset_type in TYPES.into_iter().filter(|asset_type| *asset_type != 6) {
+        let mut item = TaskItem {
+            asset_type,
+            flags: 0x20,
+            ..Default::default()
+        };
+        options.apply(&mut item);
+        assert_eq!(item.flags, 0x20, "only objects carry rez overrides");
+    }
+}
+
+#[test]
 fn all_eleven_bulk_filters_fetch_and_update_only_their_type_with_valid_masks() {
     let (world, mut tool, object, mut items) = fixture();
     items.push(TaskItem {
