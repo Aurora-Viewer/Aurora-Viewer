@@ -582,6 +582,24 @@ impl World {
             .any(|(first, last)| !first.trim().is_empty() && legacy == bare(&format!("{first} {last}")))
     }
 
+    /// The name of one of our own lines read back in a private
+    /// conversation: our cached display name, as the live lines show
+    /// (`NameScope::Roster`, which `@shownames` never hides), else the one
+    /// the file gives. The nearby chat's and a group's own lines keep the
+    /// file's name, like the Legacy Viewer's history (`message_from_log`).
+    /// Resolved once, when the conversation loads its history: a name not
+    /// cached yet then, or display names switched while it is open, leave
+    /// these lines as they were loaded.
+    pub(crate) fn private_log_name(&self, kind: ChatKind, peer: Option<Uuid>, from: String) -> String {
+        let names = &self.social.avatar_names;
+        match (kind, peer) {
+            (ChatKind::Own(_), Some(_)) => names
+                .get_in(NameScope::Roster, &self.agent_id)
+                .map_or(from, |n| n.display(&names.options)),
+            _ => from,
+        }
+    }
+
     /// The lines of a transcript's end as conversation lines
     /// (addMessagesFromHistoryCache). A line without a date takes the time
     /// of the one before. `keep_all`: one line per entry, the empty ones
@@ -618,7 +636,11 @@ impl World {
                 };
                 ChatLine {
                     time: last,
-                    from: if kind == ChatKind::System { String::new() } else { e.from },
+                    from: if kind == ChatKind::System {
+                        String::new()
+                    } else {
+                        self.private_log_name(kind, peer, e.from)
+                    },
                     text: e.text,
                     kind,
                     source,

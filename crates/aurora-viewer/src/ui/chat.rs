@@ -2744,10 +2744,19 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
+/// A line read back that still shows its resident's cached name: one of a
+/// private conversation, whose sender is known (`Origin::Log`, `ChatKind::Im`
+/// with a source). Every other history line keeps the file's name.
+pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
+    line.origin == Origin::Log && line.kind == ChatKind::Im && !line.source.is_nil()
+}
+
 /// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
-/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// the file gives it (but for a resident's line in a private conversation,
+/// which shows their cached name, and our own lines there, which load with
+/// ours: `World::private_log_name`), under RLVa's `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
@@ -2758,7 +2767,13 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
 /// and an object the name it was given then, whatever the restriction
 /// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if line.origin != Origin::Live || line.anonymous() {
+    // A line read back keeps the file's name, except a resident's in a
+    // private conversation: their cached display name, as their live lines
+    // show (Roster scope, which `@shownames` never hides). An uncached name
+    // is queued by `get_in` and shown as written until it arrives. Our own
+    // lines are renamed when they load (`World::private_log_name`).
+    let log_resolved = log_names_resolve(line);
+    if (line.origin != Origin::Live && !log_resolved) || line.anonymous() {
         return line.from.clone();
     }
     let own = line.kind.is_own();
@@ -3370,7 +3385,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged || line.anonymous() {
+    let cached = if object || (logged && !log_names_resolve(line)) || line.anonymous() {
         None
     } else {
         names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
@@ -3382,7 +3397,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     };
     if look.header {
         ui.add_space(6.0);
-        let username = cached.and_then(|n| n.chat_username(&names.options));
+        let username = cached.filter(|_| !logged).and_then(|n| n.chat_username(&names.options));
         egui::Frame::new()
             .fill(p.raised.gamma_multiply(0.55))
             .corner_radius(ui.visuals().window_corner_radius)
