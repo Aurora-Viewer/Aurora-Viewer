@@ -368,3 +368,27 @@ fn turkish_capitals_keep_the_dot_of_i() {
     assert_eq!(upper_in("en", "info"), "INFO");
     assert_eq!(upper_in("de", "straße"), "STRASSE");
 }
+
+/// The demo's block list is a mute list file as the server sends it
+/// (`type id name|flags` per line, `Group:<id>` for a group chat block):
+/// only the names may be translated, the format is what world/mutes.rs reads.
+#[test]
+fn the_demo_block_list_keeps_the_server_file_format() {
+    for &(code, _) in SOURCES {
+        let text = aurora_i18n::tr_in!(
+            code,
+            "demo-1-violet-wolf-0-2-spam-box-0-0",
+            value0 = "A",
+            value1 = "B",
+            value2 = "C",
+            value3 = "D",
+            value4 = "G"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "{code}: {text:?}");
+        for (line, start) in lines.iter().zip(["1 A ", "2 B ", "0 C ", "0 D "]) {
+            assert!(line.starts_with(start) && line.contains('|'), "{code}: {line:?}");
+        }
+        assert_eq!(lines[3], "0 D Group:G|", "{code}");
+    }
+}

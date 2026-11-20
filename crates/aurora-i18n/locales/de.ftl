@@ -2075,7 +2075,7 @@ keybinds-numpad-4 = . (Nummernblock)
 keybinds-numpad-5 = / (Nummernblock)
 ui-options-0-hide-avatar-names = 0 = Avatar-Namen ausblenden
 ui-options-0-no-chat-bubbles-above-the-chat-bar = 0 = keine Chat-Blasen über der Chat-Leiste
-demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violetter Wolf|0\u000A2 " }{ $value1 }{ " Spam-Box|0\u000A0 " }{ $value2 }{ " Werbetafel|\u000A0 " }{ $value3 }{ " Gruppe:" }{ $value4 }{ "|\u000A" }
+demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violetter Wolf|0\u000A2 " }{ $value1 }{ " Spam-Box|0\u000A0 " }{ $value2 }{ " Werbetafel|\u000A0 " }{ $value3 }{ " Group:" }{ $value4 }{ "|\u000A" }
 ui-land-dialogs-1-set-a-price = 1. Legen Sie einen Preis fest:
 build-ui-general-127-bytes-maximum = Maximal 127 Byte.
 ui-land-dialogs-2-sell-the-land-to = 2. Verkaufen Sie das Land an:

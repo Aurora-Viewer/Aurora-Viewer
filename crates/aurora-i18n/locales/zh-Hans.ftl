@@ -2044,7 +2044,7 @@ keybinds-numpad-4 = .（小键盘）
 keybinds-numpad-5 = /（小键盘）
 ui-options-0-hide-avatar-names = 0 = 隐藏化身名称
 ui-options-0-no-chat-bubbles-above-the-chat-bar = 0 = 聊天栏上方不显示聊天气泡
-demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " 垃圾信息盒|0\u000A0 " }{ $value2 }{ " 广告牌|\u000A0 " }{ $value3 }{ " 群组：" }{ $value4 }{ "|\u000A" }
+demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " 垃圾信息盒|0\u000A0 " }{ $value2 }{ " 广告牌|\u000A0 " }{ $value3 }{ " Group:" }{ $value4 }{ "|\u000A" }
 ui-land-dialogs-1-set-a-price = 1. 设置价格：
 build-ui-general-127-bytes-maximum = 最多 127 字节。
 ui-land-dialogs-2-sell-the-land-to = 2. 将土地出售给：
