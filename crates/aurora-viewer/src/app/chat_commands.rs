@@ -253,7 +253,7 @@ impl App {
                 Some((id, pos)) => {
                     let (x, y) = crate::ui::minimap::to_global(&self.world, pos);
                     self.world.map.track_location(x, y, pos.z, false);
-                    let name = self.world.person_name(&id).unwrap_or(name);
+                    let name = cmdline_tracked_name(&self.world, id).unwrap_or(name);
                     self.report_command(aurora_i18n::tr!("app-chat-commands-tracking", name = name.to_string()));
                 }
                 None => self.report_command(aurora_i18n::tr!(
@@ -284,24 +284,9 @@ impl App {
     /// matched on their user name (cmdline_partial_name2key).
     fn find_nearby(&self, partial: &str) -> Option<(Uuid, Vec3)> {
         let nearby = crate::ui::people::nearby(&self.world);
-        let names: Vec<(Uuid, String)> = nearby.iter().map(|(id, ..)| (*id, self.user_name(id))).collect();
+        let names: Vec<(Uuid, String)> = nearby.iter().map(|(id, ..)| (*id, cmdline_user_name(&self.world, id))).collect();
         let id = cmdline::partial_name_match(partial, names.iter().map(|(id, n)| (*id, n.as_str())))?;
         nearby.iter().find(|e| e.0 == id).map(|e| (id, e.2))
-    }
-
-    /// LLAvatarName::getUserName: "First Last", only "First" for a Resident.
-    fn user_name(&self, id: &Uuid) -> String {
-        if let Some(n) = self.world.social.avatar_names.get(id)
-            && !n.legacy_first.is_empty()
-        {
-            return if n.legacy_last.is_empty() || n.legacy_last == "Resident" {
-                n.legacy_first.clone()
-            } else {
-                format!("{} {}", n.legacy_first, n.legacy_last)
-            };
-        }
-        let legacy = self.world.legacy_name(id).unwrap_or_default();
-        legacy.strip_suffix(" Resident").map(str::to_owned).unwrap_or(legacy)
     }
 
     /// teleportViaLocation to a point of the current region.
@@ -412,5 +397,83 @@ mod tests {
         world.rlva_console_input("@sendchannel=n");
         // the chat path RLVa filters would have dropped it
         assert!(world.rlva.outgoing_chat("region_restart_in:60", -42, ChatType::Whisper).is_empty());
+    }
+}
+
+/// LLAvatarName::getUserName: "First Last", only "First" for a Resident.
+/// Under `@shownames` the radar's stand-in, for everyone: the
+/// FSRadarEntry::mUserName cmdline_partial_name2key
+/// (indra/newview/chatbar_as_cmdline.cpp) matches is
+/// FSRadarEntry::getRadarName there (indra/newview/fsradarentry.cpp), an
+/// `@shownames:<uuid>` exception's too.
+fn cmdline_user_name(world: &crate::world::World, id: &Uuid) -> String {
+    if world.rlva.has("shownames") {
+        return world.rlva_anonymous(*id).display_name.clone();
+    }
+    if let Some(n) = world.social.avatar_names.get(id)
+        && !n.legacy_first.is_empty()
+    {
+        return if n.legacy_last.is_empty() || n.legacy_last == "Resident" {
+            n.legacy_first.clone()
+        } else {
+            format!("{} {}", n.legacy_first, n.legacy_last)
+        };
+    }
+    let legacy = world.legacy_name(id).unwrap_or_default();
+    legacy.strip_suffix(" Resident").map(str::to_owned).unwrap_or(legacy)
+}
+
+/// The name `trkpos` reports for the avatar it tracks: FSRadarEntry::getName
+/// (indra/newview/chatbar_as_cmdline.cpp), the radar's stand-in for everyone
+/// under `@shownames`, an exception included.
+fn cmdline_tracked_name(world: &crate::world::World, id: Uuid) -> Option<String> {
+    if world.rlva.has("shownames") {
+        Some(world.rlva_anonymous(id).display_name.clone())
+    } else {
+        world.person_name(&id)
+    }
+}
+
+#[cfg(test)]
+mod rlva_tests {
+    use super::*;
+
+    /// cmdline_partial_name2key and cmdline_tp2name
+    /// (indra/newview/chatbar_as_cmdline.cpp) read the radar, whose names
+    /// are all stand-ins under `@shownames`: an `@shownames:<uuid>`
+    /// exception is matched and reported by their stand-in too.
+    #[test]
+    fn tp2_and_trkpos_name_everyone_by_the_radar_stand_in_under_shownames() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = Uuid::from_u128(0x7e57);
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Janey".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        world.rlva.configure(true);
+        assert_eq!(cmdline_user_name(&world, &id), "Jane Doe");
+        for command in ["@shownames=n".to_owned(), format!("@shownames:{id}=add")] {
+            world.rlva_console_input(&command);
+        }
+        world.refresh_rlva_privacy();
+        assert!(world.rlva_can_name(id), "the exception");
+        let anonym = world.rlva_anonymous(id).display_name.clone();
+        assert_ne!(anonym, "Jane Doe");
+        assert_eq!(cmdline_user_name(&world, &id), anonym);
+        assert_eq!(cmdline_tracked_name(&world, id), Some(anonym.clone()));
+        let found = cmdline::partial_name_match(&anonym, [(id, cmdline_user_name(&world, &id).as_str())]);
+        assert_eq!(found, Some(id));
+        assert_eq!(
+            cmdline::partial_name_match("jane", [(id, cmdline_user_name(&world, &id).as_str())]),
+            None
+        );
     }
 }

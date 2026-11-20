@@ -619,6 +619,65 @@ pub struct Rlva {
     /// The RestrainedLoveDebug line of the last OwnerSay, shown in nearby
     /// chat as the object's (process_chat_from_simulator).
     debug_line: Option<String>,
+    /// The floating texts as they were filtered (`HoverTexts`).
+    pub hover_texts: HoverTexts,
+}
+
+/// The floating texts as LLHUDText::setString (indra/newview/llhudtext.cpp)
+/// left them: filtered once, when the text comes, with the names and places
+/// hidden at that moment, and filtered again only when one of the
+/// restrictions LLHUDText::refreshAllObjectText follows comes or goes
+/// (@shownames and its exceptions, @shownearby, @showloc,
+/// @showhovertext*: RlvUIEnabler::onRefreshHoverText, rlvui.cpp, and the
+/// @shownames / @shownearby handlers, rlvhandler.cpp). A resident who comes
+/// around later keeps their name in a text already shown, as there.
+#[derive(Default)]
+pub struct HoverTexts {
+    /// The rules' revision the key was read at, and the key: the monitored
+    /// restrictions.
+    key: std::sync::Mutex<(u64, Option<Vec<String>>)>,
+    /// By object: the text received, and the text shown.
+    shown: std::sync::Mutex<std::collections::HashMap<Uuid, (String, String)>>,
+}
+
+impl HoverTexts {
+    fn shown(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<Uuid, (String, String)>> {
+        self.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The text `object` shows for `raw`, `filter` run when it changed or
+    /// a monitored restriction came or went since.
+    pub fn get(&self, rlva: &Rlva, object: Uuid, raw: &str, filter: impl FnOnce(&str) -> String) -> String {
+        {
+            let mut key = self.key.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if key.1.is_none() || key.0 != rlva.revision {
+                let now = Some(rlva.hover_refresh_key());
+                if key.1 != now {
+                    self.shown().clear();
+                }
+                *key = (rlva.revision, now);
+            }
+        }
+        if let Some((received, text)) = self.shown().get(&object)
+            && received == raw
+        {
+            return text.clone();
+        }
+        // (filtered unlocked: the filter reads the world, never this cache)
+        let text = filter(raw);
+        self.shown().insert(object, (raw.to_owned(), text.clone()));
+        text
+    }
+
+    /// Forget the objects `keep` refuses (those gone).
+    pub fn retain(&self, keep: impl Fn(&Uuid) -> bool) {
+        self.shown().retain(|id, _| keep(id));
+    }
+
+    /// How many objects' texts are kept.
+    pub fn count(&self) -> usize {
+        self.shown().len()
+    }
 }
 
 impl Rlva {
@@ -666,6 +725,38 @@ impl Rlva {
             .iter()
             .flat_map(|(id, rules)| rules.iter().map(move |r| (*id, rule_text(r))))
             .collect()
+    }
+
+    /// What LLHUDText::refreshAllObjectText follows (`HoverTexts`): whether
+    /// RLVa is on, the general @shownames, @shownearby, @showloc and
+    /// @showhovertext* restrictions, and the @shownames exceptions and
+    /// @showhovertext objects.
+    fn hover_refresh_key(&self) -> Vec<String> {
+        let mut key = vec![self.enabled.to_string()];
+        for behaviour in [
+            "shownames",
+            "shownearby",
+            "showloc",
+            "showhovertextall",
+            "showhovertextworld",
+            "showhovertexthud",
+        ] {
+            if self.has(behaviour) {
+                key.push(behaviour.to_owned());
+            }
+        }
+        let mut options: Vec<String> = ["shownames", "showhovertext"]
+            .iter()
+            .flat_map(|b| {
+                self.rules_for(b, Uuid::nil())
+                    .filter(|(_, option)| Uuid::parse_str(option).is_ok())
+                    .map(move |(_, option)| format!("{b}:{option}"))
+            })
+            .collect();
+        options.sort();
+        options.dedup();
+        key.extend(options);
+        key
     }
 
     pub fn hover_visible(&self, object: Uuid, hud: bool) -> bool {
@@ -1417,3 +1508,5 @@ mod outfit_swap_tests;
 #[cfg(test)]
 #[path = "rlva/core_parity_tests.rs"]
 mod core_parity_tests;
+#[path = "rlva/privacy_map_tests.rs"]
+mod privacy_map_tests;

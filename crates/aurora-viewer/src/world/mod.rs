@@ -142,6 +142,8 @@ mod last_speaker_tests;
 #[cfg(test)]
 mod object_name_tests;
 #[cfg(test)]
+pub(crate) mod rlva_location_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -932,10 +934,11 @@ pub struct World {
     /// fully, 2 always fully (Settings::render_exceptions), copied from the
     /// settings each frame for the menus of the people lists.
     pub render_exceptions: std::collections::HashMap<Uuid, u8>,
-    /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
-    /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
-    /// there) and said on its arrival.
-    tp_back_slurl: Option<String>,
+    /// The place a teleport leaves (grid, region, position), taken at its
+    /// TeleportFinish (LLAgent::setTeleportState(TELEPORT_MOVING) saves the
+    /// "back" SLURL there) and said on its arrival, its SLURL made then as
+    /// the Legacy Viewer's getSLURLString is.
+    tp_back_slurl: Option<(Option<String>, String, Vec3)>,
     /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -1360,23 +1363,74 @@ impl World {
     }
 
     /// LLAgentUI::buildSLURL (indra/newview/llagentui.cpp): where the agent
-    /// is now, on the main region's grid. None before the first arrival,
-    /// with no region name yet, or under RLVa `@showloc` (stricter than the
-    /// Legacy Viewer, whose line names the place left even then).
+    /// is now, on the main region's grid. None before the first arrival or
+    /// with no region name yet. Under RLVa `@showloc` a connected region is
+    /// "(Hidden region)" (`rlva_slurl_on`).
     pub(crate) fn back_slurl(&self) -> Option<String> {
-        if !self.arrived_once || self.rlva.has("showloc") {
+        let (grid, region, pos) = self.back_place()?;
+        Some(self.rlva_slurl_on(grid.as_deref(), &region, pos))
+    }
+
+    /// Where the agent is now: grid, region and position of `back_slurl`.
+    fn back_place(&self) -> Option<(Option<String>, String, Vec3)> {
+        if !self.arrived_once {
             return None;
         }
         let handle = self.main_region?;
         let name = self.regions.get(&handle).map(|r| r.name.as_str()).filter(|n| !n.is_empty())?;
-        Some(crate::slurl::make_on(self.grid_of(handle).as_deref(), name, self.agent.position))
+        Some((self.grid_of(handle), name.to_owned(), self.agent.position))
+    }
+
+    /// LLSLURL::getSLURLString (indra/newview/llslurl.cpp, fsslurl.cpp):
+    /// the SLURL of a place on `grid`, "(Hidden region)" with no position
+    /// under RLVa `@showloc` for a region the agent is connected to
+    /// (RlvUtil::isNearbyRegion, rlvcommon.cpp: the exact name).
+    pub(crate) fn rlva_slurl_on(&self, grid: Option<&str>, region: &str, pos: Vec3) -> String {
+        if self.rlva_hides_region(region) {
+            crate::slurl::hidden_on(grid, aurora_i18n::tr!("rlva-hidden-region"))
+        } else {
+            crate::slurl::make_on(grid, region, pos)
+        }
+    }
+
+    /// The region a teleport offer names ("Join me in [REGION]"): "(Hidden)"
+    /// under RLVa `@showloc` (handle_lure, indra/newview/llviewermessage.cpp:
+    /// Hidden::Generic, not Hidden::Region).
+    pub fn rlva_lure_region(&self) -> String {
+        if self.rlva.has("showloc") {
+            aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+        } else {
+            self.region_name()
+        }
+    }
+
+    /// RLVa `@showloc` hides `region`, one the agent is connected to:
+    /// `hasBehaviour(RLV_BHVR_SHOWLOC) && RlvUtil::isNearbyRegion`
+    /// (rlvcommon.cpp: the exact name of a region of LLWorld).
+    pub(crate) fn rlva_hides_region(&self, region: &str) -> bool {
+        self.rlva.has("showloc") && !region.is_empty() && self.regions.values().any(|r| r.name == region)
+    }
+
+    /// What `slurl::make` hides under RLVa `@showloc`: the "(Hidden
+    /// region)" label and the names of the regions the agent is connected
+    /// to (`slurl::set_hidden_regions`); None without the restriction.
+    pub fn rlva_slurl_hidden_regions(&self) -> Option<(String, Vec<String>)> {
+        self.rlva.has("showloc").then(|| {
+            (
+                aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+                self.regions.values().map(|r| r.name.clone()).filter(|n| !n.is_empty()).collect(),
+            )
+        })
     }
 
     /// process_agent_movement_complete (indra/newview/llviewermessage.cpp,
     /// FSShowBackSLURL): the teleport's "completed_from" message
     /// (teleport_strings.xml) in nearby chat, a ChatSystemMessageTip.
+    /// Under RLVa `@showloc` the line is said too, the place left
+    /// "(Hidden region)" while still connected (`rlva_slurl_on`, as
+    /// getSLURLString makes `[T_SLURL]` there).
     fn say_back_slurl(&mut self, slurl: &str) {
-        if !self.show_back_slurl || self.rlva.has("showloc") {
+        if !self.show_back_slurl {
             return;
         }
         self.system_notice(
@@ -3451,7 +3505,7 @@ impl World {
                     // @showloc: the session keeps neither the name nor the
                     // way back to the place (LLTeleportHistory::updateCurrentLocation)
                     let entry = if self.rlva.has("showloc") {
-                        tphistory::TpEntry::hidden(aurora_i18n::tr!("rlva-hidden-region"), at)
+                        tphistory::TpEntry::hidden(aurora_i18n::tr!("rlva-hidden-parcel"), at)
                     } else {
                         tphistory::TpEntry {
                             region: self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default(),
@@ -3485,7 +3539,8 @@ impl World {
                     self.friends_only_teleport_arrival();
                     self.tp_cancel.on_end();
                 }
-                if let Some(slurl) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                if let Some((grid, region, pos)) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                    let slurl = self.rlva_slurl_on(grid.as_deref(), &region, pos);
                     self.say_back_slurl(&slurl);
                 }
                 self.teleporting = false;
@@ -3873,7 +3928,7 @@ impl World {
                 }
                 // the region left is still the main one: the session changes
                 // it right after this event (switch_region)
-                self.tp_back_slurl = self.back_slurl();
+                self.tp_back_slurl = self.back_place();
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -5183,7 +5238,17 @@ impl World {
         };
         // IDEVO: avatars by their complete name ("Jane Doe (janedoe)")
         let from = match c.source_type {
-            ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
+            ChatSourceType::Agent => {
+                // a name not cached yet stays the one the line came with:
+                // under `@shownames` its stand-in is RlvStrings::getAnonym
+                // of it (`rlva_sender`), not the one `complete` gives the id
+                let names = &self.social.avatar_names;
+                let complete = names.complete(&c.source_id);
+                match names.raw(&c.source_id) {
+                    Some(_) => complete.unwrap_or(c.from_name),
+                    None => c.from_name,
+                }
+            }
             ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
@@ -8372,8 +8437,10 @@ mod motion_tests {
     }
 
     /// FSShowBackSLURL: a teleport through TeleportFinish says, on its
-    /// arrival, the SLURL of the place left; a local teleport, a failed one,
-    /// the setting off or RLVa `@showloc` say nothing.
+    /// arrival, the SLURL of the place left; a local teleport, a failed one
+    /// or the setting off say nothing. Under RLVa `@showloc` the place left,
+    /// still connected, is "(Hidden region)" (LLSLURL::getSLURLString in
+    /// process_agent_movement_complete, llviewermessage.cpp).
     #[test]
     fn a_teleport_to_another_region_says_where_it_came_from() {
         fn back_lines(world: &World) -> Vec<String> {
@@ -8444,6 +8511,9 @@ mod motion_tests {
         assert!(world.rlva.has("showloc"));
         hop(&mut world, handle, false);
         assert!(back_lines(&world).is_empty(), "@showloc");
+        let hidden = format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region"));
+        let said: Vec<&str> = world.chat.iter().map(|l| l.text.as_str()).filter(|t| t.contains(&hidden)).collect();
+        assert_eq!(said.len(), 1, "the place left, hidden: {said:?}");
     }
 
     #[test]

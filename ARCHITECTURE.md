@@ -1589,8 +1589,10 @@ Simulator-triggered group changes restore only the last permitted group;
 the internal restoration actor cannot activate an arbitrary group.
 `privacy.rs` provides display-only identity/location projections, keeping
 canonical cache records, transcript file identities and region coordinates
-intact. `privacy/matcher.rs` compiles Unicode word-boundary replacements into
-a shared trie, reused while the patterns stay unchanged. Name exceptions,
+intact. Its text filter replaces each place and name in turn, between word
+boundaries, as RlvUtil::filterLocation and filterNames do;
+`privacy/anonyms.rs` holds the Legacy Viewer's lists of stand-ins, English
+followed by the interface language's own. Name exceptions,
 limited avatar menus, location writes, application links and teleport offers
 are checked at both their native UI paths and the common action boundary.
 The current teleport-history label follows location privacy without losing

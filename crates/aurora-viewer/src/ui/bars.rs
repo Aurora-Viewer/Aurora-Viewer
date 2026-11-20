@@ -2281,10 +2281,11 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
         return None;
     };
     // the landmarks and places the typed text names: none for the SLURL
-    // the field opens with, nor with the location hidden
+    // the field opens with; @showloc keeps them, as
+    // LLLocationInputCtrl::rebuildLocationHistory has no RLVa test
     let (list_id, picker_key) = (id.with("suggestions"), id.with("picker"));
     let mut picker = location_suggest::Picker::load(ui.ctx(), picker_key);
-    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
+    picker.refresh(&st.landmarks, st.tp_session.items, text, *text != slurl);
     // the arrows and Enter go to the list before the field takes them
     let (mut take, moved) = if !panels.nav_edit_new && ui.memory(|m| m.has_focus(id)) {
         picker.keys(ui, id)
@@ -2317,7 +2318,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
         ui.ctx().request_repaint();
         return None;
     }
-    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
+    picker.refresh(&st.landmarks, st.tp_session.items, text, *text != slurl);
     if !picker.list().is_empty()
         && let Some(i) = location_suggest::list_area(ui, p, list_id, resp.rect, picker.list(), picker.chosen(), moved)
     {
@@ -2594,9 +2595,12 @@ pub fn top_bars(
                                 "{} ({:.0}, {:.0}, {:.0})",
                                 st.region, st.position.x, st.position.y, st.position.z
                             ));
+                            // LLAgentUI::buildLocationString (llagentui.cpp): "(Hidden
+                            // parcel), (Hidden region)" under @showloc; the field still
+                            // opens on the SLURL, hidden in its turn
+                            // (LLLocationInputCtrl::changeLocationPresentation)
                             if st.location_hidden {
                                 loc = format!("{}, {}", st.parcel, st.region);
-                                panels.nav_edit = None;
                             }
                             if !st.maturity.is_empty() {
                                 loc.push_str(&format!(" - {}", st.maturity));

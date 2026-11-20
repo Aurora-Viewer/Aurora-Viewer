@@ -148,6 +148,8 @@ mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
 mod rlva;
+#[cfg(test)]
+mod rlva_location_tests;
 mod rlva_selftest;
 mod safe_graphics;
 mod script_clicks;
@@ -10132,6 +10134,10 @@ impl App {
                 ),
         );
         crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
+        // RLVa @showloc: every SLURL a window shows names a connected region
+        // "(Hidden region)" (LLSLURL::getSLURLString, llslurl.cpp)
+        crate::slurl::set_hidden_regions(self.world.rlva_slurl_hidden_regions());
+        self.world.map.hide_location_labels = self.world.rlva.has("showloc");
         // the region's chat ranges, for every range the interface draws or
         // counts (OpenSim regions may set their own)
         crate::world::radar::set_chat_ranges(crate::world::radar::ChatRanges::from_extras(self.world.opensim_extras()));
@@ -13505,7 +13511,10 @@ impl App {
                     .iter()
                     .find(|account| account.key() == key && account.agent == Some(self.world.agent_id))
                     .cloned()
-                    .map(|account| (account, self.world.region_name()));
+                    // the place of the account's card: "(Hidden region)" under
+                    // RLVa @showloc, as a place kept then (LLTeleportHistory::
+                    // updateCurrentLocation keeps no name either)
+                    .map(|account| (account, self.world.rlva_region_label()));
             }
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
@@ -16080,7 +16089,7 @@ impl App {
                 .into_iter()
                 .filter(|id| self.world.rlva_can_offer_teleport(*id))
                 .collect();
-            self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+            self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
         }
         if let Some(asset) = a.landmark {
             self.record_library_asset(asset, 3);
@@ -18445,11 +18454,8 @@ impl App {
                         spent: self.settings.balance_shows_spent,
                     },
                     voice: (self.voice.light, self.voice.status.clone()),
-                    slurl: if self.world.rlva.has("showloc") {
-                        String::new()
-                    } else {
-                        crate::slurl::make(&self.world.region_name(), self.world.agent.position)
-                    },
+                    // "(Hidden region)" under @showloc (LLSLURL::getSLURLString)
+                    slurl: crate::slurl::make(&self.world.region_name(), self.world.agent.position),
                     tp_back: self.world.tp_history.back_name(),
                     tp_forward: self.world.tp_history.forward_name(),
                     tp_session: self.world.tp_history.session(),
@@ -20865,7 +20871,7 @@ impl App {
                 self.rlva_selftest_window(&ctx, &p);
                 self.about_window(&ctx, &p, renderer);
                 self.sysinfo_window(&ctx, &p, renderer);
-                let region = self.world.region_name();
+                let region = self.world.rlva_region_label();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
                 if rlva_actions.console_closed {
