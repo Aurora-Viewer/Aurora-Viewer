@@ -186,9 +186,11 @@ Japanese does. The main ones, to look up before choosing another word:
   (experiences), Окружающая среда, Дальность прорисовки, Изменять /
   Копировать / Передавать.
 - **Chinese** (`zh-Hans` / `zh-Hant`): 库存 / 庫存, 地标 / 地標, 地块 / 地塊,
-  区域 / 區域, 领地 / 領地 (estate), 瞬间传送 / 瞬間傳送, 元素 (prim), 垃圾桶,
-  违规检举 / 違規檢舉, 取得 / 取得副本, 穿上 / 脫下, 卸下, 装扮 / 裝扮
-  (outfit), 好友, 对话 / 對話, 封锁 / 封鎖, 权限 / 權限, 居民. zh-Hant follows
+  区域 / 區域, 领地 / 領地 (estate), 瞬间传送 / 瞬間傳送, 基本体 / 元素 (prim), 垃圾桶,
+  举报 / 檢舉 (report abuse), 取得 / 取得副本, 穿上 / 脫下, 卸下, 装扮 / 裝扮
+  (outfit), 好友, 对话 / 對話, 屏蔽 / 封鎖 (block), 权限 / 權限, 居民.
+  In zh-Hans, use 水体 for the water environment, presets and rendering controls.
+  Use 水面 or 水位 for the surface or level, as appropriate. zh-Hant follows
   the Legacy Viewer's Traditional (Taiwan) terms and Taiwan software words
   (重設, 自訂, 工具列, 取得, 帳號, 套用, 清單); zh-Hans uses their Simplified
   form, with the mainland word where the Taiwan one would read oddly (脚本,
