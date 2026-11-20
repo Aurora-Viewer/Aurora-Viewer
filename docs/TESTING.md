@@ -11666,9 +11666,9 @@ separate searches enabled and disabled; that preference controls only the text.
 - `note-find`, `note-replace`: the notecard's find and replace (the Legacy
   Viewer's search / replace, #4153) on a pose notecard with three embedded
   items, in Classic. At frame 650 the find bar opens above the text on
-  "female", every match is washed in amber and the first one is marked more
-  strongly; capture frame 680. `note-replace` then replaces them all with
-  "woman" at frame 690: capture frame 740 for the new text, the "6
+  "female", every match is washed in amber and the first one is outlined
+  as well; capture frame 700. `note-replace` then replaces them all with
+  "woman" at frame 690: capture frame 740 for the new text, the "3
   replacement(s)" note and the `*` of the unsaved title. By hand: Ctrl+F
   with the keyboard in the text (or the magnifier beside Save) opens the bar,
   with the selection as the text to find; Enter or Find goes to the next

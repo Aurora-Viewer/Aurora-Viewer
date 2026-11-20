@@ -125,8 +125,8 @@ pub(super) fn editor(
     let code_background = markdown
         .filter(|rendered| !rendered.code_blocks.is_empty())
         .map(|_| ui.painter().add(egui::Shape::Noop));
-    // The open find bar's matches, behind the text too (find.rs).
-    let find = super::find::highlights(ui.ctx(), id).map(|found| (found, ui.painter().add(egui::Shape::Noop)));
+    // The open find bar's matches (find.rs).
+    let find = super::find::highlights(ui.ctx(), id);
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
@@ -242,21 +242,30 @@ pub(super) fn editor(
             ),
         );
     }
-    if let Some((found, slot)) = find {
+    if let Some(found) = find {
         let clip = output.text_clip_rect.translate(-output.galley_pos.to_vec2());
         let focused = output.response.has_focus();
-        let shapes = super::find::rects(&output.galley, &found, clip.top(), clip.bottom())
-            .into_iter()
-            .map(|(rect, current)| {
-                // the match the bar went to stands out while the bar has the
-                // keyboard; with the keyboard here, egui's selection shows it
-                let wash = p.amber.gamma_multiply(if current && !focused { 0.6 } else { 0.28 });
-                egui::Shape::rect_filled(rect.translate(output.galley_pos.to_vec2()), egui::CornerRadius::ZERO, wash)
-            })
-            .collect();
-        ui.painter()
-            .with_clip_rect(output.text_clip_rect)
-            .set(slot, egui::Shape::Vec(shapes));
+        let painter = ui.painter().with_clip_rect(output.text_clip_rect);
+        for (rect, current) in super::find::rects(&output.galley, &found, clip.top(), clip.bottom()) {
+            // over the text: the editor's field face is opaque. A light wash
+            // keeps the glyphs readable; the match the bar went to also gets
+            // an outline while the bar has the keyboard (with the keyboard
+            // here, egui's own selection shows it)
+            let rect = rect.translate(output.galley_pos.to_vec2());
+            painter.add(egui::Shape::rect_filled(
+                rect,
+                egui::CornerRadius::ZERO,
+                p.amber.gamma_multiply(0.3),
+            ));
+            if current && !focused {
+                painter.add(egui::Shape::rect_stroke(
+                    rect,
+                    egui::CornerRadius::ZERO,
+                    egui::Stroke::new(1.5, p.amber),
+                    egui::StrokeKind::Outside,
+                ));
+            }
+        }
     }
     if super::find::take_scroll(ui.ctx(), id) {
         let cursor = output.state.cursor.char_range().unwrap_or_default().primary;

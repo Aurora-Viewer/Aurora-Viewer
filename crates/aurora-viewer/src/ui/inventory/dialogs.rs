@@ -896,7 +896,7 @@ pub(super) fn preview(
                     // LLPreviewNotecard::onSearchButtonClicked (FIRE-13969)
                     if it.asset_type == 7 {
                         let loaded = matches!(st.preview_text, Some(Ok(_)));
-                        clicked_find = widgets::icon_button(ui, p, "search", aurora_i18n::tr!("script-search-title"), loaded);
+                        clicked_find = widgets::icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-title"), loaded);
                     }
                     if st.save_pending {
                         ui.spinner();

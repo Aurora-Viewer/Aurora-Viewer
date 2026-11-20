@@ -2454,7 +2454,7 @@ in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
 Search button): the Legacy search / replace floater drawn at the top of the
 window. It reuses the script editor's matching and undo step
 (`ui/scripts/editing.rs`), hands its matches to the embedded-item editor,
-which paints them behind the text on the visible rows only, and keeps
+which paints them over the text on the visible rows only, and keeps
 embedded-item markers out of every search and replacement.
 `ui/inventory/markdown/code.rs` maps fenced LSL tokens back to the exact source
 and formatted preview. The document worker uses the script editor's lexer;

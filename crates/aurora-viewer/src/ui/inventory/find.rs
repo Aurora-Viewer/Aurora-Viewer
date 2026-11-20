@@ -37,6 +37,8 @@ pub(super) struct Find {
     /// Put the keyboard in the text to find, its text selected.
     focus: bool,
     status: String,
+    /// The match Find last went to (characters of the text).
+    current: Option<Range<usize>>,
     /// The matches of `query` in `cached`, while neither changes.
     cached: Option<Cached>,
 }
@@ -123,6 +125,7 @@ impl Find {
     pub fn hide(&mut self) {
         self.open = false;
         self.status.clear();
+        self.current = None;
         self.cached = None;
     }
 
@@ -217,21 +220,32 @@ impl Find {
         ranges
     }
 
-    fn selection(ctx: &egui::Context, editor: Id) -> Range<usize> {
+    /// The match the bar went to, while it is still one and the editor's
+    /// cursor has not moved since. egui keeps a selection only in the field
+    /// with the keyboard: elsewhere it shrinks to its end, which is where
+    /// the cursor of a match the bar selected stays.
+    fn current(&self, ctx: &egui::Context, editor: Id, ranges: &[Range<usize>]) -> Option<Range<usize>> {
+        let current = self.current.clone()?;
+        let selected = Self::selected(ctx, editor);
+        (ranges.contains(&current) && (selected == current || selected == (current.end..current.end))).then_some(current)
+    }
+
+    fn selected(ctx: &egui::Context, editor: Id) -> Range<usize> {
         let [start, end] = editing::cursor(ctx, editor).sorted_cursors();
         start.index.0..end.index.0
+    }
+
+    /// Where Find, Replace and Search upwards start from: the current
+    /// match, else the editor's selection (LLTextEditor's selection).
+    fn selection(&self, ctx: &egui::Context, editor: Id, ranges: &[Range<usize>]) -> Range<usize> {
+        self.current(ctx, editor, ranges).unwrap_or_else(|| Self::selected(ctx, editor))
     }
 
     /// Hand the matches to the editor, which paints them.
     fn publish(&mut self, ctx: &egui::Context, editor: Id, text: &str) {
         let ranges = self.matches(text);
-        let selected = Self::selection(ctx, editor);
-        let current = ranges
-            .binary_search_by_key(&selected.start, |r| r.start)
-            .ok()
-            .filter(|&i| ranges[i] == selected);
         let highlights = Highlights {
-            current: current.map(|i| ranges[i].clone()),
+            current: self.current(ctx, editor, &ranges),
             ranges,
             frame: ctx.cumulative_frame_nr(),
         };
@@ -242,7 +256,9 @@ impl Find {
     /// upwards"), wrapping around: LLTextEditor::selectNext.
     pub fn find(&mut self, ctx: &egui::Context, editor: Id, text: &str) {
         let ranges = self.matches(text);
-        if let Some(found) = editing::next_match(&ranges, Self::selection(ctx, editor), self.up) {
+        let from = self.selection(ctx, editor, &ranges);
+        self.current = editing::next_match(&ranges, from, self.up);
+        if let Some(found) = self.current.clone() {
             editing::select(ctx, editor, found, false);
             ctx.data_mut(|d| d.insert_temp(scroll_id(editor), true));
             self.status.clear();
@@ -254,8 +270,9 @@ impl Find {
     /// Replace the selection when it is a match, then go to the next one:
     /// LLTextEditor::replaceText.
     fn replace(&mut self, ctx: &egui::Context, editor: Id, text: &mut String) -> bool {
-        let selected = Self::selection(ctx, editor);
-        let changed = self.matches(text).contains(&selected);
+        let ranges = self.matches(text);
+        let selected = self.selection(ctx, editor, &ranges);
+        let changed = ranges.contains(&selected);
         if changed {
             editing::replace_text(ctx, editor, text, selected, &plain(&self.replacement));
         }
@@ -276,6 +293,7 @@ impl Find {
             self.status = aurora_i18n::tr!("script-search-not-found").into();
             return false;
         }
+        self.current = None;
         let output = editing::replaced_all(text, &ranges, &plain(&self.replacement));
         editing::replace_text(ctx, editor, text, 0..text.chars().count(), &output);
         self.status = aurora_i18n::tr!("script-search-replaced", count = ranges.len() as i64);
@@ -372,6 +390,33 @@ mod tests {
         assert!(bar.replace(&ctx, id, &mut text));
         assert!(text.starts_with("anim1 <0,0,1>\nPose2"));
         assert_eq!(selected(&ctx, id, &text), "Pose");
+    }
+
+    #[test]
+    fn the_current_match_survives_egui_shrinking_the_selection() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("note_shrunk");
+        let mut text = NOTE.to_owned();
+        let mut bar = find("pose", true);
+        bar.replacement = "anim".into();
+        bar.find(&ctx, id, &text);
+        bar.find(&ctx, id, &text);
+        assert_eq!(bar.current, Some(14..18));
+        // what egui does to an editor without the keyboard
+        editing::select(&ctx, id, 18..18, false);
+        bar.publish(&ctx, id, &text);
+        assert_eq!(highlights(&ctx, id).expect("published").current, Some(14..18));
+        bar.up = true;
+        bar.find(&ctx, id, &text);
+        assert_eq!(bar.current, Some(0..4), "upwards from the match, not from its end");
+        editing::select(&ctx, id, 4..4, false);
+        assert!(bar.replace(&ctx, id, &mut text), "Replace takes the shrunk match");
+        assert!(text.starts_with("anim1 <0,0,1>\nPose2"));
+        // the cursor moved by hand: the search starts from there
+        editing::select(&ctx, id, 20..20, false);
+        bar.up = false;
+        bar.find(&ctx, id, &text);
+        assert_eq!(selected(&ctx, id, &text), "POSE");
     }
 
     #[test]
