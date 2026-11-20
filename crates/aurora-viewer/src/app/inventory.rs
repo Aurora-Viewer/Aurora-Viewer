@@ -284,6 +284,8 @@ impl App {
             0 => {
                 if texture_preview {
                     st.attachment_preview = Some(item);
+                } else {
+                    self.rlva_view_blocked(0);
                 }
             }
             2 => {
@@ -499,13 +501,8 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id, owner) => {
-                if self
-                    .world
-                    .inventory
-                    .items
-                    .get(&id)
-                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
-                {
+                let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
+                if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
                     return;
                 }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {

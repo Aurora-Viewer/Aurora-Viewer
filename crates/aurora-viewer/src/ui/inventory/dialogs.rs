@@ -899,7 +899,7 @@ pub(super) fn preview(
             }
         }
     });
-    super::embedded::preview(ctx, p, st, inv, images);
+    super::embedded::preview(ctx, p, st, images);
     if !open {
         if st.save_pending {
             st.close_after_save = true;

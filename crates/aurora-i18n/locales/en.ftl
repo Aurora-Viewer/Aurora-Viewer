@@ -14303,6 +14303,9 @@ rlva-hide-layers-hint = Report a clothing layer as absent when it cannot be remo
 rlva-add-prefix = Folder prefix for adding
 rlva-replace-prefix = Folder prefix for replacing
 rlva-prefix-hint = Override scripted wear mode for folders starting with this text. Empty disables it; hidden-folder prefixes such as .name are ignored.
+rlva-blocked-view-notecard = Unable to open the notecard due to RLVa restrictions.
+rlva-blocked-view-script = Unable to open the script due to RLVa restrictions.
+rlva-blocked-view-texture = Unable to open the texture due to RLVa restrictions.
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priority { $rank } of { $total }

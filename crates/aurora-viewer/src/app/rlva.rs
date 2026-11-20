@@ -45,6 +45,17 @@ fn leaves_build_mode(edit_before: bool, edit_now: bool) -> bool {
     edit_now && !edit_before
 }
 
+/// RlvUtil::notifyBlockedViewXXX (rlvcommon.h): what is said of a preview
+/// RLVa keeps closed, by asset type (7 a notecard, 10 a script, else a
+/// texture).
+fn view_blocked_notice(asset_type: i32) -> String {
+    match asset_type {
+        7 => aurora_i18n::tr!("rlva-blocked-view-notecard").into(),
+        10 => aurora_i18n::tr!("rlva-blocked-view-script").into(),
+        _ => aurora_i18n::tr!("rlva-blocked-view-texture").into(),
+    }
+}
+
 /// RlvActions::canHighlightTransparent (rlvactions.cpp) refuses the
 /// highlight under @edit and @showloc, and the @viewtransparent toggle
 /// handler (rlvhandler.cpp) turns it off: the three keep it off here.
@@ -68,6 +79,34 @@ fn refuses_shortcut(rlva: &crate::world::rlva::Rlva, action: Action) -> bool {
 }
 
 impl App {
+    /// RlvUIEnabler::filterFloaterViewXXX (rlvui.cpp): a preview that
+    /// @viewnote, @viewscript or @viewtexture keeps closed says so. Returns
+    /// whether it was refused.
+    pub(super) fn rlva_preview_refused(&mut self, asset_type: i32) -> bool {
+        let refused = !self.world.inventory.can_preview(asset_type);
+        if refused {
+            self.rlva_view_blocked(asset_type);
+        }
+        refused
+    }
+
+    /// RlvUtil::notifyBlockedViewXXX, also for the notecards and scripts of a
+    /// locked attachment (LLTaskNotecardBridge::openItem, LLTaskLSLBridge::
+    /// openItem, llpanelobjectinventory.cpp).
+    pub(super) fn rlva_view_blocked(&mut self, asset_type: i32) {
+        self.world
+            .system_notice(view_blocked_notice(asset_type), crate::world::notice_topics::Topic::Warning);
+    }
+
+    /// A texture library preview, as `rlva_preview_refused` lets it open.
+    pub(super) fn open_library_preview(&mut self, ctx: &egui::Context, item: Uuid) {
+        let kind = self.world.inventory.items.get(&item).map(|it| it.asset_type);
+        if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
+            return;
+        }
+        self.texture_library.open_preview(ctx, &self.world, item);
+    }
+
     pub(super) fn camera_aspect(&self) -> f32 {
         self.gfx
             .as_ref()
@@ -1244,5 +1283,13 @@ mod tests {
         assert!(leaves_build_mode(false, true), "@edit comes");
         assert!(!leaves_build_mode(true, true), "build mode opened while it lasts stays");
         assert!(!leaves_build_mode(true, false) && !leaves_build_mode(false, false));
+    }
+
+    /// RlvUtil::notifyBlockedViewXXX: one notice per kind of preview.
+    #[test]
+    fn rlva_refused_previews_name_their_kind() {
+        assert_eq!(view_blocked_notice(7), aurora_i18n::tr!("rlva-blocked-view-notecard"));
+        assert_eq!(view_blocked_notice(10), aurora_i18n::tr!("rlva-blocked-view-script"));
+        assert_eq!(view_blocked_notice(0), aurora_i18n::tr!("rlva-blocked-view-texture"));
     }
 }

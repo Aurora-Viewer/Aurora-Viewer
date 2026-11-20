@@ -14193,6 +14193,9 @@ rlva-hide-layers-hint = 外せない衣類のレイヤーを存在しないも�
 rlva-add-prefix = 追加用のフォルダの接頭辞
 rlva-replace-prefix = 置き換え用のフォルダの接頭辞
 rlva-prefix-hint = このテキストで始まるフォルダのスクリプトによる着用モードを上書きします。空欄で無効。.name のような隠しフォルダの接頭辞は無視されます。
+rlva-blocked-view-notecard = ＲＬＶａの制限により、ノートカードを開くことができません。
+rlva-blocked-view-script = ＲＬＶａの制限により、スクリプトを開くことができません。
+rlva-blocked-view-texture = ＲＬＶａの制限により、テクスチャを開くことができません。
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = 優先度{ $total }中{ $rank }

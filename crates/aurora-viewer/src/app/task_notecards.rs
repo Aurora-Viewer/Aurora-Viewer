@@ -93,6 +93,7 @@ impl App {
 
     pub(super) fn open_task_notecard(&mut self, object: Uuid, item: Uuid) {
         if self.world.rlva.has("viewnote") {
+            self.rlva_view_blocked(7);
             return;
         }
         if self.task_notecards.get(&(object, item)).is_some_and(|d| d.state.preview.is_some()) {
@@ -110,6 +111,7 @@ impl App {
                 .index_of_uuid(&object)
                 .is_some_and(|i| self.world.rlva_locked_attachment(i))
         {
+            self.rlva_view_blocked(7);
             return;
         }
         // a preview: the rule of the contents' Open entries, on the raw item

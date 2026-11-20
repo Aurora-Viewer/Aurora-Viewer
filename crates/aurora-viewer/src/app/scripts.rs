@@ -571,6 +571,7 @@ impl App {
 
     pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
+            self.rlva_view_blocked(10);
             return;
         }
         // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
@@ -581,6 +582,7 @@ impl App {
             .index_of_uuid(&target.object)
             .is_some_and(|i| self.world.rlva_locked_attachment(i))
         {
+            self.rlva_view_blocked(10);
             return;
         }
         if task_script_refused(&self.build, &self.world, target.object) {

@@ -14308,6 +14308,9 @@ rlva-hide-layers-hint = Indiquer une couche absente lorsqu’elle ne peut pas ê
 rlva-add-prefix = Préfixe de dossier pour ajouter
 rlva-replace-prefix = Préfixe de dossier pour remplacer
 rlva-prefix-hint = Imposer ce mode de port aux dossiers commençant par ce texte. Vide le désactive ; les préfixes de dossiers cachés comme .nom sont ignorés.
+rlva-blocked-view-notecard = Impossible d’ouvrir la note en raison des restrictions RLVa.
+rlva-blocked-view-script = Impossible d’ouvrir le script en raison des restrictions RLVa.
+rlva-blocked-view-texture = Impossible d’ouvrir la texture en raison des restrictions RLVa.
 
 # Contact-set visual overrides (#408)
 contact-visual-priority = Priorité { $rank } sur { $total }
