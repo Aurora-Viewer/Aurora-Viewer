@@ -614,7 +614,7 @@ mod tests {
         assert_eq!(banner_place(&world, "Lagune (128, 64, 30)"), ("Lagune".to_owned(), Some(point)));
         assert_eq!(banner_place(&world, ""), (here.clone(), None));
         let mut tiles = crate::ui::map_tiles::MapTiles::new();
-        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
         assert_eq!(facts.position, "128, 64, 30");
         assert!(facts.pin.is_some());
 
@@ -634,7 +634,7 @@ mod tests {
             assert!(!name.contains("Lagune") && name != here && !name.is_empty(), "{dest:?}: {name}");
             assert_eq!(arrival, None);
         }
-        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
         assert!(facts.position.is_empty() && facts.maturity.is_empty());
         assert!(facts.residents.is_none() && facts.tile.is_none() && facts.pin.is_none());
     }
