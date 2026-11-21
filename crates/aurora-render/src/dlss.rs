@@ -44,6 +44,10 @@ pub(crate) struct Inputs<'a> {
     pub color: &'a wgpu::TextureView,
     pub depth: &'a wgpu::TextureView,
     pub motion: &'a wgpu::TextureView,
+    /// the scene pass's G-buffer and base colour, for Ray Reconstruction's
+    /// guides (`RenderSettings::rr_guides`); None without them
+    pub gbuf: Option<&'a wgpu::TextureView>,
+    pub albedo: Option<&'a wgpu::TextureView>,
 }
 
 /// The frame's values (fsr.rs `FrameInputs`).
@@ -162,6 +166,7 @@ mod sl {
 
     /// `sl::Feature`
     pub const FEATURE_DLSS: u32 = 0;
+    pub const FEATURE_DLSS_RR: u32 = 1001;
 
     /// `sl::Result`: `eOk` and the values the viewer tells apart.
     pub const OK: i32 = 0;
@@ -243,7 +248,14 @@ mod sl {
         pub const MOTION_VECTORS: u32 = 1;
         pub const SCALING_INPUT_COLOR: u32 = 3;
         pub const SCALING_OUTPUT_COLOR: u32 = 4;
+        pub const ALBEDO: u32 = 7;
+        pub const SPECULAR_ALBEDO: u32 = 8;
+        /// normals with the roughness in w (`DLSSDNormalRoughnessMode::ePacked`)
+        pub const NORMAL_ROUGHNESS: u32 = 14;
     }
+
+    /// `sl::DLSSDNormalRoughnessMode::ePacked`
+    pub const ROUGHNESS_PACKED: u32 = 1;
 
     /// `sl::ResourceLifecycle::eValidUntilEvaluate`: the viewer's images
     /// stay as they are until `slEvaluateFeature` returns.
@@ -311,6 +323,8 @@ mod sl {
     id!(CONSTANTS, 2, [0xd7 0x5a 0xd3 0xdc 0x4a 0x4e 0xad 0x4b 0xa9 0x0c 0xe0 0xc4 0x9e 0xb2 0x3a 0xfe]);
     id!(DLSS_OPTIONS, 3, [0xe4 0x26 0xc8 0x6a 0x61 0x4c 0x01 0x41 0xa9 0x2d 0x63 0x8d 0x42 0x10 0x57 0xb8]);
     id!(DLSS_OPTIMAL_SETTINGS, 1, [0x57 0x09 0x1d 0xef 0x58 0xfd 0xf7 0x4d 0xb5 0x04 0x8b 0x69 0xd8 0xaa 0x6b 0x76]);
+    id!(DLSSD_OPTIONS, 3, [0x04 0x75 0xd8 0x0a 0x4e 0x77 0xf3 0x4b 0x96 0x33 0xa4 0x4d 0x1f 0x7f 0x9c 0xb8]);
+    id!(DLSSD_OPTIMAL_SETTINGS, 1, [0x37 0xc6 0xd0 0xfb 0x8f 0xa2 0xf2 0x41 0xbc 0x91 0xb4 0x21 0xfa 0xee 0x8e 0x1e]);
     id!(VIEWPORT_HANDLE, 1, [0x35 0x64 0x1b 0x17 0x3c 0x9b 0xc8 0x4f 0x99 0x94 0xfb 0xe5 0x25 0x69 0xaa 0xa4]);
     id!(ADAPTER_INFO, 1, [0x5f 0x31 0x77 0x06 0x46 0xa7 0x92 0x44 0x9f 0x42 0xcb 0x61 0x42 0xc9 0xc3 0xd4]);
 
@@ -708,6 +722,84 @@ mod sl {
         }
     }
 
+    /// `sl::DLSSDOptions` (Ray Reconstruction's)
+    #[repr(C)]
+    pub struct DlssdOptions {
+        pub base: Base,
+        pub mode: u32,
+        pub output_width: u32,
+        pub output_height: u32,
+        pub sharpness: f32,
+        pub pre_exposure: f32,
+        pub exposure_scale: f32,
+        pub color_buffers_hdr: u8,
+        pub indicator_invert_axis_x: u8,
+        pub indicator_invert_axis_y: u8,
+        pub normal_roughness_mode: u32,
+        pub world_to_camera_view: Float4x4,
+        pub camera_view_to_world: Float4x4,
+        pub alpha_upscaling_enabled: u8,
+        pub dlaa_preset: u32,
+        pub quality_preset: u32,
+        pub balanced_preset: u32,
+        pub performance_preset: u32,
+        pub ultra_performance_preset: u32,
+        pub ultra_quality_preset: u32,
+    }
+
+    impl DlssdOptions {
+        /// Roughness in the normals' w; the matrices are the identity
+        /// until the frame's are set.
+        pub fn new(mode: u32, output: (u32, u32)) -> Self {
+            const IDENTITY: Float4x4 = [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            Self {
+                base: base(DLSSD_OPTIONS),
+                mode,
+                output_width: output.0,
+                output_height: output.1,
+                sharpness: 0.0,
+                pre_exposure: 1.0,
+                exposure_scale: 1.0,
+                color_buffers_hdr: TRUE,
+                indicator_invert_axis_x: FALSE,
+                indicator_invert_axis_y: FALSE,
+                normal_roughness_mode: ROUGHNESS_PACKED,
+                world_to_camera_view: IDENTITY,
+                camera_view_to_world: IDENTITY,
+                alpha_upscaling_enabled: FALSE,
+                dlaa_preset: 0,
+                quality_preset: 0,
+                balanced_preset: 0,
+                performance_preset: 0,
+                ultra_performance_preset: 0,
+                ultra_quality_preset: 0,
+            }
+        }
+
+        /// The same model for every mode.
+        pub fn preset(&mut self, preset: u32) {
+            self.dlaa_preset = preset;
+            self.quality_preset = preset;
+            self.balanced_preset = preset;
+            self.performance_preset = preset;
+            self.ultra_performance_preset = preset;
+            self.ultra_quality_preset = preset;
+        }
+    }
+
+    /// `sl::DLSSDOptimalSettings`: `sl::DLSSOptimalSettings`' fields under
+    /// its own id.
+    pub fn dlssd_optimal_settings() -> DlssOptimalSettings {
+        let mut s = DlssOptimalSettings::new();
+        s.base = base(DLSSD_OPTIMAL_SETTINGS);
+        s
+    }
+
     /// `sl::ViewportHandle`
     #[repr(C)]
     pub struct ViewportHandle {
@@ -794,6 +886,21 @@ mod sl {
         assert!(offset_of!(DlssOptions, ultra_quality_preset) == 80);
         assert!(offset_of!(DlssOptions, use_auto_exposure) == 84);
         assert!(offset_of!(DlssOptions, alpha_upscaling_enabled) == 85);
+        assert!(size_of::<DlssdOptions>() == 224 && align_of::<DlssdOptions>() == 8);
+        assert!(offset_of!(DlssdOptions, mode) == 32 && offset_of!(DlssdOptions, output_width) == 36);
+        assert!(offset_of!(DlssdOptions, output_height) == 40 && offset_of!(DlssdOptions, sharpness) == 44);
+        assert!(offset_of!(DlssdOptions, pre_exposure) == 48 && offset_of!(DlssdOptions, exposure_scale) == 52);
+        assert!(offset_of!(DlssdOptions, color_buffers_hdr) == 56);
+        assert!(offset_of!(DlssdOptions, indicator_invert_axis_x) == 57);
+        assert!(offset_of!(DlssdOptions, indicator_invert_axis_y) == 58);
+        assert!(offset_of!(DlssdOptions, normal_roughness_mode) == 60);
+        assert!(offset_of!(DlssdOptions, world_to_camera_view) == 64);
+        assert!(offset_of!(DlssdOptions, camera_view_to_world) == 128);
+        assert!(offset_of!(DlssdOptions, alpha_upscaling_enabled) == 192);
+        assert!(offset_of!(DlssdOptions, dlaa_preset) == 196 && offset_of!(DlssdOptions, quality_preset) == 200);
+        assert!(offset_of!(DlssdOptions, balanced_preset) == 204 && offset_of!(DlssdOptions, performance_preset) == 208);
+        assert!(offset_of!(DlssdOptions, ultra_performance_preset) == 212);
+        assert!(offset_of!(DlssdOptions, ultra_quality_preset) == 216);
         assert!(size_of::<DlssOptimalSettings>() == 64);
         assert!(offset_of!(DlssOptimalSettings, optimal_render_width) == 32);
         assert!(offset_of!(DlssOptimalSettings, optimal_render_height) == 36);
@@ -908,6 +1015,12 @@ mod sl {
     pub struct Dlss {
         pub optimal_settings: unsafe extern "C" fn(*const DlssOptions, *mut DlssOptimalSettings) -> i32,
         pub set_options: unsafe extern "C" fn(*const ViewportHandle, *const DlssOptions) -> i32,
+    }
+
+    /// Ray Reconstruction's functions, from `slGetFeatureFunction`.
+    pub struct Dlssd {
+        pub optimal_settings: unsafe extern "C" fn(*const DlssdOptions, *mut DlssOptimalSettings) -> i32,
+        pub set_options: unsafe extern "C" fn(*const ViewportHandle, *const DlssdOptions) -> i32,
     }
 
     /// The library the user put in the folder: sl-ngx built on their
@@ -1063,19 +1176,43 @@ mod sl {
         /// # Safety
         /// Called under Streamline's lock, after `slInit`.
         pub unsafe fn dlss(&self) -> Result<Dlss, String> {
-            let get = |name: &CStr| -> Result<*mut c_void, String> {
-                let mut f = std::ptr::null_mut();
-                // SAFETY: `name` nul-ended, `f` lives through the call
-                check(unsafe { (self.feature_function)(FEATURE_DLSS, name.as_ptr(), &mut f) })
-                    .map_err(|e| format!("slGetFeatureFunction({name:?}): {e}"))?;
-                Ok(f)
-            };
-            let missing = |name: &str| format!("{name} came back null");
-            // SAFETY: the types sl_dlss.h gives these two names
-            Ok(Dlss {
-                optimal_settings: unsafe { as_fn(get(c"slDLSSGetOptimalSettings")?) }.ok_or_else(|| missing("slDLSSGetOptimalSettings"))?,
-                set_options: unsafe { as_fn(get(c"slDLSSSetOptions")?) }.ok_or_else(|| missing("slDLSSSetOptions"))?,
-            })
+            // SAFETY: the types sl_dlss.h gives these two names; the
+            // caller's contract
+            unsafe {
+                Ok(Dlss {
+                    optimal_settings: self.function(FEATURE_DLSS, c"slDLSSGetOptimalSettings")?,
+                    set_options: self.function(FEATURE_DLSS, c"slDLSSSetOptions")?,
+                })
+            }
+        }
+
+        /// Ray Reconstruction's functions, as [`Lib::dlss`].
+        ///
+        /// # Safety
+        /// As [`Lib::dlss`].
+        pub unsafe fn dlssd(&self) -> Result<Dlssd, String> {
+            // SAFETY: the types sl_dlss_d.h gives these two names; the
+            // caller's contract
+            unsafe {
+                Ok(Dlssd {
+                    optimal_settings: self.function(FEATURE_DLSS_RR, c"slDLSSDGetOptimalSettings")?,
+                    set_options: self.function(FEATURE_DLSS_RR, c"slDLSSDSetOptions")?,
+                })
+            }
+        }
+
+        /// `feature`'s function `name`, as the pointer type `F`.
+        ///
+        /// # Safety
+        /// `F` is the type the headers give `name`; under Streamline's
+        /// lock, after `slInit`.
+        unsafe fn function<F: Copy>(&self, feature: u32, name: &CStr) -> Result<F, String> {
+            let mut f = std::ptr::null_mut();
+            // SAFETY: `name` nul-ended, `f` lives through the call
+            check(unsafe { (self.feature_function)(feature, name.as_ptr(), &mut f) })
+                .map_err(|e| format!("slGetFeatureFunction({name:?}): {e}"))?;
+            // SAFETY: the caller's contract
+            unsafe { as_fn(f) }.ok_or_else(|| format!("{name:?} came back null"))
         }
     }
 
@@ -1110,6 +1247,9 @@ mod imp {
     const PROJECT_ID: &CStr = c"5b0c4a8e-6f1d-4d7a-9a52-3e1f0c2d7b91";
     const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
     const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+    /// Ray Reconstruction's albedo guides, and its normals with roughness
+    const GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+    const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
     /// The file the user downloads starts with this (a version follows on
     /// Linux).
     #[cfg(target_os = "linux")]
@@ -1119,6 +1259,10 @@ mod imp {
 
     /// The last instance was made with the DLSS extensions.
     static INSTANCE: AtomicBool = AtomicBool::new(false);
+    /// The last instance was made with Ray Reconstruction's instance
+    /// extensions too ([`rr_instance_extensions`]): without them, its
+    /// devices open for super resolution alone ([`request_device`]).
+    static RR_INSTANCE: AtomicBool = AtomicBool::new(false);
     /// The last device opened with the DLSS extensions, and its adapter (Streamline
     /// takes the textures through it). A renderer made after a device loss
     /// opens another: one opened the usual way empties this.
@@ -1230,12 +1374,31 @@ mod imp {
         failed(&format!("refused by the video memory {when}"), report);
     }
 
+    /// Ray Reconstruction could not be made, or the video memory refused
+    /// its guides: [`rr_ready`] turns false, the renderer builds its
+    /// pipelines again without the guides, and super resolution draws (at
+    /// once when only the guides were refused, `Dlss::new`; FSR until the
+    /// rebuild when Streamline refused the feature). Kept until the next
+    /// device ([`opening_device`]), Preferences' retry ([`retry`]) or
+    /// another model ([`rr_retry`]), so a resize does not try it again.
+    /// Without `report` (an external renderer, which never draws Ray
+    /// Reconstruction: it traces nothing, `rt_shadows::traced`) only the
+    /// log, and the main view's [`rr_ready`] stays as it was.
+    fn rr_refused(e: &str, report: bool) {
+        if report {
+            RR_REFUSED.store(true, Ordering::Relaxed);
+        }
+        log::error!("DLSS: Ray Reconstruction: {e}: super resolution draws instead");
+    }
+
     struct Started {
         device: wgpu::Device,
         /// which start of DLSS this is ([`STARTS`])
         start: u64,
-        /// the viewports made on it and not yet freed, one per feature
-        viewports: Vec<u32>,
+        /// the viewports made on it and not yet freed, one per feature,
+        /// each with its feature (super resolution's or Ray
+        /// Reconstruction's)
+        viewports: Vec<(u32, u32)>,
         /// the loss of the device, as its renderer sees it
         /// (device_lost.rs): set by the device-lost callback itself,
         /// without the lock, so a renderer stuck in a Streamline call or
@@ -1268,6 +1431,130 @@ mod imp {
     /// unless `AURORA_DLSS` says otherwise.
     pub(crate) fn wanted(setting: bool) -> bool {
         forced().unwrap_or(setting)
+    }
+
+    /// `AURORA_DLSS_RR` for a test: `1` turns Ray Reconstruction on
+    /// whatever the setting, `0` or `off` keeps it out, the device's
+    /// extensions too; unset or empty, None.
+    fn rr_forced() -> Option<bool> {
+        static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| {
+            let v = std::env::var("AURORA_DLSS_RR").ok()?;
+            let v = v.trim();
+            (!v.is_empty()).then_some(!matches!(v, "0" | "off"))
+        })
+    }
+
+    /// The device was opened with Ray Reconstruction's extensions too.
+    static RR_DEVICE: AtomicBool = AtomicBool::new(false);
+    /// Streamline, started on this device, said whether Ray Reconstruction
+    /// is supported there ([`RR_UNAVAILABLE`]): until then the renderer
+    /// draws no guides ([`rr_ready_on`], [`rr_probe`]).
+    static RR_KNOWN: AtomicBool = AtomicBool::new(false);
+    /// Streamline's start on this device said Ray Reconstruction is not
+    /// supported (`slIsFeatureSupported`): asked again only by the next
+    /// start, and a retry cannot change it.
+    static RR_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+    /// Ray Reconstruction refused on this device after Streamline offered
+    /// it: its feature, its evaluate or the video memory for its textures
+    /// ([`rr_refused`]). Kept through Streamline's starts on the device (a
+    /// start says only [`RR_UNAVAILABLE`]), until the next device, a retry
+    /// or another model.
+    static RR_REFUSED: AtomicBool = AtomicBool::new(false);
+    /// Ray Reconstruction refused for a photo or film frame, whatever
+    /// refused it (its render targets, its guides' textures or objects,
+    /// Streamline's feature, its evaluate): from there every capture, of
+    /// any size, draws super resolution, until the next device, a retry or
+    /// another model; the window's Ray Reconstruction is left as it is
+    /// ([`snapshot_rr_refused`]).
+    static SNAPSHOT_RR_REFUSED: AtomicBool = AtomicBool::new(false);
+
+    /// The device was opened with Ray Reconstruction's extensions: what
+    /// the renderer draws its guides by (`RenderSettings::rr_guides`), set
+    /// once the device is open and fixed with it.
+    pub(crate) fn rr_device() -> bool {
+        RR_DEVICE.load(Ordering::Relaxed) && opened().is_some()
+    }
+
+    /// Ray Reconstruction can draw: [`rr_device`], and Streamline did not
+    /// refuse it, or has not been asked yet (it is asked when DLSS
+    /// starts). What Preferences shows; a renderer asks [`rr_ready_on`] of
+    /// its own device.
+    pub(crate) fn rr_ready() -> bool {
+        rr_device() && !RR_UNAVAILABLE.load(Ordering::Relaxed) && !RR_REFUSED.load(Ordering::Relaxed)
+    }
+
+    /// [`rr_device`], and Ray Reconstruction refused after Streamline
+    /// offered it ([`RR_REFUSED`]): what [`retry`] may change, unlike
+    /// Streamline saying it is not supported ([`RR_UNAVAILABLE`]).
+    pub(crate) fn rr_refused_here() -> bool {
+        rr_device() && !RR_UNAVAILABLE.load(Ordering::Relaxed) && RR_REFUSED.load(Ordering::Relaxed)
+    }
+
+    /// [`rr_ready`] for a renderer on `device`: false when `device` is not
+    /// the one opened with Ray Reconstruction's extensions (a renderer still
+    /// on a lost device, or on another adapter's), so that one never builds
+    /// the guides for a device without them.
+    /// Only once Streamline said Ray Reconstruction is supported there
+    /// ([`RR_KNOWN`]): guides compiled before that answer were built again
+    /// at once wherever it says no.
+    pub(crate) fn rr_ready_on(device: &wgpu::Device) -> bool {
+        RR_KNOWN.load(Ordering::Relaxed) && rr_ready() && opened().as_ref().is_some_and(|(_, d)| same(d, device))
+    }
+
+    /// Starts DLSS on `device` when it opened with Ray Reconstruction's
+    /// extensions and whether Streamline supports it there is not known yet
+    /// ([`RR_KNOWN`]): the renderer asks before it compiles the guides'
+    /// pipelines (renderer.rs, `rr_wanted`), so that a device without Ray
+    /// Reconstruction never compiles them. Nothing on a lost device, one
+    /// where Streamline refused to start, or another device than the one
+    /// opened (a start refused here is shown as [`with_started`] shows it).
+    pub(crate) fn rr_probe(device: &wgpu::Device, lost: &DeviceLost) {
+        if RR_KNOWN.load(Ordering::Relaxed)
+            || !RR_DEVICE.load(Ordering::Relaxed)
+            || lost.get()
+            || super::refused(REFUSED.load(Ordering::Relaxed), OPENS.load(Ordering::Relaxed))
+            || !opened().as_ref().is_some_and(|(_, d)| same(d, device))
+        {
+            return;
+        }
+        if let Some(lib) = sl::loaded() {
+            let _ = with_started(lib, device, lost, true, |_| ());
+        }
+    }
+
+    /// Ray Reconstruction was refused for a photo or film frame on the
+    /// device open now: every capture's pipelines, targets and DLSS take
+    /// super resolution ([`SNAPSHOT_RR_REFUSED`]).
+    pub(crate) fn snapshot_rr_refused() -> bool {
+        SNAPSHOT_RR_REFUSED.load(Ordering::Relaxed)
+    }
+
+    /// [`rr_device`], and [`snapshot_rr_refused`]: what Preferences offers
+    /// to [`retry`], as for the window's refusal ([`rr_refused_here`]).
+    pub(crate) fn snapshot_rr_refused_here() -> bool {
+        rr_device() && SNAPSHOT_RR_REFUSED.load(Ordering::Relaxed)
+    }
+
+    /// The video memory refused the render targets only Ray
+    /// Reconstruction reads (renderer.rs, `make_targets`): refused as
+    /// Streamline refusing it would be ([`rr_refused`]), so the targets are
+    /// made again without them and super resolution draws.
+    pub(crate) fn rr_targets_refused(report: bool) {
+        rr_refused("the video memory refused its render targets", report);
+    }
+
+    /// The same for a photo or film frame's targets: remembered for the
+    /// captures alone ([`SNAPSHOT_RR_REFUSED`]), the window's Ray
+    /// Reconstruction left as it was.
+    pub(crate) fn snapshot_rr_targets_refused() {
+        snapshot_refusal("the video memory refused its render targets");
+    }
+
+    /// Ray Reconstruction draws with DLSS: the setting
+    /// (`RenderSettings::dlss_rr`), unless `AURORA_DLSS_RR` says otherwise.
+    pub(crate) fn rr_wanted(setting: bool) -> bool {
+        rr_forced().unwrap_or(setting)
     }
 
     /// What Preferences shows: the device opened with the DLSS extensions, or
@@ -1401,7 +1688,10 @@ mod imp {
         let dir = sl::wide(&lib.dir.to_string_lossy());
         let dirs = [dir.as_ptr()];
         let data = sl::wide(&std::env::temp_dir().to_string_lossy());
-        let features = [sl::FEATURE_DLSS];
+        // Ray Reconstruction's plugin too: Streamline loads what it finds
+        // (on Windows `sl.dlss_d.dll`, which the user may not have copied),
+        // and says per feature whether it runs ([`start`])
+        let features = [sl::FEATURE_DLSS, sl::FEATURE_DLSS_RR];
         let mut p = sl::Preferences::new();
         p.paths_to_plugins = dirs.as_ptr();
         p.num_paths_to_plugins = 1;
@@ -1451,14 +1741,14 @@ mod imp {
         kept
     }
 
-    /// The Vulkan extensions the library asks for DLSS: the instance's,
-    /// then the device's (those once `slSetVulkanInfo` named an instance
-    /// and physical device). Under the lock, after [`ensure_init`].
-    fn requirements(lib: &sl::Lib) -> Result<(Vec<&'static CStr>, Vec<&'static CStr>), String> {
+    /// The Vulkan extensions the library asks for `feature`: the
+    /// instance's, then the device's (those once `slSetVulkanInfo` named
+    /// an instance and physical device). Under the lock, after
+    /// [`ensure_init`].
+    fn requirements(lib: &sl::Lib, feature: u32) -> Result<(Vec<&'static CStr>, Vec<&'static CStr>), String> {
         let mut req = sl::FeatureRequirements::new();
         // SAFETY: as sl.h declares it; `req` lives through the call
-        sl::check(unsafe { (lib.feature_requirements)(sl::FEATURE_DLSS, &mut req) })
-            .map_err(|e| format!("slGetFeatureRequirements: {e}"))?;
+        sl::check(unsafe { (lib.feature_requirements)(feature, &mut req) }).map_err(|e| format!("slGetFeatureRequirements: {e}"))?;
         // SAFETY: the lists the call above filled, read before any other
         // call
         let (instance, device) = unsafe {
@@ -1495,7 +1785,7 @@ mod imp {
             }
         }
         ensure_init(lib)?;
-        let (wanted, _) = requirements(lib)?;
+        let (wanted, _) = requirements(lib, sl::FEATURE_DLSS)?;
         // SAFETY: a query of the loader, no layer named
         let have = unsafe { entry.enumerate_instance_extension_properties(None) }.map_err(|e| e.to_string())?;
         for name in &wanted {
@@ -1524,13 +1814,66 @@ mod imp {
             // live instance and physical device
             sl::check(unsafe { (lib.set_vulkan_info)(&info) }).map_err(|e| format!("slSetVulkanInfo: {e}"))?;
         }
-        let (_, wanted) = requirements(lib)?;
+        let (_, wanted) = requirements(lib, sl::FEATURE_DLSS)?;
         for name in &wanted {
             if !adapter.physical_device_capabilities().supports_extension(name) {
                 return Err(format!("no device extension {name:?}"));
             }
         }
         Ok(wanted)
+    }
+
+    /// Ray Reconstruction's instance extensions beyond `wanted` (super
+    /// resolution's), when the library names them and the Vulkan loader of
+    /// `entry` has them all; None, with the reason in the log, and the
+    /// instance is made for super resolution alone. After
+    /// [`instance_extensions`], under the lock.
+    fn rr_instance_extensions(lib: &sl::Lib, entry: &ash::Entry, wanted: &[&'static CStr]) -> Option<Vec<&'static CStr>> {
+        let (all, _) = requirements(lib, sl::FEATURE_DLSS_RR)
+            .map_err(|e| log::info!("DLSS: no Ray Reconstruction on this instance ({e})"))
+            .ok()?;
+        let extra: Vec<_> = all.into_iter().filter(|n| !wanted.contains(n)).collect();
+        if extra.is_empty() {
+            return Some(extra);
+        }
+        // SAFETY: a query of the loader, no layer named
+        let have = match unsafe { entry.enumerate_instance_extension_properties(None) } {
+            Ok(have) => have,
+            Err(e) => {
+                log::info!("DLSS: no Ray Reconstruction on this instance (the loader's extensions: {e})");
+                return None;
+            }
+        };
+        let missing: Vec<_> = extra
+            .iter()
+            .filter(|n| !have.iter().any(|e| e.extension_name_as_c_str() == Ok(**n)))
+            .collect();
+        if !missing.is_empty() {
+            log::info!("DLSS: no Ray Reconstruction on this instance (missing {missing:?})");
+            return None;
+        }
+        log::info!("DLSS: Ray Reconstruction's instance extensions beyond super resolution's: {extra:?}");
+        Some(extra)
+    }
+
+    /// Ray Reconstruction's device extensions beyond `wanted` (super
+    /// resolution's) on `adapter`, when the library names them and the
+    /// device supports them all; None, with the reason in the log, and the
+    /// device opens for super resolution alone. After
+    /// [`device_extensions`] (which named the adapter), under the lock.
+    fn rr_device_extensions(lib: &sl::Lib, adapter: &wgpu::hal::vulkan::Adapter, wanted: &[&'static CStr]) -> Option<Vec<&'static CStr>> {
+        let (_, all) = requirements(lib, sl::FEATURE_DLSS_RR)
+            .map_err(|e| log::info!("DLSS: no Ray Reconstruction on this device ({e})"))
+            .ok()?;
+        let extra: Vec<_> = all.into_iter().filter(|n| !wanted.contains(n)).collect();
+        let caps = adapter.physical_device_capabilities();
+        let missing: Vec<_> = extra.iter().filter(|n| !caps.supports_extension(n)).collect();
+        if !missing.is_empty() {
+            log::info!("DLSS: no Ray Reconstruction on this device (missing {missing:?})");
+            return None;
+        }
+        log::info!("DLSS: Ray Reconstruction's device extensions beyond super resolution's: {extra:?}");
+        Some(extra)
     }
 
     /// The library's instance extensions, for the instance OpenXR makes
@@ -1618,6 +1961,15 @@ mod imp {
         let free = let_go(Ending::Moving);
         *opened() = None;
         XR.store(false, Ordering::Relaxed);
+        // Ray Reconstruction is forgotten with it: only [`request_device`]
+        // opens a device with its extensions (a VR headset's has OpenXR's
+        // and super resolution's), and a refusal belongs to the device
+        // Streamline gave it
+        RR_DEVICE.store(false, Ordering::Relaxed);
+        RR_KNOWN.store(false, Ordering::Relaxed);
+        RR_UNAVAILABLE.store(false, Ordering::Relaxed);
+        RR_REFUSED.store(false, Ordering::Relaxed);
+        SNAPSHOT_RR_REFUSED.store(false, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         REFUSAL.store(false, Ordering::Relaxed);
         let probe = if xr { &XR_PROBE_BUSY } else { &PROBE_BUSY };
@@ -1759,13 +2111,38 @@ mod imp {
         refused
     }
 
-    /// The user asked to try DLSS again (Preferences): a start Streamline refused
-    /// is asked again, and every renderer makes its feature anew
-    /// ([`retry_asked`]). [`FAILED`] stays until a feature is made.
+    /// The user asked to try DLSS again (Preferences): a start Streamline
+    /// refused is asked again, Ray Reconstruction too when it was refused,
+    /// and every renderer makes its feature anew ([`retry_asked`]).
+    /// [`FAILED`] stays until a feature is made.
     pub(crate) fn retry() {
         REFUSED.store(0, Ordering::Relaxed);
+        // Ray Reconstruction's refusal too: a feature refused again sets it
+        // back (`rr_refused`), so a retry costs at most one more pipeline
+        // rebuild
+        RR_REFUSED.store(false, Ordering::Relaxed);
+        SNAPSHOT_RR_REFUSED.store(false, Ordering::Relaxed);
         RETRIES.fetch_add(1, Ordering::Relaxed);
         log::info!("DLSS: trying again, as asked");
+    }
+
+    /// Another Ray Reconstruction model was picked (Preferences): a
+    /// refusal is forgotten, so the renderer builds the guides again and
+    /// asks Streamline with that model; refused again, it is set back
+    /// (`rr_refused`).
+    pub(crate) fn rr_retry() {
+        let snapshot = SNAPSHOT_RR_REFUSED.swap(false, Ordering::Relaxed);
+        if RR_REFUSED.swap(false, Ordering::Relaxed) || snapshot {
+            log::info!("DLSS: Ray Reconstruction tried again, with another model");
+        }
+    }
+
+    /// Ray Reconstruction refused for a photo or film frame
+    /// ([`snapshot_rr_refused`]).
+    fn snapshot_refusal(why: &str) {
+        if !SNAPSHOT_RR_REFUSED.swap(true, Ordering::Relaxed) {
+            log::warn!("DLSS: Ray Reconstruction for a snapshot: {why}: super resolution draws every snapshot from here, until Try again");
+        }
     }
 
     /// A [`retry`] came since `seen`, which is moved to it.
@@ -1784,6 +2161,7 @@ mod imp {
     /// A Vulkan instance with the DLSS extensions, when DLSS is wanted.
     pub(crate) fn instance(desc: &wgpu::InstanceDescriptor) -> Option<wgpu::Instance> {
         INSTANCE.store(false, Ordering::Relaxed);
+        RR_INSTANCE.store(false, Ordering::Relaxed);
         // opened with Streamline whenever the user's files are there, so that the
         // setting turns DLSS on and off without a new device
         if forced() == Some(false) {
@@ -1800,11 +2178,20 @@ mod imp {
         // wgpu resource is touched under it)
         let held = idle(&PROBE_BUSY)?;
         let lib = sl::lib(dir)?;
-        let raw = made(lib, &held, desc);
+        // Ray Reconstruction's extensions too, when the loader has them all
+        // (`rr_instance_extensions`); refused with them, super resolution's
+        // alone, so DLSS is not lost for it
+        let with_rr = rr_forced() != Some(false);
+        let mut raw = made(lib, &held, desc, with_rr);
+        if with_rr && let Err(e) = &raw {
+            log::error!("DLSS: {e}: making the instance with super resolution's extensions alone");
+            raw = made(lib, &held, desc, false);
+        }
         drop(held);
         match raw {
-            Ok(raw) => {
+            Ok((raw, rr)) => {
                 INSTANCE.store(true, Ordering::Relaxed);
+                RR_INSTANCE.store(rr, Ordering::Relaxed);
                 // SAFETY: `raw` is a live Vulkan instance made with wgpu's
                 // own instance flags and extensions, handed over whole
                 Some(unsafe { wgpu::Instance::from_hal::<Vulkan>(raw) })
@@ -1817,10 +2204,18 @@ mod imp {
     }
 
     /// Linux: wgpu-hal's own instance, the library's extensions added as
-    /// it is made. Under the lock (`held`).
+    /// it is made, Ray Reconstruction's too with `with_rr` when the loader
+    /// has them all (the instance says whether they were). Under the lock
+    /// (`held`).
     #[cfg(target_os = "linux")]
-    fn made(lib: &sl::Lib, held: &Option<Started>, desc: &wgpu::InstanceDescriptor) -> Result<wgpu::hal::vulkan::Instance, String> {
+    fn made(
+        lib: &sl::Lib,
+        held: &Option<Started>,
+        desc: &wgpu::InstanceDescriptor,
+        with_rr: bool,
+    ) -> Result<(wgpu::hal::vulkan::Instance, bool), String> {
         let mut added = Err(String::from("the instance was made without asking"));
+        let mut rr = false;
         // SAFETY: the descriptor is wgpu's own, copied field by field; the
         // callback only reads the entry and pushes names kept for the life
         // of the process (`interned`) onto the extensions asked for
@@ -1835,7 +2230,11 @@ mod imp {
                     display: None,
                 },
                 Some(Box::new(|args| {
-                    added = instance_extensions(lib, held, args.entry).map(|wanted| {
+                    added = instance_extensions(lib, held, args.entry).map(|mut wanted| {
+                        if with_rr && let Some(extra) = rr_instance_extensions(lib, args.entry, &wanted) {
+                            wanted.extend(extra);
+                            rr = true;
+                        }
                         for name in wanted {
                             if !args.extensions.contains(&name) {
                                 args.extensions.push(name);
@@ -1846,7 +2245,7 @@ mod imp {
             )
         }
         .map_err(|e| format!("instance with the DLSS extensions failed: {e}"))?;
-        added.map(|()| raw)
+        added.map(|()| (raw, rr))
     }
 
     /// Windows: the instance made through the interposer's
@@ -1856,13 +2255,24 @@ mod imp {
     /// makes it, without the validation layer and its messenger. Under the
     /// lock (`held`).
     #[cfg(windows)]
-    fn made(lib: &sl::Lib, held: &Option<Started>, desc: &wgpu::InstanceDescriptor) -> Result<wgpu::hal::vulkan::Instance, String> {
+    fn made(
+        lib: &sl::Lib,
+        held: &Option<Started>,
+        desc: &wgpu::InstanceDescriptor,
+        with_rr: bool,
+    ) -> Result<(wgpu::hal::vulkan::Instance, bool), String> {
         // slInit before any Vulkan call through the interposer (making
         // the entry already asks it for the global functions)
         fresh(lib, held)?;
         ensure_init(lib)?;
         let entry = interposer_entry(lib);
-        let wanted = instance_extensions(lib, held, &entry)?;
+        let mut wanted = instance_extensions(lib, held, &entry)?;
+        // Ray Reconstruction's too, when the loader has them all
+        let mut rr = false;
+        if with_rr && let Some(extra) = rr_instance_extensions(lib, &entry, &wanted) {
+            wanted.extend(extra);
+            rr = true;
+        }
         // SAFETY: queries of the interposer's loader
         let version = unsafe { entry.try_enumerate_instance_version() }
             .map_err(|e| format!("vkEnumerateInstanceVersion: {e}"))?
@@ -1914,6 +2324,7 @@ mod imp {
                 None,
             )
         }
+        .map(|raw| (raw, rr))
         .map_err(|e| format!("the instance through sl.interposer.dll: {e}"))
     }
 
@@ -1993,32 +2404,53 @@ mod imp {
         let lib = sl::lib(dir)?;
         // SAFETY: the hal adapter is only read here, while `adapter` lives
         let raw_adapter = unsafe { adapter.as_hal::<Vulkan>() }?;
-        let mut added = Err(String::from("the device was opened without asking"));
         // (held across the opening, whose callback asks the library)
         let Some(held) = super::lock_within(&STARTED, END_WAIT) else {
             log::error!("DLSS: Streamline still busy after {END_WAIT:?}: the device opens the usual way, FSR draws");
             return None;
         };
-        // SAFETY: features, limits and hints are the descriptor's, as
-        // wgpu's own `request_device` passes them; the callback asks the
-        // library with this adapter's live instance and physical device,
-        // and only adds extensions the device supports
-        let opened = unsafe {
-            raw_adapter.open_with_callback(
-                desc.required_features,
-                &limits,
-                &desc.memory_hints,
-                Some(Box::new(|args| {
-                    added = device_extensions(lib, &raw_adapter).map(|wanted| {
-                        for name in wanted {
-                            if !args.extensions.contains(&name) {
-                                args.extensions.push(name);
+        // `with_rr`: Ray Reconstruction's extensions too, when the device
+        // has them all (it is switched on and off with the device open).
+        // Whether they were added is known for sure only once it is open,
+        // so RR_DEVICE is set there.
+        let open = |with_rr: bool| {
+            let mut added = Err(String::from("the device was opened without asking"));
+            let mut rr = false;
+            // SAFETY: features, limits and hints are the descriptor's, as
+            // wgpu's own `request_device` passes them; the callback asks
+            // the library with this adapter's live instance and physical
+            // device, and only adds extensions the device supports
+            let opened = unsafe {
+                raw_adapter.open_with_callback(
+                    desc.required_features,
+                    &limits,
+                    &desc.memory_hints,
+                    Some(Box::new(|args| {
+                        added = device_extensions(lib, &raw_adapter).map(|mut wanted| {
+                            if with_rr && let Some(extra) = rr_device_extensions(lib, &raw_adapter, &wanted) {
+                                wanted.extend(extra);
+                                rr = true;
                             }
-                        }
-                    });
-                })),
-            )
+                            for name in wanted {
+                                if !args.extensions.contains(&name) {
+                                    args.extensions.push(name);
+                                }
+                            }
+                        });
+                    })),
+                )
+            };
+            (opened, added, rr)
         };
+        // (an instance without Ray Reconstruction's extensions opens its
+        // devices for super resolution alone: `RR_INSTANCE`)
+        let (mut opened, mut added, mut rr) = open(rr_forced() != Some(false) && RR_INSTANCE.load(Ordering::Relaxed));
+        // refused with Ray Reconstruction's extensions: super resolution's
+        // alone before the usual way, so DLSS is not lost for it
+        if rr && let Err(e) = &opened {
+            log::error!("DLSS: device with Ray Reconstruction's extensions failed: {e}: opening it with super resolution's alone");
+            (opened, added, rr) = open(false);
+        }
         drop(held);
         let opened = match (opened, added) {
             (Ok(opened), Ok(())) => opened,
@@ -2038,7 +2470,12 @@ mod imp {
         match unsafe { adapter.create_device_from_hal::<Vulkan>(opened, desc) } {
             Ok(pair) => {
                 *self::opened() = Some((adapter.clone(), pair.0.clone()));
-                log::info!("DLSS: device opened with the DLSS extensions on {}", adapter.get_info().name);
+                RR_DEVICE.store(rr, Ordering::Relaxed);
+                log::info!(
+                    "DLSS: device opened with the DLSS extensions on {}{}",
+                    adapter.get_info().name,
+                    if rr { ", Ray Reconstruction's included" } else { "" }
+                );
                 Some(pair)
             }
             Err(e) => {
@@ -2085,6 +2522,19 @@ mod imp {
         // SAFETY: as sl.h declares it; `adapter` lives through the call
         let r = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS, &adapter) };
         if r == sl::OK {
+            if RR_DEVICE.load(Ordering::Relaxed) {
+                // (Streamline's answer alone: a refusal of the feature on
+                // this device, RR_REFUSED, stays through a new start)
+                // SAFETY: as above
+                let rr = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS_RR, &adapter) };
+                RR_UNAVAILABLE.store(rr != sl::OK, Ordering::Relaxed);
+                RR_KNOWN.store(true, Ordering::Relaxed);
+                if rr == sl::OK {
+                    log::info!("DLSS: Ray Reconstruction supported here");
+                } else {
+                    log::info!("DLSS: no Ray Reconstruction here ({})", sl::result_name(rr));
+                }
+            }
             return Ok(());
         }
         let e = if r == sl::ERROR_DRIVER_OUT_OF_DATE {
@@ -2158,12 +2608,12 @@ mod imp {
             abandon(old);
             return Some(held);
         }
-        for id in &old.viewports {
+        for (id, feature) in &old.viewports {
             let viewport = sl::ViewportHandle::new(*id);
             // SAFETY: the device finished every frame (the wait above), so
             // no feature is in use; the viewport is one this start made and
             // did not free (still in its list); under the lock (`held`)
-            if let Err(e) = sl::check(unsafe { (lib.free)(sl::FEATURE_DLSS, &viewport) }) {
+            if let Err(e) = sl::check(unsafe { (lib.free)(*feature, &viewport) }) {
                 log::warn!("DLSS: slFreeResources: {e}");
             }
         }
@@ -2304,14 +2754,14 @@ mod imp {
         let Some(st) = held.as_mut().filter(|st| st.start == start && !st.lost.get()) else {
             return;
         };
-        let Some(at) = st.viewports.iter().position(|v| *v == viewport) else {
+        let Some(at) = st.viewports.iter().position(|(v, _)| *v == viewport) else {
             return;
         };
-        st.viewports.swap_remove(at);
+        let (_, feature) = st.viewports.swap_remove(at);
         let handle = sl::ViewportHandle::new(viewport);
         // SAFETY: a viewport the running start made and has not freed (it
         // was still in its list), under the lock
-        if let Err(e) = sl::check(unsafe { (lib.free)(sl::FEATURE_DLSS, &handle) }) {
+        if let Err(e) = sl::check(unsafe { (lib.free)(feature, &handle) }) {
             log::error!("DLSS: freeing the feature: {e}");
         }
     }
@@ -2350,8 +2800,8 @@ mod imp {
     /// this device has no Streamline (FSR draws), is lost (`lost`, its renderer's)
     /// or Streamline gives no answer; an answer is kept per display size and
     /// mode, for the start of Streamline that gave it ([`super::Answers`]).
-    pub(crate) fn optimal_size(device: &wgpu::Device, lost: &DeviceLost, display: (u32, u32), ratio: f32) -> Option<(u32, u32)> {
-        type Key = ((u32, u32), i32);
+    pub(crate) fn optimal_size(device: &wgpu::Device, lost: &DeviceLost, display: (u32, u32), ratio: f32, rr: bool) -> Option<(u32, u32)> {
+        type Key = ((u32, u32), i32, bool);
         static ASKED: Mutex<super::Answers<Key>> = Mutex::new(super::Answers::new());
         let mode = Mode::of(ratio);
         if mode == Mode::Dlaa {
@@ -2362,7 +2812,7 @@ mod imp {
         if lost.get() || !opened().as_ref().is_some_and(|(_, d)| same(d, device)) {
             return None;
         }
-        let key = (display, mode as i32);
+        let key = (display, mode as i32, rr);
         // (Streamline's lock let go before ASKED's is taken: ASKED, then Streamline)
         let running = started().as_ref().filter(|st| same(&st.device, device)).map(|st| st.start);
         let mut asked = ASKED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2374,7 +2824,7 @@ mod imp {
         // this device: with_started keeps the refusal)
         let (start, size) = with_started(lib, device, lost, true, |st| {
             // SAFETY: DLSS started on this device, under the lock
-            (st.start, unsafe { sizes(lib, display, mode) })
+            (st.start, unsafe { sizes(lib, display, mode, rr) })
         })?;
         let size = size
             .map_err(|e| log::error!("DLSS: {e}"))
@@ -2387,11 +2837,23 @@ mod imp {
     }
 
     /// What DLSS takes for `mode` at this display size: the render size it
-    /// would pick, then the smallest and the largest.
+    /// would pick, then the smallest and the largest. `rr`: Ray
+    /// Reconstruction's, which takes its one size.
     ///
     /// # Safety
     /// Under the lock, with DLSS started.
-    unsafe fn sizes(lib: &sl::Lib, display: (u32, u32), mode: Mode) -> Result<[(u32, u32); 3], String> {
+    unsafe fn sizes(lib: &sl::Lib, display: (u32, u32), mode: Mode, rr: bool) -> Result<[(u32, u32); 3], String> {
+        if rr {
+            // SAFETY: the caller's contract
+            let dlssd = unsafe { lib.dlssd() }?;
+            let options = sl::DlssdOptions::new(mode as u32, display);
+            let mut s = sl::dlssd_optimal_settings();
+            // SAFETY: as sl_dlss_d.h declares it; both structs live through
+            // the call
+            sl::check(unsafe { (dlssd.optimal_settings)(&options, &mut s) }).map_err(|e| format!("slDLSSDGetOptimalSettings: {e}"))?;
+            // RR takes no dynamic resolution: its one size
+            return Ok([(s.optimal_render_width, s.optimal_render_height); 3]);
+        }
         // SAFETY: the caller's contract
         let dlss = unsafe { lib.dlss() }?;
         let options = sl::DlssOptions::new(mode as u32, display);
@@ -2478,6 +2940,8 @@ mod imp {
     /// What a feature is made with, kept to make it again.
     #[derive(Clone, Copy, PartialEq)]
     struct Shape {
+        /// `sl::FEATURE_DLSS`, or `FEATURE_DLSS_RR`
+        feature: u32,
         mode: Mode,
         render: (u32, u32),
         display: (u32, u32),
@@ -2485,8 +2949,12 @@ mod imp {
         auto_exposure: bool,
         /// DLSS upscales the alpha too (`AURORA_DLSS_ALPHA=1`)
         alpha: bool,
-        /// `sl::DLSSPreset`, 0 for NVIDIA's own
+        /// `sl::DLSSPreset`, 0 for NVIDIA's own (and for Ray
+        /// Reconstruction, which does not read it)
         preset: u32,
+        /// Ray Reconstruction's, 0 for NVIDIA's own (and for super
+        /// resolution)
+        rr_preset: u32,
     }
 
     /// A DLSS feature: the viewport it was made for, the start that made
@@ -2503,13 +2971,22 @@ mod imp {
     /// or success is what Preferences shows ([`failed`]).
     fn create(lib: &sl::Lib, device: &wgpu::Device, lost: &DeviceLost, queue: &wgpu::Queue, shape: &Shape, report: bool) -> Option<Made> {
         let Shape {
+            feature: kind,
             mode,
             render,
             display,
             auto_exposure,
             alpha,
             preset,
+            rr_preset,
         } = *shape;
+        let rr = kind == sl::FEATURE_DLSS_RR;
+        // Debug: AURORA_DLSS_RR_FAIL=1 has Ray Reconstruction refused here,
+        // to see super resolution draw in its place
+        if rr && is("AURORA_DLSS_RR_FAIL", "1") {
+            rr_refused("refused for a test (AURORA_DLSS_RR_FAIL=1)", report);
+            return None;
+        }
         let begun = std::time::Instant::now();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("DLSS feature"),
@@ -2520,7 +2997,11 @@ mod imp {
         // once the library recorded into it; the viewport's feature is the
         // library's until freed
         let made = with_started(lib, device, lost, true, |st| unsafe {
-            let [_, mut lo, mut hi] = sizes(lib, display, mode)?;
+            let [_, mut lo, mut hi] = sizes(lib, display, mode, rr)?;
+            if rr {
+                // one size, the one the frames are drawn at
+                (lo, hi) = (render, render);
+            }
             if mode == Mode::Dlaa {
                 (lo, hi) = (display, display);
             }
@@ -2530,19 +3011,27 @@ mod imp {
                     render.0, render.1, lo.0, lo.1, hi.0, hi.1
                 ));
             }
-            let dlss = lib.dlss()?;
             let viewport = VIEWPORTS.fetch_add(1, Ordering::Relaxed);
             let handle = sl::ViewportHandle::new(viewport);
-            // the model, read when the feature is made: one per mode, as
-            // DLSS picks the one of the mode it runs
-            let mut options = sl::DlssOptions::new(mode as u32, display);
-            options.preset(preset);
-            options.use_auto_exposure = sl::boolean(auto_exposure);
-            options.alpha_upscaling_enabled = sl::boolean(alpha);
             // the library keeps the viewport from the options on, so every
             // failure after them frees it
             let made = (|| {
-                sl::check((dlss.set_options)(&handle, &options)).map_err(|e| format!("slDLSSSetOptions: {e}"))?;
+                // the model, read when the feature is made: one per mode,
+                // as DLSS picks the one of the mode it runs
+                if rr {
+                    let dlssd = lib.dlssd()?;
+                    let mut options = sl::DlssdOptions::new(mode as u32, display);
+                    options.preset(rr_preset);
+                    options.alpha_upscaling_enabled = sl::boolean(alpha);
+                    sl::check((dlssd.set_options)(&handle, &options)).map_err(|e| format!("slDLSSDSetOptions: {e}"))?;
+                } else {
+                    let dlss = lib.dlss()?;
+                    let mut options = sl::DlssOptions::new(mode as u32, display);
+                    options.preset(preset);
+                    options.use_auto_exposure = sl::boolean(auto_exposure);
+                    options.alpha_upscaling_enabled = sl::boolean(alpha);
+                    sl::check((dlss.set_options)(&handle, &options)).map_err(|e| format!("slDLSSSetOptions: {e}"))?;
+                }
                 let mut token: sl::FrameToken = std::ptr::null_mut();
                 sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
                 sl::check((lib.set_constants)(&constants(None, true), token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
@@ -2555,17 +3044,18 @@ mod imp {
                     0
                 } else {
                     encoder.as_hal_mut::<Vulkan, _, _>(|e| match e {
-                        Some(e) => (lib.allocate)(e.raw_handle(), sl::FEATURE_DLSS, &handle),
+                        Some(e) => (lib.allocate)(e.raw_handle(), kind, &handle),
                         None => sl::ERROR_INVALID_PARAMETER,
                     })
                 };
-                sl::check(r).map_err(|e| format!("the DLSS feature for {}x{}: {e}", display.0, display.1))
+                let what = if rr { "Ray Reconstruction" } else { "DLSS" };
+                sl::check(r).map_err(|e| format!("the {what} feature for {}x{}: {e}", display.0, display.1))
             })();
             if let Err(e) = made {
-                let _ = (lib.free)(sl::FEATURE_DLSS, &handle);
+                let _ = (lib.free)(kind, &handle);
                 return Err(e);
             }
-            st.viewports.push(viewport);
+            st.viewports.push((viewport, kind));
             Ok(Made {
                 viewport,
                 start: st.start,
@@ -2581,8 +3071,16 @@ mod imp {
                 // creation work is a GPU job of its own)
                 crate::device_lost::submit_tracked(lost, queue, lost.last_frame(), [encoder.finish()]);
                 working(report);
-                log::info!("DLSS: feature made in {:.1} ms", begun.elapsed().as_secs_f64() * 1000.0);
+                log::info!(
+                    "DLSS: {}feature made in {:.1} ms",
+                    if rr { "Ray Reconstruction " } else { "" },
+                    begun.elapsed().as_secs_f64() * 1000.0
+                );
                 Some(made)
+            }
+            Err(e) if rr => {
+                rr_refused(&e, report);
+                None
             }
             Err(e) => {
                 failed(&e, report);
@@ -2600,6 +3098,13 @@ mod imp {
             list.split(',').filter_map(|n| n.trim().parse().ok()).collect()
         })
         .contains(&evaluate)
+    }
+
+    /// Debug: `AURORA_DLSS_RR_TRANSPOSED=1` hands Ray Reconstruction its
+    /// matrices transposed ([`Dlss::evaluate`]), read once.
+    fn rr_transposed() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| is("AURORA_DLSS_RR_TRANSPOSED", "1"))
     }
 
     /// How long a new display size must hold before its feature is made.
@@ -2648,6 +3153,30 @@ mod imp {
     /// Evaluates of every feature since the program started.
     static EVALUATES: AtomicU64 = AtomicU64::new(0);
 
+    #[repr(C)]
+    #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+    struct GuidesU {
+        inv_view_proj: [[f32; 4]; 4],
+        eye: [f32; 4],
+    }
+
+    /// Ray Reconstruction's guides (`RenderSettings::rr_guides`), at
+    /// the render size, drawn from the G-buffer (shaders/dlss_guides.wgsl).
+    struct Rr {
+        diffuse: wgpu::TextureView,
+        specular: wgpu::TextureView,
+        normals: wgpu::TextureView,
+        pipeline: wgpu::RenderPipeline,
+        group: wgpu::BindGroup,
+        buffer: wgpu::Buffer,
+        /// Debug, `AURORA_DLSS_RR_SHOW=diffuse|specular|normals|roughness`:
+        /// that guide drawn over DLSS's image
+        show: Option<(wgpu::RenderPipeline, wgpu::BindGroup)>,
+        /// `show` reads the renderer's base colour, made again with the
+        /// targets ([`Dlss::rebind`])
+        shows_albedo: bool,
+    }
+
     pub(crate) struct Dlss {
         lib: &'static sl::Lib,
         /// the viewport the feature was made for (one per feature)
@@ -2690,6 +3219,8 @@ mod imp {
         /// its renderer's view of the device's loss: nothing of Streamline is
         /// called once it is set ([`with_started`])
         lost: DeviceLost,
+        /// the feature is Ray Reconstruction's, with its guides
+        rr: Option<Rr>,
     }
 
     /// `view` as the library takes it, in the layout wgpu-hal leaves it
@@ -2751,9 +3282,10 @@ mod imp {
         ))
     }
 
-    /// The feature `render` to `display` with `model` would be made with:
-    /// its mode, its options and the model's preset.
-    fn shape(render: (u32, u32), display: (u32, u32), model: crate::DlssModel) -> Shape {
+    /// The feature `render` to `display` with the models would be made
+    /// with: super resolution, or Ray Reconstruction when `rr` (its guides
+    /// drawn, [`guides`]), its mode, its options and the models' presets.
+    fn shape(render: (u32, u32), display: (u32, u32), (model, rr_model): (crate::DlssModel, crate::DlssRrModel), rr: bool) -> Shape {
         let mode = if render == display {
             Mode::Dlaa
         } else {
@@ -2761,18 +3293,88 @@ mod imp {
         };
         // Debug: AURORA_DLSS_PRESET=<n> sets NVIDIA's preset number
         // whatever the setting (11 K, 12 L, 13 M; 0 NVIDIA's own)
+        // (0 for Ray Reconstruction, which reads its own: a change of the
+        // super resolution model then leaves its shape, and its feature, as
+        // they are)
         let preset = std::env::var("AURORA_DLSS_PRESET")
             .ok()
             .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(model.preset());
+            .unwrap_or(model.preset())
+            * u32::from(!rr);
+        // Debug: AURORA_DLSS_RR_PRESET=<n> likewise for Ray
+        // Reconstruction (4 D, 5 E, 6 F; 0 NVIDIA's own)
+        // (0 for super resolution, which never reads it: a change of the Ray
+        // Reconstruction model then leaves its shape, and its feature, as
+        // they are)
+        let rr_preset = std::env::var("AURORA_DLSS_RR_PRESET")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(rr_model.preset())
+            * u32::from(rr);
         Shape {
+            feature: if rr { sl::FEATURE_DLSS_RR } else { sl::FEATURE_DLSS },
             mode,
             render,
             display,
-            auto_exposure: !is("AURORA_DLSS_AUTOEXP", "0"),
+            // RR takes no automatic exposure (NVIDIA's RR guide)
+            auto_exposure: !is("AURORA_DLSS_AUTOEXP", "0") && !rr,
             alpha: is("AURORA_DLSS_ALPHA", "1"),
             preset,
+            rr_preset,
         }
+    }
+
+    /// The G-buffer and base colour Ray Reconstruction's guides are drawn
+    /// from: the renderer drew them and Streamline takes RR on `device`.
+    fn guides<'a>(device: &wgpu::Device, inputs: &Inputs<'a>) -> Option<(&'a wgpu::TextureView, &'a wgpu::TextureView)> {
+        match (inputs.gbuf, inputs.albedo) {
+            (Some(g), Some(a)) if rr_ready_on(device) => Some((g, a)),
+            _ => None,
+        }
+    }
+
+    /// The guides' pass reads the depth, the G-buffer and the base colour,
+    /// and the motion and the colour for the blended faces the renderer
+    /// marked there (renderer.rs `RrInputs`).
+    fn guides_group(
+        device: &wgpu::Device,
+        pipeline: &wgpu::RenderPipeline,
+        buffer: &wgpu::Buffer,
+        inputs: &Inputs,
+        gbuf: &wgpu::TextureView,
+        albedo: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        let view = |binding, view| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        };
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("DLSS guides"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                view(0, inputs.depth),
+                view(1, gbuf),
+                view(2, albedo),
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffer.as_entire_binding(),
+                },
+                view(5, inputs.motion),
+                view(6, inputs.color),
+            ],
+        })
+    }
+
+    /// The debug view of one guide (`AURORA_DLSS_RR_SHOW`).
+    fn show_group(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline, tex: &wgpu::TextureView) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("DLSS RR show"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(tex),
+            }],
+        })
     }
 
     /// The variable `name` holds `value`, spaces aside.
@@ -2833,7 +3435,7 @@ mod imp {
             lost: &DeviceLost,
             render: (u32, u32),
             display: (u32, u32),
-            model: crate::DlssModel,
+            (model, rr_model): (crate::DlssModel, crate::DlssRrModel),
             inputs: &Inputs,
             snapshot: bool,
             report: bool,
@@ -2858,13 +3460,9 @@ mod imp {
             // whatever DLSS wrote (the reference of the fault),
             // AURORA_DLSS_AUTOEXP=0 drops the automatic exposure.
             let ngx_alpha = is("AURORA_DLSS_ALPHA", "1");
-            let shape = shape(render, display, model);
-            log::info!(
-                "DLSS: automatic exposure {}, alpha upscaled {}, preset {}",
-                shape.auto_exposure,
-                shape.alpha,
-                shape.preset
-            );
+            // Ray Reconstruction: the renderer drew its guides
+            // (`RenderSettings::rr_guides`)
+            let rr_inputs = guides(device, inputs);
             let texture = |label, size: (u32, u32), format, usage| {
                 device
                     .create_texture(&wgpu::TextureDescriptor {
@@ -2902,7 +3500,144 @@ mod imp {
                 failed("the video memory refused its textures", report);
                 return None;
             }
-            let made = create(lib, device, lost, queue, &shape, report)?;
+            // Ray Reconstruction's guides, their textures, pipelines and
+            // bind groups checked apart: refused, Ray Reconstruction is
+            // refused (`rr_refused`), not DLSS. FSR draws until the targets
+            // are made again for super resolution, at its own size
+            // (`render` is Ray Reconstruction's, which super resolution may
+            // not take). A snapshot's draws super resolution at once
+            // instead (`snapshot_refusal`)
+            let mut rr = match rr_inputs {
+                Some((gbuf, albedo)) => {
+                    let (rr, refused) = crate::gpu_alloc::scoped(device, || {
+                        let diffuse = texture("DLSS RR diffuse albedo", render, GUIDE_FORMAT, drawn_and_read);
+                        let specular = texture("DLSS RR specular albedo", render, GUIDE_FORMAT, drawn_and_read);
+                        let normals = texture("DLSS RR normals", render, NORMAL_FORMAT, drawn_and_read);
+                        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                            label: Some("DLSS guides"),
+                            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/dlss_guides.wgsl").into()),
+                        });
+                        let make = |label, entry_point, constants: &[(&str, f64)], targets: &[Option<wgpu::ColorTargetState>]| {
+                            use crate::pipeline_cache::CachedPipelines as _;
+                            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+                                label: Some(label),
+                                layout: None,
+                                vertex: wgpu::VertexState {
+                                    module: &module,
+                                    entry_point: Some("vs_main"),
+                                    compilation_options: Default::default(),
+                                    buffers: &[],
+                                },
+                                fragment: Some(wgpu::FragmentState {
+                                    module: &module,
+                                    entry_point: Some(entry_point),
+                                    compilation_options: wgpu::PipelineCompilationOptions {
+                                        constants,
+                                        ..Default::default()
+                                    },
+                                    targets,
+                                }),
+                                primitive: Default::default(),
+                                depth_stencil: None,
+                                multisample: Default::default(),
+                                multiview_mask: None,
+                                cache: None,
+                            })
+                        };
+                        let pipeline = make(
+                            "DLSS guides",
+                            "fs_main",
+                            &[],
+                            &[Some(GUIDE_FORMAT.into()), Some(GUIDE_FORMAT.into()), Some(NORMAL_FORMAT.into())],
+                        );
+                        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("DLSS guides"),
+                            size: std::mem::size_of::<GuidesU>() as u64,
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
+                        let group = guides_group(device, &pipeline, &buffer, inputs, gbuf, albedo);
+                        let shown = std::env::var("AURORA_DLSS_RR_SHOW").ok();
+                        let show = shown.as_deref().map(str::trim).and_then(|name| {
+                            let (tex, mode) = match name {
+                                "diffuse" => (&diffuse, 0.0),
+                                "specular" => (&specular, 0.0),
+                                "normals" => (&normals, 1.0),
+                                "roughness" => (&normals, 2.0),
+                                "albedo" => (albedo, 0.0),
+                                _ => return None,
+                            };
+                            let scale = std::env::var("AURORA_DLSS_RR_SHOW_SCALE")
+                                .ok()
+                                .and_then(|v| v.trim().parse::<f64>().ok())
+                                .unwrap_or(0.1);
+                            let pipeline = make(
+                                "DLSS RR show",
+                                "fs_show",
+                                &[("show_mode", mode), ("show_scale", scale)],
+                                &[Some(OUTPUT_FORMAT.into())],
+                            );
+                            let group = show_group(device, &pipeline, tex);
+                            log::info!("DLSS RR: showing the {name} guide");
+                            Some((pipeline, group))
+                        });
+                        let shows_albedo = show.is_some() && shown.as_deref().map(str::trim) == Some("albedo");
+                        Rr {
+                            diffuse,
+                            specular,
+                            normals,
+                            pipeline,
+                            group,
+                            buffer,
+                            show,
+                            shows_albedo,
+                        }
+                    });
+                    match refused {
+                        false => Some(rr),
+                        true if snapshot => {
+                            snapshot_refusal("its guides' textures or objects were refused");
+                            None
+                        }
+                        true => {
+                            rr_refused("its guides' textures or objects were refused", report);
+                            return None;
+                        }
+                    }
+                }
+                None => None,
+            };
+            let mut shape = shape(render, display, (model, rr_model), rr.is_some());
+            if rr.is_some() {
+                log::info!(
+                    "DLSS: Ray Reconstruction, alpha upscaled {}, preset {}",
+                    shape.alpha,
+                    shape.rr_preset
+                );
+            } else {
+                log::info!(
+                    "DLSS: automatic exposure {}, alpha upscaled {}, preset {}",
+                    shape.auto_exposure,
+                    shape.alpha,
+                    shape.preset
+                );
+            }
+            let made = match create(lib, device, lost, queue, &shape, report) {
+                Some(made) => made,
+                // a photo or film frame whose Ray Reconstruction Streamline
+                // refused: super resolution at once, from the same targets
+                // (a snapshot's is DLAA, whose size both take), and for
+                // every capture from here, the window's Ray Reconstruction
+                // left as it is; otherwise an offline film would ask
+                // Streamline again at every frame, each drawn by FSR
+                None if snapshot && rr.is_some() && !lost.get() => {
+                    snapshot_refusal("Streamline refused its feature");
+                    rr = None;
+                    shape = self::shape(render, display, (model, rr_model), false);
+                    create(lib, device, lost, queue, &shape, report)?
+                }
+                None => return None,
+            };
             // Only Streamline writes the output, in commands wgpu does not see, so
             // wgpu would count it unwritten and clear it before its first
             // use, after DLSS drew into it: one black frame per feature.
@@ -3002,6 +3737,7 @@ mod imp {
                 report,
                 snapshot,
                 lost: lost.clone(),
+                rr,
             })
         }
 
@@ -3010,12 +3746,21 @@ mod imp {
             &self.output
         }
 
-        /// This DLSS would be made again as it is: same device, sizes and
-        /// model, and not failed. The feature keys on those alone (Streamline
-        /// takes the textures at each evaluate), so the targets' remake
-        /// keeps it ([`Dlss::rebind`]) instead of making it again (~35 ms).
-        pub fn fits(&self, device: &wgpu::Device, render: (u32, u32), display: (u32, u32), model: crate::DlssModel) -> bool {
-            !self.failed && same(&self.device, device) && self.shape == shape(render, display, model)
+        /// This DLSS would be made again as it is from `inputs`: same
+        /// device, sizes, models and kind (Ray Reconstruction's guides or
+        /// none), and not failed. The feature keys on those alone
+        /// (Streamline takes the textures at each evaluate), so the targets'
+        /// remake keeps it ([`Dlss::rebind`]) instead of making it again
+        /// (~35 ms).
+        pub fn fits(
+            &self,
+            device: &wgpu::Device,
+            render: (u32, u32),
+            display: (u32, u32),
+            models: (crate::DlssModel, crate::DlssRrModel),
+            inputs: &Inputs,
+        ) -> bool {
+            !self.failed && same(&self.device, device) && self.shape == shape(render, display, models, guides(device, inputs).is_some())
         }
 
         /// Reads the scene from `inputs` (the targets made again at the same
@@ -3028,6 +3773,13 @@ mod imp {
             if let Some((pipeline, group)) = &mut self.alpha {
                 *group = alpha_group(&self.device, pipeline, inputs.color);
             }
+            // `fits` kept the kind: guides drawn exactly when RR is
+            if let (Some(rr), Some((gbuf, albedo))) = (&mut self.rr, guides(&self.device, inputs)) {
+                rr.group = guides_group(&self.device, &rr.pipeline, &rr.buffer, inputs, gbuf, albedo);
+                if let (Some((pipeline, group)), true) = (&mut rr.show, rr.shows_albedo) {
+                    *group = show_group(&self.device, pipeline, albedo);
+                }
+            }
             let held = (
                 std::mem::replace(&mut self.color, inputs.color.clone()),
                 std::mem::replace(&mut self.depth, inputs.depth.clone()),
@@ -3036,16 +3788,25 @@ mod imp {
             self.reset = true;
         }
 
-        /// The bytes of DLSS's own textures (wgpu's counters measure the
-        /// TAA history without a DLSS kept, `Backend::remake_taa`).
+        /// The bytes of DLSS's own textures, Ray Reconstruction's guides
+        /// included (wgpu's counters measure the TAA history without a DLSS
+        /// kept, `Backend::remake_taa`).
         pub fn bytes(&self) -> u64 {
+            let guides = self.rr.as_ref().map(|rr| [&rr.diffuse, &rr.specular, &rr.normals]);
             [&self.motion, &self.safe, &self.output]
-                .iter()
+                .into_iter()
+                .chain(guides.into_iter().flatten())
                 .map(|view| {
                     let t = view.texture();
                     u64::from(t.width()) * u64::from(t.height()) * u64::from(t.format().block_copy_size(None).unwrap_or(0))
                 })
                 .sum()
+        }
+
+        /// Ray Reconstruction draws the frames: the renderer's
+        /// own ray-tracing denoisers step aside.
+        pub fn rr_on(&self) -> bool {
+            self.rr.is_some() && self.on()
         }
 
         /// DLSS draws the frames: it has a feature and has not failed.
@@ -3087,13 +3848,15 @@ mod imp {
             opened().as_ref().is_some_and(|(_, d)| same(d, &self.device))
         }
 
-        /// The feature made again with `model` (Preferences' model list):
+        /// The feature made again with `models` (Preferences' model lists):
         /// the sizes, DLSS's textures and the targets stay, as the model
-        /// is read only when the feature is made (guide 3.12). A failed
-        /// DLSS is tried once more. The old feature is released once its
-        /// frames are done ([`Dlss::retire`]).
-        pub fn remodel(&mut self, model: crate::DlssModel) {
-            let shape = shape(self.shape.render, self.shape.display, model);
+        /// is read only when the feature is made (guide 3.12). Only the
+        /// kind drawn counts: super resolution's model for super
+        /// resolution, Ray Reconstruction's for Ray Reconstruction. A
+        /// failed DLSS is tried once more. The old feature is released once
+        /// its frames are done ([`Dlss::retire`]).
+        pub fn remodel(&mut self, models: (crate::DlssModel, crate::DlssRrModel)) {
+            let shape = shape(self.shape.render, self.shape.display, models, self.rr.is_some());
             // (on a lost device nothing is made again: the renderer goes)
             if (shape == self.shape && !self.failed) || self.lost.get() {
                 return;
@@ -3158,6 +3921,35 @@ mod imp {
                 pass.set_bind_group(0, &self.group, &[]);
                 pass.draw(0..3, 0..1);
             }
+            if let Some(rr) = &self.rr {
+                let u = GuidesU {
+                    inv_view_proj: (f.proj * f.view).inverse().to_cols_array_2d(),
+                    eye: f.camera_pos.extend(1.0).to_array(),
+                };
+                queue.write_buffer(&rr.buffer, 0, bytemuck::bytes_of(&u));
+                let target = |view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("DLSS guides"),
+                    color_attachments: &[target(&rr.diffuse), target(&rr.specular), target(&rr.normals)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&rr.pipeline);
+                pass.set_bind_group(0, &rr.group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             let commands = self.evaluate(encoder, f);
             match commands {
                 Ok(commands) => {
@@ -3174,6 +3966,23 @@ mod imp {
                 Err(e) => {
                     // (the loss found by this very evaluate)
                     if self.lost.get() {
+                        return None;
+                    }
+                    // Ray Reconstruction failing again: super resolution
+                    // draws instead (RR_REFUSED makes the renderer remake
+                    // DLSS without it). A snapshot's fails at once, its
+                    // first failure a refusal for every capture, as a
+                    // refused feature is: its DLSS is made per capture, so
+                    // a second failure would never come, and a film would
+                    // make it again at every frame
+                    if (self.remade || self.snapshot) && self.rr.is_some() && self.ours() {
+                        let why = format!("evaluate failed after {} frames: {e}", self.drawn);
+                        if self.snapshot {
+                            snapshot_refusal(&why);
+                        } else {
+                            rr_refused(&why, self.report);
+                        }
+                        self.failed = true;
                         return None;
                     }
                     if self.remade || !self.ours() {
@@ -3203,7 +4012,10 @@ mod imp {
         /// The scene's alpha of this frame over the one DLSS wrote, into
         /// the encoder submitted after DLSS's commands.
         pub fn encode_alpha(&self, encoder: &mut wgpu::CommandEncoder) {
-            let Some((pipeline, group)) = &self.alpha else { return };
+            let show = self.rr.as_ref().and_then(|rr| rr.show.as_ref());
+            let Some((pipeline, group)) = show.or(self.alpha.as_ref()) else {
+                return;
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("DLSS alpha"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3240,6 +4052,28 @@ mod imp {
             let mut depth = resource(&self.depth, &self.adapter, false).ok_or(lost)?;
             let mut motion = resource(&self.motion, &self.adapter, false).ok_or(lost)?;
             let mut output = resource(&self.output, &self.adapter, true).ok_or(lost)?;
+            let mut guides = match &self.rr {
+                Some(rr) => Some((
+                    resource(&rr.diffuse, &self.adapter, false).ok_or(lost)?,
+                    resource(&rr.specular, &self.adapter, false).ok_or(lost)?,
+                    resource(&rr.normals, &self.adapter, false).ok_or(lost)?,
+                )),
+                None => None,
+            };
+            // NVIDIA's RR guide (3.4.9): "All matrices are Row Major Order
+            // and use left multiplication", a row vector times the matrix
+            // (Streamline's `float4x4`). That matrix is the transpose of
+            // glam's, which takes a column vector, and its rows are glam's
+            // columns: glam's own column array, as `constants` hands the
+            // projection. Without jitter (`f.proj` has none). Debug:
+            // AURORA_DLSS_RR_TRANSPOSED=1 hands the transpose instead
+            let major = |m: glam::Mat4| {
+                if rr_transposed() {
+                    m.transpose().to_cols_array_2d()
+                } else {
+                    m.to_cols_array_2d()
+                }
+            };
             fn read(view: &wgpu::TextureView) -> wgpu::TextureTransition<&wgpu::Texture> {
                 wgpu::TextureTransition {
                     texture: view.texture(),
@@ -3259,7 +4093,12 @@ mod imp {
                         state: wgpu::TextureUses::STORAGE_READ_WRITE,
                     },
                 ]
-                .into_iter(),
+                .into_iter()
+                .chain(
+                    self.rr
+                        .iter()
+                        .flat_map(|rr| [read(&rr.diffuse), read(&rr.specular), read(&rr.normals)]),
+                ),
             );
             let mut own = self
                 .device
@@ -3271,7 +4110,21 @@ mod imp {
                 width,
                 height,
             };
-            let constants = constants(Some(f), f.reset || self.reset);
+            let mut constants = constants(Some(f), f.reset || self.reset);
+            // Ray Reconstruction reads the camera from the options, set
+            // each frame with the shape's own values (the library makes the
+            // feature again only when those change)
+            let rr_options = self.rr.as_ref().map(|_| {
+                if rr_transposed() {
+                    constants.camera_view_to_clip = major(f.proj);
+                }
+                let mut options = sl::DlssdOptions::new(self.shape.mode as u32, display);
+                options.preset(self.shape.rr_preset);
+                options.alpha_upscaling_enabled = sl::boolean(self.shape.alpha);
+                options.world_to_camera_view = major(f.view);
+                options.camera_view_to_world = major(f.view.inverse());
+                options
+            });
             let handle = sl::ViewportHandle::new(self.viewport);
             let lib = self.lib;
             // SAFETY: under the lock, only when the start running is the
@@ -3289,16 +4142,27 @@ mod imp {
                     let mut token: sl::FrameToken = std::ptr::null_mut();
                     sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
                     sl::check((lib.set_constants)(&constants, token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
-                    let tags = [
+                    if let Some(options) = &rr_options {
+                        let dlssd = lib.dlssd()?;
+                        sl::check((dlssd.set_options)(&handle, options)).map_err(|e| format!("slDLSSDSetOptions: {e}"))?;
+                    }
+                    let mut tags = vec![
                         sl::ResourceTag::new(&mut color, sl::buffer::SCALING_INPUT_COLOR, extent(render)),
                         sl::ResourceTag::new(&mut depth, sl::buffer::DEPTH, extent(render)),
                         sl::ResourceTag::new(&mut motion, sl::buffer::MOTION_VECTORS, extent(render)),
                         sl::ResourceTag::new(&mut output, sl::buffer::SCALING_OUTPUT_COLOR, extent(display)),
                     ];
+                    if let Some((diffuse, specular, normals)) = &mut guides {
+                        tags.extend([
+                            sl::ResourceTag::new(diffuse, sl::buffer::ALBEDO, extent(render)),
+                            sl::ResourceTag::new(specular, sl::buffer::SPECULAR_ALBEDO, extent(render)),
+                            sl::ResourceTag::new(normals, sl::buffer::NORMAL_ROUGHNESS, extent(render)),
+                        ]);
+                    }
                     sl::check((lib.set_tag_for_frame)(token, &handle, tags.as_ptr(), tags.len() as u32, cmd))
                         .map_err(|e| format!("slSetTagForFrame: {e}"))?;
                     let inputs = [(&raw const handle).cast::<sl::Base>()];
-                    sl::check((lib.evaluate)(sl::FEATURE_DLSS, token, inputs.as_ptr(), inputs.len() as u32, cmd))
+                    sl::check((lib.evaluate)(self.shape.feature, token, inputs.as_ptr(), inputs.len() as u32, cmd))
                         .map_err(|e| format!("slEvaluateFeature: {e}"))
                 }))
             })
@@ -3320,12 +4184,19 @@ mod imp {
                 return;
             }
             let (lib, lost, start, viewport) = (self.lib, self.lost.clone(), self.start, self.viewport);
+            // (the guides too: the feature reads them until its last
+            // evaluate has run)
+            let guides = self
+                .rr
+                .as_ref()
+                .map(|rr| (rr.diffuse.clone(), rr.specular.clone(), rr.normals.clone()));
             let held = (
                 self.color.clone(),
                 self.safe.clone(),
                 self.depth.clone(),
                 self.motion.clone(),
                 self.output.clone(),
+                guides,
             );
             let begun = std::time::Instant::now();
             self.queue.on_submitted_work_done(move || {
@@ -3342,6 +4213,38 @@ mod imp {
     impl Drop for Dlss {
         fn drop(&mut self) {
             self.retire();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::shape;
+        use crate::{DlssModel, DlssRrModel};
+
+        #[test]
+        fn a_ray_reconstruction_model_leaves_super_resolution_as_it_is() {
+            let sr = |rr_model| shape((960, 540), (1920, 1080), (DlssModel::default(), rr_model), false);
+            assert!(sr(DlssRrModel::D) == sr(DlssRrModel::E));
+            assert!(sr(DlssRrModel::Default) == sr(DlssRrModel::F));
+            // Ray Reconstruction itself is made again for its new model,
+            // unless a debug preset overrides both
+            if std::env::var_os("AURORA_DLSS_RR_PRESET").is_none() {
+                let rr = |rr_model| shape((960, 540), (1920, 1080), (DlssModel::default(), rr_model), true);
+                assert!(rr(DlssRrModel::D) != rr(DlssRrModel::E));
+            }
+        }
+
+        #[test]
+        fn a_super_resolution_model_leaves_ray_reconstruction_as_it_is() {
+            let rr = |model| shape((960, 540), (1920, 1080), (model, DlssRrModel::default()), true);
+            assert!(rr(DlssModel::K) == rr(DlssModel::L));
+            assert!(rr(DlssModel::Default) == rr(DlssModel::M));
+            // super resolution itself is made again for its new model,
+            // unless a debug preset overrides both
+            if std::env::var_os("AURORA_DLSS_PRESET").is_none() {
+                let sr = |model| shape((960, 540), (1920, 1080), (model, DlssRrModel::default()), false);
+                assert!(sr(DlssModel::K) != sr(DlssModel::L));
+            }
         }
     }
 }
@@ -3363,6 +4266,8 @@ mod imp {
     }
 
     pub(crate) fn retry() {}
+
+    pub(crate) fn rr_retry() {}
 
     pub(crate) fn retry_asked(_: &mut u64) -> bool {
         false
@@ -3416,8 +4321,42 @@ mod imp {
         None
     }
 
-    pub(crate) fn optimal_size(_: &wgpu::Device, _: &crate::device_lost::DeviceLost, _: (u32, u32), _: f32) -> Option<(u32, u32)> {
+    pub(crate) fn optimal_size(_: &wgpu::Device, _: &crate::device_lost::DeviceLost, _: (u32, u32), _: f32, _: bool) -> Option<(u32, u32)> {
         None
+    }
+
+    pub(crate) fn rr_device() -> bool {
+        false
+    }
+
+    pub(crate) fn rr_ready() -> bool {
+        false
+    }
+
+    pub(crate) fn rr_ready_on(_: &wgpu::Device) -> bool {
+        false
+    }
+
+    pub(crate) fn rr_refused_here() -> bool {
+        false
+    }
+
+    pub(crate) fn rr_probe(_: &wgpu::Device, _: &crate::device_lost::DeviceLost) {}
+
+    pub(crate) fn snapshot_rr_refused() -> bool {
+        false
+    }
+
+    pub(crate) fn snapshot_rr_refused_here() -> bool {
+        false
+    }
+
+    pub(crate) fn rr_targets_refused(_: bool) {}
+
+    pub(crate) fn snapshot_rr_targets_refused() {}
+
+    pub(crate) fn rr_wanted(_: bool) -> bool {
+        false
     }
 
     pub(crate) fn resizing(_: (u32, u32), _: &std::cell::Cell<Option<(u32, u32)>>) -> Option<std::time::Instant> {
@@ -3434,7 +4373,7 @@ mod imp {
             _: &crate::device_lost::DeviceLost,
             _: (u32, u32),
             _: (u32, u32),
-            _: crate::DlssModel,
+            _: (crate::DlssModel, crate::DlssRrModel),
             _: &Inputs,
             _: bool,
             _: bool,
@@ -3446,11 +4385,11 @@ mod imp {
             match self.0 {}
         }
 
-        pub fn fits(&self, _: &wgpu::Device, _: (u32, u32), _: (u32, u32), _: crate::DlssModel) -> bool {
+        pub fn fits(&self, _: &wgpu::Device, _: (u32, u32), _: (u32, u32), _: (crate::DlssModel, crate::DlssRrModel), _: &Inputs) -> bool {
             match self.0 {}
         }
 
-        pub fn remodel(&mut self, _: crate::DlssModel) {
+        pub fn remodel(&mut self, _: (crate::DlssModel, crate::DlssRrModel)) {
             match self.0 {}
         }
 
@@ -3482,6 +4421,10 @@ mod imp {
             match self.0 {}
         }
 
+        pub fn rr_on(&self) -> bool {
+            match self.0 {}
+        }
+
         pub fn encode(&mut self, _: &wgpu::Queue, _: &mut wgpu::CommandEncoder, _: &Frame) -> Option<wgpu::CommandBuffer> {
             match self.0 {}
         }
@@ -3494,7 +4437,8 @@ mod imp {
 
 pub(crate) use imp::{
     Dlss, closing, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory, request_device, resizing, retry,
-    retry_asked, support, support_on, wanted,
+    retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry, rr_targets_refused, rr_wanted, snapshot_rr_refused,
+    snapshot_rr_refused_here, snapshot_rr_targets_refused, support, support_on, wanted,
 };
 #[cfg(windows)]
 pub(crate) use imp::{forget_instance, xr_entry};

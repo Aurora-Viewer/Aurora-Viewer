@@ -118,6 +118,27 @@ fn gbuf_wanted(device: &wgpu::Device, external: bool, wide: &[u32], s: &RenderSe
     s.gbuffer()
         .then(|| gbuf_format(s.normal_precision.high(s.ssr, traced), wide.contains(&samples)))
 }
+
+/// The G-buffer the scene's pipelines draw into: the settings' (`gbuf`,
+/// [`gbuf_wanted`]), or the Standard one when only Ray Reconstruction's guides
+/// ask for one (`rr`).
+fn gbuf_drawn(gbuf: Option<wgpu::TextureFormat>, rr: bool) -> Option<wgpu::TextureFormat> {
+    gbuf.or(rr.then_some(GBUF_STANDARD))
+}
+
+/// The base colour beside the G-buffer, for DLSS Ray Reconstruction's guides.
+pub(crate) const ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+static RR_UNTRACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The window's settings trace nothing for DLSS Ray Reconstruction to clean
+/// up: ray tracing or its sun shadows off, or the shadows off (`rr_wanted`).
+/// Preferences says so under a Ray Reconstruction chosen and ready; while
+/// it waits for anything else (a resize, the guides compiling, a snapshot,
+/// a DLSS failure) it says nothing.
+pub fn rr_untraced() -> bool {
+    RR_UNTRACED.load(std::sync::atomic::Ordering::Relaxed)
+}
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -453,6 +474,7 @@ impl Smaa {
             samples: 1,
             format: Some(format),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -785,6 +807,7 @@ impl Glow {
             samples: 1,
             format: Some(fmt),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -1043,6 +1066,38 @@ fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surf
     Err(RenderError::DeviceLost)
 }
 
+/// `AURORA_DLSS_RR_BEHIND=1` (debug, docs/TESTING.md): Ray Reconstruction's
+/// depth, motion and guides stay those of the opaque surface behind the
+/// blended faces opaque to the eye (`RrInputs`), to compare. The impostor
+/// cards are in scene pass A, so they stay in all three.
+fn rr_inputs_behind() -> bool {
+    static BEHIND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *BEHIND.get_or_init(|| std::env::var("AURORA_DLSS_RR_BEHIND").is_ok_and(|v| v == "1"))
+}
+
+/// The depth and motion DLSS Ray Reconstruction reads, one surface for
+/// depth, motion and guide normal as NVIDIA's RR guide asks (3.4.1): the
+/// motion copied from the depth prepass before the occlusion's passes draw
+/// into it (GTAO's normals, or TAA's motion), with none of its own where an
+/// impostor card is nearer (they have no prepass: the card's depth moves
+/// the pixel, `fs_impostor_still`); the depth once scene pass A is drawn
+/// (the prepass's and the cards'). Then the blended faces opaque to the eye
+/// (`SCREEN_BLEND_ALPHA`, the heads, bodies and hair that look solid) are
+/// drawn over both (`rr_blend`), their mesh normal marked in the motion's
+/// xy (object.wgsl `NORMAL_RR_FACE`), where the guides take that face's normal and
+/// colour instead of scene pass A's G-buffer (dlss_guides.wgsl): a blended
+/// avatar moving over a wall keeps its own history. Fainter blended faces
+/// and the water keep the surface behind them in all three (the guide's
+/// choice for a transparent surface without specular motion, 3.4.1, and
+/// for refraction, 3.5): they are in the colour alone.
+/// `AURORA_DLSS_RR_BEHIND=1` leaves those blended faces out
+/// (`rr_inputs_behind`). Made only with the pipelines that draw the guides
+/// (`rr_compiled`), as part of the targets.
+struct RrInputs {
+    depth: (wgpu::Texture, wgpu::TextureView),
+    motion: (wgpu::Texture, wgpu::TextureView),
+}
+
 /// A planar reflection render target.
 struct ReflTarget {
     color: wgpu::TextureView,
@@ -1076,6 +1131,11 @@ struct Targets {
     /// G-buffer (normal, roughness, metallic) for SSR.
     gbuf_msaa: Option<wgpu::TextureView>,
     gbuf: Option<wgpu::TextureView>,
+    /// Base colour beside it, for Ray Reconstruction (`rr_guides`).
+    albedo_msaa: Option<wgpu::TextureView>,
+    pub(crate) albedo: Option<wgpu::TextureView>,
+    /// Ray Reconstruction's depth and motion, with its base colour.
+    rr_inputs: Option<RrInputs>,
     /// SSAO raw and blurred (half resolution).
     ao: Option<(wgpu::TextureView, wgpu::TextureView, u32, u32)>,
     /// GTAO's targets (gtao.rs), when its method is chosen or `AURORA_AO`
@@ -1283,6 +1343,11 @@ struct Pipelines {
     /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
     /// once the occlusion and the contact shadows have read it.
     fsr_blend_normal: SidedPipelines,
+    /// Ray Reconstruction only (made with its guides' pipelines): the
+    /// blended faces opaque to the eye (`SCREEN_BLEND_ALPHA`), with their
+    /// motion and normal marked (object.wgsl `fs_depth_rr_face`), into its copies of the
+    /// depth and the motion (`RrInputs`).
+    rr_blend: Option<SidedPipelines>,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -2350,16 +2415,50 @@ pub(crate) struct Backend {
     /// (`soft_path`): the mask is drawn and read only while they were.
     soft_pipelines: bool,
     /// The G-buffer the scene's pipelines were compiled for: its format,
-    /// none without it (`gbuf_wanted`). The targets are made of it, not of
-    /// the settings: a set compiling for another precision draws into the
-    /// one of before until it arrives.
+    /// none without it (`gbuf_wanted`; with Ray Reconstruction alone asking
+    /// for one, they draw its own, `gbuf_drawn`). The targets are made of
+    /// it, not of the settings: a set compiling for another precision draws
+    /// into the one of before until it arrives.
     gbuf_pipelines: Option<wgpu::TextureFormat>,
     /// The sample counts the device draws 16 normalized bits at, 1
     /// included: none without the format (`GBUF_WIDE`).
     gbuf_wide: Vec<u32>,
-    /// The pipelines being compiled for other samples, SSR or another
-    /// G-buffer format, if any.
+    /// The pipelines and targets draw Ray Reconstruction's guides
+    /// (`rr_here` when they were built).
+    rr_compiled: bool,
+    /// A capture compiled super resolution's pipelines, Ray
+    /// Reconstruction refused for the captures (`dlss::snapshot_rr_refused`,
+    /// `snapshot_without_rr`): the window between two captures keeps them
+    /// too, so that a film does not compile them again at every frame.
+    /// Until no capture follows within `DLSS_ASIDE` (the run over,
+    /// `end_snapshot_rr_off`); the instant is when the last capture gave
+    /// the window its size back (`release_snapshot`), None while one is
+    /// drawn. The captures themselves follow the refusal, which outlives
+    /// the run.
+    snapshot_rr_off: Option<Option<Instant>>,
+    /// The pipelines being compiled for other samples, SSR, another
+    /// G-buffer format or Ray Reconstruction, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// This frame draws a photo or film frame, or belongs to a photo drawn
+    /// in parts (its whole drawn small, its tiles, the frames between
+    /// them: `FrameParams::photo_job`) or a 360° capture: a
+    /// `pipeline_build` done meanwhile waits, so that a tiled photo's
+    /// tiles and a 360° capture's faces keep the pipelines and targets
+    /// they began with. A photo waiting for the 3D drawing to resume
+    /// (`PausedPart`) holds them as long; the frames meanwhile draw with
+    /// the pipelines they have.
+    capturing: bool,
+    /// The captures' Ray Reconstruction refusal as the capture under way
+    /// began with it: kept while `capturing`, so that the retry of Try
+    /// again or another model meanwhile does not give its later tiles or
+    /// faces Ray Reconstruction that the first ones drew without
+    /// (`snapshot_rr_refused`). The model itself changes at once
+    /// (`remodel_dlss`), as any setting does.
+    rr_latched: bool,
+    /// The settings were applied once: the first apply moves from
+    /// `RenderSettings::default`, which is no change of the user's
+    /// (`rr_retry` waits for a real one).
+    settings_applied: bool,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
@@ -2746,6 +2845,9 @@ struct PipeDesc<'a> {
     format: Option<wgpu::TextureFormat>,
     /// Second color target (G-buffer for SSR), of this format.
     gbuf: Option<wgpu::TextureFormat>,
+    /// With `gbuf`, a third: the base colour, for Ray Reconstruction
+    /// (`RenderSettings::rr_guides`).
+    albedo: bool,
     /// Second color target of the passes of the exact blend order
     /// (`blend_exact::Lists::range`): its blend, and what is written.
     range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
@@ -2882,6 +2984,33 @@ fn begin_scene_b_on<'a>(
 /// that never reads the mask pays nothing for it.
 fn soft_path(s: &RenderSettings) -> bool {
     crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
+}
+
+/// Whether the scene pass draws Ray Reconstruction's guides (the G-buffer
+/// with a base colour beside it): `RenderSettings::rr_guides`, Streamline has not
+/// refused it on this device, and something is traced. Without a traced
+/// effect RR has nothing to denoise, and super resolution draws for less
+/// (the second camera never traces). Every traced effect rides on the
+/// traced sun shadows: the ray tracer is made only with them
+/// (`follow_ray_tracing`) and traces only on the frames that draw shadows
+/// (`rt_now`), so shadows off (`shadow_resolution` 0) is nothing traced,
+/// and super resolution draws with the setting kept. Checked at each
+/// frame's settings: a change builds the pipelines again (`rr_compiled`).
+/// Streamline is started first when it has not said yet whether it offers RR on
+/// this device (`dlss::rr_probe`): a device without it never compiles
+/// the guides' pipelines.
+fn rr_wanted(device: &wgpu::Device, lost: &crate::device_lost::DeviceLost, external: bool, s: &RenderSettings) -> bool {
+    let traced = crate::rt_shadows::traced(device, external, s.ray_tracing);
+    let untraced = !(traced.shadows && s.shadow_resolution > 0);
+    // (the window's: an external renderer traces nothing)
+    if !external {
+        RR_UNTRACED.store(untraced, std::sync::atomic::Ordering::Relaxed);
+    }
+    if !s.rr_guides() || untraced {
+        return false;
+    }
+    crate::dlss::rr_probe(device, lost);
+    crate::dlss::rr_ready_on(device)
 }
 
 /// Whether the soft shadows' pipelines and masks are kept: the option (or
@@ -3371,6 +3500,13 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
+        if d.albedo {
+            targets.push(Some(wgpu::ColorTargetState {
+                format: ALBEDO_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            }));
+        }
     }
     if let Some((blend, write_mask)) = d.range {
         targets.push(Some(wgpu::ColorTargetState {
@@ -3759,15 +3895,19 @@ struct Impostors {
     sprite: wgpu::RenderPipeline,
     /// The cards' depth alone, single sample (contact shadows).
     sprite_depth: wgpu::RenderPipeline,
+    /// No motion where the cards are drawn, into Ray Reconstruction's copy
+    /// of the motion (`RrInputs`); made with its guides' pipelines.
+    sprite_still: Option<wgpu::RenderPipeline>,
 }
 
-/// The impostors' capture (opaque, blended) and card (colour, depth alone)
-/// pipelines.
+/// The impostors' capture (opaque, blended) and card (colour, depth alone,
+/// still) pipelines.
 type ImpostorPipelines = (
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
+    Option<wgpu::RenderPipeline>,
 );
 
 /// The pipelines that depend on the MSAA samples, SSR and the G-buffer's
@@ -3778,8 +3918,10 @@ type ImpostorPipelines = (
 /// new ones with their targets on the frame the set arrives.
 struct PipelineBuild {
     samples: u32,
-    /// The G-buffer's format, none without it (`gbuf_wanted`).
+    /// The G-buffer's format, none without it (`gbuf_drawn`).
     gbuf: Option<wgpu::TextureFormat>,
+    /// With Ray Reconstruction's base colour target.
+    albedo: bool,
     /// Compiled with the soft shadows' path (`soft_path`).
     soft: bool,
     started: std::time::Instant,
@@ -3811,6 +3953,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3870,8 +4013,17 @@ impl Impostors {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, gbuf, soft);
+        let (capture_opaque, capture_blend, sprite, sprite_depth, sprite_still) = Self::make_pipelines(
+            device,
+            &layout,
+            frame_layout,
+            records_layout,
+            tex_layout,
+            samples,
+            gbuf,
+            albedo,
+            soft,
+        );
         Impostors {
             layout,
             atlas,
@@ -3886,6 +4038,7 @@ impl Impostors {
             capture_blend,
             sprite,
             sprite_depth,
+            sprite_still,
         }
     }
 
@@ -3970,7 +4123,13 @@ impl Impostors {
     }
 
     fn set_pipelines(&mut self, p: ImpostorPipelines) {
-        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) = p;
+        (
+            self.capture_opaque,
+            self.capture_blend,
+            self.sprite,
+            self.sprite_depth,
+            self.sprite_still,
+        ) = p;
     }
 
     /// The pictures are drawn with the scene's own shaders.
@@ -3992,6 +4151,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -4023,6 +4183,7 @@ impl Impostors {
             samples,
             format: Some(HDR_FORMAT),
             gbuf,
+            albedo: gbuf.is_some() && albedo,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -4072,7 +4233,23 @@ impl Impostors {
                 ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, None)
             },
         );
-        (capture_opaque, capture_blend, sprite, sprite_depth)
+        // no motion of their own, into Ray Reconstruction's copy of the
+        // motion, where a card is nearer than the prepass's depth (tested,
+        // not written)
+        let sprite_still = albedo.then(|| {
+            make_pipeline(
+                device,
+                &module,
+                &pl,
+                PipeDesc {
+                    format: Some(crate::gtao::NORMAL_FORMAT),
+                    write_mask: wgpu::ColorWrites::BLUE | wgpu::ColorWrites::ALPHA,
+                    depth_write: false,
+                    ..desc("impostor cards still", "vs_impostor", "fs_impostor_still", Vb::Sprite, 1, None)
+                },
+            )
+        });
+        (capture_opaque, capture_blend, sprite, sprite_depth, sprite_still)
     }
 }
 
@@ -4938,6 +5115,7 @@ impl Backend {
                 scene_groups: vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
             }
         };
+        let rr = rr_wanted(&device, &lost, external, &settings);
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -4948,7 +5126,8 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            gbuf_pipelines,
+            gbuf_drawn(gbuf_pipelines, rr),
+            rr,
             soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
@@ -4962,7 +5141,7 @@ impl Backend {
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
         let refuse = crate::gpu_alloc::targets_refused();
-        let (targets, refused) = crate::gpu_alloc::scoped(&device, || {
+        let ((targets, rr_refused), refused) = crate::gpu_alloc::scoped(&device, || {
             Self::make_targets(
                 &device,
                 &post_layout,
@@ -4979,14 +5158,20 @@ impl Backend {
                 msaa_samples,
                 gbuf_pipelines,
                 &settings,
+                rr,
                 external,
                 refuse,
             )
         });
         let mut oom = crate::gpu_alloc::Refusals::default();
+        // (Ray Reconstruction's own targets refused: the set is tried
+        // again without them, `make_targets`)
+        if rr_refused && !lost.get() {
+            crate::dlss::rr_targets_refused(!external);
+        }
         // (a device lost meanwhile ends the start at the next
         // `lost_at_start`, not as video memory full)
-        if (refused && !lost.get()) || refuse {
+        if ((refused || rr_refused) && !lost.get()) || refuse {
             log::warn!("render targets: out of video memory, the interface alone until they can be made");
             oom.targets_failed(Instant::now());
         }
@@ -5072,7 +5257,8 @@ impl Backend {
             &records_layout,
             &tex_layout,
             msaa_samples,
-            gbuf_pipelines,
+            gbuf_drawn(gbuf_pipelines, rr),
+            rr,
             soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -5240,9 +5426,14 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            capturing: false,
+            rr_latched: false,
+            settings_applied: false,
             soft_pipelines: soft_path(&settings),
             gbuf_pipelines,
             gbuf_wide,
+            rr_compiled: rr,
+            snapshot_rr_off: None,
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
@@ -5427,6 +5618,7 @@ impl Backend {
             format: Some(HDR_FORMAT),
             range: None,
             gbuf: None,
+            albedo: false,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -5591,6 +5783,7 @@ impl Backend {
         samples: u32,
         surface_format: wgpu::TextureFormat,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> Pipelines {
         let ssr = gbuf.is_some();
@@ -5635,6 +5828,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -5651,6 +5845,7 @@ impl Backend {
             format: Some(surface_format),
             samples: 1,
             gbuf: None,
+            albedo: false,
             range: None,
             cull: None,
             blend,
@@ -5682,6 +5877,7 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
             gbuf,
+            albedo,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
         let clouds_weather = pipe(PipeDesc {
@@ -5697,14 +5893,17 @@ impl Backend {
         });
         let terrain = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
         });
         let terrain_pbr = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let creation_preview = pipe(PipeDesc {
@@ -5714,11 +5913,13 @@ impl Backend {
         let opaque_2s = pipe(PipeDesc {
             cull: None,
             gbuf,
+            albedo,
             ..base("opaque 2s", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let mask = pipe(PipeDesc {
             a2c: samples > 1,
             gbuf,
+            albedo,
             constants: &a2c,
             ..base("mask", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -5726,6 +5927,7 @@ impl Backend {
             a2c: samples > 1,
             cull: None,
             gbuf,
+            albedo,
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -6535,6 +6737,19 @@ impl Backend {
                 ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
             })
         });
+        let rr_blend = albedo.then(|| {
+            std::array::from_fn(|side| {
+                pipe(PipeDesc {
+                    cull: blend_cull(side != 0),
+                    samples: 1,
+                    format: Some(crate::gtao::NORMAL_FORMAT),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
+                    ..base("dlss rr blended faces", "vs_depth_mask_normal", "fs_depth_rr_face")
+                })
+            })
+        });
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -6657,6 +6872,7 @@ impl Backend {
             samples: 1,
             format: None,
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
@@ -6754,6 +6970,7 @@ impl Backend {
                 samples: 1,
                 format: Some(surface_format),
                 gbuf: None,
+                albedo: false,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -6848,6 +7065,7 @@ impl Backend {
             pre_solid: pre_solid.resolve(&mut done),
             pre_solid_normal: pre_solid_normal.resolve(&mut done),
             fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
+            rr_blend: rr_blend.resolve(&mut done),
             pre_msaa: pre_msaa.resolve(&mut done),
             refl_sky: refl_sky.resolve(&mut done),
             refl_terrain: refl_terrain.resolve(&mut done),
@@ -6913,6 +7131,7 @@ impl Backend {
                     samples: 1,
                     format: Some(AO_FORMAT),
                     gbuf: None,
+                    albedo: false,
                     range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
@@ -6953,9 +7172,10 @@ impl Backend {
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
         s: &RenderSettings,
+        rr: bool,
         external: bool,
         refuse: bool,
-    ) -> Targets {
+    ) -> (Targets, bool) {
         let (w, h) = (width.max(1), height.max(1));
         let att = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -7005,12 +7225,45 @@ impl Backend {
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         // (of the format the pipelines in use were compiled for)
-        let (gbuf_msaa, gbuf) = match gbuf {
-            Some(format) => (
+        let gbuffer = |format: wgpu::TextureFormat| {
+            (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, format, samples, att).1),
                 Some(make_view(device, "gbuffer", w, h, format, 1, sampled).1),
-            ),
+            )
+        };
+        let (mut gbuf_msaa, mut gbuf) = match gbuf {
+            Some(format) => gbuffer(format),
             None => (None, None),
+        };
+        // The targets only Ray Reconstruction reads (the base colour, its
+        // copies of the depth and the motion, the G-buffer when nothing
+        // else wants it), checked apart: refused, Ray Reconstruction is
+        // refused (`dlss::rr_targets_refused`), so the set made again once
+        // the pipelines are built without it leaves them out, and super
+        // resolution draws, instead of the interface alone at every try
+        let mut rr_refused = false;
+        let (albedo_msaa, albedo, rr_inputs) = if rr {
+            let ((rr_gbuf, albedo_msaa, albedo, rr_inputs), refused) = crate::gpu_alloc::scoped(device, || {
+                // (drawn into after the copy: the impostor cards and the
+                // blended faces opaque to the eye)
+                let copied = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | att;
+                (
+                    gbuf.is_none().then(|| gbuffer(GBUF_STANDARD)),
+                    (samples > 1).then(|| make_view(device, "albedo msaa", w, h, ALBEDO_FORMAT, samples, att).1),
+                    Some(make_view(device, "albedo", w, h, ALBEDO_FORMAT, 1, sampled).1),
+                    Some(RrInputs {
+                        depth: make_view(device, "dlss rr depth", w, h, DEPTH_FORMAT, 1, copied),
+                        motion: make_view(device, "dlss rr motion", w, h, crate::gtao::NORMAL_FORMAT, 1, copied),
+                    }),
+                )
+            });
+            if let Some(made) = rr_gbuf {
+                (gbuf_msaa, gbuf) = made;
+            }
+            rr_refused = refused;
+            (albedo_msaa, albedo, rr_inputs)
+        } else {
+            (None, None, None)
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
@@ -7104,7 +7357,7 @@ impl Backend {
                 },
             ],
         });
-        Targets {
+        let targets = Targets {
             color_msaa,
             color_tex,
             color,
@@ -7119,6 +7372,9 @@ impl Backend {
             scene_copy,
             gbuf_msaa,
             gbuf,
+            albedo_msaa,
+            albedo,
+            rr_inputs,
             ao,
             gtao,
             gtao_shown,
@@ -7132,7 +7388,8 @@ impl Backend {
             water_air,
             mirror,
             post_bind_group,
-        }
+        };
+        (targets, rr_refused)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7806,18 +8063,16 @@ impl Backend {
         let (made, refused) = crate::gpu_alloc::scoped(&device, || {
             let taa = self.taa.as_ref()?;
             let motion = self.targets.gtao.as_ref().map(|g| &g.normals).or(taa.motion.as_ref())?;
-            let inputs = crate::dlss::Inputs {
-                color: &self.targets.color,
-                depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
-                motion,
-            };
+            // (the same targets and pipelines as `make_taa`'s: Ray
+            // Reconstruction's are kept through the resize, `rr_compiled`)
+            let inputs = self.dlss_inputs(motion);
             let dlss = crate::dlss::Dlss::new(
                 &self.device,
                 &self.queue,
                 &self.lost,
                 self.scene_size(),
                 display,
-                self.settings.dlss_model,
+                (self.settings.dlss_model, self.settings.dlss_rr_model),
                 &inputs,
                 false,
                 !self.external,
@@ -7838,6 +8093,105 @@ impl Backend {
         self.taa_bytes += dlss.bytes();
         if let Some(taa) = self.taa.as_mut() {
             taa.dlss = Some((dlss, group));
+        }
+    }
+
+    /// Ray Reconstruction's guides drawn with `s`: `rr_wanted`, except
+    /// through a run of photo or film frames drawn without them
+    /// (`snapshot_rr_off`).
+    fn rr_here(&self, s: &RenderSettings) -> bool {
+        rr_wanted(&self.device, &self.lost, self.external, s) && self.snapshot_rr_off.is_none()
+    }
+
+    /// The run of captures `snapshot_rr_off` stands for is over: none
+    /// began within `DLSS_ASIDE` of the last one's end (Try again or
+    /// another model asked during it takes effect from here). The window's
+    /// pipelines follow `rr_here` again (compiled on their worker, as any
+    /// settings change).
+    fn end_snapshot_rr_off(&mut self) {
+        if self.snapshot_window.is_none()
+            && self
+                .snapshot_rr_off
+                .is_some_and(|released| released.is_some_and(|at| at.elapsed() > DLSS_ASIDE))
+        {
+            self.snapshot_rr_off = None;
+        }
+    }
+
+    /// The photo or film frame drawn without Ray Reconstruction: the
+    /// pipelines compiled again without its guides, on this thread (the
+    /// frame is drawn now), and the targets made with them. Kept through
+    /// the run of captures (`snapshot_rr_off`): once per run, never per
+    /// frame.
+    fn snapshot_without_rr(&mut self) {
+        self.snapshot_rr_off = Some(None);
+        let (samples, gbuf, soft) = (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines);
+        log::warn!("snapshot: Ray Reconstruction refused for the captures: compiling super resolution's pipelines for them");
+        self.pipeline_build = None;
+        let scene = Self::make_pipelines(
+            &self.device,
+            &self.frame_layout,
+            &self.records_layout,
+            &self.tex_layout,
+            &self.shadow_layout,
+            [&self.post_layout, &self.bloom.post_layout],
+            &self.gbuf_layout,
+            samples,
+            self.config.format,
+            gbuf,
+            false,
+            soft,
+        );
+        let impostors = Impostors::make_pipelines(
+            &self.device,
+            &self.impostors.layout,
+            &self.frame_layout,
+            &self.records_layout,
+            &self.tex_layout,
+            samples,
+            gbuf,
+            false,
+            soft,
+        );
+        self.rr_compiled = false;
+        // (makes the targets again, `rebuild_targets`)
+        self.apply_settings_with(self.settings, Some((samples, gbuf, scene, impostors)));
+    }
+
+    /// Ray Reconstruction refused for the captures (`dlss::snapshot_rr_refused`),
+    /// or refused when the capture under way began (`rr_latched`): the
+    /// retry of Try again or another model during a tiled photo or a 360°
+    /// capture waits for its end.
+    fn snapshot_rr_refused(&self) -> bool {
+        self.rr_latched || crate::dlss::snapshot_rr_refused()
+    }
+
+    /// What DLSS reads, for `make_taa` and `dlss_after_resize` alike. Ray
+    /// Reconstruction's depth and motion are its own copies, the surface
+    /// its guides describe: scene pass A's, the impostor cards and the
+    /// blended faces opaque to the eye drawn over it (`RrInputs`). Super
+    /// resolution keeps the occlusion's depth, with the blended faces
+    /// opaque to the eye drawn over it and their motion beside. (With
+    /// those targets, super resolution reads them too: a DLSS made again
+    /// as super resolution after Streamline refused RR, until the pipelines
+    /// without the guides are compiled, reads a depth and a motion that
+    /// match, the cards included.) A photo or film frame once Ray
+    /// Reconstruction was refused for the captures draws super resolution
+    /// without the guides, from targets made without the copies
+    /// (`make_targets_now`).
+    fn dlss_inputs<'a>(&'a self, motion_read: &'a wgpu::TextureView) -> crate::dlss::Inputs<'a> {
+        let rr_here = !(self.snapshot_window.is_some() && self.snapshot_rr_refused());
+        let (depth, motion) = match (&self.targets.rr_inputs, &self.targets.ao_depth) {
+            (Some(rr), _) => (&rr.depth.1, &rr.motion.1),
+            (None, Some((_, view))) => (view, motion_read),
+            (None, None) => (&self.targets.depth_ss, motion_read),
+        };
+        crate::dlss::Inputs {
+            color: &self.targets.color,
+            depth,
+            motion,
+            gbuf: rr_here.then_some(self.targets.gbuf.as_ref()).flatten(),
+            albedo: rr_here.then_some(self.targets.albedo.as_ref()).flatten(),
         }
     }
 
@@ -7888,8 +8242,34 @@ impl Backend {
             self.drop_first_use_targets();
             let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
         }
-        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
-        if self.memory_refused(refused) || refuse {
+        // a photo or film frame once a capture met a refusal of Ray
+        // Reconstruction, whatever refused it and at whatever size: super
+        // resolution's pipelines first, before any of its targets are
+        // asked for again (the targets are made with them,
+        // `snapshot_without_rr`)
+        if self.snapshot_window.is_some() && self.rr_compiled && (self.snapshot_rr_off.is_some() || self.snapshot_rr_refused()) {
+            self.snapshot_without_rr();
+            return;
+        }
+        let (rr_refused, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
+        // a photo or film frame's: drawn again at once with super
+        // resolution's pipelines and targets alone, the window's Ray
+        // Reconstruction left as it was (the refused set gives way to a
+        // 1x1 one first)
+        if self.memory_refused(rr_refused) && self.snapshot_window.is_some() && !refuse {
+            let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
+            self.snapshot_without_rr();
+            return;
+        }
+        // Ray Reconstruction's own targets refused: refused like Streamline
+        // refusing it, so the pipelines are built again without its guides
+        // and the next try makes the set without them (`make_targets`); a
+        // snapshot's is remembered for the captures alone
+        // (`make_targets_now`)
+        if self.memory_refused(rr_refused) && self.snapshot_window.is_none() {
+            crate::dlss::rr_targets_refused(!self.external);
+        }
+        if self.memory_refused(refused || rr_refused) || refuse {
             // (the DLSS set aside goes first: its textures and the targets
             // it read are room for the next try)
             self.dlss_aside = None;
@@ -7966,8 +8346,10 @@ impl Backend {
         refused && !self.lost.get()
     }
 
-    /// `size` forces a size: the 1x1 set that frees a refused one.
-    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
+    /// `size` forces a size: the 1x1 set that frees a refused one. True
+    /// when the video memory refused the targets only Ray Reconstruction
+    /// reads (`make_targets`).
+    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) -> bool {
         self.occlusion.invalidate();
         // the soft shadows' pipelines, made when they are wanted and freed
         // with their masks when they no longer are
@@ -7989,7 +8371,12 @@ impl Backend {
             Some(ratio) if crate::dlss::wanted(self.settings.dlss) => {
                 // (a start Streamline refuses here is the device's, shown in
                 // Preferences whichever view met it, dlss.rs `refused_here`)
-                crate::dlss::optimal_size(&self.device, &self.lost, window, ratio)
+                // the size of the feature Dlss::new will make: Ray
+                // Reconstruction only while Streamline has not refused it (the
+                // guides' pipelines may still be compiled after a refusal,
+                // and super resolution's sizes are its own)
+                let rr = self.rr_compiled && crate::dlss::rr_ready_on(&self.device);
+                crate::dlss::optimal_size(&self.device, &self.lost, window, ratio, rr)
                     .unwrap_or_else(|| crate::dlss::render_size(window, ratio))
             }
             Some(ratio) => crate::fsr::render_size(window, ratio),
@@ -8005,10 +8392,14 @@ impl Backend {
                 scale
             );
         }
+        // (a snapshot once Ray Reconstruction was refused for the captures
+        // has the pipelines without its guides first, `rebuild_targets`, so
+        // its targets are made without them)
+        let snapshot = self.snapshot_window.is_some() && !forced;
         // the new targets are made while the old ones live: the counters'
         // growth in between is what this size takes
         let before = self.live_bytes();
-        let targets = Self::make_targets(
+        let (targets, rr_refused) = Self::make_targets(
             &self.device,
             &self.post_layout,
             &self.post_sampler,
@@ -8024,9 +8415,16 @@ impl Backend {
             self.msaa_samples,
             self.gbuf_pipelines,
             &self.settings,
+            self.rr_compiled,
             self.external,
             refuse,
         );
+        // (a snapshot's Ray Reconstruction targets refused: super
+        // resolution draws every capture from here, the window's left as it
+        // was)
+        if rr_refused && snapshot && !self.lost.get() {
+            crate::dlss::snapshot_rr_targets_refused();
+        }
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
                 .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
@@ -8040,6 +8438,7 @@ impl Backend {
         self.histogram.bind(&self.device, &self.targets.color);
         self.targets_shrunk = forced;
         self.rebuild_bind_groups();
+        rr_refused
     }
 
     /// The surface can be copied from (captures).
@@ -8090,8 +8489,9 @@ impl Backend {
             _ => 1,
         };
         let soft = soft_path(&s);
+        let albedo = self.rr_here(&s);
         let gbuf = gbuf_wanted(&self.device, self.external, &self.gbuf_wide, &s, samples);
-        if (samples, gbuf, soft) == (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines) {
+        if (samples, gbuf, albedo, soft) == (self.msaa_samples, self.gbuf_pipelines, self.rr_compiled, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -8100,12 +8500,13 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.gbuf, b.soft) != (samples, gbuf, soft))
+            .is_none_or(|b| (b.samples, b.gbuf, b.albedo, b.soft) != (samples, gbuf, albedo, soft))
         {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
+                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, base colour {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
                 gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
+                if albedo { "on" } else { "off" },
                 if soft { "on" } else { "off" }
             );
             if gbuf.is_some() && self.gbuf_pipelines.is_some() && gbuf != self.gbuf_pipelines {
@@ -8119,7 +8520,7 @@ impl Backend {
                     crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
                 );
             }
-            let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
+            let (build, worker) = self.start_pipeline_build(samples, gbuf, albedo, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -8127,23 +8528,34 @@ impl Backend {
         let Some(build) = &self.pipeline_build else {
             return;
         };
-        match build.done.try_recv() {
+        // (a set done while a photo or film frame is drawn waits for its
+        // end, `capturing`)
+        let done = if self.capturing || self.snapshot_window.is_some() {
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        } else {
+            build.done.try_recv()
+        };
+        match done {
             Ok((scene, impostors)) => {
                 log::info!(
                     "pipelines for {samples} sample(s) ready in {} ms",
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
+                self.rr_compiled = albedo;
                 self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // the other settings now, the samples, SSR and soft shadows
-                // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there; the G-buffer
-                // keeps the format of the pipelines in use, `gbuf_pipelines`)
+                // the other settings now, the samples, SSR, soft shadows and
+                // Ray Reconstruction with their pipelines (the soft shadows'
+                // mask is made once the pipelines that read it are there; the
+                // G-buffer keeps the format of the pipelines in use,
+                // `gbuf_pipelines`)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    dlss: self.settings.dlss,
+                    dlss_rr: self.settings.dlss_rr,
                     soft_shadows: self.settings.soft_shadows,
                     rain_surfaces: self.settings.rain_surfaces,
                     ..s
@@ -8165,7 +8577,8 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    gbuf,
+                    gbuf_drawn(gbuf, albedo),
+                    albedo,
                     soft,
                 );
                 let impostors = Impostors::make_pipelines(
@@ -8175,20 +8588,24 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    gbuf,
+                    gbuf_drawn(gbuf, albedo),
+                    albedo,
                     soft,
                 );
+                self.rr_compiled = albedo;
                 self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
-    /// soft shadows' path `soft` on a worker thread.
+    /// Compile the pipelines for `samples`, the G-buffer `gbuf` (the
+    /// settings', `gbuf_wanted`), Ray Reconstruction's base colour `albedo`
+    /// and the soft shadows' path `soft` on a worker thread.
     fn start_pipeline_build(
         &self,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
@@ -8216,10 +8633,21 @@ impl Backend {
                 gbuf_layout,
                 samples,
                 format,
-                gbuf,
+                gbuf_drawn(gbuf, albedo),
+                albedo,
                 soft,
             );
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
+            let impostors = Impostors::make_pipelines(
+                &device,
+                impostor,
+                frame,
+                records,
+                tex,
+                samples,
+                gbuf_drawn(gbuf, albedo),
+                albedo,
+                soft,
+            );
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -8232,6 +8660,7 @@ impl Backend {
         let build = PipelineBuild {
             samples,
             gbuf,
+            albedo,
             soft,
             started: std::time::Instant::now(),
             done,
@@ -8357,7 +8786,8 @@ impl Backend {
         }
         // (the model alone makes only the DLSS feature again, below: the
         // sizes and the targets do not change with it)
-        let model_changed = s.dlss_model != self.settings.dlss_model;
+        let model_changed = (s.dlss_model, s.dlss_rr_model) != (self.settings.dlss_model, self.settings.dlss_rr_model);
+        let rr_model_changed = s.dlss_rr_model != self.settings.dlss_rr_model;
         self.settings = s;
         self.previews.set_anti_aliasing(self.settings.aa);
         self.follow_ray_tracing();
@@ -8392,6 +8822,15 @@ impl Backend {
         } else if shadows_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
+        // another Ray Reconstruction model asks Streamline again after a refusal
+        // (the pipelines follow at the next frame, `rr_wanted`): the
+        // window's renderer alone, and not at its first apply, which a
+        // renderer made again or the second camera's makes from the
+        // defaults, so that neither forgets a refusal that stands
+        if rr_model_changed && self.settings_applied && !self.external {
+            crate::dlss::rr_retry();
+        }
+        self.settings_applied = true;
         if model_changed && !targets_dirty && !self.taa_pending {
             self.remodel_dlss();
         }
@@ -8498,11 +8937,11 @@ impl Backend {
     /// one, unless Streamline refused to start on this device: only Preferences'
     /// button asks that again ([`crate::dlss::retry`]).
     fn remodel_dlss(&mut self) {
-        let model = self.settings.dlss_model;
+        let models = (self.settings.dlss_model, self.settings.dlss_rr_model);
         if let Some(taa) = self.taa.as_mut()
             && let Some((dlss, _)) = taa.dlss.as_mut()
         {
-            dlss.remodel(model);
+            dlss.remodel(models);
             if dlss.failed() {
                 // FSR takes the next frame from nothing: its history is of
                 // the frames before DLSS
@@ -8518,14 +8957,17 @@ impl Backend {
     /// targets are made again, and DLSS with them, from Streamline's start (its
     /// render size may differ from the fallback FSR drew at). The ask waits
     /// (not taken) while DLSS would not be made: another anti-aliasing,
-    /// or a snapshot's targets in place.
+    /// or a snapshot's targets in place, or a capture under way
+    /// (`capturing`: a tiled photo's later tiles keep what its first drew).
     fn retry_dlss_if_asked(&mut self) {
-        if !self.dlss_wanted() || self.snapshot_window.is_some() {
+        if !self.dlss_wanted() || self.snapshot_window.is_some() || self.capturing {
             return;
         }
         if crate::dlss::retry_asked(&mut self.dlss_retry) {
-            // (a DLSS kept by the remake would be a failed one: `fits` is
-            // false for those, so a new one is made)
+            // (a failed DLSS is not kept by the remake: `fits` is false for
+            // those, so a new one is made. A working super resolution kept
+            // on a Ray Reconstruction retry is made again as RR once the
+            // pipelines with the guides are compiled, `rr_wanted`)
             self.rebuild_targets();
         }
     }
@@ -8581,6 +9023,7 @@ impl Backend {
                 samples: 1,
                 format: Some(HDR_FORMAT),
                 gbuf: None,
+                albedo: false,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -8623,7 +9066,8 @@ impl Backend {
                     self.scene_size().1,
                     crate::gtao::NORMAL_FORMAT,
                     1,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    // (copied for Ray Reconstruction, `RrInputs`)
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 )
                 .1,
             ),
@@ -8693,16 +9137,13 @@ impl Backend {
         // button asks again, `retry_dlss_if_asked`)
         let dlss = (with_fsr && !self.targets_shrunk && crate::dlss::wanted(self.settings.dlss) && !crate::dlss::refused_here())
             .then(|| {
-                let inputs = crate::dlss::Inputs {
-                    color: &self.targets.color,
-                    depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
-                    motion: motion_read,
-                };
                 let snapshot = self.snapshot_window.is_some();
+                let inputs = self.dlss_inputs(motion_read);
+                let models = (self.settings.dlss_model, self.settings.dlss_rr_model);
                 let mut pool: Vec<crate::dlss::Dlss> = old.into_iter().chain(aside).collect();
                 let fitting = pool
                     .iter()
-                    .position(|dlss| dlss.fits(device, self.scene_size(), display, self.settings.dlss_model));
+                    .position(|dlss| dlss.fits(device, self.scene_size(), display, models, &inputs));
                 let fitting = fitting.map(|at| pool.swap_remove(at));
                 // the window's kept through a snapshot, the snapshot's
                 // through the window's frames between two of a film
@@ -8742,7 +9183,7 @@ impl Backend {
                                 &self.lost,
                                 self.scene_size(),
                                 display,
-                                self.settings.dlss_model,
+                                models,
                                 &inputs,
                                 snapshot,
                                 // (what Preferences says of DLSS is the window's:
@@ -9211,6 +9652,13 @@ impl Backend {
         }
         self.config.width = s.width;
         self.config.height = s.height;
+        // (a run of captures drawn without Ray Reconstruction's guides
+        // goes on: the window between them keeps super resolution's
+        // pipelines until none has followed for `DLSS_ASIDE`,
+        // `end_snapshot_rr_off`)
+        if let Some(released) = &mut self.snapshot_rr_off {
+            *released = None;
+        }
         self.gtao.photo = Some(s.photo);
         self.cube_step = s.cube.map(usize::from);
         if self.cube_step == Some(0)
@@ -9233,6 +9681,16 @@ impl Backend {
             self.prev_motion_view = None;
             if let Some(taa) = &mut self.taa {
                 taa.reset = true;
+            }
+            // Ray Reconstruction refused during the face before (its
+            // evaluate failed): super resolution draws the faces left, made
+            // again here since the targets stay
+            if self.taa.as_ref().is_some_and(|t| t.fsr.is_some() && t.dlss.is_none()) && self.dlss_wanted() && self.snapshot_rr_refused() {
+                let device = self.device.clone();
+                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                // (refused, the next try makes every target again, the TAA
+                // history with them)
+                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
             }
         } else {
             self.rebuild_targets();
@@ -9258,6 +9716,11 @@ impl Backend {
     fn release_snapshot(&mut self) {
         self.cube_hold = false;
         self.cube_keep = false;
+        // (the window keeps super resolution for a film's next frame,
+        // `end_snapshot_rr_off`)
+        if let Some(released) = &mut self.snapshot_rr_off {
+            *released = Some(Instant::now());
+        }
         let Some((w, h)) = self.snapshot_window.take() else {
             return;
         };
@@ -9495,6 +9958,7 @@ impl Backend {
             p.params.photo_tile = Mat4::IDENTITY;
             p.params.photo_scale = 1.0;
             p.params.photo_context = crate::types::PhotoContext::None;
+            p.params.photo_job = false;
             p.surface.width = world.session.width;
             p.surface.height = world.session.height;
             if let Some(gpu) = &mut p.lists.gpu {
@@ -9815,7 +10279,7 @@ impl Backend {
             self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
             self.shadow_dims = crate::projector_shadows::atlas_size(512, 0);
             self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
-            self.make_targets_now(false, Some((1, 1)));
+            let _ = self.make_targets_now(false, Some((1, 1)));
         });
     }
 
@@ -9919,8 +10383,18 @@ impl Backend {
         stats.present_mode = Some(self.config.present_mode);
         // (and at each frame while their pipelines compile: a set for another
         // G-buffer format leaves the settings as asked, with nothing held
-        // back to tell the frames apart, `apply_settings`)
-        if settings != self.settings || self.pipeline_build.is_some() {
+        // back to tell the frames apart, `apply_settings`. Streamline refusing
+        // Ray Reconstruction, or a retry forgetting that, changes what the
+        // settings ask for without changing them: the pipelines follow
+        // `rr_wanted` either way)
+        self.end_snapshot_rr_off();
+        self.capturing = cube_face
+            || params.photo_job
+            || params.photo_context != crate::types::PhotoContext::None
+            || matches!(&wanted, Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0);
+        let held = self.capturing || self.snapshot_window.is_some();
+        self.rr_latched = (held && self.rr_latched) || crate::dlss::snapshot_rr_refused();
+        if settings != self.settings || self.pipeline_build.is_some() || self.rr_compiled != self.rr_here(&settings) {
             self.apply_frame_settings(settings);
         }
         // (at each frame until its worker is done, whatever else the
@@ -10288,6 +10762,9 @@ impl Backend {
                 Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, post_size.0)),
                 None => 16,
             };
+            // Ray Reconstruction wants a sequence of 32 phases or more (its guide)
+            let rr_on = taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.rr_on());
+            let period = if rr_on { period.max(32) } else { period };
             let i = (self.frame_index % period) + 1;
             self.taa_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
@@ -12074,6 +12551,41 @@ impl Backend {
         // face in both lists writes the same depth twice)
         let n_blend = rg.blend.1 + rg.blend_under.1;
         let blend_in_ao_depth = self.blend_ao_depth && n_blend > 0 && self.targets.ao_depth.is_some();
+        // Ray Reconstruction's motion, the prepass's, before the passes
+        // below draw the blended faces into it (`RrInputs`), with no
+        // motion of their own where the impostor cards are nearer (they
+        // have no prepass): the cards' depth moves those pixels
+        if let (Some(rr), Some(motion)) = (&self.targets.rr_inputs, normals) {
+            encoder.copy_texture_to_texture(motion.texture().as_image_copy(), rr.motion.0.as_image_copy(), rr.motion.0.size());
+            if let (true, Some(still)) = (n_sprites > 0, &self.impostors.sprite_still) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dlss rr impostor cards"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &rr.motion.1,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    // the prepass's depth, tested, not written
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.targets.depth_ss,
+                        depth_ops: None,
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(still);
+                pass.set_bind_group(3, &self.impostors.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.impostors.sprites.slice(..));
+                pass.draw(0..6, 0..n_sprites as u32);
+            }
+        }
         if let Some((tex, view)) = &self.targets.ao_depth {
             encoder.copy_texture_to_texture(
                 self.targets.depth_ss_tex.as_image_copy(),
@@ -12264,6 +12776,21 @@ impl Backend {
             }
             self.contact.encode(&mut encoder, t, more);
         }
+        // Ray Reconstruction denoises the traced passes itself
+        let rr_on = self
+            .taa
+            .as_ref()
+            .and_then(|taa| taa.dlss.as_ref())
+            .is_some_and(|(dlss, _)| dlss.rr_on());
+        // (the window's: an external renderer, the second camera's or an
+        // eye of VR, may draw DLSS super resolution but traces nothing
+        // (`rt_shadows::traced`), so it never draws Ray Reconstruction nor
+        // reads the raw traced passes, and its frames would undo the
+        // window's between them)
+        if !self.external {
+            crate::rt_shadows::set_raw(rr_on);
+        }
+
         // The depth the ray-traced mask is made from. Where `frame.contact.y`
         // tells a blended face solid to the eye that the mask is its own
         // (object.wgsl `contact_share`), it is the solid depth, which holds
@@ -12385,7 +12912,10 @@ impl Backend {
         // ---- FSR: the blended faces drawn over what lies behind them, even
         // faint glass, give their own depth and motion, so their edges keep
         // their history (the occlusion and the contact shadows have read
-        // that depth; GTAO those normals)
+        // that depth; GTAO those normals). Under DLSS too: its display
+        // depth is FSR's (`encode_depth`), which DOF and the other passes
+        // at the display size read; Ray Reconstruction's depth, motion and
+        // guides are its own copies, taken before (`RrInputs`)
         if let (pipe, Some((_, view)), true, true) = (
             &self.pipelines.fsr_blend_normal,
             &self.targets.ao_depth,
@@ -12767,6 +13297,7 @@ impl Backend {
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
         let scene_gbuf = self.targets.gbuf.as_ref().map(|view| view.texture().format());
+        let scene_albedo = self.targets.albedo.is_some();
         // (until the noise is made `encode` generates it and allocates
         // nothing; after, it needs the targets made above)
         let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
@@ -12805,7 +13336,7 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, DEPTH_FORMAT);
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, scene_albedo, HDR_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
@@ -12931,6 +13462,25 @@ impl Backend {
                         },
                     },
                 }));
+                if let Some(al) = &self.targets.albedo {
+                    let (av, ar) = match &self.targets.albedo_msaa {
+                        Some(m) => (m, Some(al)),
+                        None => (al, None),
+                    };
+                    atts.push(Some(wgpu::RenderPassColorAttachment {
+                        view: av,
+                        depth_slice: None,
+                        resolve_target: ar,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: if ar.is_some() {
+                                wgpu::StoreOp::Discard
+                            } else {
+                                wgpu::StoreOp::Store
+                            },
+                        },
+                    }));
+                }
             }
             // start from a prepass depth (early-z, no overdraw): the
             // single-sample one, or with MSAA the multisampled one above
@@ -12962,7 +13512,7 @@ impl Backend {
                 if self.clouds_now
                     && let Some(clouds) = &self.clouds
                 {
-                    clouds.draw(&mut pass, scene_samples, scene_gbuf);
+                    clouds.draw(&mut pass, scene_samples, scene_gbuf, scene_albedo);
                     // (the composite has its own group 0)
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
@@ -13001,6 +13551,47 @@ impl Backend {
 
         prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
+        // Ray Reconstruction's depth: the surface scene pass A drew into the
+        // G-buffer, the impostor cards included, before the blended passes
+        // write theirs; then the blended faces opaque to the eye over it,
+        // into that depth and the motion, their normal marked for the
+        // guides (`RrInputs`)
+        if let Some(rr) = &self.targets.rr_inputs {
+            encoder.copy_texture_to_texture(
+                self.targets.depth_ss_tex.as_image_copy(),
+                rr.depth.0.as_image_copy(),
+                self.targets.depth_ss_tex.size(),
+            );
+            let faces = n_blend > 0 && normals.is_some() && !rr_inputs_behind();
+            if let (true, Some(rr_blend)) = (faces, &self.pipelines.rr_blend) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dlss rr blended faces"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &rr.motion.1,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &rr.depth.1,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, rr_blend, rg.blend, 0);
+                draw_under(&mut pass, rr_blend, rg.blend_under);
+            }
+        }
         // a cut-out photo: what shows through, from the depth the scene
         // pass ended with (cutout.rs)
         if f.cutout {
@@ -13948,6 +14539,10 @@ impl Backend {
                 // its textures at the display size (once its frames are
                 // done, Dlss::retire): FSR draws until the targets are made
                 // again
+                // (a capture's Ray Reconstruction given up is refused for
+                // every capture, dlss.rs: the next one compiles super
+                // resolution's pipelines first, `rebuild_targets`, and the
+                // window's are left as they are; this frame is FSR's)
                 if taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.failed()) {
                     taa.dlss = None;
                 }
@@ -13961,7 +14556,9 @@ impl Backend {
                     // the scene's alpha over DLSS's, after its commands
                     if let Some((dlss, _)) = &taa.dlss {
                         dlss.encode_alpha(&mut encoder);
-                        self.dlss_drew = Some(if dlss.dlaa() {
+                        self.dlss_drew = Some(if dlss.rr_on() {
+                            crate::DlssDrawing::Rr
+                        } else if dlss.dlaa() {
                             crate::DlssDrawing::Dlaa
                         } else {
                             crate::DlssDrawing::Dlss

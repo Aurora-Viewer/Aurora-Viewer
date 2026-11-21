@@ -11,6 +11,7 @@
 # The files go to $AURORA_DLSS_DIR, else $XDG_DATA_HOME/aurora-dlss, else
 # ~/.local/share/aurora-dlss: the folder the viewer looks in at start.
 #   libnvidia-ngx-dlss.so.<version>   copied from the SDK (lib/Linux_x86_64/rel)
+#   libnvidia-ngx-dlssd.so.<version>  the same, for Ray Reconstruction
 #   libsl_ngx.so                      sl-ngx, built here against the SDK
 set -euo pipefail
 
@@ -68,12 +69,12 @@ case ${1:-} in
     --remove)
         ! in_sdk "$dest" \
             || die "AURORA_DLSS_DIR is inside NVIDIA's DLSS SDK ($dest): nothing removed, choose another"
-        rm -f "$dest"/libnvidia-ngx-dlss.so.* "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME"
+        rm -f "$dest"/libnvidia-ngx-dlss.so.* "$dest"/libnvidia-ngx-dlssd.so.* "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME"
         old_files
         rmdir "$dest" 2>/dev/null || true
         echo "Removed NVIDIA DLSS from $dest. The viewer offers FSR alone from its next start."
         exit 0 ;;
-    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
 esac
 
@@ -91,7 +92,8 @@ if [[ -z $sdk ]]; then
     sdk=$work/DLSS
     git clone --quiet --depth 1 --filter=blob:none --no-checkout "$REPO" "$sdk"
     git -C "$sdk" sparse-checkout set --no-cone \
-        /LICENSE.txt /include/ /lib/Linux_x86_64/libnvsdk_ngx.a '/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.*'
+        /LICENSE.txt /include/ /lib/Linux_x86_64/libnvsdk_ngx.a '/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.*' \
+        '/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.*'
     git -C "$sdk" checkout --quiet
 fi
 
@@ -103,6 +105,10 @@ snippets=("$sdk"/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.*)
 [[ -f ${snippets[0]} ]] || die "no lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.* in $sdk"
 # the newest version, by number (310.10 after 310.9)
 snippet=$(printf '%s\n' "${snippets[@]}" | sort -V | tail -n 1)
+# Ray Reconstruction's library: optional, an older SDK has none
+rr_snippets=("$sdk"/lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.*)
+rr_snippet=
+[[ -f ${rr_snippets[0]} ]] && rr_snippet=$(printf '%s\n' "${rr_snippets[@]}" | sort -V | tail -n 1)
 # AURORA_DLSS_DIR inside an SDK (in_sdk), or the selected SDK's own folder
 # whatever its shape
 dest_real=$(realpath -m "$dest")
@@ -136,6 +142,8 @@ mkdir -p "$dest"
 # the new ones are in: a copy that fails (a full disk) leaves the working
 # install as it was, and the temporary files go with the script's exit.
 new_snippet=$(basename "$snippet")
+new_rr=
+[[ -z $rr_snippet ]] || new_rr=$(basename "$rr_snippet")
 staged=()
 trap 'rm -rf "$work"; rm -f "${staged[@]}"' EXIT
 stage() { # <source> <name> <mode>
@@ -147,7 +155,12 @@ stage() { # <source> <name> <mode>
 stage "$snippet" "$new_snippet" 755
 stage "$src/libsl_ngx.so" libsl_ngx.so 755
 stage "$licence" "$LICENCE_NAME" 644
-for name in "$new_snippet" libsl_ngx.so "$LICENCE_NAME"; do
+names=("$new_snippet" libsl_ngx.so "$LICENCE_NAME")
+if [[ -n $new_rr ]]; then
+    stage "$rr_snippet" "$new_rr" 755
+    names+=("$new_rr")
+fi
+for name in "${names[@]}"; do
     mv -f "$dest/.$name.aurora-new" "$dest/$name"
 done
 staged=()
@@ -155,10 +168,15 @@ shopt -s nullglob
 for old in "$dest"/libnvidia-ngx-dlss.so.*; do
     [[ $(basename "$old") == "$new_snippet" ]] || rm -f "$old"
 done
+# (Ray Reconstruction's too: all of them when this SDK has none)
+for old in "$dest"/libnvidia-ngx-dlssd.so.*; do
+    [[ $(basename "$old") == "$new_rr" ]] || rm -f "$old"
+done
 shopt -u nullglob
 old_files
 
 echo
-echo "Installed $(basename "$snippet") and libsl_ngx.so in $dest."
+echo "Installed $(basename "$snippet")${rr_snippet:+, $(basename "$rr_snippet")} and libsl_ngx.so in $dest."
+[[ -n $rr_snippet ]] || echo "This SDK has no Ray Reconstruction library (libnvidia-ngx-dlssd.so.*): Ray Reconstruction uses the driver's own, if it has one."
 echo "Restart the viewer, then choose NVIDIA DLSS under Preferences > Graphics > Anti-aliasing."
 echo "NVIDIA graphics cards only."

@@ -312,6 +312,7 @@ pub(super) fn effects_drawn(
         7 => match dlss {
             Some(aurora_render::DlssDrawing::Dlss) => word(true, format_args!("aa-dlss{}", settings.fsr_quality)),
             Some(aurora_render::DlssDrawing::Dlaa) => word(true, format_args!("aa-dlaa")),
+            Some(aurora_render::DlssDrawing::Rr) => word(true, format_args!("aa-dlss-rr{}", settings.fsr_quality)),
             None => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
         },
         _ => {}
@@ -685,6 +686,22 @@ mod tests {
         // the report keeps both DLSS words
         assert!(crate::crash::summary_state_value(&dlss).is_some(), "{dlss}");
         assert!(crate::crash::summary_state_value(&dlaa).is_some(), "{dlaa}");
+    }
+
+    #[test]
+    fn a_ray_reconstruction_frame_is_named_for_it() {
+        let settings = crate::settings::Settings {
+            antialiasing: 7,
+            fsr_quality: 3,
+            dlss: true,
+            ..Default::default()
+        };
+        let drawn = (settings.shadow_quality, settings.ssao);
+        let rr = effects_drawn(&settings, drawn, false, Some(aurora_render::DlssDrawing::Rr));
+        assert!(rr.split(',').any(|w| w == "aa-dlss-rr3"), "{rr}");
+        assert!(!rr.contains("aa-fsr") && !rr.split(',').any(|w| w == "aa-dlss3"), "{rr}");
+        // the report keeps the word
+        assert!(crate::crash::summary_state_value(&rr).is_some(), "{rr}");
     }
 
     #[test]

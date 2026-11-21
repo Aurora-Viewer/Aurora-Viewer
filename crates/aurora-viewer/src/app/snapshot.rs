@@ -1503,6 +1503,12 @@ impl App {
             || self.capture_360.busy()
     }
 
+    /// A photo is being drawn in parts, waits between them included
+    /// (`FrameParams::photo_job`).
+    pub(super) fn photo_job_open(&self) -> bool {
+        self.snapshots.job.is_some()
+    }
+
     /// Any photo work that still owns the renderer's snapshot slot: a
     /// part or a preview drawn or awaited, a request out, an answer not yet
     /// taken (a 360° capture waits for all of it).

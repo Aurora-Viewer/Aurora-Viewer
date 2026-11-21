@@ -969,7 +969,9 @@ impl Gtao {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: NORMAL_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // (copied for DLSS Ray Reconstruction before the blended faces
+            // are drawn in, renderer.rs `RrInputs`)
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         }));
         let group = |layout: &wgpu::BindGroupLayout, entries: &[(u32, &wgpu::TextureView)]| {

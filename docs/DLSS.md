@@ -81,7 +81,8 @@ anti-aliasing chosen in such a build turns DLSS off in the settings, so
 the DLSS build does not pick it again; only opening Preferences there
 leaves it on.
 Help › About, the Dev Toolbox and the crash report name what drew the last
-frame: NVIDIA DLSS or DLAA, or FSR 3.1 while it stands in for DLSS.
+frame: NVIDIA DLSS, DLAA or DLSS Ray Reconstruction, or FSR 3.1 while it
+stands in for DLSS.
 While the window is being resized FSR draws, and DLSS is made once the
 size has held for a moment.
 With stochastic transparency on, the transparency pass keeps its own
@@ -94,7 +95,8 @@ On Linux the folder is `$AURORA_DLSS_DIR`, else
 `$XDG_DATA_HOME/aurora-dlss`, else `~/.local/share/aurora-dlss`:
 
 - `libnvidia-ngx-dlss.so.<version>`, copied from the SDK's
-  `lib/Linux_x86_64/rel`;
+  `lib/Linux_x86_64/rel`, and `libnvidia-ngx-dlssd.so.<version>`
+  beside it for Ray Reconstruction (optional: the driver ships its own);
 - `libsl_ngx.so`, sl-ngx built against the SDK
   (`make DLSS_SDK=<the SDK>`). It holds NVIDIA's NGX core from the SDK's
   `libnvsdk_ngx.a`: keep it for your own use;
@@ -106,6 +108,70 @@ The viewer names its Vulkan instance and device to sl-ngx
 To update DLSS, run the setup again. To remove it:
 `./dlss-setup.sh --remove`. Both refuse an `AURORA_DLSS_DIR` anywhere
 inside an SDK checkout.
+
+## Ray Reconstruction
+
+With DLSS on, Preferences › Graphics › Anti-aliasing › **Ray Reconstruction**
+(experimental, off by default) has DLSS also denoise the ray-traced
+shadows, lights, indirect light and reflections. The scene pass then draws
+its guides (normals, roughness, metallic and base colour) beside the image.
+The traced shadows' and lights' own à-trous filter steps aside; their
+temporal history stays, and so do the indirect light's and the reflections'
+own filters (the reflections hand DLSS no hit distance or motion of their
+own). Its model (Automatic, D, E, F) is chosen under it while it is on;
+super resolution's model, changed while it draws, leaves it as it is.
+DLSS reads one surface for the depth, the motion and the guides, as
+NVIDIA's Ray Reconstruction guide asks: the opaque surface, the impostor
+cards (moved by the camera through their depth), and the blended faces
+opaque to the eye (heads, bodies, hair that look solid), which give their
+own depth, motion and mesh normal, matte, with their colour standing for
+their base colour. Fainter blended faces (glass, a soft strand edge) and
+the water keep the surface behind them in all three, the guide's choice
+for a transparent surface without reflection motion of its own: they are
+in the image alone. Deep snow is a known limit: its raised surface is drawn
+after the guides are taken, so its edges move with the ground buried under
+it. So is an object derezzing: the guides test its texture's alpha
+without the fade, so its fading texels keep their guides until they are
+gone. Streamline's camera matrices are row major, as NVIDIA's guide
+says.
+
+It needs a card and driver with Ray Reconstruction (the choice is greyed
+while it is off, otherwise; on, it can always be turned off, and a note
+under it says why it cannot draw, or that ray tracing and the shadows must
+be on) and NVIDIA's Ray Reconstruction
+library. On Linux the driver
+ships one (`libnvidia-ngx-builtin-dlssd.so`, in nvidia-utils 620), which
+NGX uses when the folder has none; the setup also installs the SDK's copy,
+which may be newer. On Windows it comes with Streamline's release. It costs more than super resolution alone. With
+ray tracing or the shadows off, or where the card cannot trace, DLSS draws
+super resolution and the guides are not drawn; the choice stays saved. If
+Streamline refuses Ray Reconstruction, or the video memory refuses its guides or
+the render targets only it reads, DLSS falls back to super resolution, and
+the log says why; the refusal holds for that card until **Try again**
+under it (shown while it is refused, on or off), or another model, asks
+Streamline again. A photo or film frame for which Streamline, the video memory or its
+evaluate refuses Ray Reconstruction is drawn with super resolution, at once
+where it can be (a refused feature or guides), from the next frame or 360°
+face otherwise; the frame whose evaluate failed is itself drawn by FSR.
+From there every capture, of any size and in any later photo or film,
+draws super resolution until **Try again** (shown then too, with a note
+under the choice), another model or the next device, while the window
+goes on drawing Ray Reconstruction. The tiles of a tiled photo drawn
+before the refusal stay Ray Reconstruction's. The pipelines without the
+guides are compiled once, at the next capture; the window's frames between
+captures draw super resolution with them until no capture has followed for
+two seconds, then Ray Reconstruction again, so that a film does not
+compile them again at every frame; **Try again** or another model chosen
+during a film takes effect then, and the retry they ask during a tiled
+photo or a 360° capture at its end, so that its later tiles or faces do
+not take up Ray Reconstruction its first drew without (another model
+itself applies at once, as any setting changed during a photo does). Pipelines compiled for a settings change while a photo is drawn wait
+for its end, the frames between its tiles included: a tiled photo's tiles
+and a 360° capture's faces keep the pipelines they began with (a film's
+frames each keep theirs). A Vulkan instance or device that lacks Ray
+Reconstruction's extensions, or refuses them, is made with super
+resolution's alone (the log says which are missing), and DLSS draws super
+resolution there.
 
 ## Windows
 
@@ -138,6 +204,7 @@ files come from the release's `bin\x64`, unchanged:
 
 - `sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`: NVIDIA Streamline;
 - `nvngx_dlss.dll`: the DLSS model;
+- `sl.dlss_d.dll` and `nvngx_dlssd.dll`: the same, for Ray Reconstruction;
 - `NVIDIA-DLSS-LICENSE.txt`, NVIDIA's licence you accepted, and
   `STREAMLINE-LICENSE.txt`, Streamline's own (MIT).
 
@@ -182,4 +249,12 @@ more than K does.
 - `AURORA_DLSS_DIR=<folder>` looks for the files in another folder.
 - `AURORA_DLSS_PRESET=<n>` uses NVIDIA's preset number `n` whatever the
   setting (11 K, 12 L, 13 M; 0 NVIDIA's own choice).
+- `AURORA_DLSS_RR=1` or `0` turns Ray Reconstruction on or off for one
+  launch, whatever the setting; `AURORA_DLSS_RR_PRESET=<n>` uses NVIDIA's
+  Ray Reconstruction preset `n` (4 D, 5 E, 6 F; 0 NVIDIA's own).
+  `AURORA_DLSS_RR_FAIL=1` has the viewer refuse Ray Reconstruction as if
+  Streamline had, to check the fall back to super resolution. Its other debug
+  variables (`AURORA_DLSS_RR_SHOW`, `AURORA_DLSS_RR_TRANSPOSED`,
+  `AURORA_DLSS_RR_BEHIND`) and the traced passes' denoisers
+  (`AURORA_RT_RAW`, `AURORA_RT_GI_RAW`) are in docs/TESTING.md.
 - The log's `DLSS:` lines say what was found and why DLSS did not start.
