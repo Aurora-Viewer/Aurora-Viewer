@@ -1086,8 +1086,8 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
-            crate::world::appearance::Action::OutfitBatch(outfits) => {
-                self.open_outfit_batch(outfits);
+            crate::world::appearance::Action::OutfitBatch(outfits, folder) => {
+                self.open_outfit_batch(outfits, folder);
                 return;
             }
             _ => {}
