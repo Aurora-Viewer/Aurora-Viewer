@@ -8029,7 +8029,7 @@ photo-light-time-current = 現在
 photo-light-exposure = 露光
 photo-light-exposure-reset = 初期設定の露出に戻す
 photo-light-pause-clouds = 雲を止める
-photo-light-pause-clouds-hint = 静止した空にします。
+photo-light-pause-clouds-hint = 静止した空にします。セッションの間、解除するまで続きます。
 photo-light-attached = 装着されたライト
 photo-light-attached-hint = アバターが装着しているライト（フェイスライト）。このウィンドウを閉じるとすべて元に戻ります。
 photo-light-sky = 空
@@ -15826,3 +15826,12 @@ game-control-action-escape = ESC
 
 picker-local-newest = 追加順（新しい順）
 picker-local-name = 名前順
+
+phototools-environment-settings = 環境設定
+phototools-quick-environments = クイック環境
+phototools-environment-presets = 環境プリセット
+phototools-general-render = 一般描画設定
+phototools-render-options = 描画オプション
+
+ui-bars-clouds-paused = 雲を停止中
+ui-bars-clouds-paused-tip = このセッションでは雲を止めています。クリックで再開します。

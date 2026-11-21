@@ -8100,7 +8100,7 @@ photo-light-time-current = Current
 photo-light-exposure = Exposure
 photo-light-exposure-reset = Back to the exposure of Preferences
 photo-light-pause-clouds = Pause the clouds
-photo-light-pause-clouds-hint = For a still sky.
+photo-light-pause-clouds-hint = For a still sky. The pause lasts the session, until you turn it off.
 photo-light-attached = Worn lights
 photo-light-attached-hint = Lights worn by avatars (face lights). Everything comes back when this window closes.
 photo-light-sky = Sky
@@ -15959,3 +15959,12 @@ game-control-action-escape = ESC
 
 picker-local-newest = Newest first
 picker-local-name = Name A–Z
+
+phototools-environment-settings = Environment settings
+phototools-quick-environments = Quick environments
+phototools-environment-presets = Environment presets
+phototools-general-render = General render settings
+phototools-render-options = Render options
+
+ui-bars-clouds-paused = Clouds paused
+ui-bars-clouds-paused-tip = The clouds are held still for this session. Click to let them move again.

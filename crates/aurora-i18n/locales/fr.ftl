@@ -8108,7 +8108,7 @@ photo-light-time-current = Actuel
 photo-light-exposure = Exposition
 photo-light-exposure-reset = Revenir à l'exposition des Préférences
 photo-light-pause-clouds = Figer les nuages
-photo-light-pause-clouds-hint = Pour un ciel immobile.
+photo-light-pause-clouds-hint = Pour un ciel immobile. La pause dure toute la session, jusqu'à ce que vous la coupiez.
 photo-light-attached = Lumières portées
 photo-light-attached-hint = Les lumières portées par les avatars (face lights). Tout revient à la fermeture de cette fenêtre.
 photo-light-sky = Ciel
@@ -15965,3 +15965,12 @@ game-control-action-escape = Échap
 
 picker-local-newest = Plus récentes
 picker-local-name = Nom A–Z
+
+phototools-environment-settings = Paramètres d'environnement
+phototools-quick-environments = Environnements rapides
+phototools-environment-presets = Préréglages d'environnement
+phototools-general-render = Paramètres généraux du rendu
+phototools-render-options = Options de rendu
+
+ui-bars-clouds-paused = Nuages figés
+ui-bars-clouds-paused-tip = Les nuages sont figés pour cette session. Cliquez pour les relâcher.

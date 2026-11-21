@@ -116,6 +116,7 @@ pub mod pay;
 pub mod people;
 pub mod perf;
 pub mod photo_reel;
+pub mod phototools;
 pub mod physics;
 pub mod place_card;
 pub mod place_details;
@@ -256,6 +257,8 @@ pub struct Panels {
     pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
+    /// "Phototools" (toolbar `phototools`).
+    pub phototools: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// The Director (toolbar `director`): its window and its timeline.
@@ -349,6 +352,7 @@ impl Panels {
             web_browser: false,
             avatar_welcome: false,
             destinations: false,
+            phototools: false,
             quick_prefs: false,
             director: false,
             second_camera: false,
