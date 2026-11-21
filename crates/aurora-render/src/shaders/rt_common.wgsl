@@ -263,13 +263,80 @@ fn diffuse_uv(record: u32, uv: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(s * so.x + so.z + 0.5, 1.0 - (t * so.y + so.w + 0.5));
 }
 
+// A mip past any texture's last: its 1×1, the texture's mean colour.
+const MEAN_LOD: f32 = 16.0;
+
+// The four layers' shares of a terrain at the composition `c` (0 to 3),
+// as env.wgsl `terrain_weights` mixes them: mix(mix(d3, d2, R(c - 2)),
+// mix(d1, d0, R(c)), R(c - 1)), its ramp R (the Legacy Viewer's
+// alpha_gradient.tga, eased at both ends) taken as a straight line, which
+// stays within 0.05 of it. The PBR terrain's ramp shifts by a noise along
+// the ground, a ray's hit takes its mean.
+fn terrain_shares(c: f32) -> vec4<f32> {
+    let x = clamp(c, 0.0, 3.0);
+    let a1 = clamp(1.0 - x, 0.0, 1.0);
+    let a2 = clamp(3.0 - x, 0.0, 1.0);
+    let af = clamp(2.0 - x, 0.0, 1.0);
+    return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
+}
+
+// The linear base colour of a terrain `record` where its composition is
+// `c` (its vertices' first texture coordinate, world/terrain.rs
+// `build_chunk`), for a ray's hit: the four layers' textures (the PBR
+// terrain's base colour maps) taken at their mean colour, mixed by their
+// shares, as env.wgsl `terrain_color` and `terrain_material` mix them on
+// screen. The detail of the textures is left: the indirect light and the
+// reflections it serves take a ground's colour over metres, and the hit
+// has no place on the region for them. A paint map's shares are its mean
+// too.
+fn terrain_hit_color(record: u32, c: f32, pbr: bool) -> vec3<f32> {
+    let layers = record_vec(record, RECORD_TEX);
+    var w = terrain_shares(c);
+    if (!pbr) {
+        if (layers.x == 0u && layers.y == 0u) {
+            // no detail textures: env.wgsl `terrain_color`'s flat palette
+            let flat = vec3<f32>(0.62, 0.55, 0.40) * w.x + vec3<f32>(0.20, 0.32, 0.14) * w.y
+                + vec3<f32>(0.30, 0.25, 0.18) * w.z + vec3<f32>(0.42, 0.42, 0.44) * w.w;
+            return srgb_to_linear(flat) * 1.6;
+        }
+        let mixed = sample_tex_level(layers.x, vec2<f32>(0.5), MEAN_LOD).rgb * w.x
+            + sample_tex_level(layers.y, vec2<f32>(0.5), MEAN_LOD).rgb * w.y
+            + sample_tex_level(layers.z, vec2<f32>(0.5), MEAN_LOD).rgb * w.z
+            + sample_tex_level(layers.w, vec2<f32>(0.5), MEAN_LOD).rgb * w.w;
+        return srgb_to_linear(mixed);
+    }
+    let paint = record_vec(record, RECORD_FLAGS).z;
+    if (paint != 0u) {
+        // env.wgsl `terrain_mix_weights`: slots 2 to 4 in linear RGB, the
+        // first the remainder
+        var other = max(sample_tex_level(paint, vec2<f32>(0.5), MEAN_LOD).rgb, vec3<f32>(0.0));
+        other /= max(1.0, dot(other, vec3<f32>(1.0)));
+        w = vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
+    } else {
+        // (the material cutoff of `terrain_mix_weights`)
+        w = max(w - vec4<f32>(0.1), vec4<f32>(0.0));
+        w /= max(dot(w, vec4<f32>(1.0)), 1e-6);
+    }
+    var color = vec3<f32>(0.0);
+    for (var i = 0u; i < 4u; i++) {
+        if (w[i] <= 0.0) {
+            continue;
+        }
+        // a layer is a material's record (terrain_surface.rs `layer_record`)
+        let layer = layers[i];
+        let tex = sample_tex_level(record_vec(layer, RECORD_TEX).x, vec2<f32>(0.5), MEAN_LOD).rgb;
+        color += srgb_to_linear(tex) * record_vecf(layer, RECORD_BASE_COLOR).rgb * w[i];
+    }
+    return color;
+}
+
 // The linear base colour and alpha of `record` at `uv`, from its texture's
-// mip `lod` (object.wgsl `eval_material_base`). Terrain, shaded by its own
-// path, reads as a mid brown-green.
+// mip `lod` (object.wgsl `eval_material_base`); a terrain's, by
+// `terrain_hit_color`, is opaque (its masked layers are not traced yet).
 fn base_color(record: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
     let flags = record_vec(record, RECORD_FLAGS).x;
     if ((flags & FLAG_TERRAIN) != 0u) {
-        return vec4<f32>(0.12, 0.11, 0.07, 1.0);
+        return vec4<f32>(terrain_hit_color(record, uv.x, (flags & FLAG_PBR) != 0u), 1.0);
     }
     let tint = record_vecf(record, RECORD_BASE_COLOR);
     let tex = sample_tex_level(record_vec(record, RECORD_TEX).x, diffuse_uv(record, uv), lod);
