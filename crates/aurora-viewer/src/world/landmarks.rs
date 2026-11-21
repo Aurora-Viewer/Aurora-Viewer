@@ -126,6 +126,7 @@ pub struct Landmarks {
     pub version: u64,
     /// [`named`] for the inventory generation it was built from.
     named: Option<(u64, std::sync::Arc<[Named]>)>,
+    saved: Option<(u64, std::sync::Arc<[SavedPlace]>)>,
 }
 
 /// LLViewerParcelMgr::inAgentParcel: is the global position `pos` on the
@@ -145,6 +146,18 @@ pub fn in_parcel(bitmap: &[u8], origin: (u32, u32), pos: DVec3) -> bool {
 }
 
 impl Landmarks {
+    /// Destinations available to Command Search, independent of asset fetches.
+    pub(crate) fn saved_places(&mut self, inv: &Inventory) -> std::sync::Arc<[SavedPlace]> {
+        if let Some((generation, places)) = &self.saved
+            && *generation == inv.generation
+        {
+            return places.clone();
+        }
+        let places: std::sync::Arc<[_]> = saved_places(inv).into();
+        self.saved = Some((inv.generation, places.clone()));
+        places
+    }
+
     /// [`named`], walked again only when the inventory changed.
     pub fn named(&mut self, inv: &Inventory) -> std::sync::Arc<[Named]> {
         match &self.named {
@@ -389,6 +402,52 @@ pub struct Named {
     /// `name` in lower case, the form it is matched in.
     pub lower: String,
     pub asset: Uuid,
+}
+
+#[derive(Debug)]
+pub(crate) struct SavedPlace {
+    pub name: String,
+    pub asset: Uuid,
+    pub favorite: bool,
+    /// Path below the localized Favorites or Landmarks root.
+    pub folders: String,
+}
+
+fn saved_places(inv: &Inventory) -> Vec<SavedPlace> {
+    let mut places = Vec::new();
+    let mut assets = HashSet::new();
+    let mut seen_folders = HashSet::new();
+    for (kind, favorite) in [(FOLDER_FAVORITES, true), (FOLDER_LANDMARKS, false)] {
+        let Some(root) = super::appearance::system_folder(inv, kind) else {
+            continue;
+        };
+        let mut stack = vec![(root, String::new())];
+        while let Some((id, path)) = stack.pop() {
+            let Some(folder) = inv.folders.get(&id).filter(|f| !f.library && seen_folders.insert(id)) else {
+                continue;
+            };
+            for item in folder.items.iter().filter_map(|id| inventory_item(inv, *id)) {
+                if !item.asset_id.is_nil() && assets.insert(item.asset_id) {
+                    places.push(SavedPlace {
+                        name: item.name.clone(),
+                        asset: item.asset_id,
+                        favorite,
+                        folders: path.clone(),
+                    });
+                }
+            }
+            for child in folder.children.iter().rev().filter_map(|id| inv.folders.get(id)) {
+                let child_path = if path.is_empty() {
+                    child.info.name.clone()
+                } else {
+                    format!("{path} › {}", child.info.name)
+                };
+                stack.push((child.info.id, child_path));
+            }
+        }
+    }
+    places.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then_with(|| a.folders.cmp(&b.folders)));
+    places
 }
 
 /// The landmarks of the Favorites tree, then of the Landmarks tree
@@ -743,6 +802,13 @@ mod tests {
             ],
             "the Favorites copy wins; subfolders and links count; other folders and assetless items do not"
         );
+        let mut lookup = Landmarks::default();
+        let saved = lookup.saved_places(&inv);
+        assert_eq!(saved.len(), 5, "equal names with different assets stay searchable");
+        assert!(saved.iter().any(|p| p.name == "Elsewhere" && p.folders == "f21" && !p.favorite));
+        assert!(saved.iter().any(|p| p.name == "Chonk Landing" && p.favorite));
+        assert!(std::sync::Arc::ptr_eq(&saved, &lookup.saved_places(&inv)));
+        assert!(lookup.take_wanted().is_empty());
     }
 
     #[test]

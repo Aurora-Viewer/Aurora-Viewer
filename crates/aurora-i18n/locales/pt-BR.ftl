@@ -15820,3 +15820,6 @@ game-control-action-boom-down = Descer câmera ↓
 game-control-action-escape = Esc
 picker-local-newest = Mais recentes primeiro
 picker-local-name = Nome A–Z
+
+command-search-title = Busca de comandos
+command-search-enable = Ativar a busca de comandos

@@ -1397,6 +1397,8 @@ pub struct Settings {
     /// The full-width top and bottom bars of Firestorm instead of the glass
     /// islands of `ui/bars/islands.rs`.
     pub classic_bars: bool,
+    /// Keyboard search for viewer actions, enabled by default.
+    pub command_search: bool,
     /// The place island stretches to the islands on its right (on by
     /// default); off, it is as wide as its content.
     pub place_bar_stretch: bool,
@@ -2728,6 +2730,7 @@ impl Default for Settings {
             classic_pay_window: false,
             legacy_money_tracker: false,
             classic_bars: false,
+            command_search: true,
             place_bar_stretch: true,
             place_bar_rights_text: false,
             favorites_access: FavoritesAccess::Menu,
@@ -4320,6 +4323,17 @@ mod tests {
         let restored: Settings = serde_json::from_slice(&saved).expect("restore preferences");
         assert_eq!(restored.audio.output_device, "Speakers");
         assert_eq!(restored.audio.voice_output_device, "Headset");
+    }
+
+    #[test]
+    fn command_search_defaults_on_and_keeps_an_explicit_disabled_choice() {
+        let old: super::Settings = serde_json::from_str("{}").unwrap();
+        assert!(old.command_search);
+        let disabled: super::Settings = serde_json::from_str(r#"{"command_search":false}"#).unwrap();
+        assert!(!disabled.command_search);
+        let saved = serde_json::to_string(&disabled).unwrap();
+        let restored: super::Settings = serde_json::from_str(&saved).unwrap();
+        assert!(!restored.command_search);
     }
 
     #[test]

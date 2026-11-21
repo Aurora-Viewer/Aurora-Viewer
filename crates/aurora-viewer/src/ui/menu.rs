@@ -456,7 +456,11 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
-    let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
+    let keyed = if enabled && sense.senses_click() {
+        keyboard_row(label)
+    } else {
+        None
+    };
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -785,11 +789,15 @@ const TAG_PAD: f32 = 6.0;
 /// Entry with a detail at its right end (where a landmark leads); true when
 /// clicked (the menu closes).
 pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str) -> bool {
-    let clicked = row(ui, p, icon, label, true, End::Keys(detail), false).clicked();
+    item_detail_if(ui, p, icon, label, detail, true)
+}
+
+pub(crate) fn item_detail_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str, enabled: bool) -> bool {
+    let clicked = row(ui, p, icon, label, enabled, End::Keys(detail), false).clicked();
     if clicked {
         ui.close();
     }
-    clicked
+    clicked && enabled
 }
 
 /// Entry with a small teal tag at its right end (a suggestion); true when
@@ -944,9 +952,7 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
     // a search lists the entries of an available sub-menu in place
     if enabled && filtering() {
-        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.push(label.to_owned())));
-        body(ui);
-        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
+        search_path(label, || body(ui));
         return hidden(ui);
     }
     let open = enabled && sub_menu_open(ui);
@@ -1220,6 +1226,8 @@ struct Filter {
     selectable: usize,
     selected: usize,
     pointed: Option<usize>,
+    prefer_exact: bool,
+    exact: Option<usize>,
     activate: bool,
     scroll: bool,
 }
@@ -1234,11 +1242,14 @@ struct KeyRow {
 }
 
 /// The next selectable row of the filtered menu, `None` when not filtering.
-fn keyboard_row() -> Option<KeyRow> {
+fn keyboard_row(label: &str) -> Option<KeyRow> {
     FILTER.with_borrow_mut(|f| {
         let f = f.as_mut()?;
         let index = f.selectable;
         f.selectable += 1;
+        if f.prefer_exact && f.exact.is_none() && query_words(label) == f.words {
+            f.exact = Some(index);
+        }
         Some(KeyRow {
             index,
             selected: index == f.selected,
@@ -1286,8 +1297,19 @@ thread_local! {
 
 /// A [`searchable`] menu is being filtered: its rows not matching, its
 /// separators and its titles are not drawn.
-fn filtering() -> bool {
+pub(crate) fn filtering() -> bool {
     FILTER.with_borrow(Option::is_some)
+}
+
+pub(crate) fn search_path(label: &str, body: impl FnOnce()) {
+    let pushed = !label.is_empty() && filtering();
+    if pushed {
+        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.push(label.to_owned())));
+    }
+    body();
+    if pushed {
+        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
+    }
 }
 
 /// The words of a query, lower case.
@@ -1380,10 +1402,14 @@ fn hidden(ui: &mut Ui) -> egui::Response {
 /// down arrows move the selection (wrapping around) and Enter clicks it.
 /// Aurora's own: the Legacy Viewer's menus have no search.
 pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
+    searchable_with_prompt(ui, p, aurora_i18n::tr!("common-search"), false, body);
+}
+
+pub(crate) fn searchable_with_prompt(ui: &mut Ui, p: &Palette, prompt: &str, prefer_exact: bool, body: impl FnOnce(&mut Ui)) {
     let id = ui.layer_id().id.with("aurora_menu_search");
     let frame = ui.ctx().cumulative_frame_nr();
     let mut state = ui.data(|d| d.get_temp::<SearchState>(id)).unwrap_or_default();
-    let opened = state.frame + 1 < frame;
+    let opened = state.field.is_none() || state.frame + 1 < frame;
     if opened {
         state = SearchState::default();
     }
@@ -1404,12 +1430,13 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     };
     let before = state.query.clone();
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
-    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut state.query, aurora_i18n::tr!("common-search"), w));
+    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut state.query, prompt, w));
     if opened {
         field.inner.request_focus();
     }
     state.field = Some(field.inner.id);
-    state.selected = if state.query == before {
+    let query_changed = state.query != before;
+    state.selected = if !query_changed {
         step_selection(state.selected, state.count, down, up)
     } else {
         0
@@ -1435,7 +1462,9 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
         selectable: 0,
         selected: state.selected,
         pointed: None,
-        activate: enter,
+        prefer_exact,
+        exact: None,
+        activate: enter && !query_changed,
         scroll: down || up,
     }));
     // a broad query lists more entries than the window holds: they scroll
@@ -1450,7 +1479,7 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     let found = filter.as_ref().is_some_and(|f| f.matches > 0);
     if let Some(f) = filter {
         state.count = f.selectable;
-        state.selected = f.pointed.unwrap_or(state.selected);
+        state.selected = f.pointed.or(f.exact.filter(|_| query_changed)).unwrap_or(state.selected);
         ui.ctx().data_mut(|d| d.insert_temp(id, state.clone()));
     }
     if !found {

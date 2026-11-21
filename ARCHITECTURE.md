@@ -2130,6 +2130,20 @@ remain in progress.
 
 ## `aurora-viewer` in detail
 
+`app/command_search.rs` owns the rebindable world shortcut, enabled by default. It
+yields to existing viewer and gesture bindings and keeps palette keystrokes
+out of movement and chat. `ui/command_search.rs` hosts the shared main
+menus in a keyboard-focused popup and prefers exact labels when selecting
+the initial result. Actions follow the existing bar dispatch.
+The popup also enumerates Preferences pages and tabs, toolbar-only actions,
+and saved destinations. `world/landmarks.rs` caches those destinations by
+inventory generation, collapses duplicate asset references, and preserves
+folder paths for distinct places with the same name. The app routes map and
+teleport selections through the existing landmark flows.
+Sky, water and day-cycle results reuse the Environment selector's cached
+catalog and inventory scan. Selection dispatches its existing local environment
+action with the current environment restrictions.
+
 Inventory local-file thumbnails prepare whole-image square scaling
 (LLViewerTextureList::convertToUploadFile with force_square), proportional fit
 with transparent margins, and a movable crop on bounded background jobs in

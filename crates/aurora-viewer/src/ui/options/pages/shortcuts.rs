@@ -5,7 +5,7 @@
 //! keys.
 
 use super::super::binding_cell;
-use super::super::cx::{Custom, Cx};
+use super::super::cx::{Custom, Cx, field};
 use crate::keybinds::Action;
 use crate::settings::Settings;
 use std::ops::Range;
@@ -49,6 +49,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
         .map_or(&sections[..0], |range| &sections[range.clone()]);
     for (section, actions) in shown {
         cx.group(section, |cx| {
+            if actions.iter().any(|(action, _)| *action == Action::CommandSearch) {
+                cx.toggle(aurora_i18n::tr!("command-search-enable"), "", &field!(command_search));
+            }
             if actions.iter().any(|(action, _)| *action == Action::HudDrag) {
                 cx.note(aurora_i18n::tr!("hud-local-scale-help"));
             }

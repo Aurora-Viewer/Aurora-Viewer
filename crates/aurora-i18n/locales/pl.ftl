@@ -16040,3 +16040,6 @@ game-control-action-boom-down = Jazda pionowa ↓
 game-control-action-escape = ESC
 picker-local-newest = Od najnowszych
 picker-local-name = Nazwa A–Z
+
+command-search-title = Wyszukiwanie poleceń
+command-search-enable = Włącz wyszukiwanie poleceń

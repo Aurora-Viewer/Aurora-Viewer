@@ -1119,6 +1119,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
 | `AURORA_DEMO_MENU_SEARCH=<query>` | Wolf menu filtered by its search field |
+| `AURORA_DEMO_COMMAND_SEARCH=<query>[,run or ,confirm]` | Filters or runs a result in Command Search, or forces `off` / `closed` for profiling |
 | `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
@@ -1819,6 +1820,24 @@ when unfocused") is ignored during a screenshot.
   menu state: a walked chord must never open a context menu, and an ordinary
   subsequent right click must still work. Interactive objects, HUDs, media,
   build tools, modified clicks and ground double-click actions retain priority.
+- **`AURORA_DEMO_COMMAND_SEARCH=<query>[,run]`** opens the palette at frame 620
+  and types the query at 630. Capture frame 640 to inspect the results and
+  focus. With `AURORA_DEMO_COMMAND_SEARCH=world map,run` in English, Enter at
+  frame 650 opens World Map and closes the palette. Capture frame 700.
+  Other English queries are `preferences privacy,run`, `toolbar buttons library,run`,
+  `Aurora Lagoon`, and `show on map Aurora Lagoon,run`. Use
+  `AURORA_DEMO_PLACES=favorites:links` for the saved place link fixture and
+  leave `AURORA_DEMO_INVENTORY` unset. `Aurora Lagoon,confirm` uses Enter and
+  opens the existing teleport confirmation even if the demo preference is off.
+  For before/after profiling with `AURORA_PROFILE=1`, use `off` (disabled),
+  `closed` (enabled with the palette closed), or a broad query such as `e`
+  (open with results). These modes do not save the preference. Command Search
+  is enabled by default, including when loading older settings without this
+  field. An explicitly saved disabled choice is preserved.
+  Sky environment, Water environment and Day/Night also search the Environment
+  selector's presets. After its background inventory scan completes, search a
+  preset name and press Enter. Check the local sky, water or cycle changes and
+  that environment restrictions prevent selection.
 - **`AURORA_DEMO_MENU_SEARCH=<query>`**: the wolf menu of the top islands
   (the default bars; the click misses the wolf of the Legacy bars) is
   clicked at frames 540–541 and `query` is typed into its search field at

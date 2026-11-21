@@ -16174,3 +16174,6 @@ game-control-action-boom-down = Опустить камеру ↓
 game-control-action-escape = Esc
 picker-local-newest = Сначала новые
 picker-local-name = Имя А–Я
+
+command-search-title = Поиск команд
+command-search-enable = Включить поиск команд

@@ -15640,3 +15640,6 @@ game-control-action-boom-down = 相机下移 ↓
 game-control-action-escape = Esc
 picker-local-newest = 最新优先
 picker-local-name = 名称 A–Z
+
+command-search-title = 命令搜索
+command-search-enable = 启用命令搜索

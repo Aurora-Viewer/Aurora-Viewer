@@ -540,6 +540,10 @@ are planned or in progress: they are not in the viewer yet.
   shortcuts read ⌘ ⌥ ⇧, as macOS users expect. A gamepad's buttons,
   triggers and sticks are assigned by simply pressing them, and the flycam
   gets its own zoom controls.
+- **Find commands from the keyboard**: Ctrl+Shift+P opens Command Search,
+  enabled by default. Search menu commands, toolbar actions, Favorites and
+  Landmarks, Preferences pages, and sky, water and day-cycle presets. Change
+  its shortcut or turn it off in Preferences › Shortcuts › Windows.
 - **Copy what you need**: click a name in a profile to copy it, select and
   copy the text of a greyed-out field (a no-modify object's name, a
   parcel's media address), and copy an outfit's item names and creator

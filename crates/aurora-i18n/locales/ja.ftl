@@ -15875,3 +15875,5 @@ phototools-director-lens = ディレクターのウィンドウが開いてい�
 phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
 ui-options-dof-show-focus-point = フォーカス点を表示
 ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。
+command-search-title = コマンド検索
+command-search-enable = コマンド検索を有効にする

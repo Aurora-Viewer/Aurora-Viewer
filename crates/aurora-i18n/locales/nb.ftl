@@ -15660,3 +15660,6 @@ game-control-action-boom-down = Bom ↓
 game-control-action-escape = ESC
 picker-local-newest = Nyeste først
 picker-local-name = Navn A–Å
+
+command-search-title = Kommandosøk
+command-search-enable = Aktiver kommandosøk

@@ -16020,3 +16020,5 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+command-search-title = Recherche de commandes
+command-search-enable = Activer la recherche de commandes

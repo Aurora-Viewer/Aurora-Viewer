@@ -16003,3 +16003,6 @@ game-control-action-boom-down = Опускання ↓
 game-control-action-escape = ESC
 picker-local-newest = Спочатку найновіші
 picker-local-name = Назва А–Я
+
+command-search-title = Пошук команд
+command-search-enable = Увімкнути пошук команд
