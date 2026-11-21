@@ -321,6 +321,19 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
         return out;
     }
     let n = normal_at(px, d);
+    // Last frame showed `p` there only if its surface there was `p`, as its
+    // guide says (half resolution: the distance from last frame's eye and
+    // the normal, which faced that eye). A view that went through a thin
+    // wall saw its other side there, and its outer light lit the room for
+    // a second. (Looser than the photo's: the guide is of the 2×2's first
+    // pixel, a little off `p` on a face seen aslant.)
+    let q = min(vec2<i32>(before * 0.5), vec2<i32>(params.half.xy) - vec2<i32>(1));
+    let was = textureLoad(prev_guide, q, 0);
+    let expected = distance(p, params.prev_camera.xyz);
+    if (params.mode.w < 0.5 || was.z <= 0.0 || abs(was.z - expected) > 0.05 + 0.03 * expected
+        || dot(unpack_normal(was.xy), n) < 0.5) {
+        return out;
+    }
     out.light = textureLoad(scene_tex, vec2<i32>(before), 0).rgb;
     out.normal = select(n, -n, dot(n, dir) > 0.0);
     out.seen = true;
