@@ -205,6 +205,8 @@ pub enum InvAction {
     /// Preferences › Confirmations / Inventory: stop asking before a Trash
     /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
     StopConfirmingDelete,
+    /// A line in chat, for an inventory action asked from outside the window.
+    Notice(String),
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -388,6 +390,9 @@ pub enum EditDialog {
     /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
     Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
+    /// Delete of a selection holding worn clothing or attachments: take them
+    /// off first, then move the selection to the Trash.
+    DetachDelete(Vec<Uuid>),
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Box<replace_links::ReplaceLinks>),
@@ -441,6 +446,20 @@ pub struct InventoryWindow {
     pub additional: bool,
     pub state: Box<InventoryUi>,
     pub open: bool,
+}
+
+/// Whether an inventory window stays in the list this frame: open, the main
+/// panel, or closed with a document, confirmation or pending Detach and
+/// Delete of its own still running.
+fn keeps_window(w: &InventoryWindow) -> bool {
+    w.id == listings::PANEL
+        || w.open
+        || w.state.preview.is_some()
+        || w.state.dialog.is_some()
+        || w.state.move_to.is_some()
+        || w.state.thumbnail.item.is_some()
+        || w.state.bulk_permissions.active()
+        || w.state.detach_delete.is_some()
 }
 
 /// The additional window's id: one at a time, its place and size kept
@@ -617,6 +636,10 @@ pub struct InventoryUi {
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,
+    /// A confirmed Detach and Delete waiting for the items to come off.
+    detach_delete: Option<delete::DetachDelete>,
+    /// The open Detach and Delete confirmation came from the worn object's menu.
+    detach_from_world: bool,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
@@ -862,6 +885,47 @@ impl InventoryUi {
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
+    }
+
+    /// Demo: press the Detach and Delete confirmation's button
+    /// (`AURORA_DEMO_WORN=detach-delete-confirm`, `AURORA_DEMO_GESTURES=delete`).
+    pub fn demo_confirm_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts) -> Vec<InvAction> {
+        let mut actions = Vec::new();
+        if let Some(EditDialog::DetachDelete(ids)) = self.dialog.take() {
+            delete::start_detach(inv, self, prefs, facts, &mut actions, ids);
+        }
+        actions
+    }
+
+    /// Demo: whether a Detach and Delete still waits for the take-off.
+    pub fn demo_detach_waiting(&self) -> bool {
+        self.detach_delete.is_some()
+    }
+
+    /// "Detach and Delete" from the worn object's menu: ask the same
+    /// confirmation as Inventory's own entry, without opening the window.
+    /// Nothing opens while another dialog or a delete is under way; the
+    /// error says why it cannot be done, for chat.
+    pub fn ask_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts, id: Uuid) -> Result<(), String> {
+        if self.dialog.is_some() || self.pending.is_some() || self.pending_delete.is_some() || self.detach_delete.is_some() {
+            return Ok(());
+        }
+        if id.is_nil() || !delete::detach_allowed(inv, &[id], prefs, facts) {
+            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-cannot").into());
+        }
+        self.detach_from_world = true;
+        self.dialog = Some(EditDialog::DetachDelete(vec![id]));
+        Ok(())
+    }
+
+    /// The app detached a Detach and Delete's objects itself (an incomplete
+    /// outfit or a temporary attachment, `World::recover_attachment_removal`):
+    /// no outfit update runs, so the wait must not read that as refused.
+    pub fn take_off_sent(&mut self) {
+        let windows = self.windows.iter_mut().map(|w| &mut w.state.detach_delete);
+        for pending in std::iter::once(&mut self.detach_delete).chain(windows).flatten() {
+            pending.take_off_sent();
+        }
     }
 
     fn show_original_in(&mut self, inv: &Inventory, id: Uuid, tab: usize) {
@@ -2360,11 +2424,13 @@ pub fn show(
     let shown = *open
         || dual.is_some()
         || st.dialog.is_some()
+        || st.detach_delete.is_some()
         || st.move_to.is_some()
         || st.demo_menu.is_some()
         || st.windows.iter().any(|w| {
             w.id != listings::PANEL
                 || w.state.dialog.is_some()
+                || w.state.detach_delete.is_some()
                 || w.state.move_to.is_some()
                 || w.state.thumbnail.item.is_some()
                 || w.state.bulk_permissions.active()
@@ -2501,6 +2567,7 @@ pub fn show(
         fetch_whole_inventory(inv, dual);
     }
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
+    delete::finish_detach(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -2701,6 +2768,8 @@ pub fn show(
         }
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
+            // what it was deleting went with its folder
+            w.state.detach_delete = None;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
             continue;
         }
@@ -2814,6 +2883,7 @@ pub fn show(
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+        delete::finish_detach(&world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
@@ -2862,15 +2932,7 @@ pub fn show(
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
-    windows.retain(|w| {
-        w.id == listings::PANEL
-            || w.open
-            || w.state.preview.is_some()
-            || w.state.dialog.is_some()
-            || w.state.move_to.is_some()
-            || w.state.thumbnail.item.is_some()
-            || w.state.bulk_permissions.active()
-    });
+    windows.retain(keeps_window);
     windows.append(&mut spawned);
     st.windows = windows;
     if let Some(id) = st.demo_menu {

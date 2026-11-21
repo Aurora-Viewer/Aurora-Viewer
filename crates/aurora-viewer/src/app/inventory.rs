@@ -405,6 +405,32 @@ impl App {
         ui::inventory::resize_for_dual(&self.egui_ctx, self.panels.inventory_dual);
     }
 
+    /// Demo: the Detach and Delete confirmation's button, then where `item`
+    /// is at `log_frame` (worn or active, in the Trash, the wait, the message).
+    pub(super) fn demo_detach_delete_steps(&mut self, label: &str, item: uuid::Uuid, confirm: bool, log: bool) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        if confirm {
+            let actions = self
+                .inventory_ui
+                .demo_confirm_detach_delete(&self.world.inventory, &self.settings.inventory, &facts);
+            log::info!("demo {label}: confirmed at frame {}, {} action(s)", self.frame_count, actions.len());
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
+        }
+        if log {
+            log::info!(
+                "demo {label}: frame {} worn={} active={} trash={} waiting={} message={:?}",
+                self.frame_count,
+                facts.worn.contains(&item),
+                facts.active_gestures.contains(&item),
+                crate::world::inventory::actions::in_type(&self.world.inventory, item, 14),
+                self.inventory_ui.demo_detach_waiting(),
+                self.inventory_ui.message,
+            );
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         self.apply_inventory_action_from(Uuid::nil(), action);
     }
@@ -432,6 +458,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::Notice(text) => self.world.system_message(text),
             InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
@@ -1026,6 +1053,9 @@ impl App {
         let recovered = !detach.is_empty();
         for command in detach {
             self.send_from(command, actor);
+        }
+        if recovered {
+            self.inventory_ui.take_off_sent();
         }
         let Some(action) = action else {
             if recovered {
