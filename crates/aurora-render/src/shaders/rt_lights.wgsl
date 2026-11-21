@@ -65,9 +65,11 @@
 // A projector is one of the lights drawn and shared like the others, over
 // its frustum, weighed by its colour without its texture, its rays aimed
 // at the apex of its frustum (`light_target`, `light_aim`): the tint then
-// shadows its beam (common.wgsl `projector_at`) in its shadow map's place,
-// which the faces this pass does not see (the blended ones, the
-// reflections) still read. The Legacy Viewer shadows two projectors, by
+// shadows its beam (common.wgsl `projector_at`) in its shadow map's place:
+// the map is no longer drawn (renderer.rs `traced_projectors`), so the
+// faces this pass does not see (the blended ones, the reflections) take
+// the beam unshadowed, as the Legacy Viewer's blended faces (alphaF.glsl).
+// The Legacy Viewer shadows two projectors, by
 // maps (spotLightF.glsl, pipeline.cpp RenderShadowDetail); traced, every
 // projector of the list casts, at any distance.
 //

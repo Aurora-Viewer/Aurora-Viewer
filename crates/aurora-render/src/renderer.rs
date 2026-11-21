@@ -580,11 +580,18 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
-/// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+/// shadows (reflections, probe faces and impostor pictures draw none), nor
+/// for a projector among the first `traced` lights, whose shadows the
+/// traced lights' pass draws (`Renderer::traced_projectors`).
+fn spot_shadow_views(
+    f: &FrameParams,
+    limit: usize,
+    shelter: Option<(usize, Mat4)>,
+    traced: usize,
+) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
-        let s = s.filter(|_| f.shadows)?;
+        let s = s.filter(|s| f.shadows && projector_map_drawn(s.light, traced))?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
@@ -604,6 +611,12 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4
         ));
     }
     views
+}
+
+/// Whether the shadow map of the projector at `light` in the frame's list is
+/// drawn while the first `traced` lights are traced: only past them.
+fn projector_map_drawn(light: u32, traced: usize) -> bool {
+    light as usize >= traced
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
@@ -2896,6 +2909,22 @@ impl Backend {
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+    }
+
+    /// How many of the frame's first lights have their projector shadows
+    /// traced this frame (common.wgsl `projector_at`, `PROJECTORS_TRACED`):
+    /// their shadow maps are not drawn. The faces the traced pass does not
+    /// see read the maps: without them a blended face takes such a
+    /// projector unshadowed, as the Legacy Viewer's (alphaF.glsl
+    /// `calcPointLightOrSpotLight`, only spotLightF.glsl reads the maps),
+    /// and so do the reflections. 0 while the lights are not traced.
+    fn traced_projectors(&self) -> usize {
+        let tuning = self.settings.rt_tuning;
+        let traced = self.rt_now
+            && tuning.projectors
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
+        if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
     }
 
     /// The projector map the shelter is drawn into this frame, if it is,
@@ -7825,7 +7854,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.traced_projectors())
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -9545,7 +9574,7 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -13332,6 +13361,15 @@ mod tests {
                 assert!(m.levels < 16);
             }
         }
+    }
+
+    #[test]
+    fn a_traced_projector_draws_no_shadow_map() {
+        // nothing traced: every projector keeps its map
+        assert!(projector_map_drawn(0, 0) && projector_map_drawn(5, 0));
+        // the first 4 lights traced: theirs go, the ones past them stay
+        assert!(!projector_map_drawn(0, 4) && !projector_map_drawn(3, 4));
+        assert!(projector_map_drawn(4, 4) && projector_map_drawn(63, 4));
     }
 
     #[test]
