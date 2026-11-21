@@ -2217,9 +2217,14 @@ pub struct AudioSettings {
     pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
-    /// Voice-only output device (`VoiceOutputAudioDevice` in the Legacy Viewer
-    /// panel, `indra/newview/llpanelvoicedevicesettings.cpp`; empty follows
-    /// `output_device`).
+    /// Voice-only output device, the counterpart of the Legacy Viewer's
+    /// `VoiceOutputAudioDevice` (`LLPanelVoiceDeviceSettings`,
+    /// indra/newview/llpanelvoicedevicesettings.cpp). Two deliberate
+    /// differences: empty follows Aurora's `output_device`, where the Legacy
+    /// Viewer's "Default" is the system's default playout device
+    /// (indra/llwebrtc/llwebrtc.cpp); and a chosen device that is missing is
+    /// kept, voice playing on `output_device` until it comes back, where the
+    /// Legacy Viewer's panel rewrites the setting to "Default".
     pub voice_output_device: String,
     /// Microphone name (empty = system default).
     pub input_device: String,

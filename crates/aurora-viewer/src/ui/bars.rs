@@ -3442,6 +3442,7 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                 &mut mic.input_device,
                 mic.input_devices,
                 None,
+                false,
             ),
             (
                 "headphones-filled",
@@ -3450,17 +3451,20 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                 &mut mic.output_device,
                 mic.output_devices,
                 None,
+                false,
             ),
             (
-                "headphones-filled",
+                // voice chat: a headset, apart from the main output's headphones
+                "headset-filled",
                 aurora_i18n::tr!("ui-options-voice-output"),
                 "mic_panel_voice_output",
                 &mut mic.voice_output_device,
                 mic.output_devices,
                 Some(aurora_i18n::tr!("ui-options-same-as-audio-output")),
+                true,
             ),
         ];
-        for (icon, name, id, device, list, default_label) in devices {
+        for (icon, name, id, device, list, default_label, voice_output) in devices {
             ui.horizontal(|ui| {
                 // the icons stand in the column of the modes' icons
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -3476,7 +3480,7 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                     super::options::device_combo(ui, id, device, list, width, mic.devices_listing)
                 };
                 mic.devices_changed |= changed;
-                if id == "mic_panel_voice_output" {
+                if voice_output {
                     mic.voice_output_changed |= changed;
                 }
                 *list_open |= open;
