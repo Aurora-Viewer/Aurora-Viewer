@@ -239,11 +239,11 @@ pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64, offset: f
 }
 
 /// The region of a SLURL for a global position: the map's, else the region
-/// part of a history title ("Parcel, Region").
+/// part of a history title ("Parcel, Region"). Under @showloc a connected
+/// region is "(Hidden region)" in it (`slurl::make`), as
+/// LLTeleportHistoryPanel::onCopySLURL copies LLSLURL::getSLURLString
+/// (llpanelteleporthistory.cpp, llslurl.cpp) with no RLVa test of its own.
 fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
-    if world.rlva.has("showloc") {
-        return None;
-    }
     let region = world
         .map
         .sim_at_global(global.x, global.y)
@@ -1856,5 +1856,24 @@ mod tests {
         assert_eq!(tab_from_name("reperes"), Some(TAB_LANDMARKS));
         assert_eq!(tab_from_name("historique"), Some(TAB_HISTORY));
         assert_eq!(tab_from_name("autre"), None);
+    }
+
+    /// LLTeleportHistoryPanel::onCopySLURL: under RLVa @showloc the place
+    /// the agent is in copies as "(Hidden region)", it is no longer refused;
+    /// a region the agent is not connected to keeps its address.
+    #[test]
+    fn showloc_copies_the_history_place_here_as_the_hidden_slurl() {
+        let world = crate::world::rlva_location_tests::showloc_world();
+        let here = world.region_name();
+        crate::slurl::set_hidden_regions(world.rlva_slurl_hidden_regions());
+        let global = world.agent_global().expect("arrived");
+        let slurl = slurl_at(&world, global, &format!("Parcel, {here}"));
+        let far = slurl_at(&world, DVec3::new(9_000_000.0, 9_000_000.0, 20.0), "Parcel, Far Away");
+        crate::slurl::set_hidden_regions(None);
+        assert_eq!(
+            slurl.as_deref(),
+            Some(format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region")).as_str())
+        );
+        assert!(far.is_some_and(|s| s.contains("/Far%20Away/")));
     }
 }

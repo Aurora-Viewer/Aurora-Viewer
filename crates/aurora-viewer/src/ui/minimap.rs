@@ -283,6 +283,19 @@ fn fallback_name(world: &World, object: &crate::world::objects::Object) -> Optio
         .or_else(|| world.social.names.get(&object.full_id).filter(|name| !name.is_empty()).cloned())
 }
 
+/// The colour of a visible avatar's dot: LLNetMap::getAvatarColor (its mark,
+/// its contact set, its relation), or the others' colour while RLVa or the
+/// name settings hide its name (LLNetMap::draw, indra/newview/llnetmap.cpp).
+/// The Dev Toolbox's hitboxes take it too, as LLDrawPoolAvatar::renderAvatars
+/// does (stricter there: the Legacy Viewer's hitbox does not ask RLVa).
+pub(crate) fn avatar_color(world: &World, id: &Uuid, object: &crate::world::objects::Object) -> Color32 {
+    if names_allowed(world, id) {
+        super::colors::map_color(world, id, &fallback_name(world, object).unwrap_or_default())
+    } else {
+        super::colors::c(super::colors::get().map_other)
+    }
+}
+
 fn names_allowed(world: &World, id: &Uuid) -> bool {
     world.rlva_can_name(*id) && world.social.avatar_names.shows(crate::world::names::NameScope::World, id)
 }
@@ -956,10 +969,8 @@ impl MiniMap {
             }
             let visible = visible_avatar(world, &id);
             let col = match visible {
-                Some(object) if names_allowed(world, &id) => {
-                    super::colors::map_color(world, &id, &fallback_name(world, object).unwrap_or_default())
-                }
-                _ => super::colors::c(k.map_other),
+                Some(object) => avatar_color(world, &id, object),
+                None => super::colors::c(k.map_other),
             };
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
@@ -1390,6 +1401,7 @@ impl MiniMap {
     /// The mini-map's image of a region for another window (the header of
     /// "About Land"): its map tile, else the terrain drawn from
     /// the heights received (no map server, or the tile is not there yet).
+    /// None under RLVa `@showworldmap` or `@showminimap` (`header_image_shown`).
     pub fn region_image(
         &mut self,
         ctx: &egui::Context,
@@ -1397,6 +1409,9 @@ impl MiniMap {
         tiles: &mut MapTiles,
         handle: RegionHandle,
     ) -> Option<egui::TextureHandle> {
+        if !header_image_shown(world) {
+            return None;
+        }
         let (ox, oy) = aurora_net::handle_to_origin(handle);
         if let Ok(tile) = tiles.get(1, ox / 256, oy / 256, true) {
             return Some(tile);
@@ -1410,6 +1425,15 @@ impl MiniMap {
     pub fn prune(&mut self, world: &World) {
         self.terrain.retain(|h, _| world.regions.contains_key(h));
     }
+}
+
+/// The map image of the About Land and Region headers, an Aurora-only
+/// picture: the Legacy Viewer's floaters have none, so the rules of the
+/// nearest pictures of the region apply, the world map's tiles
+/// (`@showworldmap`, RlvActions::canShowWorldMap) and the mini-map's
+/// (`@showminimap`, RlvActions::canShowMinimap; rlvactions.cpp).
+pub(crate) fn header_image_shown(world: &World) -> bool {
+    !world.rlva.has("showworldmap") && !world.rlva.has("showminimap")
 }
 
 /// Ground under a global position, else our own height (teleport target).
@@ -1958,5 +1982,24 @@ mod beacon_tests {
         track.pending = false;
         track.invalid = true;
         assert!(!hit.contains(hit.rect.center(), &track));
+    }
+}
+
+#[cfg(test)]
+mod rlva_header_tests {
+    use super::*;
+
+    /// The About Land and Region headers' map image follows RLVa's map
+    /// pictures: none under `@showworldmap` or `@showminimap`.
+    #[test]
+    fn map_restrictions_hide_the_header_image() {
+        let mut w = crate::world::rlva_location_tests::showloc_world();
+        assert!(header_image_shown(&w), "@showloc alone keeps it");
+        for rule in ["showworldmap", "showminimap"] {
+            w.rlva_console_input(&format!("@{rule}=n"));
+            assert!(!header_image_shown(&w), "{rule}");
+            w.rlva_console_input(&format!("@{rule}=y"));
+            assert!(header_image_shown(&w), "{rule} lifted");
+        }
     }
 }

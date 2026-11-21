@@ -640,9 +640,9 @@ pub(super) fn preview(
         animation(ctx, p, inv, st, it, actions);
         return;
     }
-    if !inv.can_preview(it.asset_type) {
-        return;
-    }
+    // (RLVa's @viewnote, @viewscript and @viewtexture refuse to open a
+    // preview, `InvAction::Preview`; one already open stays, as
+    // RlvUIEnabler::filterFloaterViewXXX validates the opening alone)
     let mut view = if it.asset_type == 7 {
         *st.notecard_view.get_or_insert(prefs.notecard_view)
     } else {
@@ -950,7 +950,7 @@ pub(super) fn preview(
             }
         }
     });
-    super::embedded::preview(ctx, p, st, inv, images);
+    super::embedded::preview(ctx, p, st, images);
     if !open {
         if st.save_pending {
             st.close_after_save = true;

@@ -209,6 +209,19 @@ pub fn fold<T: Sync, A: Send>(items: &[T], grain: Grain, init: impl Fn() -> A + 
     parts.into_iter().filter_map(Mutex::into_inner).collect()
 }
 
+/// `f` on every item with its place in `items`; what it returns, in the
+/// order of the items.
+pub fn filter_map_indexed<T: Sync, R: Send>(items: &[T], grain: Grain, f: impl Fn(usize, &T) -> Option<R> + Sync) -> Vec<R> {
+    let chunk = grain.chunk.max(1);
+    let parts: Vec<Mutex<Vec<R>>> = (0..grain.chunks(items.len())).map(|_| Mutex::new(Vec::new())).collect();
+    for_chunks(parts.len(), grain.helpers(parts.len()), |i| {
+        let first = i * chunk;
+        let found = items[first..(first + chunk).min(items.len())].iter().enumerate();
+        *parts[i].lock() = found.filter_map(|(at, item)| f(first + at, item)).collect();
+    });
+    parts.into_iter().flat_map(Mutex::into_inner).collect()
+}
+
 /// `f` on every item, which it may change; what it returns, in the order
 /// of the items.
 pub fn filter_map_mut<T: Send, R: Send>(items: &mut [T], grain: Grain, f: impl Fn(&mut T) -> Option<R> + Sync) -> Vec<R> {
@@ -265,6 +278,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn an_indexed_loop_gives_each_item_its_place_and_keeps_their_order() {
+        let items: Vec<u32> = (0..1000).map(|i| i * 7).collect();
+        for chunk in [1, 7, 32, 999, 1000, 5000] {
+            let found = filter_map_indexed(&items, Grain { chunk, per_helper: 2 }, |i, item| {
+                assert_eq!(*item, i as u32 * 7);
+                (i % 3 == 0).then_some(i)
+            });
+            assert_eq!(found, (0..1000).filter(|i| i % 3 == 0).collect::<Vec<_>>(), "chunks of {chunk}");
+        }
+        assert!(filter_map_indexed(&[] as &[u32], FINE, |i, _| Some(i)).is_empty());
     }
 
     #[test]

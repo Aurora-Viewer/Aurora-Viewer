@@ -292,6 +292,11 @@ pub struct WorldMap {
     /// Centre the open map on `track` once its region is known
     /// (llMapDestination's BEACON_FOCUS_MAP, LLFloaterWorldMap autofocus).
     pub focus_track: bool,
+    /// RLVa `@showloc`, set by the app each frame: a spot tracked from now on
+    /// is labelled "(Hidden)" (LLFloaterWorldMap::trackLocation,
+    /// indra/newview/llfloaterworldmap.cpp: Hidden::Generic). The label is
+    /// taken when the spot is tracked, as LLTracker keeps it.
+    pub hide_location_labels: bool,
     /// Region name search in progress (lowercase) and when it was sent.
     pub search: Option<(String, Instant)>,
     /// Place link waiting for its region by name (lowercase name, position in
@@ -550,7 +555,11 @@ impl WorldMap {
                 t.pending = false;
                 t.invalid = s.is_down();
                 if t.label.is_empty() {
-                    t.label = location_label(&s.name, t.x - sx as f64 * 256.0, t.y - sy as f64 * 256.0, t.z);
+                    t.label = if self.hide_location_labels {
+                        aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+                    } else {
+                        location_label(&s.name, t.x - sx as f64 * 256.0, t.y - sy as f64 * 256.0, t.z)
+                    };
                 }
                 if t.teleport && !t.invalid {
                     teleport = Some((t.x, t.y, t.z));
@@ -945,7 +954,11 @@ impl WorldMap {
         match self.sim_at(gx, gy).map(|(k, s)| (k, s.clone())) {
             Some(((sx, sy), s)) => {
                 t.invalid = s.is_down();
-                t.label = location_label(&s.name, x - sx as f64 * 256.0, y - sy as f64 * 256.0, z);
+                t.label = if self.hide_location_labels {
+                    aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+                } else {
+                    location_label(&s.name, x - sx as f64 * 256.0, y - sy as f64 * 256.0, z)
+                };
                 if teleport && !t.invalid {
                     self.out.push(teleport_command(x, y, z));
                 }
@@ -1926,5 +1939,54 @@ mod overlay_tests {
         map.apply_overlay(1, (256, 256), 4, &[9; 1024]);
         map.apply_overlay(1, (256, 256), -1, &[7; 1024]);
         assert!(map.overlays[&1].2[1024..].iter().all(|cell| *cell == 0));
+    }
+
+    /// LLFloaterWorldMap::trackLocation (indra/newview/llfloaterworldmap.cpp):
+    /// under RLVa `@showloc` the tracked spot is labelled "(Hidden)", on a
+    /// known region and on one that answers later; the label stays as taken.
+    #[test]
+    fn showloc_labels_a_tracked_spot_hidden() {
+        let block = MapBlock {
+            x: 1000,
+            y: 1001,
+            name: "Track Test".into(),
+            access: 21,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        };
+        let mut m = WorldMap {
+            hide_location_labels: true,
+            ..Default::default()
+        };
+        m.apply_blocks(vec![block.clone()]);
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        let mut m = WorldMap {
+            hide_location_labels: true,
+            ..Default::default()
+        };
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        m.apply_blocks(vec![block.clone()]);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        m.hide_location_labels = false;
+        m.apply_blocks(vec![block.clone()]);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![block]);
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        assert_eq!(m.track.as_ref().map(|t| t.label.as_str()), Some("Track Test (10, 20, 30)"));
     }
 }

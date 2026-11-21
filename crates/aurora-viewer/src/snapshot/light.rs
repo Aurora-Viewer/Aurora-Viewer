@@ -3,7 +3,8 @@
 //! Pause Clouds, Enable Attached Lights, Exposure, and the sun of "Personal
 //! lighting"): a time of day, a sky, a water, a day cycle, the sun's
 //! azimuth and elevation, an exposure, the clouds held still and the lights
-//! worn by avatars (face lights) off, for the photo only, while the photo
+//! worn by avatars (face lights) off, the softness and the darkness of the
+//! sun's shadows, for the photo only, while the photo
 //! window is open. Firestorm changes the environment, the cloud scroll and
 //! RenderAttachedLights until they are changed back; here nothing is saved
 //! and closing the window gives back the user's own (`app::snapshot`; the
@@ -31,6 +32,11 @@ pub struct PhotoLight {
     /// The ambient occlusion for the photo (0 off, as Preferences'
     /// levels); None: Preferences' one.
     pub ambient_occlusion: Option<u8>,
+    /// The softness of the sun's shadows for the photo (soft shadows on);
+    /// None: Preferences' one.
+    pub shadow_softness: Option<f32>,
+    /// How dark the sun's shadows are for the photo; None: Preferences' one.
+    pub shadow_intensity: Option<f32>,
     /// The clouds stop moving (LLEnvironment::pauseCloudScroll). A switch
     /// of the session, shared with Phototools and kept when the window
     /// closes (`closed`).
@@ -60,6 +66,8 @@ impl Default for PhotoLight {
             exposure: None,
             shadow_quality: None,
             ambient_occlusion: None,
+            shadow_softness: None,
+            shadow_intensity: None,
             clouds_paused: false,
             attached_lights: true,
         }
@@ -68,6 +76,9 @@ impl Default for PhotoLight {
 
 /// The range of the exposure (`Settings::exposure`).
 pub const EXPOSURE: std::ops::RangeInclusive<f32> = 0.25..=4.0;
+/// The ranges of the shadow softness and intensity (`Settings`).
+pub const SHADOW_SOFTNESS: std::ops::RangeInclusive<f32> = 0.0..=crate::settings::SHADOW_SOFTNESS_MAX;
+pub const SHADOW_INTENSITY: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 
 /// The level a photo override (shadow quality, ambient occlusion) draws
 /// with: the photo's while its window is `open`, else the user's. Under the
@@ -89,6 +100,19 @@ pub fn drawn_levels(settings: &crate::settings::Settings, light: &PhotoLight, op
     (
         photo_level(open, light.shadow_quality, settings.shadow_quality, boost),
         photo_level(open, light.ambient_occlusion, settings.ssao, boost),
+    )
+}
+
+/// The softness and the intensity of the sun's shadows the world is drawn
+/// with: the photo's while its window is `open`, else Preferences'. The
+/// photo's light is reset as the window closes, but not while the Director
+/// gives the sun (`App::photo_light`): closed, the photo's values would stay
+/// on the world until its track ended.
+pub fn drawn_shadows(settings: &crate::settings::Settings, light: &PhotoLight, open: bool) -> (f32, f32) {
+    let chosen = |value: Option<f32>| value.filter(|_| open);
+    (
+        chosen(light.shadow_softness).unwrap_or(settings.shadow_softness),
+        chosen(light.shadow_intensity).unwrap_or(settings.shadow_intensity),
     )
 }
 
@@ -118,6 +142,29 @@ mod tests {
         assert_eq!(photo_level(true, Some(4), 1, false), 4);
         // the window closed: the user's again
         assert_eq!(photo_level(false, Some(0), 3, false), 3);
+    }
+
+    #[test]
+    fn the_photo_shadow_sliders_hold_while_the_window_is_open() {
+        let settings = crate::settings::Settings {
+            shadow_softness: 0.25,
+            shadow_intensity: 1.0,
+            ..Default::default()
+        };
+        let light = PhotoLight {
+            shadow_softness: Some(2.0),
+            shadow_intensity: Some(0.3),
+            ..Default::default()
+        };
+        assert_eq!(drawn_shadows(&settings, &light, true), (2.0, 0.3));
+        // closed with the light not reset yet (the Director gives the sun)
+        assert_eq!(drawn_shadows(&settings, &light, false), (0.25, 1.0));
+        // one chosen, the other Preferences'
+        let light = PhotoLight {
+            shadow_intensity: Some(0.5),
+            ..Default::default()
+        };
+        assert_eq!(drawn_shadows(&settings, &light, true), (0.25, 0.5));
     }
 
     #[test]

@@ -129,6 +129,19 @@ impl LocalTyping {
         None
     }
 
+    /// The change due this frame while @redirchat or @rediremote holds the
+    /// typing start back: LLAgent::startTyping (indra/newview/llagent.cpp)
+    /// returns before mTypingTimer.reset(), so a key neither starts nor
+    /// keeps the typing up, while every stop (the line sent, the field left
+    /// or emptied, five seconds without a key that counts) still applies.
+    pub fn update_held(&mut self, now: Instant, field: LocalField) -> Option<bool> {
+        let idle = self.last_key.is_some_and(|k| now.duration_since(k) > IDLE);
+        if field.sent || !field.focused || field.typed == Some(false) || idle {
+            return self.stop().then_some(false);
+        }
+        None
+    }
+
     /// Keep typing as if a key came now (`AURORA_DEMO_TYPING`); true when
     /// it starts.
     pub fn hold(&mut self, now: Instant) -> bool {
@@ -290,5 +303,31 @@ mod tests {
         assert!(!says_aloud(" :)", false, true));
         assert!(says_aloud(":waves", true, true));
         assert!(says_aloud("hello :)", false, true));
+    }
+
+    /// LLAgent::startTyping under @redirchat: a typing begun before the
+    /// rule goes on until it stops on its own, keys no longer refresh it,
+    /// and none starts it again.
+    #[test]
+    fn a_held_typing_start_lets_the_typing_run_out_and_starts_nothing() {
+        let t0 = Instant::now();
+        let key = LocalField {
+            focused: true,
+            typed: Some(true),
+            sent: false,
+        };
+        let mut local = LocalTyping::default();
+        assert_eq!(local.update(t0, key), Some(true));
+        // the rule comes: typing goes on, a key does not refresh it
+        assert_eq!(local.update_held(at(t0, 3000), key), None);
+        assert!(local.typing());
+        assert_eq!(local.update_held(at(t0, 5001), key), Some(false));
+        // and a key does not start it again
+        assert_eq!(local.update_held(at(t0, 6000), key), None);
+        assert!(!local.typing());
+        // the line sent still stops a typing begun before
+        assert_eq!(local.update(at(t0, 7000), key), Some(true));
+        let sent = LocalField { sent: true, ..key };
+        assert_eq!(local.update_held(at(t0, 7500), sent), Some(false));
     }
 }
