@@ -669,6 +669,144 @@ fn enhanced_run_uses_stock_fallback_until_the_ao_asset_loads_and_reasserts_only_
     assert!(commands.contains(&(asset, true)));
 }
 
+fn fetched_folder(inv: &mut Inventory, parent: Uuid, id: Uuid, name: &str) {
+    use crate::world::inventory::{FetchState, Folder};
+    inv.folders.insert(
+        id,
+        Folder {
+            info: aurora_net::inventory::InvFolder {
+                id,
+                parent,
+                name: name.into(),
+                type_default: if parent.is_nil() { 8 } else { -1 },
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    if let Some(parent) = inv.folders.get_mut(&parent) {
+        parent.children.push(id);
+    }
+}
+
+/// `#Aurora/Aurora AO`, `#Firestorm/#AO`, or Alchemy's root, plus one Walking link.
+fn ao_tree(inv: &mut Inventory, source: inventory::Source) -> (Uuid, Uuid) {
+    let root = Uuid::from_u128(0xa0_0000_0000_0001);
+    inv.root = root;
+    fetched_folder(inv, Uuid::nil(), root, "Inventory");
+    let (brand, ao_name) = match source {
+        inventory::Source::Native => (Uuid::from_u128(0xa0_0000_0000_0002), inventory::FOLDER),
+        inventory::Source::Legacy => (Uuid::from_u128(0xa0_0000_0000_0003), "#AO"),
+        inventory::Source::Alchemy => (Uuid::from_u128(0xa0_0000_0000_0004), inventory::ALCHEMY_FOLDER),
+    };
+    let brand_name = match source {
+        inventory::Source::Native => "#Aurora",
+        inventory::Source::Legacy => "#Firestorm",
+        inventory::Source::Alchemy => inventory::ALCHEMY_FOLDER,
+    };
+    let ao = if source == inventory::Source::Alchemy {
+        fetched_folder(inv, root, brand, brand_name);
+        brand
+    } else {
+        fetched_folder(inv, root, brand, brand_name);
+        let ao = Uuid::from_u128(0xa0_0000_0000_0010);
+        fetched_folder(inv, brand, ao, ao_name);
+        ao
+    };
+    let set = Uuid::from_u128(0xa0_0000_0000_0011);
+    let walking = Uuid::from_u128(0xa0_0000_0000_0012);
+    fetched_folder(inv, ao, set, "Day");
+    fetched_folder(inv, set, walking, "Walking");
+    let anim = Uuid::from_u128(0xa0_0000_0000_0020);
+    let link = Uuid::from_u128(0xa0_0000_0000_0021);
+    inv.add_items(vec![
+        aurora_net::inventory::InvItem {
+            id: anim,
+            parent: root,
+            name: "Walk".into(),
+            asset_type: 20,
+            inv_type: 19,
+            asset_id: Uuid::from_u128(0xa0_0000_0000_0099),
+            ..Default::default()
+        },
+        aurora_net::inventory::InvItem {
+            id: link,
+            parent: walking,
+            name: "Walk".into(),
+            desc: "0".into(),
+            asset_type: 24,
+            inv_type: 19,
+            asset_id: anim,
+            ..Default::default()
+        },
+    ]);
+    (brand, set)
+}
+
+fn rename_server(inv: &mut Inventory, id: Uuid, name: &str) {
+    let mut info = inv.folders.get(&id).expect("folder").info.clone();
+    info.name = name.into();
+    info.version = -1;
+    inv.server_updated(vec![info], Vec::new());
+}
+
+#[test]
+fn a_renamed_brand_folder_keeps_the_ao_sets() {
+    for source in [inventory::Source::Native, inventory::Source::Legacy, inventory::Source::Alchemy] {
+        let mut inv = Inventory::default();
+        let (brand, set) = ao_tree(&mut inv, source);
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh_source(&mut inv, source);
+        assert_eq!(catalog.sets.len(), 1, "{source:?} loaded");
+        assert_eq!(catalog.selected(set).map(|s| s.id), Some(set), "{source:?} selected");
+
+        let original = inv.folders[&brand].info.name.clone();
+        rename_server(&mut inv, brand, &format!("{original} (Unavailable)"));
+        assert!(
+            inv.folders[&brand].info.name.ends_with("(Unavailable)"),
+            "{source:?} rename applied"
+        );
+        catalog.refresh_source(&mut inv, source);
+        assert!(!catalog.loading, "{source:?} still fetched");
+        assert_eq!(catalog.sets.len(), 1, "{source:?} renamed");
+        assert_eq!(catalog.selected(set).map(|s| s.id), Some(set), "{source:?} selection kept");
+
+        rename_server(&mut inv, brand, &original);
+        catalog.refresh_source(&mut inv, source);
+        assert_eq!(catalog.sets.len(), 1, "{source:?} restored");
+
+        catalog.reload(&mut inv);
+        catalog.refresh_source(&mut inv, source);
+        assert_eq!(catalog.sets.len(), 1, "{source:?} reload by name");
+        assert_eq!(catalog.selected(set).map(|s| s.id), Some(set));
+
+        rename_server(&mut inv, brand, &format!("{original} (Unavailable)"));
+        catalog.reload(&mut inv);
+        catalog.refresh_source(&mut inv, source);
+        assert!(catalog.sets.is_empty(), "{source:?} reload while renamed");
+    }
+}
+
+#[test]
+fn a_renamed_ao_root_keeps_the_set() {
+    for source in [inventory::Source::Native, inventory::Source::Legacy] {
+        let mut inv = Inventory::default();
+        let (_brand, set) = ao_tree(&mut inv, source);
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh_source(&mut inv, source);
+        let root = catalog.root.expect("ao root");
+        let original = inv.folders[&root].info.name.clone();
+        rename_server(&mut inv, root, &format!("{original} (Unavailable)"));
+        catalog.refresh_source(&mut inv, source);
+        assert_eq!(catalog.sets.len(), 1, "{source:?}");
+        assert_eq!(catalog.selected(set).map(|s| s.id), Some(set), "{source:?}");
+    }
+}
+
 #[test]
 fn inventory_round_trip_preserves_firestorm_options_and_originals() {
     let (mut inv, mut set) = fixture();

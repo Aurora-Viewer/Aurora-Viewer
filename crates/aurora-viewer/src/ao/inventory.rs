@@ -50,6 +50,10 @@ impl Source {
 #[derive(Default)]
 pub struct Catalog {
     pub root: Option<Uuid>,
+    /// `#Aurora`, or the Legacy Viewer's brand folder, from the last load.
+    /// OpenSim's Hypergrid rename keeps this id and its parent and only
+    /// changes the name. Alchemy has no brand folder.
+    brand: Option<Uuid>,
     pub sets: Vec<Set>,
     pub loading: bool,
     pub failed: bool,
@@ -76,6 +80,18 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
 fn native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
     // Prefer the requested name when both exist; never merge or discard data.
     child(inv, brand, FOLDER).or_else(|| child(inv, brand, OLD_FOLDER))
+}
+
+/// A folder already loaded, still under `parent`. The name may have changed.
+/// AOEngine::tick (aoengine.cpp) looks the brand and `#AO` up by name only
+/// while nothing is loaded, then keeps `mAOFolder`. AOEngine::reload clears
+/// that id and looks the names up again.
+fn still_there(inv: &Inventory, id: Option<Uuid>, parent: Uuid) -> Option<Uuid> {
+    id.filter(|id| {
+        inv.folders
+            .get(id)
+            .is_some_and(|folder| !folder.library && folder.info.parent == parent)
+    })
 }
 
 fn fetch(inv: &mut Inventory, id: Uuid, waiting: &mut Vec<(Uuid, FetchState)>, failed: &mut bool) -> bool {
@@ -172,20 +188,33 @@ impl Catalog {
         self.missing.clear();
         self.loading = !fetch(inv, inv.root, &mut self.waiting, &mut self.failed);
         // The brand folder must be fetched before its AO child can be found.
-        let brand = match source {
+        // A Hypergrid teleport renames it in place. Keep the loaded id; look
+        // up by name only when nothing is known, or after reload forgot it.
+        let brand_name = match source {
             Source::Native => Some("#Aurora"),
             Source::Legacy => Some("#Firestorm"),
             Source::Alchemy => None,
         };
-        if let Some(name) = brand {
-            let Some(fs) = child(inv, inv.root, name) else {
+        let brand = if let Some(name) = brand_name {
+            let Some(id) = still_there(inv, self.brand, inv.root).or_else(|| child(inv, inv.root, name)) else {
+                self.brand = None;
                 self.root = None;
                 self.sets.clear();
                 return;
             };
-            self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
-        }
-        self.root = source.root(inv);
+            self.brand = Some(id);
+            self.loading |= !fetch(inv, id, &mut self.waiting, &mut self.failed);
+            Some(id)
+        } else {
+            self.brand = None;
+            None
+        };
+        let parent = brand.unwrap_or(inv.root);
+        self.root = still_there(inv, self.root, parent).or_else(|| match source {
+            Source::Native => brand.and_then(|id| native_root(inv, id)),
+            Source::Legacy => brand.and_then(|id| child(inv, id, "#AO")),
+            Source::Alchemy => child(inv, inv.root, ALCHEMY_FOLDER),
+        });
         let Some(root) = self.root else {
             self.sets.clear();
             return;
@@ -341,6 +370,11 @@ impl Catalog {
         if let Some(f) = inv.folders.get_mut(&inv.root) {
             f.state = FetchState::Unknown;
         }
+        // AOEngine::reload (aoengine.cpp) sets mAOFolder null, then tick looks
+        // the folders up by name. An explicit reload while the brand is
+        // renamed finds nothing; that is the same in both viewers.
+        self.brand = None;
+        self.root = None;
         self.invalidate();
     }
 }
