@@ -4445,6 +4445,13 @@ swimming/water walking and the manager button. Check Escape, click-away and repe
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
+Mini AO window: `AURORA_DEMO_AO=mini` seeds the same complete swimming set
+with the Mini AO window open, as after a relog with it open, and closes the
+full manager at frame 360. Capture around frame 600. Check the "now playing"
+line, previous / next, the set list, Sits, Settings (the full AO window opens
+and the mini window stays open), and the AO popup's "Open mini AO window",
+hidden while the window is shown and expanding it when it is minimized.
+
 For #1394 on the grid, turn automatic cycling off, choose a non-first stand
 from the manager and then from the quick arrows, and check it after logout/login
 and a full viewer restart. Repeat with another set/account and an independent
