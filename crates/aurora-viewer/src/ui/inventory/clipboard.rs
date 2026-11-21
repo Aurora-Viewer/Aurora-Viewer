@@ -246,9 +246,13 @@ pub(crate) fn offer(
     ids: Vec<Uuid>,
     cut: bool,
     protected: &HashSet<Uuid>,
+    rlva: &crate::world::rlva::WearLocks,
 ) -> bool {
     let allowed = if cut {
-        !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
+        !ids.is_empty()
+            && ids
+                .iter()
+                .all(|id| rules::relocatable(inv, *id, protected) && rlva.removable(inv, *id))
     } else {
         copy_allowed(inv, &ids)
     };
@@ -281,7 +285,7 @@ pub fn appearance_request(
     let mut actions = Vec::new();
     match request {
         ClipboardRequest::Store { ids, cut } => {
-            if !offer(ctx, inv, st, ids, cut, &prefs.protected) {
+            if !offer(ctx, inv, st, ids, cut, &prefs.protected, &facts.rlva) {
                 st.message = aurora_i18n::tr!("ui-appearance-clipboard-cannot-take").into();
             }
         }
@@ -425,7 +429,15 @@ pub(super) fn shortcuts(
             egui::Event::Copy | egui::Event::Cut => {
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
-                offer(ui.ctx(), inv, st, ids, matches!(event, egui::Event::Cut), &prefs.protected);
+                offer(
+                    ui.ctx(),
+                    inv,
+                    st,
+                    ids,
+                    matches!(event, egui::Event::Cut),
+                    &prefs.protected,
+                    &facts.rlva,
+                );
             }
             egui::Event::Paste(text) => {
                 if !holds_marker(st, &text) {

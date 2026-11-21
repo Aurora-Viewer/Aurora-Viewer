@@ -395,7 +395,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && movable,
+        // LLInvFVBridge::canMenuCut: removable too, RLVa's folder locks included
+        ready && movable && ids.iter().all(|id| facts.rlva.removable(inv, *id)),
         Command::Copy(ids.clone(), true),
     );
     let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
