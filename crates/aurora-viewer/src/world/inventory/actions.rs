@@ -40,6 +40,20 @@ pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
     if owned { item.owner_mask } else { item.everyone_mask }
 }
 
+/// LLSidepanelItemInfo::updatePermissions (indra/newview/llsidepaneliteminfo.cpp):
+/// stored objects need these flags so their changed masks are applied on rez.
+/// The triples contain group, everyone and next-owner masks, in that order.
+pub fn object_permission_flags(flags: u32, before: [u32; 3], after: [u32; 3]) -> u32 {
+    let overrides = [0x040000, 0x080000, 0x100];
+    before
+        .into_iter()
+        .zip(after)
+        .zip(overrides)
+        .fold(flags, |flags, ((before, after), flag)| {
+            flags | if before != after { flag } else { 0 }
+        })
+}
+
 /// Whether an object of an object's contents may be rezzed from there, by a
 /// drag onto the land or onto another object: copy for the agent, transfer
 /// for its owner. LLToolDragAndDrop::dad3dRezFromObjectOnLand and
