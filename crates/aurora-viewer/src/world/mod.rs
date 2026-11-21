@@ -3239,6 +3239,30 @@ impl World {
         }
     }
 
+    pub fn legacy_history_available(&self) -> bool {
+        self.login.is_some()
+            && self.chat_log.identity().is_some_and(|identity| identity.grid == "agni")
+            && self.tp_storage.import_available()
+    }
+
+    pub fn start_legacy_history_import(&mut self, chosen: Option<std::path::PathBuf>, manual: bool) {
+        if !self.legacy_history_available() {
+            return;
+        }
+        if let Some(login) = &self.login {
+            self.tp_storage.start_legacy_import(
+                crate::legacy_profile::Account {
+                    first: login.first_name.clone(),
+                    last: login.last_name.clone(),
+                    grid: "agni".into(),
+                },
+                self.chat_log.legacy_apps(),
+                chosen,
+                manual,
+            );
+        }
+    }
+
     /// Apply one network event. Returns events the app layer must handle.
     pub fn apply(&mut self, ev: NetEvent) -> Option<NetEvent> {
         self.received = None;
@@ -3304,16 +3328,6 @@ impl World {
                 self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
-                if let Some(identity) = self.chat_log.identity() {
-                    self.tp_storage.start_legacy_import(
-                        crate::legacy_profile::Account {
-                            first: l.first_name.clone(),
-                            last: l.last_name.clone(),
-                            grid: identity.grid.clone(),
-                        },
-                        self.chat_log.legacy_apps(),
-                    );
-                }
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.hud_locks = hud_lock::HudLocks::load(account.join(hud_lock::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
@@ -3335,6 +3349,7 @@ impl World {
                 self.map.set_home_from_login(l.raw["home"].as_str());
                 crate::ui::bars::clock::set_grid_time(&l.raw["seconds_since_epoch"].to_string_value());
                 self.login = Some(l.clone());
+                self.start_legacy_history_import(None, false);
                 Some(NetEvent::LoggedIn(l))
             }
             NetEvent::MainRegionChanged { handle } => {

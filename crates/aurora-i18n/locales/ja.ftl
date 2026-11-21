@@ -15863,3 +15863,11 @@ phototools-director-lens = ディレクターのウィンドウが開いてい�
 phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
 ui-options-dof-show-focus-point = フォーカス点を表示
 ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。
+
+ui-places-legacy-history-at-login = ログイン時に従来ビューアーの履歴を取り込む
+ui-places-legacy-history-import = 検出した従来ビューアーから取り込む
+ui-places-legacy-history-folder = 従来ビューアーのフォルダーを選択…
+ui-places-legacy-history-not-found = このアカウントのテレポート履歴が見つかりませんでした。ビューアーのデータフォルダーか、その中のアカウントフォルダーを選択してください。
+ui-places-legacy-history-no-new = 取り込む新しいテレポート履歴はありません。
+ui-places-legacy-history-imported = テレポート履歴を { $count } 件取り込みました。
+ui-places-legacy-history-read-failed = 従来ビューアーのテレポート履歴の一部を読み込めませんでした。

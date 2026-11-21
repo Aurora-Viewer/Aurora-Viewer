@@ -16008,3 +16008,14 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+
+ui-places-legacy-history-at-login = Importer les visites du Legacy Viewer à la connexion
+ui-places-legacy-history-import = Importer depuis les Legacy Viewers détectés
+ui-places-legacy-history-folder = Choisir le dossier du Legacy Viewer…
+ui-places-legacy-history-not-found = Aucun historique de téléportation correspondant. Choisissez le dossier de données du viewer ou le dossier de ce compte.
+ui-places-legacy-history-no-new = Aucune nouvelle visite à importer.
+ui-places-legacy-history-imported = { $count ->
+    [one] Une visite importée dans l’historique de téléportation.
+   *[other] { $count } visites importées dans l’historique de téléportation.
+    }
+ui-places-legacy-history-read-failed = Une partie de l’historique de téléportation du Legacy Viewer n’a pas pu être lue.
