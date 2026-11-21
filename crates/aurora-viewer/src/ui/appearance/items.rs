@@ -150,15 +150,11 @@ pub(super) fn context_menu(
             .filter(|it| matches!(it.asset_type, 5 | 6 | 13))
             .map(|it| it.id)
             .collect();
-        let is_worn = worn_set.contains(&it.id);
         // RLVa greys what a lock forbids, as LLWearableItemsList::ContextMenu
         // does with ERlvWearMask (llwearableitemslist.cpp): enabled when a
         // lock lets one of the items through; the outgoing COF update drops
         // the others (World::rlva_prepare_outfit).
         let locks = world.rlva_wear_locks();
-        if single && is_worn && matches!(it.asset_type, 5 | 13) && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
-            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
-        }
         if !wearable.is_empty() {
             let wear = |id: &Uuid| locks.wear(&world.inventory, *id, 0);
             if menu::item_if(
@@ -184,17 +180,10 @@ pub(super) fn context_menu(
                 attach_menu(ui, p, world, &locks, &wearable, true, actions);
             }
         }
-        // "touch" / "edit" of a worn object (updateItemsVisibility); editing
-        // worn clothing waits for the appearance editor
-        if single && is_worn && it.asset_type == 6 {
-            let touch = world.touchable_attachment_items().contains(&it.id);
-            if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch) {
-                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
-            }
-            let edit = world.worn_attachment(&it.id).is_some();
-            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), edit) {
-                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
-            }
+        // Touch and Edit when every selected item is worn (n_worn ==
+        // n_items), greyed for several
+        if !items.is_empty() && worn.len() == items.len() {
+            worn_touch_edit_menu(ui, p, world, &items);
         }
         remove_item(ui, p, &worn, &locks, aurora_i18n::tr!("ui-appearance-items-remove"), actions);
         if menu::item_if(
@@ -207,24 +196,7 @@ pub(super) fn context_menu(
             st.profile_item = Some(it.id);
         }
         menu::separator(ui, p);
-        // favorites_add / favorites_remove: each one shown when an item of
-        // the selection is in the other state
-        for favorite in [false, true] {
-            let ids: Vec<Uuid> = items
-                .iter()
-                .filter(|it| it.favorite == favorite && !st.favorite_pending.contains(&it.id))
-                .map(|it| it.id)
-                .collect();
-            let shown = items.iter().any(|it| it.favorite == favorite);
-            let label = if favorite {
-                aurora_i18n::tr!("common-remove-from-favorites")
-            } else {
-                aurora_i18n::tr!("common-add-to-favorites")
-            };
-            if shown && menu::item_if(ui, p, "star-filled", label, !ids.is_empty()) {
-                actions.extend(ids.into_iter().map(Action::Favorite));
-            }
-        }
+        favorites_menu(ui, p, st, &items, actions);
         // gestures are activated, not worn (the inventory's Activate /
         // Deactivate entry)
         let gestures: Vec<Uuid> = items.iter().filter(|it| it.asset_type == 21).map(|it| it.id).collect();
@@ -266,6 +238,74 @@ pub(super) fn context_menu(
             });
         }
     });
+}
+
+/// Touch and Edit of the worn `items`. Port of
+/// LLWearingContextMenu::updateMenuItemsVisibility
+/// (indra/newview/llpanelwearing.cpp) and of the touch and edit entries of
+/// LLWearableItemsList::ContextMenu::updateItemsVisibility
+/// (indra/newview/llwearableitemslist.cpp), originally LGPL 2.1: Touch is
+/// shown for attachments alone, Edit for any selection with an attachment,
+/// clothing or a body part. Both act on one item: with several selected they
+/// stay in the menu, greyed, as there. Touch needs an attachment that handles
+/// touches (enable_attachment_touch), Edit [`worn_editable`].
+pub(super) fn worn_touch_edit_menu(ui: &mut egui::Ui, p: &Palette, world: &World, items: &[&InvItem]) {
+    let single = match items {
+        [] => return,
+        [it] => Some(*it),
+        _ => None,
+    };
+    if items.iter().all(|it| it.asset_type == 6) {
+        let touch = single.filter(|it| world.touchable_attachment_items().contains(&it.id));
+        if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch.is_some())
+            && let Some(it) = touch
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
+        }
+    }
+    if items.iter().any(|it| matches!(it.asset_type, 5 | 6 | 13)) {
+        let edit = single.filter(|it| worn_editable(world, it));
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), edit.is_some())
+            && let Some(it) = edit
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
+        }
+    }
+}
+
+/// Whether Edit may open worn item `it`: get_is_item_editable
+/// (indra/newview/llinventoryfunctions.cpp, originally LGPL 2.1). An
+/// attachment must be on the avatar and allowed by RlvActions::canEdit
+/// (`@edit`, `@editattach`, `@editobj:<id>`); clothing and body parts need
+/// the modify right (LLAgentWearables::isWearableModifiable), the rule of the
+/// wearable editor's `can_modify`.
+pub(super) fn worn_editable(world: &World, it: &InvItem) -> bool {
+    use crate::world::inventory::actions;
+    match it.asset_type {
+        6 => world.worn_attachment(&it.id).is_some_and(|i| world.rlva_can_edit(i)),
+        5 | 13 => actions::agent_mask(it, world.agent_id) & actions::MODIFY != 0,
+        _ => false,
+    }
+}
+
+/// Shared Add to / Remove from Favorites entries for worn and outfit rows.
+pub(super) fn favorites_menu(ui: &mut egui::Ui, p: &Palette, st: &AppearanceUi, items: &[&InvItem], actions: &mut Vec<Action>) {
+    for favorite in [false, true] {
+        let ids: Vec<Uuid> = items
+            .iter()
+            .filter(|it| it.favorite == favorite && !st.favorite_pending.contains(&it.id))
+            .map(|it| it.id)
+            .collect();
+        let shown = items.iter().any(|it| it.favorite == favorite);
+        let label = if favorite {
+            aurora_i18n::tr!("common-remove-from-favorites")
+        } else {
+            aurora_i18n::tr!("common-add-to-favorites")
+        };
+        if shown && menu::item_if(ui, p, "star-filled", label, !ids.is_empty()) {
+            actions.extend(ids.into_iter().map(Action::Favorite));
+        }
+    }
 }
 
 /// Assign to Folder: the favorites' subfolders, by name

@@ -266,6 +266,7 @@ impl App {
             "O4" => d.freeze_culling,
             "O5" => d.skeletons,
             "O6" => d.complexity_tags,
+            "O10" => d.avatar_hitboxes,
             "O9" => self.scene.sculpt_watch_target().is_some(),
             "P3" => self.scene.slow_sync().is_some(),
             "P4" => self.scene.still.is_some(),
@@ -305,6 +306,7 @@ impl App {
             "O4" => d.freeze_culling = on,
             "O5" => d.skeletons = on,
             "O6" => d.complexity_tags = on,
+            "O10" => d.avatar_hitboxes = on,
             "O9" => {
                 let target = on.then(|| self.target_avatar()).flatten();
                 if on && target.is_none() {
@@ -429,13 +431,6 @@ impl App {
             "J3" => Some(warnings_text(50, &AssetIds::diagnostics(&self.world))),
             "J4" => Some(self.system_text(renderer)),
             "J5" => Some(tool_output_text(&AssetIds::diagnostics(&self.world))),
-            "J8" => {
-                let edit = self.ik_editor.request();
-                Some(
-                    self.world
-                        .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
-                )
-            }
             // #1492: the control skeleton of each animesh the target wears
             "J9" => Some(match self.target_avatar() {
                 Some(avatar) => crate::scene::animesh_report::text(

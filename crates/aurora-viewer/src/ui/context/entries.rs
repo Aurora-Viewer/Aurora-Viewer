@@ -519,7 +519,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "briefcase-filled",
         aurora_i18n::tr!("ui-context-show-in-inventory"),
-        f.object.attachment_item.is_some(),
+        f.object.attachment_item.is_some() && !f.show_original_blocked,
         CtxAction::AttachmentInventory(f.object.attachment_item.unwrap_or_default()),
     );
     // Object.SetFavorite Add / Remove, the one that applies
@@ -774,7 +774,11 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
                 aurora_i18n::tr!("ui-context-inspect-2"),
                 CtxAction::Inspect(object),
             );
-            ui.item("code", aurora_i18n::tr!("ui-context-script-info"), CtxAction::ScriptInfo(object));
+            ui.item(
+                "code",
+                aurora_i18n::tr!("ui-context-script-information"),
+                CtxAction::ScriptInfo(object),
+            );
             ui.item(
                 "box",
                 aurora_i18n::tr!("ui-context-object-information"),
@@ -825,7 +829,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         |ui| {
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-2"),
+                aurora_i18n::tr!("ui-context-inspect-all-attachments"),
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -1756,7 +1760,7 @@ mod tests {
             attachment: None,
         };
         // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
-        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-2", false);
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-all-attachments", false);
         assert!(!inspect(&Facts::default()).enabled);
         let wearing = Facts {
             worn: true,
@@ -2506,5 +2510,33 @@ mod rlva_fly_tests {
         for target in [&own, &worn] {
             assert!(fly_enabled(world_menu(target, &f, Vec3::ZERO)));
         }
+    }
+}
+
+#[cfg(test)]
+mod rlva_showinv_tests {
+    use super::*;
+
+    /// enable_object_show_original (indra/newview/llviewermenu.cpp):
+    /// "Show in inventory" of our attachment is greyed under @showinv.
+    #[test]
+    fn show_in_inventory_is_greyed_under_showinv() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let row = |entries: Vec<Entry>| {
+            fn find(entries: Vec<Entry>) -> Option<bool> {
+                entries.into_iter().find_map(|e| match e.kind {
+                    Kind::Submenu(inner) => find(inner),
+                    Kind::Action(CtxAction::AttachmentInventory(_)) => Some(e.enabled),
+                    _ => None,
+                })
+            }
+            find(entries).expect("a Show in inventory row")
+        };
+        assert!(row(menu(&f)));
+        f.show_original_blocked = true;
+        assert!(!row(menu(&f)));
     }
 }

@@ -13,10 +13,10 @@
 //! along a ray towards that point, in up to eight dispatches.
 //!
 //! What casts: the depth prepass (opaque and masked faces, terrain), and,
-//! drawn into a copy of it each frame, the blended faces opaque enough
-//! (half covered: the many mesh bodies, shoes and hair whose faces are
-//! blended though they look opaque) and the impostor cards; those blended
-//! faces then also receive them.
+//! drawn into a copy of it each frame, the blended faces opaque to the eye
+//! (`SCREEN_BLEND_ALPHA`: the many mesh bodies, shoes and hair whose faces
+//! are blended though they look opaque) and the impostor cards; those
+//! blended faces then also receive them.
 //!
 //! `AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell` overrides the setting for
 //! a comparison; `alt` switches every second, `prepass`: the prepass alone

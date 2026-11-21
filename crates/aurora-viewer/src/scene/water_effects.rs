@@ -2,20 +2,29 @@
 //! No messages, forces, scripts or physics changes are sent to the grid.
 
 use super::{Scene, anchors, anim, water_contacts};
+use crate::frame_par::Grain;
 use crate::world::World;
 use aurora_render::{WaterEffects, WaterEvent, WaterGround};
 use glam::{Mat4, Vec2, Vec3};
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
+
+/// How the two periodic loops are shared with the pool's workers
+/// (frame_par.rs); the costs are those of the dev profile. As plain rayon
+/// loops, called from the main thread, they waited for a worker of the pool:
+/// the ground heights 10 to 16 ms on a busy region, for 0.1 ms of work.
+/// A row of the ground grid: 2 µs.
+const GROUND_GRAIN: Grain = Grain { chunk: 4, per_helper: 8 };
+/// An object of the candidate scan: 24 ns.
+const SCAN_GRAIN: Grain = Grain { chunk: 512, per_helper: 8 };
 
 #[derive(Default)]
 pub struct Effects {
     pub geometry: Option<u8>,
     region: Option<u64>,
     candidates: Vec<usize>,
-    scan_at: f32,
+    scan_at: Option<f32>,
     ground_at: f32,
     ground: WaterGround,
     history: HashMap<(Uuid, u8), Contact>,
@@ -23,9 +32,6 @@ pub struct Effects {
     impacts: Vec<crate::movement::water_jump::Impact>,
     bodies: water_contacts::Bodies,
     visible: HashMap<Uuid, u32>,
-    /// Prim water volumes near our avatar (#2008, `app/water_volumes.rs`):
-    /// their bubbles and splashes, without the region water's ripples.
-    volumes: Vec<crate::movement::water_volume::Volume>,
 }
 
 #[derive(Clone, Copy)]
@@ -58,27 +64,25 @@ fn water_at(world: &World, p: Vec3) -> Option<f32> {
     })
 }
 
+/// The objects near the water are looked for again every 0.35 s, whether
+/// the last scan found some or none.
+fn scan_due(last: Option<f32>, time: f32) -> bool {
+    last.is_none_or(|last| time - last > 0.35)
+}
+
+/// The ground grid's 64 x 64 samples at their cells' centres, row by row.
+fn ground_grid(origin: Vec2, extent: f32, sample: impl Fn(Vec2) -> [f32; 2] + Sync) -> Vec<[f32; 2]> {
+    let rows: [usize; 64] = std::array::from_fn(|row| row);
+    crate::frame_par::fold(&rows, GROUND_GRAIN, Vec::new, |mut heights, &row| {
+        heights.extend((0..64).map(|column| sample(origin + (Vec2::new(column as f32, row as f32) + Vec2::splat(0.5)) * extent / 64.0)));
+        heights
+    })
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 impl Effects {
-    /// The water at `p`: a prim volume's (its surface and bottom), else the
-    /// region's (its height, no bottom: the ground grid's).
-    fn water(&self, world: &World, p: Vec3) -> Option<(f32, Option<f32>)> {
-        let region = water_at(world, p);
-        // a volume under the region's water is the sea's (as for movement)
-        match crate::movement::water_volume::surface_at(&self.volumes, p).filter(|(top, _)| region.is_none_or(|r| *top > r)) {
-            Some((top, bottom)) => Some((top, Some(bottom))),
-            None => region.map(|w| (w, None)),
-        }
-    }
-
-    /// In a prim volume only what is drawn as particles (bubbles, splashes,
-    /// sheets): its surface is a prim's, not the region water's, whose wave
-    /// field the displacements (ripples, wakes, foam) would stir.
-    fn particles_only(mut settings: WaterEffects) -> WaterEffects {
-        settings.interactions = false;
-        settings.contact_foam = false;
-        settings
-    }
-
     fn retain_events(&mut self, time: f32, quality: u8, eye: Vec2) {
         self.events.retain(|event| {
             let lifetime = match event.params[1] {
@@ -204,8 +208,6 @@ impl Effects {
         if self.region != world.main_region || settings.flags() == 0 {
             *self = Self {
                 region: world.main_region,
-                // (set for this frame just before: `Scene::set_water_volumes`)
-                volumes: std::mem::take(&mut self.volumes),
                 ..Default::default()
             };
         }
@@ -221,15 +223,11 @@ impl Effects {
         let origin = anchor - Vec2::splat(range);
         if self.ground.extent != extent || self.ground.origin != origin.to_array() || time - self.ground_at > 0.5 {
             self.ground_at = time;
-            let heights: Vec<[f32; 2]> = (0..4096usize)
-                .into_par_iter()
-                .map(|i| {
-                    let xy = origin + (Vec2::new((i % 64) as f32, (i / 64) as f32) + Vec2::splat(0.5)) * extent / 64.0;
-                    let p = xy.extend(0.0);
-                    let w = water_at(world, p).unwrap_or(world.main_water_height());
-                    [world.ground_height(p).unwrap_or(w - 100.0), w]
-                })
-                .collect();
+            let heights = ground_grid(origin, extent, |xy| {
+                let p = xy.extend(0.0);
+                let w = water_at(world, p).unwrap_or(world.main_water_height());
+                [world.ground_height(p).unwrap_or(w - 100.0), w]
+            });
             self.ground = WaterGround {
                 region: world.main_region.unwrap_or(0),
                 origin: origin.to_array(),
@@ -243,27 +241,22 @@ impl Effects {
             self.history.clear();
             return (Vec::new(), Vec::new(), self.ground.clone());
         }
-        if self.candidates.is_empty() || time - self.scan_at > 0.35 {
-            self.scan_at = time;
-            let mut near: Vec<(f32, usize)> = scene
-                .gpu
-                .par_iter()
-                .enumerate()
-                .filter_map(|(i, g)| {
-                    let object = world.objects.get(i)?;
-                    if g.hud || g.owner_avatar.is_some() || object.extra.reflection_probe.is_some() {
-                        return None;
-                    }
-                    let distance = g.center.truncate().distance_squared(eye.truncate());
-                    if distance >= range * range || (!g.is_avatar && g.faces.is_empty()) {
-                        return None;
-                    }
-                    let height = object.scale.z.abs().max(if g.is_avatar { 2.0 } else { 0.0 });
-                    let w = water_at(world, g.center)?;
-                    let nearby_avatar = g.is_avatar && g.center.distance_squared(eye) < range * range;
-                    (nearby_avatar || (!g.is_avatar && (g.center.z - w).abs() < height * 0.5 + 8.0)).then_some((distance, i))
-                })
-                .collect();
+        if scan_due(self.scan_at, time) {
+            self.scan_at = Some(time);
+            let mut near: Vec<(f32, usize)> = crate::frame_par::filter_map_indexed(&scene.gpu, SCAN_GRAIN, |i, g| {
+                let object = world.objects.get(i)?;
+                if g.hud || g.owner_avatar.is_some() || object.extra.reflection_probe.is_some() {
+                    return None;
+                }
+                let distance = g.center.truncate().distance_squared(eye.truncate());
+                if distance >= range * range || (!g.is_avatar && g.faces.is_empty()) {
+                    return None;
+                }
+                let height = object.scale.z.abs().max(if g.is_avatar { 2.0 } else { 0.0 });
+                let w = water_at(world, g.center)?;
+                let nearby_avatar = g.is_avatar && g.center.distance_squared(eye) < range * range;
+                (nearby_avatar || (!g.is_avatar && (g.center.z - w).abs() < height * 0.5 + 8.0)).then_some((distance, i))
+            });
             near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
             self.candidates = near.into_iter().take(96).map(|(_, i)| i).collect();
             self.visible = water_contacts::visibility(scene, world, &self.candidates);
@@ -272,7 +265,7 @@ impl Effects {
         let mut contacts = Vec::new();
         let body_samples = crate::frame_par::fold(
             &self.candidates,
-            crate::frame_par::Grain { chunk: 4, per_helper: 1 },
+            Grain { chunk: 4, per_helper: 1 },
             Vec::new,
             |mut samples, &idx| {
                 let Some(o) = world.objects.get(idx).filter(|o| o.is_avatar()) else {
@@ -289,7 +282,7 @@ impl Effects {
                 let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {
                     return samples;
                 };
-                let Some((water, _)) = self.water(world, p) else {
+                let Some(water) = water_at(world, p) else {
                     return samples;
                 };
                 let Some(slot) = scene.palette_slots.get(&o.full_id) else {
@@ -315,38 +308,25 @@ impl Effects {
                     if part != water_contacts::PARTS.len() - 1 && (center.truncate() - eye.truncate()).abs().max_element() > 18.0 {
                         continue;
                     }
-                    let (water, volume) = self.water(world, center).unwrap_or((water, None));
-                    // a prim volume: its own bottom, and a flat surface (the
-                    // waves are the region water's)
-                    let (ground, surface) = match volume {
-                        Some(bottom) => (bottom, water),
-                        None => {
-                            let ground = self.ground.sample(center.truncate()).map(|p| p[0]).unwrap_or(water - 20.0);
-                            (
-                                ground,
-                                aurora_render::water_effects::surface_level(center.truncate(), time, settings, water, ground),
-                            )
-                        }
-                    };
-                    samples.push((
-                        volume.is_some(),
-                        water_contacts::Sample {
-                            id: o.full_id,
-                            part,
-                            matrix,
-                            level: water,
-                            surface,
-                            ground,
-                            carrier_z: world.water_visual_dz(&o.full_id),
-                        },
-                    ));
+                    let water = water_at(world, center).unwrap_or(water);
+                    let ground = self.ground.sample(center.truncate()).map(|p| p[0]).unwrap_or(water - 20.0);
+                    let surface = aurora_render::water_effects::surface_level(center.truncate(), time, settings, water, ground);
+                    samples.push(water_contacts::Sample {
+                        id: o.full_id,
+                        part,
+                        matrix,
+                        level: water,
+                        surface,
+                        ground,
+                        carrier_z: world.water_visual_dz(&o.full_id),
+                    });
                 }
                 samples
             },
         );
-        for (in_volume, sample) in body_samples.into_iter().flatten() {
+        for sample in body_samples.into_iter().flatten() {
             let before = self.events.len();
-            let mut part_settings = if in_volume { Self::particles_only(settings) } else { settings };
+            let mut part_settings = settings;
             if (sample.matrix.w_axis.truncate().truncate() - eye.truncate()).abs().max_element() > 18.0 {
                 part_settings.interactions = false;
                 part_settings.splashes = false;
@@ -401,10 +381,7 @@ impl Effects {
             }
         }
         for impact in std::mem::take(&mut self.impacts) {
-            // not the region water's level: a volume's (the leading hand may
-            // be past its sides, where the avatar's centre is not)
-            let in_volume = water_at(world, impact.position).is_none_or(|w| (w - impact.position.z).abs() > 0.5);
-            self.emit_impact(impact, time, if in_volume { Self::particles_only(settings) } else { settings });
+            self.emit_impact(impact, time, settings);
         }
         self.history.retain(|_, contact| time - contact.time < 1.0);
         self.bodies.retain(time);
@@ -428,12 +405,6 @@ impl Scene {
                 contact.is_finite().then_some(contact)
             })
             .min_by(|a, b| a.z.total_cmp(&b.z))
-    }
-
-    /// The prim water volumes near our avatar this frame (#2008).
-    pub fn set_water_volumes(&mut self, volumes: &[crate::movement::water_volume::Volume]) {
-        self.water_effects.volumes.clear();
-        self.water_effects.volumes.extend_from_slice(volumes);
     }
 
     pub fn water_impact(&mut self, impact: crate::movement::water_jump::Impact) {
@@ -460,6 +431,25 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_scan_that_found_nothing_is_not_run_again_at_the_next_frame() {
+        assert!(scan_due(None, 0.0));
+        assert!(!scan_due(Some(10.0), 10.004));
+        assert!(!scan_due(Some(10.0), 10.3));
+        assert!(scan_due(Some(10.0), 10.4));
+    }
+
+    #[test]
+    fn the_ground_grid_is_sampled_at_its_cells_centres_row_by_row() {
+        let origin = Vec2::new(100.0, -40.0);
+        let grid = ground_grid(origin, 128.0, |xy| [xy.x, xy.y]);
+        assert_eq!(grid.len(), 4096);
+        for (i, sample) in grid.iter().enumerate() {
+            let expected = origin + (Vec2::new((i % 64) as f32, (i / 64) as f32) + Vec2::splat(0.5)) * 128.0 / 64.0;
+            assert_eq!(*sample, [expected.x, expected.y], "sample {i}");
+        }
+    }
+
     #[test]
     fn low_quality_keeps_entry_sheets_and_expires_spent_contact_impulses() {
         use crate::movement::water_jump::{Impact, Kind};

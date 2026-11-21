@@ -1,15 +1,11 @@
-//! Narrow screen-space bone picking. A real shaft belongs to its origin
-//! joint, not its child; virtual parent connectors belong to the virtual node.
+//! Narrow screen-space bone picking. A shaft belongs to its origin joint,
+//! not its child.
 use super::*;
-use crate::{build::geom::seg_distance, world::rig_graph::Target};
+use crate::build::geom::seg_distance;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Source {
-    Bone(usize),
-    Node(Uuid),
-}
 pub(super) struct Segment {
-    pub source: Source,
+    /// The joint the shaft starts from.
+    pub bone: usize,
     pub a: (Pos2, f32),
     pub b: (Pos2, f32),
 }
@@ -49,11 +45,7 @@ impl Editor {
                     proj.project(frame.joints[parent].w_axis.truncate()),
                     proj.project(frame.joints[joint].w_axis.truncate()),
                 ) {
-                    segments.push(Segment {
-                        source: Source::Bone(parent),
-                        a,
-                        b,
-                    });
+                    segments.push(Segment { bone: parent, a, b });
                 }
             }
         }
@@ -74,31 +66,17 @@ impl Editor {
                         proj.project(frame.joints[bone].transform_point3(joint.end)),
                     )
                 {
-                    segments.push(Segment {
-                        source: Source::Bone(bone),
-                        a,
-                        b,
-                    });
+                    segments.push(Segment { bone, a, b });
                 }
             }
-        }
-        if !self.poser.active && !self.clip.active {
-            segments.extend(self.virtual_segments(proj, frame));
         }
         segments
     }
     pub(super) fn draw_segments(&self, painter: &egui::Painter, palette: &Palette, segments: &[Segment]) {
         for s in segments {
-            let selected = match s.source {
-                Source::Bone(b) => {
-                    (self.poser.active || self.graph.selected.is_none()) && self.selected == Some(b) && self.control == Control::Bone
-                }
-                Source::Node(id) => self.graph.selected == Some(id),
-            };
+            let selected = self.selected == Some(s.bone) && self.control == Control::Bone;
             let color = if selected {
                 palette.teal
-            } else if matches!(s.source, Source::Node(_)) {
-                palette.teal.gamma_multiply(0.6)
             } else {
                 palette.indigo_light.gamma_multiply(0.8)
             };
@@ -128,11 +106,6 @@ impl Editor {
                             m.area_rect(egui::Id::unique(("ik-pole", l.end)))
                                 .is_some_and(|r| r.contains(pointer))
                         }))
-                || (!self.clip.active
-                    && self.graph.definition.nodes.iter().any(|n| {
-                        m.area_rect(egui::Id::unique(("ik-virtual", n.id)))
-                            .is_some_and(|r| r.contains(pointer))
-                    }))
         })
     }
     pub(super) fn pick_segment(
@@ -148,8 +121,7 @@ impl Editor {
             || self.drag.is_some()
             || self.gizmo.dragging()
             || self.clip.waiting_source()
-            || (self.picking && !self.links.bone_pick)
-            || (self.prims.object_handles && !self.links.bone_pick)
+            || self.object_handles
             || ctx.input(|i| i.modifiers.alt)
         {
             return;
@@ -161,25 +133,16 @@ impl Editor {
             return;
         }
         let rig = &world.avatar_lib.rig;
-        // Existing point, effector, bend and virtual controls keep their exact
+        // Existing point, effector and bend controls keep their exact
         // hit rectangles. Never put a segment widget across those controls.
         if self.point_owns_pointer(ctx, rig, pointer) {
             return;
         }
         let Some(s) = pick(segments, pointer) else { return };
-        let name = match s.source {
-            Source::Bone(b) => rig.canonical_names[b].clone(),
-            Source::Node(id) => self
-                .graph
-                .definition
-                .nodes
-                .iter()
-                .find(|n| n.id == id)
-                .map_or_else(String::new, |n| n.name.clone()),
-        };
+        let name = rig.canonical_names[s.bone].clone();
         let (_, t) = seg_distance(pointer, s.a.0, s.b.0);
         let at = s.a.0.lerp(s.b.0, t);
-        let response = egui::Area::new(egui::Id::unique(("ik-segment", s.source)))
+        let response = egui::Area::new(egui::Id::unique(("ik-segment", s.bone)))
             .order(egui::Order::Background)
             .fixed_pos(at - egui::vec2(6.0, 6.0))
             .movable(false)
@@ -192,23 +155,10 @@ impl Editor {
                 .line_segment([s.a.0, s.b.0], Stroke::new(3.0, palette.violet_light));
         }
         if response.clicked() {
-            if self.links.bone_pick {
-                let target = match s.source {
-                    Source::Bone(b) => Target::Bone {
-                        avatar: Uuid::nil(),
-                        bone: rig.canonical_names[b].clone(),
-                    },
-                    Source::Node(id) => Target::Node { id },
-                };
-                self.picked_bone(world, frame, target);
+            if self.clip.active {
+                self.clip_click_bone(s.bone, rig, frame, ctx.input(|i| super::adds_to_selection(i.modifiers)));
             } else {
-                match s.source {
-                    Source::Bone(b) if self.clip.active => {
-                        self.clip_click_bone(b, rig, frame, ctx.input(|i| super::adds_to_selection(i.modifiers)));
-                    }
-                    Source::Bone(b) => self.select(b, rig, frame),
-                    Source::Node(id) => self.select_virtual_node(id),
-                }
+                self.select(s.bone, rig, frame);
             }
         }
         response.on_hover_text(name);

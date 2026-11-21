@@ -83,6 +83,31 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
+        // an Aurora difference: the world drawn on a round planet
+        cx.experimental().toggle(
+            tr!("ui-options-planet-curvature"),
+            tr!("ui-options-planet-curvature-help"),
+            &field!(planet_curvature),
+        );
+        let flat = !cx.s.planet_curvature;
+        cx.subs(flat, |cx| {
+            cx.row(
+                tr!("ui-options-planet-radius"),
+                tr!("ui-options-planet-radius-help"),
+                &field!(planet_radius_km),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.planet_radius_km, crate::settings::PLANET_RADIUS_KM_RANGE)
+                            .logarithmic(true)
+                            .step_by(1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .suffix(" km")
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
         cx.toggle(
             tr!("ui-options-keep-environment"),
             tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -572,6 +597,11 @@ fn quality(cx: &mut Cx) {
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
         );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
+        );
         cx.stepped(
             tr!("ui-options-limit-applied"),
             tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
@@ -685,6 +715,49 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
                 &field!(contact_shadows),
+            );
+            cx.experimental().toggle(
+                tr!("ui-options-soft-shadows"),
+                tr!("ui-options-soft-shadows-help"),
+                &field!(soft_shadows),
+            );
+            // the size of the light acts with the soft shadows only
+            let soft = cx.s.soft_shadows;
+            cx.subs(!soft, |cx| {
+                cx.row(
+                    tr!("ui-options-shadow-softness"),
+                    tr!("ui-options-shadow-softness-help"),
+                    &field!(shadow_softness),
+                    |ui, s| {
+                        let slider = ui.add_enabled_ui(soft, |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut s.shadow_softness, 0.0..=crate::settings::SHADOW_SOFTNESS_MAX)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .fixed_decimals(2)
+                                    .step_by(0.05)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        });
+                        slider.response.on_disabled_hover_text(tr!("ui-options-shadow-softness-needs-soft"));
+                        slider.inner
+                    },
+                );
+            });
+            cx.row(
+                tr!("ui-options-shadow-intensity"),
+                tr!("ui-options-shadow-intensity-help"),
+                &field!(shadow_intensity),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.shadow_intensity, 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .fixed_decimals(2)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
         });
     });
@@ -1038,7 +1111,43 @@ fn image(cx: &mut Cx) {
             },
         );
     });
+    world_look(cx);
     depth_of_field(cx);
+}
+
+/// The world's own filters (`snapshot::looks::WorldLook`): switched on here,
+/// chosen in their window (`ui/world_look.rs`). Aurora's own.
+fn world_look(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-world-look"), |cx| {
+        cx.keywords("LUT look filter colour grading").toggle(
+            tr!("ui-options-world-look-on"),
+            tr!("ui-options-world-look-on-help"),
+            &field!(world_look.on),
+        );
+        let p = cx.p;
+        cx.row_with(
+            tr!("ui-options-world-look-choose"),
+            tr!("ui-options-world-look-choose-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                use crate::ui::widgets::{ActionKind, action_button};
+                if action_button(
+                    ui,
+                    &p,
+                    "color-filter",
+                    tr!("ui-options-world-look-open"),
+                    ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    r.open_world_look = true;
+                }
+                false
+            },
+        );
+    });
 }
 
 /// Depth of field (panel_preferences_graphics1.xml, "DOF panel":
@@ -1098,6 +1207,11 @@ fn depth_of_field(cx: &mut Cx) {
                     (FocusMode::Click, tr!("ui-options-dof-focus-click"), true),
                     (FocusMode::Locked, tr!("ui-options-dof-focus-locked"), true),
                 ],
+            );
+            cx.toggle(
+                tr!("ui-options-dof-show-focus-point"),
+                tr!("ui-options-dof-show-focus-point-help"),
+                &field!(dof.show_focus_point),
             );
             cx.row(
                 tr!("ui-options-dof-aperture"),

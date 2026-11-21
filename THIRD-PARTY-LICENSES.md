@@ -37,7 +37,9 @@ The other components (ported code, native libraries, assets) are in
 | as-raw-xcb-connection 1.0.1 | MIT OR Apache-2.0 |
 | ash 0.38.0+1.3.281 | MIT OR Apache-2.0 |
 | asn1-rs 0.6.2 | MIT OR Apache-2.0 |
+| asn1-rs 0.7.2 | MIT OR Apache-2.0 |
 | asn1-rs-derive 0.5.1 | MIT OR Apache-2.0 |
+| asn1-rs-derive 0.6.0 | MIT OR Apache-2.0 |
 | asn1-rs-impl 0.2.0 | MIT OR Apache-2.0 |
 | async-broadcast 0.7.2 | MIT OR Apache-2.0 |
 | async-channel 2.5.0 | Apache-2.0 OR MIT |
@@ -130,6 +132,7 @@ The other components (ported code, native libraries, assets) are in
 | data-encoding 2.11.1 | MIT |
 | data-url 0.3.2 | MIT OR Apache-2.0 |
 | der-parser 9.0.0 | MIT OR Apache-2.0 |
+| der-parser 10.0.0 | MIT OR Apache-2.0 |
 | deranged 0.5.8 | MIT OR Apache-2.0 |
 | derive_more 2.1.1 | MIT |
 | derive_more-impl 2.1.1 | MIT |
@@ -340,6 +343,7 @@ The other components (ported code, native libraries, assets) are in
 | objc2-quartz-core 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | ogg_next_sys 0.1.5 | BSD-3-Clause |
 | oid-registry 0.7.1 | MIT OR Apache-2.0 |
+| oid-registry 0.8.1 | MIT OR Apache-2.0 |
 | once_cell 1.21.4 | MIT OR Apache-2.0 |
 | once_cell_polyfill 1.70.2 | MIT OR Apache-2.0 |
 | openjpeg-sys 1.0.12 | BSD-2-Clause |
@@ -440,7 +444,7 @@ The other components (ported code, native libraries, assets) are in
 | rusticata-macros 4.1.0 | MIT OR Apache-2.0 |
 | rustix 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustix 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustls 0.23.46 | Apache-2.0 OR MIT OR ISC |
+| rustls 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs 0.8.4 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types 1.15.1 | MIT OR Apache-2.0 |
 | rustls-platform-verifier 0.7.1 | MIT OR Apache-2.0 |
@@ -633,6 +637,7 @@ The other components (ported code, native libraries, assets) are in
 | x11rb 0.13.2 | MIT OR Apache-2.0 |
 | x11rb-protocol 0.13.2 | MIT OR Apache-2.0 |
 | x509-parser 0.16.0 | MIT OR Apache-2.0 |
+| x509-parser 0.18.1 | MIT OR Apache-2.0 |
 | xcursor 0.3.11 | MIT |
 | xkbcommon-dl 0.4.2 | MIT |
 | xkeysym 0.2.1 | MIT OR Apache-2.0 OR Zlib |
@@ -8719,7 +8724,7 @@ limitations under the License.
 
 ### Apache License 2.0
 
-Used by: ahash 0.8.12, arrayvec 0.7.8, asn1-rs-derive 0.5.1, asn1-rs 0.6.2, async-channel 2.5.0, async-compression 0.4.50, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, atomic-waker 1.1.2, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, blocking 1.7.0, bumpalo 3.20.3, cfg-if 1.0.5, compression-codecs 0.4.45, compression-core 0.4.33, concurrent-queue 2.5.0, core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.1.3, core-graphics 0.23.2, coreaudio-rs 0.14.2, crossbeam-channel 0.5.17, crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21, crossbeam-utils 0.8.23, data-url 0.3.2, der-parser 9.0.0, displaydoc 0.2.7, either 1.19.0, ena 0.14.4, equivalent 1.0.2, errno 0.3.14, euclid 0.22.14, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, filetime 0.2.29, fixedbitset 0.5.7, flate2 1.1.11, form_urlencoded 1.2.2, futures-lite 2.6.1, gethostname 1.1.0, hash32 0.3.1, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.8.0, httparse 1.10.1, hyper-rustls 0.27.10, idna 1.1.0, idna_adapter 1.2.2, indexmap 2.14.2, itertools 0.15.0, khronos-egl 6.0.0, lazy_static 1.5.1, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, linux-raw-sys 0.9.4, lock_api 0.4.14, lock_api 0.5.0, log 0.4.35, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.5.1, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, num 0.4.3, num_cpus 1.17.0, oid-registry 0.7.1, once_cell 1.21.4, openssl-probe 0.2.1, ordered-stream 0.2.0, parking 2.2.1, parking_lot 0.12.5, parking_lot 0.13.0, parking_lot_core 0.10.0, parking_lot_core 0.9.12, percent-encoding 2.3.2, petgraph 0.8.3, piper 0.2.5, png 0.18.1, polling 3.11.0, pollster 0.4.0, pollster 1.0.1, rayon-core 1.13.0, rayon 1.12.0, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, regex 1.13.1, renderdoc-sys 1.1.0, ring 0.17.14, robust 1.2.0, ron 0.12.3, roxmltree 0.20.0, roxmltree 0.21.2, rtc 0.21.1, rtrb 0.4.1, rustc-hash 1.1.0, rusticata-macros 4.1.0, rustix 0.38.44, rustix 1.1.5, rustls-native-certs 0.8.4, rustls 0.23.46, sansio 1.0.1, scoped-tls 1.0.1, scopeguard 1.2.0, secret-service 5.2.0, security-framework-sys 2.17.0, security-framework 3.7.0, signal-hook-registry 1.4.8, simplecss 0.2.2, smallvec 1.16.2, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, svgtypes 0.16.1, tar 0.4.46, tempfile 3.27.0, ttf-parser 0.25.1, tungstenite 0.30.0, unic-langid-impl 0.9.6, unic-langid 0.9.6, unicase 2.10.0, unicode-bidi-mirroring 0.4.0, unicode-bidi 0.3.18, unicode-properties 0.1.4, unicode-segmentation 1.13.3, unicode-vo 0.1.0, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, uuid 1.29.2, webrtc 0.21.1, wl-clipboard-rs 0.9.4, x509-parser 0.16.0, yasna 0.6.0
+Used by: ahash 0.8.12, arrayvec 0.7.8, asn1-rs-derive 0.5.1, asn1-rs-derive 0.6.0, asn1-rs 0.6.2, asn1-rs 0.7.2, async-channel 2.5.0, async-compression 0.4.50, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, atomic-waker 1.1.2, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, blocking 1.7.0, bumpalo 3.20.3, cfg-if 1.0.5, compression-codecs 0.4.45, compression-core 0.4.33, concurrent-queue 2.5.0, core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.1.3, core-graphics 0.23.2, coreaudio-rs 0.14.2, crossbeam-channel 0.5.17, crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21, crossbeam-utils 0.8.23, data-url 0.3.2, der-parser 10.0.0, der-parser 9.0.0, displaydoc 0.2.7, either 1.19.0, ena 0.14.4, equivalent 1.0.2, errno 0.3.14, euclid 0.22.14, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, filetime 0.2.29, fixedbitset 0.5.7, flate2 1.1.11, form_urlencoded 1.2.2, futures-lite 2.6.1, gethostname 1.1.0, hash32 0.3.1, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.8.0, httparse 1.10.1, hyper-rustls 0.27.10, idna 1.1.0, idna_adapter 1.2.2, indexmap 2.14.2, itertools 0.15.0, khronos-egl 6.0.0, lazy_static 1.5.1, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, linux-raw-sys 0.9.4, lock_api 0.4.14, lock_api 0.5.0, log 0.4.35, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.5.1, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, num 0.4.3, num_cpus 1.17.0, oid-registry 0.7.1, oid-registry 0.8.1, once_cell 1.21.4, openssl-probe 0.2.1, ordered-stream 0.2.0, parking 2.2.1, parking_lot 0.12.5, parking_lot 0.13.0, parking_lot_core 0.10.0, parking_lot_core 0.9.12, percent-encoding 2.3.2, petgraph 0.8.3, piper 0.2.5, png 0.18.1, polling 3.11.0, pollster 0.4.0, pollster 1.0.1, rayon-core 1.13.0, rayon 1.12.0, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, regex 1.13.1, renderdoc-sys 1.1.0, ring 0.17.14, robust 1.2.0, ron 0.12.3, roxmltree 0.20.0, roxmltree 0.21.2, rtc 0.21.1, rtrb 0.4.1, rustc-hash 1.1.0, rusticata-macros 4.1.0, rustix 0.38.44, rustix 1.1.5, rustls-native-certs 0.8.4, rustls 0.23.46, sansio 1.0.1, scoped-tls 1.0.1, scopeguard 1.2.0, secret-service 5.2.0, security-framework-sys 2.17.0, security-framework 3.7.0, signal-hook-registry 1.4.8, simplecss 0.2.2, smallvec 1.16.2, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, svgtypes 0.16.1, tar 0.4.46, tempfile 3.27.0, ttf-parser 0.25.1, tungstenite 0.30.0, unic-langid-impl 0.9.6, unic-langid 0.9.6, unicase 2.10.0, unicode-bidi-mirroring 0.4.0, unicode-bidi 0.3.18, unicode-properties 0.1.4, unicode-segmentation 1.13.3, unicode-vo 0.1.0, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, uuid 1.29.2, webrtc 0.21.1, wl-clipboard-rs 0.9.4, x509-parser 0.16.0, x509-parser 0.18.1, yasna 0.6.0
 
 ````text
                               Apache License

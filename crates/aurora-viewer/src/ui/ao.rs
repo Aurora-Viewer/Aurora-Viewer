@@ -24,6 +24,8 @@ pub enum Action {
     Import(Uuid),
     Migrate,
     ReloadMigration,
+    FinishRecovery(inventory::Recovery),
+    ShowRecovery(Uuid),
     Reload,
     Preferences,
     MovementPreferences,
@@ -172,7 +174,6 @@ pub fn show(
     open: &mut bool,
     movement: &mut super::movement::MovementUi,
     movement_prefs: &mut crate::movement::Preferences,
-    water_volumes: &mut crate::movement::water_volume::Settings,
     keys: &crate::keybinds::KeyBindings,
     movement_status: &str,
 ) -> Vec<Action> {
@@ -210,7 +211,7 @@ pub fn show(
                     let actions = egui::ScrollArea::vertical()
                         .id_salt("ao_movement")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| movement.show(ui, p, movement_prefs, water_volumes, keys, movement_status))
+                        .show(ui, |ui| movement.show(ui, p, movement_prefs, keys, movement_status))
                         .inner;
                     if actions.changed {
                         out.push(Action::MovementPreferences);
@@ -295,6 +296,32 @@ pub fn show(
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);
+                        }
+                    });
+                });
+            }
+            for recovery in inventory::recoveries(inv) {
+                let name = inv
+                    .folders
+                    .get(&recovery.source)
+                    .map_or("Aurora AO".to_owned(), |f| f.info.name.clone());
+                widgets::surface(ui, p, |ui| {
+                    let notice = if recovery.duplicate {
+                        aurora_i18n::tr!("ao-duplicate-native", folder = name.as_str(), count = recovery.sets)
+                    } else {
+                        aurora_i18n::tr!("ao-unfinished-import", folder = name.as_str(), count = recovery.sets)
+                    };
+                    ui.label(RichText::new(notice).color(p.warn));
+                    ui.horizontal(|ui| {
+                        // Like the other AO buttons: an edit already running
+                        // would drop the click.
+                        ui.add_enabled_ui(!state.busy() && !catalog.loading, |ui| {
+                            if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-finish-import")).clicked() {
+                                out.push(Action::FinishRecovery(recovery));
+                            }
+                        });
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
+                            out.push(Action::ShowRecovery(recovery.source));
                         }
                     });
                 });

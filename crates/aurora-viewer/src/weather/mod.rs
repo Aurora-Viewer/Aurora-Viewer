@@ -69,13 +69,25 @@ pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
 /// (RTX 3090, 1080p, 2026-11-15).
 pub const DEEP_SNOW_REACH: std::ops::RangeInclusive<f32> = 10.0..=40.0;
 pub const DEEP_SNOW_REACH_DEFAULT: f32 = 15.0;
+/// The wind's defaults, its lulls and its gusts (0..1): a breeze, gusting
+/// to a steady wind (`ui/weather_window.rs` `wind_word`).
+pub const WIND_MIN_DEFAULT: f32 = 0.1;
+pub const WIND_MAX_DEFAULT: f32 = 0.35;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WeatherSettings {
+    /// The window's main switch: off, none of its weather is drawn (its
+    /// settings are kept, greyed). Off by default.
+    pub enabled: bool,
+    /// The "Falling" card's switch: rain or snow falls (and thunder comes
+    /// with the rain). Off by default.
+    pub precipitation_on: bool,
     pub precipitation: Precipitation,
     /// How much falls, 0 (none) to 1 (a downpour).
     pub amount: f32,
+    /// The "Wind" card's switch: the weather's wind blows. Off by default.
+    pub wind_on: bool,
     /// How hard the wind blows in its lulls, 0 (calm) to 1 (a gale).
     pub wind_min: f32,
     /// How hard it blows in its gusts (the files of the single Wind slider
@@ -136,10 +148,16 @@ pub struct WeatherSettings {
 impl Default for WeatherSettings {
     fn default() -> Self {
         Self {
+            enabled: false,
+            precipitation_on: false,
             precipitation: Precipitation::Rain,
-            amount: 0.0,
-            wind_min: 0.0,
-            wind_max: 0.0,
+            // the switches turn the weather on: once on, it falls at full
+            // strength
+            amount: 1.0,
+            wind_on: false,
+            // and once the wind is on, it blows: a breeze
+            wind_min: WIND_MIN_DEFAULT,
+            wind_max: WIND_MAX_DEFAULT,
             wind_follow_region: true,
             wind_from: 270.0,
             puddles: true,
@@ -166,14 +184,77 @@ impl Default for WeatherSettings {
     }
 }
 
+/// A teleport to another region (#3664): whether what the weather left on
+/// the ground (lying snow, wet ground and puddles, footprints, snow on the
+/// avatars) goes, as with the Weather window's clean-up button. It belongs
+/// to the place left, and kept, it lay on the new region for many minutes
+/// while it melted. Only rain or snow falling now keeps it: it falls the
+/// same everywhere, and cleaned up, the ground went bare or dry under it and
+/// filled again.
+pub fn clean_on_arrival(now: &WeatherSettings) -> bool {
+    now.fall() <= 0.0
+}
+
 impl WeatherSettings {
+    /// The weather drawn: these settings with what their switches turn off
+    /// taken out (`App::update_weather_now`, the window's summary). Off is
+    /// what it was before the switches: nothing falling, no wind, no aurora.
+    /// `AURORA_RAIN`, `AURORA_SNOW` and `AURORA_NORTHERN_LIGHTS` still win
+    /// until the window is used (they are read before these values).
+    pub fn in_effect(&self) -> WeatherSettings {
+        let mut w = self.clone();
+        // what the variables set is on, for the summary's words too
+        if !w.touched && (env_rain().is_some() || env_snow().is_some()) {
+            w.enabled = true;
+            w.precipitation_on = true;
+        }
+        if !w.touched && env_northern_lights().is_some() {
+            w.enabled = true;
+        }
+        if !(w.enabled && w.precipitation_on) {
+            w.amount = 0.0;
+            w.thunder = false;
+        }
+        if !(w.enabled && w.wind_on) {
+            w.wind_min = 0.0;
+            w.wind_max = 0.0;
+        }
+        if !w.enabled {
+            w.aurora = false;
+        }
+        w
+    }
+
+    /// A file from before the switches (settings version 43): what it drew
+    /// stays on. Nothing falling, no wind and no aurora was how it was off;
+    /// a fall at 0 then starts at full strength, as a new one does.
+    pub fn upgrade_to_switches(&mut self) {
+        self.precipitation_on = self.amount > 0.0;
+        self.wind_on = self.wind_max > 0.0;
+        self.enabled = self.precipitation_on || self.wind_on || self.aurora;
+        if self.amount <= 0.0 {
+            self.amount = 1.0;
+        }
+    }
+
+    /// A file from before the wind's defaults (settings version 44): a wind
+    /// switched off and left still takes them, so that switching it on
+    /// blows, as a new one does.
+    pub fn upgrade_wind_defaults(&mut self) {
+        if !self.wind_on && self.wind_max <= 0.0 {
+            self.wind_min = WIND_MIN_DEFAULT;
+            self.wind_max = WIND_MAX_DEFAULT;
+        }
+    }
+
     /// How hard it rains, 0 to 1: the menu's, or `AURORA_RAIN` until the
     /// menu is used (demo captures).
     pub fn rain(&self) -> f32 {
         if !self.touched
             && let Some(v) = env_rain()
         {
-            return v;
+            // AURORA_SNOW_AFTER: the rain stops when the snow starts
+            return if env_snow_now().is_some() { 0.0 } else { v };
         }
         match self.precipitation {
             Precipitation::Rain => self.amount.clamp(0.0, 1.0),
@@ -184,7 +265,7 @@ impl WeatherSettings {
 
     /// Snow is chosen (the menu's, or `AURORA_SNOW` until the menu is used).
     pub fn snowing(&self) -> bool {
-        if !self.touched && env_snow().is_some() {
+        if !self.touched && env_snow_now().is_some() {
             return true;
         }
         self.precipitation == Precipitation::Snow
@@ -194,7 +275,7 @@ impl WeatherSettings {
     /// pass draws.
     pub fn fall(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow()
+            && let Some(v) = env_snow_now()
         {
             return v;
         }
@@ -208,7 +289,7 @@ impl WeatherSettings {
     /// the menu is used.
     pub fn rain_or_amount(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow().or_else(env_rain)
+            && let Some(v) = env_snow_now().or_else(env_rain)
         {
             return v;
         }
@@ -227,6 +308,14 @@ impl WeatherSettings {
         }
         if self.precipitation == before.precipitation && before.snowing() {
             self.precipitation = Precipitation::Snow;
+        }
+        // and what they made fall stays on, unless a switch was just used
+        if (env_rain().is_some() || env_snow().is_some())
+            && self.enabled == before.enabled
+            && self.precipitation_on == before.precipitation_on
+        {
+            self.enabled = true;
+            self.precipitation_on = true;
         }
     }
 
@@ -425,6 +514,23 @@ impl Wind {
     }
 }
 
+/// `AURORA_SNOW` once `AURORA_SNOW_AFTER=<s>` seconds have passed since
+/// launch (at once without it): before, `AURORA_RAIN` falls, so that a
+/// capture shows the puddles it left frozen.
+fn env_snow_now() -> Option<f32> {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static AFTER: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    let after = *AFTER.get_or_init(|| {
+        std::env::var("AURORA_SNOW_AFTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0)
+    });
+    env_snow().filter(|_| start.elapsed().as_secs_f32() >= after)
+}
+
 /// `AURORA_SNOW=<0..1>`: snow of this strength until the menu is used
 /// (demo captures).
 fn env_snow() -> Option<f32> {
@@ -498,6 +604,20 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teleport_cleans_up_unless_rain_or_snow_is_falling() {
+        let weather = |precipitation, amount| WeatherSettings {
+            precipitation,
+            amount,
+            touched: true,
+            ..WeatherSettings::default()
+        };
+        assert!(!clean_on_arrival(&weather(Precipitation::Snow, 0.6)));
+        assert!(!clean_on_arrival(&weather(Precipitation::Rain, 0.6)));
+        assert!(clean_on_arrival(&weather(Precipitation::Snow, 0.0)), "snow at amount 0");
+        assert!(clean_on_arrival(&weather(Precipitation::Rain, 0.0)), "rain at amount 0");
+    }
 
     #[test]
     fn the_renderer_gets_both_distances_and_deep_snows_reach() {
@@ -698,9 +818,91 @@ mod tests {
     }
 
     #[test]
+    fn the_switches_turn_off_what_they_hold_and_keep_its_settings() {
+        // off by default, at full strength once on
+        let d = WeatherSettings::default();
+        assert!(!d.enabled && !d.precipitation_on && !d.wind_on && !d.aurora);
+        assert_eq!(d.amount, 1.0);
+        let on = WeatherSettings {
+            enabled: true,
+            precipitation_on: true,
+            wind_on: true,
+            amount: 0.8,
+            wind_min: 0.2,
+            wind_max: 0.6,
+            thunder: true,
+            aurora: true,
+            touched: true,
+            ..Default::default()
+        };
+        assert_eq!(on.in_effect(), on);
+        // the main switch: nothing at all, its settings kept
+        let all_off = WeatherSettings {
+            enabled: false,
+            ..on.clone()
+        };
+        let drawn = all_off.in_effect();
+        assert_eq!((drawn.fall(), drawn.wind_range(), drawn.thunder), (0.0, (0.0, 0.0), false));
+        assert_eq!(drawn.aurora_look(), [0.0; 4]);
+        assert_eq!(all_off.amount, 0.8);
+        // a card's switch: its own part only
+        let dry = WeatherSettings {
+            precipitation_on: false,
+            ..on.clone()
+        }
+        .in_effect();
+        assert_eq!((dry.fall(), dry.thunder, dry.wind_range()), (0.0, false, (0.2, 0.6)));
+        assert!(dry.aurora);
+        let calm = WeatherSettings {
+            wind_on: false,
+            ..on.clone()
+        }
+        .in_effect();
+        assert_eq!((calm.wind_range(), calm.fall()), ((0.0, 0.0), 0.8));
+    }
+
+    #[test]
+    fn a_file_from_before_the_switches_keeps_what_it_drew() {
+        let read = |json: &str| {
+            let mut w: WeatherSettings = serde_json::from_str(json).expect("parse");
+            w.upgrade_to_switches();
+            w
+        };
+        let rain = read("{\"amount\": 0.4, \"wind_max\": 0.0, \"aurora\": false}");
+        assert!(rain.enabled && rain.precipitation_on && !rain.wind_on);
+        assert_eq!(rain.amount, 0.4);
+        let night = read("{\"amount\": 0.0, \"wind_max\": 0.3, \"aurora\": true}");
+        assert!(night.enabled && !night.precipitation_on && night.wind_on);
+        // turned on later, it falls at full strength
+        assert_eq!(night.amount, 1.0);
+        let clear = read("{\"amount\": 0.0, \"wind_max\": 0.0, \"aurora\": false}");
+        assert!(!clear.enabled && !clear.precipitation_on && !clear.wind_on);
+    }
+
+    #[test]
+    fn a_still_wind_switched_off_takes_the_breeze_and_a_set_one_is_kept() {
+        let d = WeatherSettings::default();
+        assert_eq!(d.wind_range(), (WIND_MIN_DEFAULT, WIND_MAX_DEFAULT));
+        let read = |json: &str| {
+            let mut w: WeatherSettings = serde_json::from_str(json).expect("parse");
+            w.upgrade_wind_defaults();
+            w
+        };
+        // still and off: switched on, it blows
+        let still = read("{\"wind_on\": false, \"wind_min\": 0.0, \"wind_max\": 0.0}");
+        assert_eq!(still.wind_range(), (WIND_MIN_DEFAULT, WIND_MAX_DEFAULT));
+        // set by hand, or on: kept as it is
+        let set = read("{\"wind_on\": false, \"wind_min\": 0.0, \"wind_max\": 0.6}");
+        assert_eq!(set.wind_range(), (0.0, 0.6));
+        let on = read("{\"wind_on\": true, \"wind_min\": 0.0, \"wind_max\": 0.0}");
+        assert_eq!(on.wind_range(), (0.0, 0.0));
+    }
+
+    #[test]
     fn old_settings_files_keep_their_wind_as_the_gusts() {
         let read: WeatherSettings = serde_json::from_str("{\"wind\": 0.6}").expect("parse");
-        assert_eq!(read.wind_range(), (0.0, 0.6));
+        // the lulls they had not are the default's
+        assert_eq!(read.wind_range(), (WIND_MIN_DEFAULT, 0.6));
         assert!(read.wind_follow_region);
         assert_eq!(read.thunder_frequency, 0.5);
     }

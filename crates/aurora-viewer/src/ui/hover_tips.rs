@@ -8,6 +8,7 @@ use crate::settings::HoverTipForm;
 use crate::theme::Palette;
 use crate::ui::sheet::{icon_at, semibold};
 use crate::ui::widgets::{self, ActionKind};
+use aurora_i18n::UiUpper;
 use egui::{Align2, Id, Pos2, Rect, RichText, Sense, Vec2};
 
 /// Where the tip appears from the point the pointer rested on
@@ -132,7 +133,7 @@ fn owner_icon(group: bool) -> &'static str {
 /// The small capitals above a title ("LAND"), or the avatar's group title.
 fn kicker(ui: &mut egui::Ui, p: &Palette, tip: &Tip) {
     if let Some(k) = &tip.kicker {
-        let text = if tip.kind == TipKind::Land { k.to_uppercase() } else { k.clone() };
+        let text = if tip.kind == TipKind::Land { k.ui_upper() } else { k.clone() };
         ui.add(egui::Label::new(RichText::new(text).size(11.0).color(p.muted)).truncate());
     }
 }
