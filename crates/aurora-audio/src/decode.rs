@@ -6,6 +6,7 @@ use std::sync::Arc;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::well_known::FORMAT_ID_OGG;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::{MetadataOptions, StandardTag};
@@ -21,11 +22,39 @@ pub(crate) struct Chunk<'a> {
     pub rate: u32,
 }
 
+/// How the decoded samples of a stream are read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Layout {
+    /// The channels and sample rate the stream declares (local files,
+    /// parcel music, the viewer's own sounds).
+    Declared,
+    /// A sound asset of the grid, read as the Legacy Viewer reads it: every
+    /// decoded sample in order, as one mono stream at 44.1 kHz, whatever
+    /// the file declares. Port of LLVorbisDecodeState::initDecode and
+    /// decodeSection (indra/llaudio/llaudiodecodemgr.cpp): the WAV header
+    /// written for every sound says 1 channel at 44 100 Hz, and the samples
+    /// of ov_read, left and right interleaved for a stereo file, follow it
+    /// unchanged. The upload makes mono 44.1 kHz files, which play the same
+    /// either way; a file made with another tool (stereo, 48 kHz, 128 kHz)
+    /// plays slower and lower there, and that is what its creator and every
+    /// other resident hear.
+    LegacyAsset,
+}
+
+/// The rate every sound asset is played at (LLVORBIS_CLIP_SAMPLE_RATE,
+/// indra/llaudio/llvorbisencode.h; the fixed WAV header of initDecode).
+pub(crate) const LEGACY_ASSET_RATE: u32 = 44_100;
+
+/// Most channels a sound asset may declare (LLVORBIS_CLIP_MAX_CHANNELS):
+/// initDecode refuses any other count as a bad asset.
+const LEGACY_ASSET_MAX_CHANNELS: usize = 2;
+
 /// A demuxer + decoder pair reading from any (possibly non-seekable) source.
 pub(crate) struct DecodeStream {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
+    layout: Layout,
     /// Interleaved samples of the last decoded packet (reused between packets).
     samples: Vec<f32>,
 }
@@ -34,9 +63,28 @@ fn dec_err(e: SymError) -> AudioError {
     AudioError::Decode(e.to_string())
 }
 
+/// Source sample rates the decoder accepts, in Hz: from the lowest rate of
+/// the supported codecs (7.35 kHz for AAC, 8 kHz for MP3; sound assets are
+/// uploaded at 44.1 kHz, LLVORBIS_CLIP_SAMPLE_RATE in llvorbisencode.h) to
+/// 192 kHz. Keeps the resampler's output within a few times its input.
+pub(crate) const SAMPLE_RATES: std::ops::RangeInclusive<u32> = 7_350..=192_000;
+
+fn check_rate(rate: u32) -> Result<(), AudioError> {
+    if SAMPLE_RATES.contains(&rate) {
+        Ok(())
+    } else {
+        Err(AudioError::Decode(format!("unsupported sample rate: {rate} Hz")))
+    }
+}
+
 impl DecodeStream {
     /// `ext` is a file-extension style hint ("mp3", "aac", "ogg", "wav").
     pub(crate) fn open(source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<Self, AudioError> {
+        Self::open_as(source, ext, Layout::Declared)
+    }
+
+    /// [`DecodeStream::open`], reading the samples with `layout`.
+    pub(crate) fn open_as(source: Box<dyn MediaSource>, ext: Option<&str>, layout: Layout) -> Result<Self, AudioError> {
         let mss = MediaSourceStream::new(source, Default::default());
         let mut hint = Hint::new();
         if let Some(ext) = ext {
@@ -45,11 +93,12 @@ impl DecodeStream {
         let format = symphonia::default::get_probe()
             .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
             .map_err(dec_err)?;
-        let (decoder, track_id) = make_decoder(format.as_ref())?;
+        let (decoder, track_id) = make_decoder(format.as_ref(), layout)?;
         Ok(Self {
             format,
             decoder,
             track_id,
+            layout,
             samples: Vec::new(),
         })
     }
@@ -58,6 +107,10 @@ impl DecodeStream {
     pub(crate) fn next_chunk(&mut self) -> Result<Option<Chunk<'_>>, AudioError> {
         let Some((channels, rate)) = self.decode_next()? else {
             return Ok(None);
+        };
+        let (channels, rate) = match self.layout {
+            Layout::Declared => (channels, rate),
+            Layout::LegacyAsset => (1, LEGACY_ASSET_RATE),
         };
         Ok(Some(Chunk {
             samples: &self.samples,
@@ -77,7 +130,7 @@ impl DecodeStream {
                 }
                 Err(SymError::ResetRequired) => {
                     // Chained Ogg stream (new song on Icecast): new decoder.
-                    let (decoder, track_id) = make_decoder(self.format.as_ref())?;
+                    let (decoder, track_id) = make_decoder(self.format.as_ref(), self.layout)?;
                     self.decoder = decoder;
                     self.track_id = track_id;
                     continue;
@@ -94,6 +147,10 @@ impl DecodeStream {
                         continue;
                     }
                     let rate = buf.spec().rate();
+                    // A sound asset's declared rate is not read (Layout::LegacyAsset).
+                    if self.layout == Layout::Declared {
+                        check_rate(rate)?;
+                    }
                     buf.copy_to_vec_interleaved(&mut self.samples);
                     // Symphonia 0.6 no longer clips its float output; the reference decodes to
                     // 16-bit PCM (ov_read in LLVorbisDecodeState::decodeSection), which clips at
@@ -149,10 +206,25 @@ impl DecodeStream {
     }
 }
 
-fn make_decoder(format: &dyn FormatReader) -> Result<(Box<dyn AudioDecoder>, u32), AudioError> {
+fn make_decoder(format: &dyn FormatReader, layout: Layout) -> Result<(Box<dyn AudioDecoder>, u32), AudioError> {
     let no_track = || AudioError::Decode("no audio track".into());
     let track = format.first_track_known_codec(TrackType::Audio).ok_or_else(no_track)?;
     let params = track.codec_params.as_ref().and_then(|p| p.audio()).ok_or_else(no_track)?;
+    match layout {
+        Layout::Declared => {
+            if let Some(rate) = params.sample_rate {
+                check_rate(rate)?;
+            }
+        }
+        // initDecode reads the channel count of the bitstream and refuses
+        // 0 or more than LLVORBIS_CLIP_MAX_CHANNELS; the rate is never read.
+        Layout::LegacyAsset => {
+            let channels = params.channels.as_ref().map_or(0, |c| c.count());
+            if !(1..=LEGACY_ASSET_MAX_CHANNELS).contains(&channels) {
+                return Err(AudioError::Decode(format!("bad channel count: {channels}")));
+            }
+        }
+    }
     let decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default())
         .map_err(dec_err)?;
@@ -187,6 +259,9 @@ pub(crate) fn hint_for_path(path: &str) -> Option<&'static str> {
 #[derive(Clone)]
 pub struct SoundClip {
     pub(crate) samples: Arc<[f32]>,
+    /// Where a voice of it starts (an even sample index: a frame), set by
+    /// [`SoundClip::rotated`]; the samples stay shared.
+    pub(crate) start: usize,
 }
 
 impl std::fmt::Debug for SoundClip {
@@ -232,6 +307,20 @@ impl SoundClip {
         Self::decode_limited(bytes, MAX_CLIP_SOURCE_SAMPLES, MAX_CLIP_SECONDS)
     }
 
+    /// Decodes a sound asset of the grid: Ogg Vorbis only, the one format
+    /// LLVorbisDecodeState::initDecode opens (ov_open_callbacks,
+    /// indra/llaudio/llaudiodecodemgr.cpp), with the limits of
+    /// [`SoundClip::decode`], and played as the Legacy Viewer plays it:
+    /// mono at 44.1 kHz whatever the file declares ([`Layout::LegacyAsset`]).
+    pub fn decode_asset(bytes: &[u8]) -> Result<SoundClip, AudioError> {
+        let stream = DecodeStream::open_as(Box::new(Cursor::new(bytes.to_vec())), Some("ogg"), Layout::LegacyAsset)?;
+        // The probe reads the content, never the hint (symphonia 0.6).
+        if stream.format.format_info().format != FORMAT_ID_OGG {
+            return Err(AudioError::Decode("sound asset is not Ogg".into()));
+        }
+        Self::decode_stream(stream, MAX_CLIP_SOURCE_SAMPLES, MAX_CLIP_SECONDS)
+    }
+
     /// [`SoundClip::decode`] with explicit limits: `max_source` source
     /// samples (frames x channels) and `max_seconds` once decoded.
     fn decode_limited(bytes: &[u8], max_source: usize, max_seconds: usize) -> Result<SoundClip, AudioError> {
@@ -263,7 +352,11 @@ impl SoundClip {
                     resampler = Some((chunk.rate, Resampler::new(chunk.rate, ENGINE_SAMPLE_RATE, 2)));
                 }
                 if let Some((_, rs)) = resampler.as_mut() {
-                    rs.process(&stereo, &mut out);
+                    // One frame past what the limit leaves is enough to
+                    // refuse the clip; the rest of the packet is not resampled.
+                    let budget = limit.saturating_sub(out.len()) / 2 + 1;
+                    rs.push(&stereo);
+                    rs.pull(&mut out, budget);
                 }
             }
             if out.len() > limit {
@@ -274,21 +367,45 @@ impl SoundClip {
             return Err(AudioError::Decode("no audio decoded".into()));
         }
         fade_clip_edges(&mut out);
-        Ok(SoundClip { samples: out.into() })
+        Ok(SoundClip {
+            samples: out.into(),
+            start: 0,
+        })
     }
 
-    /// Builds a clip from raw interleaved f32 PCM (`channels` >= 1).
+    /// Builds a clip from raw interleaved f32 PCM (`channels` >= 1), made
+    /// by the viewer itself (synthesized or imported sounds). A rate outside
+    /// [`SAMPLE_RATES`] is taken as its nearest bound; 0 is the engine rate.
     pub fn from_pcm(samples: &[f32], channels: u16, sample_rate: u32) -> SoundClip {
         let mut stereo = Vec::new();
         to_stereo(samples, usize::from(channels), &mut stereo);
         let samples: Arc<[f32]> = if sample_rate == ENGINE_SAMPLE_RATE || sample_rate == 0 {
             stereo.into()
         } else {
+            let rate = sample_rate.clamp(*SAMPLE_RATES.start(), *SAMPLE_RATES.end());
             let mut out = Vec::new();
-            Resampler::new(sample_rate, ENGINE_SAMPLE_RATE, 2).process(&stereo, &mut out);
+            Resampler::new(rate, ENGINE_SAMPLE_RATE, 2).process(&stereo, &mut out);
             out.into()
         };
-        SoundClip { samples }
+        SoundClip { samples, start: 0 }
+    }
+
+    /// The same sound, starting `fraction` (0..1) of the way through: a
+    /// looping voice wraps round, so it is the loop played from another
+    /// point (two voices of a long noisy loop, offset, sound like two
+    /// different sources); a voice that does not loop plays from there to
+    /// the end. The samples are shared, not copied (a minute of stereo is
+    /// 23 MB).
+    pub fn rotated(&self, fraction: f32) -> SoundClip {
+        let frames = self.samples.len() / 2;
+        if frames == 0 {
+            return self.clone();
+        }
+        let offset = ((fraction.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1) * 2;
+        SoundClip {
+            samples: self.samples.clone(),
+            start: (self.start + offset) % (frames * 2),
+        }
     }
 
     /// Length of the clip.
@@ -552,6 +669,159 @@ pub(crate) mod tests {
         let wav = wav_bytes(8_000, 1, &[0; 16_000]);
         assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 3).is_ok());
         assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 1).is_err());
+    }
+
+    #[test]
+    fn only_the_supported_sample_rates_decode() {
+        for rate in [1, 100, 7_349, 192_001, 1_000_000] {
+            let wav = wav_bytes(rate, 1, &[0; 4_096]);
+            assert!(SoundClip::decode(&wav).is_err(), "{rate} Hz");
+            assert!(DecodeStream::open(Box::new(Cursor::new(wav)), None).is_err(), "{rate} Hz");
+            assert!(check_rate(rate).is_err(), "{rate} Hz");
+        }
+        for rate in [7_350, 8_000, 11_025, 22_050, 44_100, 96_000, 192_000] {
+            let clip = SoundClip::decode(&wav_bytes(rate, 2, &[0; 4_096])).unwrap();
+            // The resampler holds back its last two source frames.
+            let ratio = f64::from(ENGINE_SAMPLE_RATE) / f64::from(rate);
+            let frames = 2_048.0 * ratio;
+            let got = clip.samples.len() as f64 / 2.0;
+            assert!(
+                (got - frames).abs() <= 3.0 * ratio + 2.0,
+                "{rate} Hz: {got} frames, {frames} expected"
+            );
+        }
+    }
+
+    #[test]
+    fn each_packet_stays_within_the_clip_limit() {
+        // 3 s at 8 kHz, six engine frames per source frame: a 2 s limit
+        // refuses it, and a pull never goes past the frames it is given.
+        let wav = wav_bytes(8_000, 1, &[0; 24_000]);
+        assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 3).is_ok());
+        assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 2).is_err());
+        let mut rs = Resampler::new(8_000, ENGINE_SAMPLE_RATE, 2);
+        rs.push(&[0.0; 16_000]);
+        let mut out = Vec::new();
+        assert_eq!(rs.pull(&mut out, 1_001), 1_001);
+        assert_eq!(out.len(), 2_002);
+    }
+
+    #[test]
+    fn sound_assets_are_ogg_only() {
+        assert!(SoundClip::decode_asset(include_bytes!("../tests/data/abrupt-tone.ogg")).is_ok());
+        assert!(SoundClip::decode_asset(&wav_bytes(44_100, 1, &[0; 4_096])).is_err());
+        assert!(SoundClip::decode_asset(&mp3_silence(30)).is_err());
+        assert!(SoundClip::decode_asset(b"definitely not audio").is_err());
+        // Local files keep every supported format.
+        assert!(SoundClip::decode(&wav_bytes(44_100, 1, &[0; 4_096])).is_ok());
+        assert!(SoundClip::decode(&mp3_silence(30)).is_ok());
+    }
+
+    const STEREO_48K: &[u8] = include_bytes!("../tests/data/stereo-48k.ogg");
+    const STEREO_128K: &[u8] = include_bytes!("../tests/data/stereo-128k.ogg");
+    const THREE_CHANNELS: &[u8] = include_bytes!("../tests/data/three-channels.ogg");
+    const MONO_44K: &[u8] = include_bytes!("../tests/data/abrupt-tone.ogg");
+
+    /// Decoded samples (frames x channels) and the rate the file declares.
+    fn source_samples(bytes: &[u8]) -> (usize, u32) {
+        let mut s = DecodeStream::open(Box::new(Cursor::new(bytes.to_vec())), None).unwrap();
+        let (mut n, mut rate) = (0, 0);
+        while let Some(c) = s.next_chunk().unwrap() {
+            n += c.samples.len();
+            rate = c.rate;
+        }
+        (n, rate)
+    }
+
+    /// Engine frames a clip of `samples` mono source samples at 44.1 kHz
+    /// lasts, within the resampler's held-back frames.
+    fn assert_legacy_length(clip: &SoundClip, samples: usize, what: &str) {
+        let ratio = f64::from(ENGINE_SAMPLE_RATE) / f64::from(LEGACY_ASSET_RATE);
+        let want = samples as f64 * ratio;
+        let got = clip.samples.len() as f64 / 2.0;
+        assert!((got - want).abs() <= 3.0 * ratio + 2.0, "{what}: {got} frames, {want} expected");
+    }
+
+    #[test]
+    fn sound_assets_play_as_mono_at_44_1_khz_like_the_legacy_viewer() {
+        // A normal upload (mono, 44.1 kHz) plays exactly as before.
+        assert_eq!(source_samples(MONO_44K).1, 44_100);
+        let asset = SoundClip::decode_asset(MONO_44K).unwrap();
+        assert_eq!(asset.samples, SoundClip::decode(MONO_44K).unwrap().samples);
+
+        // Other formats: every decoded sample in order, one mono stream at
+        // 44.1 kHz. A 128 kHz stereo file lasts 2 x 128 000 / 44 100 = 5.8
+        // times longer than it declares, as in the Legacy Viewer (#3766).
+        for (bytes, rate, what) in [(STEREO_48K, 48_000, "48 kHz stereo"), (STEREO_128K, 128_000, "128 kHz stereo")] {
+            let (samples, declared) = source_samples(bytes);
+            assert_eq!(declared, rate, "{what}");
+            let asset = SoundClip::decode_asset(bytes).unwrap();
+            assert_legacy_length(&asset, samples, what);
+            let local = SoundClip::decode(bytes).unwrap();
+            let stretch = asset.duration().as_secs_f64() / local.duration().as_secs_f64();
+            let legacy = 2.0 * f64::from(rate) / 44_100.0;
+            assert!((stretch - legacy).abs() < 0.05 * legacy, "{what}: {stretch}x, {legacy}x expected");
+            // Left and right samples follow each other on both sides.
+            assert!(asset.samples.as_chunks::<2>().0.iter().all(|f| f[0] == f[1]), "{what}");
+        }
+    }
+
+    /// The file with the sample rate of its Vorbis identification header
+    /// replaced, and its Ogg page checksum computed again.
+    fn with_declared_rate(bytes: &[u8], rate: u32) -> Vec<u8> {
+        fn ogg_crc(data: &[u8]) -> u32 {
+            let mut crc = 0u32;
+            for &b in data {
+                crc ^= u32::from(b) << 24;
+                for _ in 0..8 {
+                    crc = if crc & 0x8000_0000 != 0 {
+                        (crc << 1) ^ 0x04c1_1db7
+                    } else {
+                        crc << 1
+                    };
+                }
+            }
+            crc
+        }
+        let mut v = bytes.to_vec();
+        let ident = v.windows(7).position(|w| w == b"\x01vorbis").expect("identification header");
+        // packet type and "vorbis" (7), version (4), channels (1), then the rate
+        v[ident + 12..ident + 16].copy_from_slice(&rate.to_le_bytes());
+        let segments = usize::from(v[26]);
+        let page_len = 27 + segments + v[27..27 + segments].iter().map(|&s| usize::from(s)).sum::<usize>();
+        v[22..26].fill(0);
+        let crc = ogg_crc(&v[..page_len]);
+        v[22..26].copy_from_slice(&crc.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn a_sound_asset_plays_whatever_rate_it_declares() {
+        // The Legacy Viewer never reads the rate: a sound asset declaring
+        // 256 kHz plays like any other, where Aurora used to stay silent (#4110).
+        let fast = with_declared_rate(MONO_44K, 256_000);
+        // A local file keeps the supported rates.
+        let local = SoundClip::decode(&fast).map(|_| ()).unwrap_err();
+        assert!(local.to_string().contains("256000 Hz"), "{local}");
+        let asset = SoundClip::decode_asset(&fast).unwrap();
+        assert_eq!(asset.samples, SoundClip::decode_asset(MONO_44K).unwrap().samples);
+        let slow = with_declared_rate(MONO_44K, 1);
+        assert_eq!(SoundClip::decode_asset(&slow).unwrap().samples, asset.samples);
+    }
+
+    #[test]
+    fn a_sound_asset_has_one_or_two_channels() {
+        // LLVORBIS_CLIP_MAX_CHANNELS: initDecode refuses the asset.
+        assert!(SoundClip::decode_asset(THREE_CHANNELS).is_err());
+        // A local file is mixed down.
+        assert!(SoundClip::decode(THREE_CHANNELS).is_ok());
+    }
+
+    #[test]
+    fn raw_pcm_rates_stay_within_the_supported_range() {
+        let clip = SoundClip::from_pcm(&[0.0; 100], 1, 1);
+        let bound = SoundClip::from_pcm(&[0.0; 100], 1, *SAMPLE_RATES.start());
+        assert_eq!(clip.samples.len(), bound.samples.len());
     }
 
     #[test]

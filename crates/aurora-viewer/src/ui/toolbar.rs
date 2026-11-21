@@ -126,6 +126,8 @@ pub struct ToolbarSettings {
     pub locked: bool,
     /// One-time discovery of the new command; later manual removal is retained.
     pub vr_button_migrated: bool,
+    /// The same for the Director, placed next to the photo button.
+    pub director_button_migrated: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub left: Vec<ToolButton>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -159,6 +161,38 @@ impl ToolbarSettings {
         }
         true
     }
+
+    /// One-time discovery of the Director (0.9.11): a bar the user arranged
+    /// gets its button right after the photo button, on whichever bar that
+    /// one stands, else at the end of the bottom bar. A bar that follows the
+    /// skin already has it (`Layout::default`); an emptied bottom bar, a
+    /// Director already placed or removed later are left alone.
+    pub fn migrate_director_button(&mut self) -> bool {
+        if self.director_button_migrated {
+            return false;
+        }
+        self.director_button_migrated = true;
+        let Some(bottom) = &mut self.buttons else {
+            return true;
+        };
+        if bottom.is_empty() || bottom.iter().chain(&self.left).chain(&self.right).any(|b| b.command == "director") {
+            return true;
+        }
+        let director = ToolButton {
+            command: "director".into(),
+            icon: "movie".into(),
+            tooltip: String::new(),
+        };
+        let bar = [bottom, &mut self.left, &mut self.right]
+            .into_iter()
+            .find_map(|bar| bar.iter().position(|b| b.command == "snapshot").map(|i| (bar, i + 1)));
+        match bar {
+            Some((bar, at)) => bar.insert(at, director),
+            None => self.buttons.get_or_insert_default().push(director),
+        }
+        true
+    }
+
     pub fn buttons<'a>(&'a self, layout: &'a Layout) -> &'a [ToolButton] {
         self.buttons.as_deref().unwrap_or(&layout.toolbar)
     }
@@ -270,10 +304,15 @@ pub struct ToolbarUi {
     /// The photo reel holds no photo (given by the app): its button is
     /// dimmed. And its quick view is open: the button is lit.
     pub photo_roll_empty: bool,
+    /// The grid has an Avatar Welcome Pack (given by the app): without one,
+    /// its button is dimmed (GridFeatureCheck avatar_picker).
+    pub avatar_welcome: bool,
     /// The grid has a Destination Guide (given by the app): without one,
     /// its button is dimmed (GridFeatureCheck destination_guide).
     pub destinations: bool,
     pub photo_roll_active: bool,
+    /// Gaming mode is on (app/gaming_mode.rs).
+    pub gaming_mode_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
     /// The windows the app opens itself, for their buttons' highlight.

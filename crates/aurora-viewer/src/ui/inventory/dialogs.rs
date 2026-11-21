@@ -20,9 +20,9 @@ pub(super) fn show(
     let Some(mut dialog) = st.dialog.take() else {
         return;
     };
-    if let EditDialog::Share(ids, resident) = &dialog {
-        let picture = facts.pictures.get(resident);
-        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, *resident, actions) {
+    if let EditDialog::Share(ids, residents) = &dialog {
+        let picture = residents.first().and_then(|id| facts.pictures.get(id));
+        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, residents, actions) {
             st.dialog = Some(dialog);
         }
         return;
@@ -349,6 +349,28 @@ enum Fate {
     Excluded,
 }
 
+/// How many names fit as a comma list before switching to "+ N people".
+const RESIDENTS_LISTED: usize = 2;
+
+/// Label for the give confirmation's recipients, and an optional hover with
+/// every name (when the label only keeps the first ones).
+fn residents_label(names: &[&str]) -> (String, Option<String>) {
+    if names.is_empty() {
+        return (String::new(), None);
+    }
+    if names.len() <= RESIDENTS_LISTED {
+        return (names.join(", "), None);
+    }
+    let more = names.len() - 1;
+    let label = aurora_i18n::tr!(
+        "ui-inventory-dialogs-give-to-many",
+        name = names[0].to_string(),
+        count = more as i64,
+        number = aurora_i18n::integer(more as i64)
+    );
+    (label, Some(names.join(", ")))
+}
+
 /// The confirmation of a give, from an inventory window or a drop on a
 /// conversation (ShareItemsConfirmation, LLToolDragAndDrop's
 /// show_object_sharing_confirmation and LLAvatarActions::shareWithAvatars,
@@ -370,10 +392,17 @@ fn share(
     picture: Option<&egui::TextureHandle>,
     ui_id: Uuid,
     ids: &[Uuid],
-    resident: Uuid,
+    residents: &[Uuid],
     actions: &mut Vec<InvAction>,
 ) -> bool {
-    let name = facts.names.get(&resident).map_or("…", String::as_str);
+    if residents.is_empty() {
+        return true;
+    }
+    // LLAvatarActions::buildResidentsString joins every name; a long multi-
+    // select overflows the modal, so we keep one or two names then "+ N people"
+    let names: Vec<&str> = residents.iter().map(|id| facts.names.get(id).map_or("…", String::as_str)).collect();
+    let (name, name_tip) = residents_label(&names);
+    let first = residents[0];
     // ((icon, tint), name, fate, tag, why)
     let rows: Vec<((&str, egui::Color32), String, Fate, &str, String)> = ids
         .iter()
@@ -388,6 +417,18 @@ fn share(
                 |it| inventory_item_icon(inv, it, p),
             );
             let (fate, tag, why) = match rules::offer(inv, *id, &facts.worn) {
+                // A no-copy item leaves the inventory with its first give, so
+                // it can reach one resident only. The Legacy Viewer
+                // (give_inventory_cb, indra/newview/llavataractions.cpp) gives
+                // it to the first resident after CannotCopyWarning and stops
+                // there, leaving the others with nothing; Aurora leaves the
+                // no-copy item out and still gives the rest to everyone
+                // (stricter for the item, clearer for the user).
+                Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) && residents.len() > 1 => (
+                    Fate::Excluded,
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy"),
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").to_owned(),
+                ),
                 Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) => {
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
@@ -414,7 +455,7 @@ fn share(
         ui.set_width(360.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
-            crate::ui::widgets::avatar_disc(ui, p, rect, picture, name, false);
+            crate::ui::widgets::avatar_disc(ui, p, rect, picture, facts.names.get(&first).map_or("…", String::as_str), false);
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -423,7 +464,10 @@ fn share(
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.add(egui::Label::new(RichText::new(name).size(15.0).strong().color(p.ink)).truncate());
+                let label = ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
+                if let Some(tip) = &name_tip {
+                    label.on_hover_text(tip);
+                }
             });
         });
         ui.add_space(10.0);
@@ -513,7 +557,10 @@ fn share(
         });
     });
     if give {
-        actions.push(InvAction::Share { items: given, resident });
+        actions.push(InvAction::Share {
+            items: given,
+            residents: residents.to_vec(),
+        });
     }
     give || cancel || modal.should_close()
 }
@@ -574,10 +621,13 @@ pub(super) fn preview(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
+        // A successful asynchronous save or a confirmed discard can also close the document.
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     let Some(it) = inv.items.get(&id) else {
         st.preview = None;
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     if it.asset_type == 20 {
@@ -644,36 +694,18 @@ pub(super) fn preview(
                     .size(10.0)
                     .color(p.muted),
             );
-        } else if matches!(it.asset_type, 20 | 1) {
-            if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
-                if it.asset_type == 20 {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: false,
-                        start: true,
-                    });
-                } else {
+        } else if it.asset_type == 1 {
+            // LLPreviewSound::{playSound,auditionSound} (indra/newview/llpreviewsound.cpp,
+            // floater_preview_sound.xml): "Play Inworld" first, through the inventory
+            // double-click trigger, then the local audition.
+            ui.horizontal(|ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-in-world")).clicked() {
+                    actions.push(InvAction::TriggerSound(it.asset_id));
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
                     actions.push(InvAction::Sound(it.asset_id));
                 }
-            }
-            if it.asset_type == 20 {
-                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: true,
-                        start: true,
-                    });
-                }
-                if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked()
-                    && let Some((asset, local)) = st.playing
-                {
-                    actions.push(InvAction::Animation {
-                        asset,
-                        local,
-                        start: false,
-                    });
-                }
-            }
+            });
         } else {
             if it.asset_type == 7 {
                 notecard_description(ui, inv, st, it, actions);
@@ -695,10 +727,40 @@ pub(super) fn preview(
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
             let mut edited = super::embedded::EditorResult::default();
+            let mut find_changed = false;
+            let text_editable = editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_)));
+            let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
             match &mut st.preview_text {
                 Some(Ok(text)) => {
                     if matches!(it.asset_type, 7 | 10) && !editable {
                         ui.label(RichText::new(aurora_i18n::tr!("notecard-read-only")).color(p.muted));
+                    }
+                    if it.asset_type == 7 {
+                        // LLPreviewNotecard::handleKeyHere: Ctrl+F in the
+                        // window opens its find, wherever its keyboard is
+                        let preview_id = editor_id.with("markdown");
+                        let mut fields = vec![editor_id, preview_id];
+                        fields.extend(super::find::field_ids(editor_id));
+                        fields.extend(super::find::field_ids(preview_id));
+                        let shortcut = crate::ui::find_shortcut::take(ui, &fields);
+                        // the Markdown view is read-only: its find searches
+                        // the text it shows, and replaces nothing
+                        if view == super::markdown::View::Markdown {
+                            if (shortcut || st.notecard_find.open)
+                                && let Some(rendered) = st.notecard_markdown.get(ui.ctx(), text)
+                            {
+                                let mut shown = rendered.text.clone();
+                                if shortcut {
+                                    st.notecard_find.begin(ui.ctx(), preview_id, &shown);
+                                }
+                                st.notecard_find.bar(ui, p, preview_id, &mut shown, false);
+                            }
+                        } else {
+                            if shortcut {
+                                st.notecard_find.begin(ui.ctx(), editor_id, text);
+                            }
+                            find_changed = st.notecard_find.bar(ui, p, editor_id, text, text_editable);
+                        }
                     }
                     let documents = matches!(it.asset_type, 7 | 10);
                     // the Save row is as tall as its button: its text and
@@ -735,10 +797,10 @@ pub(super) fn preview(
                             ui,
                             p,
                             icons,
-                            egui::Id::unique(("inventory_document_text", st.ui_id, id)),
+                            editor_id,
                             text,
                             st.preview_source.as_mut(),
-                            editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
+                            text_editable,
                             editor_size,
                             view,
                             &mut st.notecard_markdown,
@@ -791,7 +853,7 @@ pub(super) fn preview(
                     st.preview_message = aurora_i18n::tr!("common-item-not-found").into();
                 }
             }
-            if edited.changed {
+            if edited.changed || find_changed {
                 st.document_changed();
             }
             if let Some(marker) = edited.open {
@@ -805,6 +867,16 @@ pub(super) fn preview(
             if let Some(marker) = edited.copy {
                 st.dialog = Some(EditDialog::CopyEmbedded(id, marker));
             }
+            if let Some(marker) = edited.drag {
+                egui::DragAndDrop::set_payload(
+                    ui.ctx(),
+                    super::NotecardDrag {
+                        editor: st.ui_id,
+                        notecard: id,
+                        marker,
+                    },
+                );
+            }
             let valid_size = st.preview_text.as_ref().is_some_and(|r| {
                 r.as_ref()
                     .is_ok_and(|text| it.asset_type != 7 || aurora_net::inventory::notecard::Notecard::validate_text(text).is_ok())
@@ -812,6 +884,7 @@ pub(super) fn preview(
             let can_save =
                 editable && st.preview_dirty && !st.save_pending && valid_size && !matches!(st.dialog, Some(EditDialog::Discard(_)));
             let mut clicked_save = false;
+            let mut clicked_find = false;
             if matches!(it.asset_type, 7 | 10) {
                 ui.horizontal(|ui| {
                     clicked_save = ui
@@ -820,6 +893,11 @@ pub(super) fn preview(
                         })
                         .inner
                         .clicked();
+                    // LLPreviewNotecard::onSearchButtonClicked (FIRE-13969)
+                    if it.asset_type == 7 {
+                        let loaded = matches!(st.preview_text, Some(Ok(_)));
+                        clicked_find = widgets::icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-title"), loaded);
+                    }
                     if st.save_pending {
                         ui.spinner();
                         ui.label(aurora_i18n::tr!("notecard-saving"));
@@ -835,6 +913,15 @@ pub(super) fn preview(
                         );
                     }
                 });
+            }
+            if clicked_find && let Some(Ok(text)) = &st.preview_text {
+                if view == super::markdown::View::Markdown {
+                    let shown = st.notecard_markdown.get(ui.ctx(), text).map(|rendered| rendered.text.clone());
+                    st.notecard_find
+                        .begin(ui.ctx(), editor_id.with("markdown"), shown.as_deref().unwrap_or_default());
+                } else {
+                    st.notecard_find.begin(ui.ctx(), editor_id, text);
+                }
             }
             if can_save
                 && (clicked_save || edited.save)
@@ -857,7 +944,7 @@ pub(super) fn preview(
             }
         }
     });
-    super::embedded::preview(ctx, p, st, images);
+    super::embedded::preview(ctx, p, st, inv, images);
     if !open {
         if st.save_pending {
             st.close_after_save = true;
@@ -869,6 +956,9 @@ pub(super) fn preview(
         }
         st.preview = None;
         st.reset_document();
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing {
             actions.push(InvAction::Animation {
                 asset,
@@ -1046,6 +1136,9 @@ fn animation(
     });
     if !open {
         st.preview = None;
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
             actions.push(InvAction::Animation {
                 asset,
@@ -1306,6 +1399,28 @@ mod tests {
     }
 
     #[test]
+    fn sound_preview_separates_local_playback_from_the_inventory_world_trigger() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let item = Uuid::from_u128(8105);
+        let asset = inv.items[&item].asset_id;
+        let mut st = InventoryUi {
+            preview: Some(item),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+        let local = label_center(&output, aurora_i18n::tr!("common-play-locally"));
+        let world = label_center(&output, aurora_i18n::tr!("common-play-in-world"));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, local)[..], [InvAction::Sound(id)] if *id == asset));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, world)[..], [InvAction::TriggerSound(id)] if *id == asset));
+        assert_eq!(st.preview, Some(item));
+    }
+
+    #[test]
     fn editing_and_ctrl_s_emit_the_current_draft_for_its_own_editor() {
         let ctx = egui::Context::default();
         let (inv, mut st) = note_fixture();
@@ -1386,7 +1501,7 @@ mod tests {
             let fresh_ctx = egui::Context::default();
             let mut inventory = InventoryUi::default();
             let item = st.preview.expect("item");
-            inventory.open_document(&fresh_ctx, item, 7);
+            inventory.open_document(&fresh_ctx, item, 7, None);
             let new_note = &mut inventory.windows[0].state;
             new_note.load_document(7, true, &Ok(b"New note".to_vec()));
             let mut object_note = InventoryUi::document(item);
@@ -2537,7 +2652,7 @@ mod tests {
         let mut asked = ids.clone();
         asked.push(no_transfer);
         let mut st = InventoryUi {
-            dialog: Some(EditDialog::Share(asked.clone(), resident)),
+            dialog: Some(EditDialog::Share(asked.clone(), vec![resident])),
             ..Default::default()
         };
         let mut texts = Vec::new();
@@ -2550,6 +2665,24 @@ mod tests {
         for id in &ids {
             assert!(shown(&rules::name(&inv, *id)), "each entry listed");
         }
+        // many recipients: first name + count, not a truncated comma list
+        let crowd_names: Vec<&str> = (1..=5).map(|_| "Orion Example").collect();
+        let (many, tip) = residents_label(&crowd_names);
+        assert_eq!(
+            many,
+            aurora_i18n::tr!(
+                "ui-inventory-dialogs-give-to-many",
+                name = "Orion Example".to_string(),
+                count = 4i64,
+                number = aurora_i18n::integer(4)
+            )
+        );
+        assert_eq!(
+            tip.as_deref(),
+            Some("Orion Example, Orion Example, Orion Example, Orion Example, Orion Example")
+        );
+        assert_eq!(residents_label(&["A", "B"]).0, "A, B");
+        assert!(residents_label(&["A", "B"]).1.is_none());
         assert!(shown(aurora_i18n::tr!("ui-inventory-dialogs-no-copy")), "the no-copy entry marked");
         assert!(shown(&aurora_i18n::tr!(
             "ui-inventory-dialogs-no-copy-will-leave",
@@ -2579,8 +2712,51 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(give), button(true)]);
         let (_, actions) = frame(&mut st, vec![button(false)]);
         assert!(
-            matches!(&actions[..], [InvAction::Share { items, resident: to }] if *items == ids && *to == resident),
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids && residents == &[resident]),
             "Give gives all but the entry left out"
+        );
+        assert!(st.dialog.is_none());
+        // several residents at once (LLAvatarActions::shareWithAvatars, #3074)
+        let crowd: Vec<Uuid> = (1..=5)
+            .map(|n| Uuid::from_u128(0xA0E0_5A4E_0000_0000_0000_0000_0000_0000 | n))
+            .collect();
+        st.dialog = Some(EditDialog::Share(ids.clone(), crowd.clone()));
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        // a no-copy item reaches one resident only: with several it is left
+        // out (give_inventory_cb stops after the first resident), and the
+        // copyable items still go to everyone
+        let shown = |s: &str| texts.iter().any(|t| t == s);
+        assert!(shown(&aurora_i18n::tr!(
+            "ui-inventory-dialogs-not-given",
+            count = 1usize,
+            number = "1"
+        )));
+        assert!(
+            !shown(&aurora_i18n::tr!(
+                "ui-inventory-dialogs-no-copy-will-leave",
+                count = 1usize,
+                number = "1"
+            )),
+            "nothing leaves the inventory: {texts:?}"
+        );
+        let give_many = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
+            .expect("give button")
+            .center();
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut st, vec![egui::Event::PointerMoved(give_many), press(true, give_many)]);
+        let (_, actions) = frame(&mut st, vec![press(false, give_many)]);
+        assert!(
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids[..1] && residents == &crowd),
+            "The confirmed gift keeps every recipient and only the copyable item"
         );
         assert!(st.dialog.is_none());
         // nothing that can be given: Enter gives nothing
@@ -2591,14 +2767,14 @@ mod tests {
             repeat: false,
             modifiers: Default::default(),
         };
-        st.dialog = Some(EditDialog::Share(vec![no_transfer], resident));
+        st.dialog = Some(EditDialog::Share(vec![no_transfer], vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }
         let (_, actions) = frame(&mut st, vec![enter]);
         assert!(actions.is_empty() && st.dialog.is_some(), "nothing to give");
         // Escape
-        st.dialog = Some(EditDialog::Share(ids.clone(), resident));
+        st.dialog = Some(EditDialog::Share(ids.clone(), vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }

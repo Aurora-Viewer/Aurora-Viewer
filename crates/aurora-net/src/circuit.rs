@@ -1,6 +1,7 @@
 //! Reliable UDP circuit bookkeeping (port of the essentials of
 //! `llmessage/llcircuit.cpp`): sequence numbers, resends, acks, dedupe.
 
+use crate::circuit_socket::DatagramOut;
 use crate::packet_loss::PacketLoss;
 use crate::stats::NetStats;
 use aurora_msg::packet::{PacketFlags, build_raw};
@@ -9,7 +10,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 
 /// Resends of an ordinary reliable packet before it is given up.
 /// `LL_DEFAULT_RELIABLE_RETRIES` (indra/llmessage/message.h): three resends,
@@ -61,12 +61,29 @@ impl Resend {
     };
 }
 
+/// Kept on the packet so removing the circuit or exhausting its retries
+/// closes the channel without confusing either case with an acknowledgment.
+struct OfferReceipt {
+    sender: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    transmitted: bool,
+}
+
+impl OfferReceipt {
+    fn transmitted(&mut self) {
+        if !self.transmitted {
+            self.transmitted = true;
+            let _ = self.sender.try_send(crate::InventoryOfferStatus::Transmitted);
+        }
+    }
+}
+
 struct Unacked {
     payload: Vec<u8>,
     zerocoded: bool,
     sent: Instant,
     retries: u8,
     policy: Resend,
+    offer: Option<OfferReceipt>,
 }
 
 pub struct Circuit {
@@ -123,44 +140,58 @@ impl Circuit {
         }
     }
 
-    fn raw_send(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    fn raw_send(&self, sock: &impl DatagramOut, stats: &NetStats) -> bool {
         match sock.try_send_to(&self.buf, self.addr) {
             Ok(n) => {
                 stats.packets_out.fetch_add(1, Ordering::Relaxed);
                 stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+                true
             }
             Err(e) => {
                 log::trace!("udp send to {} failed: {e}", self.addr);
                 stats.send_errors.fetch_add(1, Ordering::Relaxed);
+                false
             }
         }
     }
 
     /// Encode and send a message, piggybacking pending acks. Returns the sequence number.
-    pub fn send<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
-        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT))
+    pub fn send<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
+        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT), None)
     }
 
     /// Send a reliable message with its own resend policy.
-    pub fn send_reliable_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
-        self.send_with(sock, stats, msg, Some(policy))
+    pub fn send_reliable_with<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
+        self.send_with(sock, stats, msg, Some(policy), None)
     }
 
-    fn send_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: Option<Resend>) -> u32 {
+    pub(crate) fn send_offer<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        receipt: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    ) -> u32 {
+        let offer = OfferReceipt {
+            sender: receipt,
+            transmitted: false,
+        };
+        self.send_with(sock, stats, msg, Some(Resend::DEFAULT), Some(offer))
+    }
+
+    fn send_with<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        reliable: Option<Resend>,
+        mut offer: Option<OfferReceipt>,
+    ) -> u32 {
         let mut w = Writer::new();
         M::ID.encode(&mut w.buf);
         msg.encode_body(&mut w);
-        let seq = self.next_seq;
-        self.send_payload(sock, stats, w.buf, M::ZEROCODED, reliable);
-        seq
-    }
-
-    /// True while a reliable packet is still waiting for its ack.
-    pub fn is_unacked(&self, seq: u32) -> bool {
-        self.unacked.contains_key(&seq)
-    }
-
-    fn send_payload(&mut self, sock: &UdpSocket, stats: &NetStats, payload: Vec<u8>, zerocoded: bool, reliable: Option<Resend>) {
+        let payload = w.buf;
+        let zerocoded = M::ZEROCODED;
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         let mut buf = std::mem::take(&mut self.buf);
@@ -168,7 +199,11 @@ impl Circuit {
         self.pending_acks.drain(..n);
         crate::probe::message_out(&payload, buf.len());
         self.buf = buf;
-        self.raw_send(sock, stats);
+        if self.raw_send(sock, stats)
+            && let Some(receipt) = &mut offer
+        {
+            receipt.transmitted();
+        }
         if let Some(policy) = reliable {
             self.unacked.insert(
                 seq,
@@ -178,9 +213,16 @@ impl Circuit {
                     sent: Instant::now(),
                     retries: 0,
                     policy,
+                    offer,
                 },
             );
         }
+        seq
+    }
+
+    /// True while a reliable packet is still waiting for its ack.
+    pub fn is_unacked(&self, seq: u32) -> bool {
+        self.unacked.contains_key(&seq)
     }
 
     /// Process the header of an incoming packet (the acks it carries).
@@ -189,9 +231,7 @@ impl Circuit {
     /// A new packet is acked only once processed, see [`Circuit::accept`].
     pub fn on_receive(&mut self, flags: u8, seq: u32, acks: &[u32]) -> bool {
         self.last_recv = Instant::now();
-        for a in acks {
-            self.unacked.remove(a);
-        }
+        self.ack_received(acks.iter().copied());
         // Like LL (message.cpp), only packets flagged RESENT can be duplicates;
         // this also survives a simulator resetting its sequence numbers.
         if flags & PacketFlags::RESENT != 0 && self.recent_set.contains(&seq) {
@@ -230,7 +270,12 @@ impl Circuit {
 
     pub fn ack_received(&mut self, ids: impl IntoIterator<Item = u32>) {
         for id in ids {
-            self.unacked.remove(&id);
+            if let Some(packet) = self.unacked.remove(&id)
+                && let Some(receipt) = packet.offer
+                && receipt.transmitted
+            {
+                let _ = receipt.sender.try_send(crate::InventoryOfferStatus::Acknowledged);
+            }
         }
     }
 
@@ -239,7 +284,7 @@ impl Circuit {
     }
 
     /// Resend timed-out reliable packets and flush standalone acks.
-    pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn tick(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         let now = Instant::now();
         let loss_rtt = self
             .ping_wait_started
@@ -280,7 +325,13 @@ impl Circuit {
             build_raw(&u.payload, u.zerocoded, seq, true, true, &[], &mut buf);
             crate::probe::message_out(&u.payload, buf.len());
             self.buf = buf;
-            self.raw_send(sock, stats);
+            let offer = u.offer.as_ref().is_some_and(|receipt| !receipt.transmitted);
+            if self.raw_send(sock, stats)
+                && offer
+                && let Some(receipt) = self.unacked.get_mut(&seq).and_then(|u| u.offer.as_mut())
+            {
+                receipt.transmitted();
+            }
             stats.resent.fetch_add(1, Ordering::Relaxed);
         }
         if !self.pending_acks.is_empty() && now.duration_since(self.last_ack_flush) >= ACK_FLUSH_INTERVAL {
@@ -288,7 +339,7 @@ impl Circuit {
         }
     }
 
-    pub fn flush_acks(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn flush_acks(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         self.last_ack_flush = Instant::now();
         while !self.pending_acks.is_empty() {
             let n = self.pending_acks.len().min(250);
@@ -337,12 +388,75 @@ impl Circuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UdpSocket;
 
     const RELIABLE: u8 = PacketFlags::RELIABLE;
     const RESENT: u8 = PacketFlags::RELIABLE | PacketFlags::RESENT;
 
     fn circuit() -> Circuit {
         Circuit::new("127.0.0.1:9".parse().expect("address"))
+    }
+
+    #[tokio::test]
+    async fn inventory_offer_receipts_require_a_real_write_and_an_ack_on_the_same_circuit() {
+        use crate::InventoryOfferStatus::{Acknowledged, Transmitted};
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        let packet = aurora_msg::msgs::ImprovedInstantMessage::default();
+        // An IPv4 socket cannot write to an IPv6 address. The reliable packet
+        // is still queued: a later successful retry is its first transmission.
+        let mut circuit = Circuit::new("[::1]:9".parse().unwrap());
+        let (send, receipt) = unbounded();
+        let seq = circuit.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        circuit.addr = peer.local_addr().unwrap();
+        circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+        circuit.tick(&socket, &stats);
+        assert_eq!(receipt.try_recv(), Ok(Transmitted));
+
+        let mut neighbour = Circuit::new(peer.local_addr().unwrap());
+        let (send, second) = unbounded();
+        let other_seq = neighbour.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(other_seq, seq, "sequence numbers belong to the circuit");
+        assert_eq!(second.try_recv(), Ok(Transmitted));
+        neighbour.ack_received([seq, seq]);
+        assert_eq!(second.try_recv(), Ok(Acknowledged));
+        assert_eq!(second.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        assert!(circuit.on_receive(0, 98, &[seq, seq])); // piggyback
+        assert_eq!(receipt.try_recv(), Ok(Acknowledged));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn an_inventory_offer_circuit_drop_or_retry_exhaustion_cannot_emit_an_ack() {
+        use crate::InventoryOfferStatus::Transmitted;
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        for exhausted in [false, true] {
+            let mut circuit = Circuit::new(peer.local_addr().unwrap());
+            let (send, receipt) = unbounded();
+            let seq = circuit.send_offer(&socket, &stats, &aurora_msg::msgs::ImprovedInstantMessage::default(), send);
+            assert_eq!(receipt.try_recv(), Ok(Transmitted));
+            if exhausted {
+                for _ in 0..=MAX_RESENDS {
+                    circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+                    circuit.tick(&socket, &stats);
+                }
+                assert_eq!(circuit.take_dropped(), [seq]);
+                circuit.ack_received([seq]); // a late ACK cannot revive an expired offer
+            }
+            drop(circuit);
+            assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+        }
     }
 
     #[test]

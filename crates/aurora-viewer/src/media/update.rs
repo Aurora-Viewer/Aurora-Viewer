@@ -501,7 +501,7 @@ impl MediaManager {
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
     /// unloaded, a refused one is no longer wanted. Media on items we wear
-    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// (whoever made them) is not asked about (`filter_trust_own_worn`). A
     /// script, a file of this computer or a browser page never loads, with
     /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
@@ -538,8 +538,8 @@ impl MediaManager {
         }
     }
 
-    /// Interest (pixels on screen, LLViewerMediaImpl::calculateInterest) and
-    /// distance to the camera.
+    /// Interest (pixels on screen, LLViewerMediaImpl::calculateInterest),
+    /// distance to the camera and to the ear.
     fn compute_interest(&mut self, world: &World, scene: &Scene, f: &MediaFrame) {
         self.parcel_bounds.clear();
         for &idx in self.parcel_objects.as_slice() {
@@ -556,6 +556,7 @@ impl MediaManager {
                 MediaKey::Parcel => {
                     m.interest = parcel_interest;
                     m.distance = 0.0;
+                    m.ear_distance = 0.0;
                 }
                 MediaKey::Prim { object, .. } => {
                     let Some(om) = self.objects.get(&object) else {
@@ -565,11 +566,13 @@ impl MediaManager {
                     if om.hud {
                         m.interest = 512.0 * 512.0;
                         m.distance = 0.0;
+                        m.ear_distance = 0.0;
                         continue;
                     }
                     match scene.gpu.get(om.idx).filter(|g| g.radius > 0.0) {
                         Some(g) => {
                             m.distance = g.center.distance(f.camera);
+                            m.ear_distance = g.center.distance(f.ear);
                             m.interest = if f.view.sphere_visible(g.center, g.radius) {
                                 let px = f.view.pixel_size(g.center, g.radius);
                                 px * px
@@ -637,6 +640,11 @@ impl MediaManager {
                 if !f.window_focused && p > Priority::Low {
                     p = Priority::Low;
                 }
+                // gaming mode: loaded but not drawn, the sound going on
+                // (app/gaming_mode.rs; not in the Legacy Viewer)
+                if f.gaming_mode && p > Priority::Hidden {
+                    p = Priority::Hidden;
+                }
             }
             m.priority = p;
         }
@@ -647,8 +655,9 @@ impl MediaManager {
     fn drive_plugins(&mut self, f: &MediaFrame, now: Instant) -> Vec<(Uuid, u8, String)> {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
+        let mut links = Vec::new();
         let paths = self.paths.clone();
-        let browser = browser_settings(f.cache_dir, f.language);
+        let browser = browser_settings(f.cache_dir, f.language, f.settings);
         for m in &mut self.impls {
             if m.priority == Priority::Unloaded {
                 if m.plugin.take().is_some() {
@@ -735,6 +744,9 @@ impl MediaManager {
             p.idle();
             let mut close = false;
             for ev in p.take_events() {
+                if let Some(url) = ev.clicked_url() {
+                    links.push(url.to_owned());
+                }
                 let complete = matches!(ev, MediaEvent::NavigateComplete { .. });
                 match ev {
                     MediaEvent::StatusChanged(s) => m.status = s,
@@ -802,6 +814,7 @@ impl MediaManager {
             }
         }
         self.messages.extend(messages);
+        self.links.extend(links);
         navs
     }
 
@@ -1095,11 +1108,12 @@ impl MediaImpl {
             return 0.0;
         }
         let mut volume = channel_volume * self.volume;
+        // measured from the ear, camera or avatar (mProximityCamera)
         if matches!(self.key, MediaKey::Prim { .. }) {
-            if self.distance > ROLLOFF_MAX {
+            if self.ear_distance > ROLLOFF_MAX {
                 volume = 0.0;
-            } else if self.distance > ROLLOFF_MIN {
-                let attenuation = 1.0 + ROLLOFF_RATE * (self.distance - ROLLOFF_MIN);
+            } else if self.ear_distance > ROLLOFF_MIN {
+                let attenuation = 1.0 + ROLLOFF_RATE * (self.ear_distance - ROLLOFF_MIN);
                 volume *= (1.0 / (attenuation * attenuation)).min(1.0);
             }
         }
@@ -1156,6 +1170,24 @@ mod tests {
     }
 
     #[test]
+    fn custom_scheme_links_in_media_act_only_on_a_click() {
+        let link = |nav_type: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/chat/824619/hello".into(),
+            nav_type: nav_type.into(),
+        };
+        assert_eq!(link("clicked").clicked_url(), Some("secondlife:///app/chat/824619/hello"));
+        assert_eq!(link("navigated").clicked_url(), None);
+        assert_eq!(
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: String::new(),
+                nav_type: "clicked".into()
+            }),
+            None
+        );
+        assert_eq!(MediaEvent::CloseRequest.clicked_url(), None);
+    }
+
+    #[test]
     fn minimized_mute_restores_media_source_volume_and_rolloff() {
         for key in [
             MediaKey::Parcel,
@@ -1166,7 +1198,7 @@ mod tests {
         ] {
             let mut media = MediaImpl::new(key, String::new(), "text/html".into());
             media.volume = 0.6;
-            media.distance = 60.0;
+            media.ear_distance = 60.0;
             let before = media.output_volume(0.5);
             assert!(before > 0.0);
             assert_eq!(media.output_volume(0.0), 0.0);
@@ -1175,7 +1207,7 @@ mod tests {
                 assert_eq!(before, 0.3);
             } else {
                 assert!(before < 0.3);
-                media.distance = ROLLOFF_MAX + 1.0;
+                media.ear_distance = ROLLOFF_MAX + 1.0;
                 assert_eq!(media.output_volume(0.5), 0.0);
             }
             media.muted = true;
@@ -1209,11 +1241,13 @@ mod tests {
             &MediaFrame {
                 view: &view,
                 camera: Vec3::ZERO,
+                ear: Vec3::ZERO,
                 settings: &settings,
                 autoplay: true,
                 channel_volume: 1.0,
                 agent_speed: 0.0,
                 window_focused: true,
+                gaming_mode: false,
                 net: None,
                 cache_dir: std::path::Path::new(""),
                 language: "en",

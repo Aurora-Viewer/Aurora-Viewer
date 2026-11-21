@@ -7,8 +7,11 @@ pub mod appearance;
 pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
+pub mod avatar_align;
+pub mod avatar_marks;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
+pub mod avatar_welcome;
 pub mod backdrop;
 pub mod balance_gains;
 pub mod bars;
@@ -20,6 +23,7 @@ pub mod voice_controls;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
+pub mod beams;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
@@ -33,11 +37,20 @@ pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
+pub mod conversation_log;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
+pub mod director;
+pub mod director_capture;
+pub mod director_drag;
+pub mod director_key_rows;
+pub mod director_library;
+pub mod director_look;
+pub mod director_output;
+pub mod director_ruler;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -65,6 +78,7 @@ pub mod icons;
 pub mod inspect;
 pub mod interface;
 pub mod inventory;
+pub mod keyboard_focus;
 pub mod land;
 pub mod landmark_create;
 pub mod layout;
@@ -83,16 +97,20 @@ pub mod menu;
 pub mod minimap;
 pub mod money_tracker;
 pub mod monitor;
+pub mod mouselook_combat;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
+pub mod nearby_media;
 pub mod news;
 pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
+pub mod panorama;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -103,6 +121,7 @@ pub mod place_card;
 pub mod place_details;
 pub mod places;
 pub mod portals;
+pub mod pose_stand;
 pub mod presence;
 pub mod profile;
 pub mod quick_prefs;
@@ -114,11 +133,14 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
+pub mod second_camera;
 pub mod shape;
 pub mod sheet;
+pub mod signup;
 pub mod sim_console;
 pub mod skin;
 pub mod sky_beacons;
@@ -126,8 +148,11 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
+pub mod stand_fly;
 pub mod stream_title;
+pub mod surface_opacity;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
@@ -139,12 +164,14 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod weather_window;
 pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
 
 #[cfg(test)]
 mod uri_restore_tests;
+pub mod world_look;
 pub mod worldmap;
 
 /// Which floating panels are open.
@@ -160,8 +187,15 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Favorite Wearables window (`ui/appearance/wearable_favorites.rs`).
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
+    /// The World filters window (`ui/world_look.rs`).
+    pub world_look: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -177,10 +211,14 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    /// Inventory's dual-panel layout (`InventoryPreferences::dual_panel`,
+    /// saved by the app when it changes).
+    pub inventory_dual: bool,
     pub texture_library: bool,
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
+    pub avatar_studio: bool,
     pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
@@ -208,14 +246,32 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The Compass (toolbar `avatar_align`, Me › Avatar alignment), in its
+    /// compact layout while `avatar_align_mini` (kept in the settings).
+    pub avatar_align: bool,
+    pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Avatar Welcome Pack (toolbar `avatar`, Me › Avatar Welcome Pack…).
+    pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
+    /// The Director (toolbar `director`): its window and its timeline.
+    pub director: bool,
+    /// The second camera (View › Second camera, toolbar `second_camera`):
+    /// our avatar seen by a camera of its own (ui/second_camera.rs).
+    pub second_camera: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The pose stand (toolbar `pose_stand`).
+    pub pose_stand: bool,
+    /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
+    pub omnifilter: bool,
+    /// The conversation log (toolbar `conversation_log`, Communicate ›
+    /// Conversation log…).
+    pub conversation_log: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -246,7 +302,10 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
+            snapshot_pano: false,
+            world_look: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
@@ -258,13 +317,20 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            inventory_dual: settings.inventory.dual_panel,
             texture_library: false,
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
+            avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
-            contacts: false,
+            // FSFloaterContacts::onOpen: torn off, Contacts is its own window
+            // (ContactsTornOff). Closing that window puts the flag back to
+            // false (contacts.rs), so the flag alone says the window was
+            // open: keeping it while always starting closed left a torn-off
+            // Contacts with no way back to its tab.
+            contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
             places: false,
@@ -278,10 +344,18 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            avatar_align: false,
+            avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
+            avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
+            director: false,
+            second_camera: false,
             voice_controls: false,
+            pose_stand: false,
+            omnifilter: false,
+            conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,
@@ -367,6 +441,18 @@ mod tests {
                 "the mini-map window is open: the radar does not repeat it"
             );
         }
+    }
+
+    /// A Contacts torn off at the last exit comes back as its own window: it
+    /// is where its tab went, and the settings record it.
+    #[test]
+    fn a_torn_off_contacts_comes_back_as_its_own_window() {
+        let mut settings = Settings::default();
+        settings.contacts.torn_off = true;
+        let panels = Panels::from_settings(&settings);
+        assert!(panels.contacts, "the torn-off Contacts window is open");
+        settings.contacts.torn_off = false;
+        assert!(!Panels::from_settings(&settings).contacts);
     }
 
     /// The radar in the top left corner, the mini-map in the top right one

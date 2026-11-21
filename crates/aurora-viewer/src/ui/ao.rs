@@ -270,6 +270,8 @@ pub fn show(
                         }
                         if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), true) {
                             state.remove = Some(set.id);
+                            // the question left folded to its title bar opens again
+                            widgets::bring_floater_front(ui.ctx(), "ao_remove");
                         }
                     }
                 });

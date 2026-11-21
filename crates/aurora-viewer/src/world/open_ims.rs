@@ -370,7 +370,7 @@ mod tests {
         let id = Uuid::from_u128(42);
         w.on_group_event(NetEvent::Groups(vec![membership(id)]));
         w.mutes.on_server(aurora_net::MuteListSource::UseCache, None);
-        w.start_group_chat(id);
+        w.start_group_chat(id, false);
         w.groups.take_commands();
         w.reopen_ims = vec![Conversation::Group(id)];
         w.restore_open_ims(true);
@@ -538,6 +538,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@startim=n".into(),
         }));

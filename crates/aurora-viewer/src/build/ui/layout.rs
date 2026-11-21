@@ -86,6 +86,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Surrounding => aurora_i18n::tr!("build-compact-surrounding"),
         Item::LandGroup => aurora_i18n::tr!("rez-under-land-group"),
         Item::FollowEdit => aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        Item::WheelOnHover => aurora_i18n::tr!("build-wheel-on-hover"),
         Item::General => aurora_i18n::tr!("build-compact-general"),
         Item::Shape => aurora_i18n::tr!("build-compact-shape"),
         Item::Materials => aurora_i18n::tr!("build-compact-materials"),
@@ -748,6 +749,7 @@ pub(super) fn control(
         Item::Surrounding => s.select_surrounding,
         Item::LandGroup => s.rez_under_land_group,
         Item::FollowEdit => s.follow_edit_object,
+        Item::WheelOnHover => s.wheel_on_hover,
         _ => return,
     };
     let compact_footer = panel == Panel::Footer && !s.legacy_window;
@@ -775,6 +777,7 @@ pub(super) fn control(
                 Item::Surrounding => s.select_surrounding = value,
                 Item::LandGroup => s.rez_under_land_group = value,
                 Item::FollowEdit => s.follow_edit_object = value,
+                Item::WheelOnHover => s.wheel_on_hover = value,
                 _ => {}
             }
         }
@@ -1029,6 +1032,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                             Item::Surrounding,
                             Item::LandGroup,
                             Item::FollowEdit,
+                            Item::WheelOnHover,
                         ] {
                             control(ui, p, tool, world, s, mods, item, Panel::Settings);
                         }

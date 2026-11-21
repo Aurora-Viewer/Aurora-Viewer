@@ -12,7 +12,7 @@ fn body_texts_with(world: &World, w: &mut Window, width: f32, friend_rights: boo
     let p = crate::theme::Theme::default().palette();
     let ctx = egui::Context::default();
     let mut emoji = Emoji::load();
-    let browser = crate::media::browser_settings(std::path::Path::new("."), "fr");
+    let browser = crate::media::browser_settings(std::path::Path::new("."), "fr", &Default::default());
     let web = WebContext {
         paths: None,
         browser: &browser,
@@ -447,14 +447,21 @@ impl PhotoFixture {
     }
 
     fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+        let (output, actions) = self.frame_actions(events);
+        assert!(actions.is_empty(), "previewing a picture never changes the profile");
+        output
+    }
+
+    fn frame_actions(&mut self, events: Vec<egui::Event>) -> (egui::FullOutput, Vec<ProfileAction>) {
         self.time += 1.0 / 60.0;
-        let browser = crate::media::browser_settings(std::path::Path::new("."), "en");
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "en", &Default::default());
         let web = WebContext {
             paths: None,
             browser: &browser,
             cookie: None,
             profile_base: None,
         };
+        let mut actions = Vec::new();
         let mut output = self.ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
@@ -463,7 +470,7 @@ impl PhotoFixture {
                 ..Default::default()
             },
             |host| {
-                let actions = self.profiles.show(
+                actions = self.profiles.show(
                     host.ctx(),
                     &crate::theme::Theme::default().palette(),
                     &mut self.emoji,
@@ -475,11 +482,10 @@ impl PhotoFixture {
                     self.classic,
                     true,
                 );
-                assert!(actions.is_empty(), "previewing a picture never changes the profile");
             },
         );
         output.textures_delta.clear();
-        output
+        (output, actions)
     }
 
     fn settle(&mut self) -> egui::FullOutput {
@@ -522,6 +528,77 @@ fn photo_shape(output: &egui::FullOutput, find: impl Fn(&egui::Shape) -> Option<
         .iter()
         .find_map(|shape| visit(&shape.shape, &find))
         .expect("visible photo control")
+}
+
+#[test]
+fn both_profile_styles_keep_the_draft_through_retry_and_only_save_on_another_click() {
+    use aurora_net::{NetCommand, PickInfo};
+    use std::time::{Duration, Instant};
+    let label = |output: &egui::FullOutput, target: &str| {
+        photo_shape(output, |shape| match shape {
+            egui::Shape::Text(text) if text.galley.text() == target => Some(Rect::from_min_size(text.pos, text.galley.size())),
+            _ => None,
+        })
+        .center()
+    };
+    let click = |f: &mut PhotoFixture, point| {
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(
+                f.frame_actions(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ])
+                .1,
+            );
+        }
+        actions
+    };
+    for classic in [false, true] {
+        let mut f = PhotoFixture::new(classic, false);
+        f.world.agent_id = f.id;
+        let id = Uuid::from_u128(351);
+        let pick = PickInfo {
+            id,
+            creator: f.id,
+            pos_global: glam::DVec3::new(100.0, 120.0, 25.0),
+            ..Default::default()
+        };
+        f.world.profiles.pick_saved(f.id, pick.clone());
+        let w = &mut f.profiles.windows[0];
+        w.tab = TAB_PICKS;
+        w.editing = true;
+        w.pick_sel = Some(id);
+        w.asked.insert(id);
+        w.follow_pick(&pick);
+        w.pick_edit.as_mut().unwrap().0.desc = "My newer description".into();
+        w.confirm_close = true;
+        f.world.profiles.pick_read(f.id, id, Instant::now() - Duration::from_secs(5));
+        let out = f.settle();
+        label(&out, aurora_i18n::tr!("voice-waiting-for-parcel"));
+        let save = label(&out, aurora_i18n::tr!("common-save"));
+        assert!(click(&mut f, save).is_empty());
+        assert!(f.profiles.windows[0].confirm_close);
+        let retry = label(&out, aurora_i18n::tr!("script-retry"));
+        assert!(
+            matches!(&click(&mut f, retry)[..], [ProfileAction::Net(NetCommand::PickInfoRequest { creator, pick })] if *creator == f.id && *pick == id)
+        );
+        let parcel = Uuid::from_u128(352);
+        f.profiles.windows[0].asked.insert(parcel);
+        f.world.profiles.pick_received(f.id, PickInfo { parcel, ..pick }, Instant::now());
+        let out = f.settle(); // a reply draws the confirmed location but sends nothing
+        assert!(f.profiles.windows[0].confirm_close);
+        let save = label(&out, aurora_i18n::tr!("common-save"));
+        assert!(
+            matches!(&click(&mut f, save)[..], [ProfileAction::Net(NetCommand::PickUpdate(p))] if p.parcel == parcel && p.desc == "My newer description")
+        );
+        assert!(f.profiles.windows.is_empty());
+    }
 }
 
 #[test]
