@@ -8,7 +8,7 @@
 //! under water; it fades in and out over two seconds.
 
 use aurora_audio::{AudioEngine, WindTarget};
-use glam::{Quat, Vec3};
+use glam::{Mat4, Vec3};
 
 /// AudioLevelWind: share of the region's wind heard, so that the world does
 /// not feel desolate when hovering still (a debug setting with no
@@ -39,18 +39,22 @@ pub struct WindInput {
     pub region_wind: Vec3,
     /// Our avatar's velocity (m/s).
     pub velocity: Vec3,
-    /// Our avatar's facing (the agent frame).
-    pub rotation: Quat,
+    /// The camera's view: the wind is heard from it, as voice is (the Legacy
+    /// Viewer turns the wind with the avatar's body instead, so with the
+    /// camera orbited it came from the side the avatar faced).
+    pub camera_view: Mat4,
     /// Flying, above the water, in the world (not behind a loading or
     /// teleport screen, where the Legacy Viewer mutes all audio).
     pub audible: bool,
 }
 
-/// The wind felt by the avatar, in its own frame: the scaled region wind
-/// minus the avatar's motion (walking north, the apparent wind blows south).
+/// The wind felt at the avatar, in the camera's frame (+X forward, +Y left,
+/// +Z up): the scaled region wind minus the avatar's motion (walking east,
+/// the apparent wind blows west).
 pub fn relative_wind(input: &WindInput) -> Vec3 {
     let felt = input.region_wind * AUDIO_LEVEL_WIND - input.velocity;
-    let local = input.rotation.inverse() * felt;
+    let rotation = crate::voice::listener_rotation(input.camera_view);
+    let local = rotation.inverse() * felt;
     if local.is_finite() { local } else { Vec3::ZERO }
 }
 
@@ -93,27 +97,47 @@ impl WindSound {
 mod tests {
     use super::*;
 
+    /// A camera behind the avatar, looking along `dir`.
+    fn looking(dir: Vec3) -> Mat4 {
+        glam::camera::rh::view::look_to_mat4(Vec3::new(128.0, 128.0, 30.0), dir, Vec3::Z)
+    }
+
     fn input(velocity: Vec3, audible: bool) -> WindInput {
         WindInput {
             region_wind: Vec3::new(4.0, 0.0, 0.0),
             velocity,
-            rotation: Quat::IDENTITY,
+            camera_view: looking(Vec3::X),
             audible,
         }
     }
 
     #[test]
     fn the_wind_felt_is_half_the_region_wind_against_the_motion() {
-        // Flying north at 10 m/s in a 4 m/s north wind: 8 m/s from the front.
+        // Flying east at 10 m/s, looking east, in a 4 m/s wind blowing east:
+        // 8 m/s blowing from the front.
         let w = relative_wind(&input(Vec3::new(10.0, 0.0, 0.0), true));
-        assert!((w - Vec3::new(-8.0, 0.0, 0.0)).length() < 1e-5, "{w}");
-        // Facing west (+Y), the same wind comes from the right side.
-        let turned = WindInput {
-            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        assert!((w - Vec3::new(-8.0, 0.0, 0.0)).length() < 1e-4, "{w}");
+    }
+
+    #[test]
+    fn the_wind_turns_with_the_camera() {
+        // Hovering, the camera orbited to look north (+Y) whatever way the
+        // avatar faces: the wind blowing east comes from the left.
+        let orbited = WindInput {
+            camera_view: looking(Vec3::Y),
             ..input(Vec3::ZERO, true)
         };
-        let w = relative_wind(&turned);
-        assert!((w - Vec3::new(0.0, -2.0, 0.0)).length() < 1e-5, "{w}");
+        let w = relative_wind(&orbited);
+        assert!((w - Vec3::new(0.0, -2.0, 0.0)).length() < 1e-4, "{w}");
+        let t = WindTarget::from_wind(w.to_array(), 1.0);
+        assert!(t.pan_right < 0.01, "left ear: {}", t.pan_right);
+        // Looking down at the avatar does not move it between the ears.
+        let down = WindInput {
+            camera_view: looking(Vec3::new(0.0, 1.0, -2.0).normalize()),
+            ..input(Vec3::ZERO, true)
+        };
+        let t = WindTarget::from_wind(relative_wind(&down).to_array(), 1.0);
+        assert!(t.pan_right < 0.01, "left ear looking down: {}", t.pan_right);
     }
 
     #[test]
