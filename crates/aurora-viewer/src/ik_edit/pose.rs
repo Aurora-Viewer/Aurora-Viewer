@@ -199,7 +199,8 @@ impl Editor {
         let has_parent = rig.parent[bone].is_some();
         ui.horizontal_wrapped(|ui| {
             let mut mode = usize::from(!has_parent || self.mode == Mode::Direct);
-            let choice = ui.add_enabled_ui(has_parent, |ui| {
+            // Location keying moves every joint freely: IK waits for Auto or Rotation
+            let choice = ui.add_enabled_ui(has_parent && !self.clip.frees_joints(), |ui| {
                 widgets::segmented(
                     ui,
                     palette,
@@ -310,6 +311,17 @@ impl Editor {
     }
     /// Switch the selected bone between its IK chain and a direct (FK) joint
     /// edit, shared by the Pose page and the timeline's posing toggle.
+    /// Move the selected joint alone, its chain left as it is (FK): what
+    /// Location keying asks for. The next manipulation commits it.
+    pub(super) fn free_joint(&mut self) {
+        if self.mode == Mode::Ik {
+            self.mode = Mode::Direct;
+            self.pole = None;
+            self.control = Control::Bone;
+            self.drag = None;
+            self.gizmo.cancel();
+        }
+    }
     pub(super) fn set_chain_ik(&mut self, ik: bool, rig: &Rig, frame: &Frame) {
         let Some(bone) = self.selected else { return };
         if rig.parent[bone].is_none() || (self.mode == Mode::Ik) == ik {
