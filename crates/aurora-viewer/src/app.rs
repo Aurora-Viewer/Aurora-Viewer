@@ -7289,6 +7289,12 @@ impl App {
         }
         self.mcp_bridge.shutdown_completed = true;
         self.shutdown_inner(None);
+        self.gfx = None;
+        // Mirror ApplicationHandler::exiting: drop renderer/threads cleanly and
+        // drain voice sessions before process exit to avoid TLS destructor aborts.
+        if !self.voice.close_for_exit().wait(Duration::from_secs(3)) {
+            log::warn!("a voice session was still closing at exit");
+        }
     }
 
     pub(crate) fn mcp_shutdown_requested(&self) -> bool {
