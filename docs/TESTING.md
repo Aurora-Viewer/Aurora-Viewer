@@ -7312,7 +7312,7 @@ failure. Grid validation and any paid upload are performed by the human.
   breadcrumb as a path with the top's subfolders as completions; `-menu`
   opens the menu of the empty space (View, Sort, Select all, Invert
   selection, each with its keys); `-filter` opens the folder filter's bar
-  (Ctrl+I, Cmd+Option+F on a Mac) holding `demo o`: only the names with
+  (Ctrl+Alt+F, Cmd+Option+F on a Mac) holding `demo o`: only the names with
   both words are listed, the status counts them, Esc or the bar's × at its
   start closes it and lists everything again; `-preview` turns on the
   details pane's preview (Alt+P, Cmd+Shift+P on a Mac) with the demo's

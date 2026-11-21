@@ -7,9 +7,13 @@
 //! `Deref` to the map; every write goes through this type, so the index
 //! cannot miss one. A record lent out by `get_mut` is checked again before
 //! the next lookup, since its parent or type may have changed.
+//!
+//! The type also keeps a journal of the records written (`changed_since`),
+//! so that a reader of every record (the explorer's creator names) follows
+//! the changes instead of reading all of them again at each one.
 
 use aurora_net::inventory::InvItem;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Deref;
 use uuid::Uuid;
 
@@ -18,7 +22,7 @@ fn is_link(item: &InvItem) -> bool {
     matches!(item.asset_type, 24 | 25)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Items {
     map: HashMap<Uuid, InvItem>,
     /// Link ids by the parent they were indexed under.
@@ -29,6 +33,39 @@ pub struct Items {
     lent: HashSet<Uuid>,
     /// Every record was lent out (`iter_mut`, `values_mut`): rebuild.
     all_lent: bool,
+    /// The ids written lately, oldest first (`changed_since`).
+    journal: VecDeque<Uuid>,
+    /// The number of the journal's first write.
+    journal_start: u64,
+    /// Writes numbered below cannot be followed: everything changed at once.
+    journal_reset: u64,
+}
+
+/// The writes the journal keeps; a reader further behind reads everything.
+const JOURNAL: usize = 8192;
+
+/// Each set of records numbers its writes from its own base, above every
+/// earlier set's: a reader of a replaced set (`Inventory::items` assigned
+/// anew) is behind the new one's start and reads everything.
+fn journal_base() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1 << 40, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Default for Items {
+    fn default() -> Self {
+        let base = journal_base();
+        Self {
+            map: HashMap::new(),
+            links: HashMap::new(),
+            indexed: HashMap::new(),
+            lent: HashSet::new(),
+            all_lent: false,
+            journal: VecDeque::new(),
+            journal_start: base,
+            journal_reset: base,
+        }
+    }
 }
 
 impl Deref for Items {
@@ -73,7 +110,37 @@ impl Extend<(Uuid, InvItem)> for Items {
 }
 
 impl Items {
+    /// The number the next write gets, for `changed_since`.
+    pub fn revision(&self) -> u64 {
+        self.journal_start + self.journal.len() as u64
+    }
+
+    /// The ids written since `revision` was `from` (some may since be
+    /// gone), oldest first; None when they cannot be told apart from the
+    /// rest any more (a change of everything, or too many writes since).
+    pub fn changed_since(&self, from: u64) -> Option<impl Iterator<Item = Uuid> + '_> {
+        (from >= self.journal_reset && from >= self.journal_start && from <= self.revision())
+            .then(|| self.journal.iter().skip((from - self.journal_start) as usize).copied())
+    }
+
+    fn note(&mut self, id: Uuid) {
+        self.journal.push_back(id);
+        if self.journal.len() > JOURNAL {
+            self.journal.pop_front();
+            self.journal_start += 1;
+        }
+    }
+
+    /// Everything may have changed: readers read everything again.
+    fn note_all(&mut self) {
+        let next = self.revision() + 1;
+        self.journal.clear();
+        self.journal_start = next;
+        self.journal_reset = next;
+    }
+
     pub fn insert(&mut self, id: Uuid, item: InvItem) -> Option<InvItem> {
+        self.note(id);
         self.unindex(id);
         if is_link(&item) {
             self.index(id, item.parent);
@@ -82,34 +149,44 @@ impl Items {
     }
 
     pub fn remove(&mut self, id: &Uuid) -> Option<InvItem> {
+        self.note(*id);
         self.unindex(*id);
         self.lent.remove(id);
         self.map.remove(id)
     }
 
     pub fn get_mut(&mut self, id: &Uuid) -> Option<&mut InvItem> {
-        let item = self.map.get_mut(id)?;
+        if !self.map.contains_key(id) {
+            return None;
+        }
+        self.note(*id);
         self.lent.insert(*id);
-        Some(item)
+        self.map.get_mut(id)
     }
 
     pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, Uuid, InvItem> {
+        self.note_all();
         self.all_lent = true;
         self.map.iter_mut()
     }
 
     pub fn values_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, Uuid, InvItem> {
+        self.note_all();
         self.all_lent = true;
         self.map.values_mut()
     }
 
     /// Updates the index record by record: `Inventory::remove` runs this on
     /// every deletion, and a full rebuild would cost the scan it replaces.
+    /// A kept record the closure changes is journaled when its place, type,
+    /// creator or owner changed (what the readers follow).
     pub fn retain(&mut self, mut keep: impl FnMut(&Uuid, &mut InvItem) -> bool) {
         let mut dropped = Vec::new();
+        let mut changed = Vec::new();
         let lent = &mut self.lent;
         self.map.retain(|id, item| {
             let before = (is_link(item), item.parent);
+            let owners = (item.creator, item.owner, item.group_owned);
             if !keep(id, item) {
                 dropped.push(*id);
                 return false;
@@ -118,15 +195,23 @@ impl Items {
             if (is_link(item), item.parent) != before {
                 lent.insert(*id);
             }
+            if (is_link(item), item.parent) != before || (item.creator, item.owner, item.group_owned) != owners {
+                changed.push(*id);
+            }
             true
         });
         for id in dropped {
+            self.note(id);
             self.unindex(id);
             self.lent.remove(&id);
+        }
+        for id in changed {
+            self.note(id);
         }
     }
 
     pub fn clear(&mut self) {
+        self.note_all();
         self.map.clear();
         self.links.clear();
         self.indexed.clear();
@@ -135,6 +220,7 @@ impl Items {
     }
 
     pub fn drain(&mut self) -> std::collections::hash_map::Drain<'_, Uuid, InvItem> {
+        self.note_all();
         self.links.clear();
         self.indexed.clear();
         self.lent.clear();
@@ -230,6 +316,44 @@ mod tests {
         assert_eq!(links_in(&mut items, 10), [3]);
         items.get_mut(&Uuid::from_u128(3)).expect("record").asset_type = 6;
         assert_eq!(links_in(&mut items, 10), Vec::<u128>::new());
+    }
+
+    #[test]
+    fn the_journal_names_the_records_written_until_everything_changes() {
+        let mut items = Items::default();
+        let start = items.revision();
+        let ids = |items: &Items, from| items.changed_since(from).map(|ids| ids.map(|id| id.as_u128()).collect::<Vec<_>>());
+        items.insert(Uuid::from_u128(1), record(1, 10, 6));
+        items.insert(Uuid::from_u128(2), record(2, 10, 6));
+        let mid = items.revision();
+        items.get_mut(&Uuid::from_u128(1)).expect("record").owner = Uuid::from_u128(7);
+        assert!(items.get_mut(&Uuid::from_u128(9)).is_none());
+        items.remove(&Uuid::from_u128(2));
+        assert_eq!(ids(&items, start), Some(vec![1, 2, 1, 2]));
+        assert_eq!(ids(&items, mid), Some(vec![1, 2]));
+        assert_eq!(ids(&items, items.revision()), Some(vec![]));
+        // a creator or owner changed by a retain's closure
+        let now = items.revision();
+        items.retain(|_, it| {
+            it.creator = Uuid::from_u128(8);
+            true
+        });
+        assert_eq!(ids(&items, now), Some(vec![1]));
+        // everything at once: read again
+        let now = items.revision();
+        for it in items.values_mut() {
+            it.owner = Uuid::nil();
+        }
+        assert_eq!(ids(&items, now), None);
+        assert_eq!(ids(&items, items.revision()), Some(vec![]));
+        // too far behind, or a set of records made anew
+        let now = items.revision();
+        for n in 0..=JOURNAL as u128 {
+            items.insert(Uuid::from_u128(100 + n), record(100 + n, 10, 6));
+        }
+        assert_eq!(ids(&items, now), None);
+        let fresh = Items::default();
+        assert_eq!(ids(&fresh, items.revision()), None);
     }
 
     #[test]

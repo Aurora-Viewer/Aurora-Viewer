@@ -505,8 +505,10 @@ impl App {
                 let (original, asset, readable) = key;
                 let item = self.world.inventory.items.get(&original).cloned();
                 let texts = std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts);
+                // the texts read go, the ones on their way stay for their
+                // answer (`inventory_preview` keeps only an awaited one)
                 if texts.len() >= 32 {
-                    texts.clear();
+                    texts.retain(|_, text| *text == PaneText::Loading);
                 }
                 match item {
                     Some(_) if readable && asset.is_nil() => {

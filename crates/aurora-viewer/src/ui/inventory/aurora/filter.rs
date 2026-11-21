@@ -1,4 +1,4 @@
-//! Dolphin's filter bar (Ctrl+I, Cmd+Option+F on a Mac): a field under the
+//! Dolphin's filter bar (Ctrl+Alt+F, Cmd+Option+F on a Mac): a field under the
 //! toolbar that lists only the shown folder's entries whose names hold
 //! what is typed, apart from the search, which looks through every folder.
 //! It stays open from folder to folder, its text emptied in each new one,

@@ -556,9 +556,32 @@ pub(super) fn pane(
     details_below_picture(ui, p, icons, inv, st, prefs, facts, images, actions, id);
 }
 
+/// How long a notecard stays selected before the preview pane asks for its
+/// text: arrowing down a folder of notecards fetches only where it stops.
+const PANE_TEXT_SETTLE: f64 = 0.25;
+
+/// Whether the notecard `id` has been the one previewed for
+/// `PANE_TEXT_SETTLE`; until then a repaint is asked for that moment.
+fn settled(ctx: &egui::Context, id: Uuid) -> bool {
+    let key = egui::Id::unique("aurora_preview_settle");
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| {
+        let entry = d.get_temp_mut_or_insert_with(key, || (id, now));
+        if entry.0 != id {
+            *entry = (id, now);
+        }
+        entry.1
+    });
+    let left = PANE_TEXT_SETTLE - (now - since);
+    if left > 0.0 {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+    }
+    left <= 0.0
+}
+
 /// What the preview pane shows of an item (Alt+P; Windows Explorer's
-/// preview pane): a texture whole (the rule of the rows' tooltips,
-/// `hover::asset`, RLVa's @viewtexture included), a notecard's text when the
+/// preview pane): a texture whole, its own image even when its item
+/// carries another picture (nothing under RLVa's @viewtexture), a notecard's text when the
 /// agent may read it (`preview::can_read`), a sound to play here. False
 /// for anything else, which keeps its picture.
 #[allow(clippy::too_many_arguments)]
@@ -579,7 +602,10 @@ fn preview(
     let height = (ui.available_height() * 0.5).clamp(176.0, 420.0);
     match original.asset_type {
         0 => {
-            let Some(asset) = super::super::hover::asset(inv, original.id) else {
+            // the texture itself, not the picture its item may carry (as
+            // LLPreviewTexture shows it); the tooltips' rule otherwise
+            let own = (inv.can_preview(0) && !original.asset_id.is_nil()).then_some(original.asset_id);
+            let Some(asset) = own.or_else(|| super::super::hover::asset(inv, original.id)) else {
                 return false;
             };
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
@@ -612,7 +638,7 @@ fn preview(
         7 => {
             let key = crate::ui::inventory::pane_key(inv, original.id, facts.god_level);
             let text = key.and_then(|key| facts.pane_texts.get(&key));
-            if text.is_none() {
+            if text.is_none() && settled(ui.ctx(), original.id) {
                 actions.push(InvAction::PaneText(original.id));
             }
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());

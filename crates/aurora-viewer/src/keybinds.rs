@@ -1153,18 +1153,10 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
                 None,
             ],
         ),
-        // Dolphin's filter bar; Cmd+I is Finder's Get Info on a Mac
-        (
-            Action::InvFilter,
-            [
-                if mac {
-                    kalt(K::KeyF, true, false)
-                } else {
-                    kmod(K::KeyI, true, false)
-                },
-                None,
-            ],
-        ),
+        // Dolphin's filter bar. Not Dolphin's Ctrl+I, the viewer's Inventory
+        // window (nor Ctrl+Shift+F, Friends): Ctrl+Alt+F, Cmd+Option+F on a
+        // Mac, which no viewer shortcut uses
+        (Action::InvFilter, [kalt(K::KeyF, true, false), None]),
         (Action::InvSelectAll, [kmod(K::KeyA, true, false), None]),
         (Action::InvInvertSelection, [kmod(K::KeyA, true, true), None]),
         // Cmd+Space is Spotlight: no default there

@@ -828,7 +828,8 @@ impl InventoryPreferences {
         }
         self.folder_views.insert(folder, view);
         while self.folder_views.len() > FOLDER_VIEWS {
-            let Some(first) = self.folder_views.keys().next().copied().filter(|id| *id != folder) else {
+            // the smallest id goes, never the folder just set
+            let Some(first) = self.folder_views.keys().copied().find(|id| *id != folder) else {
                 break;
             };
             self.folder_views.remove(&first);
@@ -2348,6 +2349,11 @@ mod tests {
             prefs.set_view_in(Uuid::from_u128(1000 + n), ExplorerView::Gallery);
         }
         assert_eq!(prefs.folder_views.len(), FOLDER_VIEWS, "bounded");
+        // the folder just set stays even with the smallest id
+        let smallest = Uuid::from_u128(5);
+        prefs.set_view_in(smallest, ExplorerView::Compact);
+        assert_eq!(prefs.folder_views.len(), FOLDER_VIEWS, "the next one went");
+        assert_eq!(prefs.view_in(smallest), ExplorerView::Compact);
         let saved = serde_json::to_string(&prefs).unwrap();
         let back: InventoryPreferences = serde_json::from_str(&saved).unwrap();
         assert_eq!(back.folder_views, prefs.folder_views);

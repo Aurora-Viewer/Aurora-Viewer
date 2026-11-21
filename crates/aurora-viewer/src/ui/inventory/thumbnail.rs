@@ -414,11 +414,35 @@ pub(super) fn shown(inv: &Inventory, id: Uuid) -> Option<Uuid> {
 /// is drawn every frame.
 const PREVIEW_SCAN: usize = 256;
 
+/// The folder previews already worked out, by folder and count, for the
+/// inventory generation and RLVa preview mask they were worked out under:
+/// a tile is drawn every frame, its folder's items looked at once.
+#[derive(Default)]
+pub struct PreviewCache {
+    at: (u64, u8),
+    map: HashMap<(Uuid, usize), Vec<Uuid>>,
+}
+
+impl PreviewCache {
+    /// The pictures of `folder_preview`, from the cache while nothing
+    /// changed.
+    pub(super) fn get(&mut self, inv: &Inventory, id: Uuid, max: usize) -> Vec<Uuid> {
+        let at = (inv.generation, inv.rlva_preview_mask);
+        // a long scroll through many folders does not grow it for ever
+        if self.at != at || self.map.len() > 4096 {
+            self.at = at;
+            self.map.clear();
+        }
+        self.map.entry((id, max)).or_insert_with(|| folder_preview(inv, id, max)).clone()
+    }
+}
+
 /// Dolphin's folder previews (Aurora's): the pictures a folder without one
 /// of its own borrows from its items, at most `max`: their own pictures
 /// first, then its textures, in the folder's order. Only a folder already
-/// loaded, its own items (never a subfolder's), and nothing while RLVa
-/// forbids previews (@viewtexture), as for the tiles' pictures.
+/// loaded (a folder is never loaded for its preview; the pictures chosen
+/// load as any tile's), its own items (never a subfolder's), and nothing
+/// while RLVa forbids previews (@viewtexture), as for the tiles' pictures.
 pub(super) fn folder_preview(inv: &Inventory, id: Uuid, max: usize) -> Vec<Uuid> {
     let Some(folder) = inv.folders.get(&id) else {
         return Vec::new();
@@ -680,6 +704,26 @@ mod tests {
         inv.folders.get_mut(&folder).unwrap().state = FetchState::Unknown;
         assert!(folder_preview(&inv, folder, 4).is_empty(), "never fetched for it");
         assert_eq!((preview_count(96.0), preview_count(128.0), preview_count(192.0)), (0, 1, 4));
+    }
+
+    #[test]
+    fn the_preview_cache_follows_the_inventory_and_rlva() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let folder = Uuid::from_u128(8000);
+        let mut cache = PreviewCache::default();
+        let one = cache.get(&inv, folder, 4);
+        assert_eq!(one, folder_preview(&inv, folder, 4));
+        // a change unseen by the generation keeps what was worked out
+        inv.folders.get_mut(&folder).unwrap().state = FetchState::Unknown;
+        assert_eq!(cache.get(&inv, folder, 4), one);
+        inv.generation += 1;
+        assert!(cache.get(&inv, folder, 4).is_empty(), "a new generation");
+        inv.folders.get_mut(&folder).unwrap().state = FetchState::Fetched;
+        inv.generation += 1;
+        assert_eq!(cache.get(&inv, folder, 4), one);
+        inv.rlva_preview_mask = 1;
+        assert!(cache.get(&inv, folder, 4).is_empty(), "@viewtexture");
     }
 
     #[test]

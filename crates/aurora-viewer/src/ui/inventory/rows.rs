@@ -123,7 +123,7 @@ pub struct PlainTree {
     pub listed_open: Vec<Uuid>,
     /// The widest row measured since the last rebuild (horizontal range).
     pub width: f32,
-    /// The words the explorer's folder filter keeps (Ctrl+I, lowercase):
+    /// The words the explorer's folder filter keeps (Ctrl+Alt+F, lowercase):
     /// only its own entries, not a whole tree's.
     filter: Vec<String>,
     /// The entries the filter left out of the folder listed.

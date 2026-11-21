@@ -672,7 +672,7 @@ fn tile(
         let shown = thumbnail::tile_picture(inv, id);
         // a folder without a picture of its own: those of its items
         if shown.is_none() && folder.is_some() {
-            let previews = thumbnail::folder_preview(inv, id, thumbnail::preview_count(side));
+            let previews = st.folder_previews.get(inv, id, thumbnail::preview_count(side));
             if paint_previews(ui, p, &previews, picture, images, &mut st.wanted_images) {
                 let corner = Rect::from_min_size(
                     Pos2::new(picture.left() + 4.0, picture.bottom() - 4.0 - ICON - 4.0),

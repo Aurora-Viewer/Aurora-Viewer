@@ -7,7 +7,7 @@ use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
 use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub struct WearCopyGroup {
@@ -331,7 +331,7 @@ impl Facts {
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
             pane_texts: Default::default(),
-            creator_names: Default::default(),
+            creator_names: no_creator_names(),
             hidden_names: Default::default(),
             pictures: Default::default(),
             online: world
@@ -490,7 +490,7 @@ fn floater_id(id: Uuid) -> String {
 /// A key the focused inventory list handles itself (its bindings,
 /// `shortcuts::list_keeps`), before the viewer's own shortcuts take it.
 pub fn list_keeps_chord(ctx: &egui::Context, input: &crate::keybinds::Input, ctrl: bool, shift: bool, alt: bool) -> bool {
-    clipboard::list_focused_recently(ctx) && shortcuts::list_keeps(ctx, input, ctrl, shift, alt)
+    clipboard::list_focused_recently(ctx).is_some_and(|explorer| shortcuts::list_keeps(ctx, input, ctrl, shift, alt, explorer))
 }
 
 /// The user's inventory keys, for this frame's lists (`shortcuts::publish`).
@@ -568,13 +568,15 @@ pub struct InventoryUi {
     pub preferences_dirty: bool,
     was_open: bool,
     focus_search: bool,
-    /// The explorer's folder filter (Ctrl+I, `aurora::filter`): what it
+    /// The explorer's folder filter (Ctrl+Alt+F, `aurora::filter`): what it
     /// keeps, `None` while its bar is closed.
     folder_filter: Option<String>,
     focus_folder_filter: bool,
     /// The folder the filter's text was typed for (`None`: the one about to
     /// be shown): another folder empties the text, as Dolphin's unlocked bar.
     folder_filter_at: Option<Uuid>,
+    /// The folder tiles' borrowed pictures (`thumbnail::PreviewCache`).
+    folder_previews: thumbnail::PreviewCache,
     /// Alt+P was pressed: the preview pane turns on or off.
     toggle_preview: bool,
     /// Ctrl+Shift+1…6 was pressed: the view it gives (`aurora::set_view`).
@@ -613,12 +615,11 @@ pub struct InventoryUi {
     result_width: f32,
     creator_generation: Option<u64>,
     creators: HashSet<Uuid>,
-    /// The creators and owners of the items (`aurora::rows::creator_key`),
-    /// for the creator column, by inventory generation.
-    creator_keys: Vec<(Uuid, Uuid)>,
-    creator_keys_generation: Option<u64>,
-    /// The creator column's names, built again when the inventory or RLVa's
-    /// `@shownames` changes, soon while some are unknown, and every few
+    /// The creators and owners of the items, for the creator column
+    /// (`CreatorKeys`), followed through the items' journal.
+    creator_keys: CreatorKeys,
+    /// The creator column's names, built again when the creators or RLVa's
+    /// `@shownames` change, soon while some are unknown, and every few
     /// seconds for the renames (`CREATOR_NAMES_REFRESH`).
     creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
     creator_names_at: Option<(u64, u64, std::time::Instant)>,
@@ -1253,6 +1254,95 @@ pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, cr
 /// How often the creator column's names are read again, for the renames,
 /// and while some are still unknown.
 const CREATOR_NAMES_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The creator column's names when it shows none: one map shared by every
+/// frame, so that a sort context made from it is not made again each frame.
+fn no_creator_names() -> std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>> {
+    static EMPTY: std::sync::LazyLock<std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>> =
+        std::sync::LazyLock::new(Default::default);
+    EMPTY.clone()
+}
+
+/// Every creator and owner among the items (each record's own, a link's
+/// included: the column's key, `aurora::rows::creator_key`, is its
+/// original's, which is a record too, or its own when the original is not
+/// loaded), with how many records hold each. Read whole once, then followed
+/// record by record through the items' journal (`Items::changed_since`):
+/// an inventory of 200,000 items is not read again at each change.
+#[derive(Default)]
+struct CreatorKeys {
+    of: HashMap<Uuid, (Uuid, Uuid)>,
+    count: HashMap<(Uuid, Uuid), u32>,
+    /// The items' revision read up to.
+    revision: Option<u64>,
+    /// Bumped when the set of keys changes.
+    version: u64,
+}
+
+impl CreatorKeys {
+    fn key(it: &aurora_net::inventory::InvItem) -> Option<(Uuid, Uuid)> {
+        (!it.creator.is_nil()).then_some((it.creator, if it.group_owned { Uuid::nil() } else { it.owner }))
+    }
+
+    /// Brings the keys up to the items' revision, `version` bumped when the
+    /// set changed.
+    fn update(&mut self, items: &crate::world::inventory::items::Items) {
+        if self.revision == Some(items.revision()) {
+            return;
+        }
+        let changed: Option<Vec<Uuid>> = self.revision.and_then(|from| items.changed_since(from)).map(Iterator::collect);
+        let mut grew_or_shrank = false;
+        match changed {
+            Some(ids) => {
+                for id in ids {
+                    let old = self.of.remove(&id);
+                    let new = items.get(&id).and_then(Self::key);
+                    if old == new {
+                        if let Some(key) = new {
+                            self.of.insert(id, key);
+                        }
+                        continue;
+                    }
+                    if let Some(key) = old
+                        && let Some(n) = self.count.get_mut(&key)
+                    {
+                        *n -= 1;
+                        if *n == 0 {
+                            self.count.remove(&key);
+                            grew_or_shrank = true;
+                        }
+                    }
+                    if let Some(key) = new {
+                        self.of.insert(id, key);
+                        let n = self.count.entry(key).or_insert(0);
+                        grew_or_shrank |= *n == 0;
+                        *n += 1;
+                    }
+                }
+            }
+            None => {
+                let old: HashSet<(Uuid, Uuid)> = self.count.keys().copied().collect();
+                self.of.clear();
+                self.count.clear();
+                for (id, it) in items.iter() {
+                    if let Some(key) = Self::key(it) {
+                        self.of.insert(*id, key);
+                        *self.count.entry(key).or_insert(0) += 1;
+                    }
+                }
+                grew_or_shrank = self.revision.is_none() || self.count.len() != old.len() || self.count.keys().any(|k| !old.contains(k));
+            }
+        }
+        self.revision = Some(items.revision());
+        if grew_or_shrank {
+            self.version += 1;
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = (Uuid, Uuid)> + '_ {
+        self.count.keys().copied()
+    }
+}
 const CREATOR_NAMES_PENDING: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// What a notecard's text in the preview pane was read for: the notecard
@@ -2722,28 +2812,19 @@ pub fn show(
     let sorts_by = |column| (0..=4).any(|tab| prefs.sort_for(tab).column == Some(column));
     let by_creator = prefs.explorer.group_by == groups::GroupBy::Creator;
     if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator) || by_creator) {
-        if st.creator_keys_generation != Some(world.inventory.generation) {
-            let keys: HashSet<(Uuid, Uuid)> = world
-                .inventory
-                .items
-                .values()
-                .map(|it| aurora::rows::creator_key(&world.inventory, it))
-                .filter(|(creator, _)| !creator.is_nil())
-                .collect();
-            st.creator_keys = keys.into_iter().collect();
-            st.creator_keys_generation = Some(world.inventory.generation);
-        }
+        st.creator_keys.update(&world.inventory.items);
+        let version = st.creator_keys.version;
         let now = std::time::Instant::now();
         let complete = st.creator_names.values().all(Option::is_some);
         let privacy = world.social.avatar_names.privacy_key();
-        let stale = st.creator_names_at.is_none_or(|(generation, was_private, at)| {
-            generation != world.inventory.generation
+        let stale = st.creator_names_at.is_none_or(|(was_version, was_private, at)| {
+            was_version != version
                 || was_private != privacy
                 || now.duration_since(at) >= if complete { CREATOR_NAMES_REFRESH } else { CREATOR_NAMES_PENDING }
         });
         if stale {
-            let mut names = std::collections::HashMap::with_capacity(st.creator_keys.len());
-            for &(creator, owner) in &st.creator_keys {
+            let mut names = std::collections::HashMap::with_capacity(st.creator_keys.count.len());
+            for (creator, owner) in st.creator_keys.keys() {
                 let name = creator_label(world, creator, owner);
                 if name.is_none() {
                     world.social.want_name(creator);
@@ -2753,7 +2834,7 @@ pub fn show(
             if *st.creator_names != names {
                 st.creator_names = std::sync::Arc::new(names);
             }
-            st.creator_names_at = Some((world.inventory.generation, privacy, now));
+            st.creator_names_at = Some((version, privacy, now));
         }
         facts.creator_names = st.creator_names.clone();
     }
@@ -3231,6 +3312,53 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creator_keys_follow_the_items_written() {
+        let item = |id: u128, creator: u128, owner: u128| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(id),
+            creator: Uuid::from_u128(creator),
+            owner: Uuid::from_u128(owner),
+            asset_type: 6,
+            ..Default::default()
+        };
+        let mut items: crate::world::inventory::items::Items = [item(1, 10, 20), item(2, 10, 20), item(3, 11, 20)]
+            .into_iter()
+            .map(|it| (it.id, it))
+            .collect();
+        let mut keys = CreatorKeys::default();
+        let sorted = |keys: &CreatorKeys| {
+            let mut all: Vec<(u128, u128)> = keys.keys().map(|(c, o)| (c.as_u128(), o.as_u128())).collect();
+            all.sort();
+            all
+        };
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 20), (11, 20)]);
+        let first = keys.version;
+        // one of two records of a key goes: the set stays
+        items.remove(&Uuid::from_u128(2));
+        keys.update(&items);
+        assert_eq!((sorted(&keys), keys.version), (vec![(10, 20), (11, 20)], first));
+        // a new creator, a group-owned record, a record without a creator
+        items.insert(Uuid::from_u128(4), item(4, 12, 20));
+        let mut group = item(5, 10, 30);
+        group.group_owned = true;
+        items.insert(group.id, group);
+        items.insert(Uuid::from_u128(6), item(6, 0, 20));
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 0), (10, 20), (11, 20), (12, 20)]);
+        assert!(keys.version > first);
+        // the last record of a key changes hands, then everything at once
+        items.get_mut(&Uuid::from_u128(3)).expect("record").owner = Uuid::from_u128(21);
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 0), (10, 20), (11, 21), (12, 20)]);
+        for it in items.values_mut() {
+            it.owner = Uuid::from_u128(22);
+            it.group_owned = false;
+        }
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 22), (11, 22), (12, 22)]);
+    }
 
     /// RLVa `@shownames` answers for each field, as
     /// LLSidepanelItemInfo::refreshFromItem does: the owner is hidden unless

@@ -915,6 +915,9 @@ mod tests {
         h.frames(2);
         assert!(h.prefs.preview_pane && h.prefs.show_details);
         let note = Uuid::from_u128(8103);
+        let asked = |h: &Harness| h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note));
+        assert!(!asked(&h), "not before the selection has settled");
+        h.frames(20);
         assert!(
             h.actions.iter().any(|a| matches!(a, InvAction::PaneText(id) if *id == note)),
             "the text is asked for"
@@ -1243,7 +1246,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_i_filters_the_folder_shown_until_esc() {
+    fn ctrl_alt_f_filters_the_folder_shown_until_esc() {
         let key = |key, modifiers| egui::Event::Key {
             key,
             physical_key: Some(key),
@@ -1268,7 +1271,10 @@ mod tests {
             };
             key(egui::Key::F, cmd_option)
         } else {
-            key(egui::Key::I, egui::Modifiers::CTRL | egui::Modifiers::COMMAND)
+            key(
+                egui::Key::F,
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            )
         };
         h.run(vec![filter]);
         h.frames(3);
