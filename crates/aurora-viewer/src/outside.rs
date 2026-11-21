@@ -678,6 +678,36 @@ mod tests {
         assert!(!wanted(&ctx, window));
     }
 
+    /// A restart: the layout is written at exit and read at the next start.
+    #[test]
+    fn a_window_sent_outside_is_outside_again_after_a_restart() {
+        let ctx = egui::Context::default();
+        let window = egui::Id::unique("conversations");
+        want(&ctx, window, true);
+        set_native(&ctx, window, true);
+        let saved = crate::ui::layout::text(&ctx).expect("the layout is written");
+        let next = egui::Context::default();
+        crate::ui::layout::apply(&next, &saved).expect("the layout is read");
+        assert!(wanted(&next, window));
+        // (its window of the last session is gone: it asks for a new one)
+        assert!(!native(&next, window));
+        assert!(!wanted(&next, egui::Id::unique("people")));
+    }
+
+    #[test]
+    fn a_reset_of_the_windows_is_left_for_the_window_to_take() {
+        let ctx = egui::Context::default();
+        let window = egui::Id::unique("conversations");
+        assert!(!crate::ui::layout::reset_pending(&ctx, window));
+        crate::ui::layout::reset_windows(&ctx);
+        // asked twice, still there: the window outside comes back inside,
+        // then takes the reset as a window inside does
+        assert!(crate::ui::layout::reset_pending(&ctx, window));
+        assert!(crate::ui::layout::reset_pending(&ctx, window));
+        assert!(crate::ui::layout::take_reset(&ctx, window));
+        assert!(!crate::ui::layout::reset_pending(&ctx, window));
+    }
+
     #[test]
     fn a_key_goes_on_to_the_viewer_unless_the_window_outside_reads_it() {
         // a list, a picture: the key is a shortcut or a movement, as under

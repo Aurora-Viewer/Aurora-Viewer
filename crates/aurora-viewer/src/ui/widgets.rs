@@ -844,7 +844,14 @@ impl<'a> Floater<'a> {
             return None;
         }
         if self.outside && crate::outside::wanted(ctx, egui::Id::unique(self.id)) {
-            return self.show_outside(ctx, p, open, body);
+            let window_id = egui::Id::unique(self.id);
+            if !super::layout::reset_pending(ctx, window_id) {
+                return self.show_outside(ctx, p, open, body);
+            }
+            // "Reset window positions and sizes": back inside the viewer's,
+            // where it takes its default place and size below
+            crate::outside::want(ctx, window_id, false);
+            ctx.data_mut(|d| d.remove::<Vec2>(window_id.with(OUTSIDE_SIZE)));
         }
         let min_id = egui::Id::unique((self.id, "minimized"));
         // "Reset window positions and sizes" (`reset_windows`): back to its
