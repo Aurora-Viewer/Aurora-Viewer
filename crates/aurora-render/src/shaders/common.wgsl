@@ -109,7 +109,7 @@ struct Frame {
     spot_vp: array<mat4x4<f32>, 16>,
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
-    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
+    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque to the eye cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none); z: FEATURE_FACE_SELECT_SLOT; w: 1 where the volumetric clouds replace the Legacy layer (main view)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
@@ -131,8 +131,10 @@ struct Frame {
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
+    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
+    curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -147,6 +149,52 @@ const FEATURE_FACE_SELECT_SLOT: u32 = 2u;
 
 fn deferred_emissive_off() -> bool {
     return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;
+}
+
+// ------------------------------------------------------ planet curvature
+//
+// Aurora's own, off by default (curvature.rs). Regions are flat, so open
+// water runs out to eye level; on a planet of radius R it falls away under
+// the camera by the sagitta d^2 / 2R of a horizontal distance d, and from
+// 10 m up the sea ends ~11 km out, ~0.1 degrees under eye level, with the
+// sky below it. (The exact drop R - sqrt(R^2 - d^2) differs by d^4 / 8R^3:
+// about a millimetre at 40 km on the Earth.)
+//
+// The bend is a projection, not a change of the world: only positions
+// going to clip space are lowered (world_clip, eye_clip, motion_clips), and
+// world_from_depth raises what the depth gives back by the same amount.
+// Lighting, shadows, fog, the waterline tests and every other use of a
+// world position stay those of the flat region, as the simulator has it;
+// the shadow maps, made in that flat world, need no bend of their own. The
+// drop depends on x and y alone, so the inverse is exact.
+//
+// `c`: xy the main camera (the centre of the bend in every pass:
+// reflections, mirrors and probes see the planet the camera stands on),
+// z 1 / 2R, 0 for a flat world.
+fn curvature_drop(p: vec2<f32>, c: vec4<f32>) -> f32 {
+    let d = p - c.xy;
+    return dot(d, d) * c.z;
+}
+
+fn apply_curvature(p: vec3<f32>, c: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(p.xy, p.z - curvature_drop(p.xy, c));
+}
+
+fn remove_curvature(p: vec3<f32>, c: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(p.xy, p.z + curvature_drop(p.xy, c));
+}
+
+// A position relative to the frame's eye (object vertices), bent: the
+// distance is taken from the eye's offsets, so that no region coordinate
+// is rounded on the way.
+fn curve_eye(ep: vec4<f32>) -> vec4<f32> {
+    let d = ep.xy + (frame.eye.xy - frame.curvature.xy);
+    return vec4<f32>(ep.x, ep.y, ep.z - dot(d, d) * frame.curvature.z, ep.w);
+}
+
+// Clip position of a region position, on the curved planet.
+fn world_clip(p: vec3<f32>) -> vec4<f32> {
+    return frame.view_proj * vec4<f32>(apply_curvature(p, frame.curvature), 1.0);
 }
 
 struct DrawRecord {
@@ -223,6 +271,13 @@ const PALETTE_STRIDE: u32 = 261u;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
+// The solid surfaces of the depth the occlusion and the contact shadows
+// were made from (renderer.rs, "solid depth"): the prepass and the blended
+// texels solid to the eye, without those that are in that depth while
+// their opacity still rises (blend_screen_share), which would find
+// themselves here. Bound where the blended faces are drawn
+// (`on_occlusion_surface`); a dummy elsewhere.
+@group(0) @binding(29) var solid_depth: texture_depth_2d;
 @group(0) @binding(20) var water_interface: texture_depth_2d;
 @group(0) @binding(21) var water_air_color: texture_2d<f32>;
 @group(0) @binding(22) var water_air_depth: texture_depth_2d;
@@ -268,6 +323,9 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
+// the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
+// through (10 bits) and the distance of the surface it was made for (an f16)
+@group(0) @binding(30) var soft_tex: texture_2d<u32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -898,7 +956,12 @@ fn screen_uv(frag: vec2<f32>) -> vec2<f32> {
 fn world_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let w = frame.inv_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
-    return w.xyz / w.w;
+    // the point of the flat region the curved one was drawn from (the sky,
+    // at depth 0, stays the far point it was)
+    if (depth <= 0.0) {
+        return w.xyz / w.w;
+    }
+    return remove_curvature(w.xyz / w.w, frame.curvature);
 }
 
 fn scene_depth_at(uv: vec2<f32>) -> f32 {
@@ -1235,7 +1298,7 @@ fn camera_underwater() -> bool {
 // LLDrawPoolWaterExclusion: the nearest front-facing exclusion surface
 // hides water only when it is in front of the nearest water interface.
 fn water_excluded(world_pos:vec3<f32>) -> bool {
-    let clip=frame.view_proj*vec4<f32>(world_pos,1.0);
+    let clip=world_clip(world_pos);
     if(clip.w<=0.0){return false;}
     let uv=clip.xy/clip.w*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5);
     let size=vec2<i32>(textureDimensions(water_exclusion_mask));
@@ -1339,9 +1402,10 @@ const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
 // indirect light of what lies behind them, as before (AURORA_BLEND_AO=old;
 // screen_ao)
 const BLEND_SCREEN_TERMS: u32 = 0x4000u;
-// frame.light_mode.z: the occlusion's depth holds the blended faces at least
-// half covered (renderer.rs, "occlusion depth"), which then take the
-// screen-space terms (screen_surface; AURORA_BLEND_AO)
+// frame.light_mode.z: the occlusion's depth holds the blended faces opaque
+// to the eye (renderer.rs, "occlusion depth"), which then take the
+// screen-space terms, as the fainter ones lying on a solid surface do
+// (screen_share; AURORA_BLEND_AO)
 const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
@@ -1527,15 +1591,19 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
 }
 
-// Whether the fragment being shaded is the surface of the depth prepass,
-// whose contact shadows the mask holds: not a blended face.
-var<private> contact_surface: bool = true;
+// How much of the contact shadows' mask the fragment being shaded takes: 1
+// on the surface of the depth the mask was made from (the prepass, and the
+// blended faces opaque to the eye drawn over it: blend_screen_share), 0 on
+// a more transparent blended face, unless it lies on a solid surface: as
+// `screen_share`, and for the same reason (the skin under a fading layer
+// is in the shadow).
+var<private> contact_share: f32 = 1.0;
 
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
-    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
+    if (frame.contact.x < 0.5 || contact_share <= 0.0 || in_reflection_pass()) {
         return 1.0;
     }
     let p = vec2<i32>(frag);
@@ -1543,17 +1611,77 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return 1.0;
     }
-    return 1.0 - textureLoad(contact_tex, p, 0).r;
+    return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
 }
 
-// The sun's shadow of an opaque surface of the main view: the shadow map,
-// and the contact shadows where they are on.
+// Whether this shader reads the soft shadows: the sun's mask and the
+// projectors' filter. `true` here; while the option is off the scene's
+// pipelines are compiled from this source with the line below set to `false`
+// (renderer.rs `common_shader_for`), so the soft branches and their
+// registers are not in the shaders of a frame that never takes them. The
+// line is matched as it stands.
+const SOFT_PATH: bool = true;
+
+// The sun's soft shadow at a pixel of the main view (soft_shadows.wgsl): the
+// light the mask lets through, or -1 where it does not hold for the surface
+// being shaded: it was made for the surface of the depth prepass at that
+// pixel, so it is read where the two are at the same distance from the
+// camera only (a blended face in front of it, an MSAA sample of another
+// surface, a reflection or a probe, which have `soft.x == 0`).
+fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
+    // (a blended face outside the occlusion depth keeps the filter of before)
+    if (!SOFT_PATH || frame.soft.x < 0.5 || screen_share <= 0.0) {
+        return -1.0;
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(soft_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return -1.0;
+    }
+    // the surface's distance as an f16 in the high 16 bits (negative: the
+    // sky), the light in the low 10, as soft_shadows.wgsl `store` writes
+    let texel = textureLoad(soft_tex, p, 0).x;
+    let stored = unpack2x16float(texel >> 16u).x;
+    let d = distance(world_pos, frame.camera_pos.xyz);
+    if (stored < 0.0 || abs(stored - d) > max(0.01 * d, 0.02)) {
+        return -1.0;
+    }
+    return f32(texel & 1023u) / 1023.0;
+}
+
+// The sun's shadow of an opaque surface of the main view: the shadow map
+// (its soft mask where that holds), and the contact shadows where they are
+// on, then the shadow intensity (Preferences, or the photo's).
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    let s = shadow_factor(world_pos, n, vertex_depth);
+    var s = soft_shadow(world_pos, frag);
+    if (s < 0.0) {
+        s = shadow_factor(world_pos, n, vertex_depth);
+    }
     if (frame.params.z < 0.5) {
         return s;
     }
-    return min(s, contact_shadow(frag));
+    s = min(s, contact_shadow(frag));
+    // (a classic sky's sun is min(N.L, shadow), where the lift would hide
+    // under N.L: `classic_shadowed` and `ll_classic_pbr` lift it there)
+    if (frame.sky_ll.x < 0.5) {
+        s = shadow_lift(s);
+    }
+    return s;
+}
+
+// The shadow with the shadow intensity: the share of the light a shadow lets
+// through, `frame.soft.y` (1 - intensity, 0 at full intensity: the shadow is
+// then returned as it is, to the bit).
+fn shadow_lift(s: f32) -> f32 {
+    return s + (1.0 - s) * frame.soft.y;
+}
+
+// The Legacy `min(N.L, shadow)` of a classic sky's sun, with the shadow
+// intensity: what the shadow takes of the sun's light, `nl - min(nl, shadow)`,
+// is scaled by the intensity (1 - frame.soft.y), 0 lifts it away.
+fn classic_shadowed(nl: f32, shadow: f32) -> f32 {
+    let lit = min(nl, shadow);
+    return lit + (nl - lit) * frame.soft.y;
 }
 
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
@@ -1657,22 +1785,85 @@ var<private> surface_occlusion: f32 = 0.0;
 // a face they are those of what lies behind it, around a closer object a
 // dark halo (#556). The Legacy Viewer's alpha pass applies neither
 // (materialF.glsl, alphaF.glsl: no adjustIrradiance outside softenLightF).
-// A blended face at least half covered is in that depth (BLEND_SCREEN_DEPTH)
+// A blended face opaque to the eye is in that depth (BLEND_SCREEN_DEPTH)
 // and takes them like an opaque one: a head whose halves differ in alpha
-// mode no longer shows a line down the middle (#882).
-var<private> screen_surface: bool = true;
+// mode no longer shows a line down the middle (#882). 1 on an opaque
+// surface, 0 on a translucent face, blend_screen_share between; and on a
+// blended face not yet solid, how much it lies on a solid surface
+// (`on_occlusion_surface`) where that is more. A soft layer worn on a body
+// (a tattoo, a blush, a second skin) fades out over the skin: taking none,
+// over a skin that takes them, it lit the skin back up as far as the line
+// where it enters that depth and stopped there, a hard edge in every
+// crease with the occlusion on.
+var<private> screen_share: f32 = 1.0;
 
-// Whether the fragment being shaded takes the screen-space terms (see
-// screen_surface).
-fn screen_terms() -> bool {
-    return screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u;
+// How far a faint blended fragment may be from the surface in the
+// occlusion's depth and still take its screen-space terms whole (m), the
+// larger of this and a hundredth of its distance from the camera; none from
+// twice as far.
+const SCREEN_LAYER_REACH: f32 = 0.03;
+
+// How much a fragment `here` from the camera lies on the surface seen
+// `there` in its pixel (m): 1 within the reach, falling smoothly to 0 at
+// twice it, so that a layer leaving its surface shows no line either. A
+// pane in front of a room is far from the wall behind it and takes none of
+// the wall's occlusion, as before (#556).
+fn layer_on_surface(here: f32, there: f32) -> f32 {
+    let reach = max(SCREEN_LAYER_REACH, 0.01 * here);
+    return 1.0 - smoothstep(reach, 2.0 * reach, abs(there - here));
+}
+
+// `layer_on_surface` of the fragment at `world_pos`, against the solid
+// surface in its pixel (`solid_depth`).
+fn on_occlusion_surface(frag: vec2<f32>, world_pos: vec3<f32>) -> f32 {
+    let uv = screen_uv(frag);
+    let size = vec2<i32>(textureDimensions(solid_depth));
+    let px = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+    let depth = textureLoad(solid_depth, px, 0);
+    // (reversed depth: 0 is the sky)
+    if (depth <= 0.0) {
+        return 0.0;
+    }
+    // from the camera, by the view's rotation alone: region coordinates
+    // lose their millimetres far from the region's origin
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let seen = frame.inv_view_proj_rot * vec4<f32>(ndc, depth, 1.0);
+    return layer_on_surface(distance(world_pos, frame.camera_pos.xyz), length(seen.xyz / seen.w));
+}
+
+// The opacities from which a blended texel is opaque to the eye, and
+// solid (the constants of these names in renderer.rs).
+const SCREEN_BLEND_ALPHA: f32 = 0.88;
+const SCREEN_SOLID_ALPHA: f32 = 0.95;
+
+// How much of the screen-space terms (ambient occlusion, indirect light,
+// contact shadows) a blended fragment of opacity `alpha` takes. They are
+// made from a depth that holds a blended texel from an opacity of 0.88
+// (SCREEN_BLEND_ALPHA), where the Legacy Viewer's shadows stop treating a
+// face as semi-transparent (shadowAlphaMaskF.glsl): none under it, where
+// they are those of what lies behind the face, all from 0.95
+// (SCREEN_SOLID_ALPHA), and a ramp between. A step drew a ragged line along the texels of
+// a glass texture whose opacity crosses it.
+fn blend_screen_share(alpha: f32) -> f32 {
+    return smoothstep(SCREEN_BLEND_ALPHA, SCREEN_SOLID_ALPHA, alpha);
+}
+
+// The share of the screen-space terms the fragment being shaded takes (see
+// screen_share).
+fn screen_terms() -> f32 {
+    if ((frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u) {
+        return 1.0;
+    }
+    return screen_share;
 }
 
 fn screen_ao(frag: vec2<f32>) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if (frame.misc.x < 0.5 || in_reflection_pass() || share <= 0.0) {
         return 1.0;
     }
-    return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    let ao = max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    return mix(1.0, ao, share);
 }
 
 // The light the surfaces around bounce onto the fragment at `frag`
@@ -1685,10 +1876,11 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // as is, it lit the creases and contacts back up and the occlusion seemed
 // gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || share <= 0.0) {
         return vec3<f32>(0.0);
     }
-    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * (share * screen_ao(frag));
 }
 
 // The solid angle two spherical caps share, divided by 2 pi: caps of
@@ -2012,7 +2204,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
     var prev_t = 0.0;
     for (var i = 0; i < steps; i++) {
         let p = origin + dir * t;
-        let c = frame.view_proj * vec4<f32>(p, 1.0);
+        let c = world_clip(p);
         if (c.w <= 0.01) {
             break;
         }
@@ -2034,7 +2226,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                 for (var k = 0; k < 5; k++) {
                     let mid = (lo + hi) * 0.5;
                     let mp = origin + dir * mid;
-                    let mc = frame.view_proj * vec4<f32>(mp, 1.0);
+                    let mc = world_clip(mp);
                     let mn = mc.xyz / mc.w;
                     let muv = vec2<f32>(mn.x * 0.5 + 0.5, 0.5 - mn.y * 0.5);
                     if (scene_depth_at(muv) > mn.z) {
@@ -2155,6 +2347,110 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
     return ret;
 }
 
+// Points of a disk of radius 1, spread evenly (soft_shadows.wgsl DISK).
+const SOFT_DISK: array<vec2<f32>, 32> = array(
+    vec2<f32>(0.176776695, 0.000000000), vec2<f32>(-0.176776695, 0.000000000),
+    vec2<f32>(-0.225772188, 0.206825818), vec2<f32>(0.225772188, -0.206825818),
+    vec2<f32>(0.034558052, -0.393771179), vec2<f32>(-0.034558052, 0.393771179),
+    vec2<f32>(0.284571220, 0.371172764), vec2<f32>(-0.284571220, -0.371172764),
+    vec2<f32>(-0.522223187, -0.092373929), vec2<f32>(0.522223187, 0.092373929),
+    vec2<f32>(0.494695392, -0.314684715), vec2<f32>(-0.494695392, 0.314684715),
+    vec2<f32>(-0.165465927, 0.615525001), vec2<f32>(0.165465927, -0.615525001),
+    vec2<f32>(-0.315561468, -0.607594404), vec2<f32>(0.315561468, 0.607594404),
+    vec2<f32>(0.684642162, 0.250030219), vec2<f32>(-0.684642162, -0.250030219),
+    vec2<f32>(-0.712256086, 0.294008958), vec2<f32>(0.712256086, -0.294008958),
+    vec2<f32>(0.343354499, -0.733728620), vec2<f32>(-0.343354499, 0.733728620),
+    vec2<f32>(0.253730241, 0.808931990), vec2<f32>(-0.253730241, -0.808931990),
+    vec2<f32>(-0.764745892, -0.443185876), vec2<f32>(0.764745892, 0.443185876),
+    vec2<f32>(0.897133984, -0.197232390), vec2<f32>(-0.897133984, 0.197232390),
+    vec2<f32>(-0.547506905, 0.778772232), vec2<f32>(0.547506905, -0.778772232),
+    vec2<f32>(-0.126486773, -0.976089697), vec2<f32>(0.126486773, 0.976089697)
+);
+
+// Soft shadow of projector map `k` on the point `q` (1 lit, 0 shadowed),
+// main view only (frame.soft.z, the light's radius in metres): percentage-
+// closer soft shadows with the map of a perspective projector. A search
+// of the map around the point finds the casters and their mean distance
+// from the projector, the light's size gives the penumbra by similar
+// triangles, and a filter of 12 taps of that width takes the light; 1 when
+// the search finds no caster.
+// `uv`, `receiver`: the point in the map and its depth; `z`: its distance
+// along the projector's axis; `origin`, `half`, `dims`, `texel`: the map in
+// the atlas, in pixels (projector_shadow).
+//
+// The stored depth is a + b / z (a, b from the matrix), so a caster's
+// distance is b / (stored - a): gaps and penumbrae are in metres, never an
+// average of stored depths. The depth of the receiver's plane across the
+// map (from two steps along it) keeps a slanted face from shadowing itself
+// over the wide filter.
+fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f32, z: f32,
+    origin: vec2<f32>, half: f32, dims: vec2<f32>, texel: f32) -> f32 {
+    let m = frame.spot_vp[k];
+    let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
+    let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
+    let row_z = vec3<f32>(m[0].z, m[1].z, m[2].z);
+    let row_w = vec3<f32>(m[0].w, m[1].w, m[2].w);
+    let a = dot(row_z, row_w) / max(dot(row_w, row_w), 1e-12);
+    let b = m[3].z - a * m[3].w;
+    // map units across one metre at one metre from the apex, each way
+    let per_metre = 0.5 * vec2<f32>(length(row_x), length(row_y));
+    // the receiver's plane: depth change per map unit, from two steps of 5 cm
+    let tangent = normalize(cross(n, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) > 0.9)));
+    let bitangent = cross(n, tangent);
+    var step_uv = array<vec2<f32>, 2>(vec2<f32>(0.0), vec2<f32>(0.0));
+    var step_z = vec2<f32>(0.0);
+    for (var i = 0u; i < 2u; i++) {
+        let lp = m * vec4<f32>(q + select(bitangent, tangent, i == 0u) * 0.05, 1.0);
+        let ndc = lp.xyz / max(lp.w, 1e-6);
+        step_uv[i] = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) - uv;
+        step_z[i] = ndc.z - receiver;
+    }
+    let det = step_uv[0].x * step_uv[1].y - step_uv[0].y * step_uv[1].x;
+    var gradient = vec2<f32>(0.0);
+    if (abs(det) > 1e-9 * texel) {
+        gradient = vec2<f32>(
+            step_uv[1].y * step_z.x - step_uv[0].y * step_z.y,
+            step_uv[0].x * step_z.y - step_uv[1].x * step_z.x) / det;
+    }
+    let light = frame.soft.z;
+    // the widest half width of the filter at the receiver: 25 light radii,
+    // between 25 cm and 1 m (the sun search radius, soft_shadows.rs)
+    let cap = clamp(25.0 * light, 0.25, 1.0);
+    let search = min(per_metre * cap / z, vec2<f32>(0.1));
+    var ratio = 0.0;
+    var blockers = 0.0;
+    for (var i = 0u; i < 9u; i++) {
+        var o = vec2<f32>(0.0);
+        if (i > 0u) {
+            o = SOFT_DISK[((i - 1u) * 32u) / 8u] * search;
+        }
+        let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        let at = vec2<i32>(floor(origin + local * half));
+        let stored = textureLoad(shadow_map, at, 0);
+        let centre = (vec2<f32>(at) + 0.5 - origin) / half;
+        if (stored < 1.0 && stored < receiver + dot(gradient, centre - uv) - 0.0002) {
+            let caster = b / (stored - a);
+            if (caster > 0.0 && caster < z) {
+                ratio += (z - caster) / caster;
+                blockers += 1.0;
+            }
+        }
+    }
+    // no caster within the search: lit
+    if (blockers == 0.0) {
+        return 1.0;
+    }
+    let width = min(light * ratio / blockers, cap);
+    let radius = max(per_metre * width / z, vec2<f32>(1.5 * texel));
+    var sum = 0.0;
+    for (var i = 0u; i < 12u; i++) {
+        let local = clamp(uv + SOFT_DISK[(i * 32u) / 12u] * radius, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + local * half) / dims,
+            receiver + dot(gradient, local - uv) - 0.0002);
+    }
+    return sum / 12.0;
+}
+
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
 // the configured budget extends the Legacy Viewer's two-map limit without
@@ -2192,15 +2488,21 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     } else {
         origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
     }
-    var sum = 0.0;
-    // pcfSpotShadow's five taps
-    let taps = array<vec2<f32>, 5>(
-        vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
-    for (var t = 0; t < 5; t++) {
-        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
+    var s = -1.0;
+    if (SOFT_PATH && frame.soft.z > 0.0) {
+        s = projector_soft(k, world_pos + n * 0.04, n, uv, ndc.z, lp.w, origin, half, dims, texel);
     }
-    var s = sum * 0.2;
+    if (s < 0.0) {
+        var sum = 0.0;
+        // pcfSpotShadow's five taps
+        let taps = array<vec2<f32>, 5>(
+            vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
+        for (var t = 0; t < 5; t++) {
+            let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
+        }
+        s = sum * 0.2;
+    }
     // the map fades in and out as its projector takes or loses it
     s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
@@ -2502,7 +2804,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     if (ll_classic_mode()) {
         let sunlit = a.sunlit * 1.35;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
-        let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
+        let sun_contrib = vec3<f32>(classic_shadowed(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
         return (srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) + screen_indirect(frag)) * base;
     }
@@ -2510,7 +2812,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2570,8 +2872,8 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(min(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(classic_shadowed(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
+        final_sun = clamp(sun_contrib * (diff + spec) * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2795,7 +3097,7 @@ fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     // no focused light here, or a face turned away from the sun: nothing for
     // the shadow to dim, it is not looked up
     if(max(focused.r,max(focused.g,focused.b))<=0.0){return vec3<f32>(0.0);}
-    return focused*shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
+    return focused*shadow_lift(shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz)));
 }
 
 fn water_fx_noise(p: vec2<f32>) -> f32 {

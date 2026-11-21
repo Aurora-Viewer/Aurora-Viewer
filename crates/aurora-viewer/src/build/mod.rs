@@ -17,6 +17,7 @@ pub mod contents;
 pub mod contents_drop;
 pub mod costs;
 mod cycle;
+pub mod deep_perms;
 pub mod demo;
 pub mod demo_sim;
 pub mod draw;
@@ -2184,6 +2185,14 @@ impl BuildTool {
         if !rect_dragged(a, b) {
             return; // a click, handled by `mouse_up`
         }
+        // LLToolSelectRect::handleRectangleSelection (llglsandbox.cpp): no
+        // rectangle selects anything under @interact, a HUD's included
+        if world.rlva_drops_picks() {
+            return;
+        }
+        // …and under @fartouch its distance stands for MaxSelectDistance,
+        // whether "Limit select distance" is on or not, farther or nearer
+        let limit = world.rlva_select_limit().or(s.select_limit());
         let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
         self.selection_linked = s.edit_linked;
@@ -2196,7 +2205,7 @@ impl BuildTool {
             let Some((p, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            if hud != self.cam.hud.is_some() || (!hud && s.select_limit().is_some_and(|max| p.distance(world.agent.position) > max)) {
+            if hud != self.cam.hud.is_some() || (!hud && limit.is_some_and(|max| p.distance(world.agent.position) > max)) {
                 continue;
             }
             // what avatars wear is left out of a rectangle drawn in the
@@ -2295,6 +2304,7 @@ impl BuildTool {
         self.last_frame = Some(now);
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
+        self.advance_deep_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
         // "Place on surface" lives in the Edit tool of the open tools

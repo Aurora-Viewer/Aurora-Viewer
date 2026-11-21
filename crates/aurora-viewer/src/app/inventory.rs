@@ -284,6 +284,8 @@ impl App {
             0 => {
                 if texture_preview {
                     st.attachment_preview = Some(item);
+                } else {
+                    self.rlva_view_blocked(0);
                 }
             }
             2 => {
@@ -499,13 +501,8 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id, owner) => {
-                if self
-                    .world
-                    .inventory
-                    .items
-                    .get(&id)
-                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
-                {
+                let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
+                if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
                     return;
                 }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
@@ -623,9 +620,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags, item) => {
+            InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.pick_local_settings(asset, kind, Some(item));
+                    self.world.eep.request_local_item(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
@@ -1115,7 +1112,21 @@ impl App {
                 | crate::world::appearance::Action::SaveIn(..)
                 | crate::world::appearance::Action::ImportJson { .. }
         );
-        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
+        self.world.rlva_note_wear_request(&action);
+        let mut attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: rez_attachment takes the point the names give while a point
+        // is locked (Wear, Add, a drop on the avatar; not an outfit)
+        if matches!(
+            action,
+            crate::world::appearance::Action::WearItem { .. }
+                | crate::world::appearance::Action::WearItems { .. }
+                | crate::world::appearance::Action::Add(_)
+        ) {
+            for attachment in &mut attachments {
+                attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
+            }
+        }
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();

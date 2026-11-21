@@ -135,7 +135,7 @@ impl App {
     /// `unblock` asks first (`BlockStep::AskUnblock`), whether the link was
     /// clicked in a text or came from outside the viewer.
     fn run_agent_verb(&mut self, id: Uuid, verb: AgentVerb) {
-        match verb.block_step(self.world.mutes.is_muted_id(&id)) {
+        match verb.block_step(self.world.object_block_entry(&id).is_some()) {
             BlockStep::Nothing => return,
             BlockStep::AskUnblock => {
                 let object = match verb {
@@ -220,7 +220,7 @@ impl App {
             log::info!("app link: unblocking cancelled");
             return;
         }
-        if !self.world.mutes.is_muted_id(&ask.id) {
+        if self.world.object_block_entry(&ask.id).is_none() {
             return;
         }
         log::info!("app link: unblocking confirmed");

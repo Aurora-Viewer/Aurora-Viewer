@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-21 — Aurora 0.9.12: fifteen languages, Game Controls and a look for the world
+Aurora now speaks fifteen languages: German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian, Norwegian, Portuguese and Chinese join English, French and Japanese, built on the community's translations. Game Controls let a game controller drive the avatar, the camera and scripts, like the LL viewer 26.5. Photo looks and LUTs can stay on the world, with 30 new looks by JuicyBomb. Versions before 0.9.12 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.12)
+
+## 2026-11-21 — Chat, avatars and inventory
+Direct messages sent from another device, the mobile app included, now show up in the conversation. Avatars you have already seen show at once from a local copy while the region sends them. The inventory gets a Gallery view, notecards get find and replace, and the Second camera window keeps your avatar in view. The Aurora Weather window is redesigned and holds every weather setting. A Second Life account can be created from the login screen, and Linux installs its updates in place.
+
+## 2026-11-21 — More like the Legacy Viewer
+The Phototools window, media and sounds heard from the avatar, the microphone closed while muted, permissions set on objects inside objects, Disable glass for accessibility, and RLVa as in the Legacy Viewer. Thanks to anne-skydancer, circuskid, ClifHofmann, dash-sl, Gaalrauch, Glychd, Izusl, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik, PumpkinSpicePanda, and to the translators 00JackWild00, 1615424277, DDynamic-Evolution, deontodi-ctrl, SmurfCat1234, wolfosbournesl.
+
 ## 2026-11-18 — Aurora 0.9.11: a complete Director, Gaming mode and 360° pictures
 The Director becomes a full machinima tool: ready-made shots, renders up to 4K, films with their sound, montages, the photo looks and LUTs, handles on the cameras, and ffmpeg downloaded in one click. Gaming mode lets Aurora step back while you play: the world stops drawing and gives the video memory and RAM back, while chat and sounds go on. The photo window takes 360° pictures. Versions before 0.9.11 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.11)

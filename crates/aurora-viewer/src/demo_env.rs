@@ -12,6 +12,9 @@
 //! - `search`: the sky list open (2500), "sunset" typed in its search
 //!   field (2510): the two sunsets only. `search-none`: a long text no name
 //!   contains: the no-match line, cut to the list's width.
+//! - `order`: the items get dates (a later asset is newer), so the sky list
+//!   open at 2500 shows the inventory's order, newest first, scattered.
+//!   `order-az`: the same with the lists' A–Z switch on (2490).
 
 use crate::world::eep::{Settings, SkyFrame};
 use crate::world::env_select::{AT_SETTINGS, SettingsKind};
@@ -56,6 +59,63 @@ pub fn parcel_scenario() -> bool {
 /// `AURORA_DEMO_ENV_EDITOR=region…`: the avatar manages the demo estate.
 pub fn estate_manager() -> bool {
     editor().is_some_and(|s| s.starts_with("region"))
+}
+
+/// `AURORA_DEMO_WEATHER_WINDOW=rain|snow|night`: the Aurora Weather window
+/// opens at the start on a weather of its own: a thunderstorm with
+/// puddles, a snowfall that settles, or a clear night with the northern
+/// lights.
+pub fn weather_window() -> Option<&'static str> {
+    static S: OnceLock<String> = OnceLock::new();
+    let s = S.get_or_init(|| std::env::var("AURORA_DEMO_WEATHER_WINDOW").unwrap_or_default().trim().to_owned());
+    (!s.is_empty() && s != "0").then_some(s.as_str())
+}
+
+/// The weather `AURORA_DEMO_WEATHER_WINDOW` opens its window on, set as
+/// the window sets it (the variables of the weather no longer apply).
+pub fn weather_scene(mode: &str, w: &mut crate::weather::WeatherSettings) {
+    use crate::weather::{AuroraColours, Precipitation};
+    w.touched = true;
+    // its switches on: the night's sky is clear
+    w.enabled = true;
+    w.precipitation_on = mode != "night";
+    w.wind_on = true;
+    match mode {
+        "snow" => {
+            w.precipitation = Precipitation::Snow;
+            w.amount = 0.6;
+            w.wind_min = 0.1;
+            w.wind_max = 0.35;
+            w.wind_follow_region = false;
+            w.wind_from = 315.0;
+            w.snow_settles = true;
+            w.snow_footprints = true;
+            w.aurora = false;
+        }
+        "night" => {
+            w.amount = 0.0;
+            w.wind_min = 0.05;
+            w.wind_max = 0.2;
+            w.aurora = true;
+            w.aurora_intensity = 0.8;
+            w.aurora_heading = 20.0;
+            w.aurora_height = 0.3;
+            w.aurora_colours = AuroraColours::Green;
+        }
+        // "rain", "1" and anything else: a thunderstorm
+        _ => {
+            w.precipitation = Precipitation::Rain;
+            w.amount = 0.85;
+            w.wind_min = 0.25;
+            w.wind_max = 0.65;
+            w.wind_follow_region = false;
+            w.wind_from = 270.0;
+            w.thunder = true;
+            w.puddles = true;
+            w.aurora = true;
+            w.aurora_colours = AuroraColours::Violet;
+        }
+    }
 }
 
 /// The library and the user's Settings folder: for the selector's and the
@@ -237,7 +297,12 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             favorite: false,
             favorite_known: false,
             creator: Uuid::nil(),
-            created_at: 0,
+            // dated for `order` only: the other scenarios keep their order
+            created_at: if matches!(scenario(), "order" | "order-az") {
+                1_700_000_000 + *a as i64
+            } else {
+                0
+            },
             owner,
             group_mask: 0,
             everyone_mask: 0,
@@ -485,6 +550,8 @@ pub enum Step {
     PhotoList,
     /// Type into the open list's search field.
     Search(SettingsKind, &'static str),
+    /// Turn the lists' A–Z switch on.
+    ListsByName,
 }
 
 pub fn step(frame: u64) -> Option<Step> {
@@ -499,12 +566,15 @@ pub fn step(frame: u64) -> Option<Step> {
     }
     let s = match frame {
         30 => Step::Open { lighting },
-        2500 if matches!(scenario(), "list" | "search" | "search-none" | "search-back") => Step::OpenList(SettingsKind::Sky),
+        2490 if scenario() == "order-az" => Step::ListsByName,
+        2500 if matches!(scenario(), "list" | "search" | "search-none" | "search-back" | "order" | "order-az") => {
+            Step::OpenList(SettingsKind::Sky)
+        }
         2510 if scenario() == "search" => Step::Search(SettingsKind::Sky, "sunset"),
         2510 if scenario() == "search-none" => Step::Search(SettingsKind::Sky, "zzz no sky has a name as long as this one"),
         2510 if scenario() == "search-back" => Step::Search(SettingsKind::Sky, "zzz"),
         2520 if scenario() == "search-back" => Step::Search(SettingsKind::Sky, ""),
-        _ if matches!(scenario(), "list" | "search" | "search-none" | "search-back") => return None,
+        _ if matches!(scenario(), "list" | "search" | "search-none" | "search-back" | "order" | "order-az") => return None,
         2600 => Step::Pick(SettingsKind::Sky, u(0x204)),
         2900 if lighting => Step::EditLighting,
         2900 => Step::Pick(SettingsKind::Water, u(0x302)),
