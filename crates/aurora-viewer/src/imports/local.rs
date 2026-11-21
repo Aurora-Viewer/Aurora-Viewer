@@ -133,11 +133,25 @@ pub fn stamp(paths: &[PathBuf]) -> Stamp {
         })
         .collect()
 }
+/// Reloads of a changed file that may fail in a row before the watch gives
+/// up until the file changes again (LL_LOCAL_UPDATE_RETRIES,
+/// indra/newview/lllocalbitmaps.cpp): painting programs lock or rewrite the
+/// file while they export it.
+pub const RELOAD_RETRIES: u8 = 5;
 pub struct Watch {
     pub paths: Vec<PathBuf>,
+    /// The files as last loaded. Like LLLocalBitmap::updateSelf, a new stamp
+    /// is only accepted once its reload has started, and only kept once that
+    /// reload succeeded, so an export is never skipped.
     pub stamp: Stamp,
     pub next: Instant,
     pub pending: bool,
+    /// Failed reloads of the current change (LLLocalBitmap::mUpdateRetries).
+    pub failures: u8,
+    /// Whether the reload under way was started by this watch, not by the
+    /// Reload button: only those are retried quietly, as the Legacy Viewer
+    /// only retries inside its timer (LLLocalBitmapMgr::doUpdates).
+    pub auto: bool,
 }
 impl Watch {
     pub fn new(mut paths: Vec<PathBuf>) -> Self {
@@ -148,7 +162,32 @@ impl Watch {
             paths,
             next: Instant::now() + Duration::from_secs(3),
             pending: false,
+            failures: 0,
+            auto: false,
         }
+    }
+    /// After a successful reload: the stamp seen when the change was noticed
+    /// (`seen`) replaces the one taken after the files were read, path by
+    /// path, so a write that landed during the read is reloaded at the next
+    /// check instead of being taken as already loaded.
+    pub fn reloaded(&mut self, seen: &Stamp) {
+        for (path, value) in &mut self.stamp {
+            if let Some((_, before)) = seen.iter().find(|(seen, _)| seen == path) {
+                *value = *before;
+            }
+        }
+        self.failures = 0;
+    }
+    /// After a failed reload: true while the next check should try again.
+    /// The last stamp tried is forgotten so that the unchanged file still
+    /// counts as changed.
+    pub fn failed(&mut self) -> bool {
+        self.failures = self.failures.saturating_add(1);
+        if self.failures > RELOAD_RETRIES {
+            return false;
+        }
+        self.stamp.clear();
+        true
     }
 }
 fn prepare(
