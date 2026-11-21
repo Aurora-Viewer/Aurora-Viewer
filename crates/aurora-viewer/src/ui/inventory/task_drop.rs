@@ -51,7 +51,7 @@ impl PendingTransfer {
 /// enclosing surfaces, so the first hovered target owns the feedback this pass.
 /// Firestorm: LLToolDragAndDrop::acceptanceToCursor / handleHover.
 pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !ctx.input(|i| i.pointer.primary_down()) {
+    if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !crate::outside::carry::dragging(ctx) {
         return None;
     }
     let pass = ctx.cumulative_pass_nr();

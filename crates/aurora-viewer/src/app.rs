@@ -586,6 +586,9 @@ pub struct App {
     egui_hand_over: EguiHandOver,
     /// The interface's windows outside the viewer's (outside.rs).
     outside: crate::outside::Outside,
+    /// An item dragged out of one window, in hand until a click drops it
+    /// in another (outside/carry.rs).
+    carry: crate::outside::carry::Carry,
     /// AURORA_DEMO_OUTSIDE: the test window outside, until it is closed.
     outside_demo: Option<crate::outside::demo::Demo>,
     /// egui's textures kept on the CPU, for the renderer of a GPU recovery
@@ -2002,6 +2005,7 @@ impl App {
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             outside,
+            carry: Default::default(),
             outside_demo: None,
             egui_shadow: Default::default(),
             egui_replay: false,
@@ -13338,6 +13342,7 @@ impl App {
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
+            crate::outside::carry::hint(ui.ctx(), &self.palette);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
@@ -24782,6 +24787,11 @@ impl ApplicationHandler for App {
         // the window of a lost device, on screen until its successor has
         // presented: its redraws and sizes are not the new renderer's
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
+            return;
+        }
+        // an item in hand between two windows: the press of the click that
+        // drops it, and what lets go of it, are no window's (outside/carry.rs)
+        if self.carry_window_event(id, &event) {
             return;
         }
         // a window of the interface outside the viewer's reads its own

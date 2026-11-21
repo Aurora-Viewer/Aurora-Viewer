@@ -38,6 +38,7 @@
 //! (`App::exiting`: on Wayland an object destroyed after the connection is
 //! a crash).
 
+pub(crate) mod carry;
 pub(crate) mod demo;
 
 use std::cell::RefCell;
@@ -559,6 +560,16 @@ impl Outside {
             return None;
         }
         Some(ctx.show_viewport_immediate(id, egui::ViewportBuilder::default(), |ui, _| add(ui)))
+    }
+
+    /// The inner size of the window outside `id`, in pixels.
+    pub fn size_of(&self, id: WindowId) -> Option<winit::dpi::PhysicalSize<u32>> {
+        self.shared
+            .borrow()
+            .windows
+            .values()
+            .find(|native| native.window.id() == id)
+            .map(|native| native.window.inner_size())
     }
 
     /// One of the windows outside has the focus.

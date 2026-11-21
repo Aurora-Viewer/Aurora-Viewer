@@ -29,6 +29,9 @@ impl App {
     /// let go of, and the scenario's scripted pointer. `own`: the viewer's
     /// own window.
     pub(super) fn outside_frame_start(&mut self, event_loop: &ActiveEventLoop, own: &Window, renderer: &mut Renderer) {
+        if self.carry.frame_start(&self.egui_ctx) {
+            log::info!("carry: nothing in hand any more");
+        }
         for id in self.outside.answers(renderer, &self.egui_ctx) {
             if id == demo::id() {
                 self.outside_demo = None;
@@ -111,6 +114,31 @@ impl App {
             let frame = self.frame_count;
             self.outside.show(ctx, demo::id(), |ui| demo.show(ui, p, frame));
         }
+    }
+
+    /// An event of the system, before any window reads it: true when the
+    /// carry of an item between two windows took it (outside/carry.rs).
+    pub(super) fn carry_window_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        use crate::outside::carry::{Event, Step};
+        let size = match &self.gfx {
+            Some(g) if g.window.id() == id => Some(g.window.inner_size()),
+            _ => self.outside.size_of(id),
+        };
+        let Some(size) = size else {
+            return false;
+        };
+        let (went, step) = self.carry.window_event(&self.egui_ctx, id, size, event);
+        match step {
+            Step::Nothing => {}
+            Step::Began => log::info!("carry: an item let go of beyond its window stays in hand"),
+            Step::Dropping => log::info!("carry: a click drops the item in hand"),
+            Step::LetGo => log::info!("carry: the item in hand is let go of"),
+        }
+        if step != Step::Nothing {
+            self.last_input = Instant::now();
+            self.egui_ctx.request_repaint();
+        }
+        went == Event::Swallow
     }
 
     /// An event of the system, first: a window outside reads its own, and

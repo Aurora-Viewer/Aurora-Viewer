@@ -1441,6 +1441,7 @@ impl<'a> Floater<'a> {
         let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
             let size = ui.max_rect().size();
             ui.ctx().data_mut(|d| d.insert_persisted(window_id.with(OUTSIDE_SIZE), size));
+            crate::outside::carry::hint(ui.ctx(), p);
             let margin = if flush {
                 egui::Margin {
                     left: 0,

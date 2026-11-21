@@ -6672,6 +6672,7 @@ ui-land-general-reclaim-land = 土地を取り戻す
 common-collapse = 折りたたむ
 common-window-outside = ビューアのウィンドウの外に出す
 common-window-inside = ビューアのウィンドウ内に戻す
+common-carry-hint = クリックでここにドロップ、Escで取り消し
 common-compact-view = 簡易表示
 common-full-view = 全体表示
 ui-inventory-controls-collapse-displayed-folders = 表示中のフォルダを折りたたむ

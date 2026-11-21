@@ -251,7 +251,7 @@ pub(super) fn target(
 
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
 pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !ctx.input(|i| i.pointer.primary_down()) {
+    if !crate::outside::carry::dragging(ctx) {
         return None;
     }
     let pass = ctx.cumulative_pass_nr();
@@ -265,7 +265,10 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let Some(cargo) = egui::DragAndDrop::payload::<SelectionDrag>(ctx) else {
         return;
     };
-    let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| i.pointer.primary_down())) else {
+    let Some(pointer) = ctx
+        .input(|i| i.pointer.interact_pos())
+        .filter(|_| crate::outside::carry::dragging(ctx))
+    else {
         return;
     };
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_drag_count")));
