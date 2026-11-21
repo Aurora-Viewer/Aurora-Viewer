@@ -7,6 +7,7 @@
 //! the human; Firestorm shows a progress bar over a snapshot.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Pos2, Rect, Shape, Vec2};
 
@@ -68,6 +69,12 @@ impl PlaceFacts {
         arrived: bool,
     ) -> PlaceFacts {
         let mut facts = PlaceFacts::default();
+        // @showloc: the classification, the arrival point, the head count and
+        // the map tile each tell the place apart; the Legacy Viewer's progress
+        // view (LLProgressView) shows none of them.
+        if world.rlva.has("showloc") {
+            return facts;
+        }
         if let Some(pos) = position {
             facts.position = format!("{:.0}, {:.0}, {:.0}", pos.x, pos.y, pos.z);
         }
@@ -114,6 +121,24 @@ pub fn split_destination(dest: &str) -> (&str, Option<glam::Vec3>) {
         (Some(Ok(x)), Some(Ok(y)), Some(Ok(z)), None) => (name.trim(), Some(glam::Vec3::new(x, y, z))),
         _ => (dest.trim(), None),
     }
+}
+
+/// The region a teleport screen names, and the arrival point it may show,
+/// from the destination "Region (x, y, z)" (empty: the region we are in).
+/// Under @showloc neither is told: the screen says what the location bar
+/// says of the current region (RlvStrings::getString(RlvStringKeys::Hidden::
+/// Region)); the Legacy Viewer's own progress view never names the place.
+pub fn banner_place(world: &crate::world::World, dest: &str) -> (String, Option<glam::Vec3>) {
+    if world.rlva.has("showloc") {
+        return (world.rlva_region_label(), None);
+    }
+    let (region, point) = split_destination(dest);
+    let name = if region.is_empty() {
+        world.region_name()
+    } else {
+        region.to_owned()
+    };
+    (name, point)
 }
 
 /// Fade-out duration of the loading / teleport screens.
@@ -409,7 +434,7 @@ fn banner(
         let accent = p.violet_light.gamma_multiply(a);
         let mut job = egui::text::LayoutJob::default();
         job.append(
-            &label.to_uppercase(),
+            &label.ui_upper(),
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::proportional(11.5 * k),
@@ -497,7 +522,9 @@ pub fn show(
 }
 
 /// Teleport screen over the world (and the end of the loading screen fading
-/// out): the same banner.
+/// out): the same banner. With `cancel`, the Cancel button of the login
+/// screen in the same corner (LLProgressView's cancel_btn); true when it was
+/// pressed.
 #[allow(clippy::too_many_arguments)]
 pub fn teleport_overlay(
     ctx: &egui::Context,
@@ -510,7 +537,8 @@ pub fn teleport_overlay(
     fraction: Option<f32>,
     alpha: f32,
     place: &Place,
-) {
+    cancel: bool,
+) -> bool {
     let a = alpha.clamp(0.0, 1.0);
     let rect = ctx.content_rect();
     let t = ctx.input(|i| i.time) as f32;
@@ -531,8 +559,23 @@ pub fn teleport_overlay(
     if !backdrop.is_some_and(|b| b.paint(&painter, p, rect, a)) {
         super::aurora_bg::paint(&painter, p, rect, t, a);
     }
-    banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
+    let corner = banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
     ctx.request_repaint();
+    let mut pressed = false;
+    if cancel && a > 0.5 {
+        let area = egui::Area::new(egui::Id::unique("teleport_cancel"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_CENTER)
+            .fixed_pos(corner)
+            .show(ctx, |ui| {
+                let label = aurora_i18n::tr!("common-cancel");
+                let kind = super::widgets::ActionKind::Flat;
+                pressed = super::widgets::action_button(ui, p, "x", label, kind, Vec2::new(0.0, 28.0)).clicked();
+            });
+        // above the screen's own area, which a click on it raises
+        ctx.move_to_top(area.response.layer_id);
+    }
+    pressed
 }
 
 #[cfg(test)]
@@ -550,6 +593,44 @@ mod tests {
         assert_eq!(split_destination("Port (nord)"), ("Port (nord)", None));
         assert_eq!(split_destination("Domicile"), ("Domicile", None));
         assert_eq!(split_destination(""), ("", None));
+    }
+
+    /// @showloc: the screen tells neither the destination nor a fact of it.
+    #[test]
+    fn rlva_showloc_hides_the_destination_and_its_facts() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let here = world.region_name();
+        assert!(!here.is_empty());
+        let point = glam::Vec3::new(128.0, 64.0, 30.0);
+        assert_eq!(banner_place(&world, "Lagune (128, 64, 30)"), ("Lagune".to_owned(), Some(point)));
+        assert_eq!(banner_place(&world, ""), (here.clone(), None));
+        let mut tiles = crate::ui::map_tiles::MapTiles::new();
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert_eq!(facts.position, "128, 64, 30");
+        assert!(facts.pin.is_some());
+
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(99),
+            owner_id: uuid::Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@showloc=n".into(),
+        }));
+        for dest in ["Lagune (128, 64, 30)", "Lagune", ""] {
+            let (name, arrival) = banner_place(&world, dest);
+            assert!(!name.contains("Lagune") && name != here && !name.is_empty(), "{dest:?}: {name}");
+            assert_eq!(arrival, None);
+        }
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.position.is_empty() && facts.maturity.is_empty());
+        assert!(facts.residents.is_none() && facts.tile.is_none() && facts.pin.is_none());
     }
 
     #[test]
@@ -575,7 +656,8 @@ mod tests {
                     Some(1.0),
                     1.0,
                     &Place::default(),
-                )
+                    false,
+                );
             },
         );
         output.textures_delta.clear();
@@ -584,5 +666,68 @@ mod tests {
             _ => false,
         });
         assert!(painted, "the region name is not painted in the first frame");
+    }
+
+    #[test]
+    fn the_teleport_screen_cancel_button_takes_the_click() {
+        // the screen's own area swallows clicks over the whole window: the
+        // button must stay above it, also after a click on the screen
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let label = aurora_i18n::tr!("common-cancel");
+        let frame = |events: Vec<egui::Event>| {
+            let mut pressed = false;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    pressed = teleport_overlay(
+                        ui.ctx(),
+                        &p,
+                        None,
+                        None,
+                        "Teleport",
+                        "Lagune",
+                        "Scene",
+                        Some(0.2),
+                        1.0,
+                        &Place::default(),
+                        true,
+                    )
+                },
+            );
+            output.textures_delta.clear();
+            let at = output.shapes.iter().find_map(|clipped| match &clipped.shape {
+                Shape::Text(text) if text.galley.text() == label => Some(text.visual_bounding_rect().center()),
+                _ => None,
+            });
+            (pressed, at)
+        };
+        let click = |at: Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ]
+        };
+        frame(Vec::new());
+        let (_, at) = frame(Vec::new());
+        let at = at.expect("the Cancel button is painted");
+        // a click on the screen first, away from the button
+        for events in click(Pos2::new(600.0, 450.0)) {
+            assert!(!frame(events).0);
+        }
+        let pressed = click(at).into_iter().any(|events| frame(events).0);
+        assert!(pressed, "the click on Cancel reached the screen behind it");
     }
 }

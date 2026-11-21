@@ -305,6 +305,11 @@ pub struct ChatMessage {
     pub owner_id: Uuid,
     pub source_type: ChatSourceType,
     pub chat_type: ChatType,
+    /// The simulator circuit's region when the message arrived; None for
+    /// synthetic messages without a known origin. Never inferred from the
+    /// agent's current region, which may change before the event is consumed.
+    pub region: Option<RegionHandle>,
+    /// Region-local, as specified by ChatFromSimulator in message_template.msg.
     pub position: Vec3,
     pub message: String,
 }
@@ -335,9 +340,11 @@ pub struct AvatarAppearance {
     /// the block.
     pub appearance_version: u8,
     pub hover_height: f32,
-    /// Worn objects the simulator lists (AttachmentBlock entries with an
-    /// id, each once: LLVOAvatar::mSimAttachments).
-    pub attachments: u32,
+    /// Worn objects the simulator lists: object id and attachment point of
+    /// the AttachmentBlock entries with an id, each id once
+    /// (LLVOAvatar::mSimAttachments). The Dev Toolbox's J2 compares them
+    /// with the objects that came (issue #2747).
+    pub attachments: Vec<(Uuid, u8)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -374,6 +381,18 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "avatar-picker-url": the grid's Avatar Welcome Pack page
+    /// (LFSimFeatureHandler::avatarPickerURL). `None` when the region does
+    /// not name the key: only then does the login response's page count; a
+    /// key given empty means "no welcome pack" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub avatar_picker_url: Option<String>,
+    /// "destination-guide-url": the grid's Destination Guide page
+    /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
+    /// does not name the key: only then does the login response's page
+    /// count; a key given empty means "no guide" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub destination_guide_url: Option<String>,
     /// "whisper-range", "say-range", "shout-range": how far the region's
     /// chat carries, in meters (None: the usual 10, 20 and 100 m).
     pub whisper_range: Option<f32>,
@@ -416,6 +435,12 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            avatar_picker_url: extras
+                .has("avatar-picker-url")
+                .then(|| extras["avatar-picker-url"].to_string_value().trim().to_owned()),
+            destination_guide_url: extras
+                .has("destination-guide-url")
+                .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
             whisper_range: figure("whisper-range"),
             say_range: figure("say-range"),
             shout_range: figure("shout-range"),
@@ -427,12 +452,22 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// GrantGodlikePowers: the god level the region gives us (0: none,
+    /// 200 and more: an administrator of the grid or of the region).
+    GodLevel(u8),
     /// OpenRegionInfo's MaxLinkCount, in children (LLWorld::setMaxLinkedPrims).
     RegionLinkLimit {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
-    /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
+    /// OpenRegionInfo, whole: the Region / Estate window's "Region
+    /// settings" tab (Aurora-Sim based grids).
+    OpenRegionSettings {
+        handle: RegionHandle,
+        settings: Box<crate::open_region::OpenRegionSettings>,
+    },
+    /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
+    /// empty on the server.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
     Groups(Vec<crate::social::GroupMembership>),
@@ -487,6 +522,16 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Answer of a `NetCommand::ChatServiceRequest`. `status` is the HTTP
+    /// status, 0 for a transport failure (timeout, connection) and 499 for
+    /// an LLSD body that does not parse, as LLCoreHttpUtil reports them.
+    /// `body` is the LLSD of a success only; an array root (the list) is
+    /// given as it is.
+    ChatServiceResponse {
+        id: u64,
+        status: u16,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -497,6 +542,13 @@ pub enum NetEvent {
         session: Uuid,
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
+    },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
     },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
@@ -523,6 +575,8 @@ pub enum NetEvent {
     /// `tos_required` / `critical_required`: the Terms of Service to accept
     /// (reason "tos") or a message to read (reason "critical"), each with
     /// its own flag in the next request; `error` is then the server's text.
+    /// `next_server`: the login server sends the login on to this other
+    /// server (`LoginError::NextServer`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -530,6 +584,7 @@ pub enum NetEvent {
         critical_required: bool,
         bad_credentials: bool,
         previous_session: bool,
+        next_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -598,6 +653,18 @@ pub enum NetEvent {
         target: Uuid,
         animations: bool,
     },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -606,6 +673,13 @@ pub enum NetEvent {
     Capabilities {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
+    },
+    /// A region's answer to the GET of `AvatarRenderInfo` with both counts
+    /// (render_info.rs): of the viewers around that report on us,
+    /// `over_limit` draw our avatar as a silhouette.
+    AvatarRenderInfo {
+        handle: RegionHandle,
+        visibility: crate::render_info::Visibility,
     },
     /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
     /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
@@ -623,6 +697,8 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "LuaScriptsEnabled": the region runs SLua scripts.
+        lua_scripts: bool,
         /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
         /// grid's status feed and page (Help › Grid status); empty when
         /// not given, always on Second Life.
@@ -640,7 +716,17 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
+        /// "GameControlEnabled": the region reads GameControlData
+        /// (LLViewerRegion::gameControlEnabled).
+        game_control: bool,
     },
+    /// SimStats' LL_SIM_STAT_FPS of any region (process_sim_stats): the
+    /// simulator's frame rate, which paces GameControlData
+    /// (LLGameControl::setServerFrameRate).
+    SimFrameRate(f32),
     HoverHeightUpdated {
         region: RegionHandle,
         request: u64,
@@ -694,10 +780,16 @@ pub enum NetEvent {
     RegionRemoved {
         handle: RegionHandle,
     },
-    TeleportStarted,
-    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest").
+    /// TeleportStart, with its TeleportFlags (TELEPORT_FLAGS_DISABLE_CANCEL:
+    /// the teleport screen offers no Cancel).
+    TeleportStarted {
+        flags: u32,
+    },
+    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest"),
+    /// with its TeleportFlags.
     TeleportProgress {
         message: String,
+        flags: u32,
     },
     /// TeleportFinish: the destination region is known, connecting to it.
     TeleportFinished {
@@ -739,6 +831,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
@@ -748,6 +843,10 @@ pub enum NetEvent {
     TeleportFailed {
         reason: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },
@@ -908,6 +1007,17 @@ pub enum NetEvent {
         change: crate::experience::ExperiencePermissionChange,
         result: Result<crate::experience::ExperiencePermission, String>,
     },
+    /// IsExperienceAdmin, with the region's UpdateExperience capability:
+    /// the agent may edit the experience.
+    ExperienceAdmin {
+        experience: Uuid,
+        admin: bool,
+    },
+    /// UpdateExperience's answer.
+    ExperienceUpdated {
+        experience: Uuid,
+        result: Result<crate::experience::ExperienceUpdate, String>,
+    },
     /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
     /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
     SitResponse {
@@ -934,7 +1044,15 @@ pub enum NetEvent {
     LoadUrl {
         object_name: String,
         object_id: Uuid,
+        /// The object's owner, a resident or a group (OwnerIsGroup).
+        owner_id: Uuid,
+        owner_is_group: bool,
         message: String,
+        url: String,
+    },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
         url: String,
     },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
@@ -1032,6 +1150,14 @@ pub enum NetEvent {
     GroupBanList {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
+    },
+    /// One group of a `BanInGroups`: whether the server took the ban (or
+    /// its lifting).
+    GroupBanInGroup {
+        group: Uuid,
+        agent: Uuid,
+        ban: bool,
+        ok: bool,
     },
     /// The group's parcels and land totals (PlacesReply), one packet.
     GroupLand(Box<crate::group_money::GroupLandReply>),
@@ -1290,10 +1416,14 @@ pub enum NetEvent {
     /// brought, parents first, or why the read failed.
     InventoryTreeFetched {
         request: u64,
-        result: Result<Vec<crate::inventory::FolderContents>, String>,
+        result: Result<Vec<crate::inventory::FolderContents>, crate::inventory::ais::FetchError>,
     },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
+        /// The server refuses these folders even alone: over its reply limit.
+        too_big: bool,
+        /// The HTTP status the refusal carried, when one was read.
+        status: Option<u16>,
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),
@@ -1365,12 +1495,12 @@ pub enum NetEvent {
         serial: Option<i16>,
         result: Result<Vec<crate::build::TaskItem>, String>,
     },
-    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    /// ScriptRunningReply (and the event queue's VM flags when given).
     ScriptRunning {
         object_id: Uuid,
         item_id: Uuid,
         running: bool,
-        mono: Option<bool>,
+        compile: Option<crate::scripts::CompileTarget>,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1446,6 +1576,26 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
+/// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
+/// view by default, everything while the 360° snapshot window is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterestListMode {
+    #[default]
+    Default,
+    Capture360,
+}
+
+impl InterestListMode {
+    /// The capability's `mode` (IL_MODE_DEFAULT, IL_MODE_360).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterestListMode::Default => "default",
+            InterestListMode::Capture360 => "360",
+        }
+    }
+}
+
 /// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchSurface {
@@ -1468,6 +1618,15 @@ impl Default for TouchSurface {
         }
     }
 }
+/// Progress of an outgoing inventory offer on its original reliable circuit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryOfferStatus {
+    /// The datagram was handed to the socket, possibly on a retry.
+    Transmitted,
+    /// The simulator acknowledged that datagram. Acceptance by the resident is separate.
+    Acknowledged,
+}
+
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
@@ -1503,6 +1662,17 @@ pub enum NetCommand {
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,
+    /// One request of the grid's direct IM history
+    /// (LLChatServiceHistory::request, LL viewer 26.5): a GET of the
+    /// conversation list when `body` is None, else a POST of one history
+    /// page. `url` is the capability of the context the viewer sampled, so
+    /// that a region change in between does not send it elsewhere. Answered
+    /// by `NetEvent::ChatServiceResponse` with the same `id`.
+    ChatServiceRequest {
+        id: u64,
+        url: String,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// Answer a friendship offer received while offline: by the
     /// AcceptFriendship / DeclineFriendship capability, else by message when
     /// it came with a transaction id.
@@ -1559,10 +1729,22 @@ pub enum NetCommand {
         target: Uuid,
         permissions: u32,
     },
+    /// Make the region release every control the scripts took
+    /// (llTakeControls): Advanced › Release Keys
+    /// (LLAgent::forceReleaseControls). The region answers with
+    /// ScriptControlChange releases.
+    ForceScriptControlRelease,
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
         session: Uuid,
+    },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
     },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
@@ -1600,6 +1782,10 @@ pub enum NetCommand {
         local_ids: Vec<u32>,
     },
     TeleportHome,
+    /// The teleport screen's Cancel (LLAgent::teleportCancel): TeleportCancel
+    /// to the region we are leaving. The simulator may ignore it or get it
+    /// too late; a TeleportFinish then still comes.
+    TeleportCancel,
     /// The content rating the agent wants (UpdateAgentInformation,
     /// LLAgent::sendMaturityPreferenceToServer); answered by
     /// `NetEvent::MaturityPreference`.
@@ -1650,8 +1836,6 @@ pub enum NetCommand {
         position: Vec3,
         look_at: Vec3,
     },
-    /// Change the draw distance used in AgentUpdate (`Far`).
-    SetDrawDistance(f32),
     /// No connection to the neighbouring regions while true
     /// (FSDisableNeighbourRegionConnections): the viewer sends false while
     /// the agent is outside its region, so that a crossing still connects.
@@ -1659,10 +1843,23 @@ pub enum NetCommand {
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),
+    /// The interest list mode (LLAgent::changeInterestListMode): posted to
+    /// the InterestList capability of every region that has it, and again
+    /// to the agent's region when its capabilities arrive while the mode is
+    /// not the default (the 360° snapshot window).
+    SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
     AgentControls(AgentControls),
+    /// Send the controls of this frame now, even if nothing moved past the
+    /// thresholds (`send_agent_update(true, …)`, force_send): a turn the
+    /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
+    /// then send_agent_update in FSAvatarAlignBase::applyRotation).
+    ForceAgentUpdate,
+    /// GameControlData to the agent's region, unreliable (sendGameControlData,
+    /// llappviewer.cpp): the viewer decides when it is due.
+    GameControlData(GameControlPacket),
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -1687,6 +1884,32 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
+    /// An inventory offer (IM_INVENTORY_OFFERED) scoped to this login. The
+    /// unbounded receipt channel closes on circuit loss or exhausted retries.
+    OfferInventory {
+        session: Uuid,
+        to: Uuid,
+        id: Uuid,
+        message: String,
+        bucket: Vec<u8>,
+        receipt: crossbeam_channel::Sender<InventoryOfferStatus>,
+    },
+    /// Check reserved originals in this login's inventory after an uncertain offer.
+    CheckInventoryOffer {
+        session: Uuid,
+        items: Vec<Uuid>,
+        reply: crossbeam_channel::Sender<crate::inventory::ais::ItemReads>,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -1754,6 +1977,14 @@ pub enum NetCommand {
         experience: Uuid,
         change: crate::experience::ExperiencePermissionChange,
     },
+    /// IsExperienceAdmin, answered by NetEvent::ExperienceAdmin.
+    ExperienceAdmin(Uuid),
+    /// UpdateExperience: the package `update_body` built, answered by
+    /// NetEvent::ExperienceUpdated.
+    UpdateExperience {
+        experience: Uuid,
+        body: aurora_llsd::Llsd,
+    },
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {
         local_id: u32,
@@ -1812,12 +2043,15 @@ pub enum NetCommand {
         object: Uuid,
     },
     /// Sent only after the user confirms the displayed price (ObjectBuy).
+    /// `group_id` is the agent's active group at that moment (nil for
+    /// none): the simulator sets it as the bought object's group.
     BuyObject {
         handle: RegionHandle,
         local_id: u32,
         folder: Uuid,
         sale_type: u8,
         price: i32,
+        group_id: Uuid,
     },
     /// Payment to the clicked prim, not directly to its owner.
     PayObject {
@@ -1918,6 +2152,14 @@ pub enum NetCommand {
         /// BAN_UPDATE: the list asked again after the action.
         refresh: bool,
     },
+    /// The GroupAPIv1 capability, one group after the other, half a second
+    /// apart: `agent` banned (or unbanned) in each of `groups`; each answer
+    /// is a `GroupBanInGroup` (LLGroupActions::banFromAllGroupsCoro).
+    BanInGroups {
+        agent: Uuid,
+        groups: Vec<Uuid>,
+        ban: bool,
+    },
     /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
     GroupRoleUpdate {
         group: Uuid,
@@ -1980,6 +2222,13 @@ pub enum NetCommand {
     Land(crate::land::LandCommand),
     /// Region / Estate window (estate.rs).
     Estate(crate::estate::EstateCommand),
+    /// Request / Leave Admin Status (RequestGodlikePowers): `godlike` asks
+    /// the region for its god level, false gives it back.
+    RequestGodlikePowers {
+        godlike: bool,
+    },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,
@@ -2221,6 +2470,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::is_slua_item`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching
@@ -2231,6 +2483,18 @@ pub enum NetCommand {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+    },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
@@ -2365,6 +2629,21 @@ pub mod control {
 /// The typing bit of AgentUpdate's State (AGENT_STATE_TYPING, llagent.cpp).
 pub const AGENT_STATE_TYPING: u8 = 0x04;
 
+/// One GameControlData message, packed as sendGameControlData does: the
+/// trailing zero axes are already cut, and a button mask of zero is `None`
+/// (the server reads anything left out as zero).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameControlPacket {
+    /// Wraps at 255, never reset (LLGameControl::getNextPacketNum).
+    pub packet: u8,
+    /// AgentControlMode: 0 avatar, 1 mouselook, 2 flycam, 3 captive, 4 cursor.
+    pub action_mode: u8,
+    pub axes: Vec<i16>,
+    pub buttons: Option<u32>,
+    pub mode_axes: Vec<i16>,
+    pub mode_buttons: Option<u32>,
+}
+
 /// Agent state the viewer writes each frame and the network layer sends by
 /// the rule of `agent_update.rs`.
 #[derive(Debug, Clone, Copy)]
@@ -2376,6 +2655,8 @@ pub struct AgentControls {
     pub camera_at: Vec3,
     pub camera_left: Vec3,
     pub camera_up: Vec3,
+    /// The draw distance (RenderFarClip): AgentUpdate's `Far` follows it by
+    /// the steps of `agent_update::FarStep`.
     pub far: f32,
     /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
     /// while we type in the nearby chat.
@@ -2428,6 +2709,8 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("avatar-picker-url", " https://avatars.example/[GRID_LOWERCASE]/ "),
+                ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
@@ -2437,6 +2720,27 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(read.avatar_picker_url.as_deref(), Some("https://avatars.example/[GRID_LOWERCASE]/"));
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("avatar-picker-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).avatar_picker_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).avatar_picker_url, None);
+        assert_eq!(
+            read.destination_guide_url.as_deref(),
+            Some("https://guide.example/[GRID_LOWERCASE]/")
+        );
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("destination-guide-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).destination_guide_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).destination_guide_url, None);
         // a GridURL given without a scheme, as most grids do
         let bare = Llsd::Map(
             [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]

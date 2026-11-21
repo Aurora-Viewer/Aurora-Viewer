@@ -1,6 +1,8 @@
 //! Reliable UDP circuit bookkeeping (port of the essentials of
 //! `llmessage/llcircuit.cpp`): sequence numbers, resends, acks, dedupe.
 
+use crate::circuit_socket::DatagramOut;
+use crate::packet_loss::PacketLoss;
 use crate::stats::NetStats;
 use aurora_msg::packet::{PacketFlags, build_raw};
 use aurora_msg::{Msg, Writer};
@@ -8,7 +10,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 
 const MAX_RESENDS: u8 = 4;
 const DEDUPE_WINDOW: usize = 2048;
@@ -36,12 +37,29 @@ impl Resend {
     };
 }
 
+/// Kept on the packet so removing the circuit or exhausting its retries
+/// closes the channel without confusing either case with an acknowledgment.
+struct OfferReceipt {
+    sender: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    transmitted: bool,
+}
+
+impl OfferReceipt {
+    fn transmitted(&mut self) {
+        if !self.transmitted {
+            self.transmitted = true;
+            let _ = self.sender.try_send(crate::InventoryOfferStatus::Transmitted);
+        }
+    }
+}
+
 struct Unacked {
     payload: Vec<u8>,
     zerocoded: bool,
     sent: Instant,
     retries: u8,
     policy: Resend,
+    offer: Option<OfferReceipt>,
 }
 
 pub struct Circuit {
@@ -56,16 +74,14 @@ pub struct Circuit {
     pub rtt: Duration,
     ping_id: u8,
     ping_sent: Option<(u8, Instant)>,
+    /// Oldest ping still unanswered: new pings must not shorten the loss
+    /// grace during a stall (getPingInTransitTime, llcircuit.cpp).
+    ping_wait_started: Option<Instant>,
     buf: Vec<u8>,
     /// Reliable packets given up on since the last `take_dropped`.
     dropped: Vec<u32>,
-    /// Highest sequence number received, for the loss counters.
-    highest_seq: Option<u32>,
+    packet_loss: PacketLoss,
 }
-
-/// A sequence number this far below the highest one is the simulator
-/// starting over, not a late packet.
-const SEQUENCE_RESET: u32 = 100_000;
 
 impl Circuit {
     pub fn new(addr: SocketAddr) -> Self {
@@ -81,68 +97,77 @@ impl Circuit {
             rtt: Duration::from_millis(300),
             ping_id: 0,
             ping_sent: None,
+            ping_wait_started: None,
             buf: Vec::with_capacity(1500),
             dropped: Vec::new(),
-            highest_seq: None,
+            packet_loss: PacketLoss::default(),
         }
     }
 
-    /// Count what the sequence number of a new packet tells about losses:
-    /// the numbers it skips (`seq_gaps`), or that it comes after a later
-    /// one (`seq_late`: a resend or a reordered packet filling a gap).
-    pub fn note_sequence(&mut self, seq: u32, stats: &NetStats) {
-        match self.highest_seq {
-            Some(high) if seq > high => {
-                stats.seq_gaps.fetch_add(u64::from(seq - high - 1), Ordering::Relaxed);
-                self.highest_seq = Some(seq);
-            }
-            Some(high) if high - seq > SEQUENCE_RESET => self.highest_seq = Some(seq),
-            Some(high) if seq < high => {
-                stats.seq_late.fetch_add(1, Ordering::Relaxed);
-            }
-            Some(_) => {}
-            None => self.highest_seq = Some(seq),
+    /// Record provisional holes and recoveries; only the circuit tick
+    /// confirms losses after the ping-dependent grace period.
+    pub fn note_sequence(&mut self, seq: u32, resent: bool, stats: &NetStats) {
+        let (gaps, late) = self.packet_loss.receive(seq, resent, Instant::now());
+        if gaps > 0 {
+            stats.seq_gaps.fetch_add(gaps, Ordering::Relaxed);
+        }
+        if late > 0 {
+            stats.seq_late.fetch_add(late, Ordering::Relaxed);
         }
     }
 
-    fn raw_send(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    fn raw_send(&self, sock: &impl DatagramOut, stats: &NetStats) -> bool {
         match sock.try_send_to(&self.buf, self.addr) {
             Ok(n) => {
                 stats.packets_out.fetch_add(1, Ordering::Relaxed);
                 stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+                true
             }
             Err(e) => {
                 log::trace!("udp send to {} failed: {e}", self.addr);
                 stats.send_errors.fetch_add(1, Ordering::Relaxed);
+                false
             }
         }
     }
 
     /// Encode and send a message, piggybacking pending acks. Returns the sequence number.
-    pub fn send<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
-        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT))
+    pub fn send<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
+        self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT), None)
     }
 
     /// Send a reliable message with its own resend policy.
-    pub fn send_reliable_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
-        self.send_with(sock, stats, msg, Some(policy))
+    pub fn send_reliable_with<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
+        self.send_with(sock, stats, msg, Some(policy), None)
     }
 
-    fn send_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: Option<Resend>) -> u32 {
+    pub(crate) fn send_offer<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        receipt: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
+    ) -> u32 {
+        let offer = OfferReceipt {
+            sender: receipt,
+            transmitted: false,
+        };
+        self.send_with(sock, stats, msg, Some(Resend::DEFAULT), Some(offer))
+    }
+
+    fn send_with<M: Msg>(
+        &mut self,
+        sock: &impl DatagramOut,
+        stats: &NetStats,
+        msg: &M,
+        reliable: Option<Resend>,
+        mut offer: Option<OfferReceipt>,
+    ) -> u32 {
         let mut w = Writer::new();
         M::ID.encode(&mut w.buf);
         msg.encode_body(&mut w);
-        let seq = self.next_seq;
-        self.send_payload(sock, stats, w.buf, M::ZEROCODED, reliable);
-        seq
-    }
-
-    /// True while a reliable packet is still waiting for its ack.
-    pub fn is_unacked(&self, seq: u32) -> bool {
-        self.unacked.contains_key(&seq)
-    }
-
-    fn send_payload(&mut self, sock: &UdpSocket, stats: &NetStats, payload: Vec<u8>, zerocoded: bool, reliable: Option<Resend>) {
+        let payload = w.buf;
+        let zerocoded = M::ZEROCODED;
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         let mut buf = std::mem::take(&mut self.buf);
@@ -150,7 +175,11 @@ impl Circuit {
         self.pending_acks.drain(..n);
         crate::probe::message_out(&payload, buf.len());
         self.buf = buf;
-        self.raw_send(sock, stats);
+        if self.raw_send(sock, stats)
+            && let Some(receipt) = &mut offer
+        {
+            receipt.transmitted();
+        }
         if let Some(policy) = reliable {
             self.unacked.insert(
                 seq,
@@ -160,9 +189,16 @@ impl Circuit {
                     sent: Instant::now(),
                     retries: 0,
                     policy,
+                    offer,
                 },
             );
         }
+        seq
+    }
+
+    /// True while a reliable packet is still waiting for its ack.
+    pub fn is_unacked(&self, seq: u32) -> bool {
+        self.unacked.contains_key(&seq)
     }
 
     /// Process the header of an incoming packet (the acks it carries).
@@ -171,9 +207,7 @@ impl Circuit {
     /// A new packet is acked only once processed, see [`Circuit::accept`].
     pub fn on_receive(&mut self, flags: u8, seq: u32, acks: &[u32]) -> bool {
         self.last_recv = Instant::now();
-        for a in acks {
-            self.unacked.remove(a);
-        }
+        self.ack_received(acks.iter().copied());
         // Like LL (message.cpp), only packets flagged RESENT can be duplicates;
         // this also survives a simulator resetting its sequence numbers.
         if flags & PacketFlags::RESENT != 0 && self.recent_set.contains(&seq) {
@@ -212,7 +246,12 @@ impl Circuit {
 
     pub fn ack_received(&mut self, ids: impl IntoIterator<Item = u32>) {
         for id in ids {
-            self.unacked.remove(&id);
+            if let Some(packet) = self.unacked.remove(&id)
+                && let Some(receipt) = packet.offer
+                && receipt.transmitted
+            {
+                let _ = receipt.sender.try_send(crate::InventoryOfferStatus::Acknowledged);
+            }
         }
     }
 
@@ -221,8 +260,15 @@ impl Circuit {
     }
 
     /// Resend timed-out reliable packets and flush standalone acks.
-    pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn tick(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         let now = Instant::now();
+        let loss_rtt = self
+            .ping_wait_started
+            .map_or(self.rtt, |at| self.rtt.max(now.saturating_duration_since(at)));
+        let lost = self.packet_loss.expire(now, loss_rtt);
+        if lost > 0 {
+            stats.packets_lost.fetch_add(lost, Ordering::Relaxed);
+        }
         let ping_timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
@@ -250,7 +296,13 @@ impl Circuit {
             build_raw(&u.payload, u.zerocoded, seq, true, true, &[], &mut buf);
             crate::probe::message_out(&u.payload, buf.len());
             self.buf = buf;
-            self.raw_send(sock, stats);
+            let offer = u.offer.as_ref().is_some_and(|receipt| !receipt.transmitted);
+            if self.raw_send(sock, stats)
+                && offer
+                && let Some(receipt) = self.unacked.get_mut(&seq).and_then(|u| u.offer.as_mut())
+            {
+                receipt.transmitted();
+            }
             stats.resent.fetch_add(1, Ordering::Relaxed);
         }
         if !self.pending_acks.is_empty() && now.duration_since(self.last_ack_flush) >= ACK_FLUSH_INTERVAL {
@@ -258,7 +310,7 @@ impl Circuit {
         }
     }
 
-    pub fn flush_acks(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn flush_acks(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         self.last_ack_flush = Instant::now();
         while !self.pending_acks.is_empty() {
             let n = self.pending_acks.len().min(250);
@@ -282,7 +334,9 @@ impl Circuit {
     /// Start a ping; returns the ping id and the oldest unacked sequence.
     pub fn next_ping(&mut self) -> (u8, u32) {
         self.ping_id = self.ping_id.wrapping_add(1);
-        self.ping_sent = Some((self.ping_id, Instant::now()));
+        let now = Instant::now();
+        self.ping_sent = Some((self.ping_id, now));
+        self.ping_wait_started.get_or_insert(now);
         let oldest = self.unacked.keys().min().copied().unwrap_or(self.next_seq);
         (self.ping_id, oldest)
     }
@@ -295,6 +349,7 @@ impl Circuit {
             // Smooth like TCP's SRTT.
             self.rtt = (self.rtt * 7 + rtt) / 8;
             self.ping_sent = None;
+            self.ping_wait_started = None;
             return Some(rtt);
         }
         None
@@ -304,12 +359,75 @@ impl Circuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UdpSocket;
 
     const RELIABLE: u8 = PacketFlags::RELIABLE;
     const RESENT: u8 = PacketFlags::RELIABLE | PacketFlags::RESENT;
 
     fn circuit() -> Circuit {
         Circuit::new("127.0.0.1:9".parse().expect("address"))
+    }
+
+    #[tokio::test]
+    async fn inventory_offer_receipts_require_a_real_write_and_an_ack_on_the_same_circuit() {
+        use crate::InventoryOfferStatus::{Acknowledged, Transmitted};
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        let packet = aurora_msg::msgs::ImprovedInstantMessage::default();
+        // An IPv4 socket cannot write to an IPv6 address. The reliable packet
+        // is still queued: a later successful retry is its first transmission.
+        let mut circuit = Circuit::new("[::1]:9".parse().unwrap());
+        let (send, receipt) = unbounded();
+        let seq = circuit.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        circuit.addr = peer.local_addr().unwrap();
+        circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+        circuit.tick(&socket, &stats);
+        assert_eq!(receipt.try_recv(), Ok(Transmitted));
+
+        let mut neighbour = Circuit::new(peer.local_addr().unwrap());
+        let (send, second) = unbounded();
+        let other_seq = neighbour.send_offer(&socket, &stats, &packet, send);
+        assert_eq!(other_seq, seq, "sequence numbers belong to the circuit");
+        assert_eq!(second.try_recv(), Ok(Transmitted));
+        neighbour.ack_received([seq, seq]);
+        assert_eq!(second.try_recv(), Ok(Acknowledged));
+        assert_eq!(second.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+        assert!(circuit.on_receive(0, 98, &[seq, seq])); // piggyback
+        assert_eq!(receipt.try_recv(), Ok(Acknowledged));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn an_inventory_offer_circuit_drop_or_retry_exhaustion_cannot_emit_an_ack() {
+        use crate::InventoryOfferStatus::Transmitted;
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket");
+        socket.writable().await.expect("writable socket");
+        let peer = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let stats = NetStats::default();
+        for exhausted in [false, true] {
+            let mut circuit = Circuit::new(peer.local_addr().unwrap());
+            let (send, receipt) = unbounded();
+            let seq = circuit.send_offer(&socket, &stats, &aurora_msg::msgs::ImprovedInstantMessage::default(), send);
+            assert_eq!(receipt.try_recv(), Ok(Transmitted));
+            if exhausted {
+                for _ in 0..=MAX_RESENDS {
+                    circuit.unacked.get_mut(&seq).unwrap().sent -= Duration::from_secs(6);
+                    circuit.tick(&socket, &stats);
+                }
+                assert_eq!(circuit.take_dropped(), [seq]);
+                circuit.ack_received([seq]); // a late ACK cannot revive an expired offer
+            }
+            drop(circuit);
+            assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+        }
     }
 
     #[test]
@@ -342,21 +460,21 @@ mod tests {
         let mut c = circuit();
         let seen = |stats: &NetStats| (stats.seq_gaps.load(Ordering::Relaxed), stats.seq_late.load(Ordering::Relaxed));
         // the first packet is where the count starts, whatever its number
-        c.note_sequence(10, &stats);
-        c.note_sequence(11, &stats);
+        c.note_sequence(10, false, &stats);
+        c.note_sequence(11, false, &stats);
         assert_eq!(seen(&stats), (0, 0));
         // 12 and 13 are missing, then 12 arrives (resent): one still missing
-        c.note_sequence(14, &stats);
-        c.note_sequence(12, &stats);
+        c.note_sequence(14, false, &stats);
+        c.note_sequence(12, true, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the same number twice is neither
-        c.note_sequence(14, &stats);
+        c.note_sequence(14, false, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the simulator starts its numbers over: not a late packet
-        c.note_sequence(500_000, &stats);
+        c.note_sequence(500_000, false, &stats);
         let gaps = stats.seq_gaps.load(Ordering::Relaxed);
-        c.note_sequence(1, &stats);
-        c.note_sequence(2, &stats);
+        c.note_sequence(1, false, &stats);
+        c.note_sequence(2, false, &stats);
         assert_eq!(seen(&stats), (gaps, 1));
     }
 
@@ -366,6 +484,41 @@ mod tests {
         assert!(c.on_receive(0, 1, &[]));
         c.accept(0, 1);
         assert!(c.pending_acks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn packet_loss_circuit_tick_confirms_a_loss_without_more_datagrams() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let before = Instant::now() - Duration::from_secs(10);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+    }
+
+    #[tokio::test]
+    async fn packet_loss_an_unanswered_ping_extends_the_grace_until_a_reply() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(10);
+        let before = Instant::now() - Duration::from_secs(2);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        c.ping_wait_started = Some(before);
+        let (id, _) = c.next_ping();
+        assert_eq!(c.ping_wait_started, Some(before), "a newer ping must not reset the wait");
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        assert!(c.on_ping_reply(id).is_some());
+        assert!(c.ping_wait_started.is_none());
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
     }
 
     #[tokio::test]

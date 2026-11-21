@@ -4,7 +4,7 @@
 
 use super::InvItem;
 use crate::types::RegionHandle;
-use aurora_msg::msgs::{RezObject, rez_object};
+use aurora_msg::msgs::{RezObject, RezObjectFromNotecard, rez_object, rez_object_from_notecard};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -21,9 +21,59 @@ pub struct RezInventory {
     pub remove: bool,
     /// Library and trash items must not be taken back into their source folder.
     pub source_folder: Uuid,
+    /// The object whose contents hold the item, nil for the agent's
+    /// inventory: the simulator copies it out of that object (FromTaskID).
+    pub from_task: Uuid,
+    /// An object embedded in a notecard: RezObjectFromNotecard instead of
+    /// RezObject (dropObject with SOURCE_NOTECARD).
+    pub notecard: Option<FromNotecard>,
+}
+
+/// Where an embedded object comes from: the notecard's item, and the
+/// object whose contents hold that notecard (nil for the agent's
+/// inventory), as LLViewerTextEditor's drag gives them (mPreviewID,
+/// mObjectID).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FromNotecard {
+    pub notecard: Uuid,
+    pub object: Uuid,
 }
 
 impl RezInventory {
+    /// RezObjectFromNotecard (LLToolDragAndDrop::dropObject, SOURCE_NOTECARD):
+    /// the same RezData, then the notecard and the object that holds it,
+    /// and the embedded item named by its id only.
+    pub(crate) fn notecard_message(&self, agent: Uuid, session: Uuid, from: FromNotecard) -> RezObjectFromNotecard {
+        let r = self.message(agent, session);
+        let d = r.rez_data;
+        RezObjectFromNotecard {
+            agent_data: rez_object_from_notecard::AgentData {
+                agent_id: agent,
+                session_id: session,
+                group_id: self.group,
+            },
+            rez_data: rez_object_from_notecard::RezData {
+                from_task_id: d.from_task_id,
+                bypass_raycast: d.bypass_raycast,
+                ray_start: d.ray_start,
+                ray_end: d.ray_end,
+                ray_target_id: d.ray_target_id,
+                ray_end_is_intersection: d.ray_end_is_intersection,
+                rez_selected: d.rez_selected,
+                remove_item: d.remove_item,
+                item_flags: d.item_flags,
+                group_mask: d.group_mask,
+                everyone_mask: d.everyone_mask,
+                next_owner_mask: d.next_owner_mask,
+            },
+            notecard_data: rez_object_from_notecard::NotecardData {
+                notecard_item_id: from.notecard,
+                object_id: from.object,
+            },
+            inventory_data: vec![rez_object_from_notecard::InventoryData { item_id: self.item.id }],
+        }
+    }
+
     pub(crate) fn message(&self, agent: Uuid, session: Uuid) -> RezObject {
         let i = &self.item;
         let land = self.target.is_nil();
@@ -34,7 +84,7 @@ impl RezInventory {
                 group_id: self.group,
             },
             rez_data: rez_object::RezData {
-                from_task_id: Uuid::nil(),
+                from_task_id: self.from_task,
                 bypass_raycast: u8::from(land),
                 ray_start: self.ray_start,
                 // The simulator traces only the picked object. Extend the ray
@@ -107,12 +157,15 @@ mod tests {
             selected: true,
             remove: true,
             source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
+            notecard: None,
         };
         let land = r.message(Uuid::from_u128(5), Uuid::nil());
         assert_eq!(land.agent_data.group_id, r.group);
         assert_eq!(land.inventory_data.group_id, r.item.group_id);
         assert_ne!(land.agent_data.group_id, land.inventory_data.group_id);
         assert_eq!(land.rez_data.bypass_raycast, 1);
+        assert_eq!(land.rez_data.from_task_id, Uuid::nil());
         assert_eq!(land.rez_data.ray_end, Vec3::new(3.0, 20.0, 10.0));
         assert!(land.rez_data.remove_item && land.rez_data.rez_selected);
         assert_eq!(land.inventory_data.folder_id, Uuid::nil());
@@ -132,5 +185,49 @@ mod tests {
         assert_eq!(object.rez_data.ray_target_id, r.target);
         assert_eq!(object.rez_data.ray_end, Vec3::new(18.0, 10.0, -20.0));
         assert!(!object.rez_data.ray_end_is_intersection);
+        r.from_task = Uuid::from_u128(7);
+        assert_eq!(r.message(Uuid::nil(), Uuid::nil()).rez_data.from_task_id, r.from_task);
+    }
+
+    #[test]
+    fn an_object_of_a_notecard_names_the_notecard_its_object_and_the_item() {
+        let r = RezInventory {
+            handle: 1,
+            group: Uuid::from_u128(2),
+            item: InvItem {
+                id: Uuid::from_u128(3),
+                asset_type: 6,
+                inv_type: 6,
+                everyone_mask: 0x8000,
+                next_owner_mask: 0x6000,
+                flags: 0x100,
+                ..Default::default()
+            },
+            ray_start: Vec3::new(1.0, 2.0, 30.0),
+            ray_end: Vec3::new(5.0, 6.0, 20.0),
+            target: Uuid::nil(),
+            selected: false,
+            remove: true,
+            source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
+            notecard: Some(FromNotecard {
+                notecard: Uuid::from_u128(7),
+                object: Uuid::from_u128(8),
+            }),
+        };
+        let from = r.notecard.unwrap();
+        let m = r.notecard_message(Uuid::from_u128(10), Uuid::from_u128(11), from);
+        assert_eq!(m.agent_data.group_id, Uuid::from_u128(2));
+        assert_eq!(m.notecard_data.notecard_item_id, Uuid::from_u128(7));
+        assert_eq!(m.notecard_data.object_id, Uuid::from_u128(8));
+        assert_eq!(m.inventory_data.len(), 1);
+        assert_eq!(m.inventory_data[0].item_id, Uuid::from_u128(3));
+        assert!(m.rez_data.from_task_id.is_nil(), "dropObject sends no FromTaskID for a notecard");
+        assert_eq!(m.rez_data.bypass_raycast, 1);
+        assert!(m.rez_data.remove_item);
+        assert_eq!(
+            (m.rez_data.everyone_mask, m.rez_data.next_owner_mask, m.rez_data.item_flags),
+            (0x8000, 0x6000, 0x100)
+        );
     }
 }

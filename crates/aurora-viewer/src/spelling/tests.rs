@@ -121,6 +121,21 @@ fn the_users_words_count() {
     assert!(!dict.check("Zorblaxes"));
 }
 
+/// The folder of the list refuses the write (a file stands in its place):
+/// the word stays owed and is written with the next one, nothing dropped.
+#[test]
+fn a_word_whose_write_is_refused_is_written_with_the_next() {
+    let dir = scratch("custom-refused").join("words");
+    std::fs::write(&dir, b"in the way").expect("file in the way");
+    let path = dictionaries::custom_path(&dir);
+    dictionaries::append_word(&path, "Zorblax");
+    assert!(!path.exists());
+    std::fs::remove_file(&dir).expect("freed");
+    dictionaries::append_word(&path, "quuxing");
+    let file = std::fs::read_to_string(&path).expect("written");
+    assert_eq!(file.lines().collect::<Vec<_>>(), ["2", "Zorblax", "quuxing"]);
+}
+
 #[test]
 fn an_imported_dictionary_is_listed_used_and_removed() {
     let dir = scratch("import");
@@ -166,6 +181,19 @@ fn a_bad_word_line_is_left_out_as_hunspell_does() {
     let aff = "FLAG num\nSFX 10 Y 1\nSFX 10 0 s .\n";
     let dict = dictionaries::parse(aff, "3\nhouse/10\n\"A/S\"\ncar\n").expect("parsed without the bad line");
     assert!(dict.check("houses") && dict.check("car"));
+}
+
+thread_local! {
+    /// The status `status()` gives on this test's thread, whatever the
+    /// shared checker is doing.
+    pub(super) static PINNED_STATUS: std::cell::RefCell<Option<Status>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Pins the status the preferences show on this thread: other tests
+/// (`ready()`) load the shared checker meanwhile, and its "Loading…" line
+/// would come and go between two layouts of the Spelling tab.
+pub(crate) fn pin_status(status: Status) {
+    PINNED_STATUS.with(|pinned| *pinned.borrow_mut() = Some(status));
 }
 
 /// The shared checker with the default dictionaries, ready.

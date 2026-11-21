@@ -8,7 +8,8 @@
 //!
 //! Both services ask, in their terms of use:
 //! * the requests leave the user's own application, never a proxy or a
-//!   server of ours (there is none);
+//!   server of ours (there is none); a proxy the user set up in Preferences
+//!   › Network is theirs, and these requests follow it like all others;
 //! * one key per application, a test key limited to about 100 requests an
 //!   hour until the service grants a production key;
 //! * their results shown as they come, in their order, never mixed with
@@ -99,6 +100,8 @@ pub struct Favorite {
 
 /// Most favourites kept, per service: one request fetches them all.
 pub const MAX_FAVORITES: usize = 48;
+/// GIFs sent remembered, per service: two screens of the picker.
+pub const MAX_RECENT: usize = 18;
 
 /// The GIF picker of Preferences › Chat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -120,6 +123,9 @@ pub struct Settings {
     /// services ask for one to count what is sent. Nothing of the account.
     pub customer_id: String,
     pub favorites: Vec<Favorite>,
+    /// The GIFs sent last, newest first: their ids alone, like the
+    /// favourites.
+    pub recent: Vec<Favorite>,
 }
 
 /// A key that is no key: empty, or not made of URL-safe characters.
@@ -198,6 +204,35 @@ impl Settings {
             kept += 1;
             kept <= MAX_FAVORITES
         });
+    }
+
+    /// A GIF was sent: first of its service's recent ones, once.
+    pub fn note_sent(&mut self, provider: Provider, id: &str) {
+        self.recent.retain(|r| !(r.provider == provider && r.id == id));
+        self.recent.insert(
+            0,
+            Favorite {
+                provider,
+                id: id.to_owned(),
+            },
+        );
+        let mut kept = 0;
+        self.recent.retain(|r| {
+            if r.provider != provider {
+                return true;
+            }
+            kept += 1;
+            kept <= MAX_RECENT
+        });
+    }
+
+    /// The ids of `provider`'s recent GIFs, newest first.
+    pub fn recent_ids(&self, provider: Provider) -> Vec<String> {
+        self.recent
+            .iter()
+            .filter(|r| r.provider == provider)
+            .map(|r| r.id.clone())
+            .collect()
     }
 
     /// The ids of `provider`'s favourites, newest first.
@@ -367,6 +402,12 @@ pub struct Gif {
     /// The link sent in the chat.
     pub send: String,
     pub pings: Pings,
+}
+
+/// `gifs` in the order of `ids`: an answer by ids need not keep it. What
+/// `ids` does not hold goes last.
+pub fn in_order_of(gifs: &mut [Gif], ids: &[String]) {
+    gifs.sort_by_key(|g| ids.iter().position(|id| *id == g.id).unwrap_or(ids.len()));
 }
 
 /// A page of results.
@@ -557,15 +598,15 @@ pub fn client() -> Option<reqwest::Client> {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(format!("{} (GIF search)", aurora_version::user_agent()))
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .build()
-        .map_err(|e| log::warn!("GIF search: no HTTP client: {e}"))
-        .ok()
+    aurora_proxy::http_client(|b| {
+        b.user_agent(format!("{} (GIF search)", aurora_version::user_agent()))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy)
+    })
+    .map_err(|e| log::warn!("GIF search: no HTTP client: {e}"))
+    .ok()
 }
 
 /// The body of `url`, at most `max` bytes.

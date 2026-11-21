@@ -15,8 +15,139 @@ fn triangle() -> serde_json::Value {
         "faces":[{"color":[0.3,0.2,0.8,1.0],"vertices":vertices,"indices":[0,1,2]}]
     }]})
 }
+/// The key of the test servers, sent after the magic by `greeting`.
+const TEST_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn greeting() -> Vec<u8> {
+    [b"AURBLD2\n".as_slice(), TEST_KEY.as_bytes()].concat()
+}
+
 fn supported() -> HashSet<String> {
     HashSet::from(["mPelvis".into()])
+}
+
+#[test]
+fn blender_live_window_stays_steady_at_reported_ui_scales() {
+    // Fluent's language is process-wide. Run the French layout alone so other
+    // tests keep their own language, including when the suite runs in parallel.
+    const ALONE: &str = "AURORA_TEST_LIVEMESH_SCALE_ALONE";
+    if std::env::var_os(ALONE).is_none() {
+        let path = concat!(module_path!(), "::blender_live_window_stays_steady_at_reported_ui_scales");
+        let (_, name) = path.split_once("::").expect("test module path");
+        let result = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([name, "--exact", "--test-threads=1"])
+            .env(ALONE, "1")
+            .output()
+            .expect("the isolated UI test starts");
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            result.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    for language in ["en", "fr"] {
+        aurora_i18n::select(language, None);
+        assert_eq!(aurora_i18n::language(), language);
+        let label = aurora_i18n::tr!("blender-live-clear");
+        crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+            "blender_live",
+            &[egui::vec2(560.0, 660.0), egui::vec2(460.0, 350.0)],
+            &[(0.94, 1.0), (0.947, 1.0), (0.953, 1.0)],
+            || {
+                let mut live = Live {
+                    open: true,
+                    ..Default::default()
+                };
+                live.receive(prepare(&triangle()).expect("one local mesh enables the Clear button"));
+                live
+            },
+            |live, ctx, palette| {
+                super::ui::show(live, ctx, palette, false);
+            },
+            |frames, live, case, window, texts| {
+                use crate::ui::widgets::elide_tests::Text;
+                let id = egui::Id::unique("blender_live");
+                let layer = egui::LayerId::new(egui::Order::Middle, id);
+                let button = |ctx: &egui::Context, texts: &[Text]| -> Option<egui::WidgetRect> {
+                    let text = texts.iter().find(|t| t.source == label)?;
+                    ctx.viewport(|v| {
+                        v.prev_pass
+                            .widgets
+                            .get_layer(layer)
+                            .filter(|w| w.enabled && w.sense.senses_click() && w.rect.contains(text.rect.center()))
+                            .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                            .copied()
+                    })
+                };
+                let visible = |b: &egui::WidgetRect| window.contains_rect(b.rect) && b.interact_rect.contains_rect(b.rect);
+                let before = button(&frames.ctx, texts);
+                let source = live.selected.expect("one mesh");
+                let palette = crate::theme::Theme::default().palette();
+                let mut draw = |ui: &mut egui::Ui| {
+                    super::ui::show(live, ui.ctx(), &palette, false);
+                };
+                let mut after = before;
+                // Scroll the body under the pointer in small steps. Stop on the
+                // button, even if the panel below it is taller than the window.
+                for step in 0..40 {
+                    if after.as_ref().is_some_and(&visible) && (step > 0 || window.height() > 500.0) {
+                        break;
+                    }
+                    let wheel = egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -18.0),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Wheel,
+                        modifiers: Default::default(),
+                    };
+                    let texts = frames.run(vec![egui::Event::PointerMoved(window.center()), wheel], &mut draw);
+                    assert_eq!(
+                        frames.ctx.memory(|m| m.area_rect(id)),
+                        Some(window),
+                        "{language}, {case}: scrolling moved the window"
+                    );
+                    after = button(&frames.ctx, &texts);
+                }
+                let after = after.expect("the localized button is drawn after scrolling");
+                assert!(
+                    visible(&after),
+                    "{language}, {case}: button {:?}, hit area {:?}, window {window:?}",
+                    after.rect,
+                    after.interact_rect
+                );
+                if let Some(before) = before
+                    && !visible(&before)
+                {
+                    assert!(
+                        after.rect.top() < before.rect.top(),
+                        "{language}, {case}: the wheel brings the button into view"
+                    );
+                }
+                let pos = after.rect.center();
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        &mut draw,
+                    );
+                }
+                assert_eq!(
+                    live.state(source),
+                    SourceState::Removed,
+                    "{language}, {case}: clicking {label:?} removed the mesh"
+                );
+            },
+        );
+    }
 }
 
 fn static_triangle() -> serde_json::Value {
@@ -945,11 +1076,14 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let ctx = egui::Context::default();
     let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("free port");
     let port = probe.local_addr().expect("address").port();
-    let shared = transport::start_listener(probe, supported(), Default::default(), ctx, None).expect("start");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("magic");
+    stream.write_all(&greeting()).expect("magic");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
@@ -985,11 +1119,22 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
 fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separately() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("hello");
+    stream.write_all(&greeting()).expect("hello");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
@@ -1045,11 +1190,22 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
 fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("hello");
+    stream.write_all(&greeting()).expect("hello");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
