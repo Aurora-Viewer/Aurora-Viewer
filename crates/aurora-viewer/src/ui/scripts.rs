@@ -13,7 +13,7 @@ pub mod backup;
 mod colors;
 mod debug;
 mod dialogs;
-mod editing;
+pub(crate) mod editing;
 mod experiences;
 mod files;
 pub(crate) use files::live_folder;
@@ -172,7 +172,6 @@ impl Editor {
 
 #[derive(Default)]
 pub struct Editors {
-    pub rlva_hidden: bool,
     pub documents: Vec<Editor>,
     panels: dialogs::Panels,
     debug: debug::Debug,
@@ -761,9 +760,6 @@ impl Editors {
         settings: &mut settings::ScriptSettings,
         color_prefs: &mut super::color_picker::Preferences,
     ) -> Vec<Action> {
-        if self.rlva_hidden {
-            return Vec::new();
-        }
         let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
         if self.panels.preferences.show(ctx, p, settings) {

@@ -381,6 +381,42 @@ pub(super) fn image(inv: &Inventory, item: Uuid) -> Uuid {
         .or_else(|| inv.folders.get(&item).map(|f| f.info.thumbnail))
         .unwrap_or_default()
 }
+/// The picture an entry shows in the gallery and its tooltip: its own image,
+/// a link's original's (LLViewerInventoryItem::getThumbnailUUID), or for an
+/// outfit folder without one its only direct texture
+/// (LLInventoryGallery::getOutfitImageID,
+/// indra/newview/llinventorygallery.cpp). A texture is not its own picture
+/// there: the tooltip adds it (`hover`).
+pub(super) fn shown(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    let own = image(inv, id);
+    if !own.is_nil() {
+        return Some(own);
+    }
+    let original = rules::original(inv, id)?;
+    let linked = image(inv, original);
+    if !linked.is_nil() {
+        return Some(linked);
+    }
+    let folder = inv.folders.get(&original)?;
+    if folder.info.type_default != 47 || folder.state != FetchState::Fetched {
+        return None;
+    }
+    // Exactly one direct texture, links included. Never walk or fetch a
+    // folder tree for it: a folder's picture is drawn every frame.
+    let mut textures = folder.items.iter().filter_map(|id| {
+        let item = inv.items.get(&rules::original(inv, *id)?)?;
+        (item.asset_type == 0).then_some(item.asset_id)
+    });
+    let texture = textures.next()?;
+    (!texture.is_nil() && textures.next().is_none()).then_some(texture)
+}
+/// The picture of an entry's tile. RLVa's @viewtexture leaves it
+/// (LLInventoryGallery and LLThumbnailCtrl, indra/newview, ask nothing of
+/// RLVa): it takes the tooltip's picture alone (LLInspectTexture,
+/// llinspecttexture.cpp).
+pub(super) fn tile_picture(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    shown(inv, id)
+}
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
     match inv.items.get(&item) {
         Some(it) => resolved_item_type_icon(ui, icons, inv, it, p),
@@ -933,5 +969,19 @@ mod tests {
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"))));
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"))));
+    }
+
+    /// LLInventoryGallery and LLThumbnailCtrl (indra/newview) ask nothing of
+    /// RLVa: @viewtexture leaves the tiles' pictures, and takes the
+    /// tooltip's (LLInspectTexture, llinspecttexture.cpp; `hover.rs`).
+    #[test]
+    fn rlva_viewtexture_leaves_the_tiles_pictures() {
+        let mut inv = super::super::tests::view_inventory(false);
+        crate::world::inventory::demo::seed_gallery(&mut inv);
+        let item = Uuid::from_u128(8100);
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
+        inv.rlva_preview_mask = 1;
+        assert!(!inv.can_preview(0));
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
     }
 }

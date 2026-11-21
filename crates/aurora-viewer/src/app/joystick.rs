@@ -323,10 +323,11 @@ impl App {
             Use::On
         } else if self.panels.settings && self.options_ui.page == crate::ui::options::Page::Controls && self.options_ui.tab != 0 {
             Use::List
-        } else if self.settings.gamepad.enabled || (self.panels.settings && self.options_ui.page == crate::ui::options::Page::Gamepad) {
-            Use::Gamepad
         } else {
-            Use::Off
+            // the gamepads are always read: Game Controls sends them to the
+            // region whatever drives the avatar (LLGameControl::init always
+            // opens them)
+            Use::Gamepad
         };
         self.joystick.backend.poll(mode, &mut self.joystick.snapshot);
         if self.settings.migrate_legacy_gamepad(&self.joystick.snapshot) {
@@ -521,7 +522,7 @@ impl App {
         if self.camera.mouselook() {
             if player_movement_input {
                 self.camera.reset_gamepad_mouselook_zoom();
-            } else if motion.avatar_zoom != 0.0 && self.world.rlva.camera_owner().is_none() {
+            } else if motion.avatar_zoom != 0.0 {
                 self.camera
                     .gamepad_mouselook_zoom(motion.avatar_zoom, dt, &self.settings.camera, self.view_aspect());
             }

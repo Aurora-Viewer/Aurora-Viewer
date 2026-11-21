@@ -17,8 +17,6 @@ use uuid::Uuid;
 /// FT_LANDMARK and FT_FAVORITE.
 pub const FOLDER_LANDMARKS: i32 = 3;
 pub const FOLDER_FAVORITES: i32 = 23;
-/// AT_LANDMARK.
-const ASSET_LANDMARK: i32 = 3;
 /// A teleport that arrived this close to a landmark (horizontally) was a
 /// visit of it: a parcel's landing point puts the arrival away from the
 /// landmark's own position.
@@ -171,7 +169,7 @@ fn items_under(inv: &Inventory, kind: i32) -> Vec<Uuid> {
         out.extend(
             f.items
                 .iter()
-                .filter(|id| inv.items.get(*id).is_some_and(|it| it.asset_type == ASSET_LANDMARK)),
+                .filter(|id| crate::world::landmarks::inventory_item(inv, **id).is_some()),
         );
         // children in reverse so the first one is read first
         stack.extend(f.children.iter().rev().copied());
@@ -189,7 +187,9 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
     let favorite_items = items_under(inv, FOLDER_FAVORITES);
     let favorites: HashSet<Uuid> = favorite_items.iter().copied().collect();
     for id in items_under(inv, FOLDER_LANDMARKS).into_iter().chain(favorite_items) {
-        let Some(it) = inv.items.get(&id) else { continue };
+        let Some(it) = crate::world::landmarks::inventory_item(inv, id) else {
+            continue;
+        };
         let in_favorites = favorites.contains(&id);
         // a landmark with a nil asset is its own place
         let key = if it.asset_id.is_nil() { id } else { it.asset_id };
@@ -222,7 +222,7 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
             item: Some(id),
             asset: Some(key),
             favorite: in_favorites.then_some(id),
-            folder: (!in_favorites).then_some(it.parent),
+            folder: (!in_favorites).then(|| inv.items[&id].parent),
             note: it.desc.clone(),
             thumbnail: it.thumbnail,
             created: it.created_at,
@@ -492,6 +492,29 @@ mod tests {
             date,
             slurl: String::new(),
         }
+    }
+
+    #[test]
+    fn landmark_links_share_the_original_asset_and_keep_the_favorite_link_id() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(200)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        link.name = "Stale link name".into();
+        let cat = catalog(&inv, &resolved(), &map(), &[], true);
+        let cafe = cat.landmark(id(1001)).expect("linked favorite");
+        assert_eq!(cafe.name, "Café");
+        assert_eq!(cafe.favorite, Some(id(200)));
+        assert_eq!(cafe.item, Some(id(101)));
+        assert_eq!(cat.landmarks.len(), 4);
+        assert!(!cat.wanted_assets.contains(&id(101)), "never request an inventory UUID as an asset");
+        inv.folders.get_mut(&id(11)).expect("original folder").items.clear();
+        let cat = catalog(&inv, &Landmarks::default(), &map(), &[], true);
+        let cafe = cat.landmark(id(1001)).expect("favorite alone");
+        assert_eq!(cafe.item, Some(id(200)));
+        assert_eq!(cafe.favorite, Some(id(200)));
+        assert!(cat.wanted_assets.contains(&id(1001)));
+        assert!(!cat.wanted_assets.contains(&id(101)));
     }
 
     #[test]

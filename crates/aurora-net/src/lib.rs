@@ -8,6 +8,7 @@ pub mod bridge;
 pub mod build;
 pub mod caps;
 mod chat_reply;
+pub mod chat_service;
 pub mod circuit;
 mod circuit_socket;
 pub mod currency;
@@ -52,6 +53,7 @@ pub mod slm;
 pub mod social;
 pub mod stats;
 pub mod task_inventory;
+pub mod teleport_access;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;
@@ -230,7 +232,7 @@ impl NetClient {
         let stats = Arc::new(NetStats::default());
         let object_cache_dir = Arc::new(Mutex::new(None));
         let bandwidth_kbps = Arc::new(std::sync::atomic::AtomicU32::new(throttle::DEFAULT_KBPS as u32));
-        let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
+        let agent_language = Arc::new(Mutex::new((aurora_i18n::grid_language().to_owned(), true)));
         let viewer_stats = Arc::new(Mutex::new(viewer_stats::ViewerSide::default()));
         let viewer_stats_posts = Arc::new(viewer_stats::PostsInFlight::default());
         let seen_avatars = Arc::new(Mutex::new(Vec::new()));

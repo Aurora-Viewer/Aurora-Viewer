@@ -368,7 +368,9 @@ pub(super) fn phase2() -> Vec<Case> {
         ),
         // RlvHandler::setSitSource (rlvhandler.cpp): a sit asked under
         // @standtp keeps where the avatar stood. The rule is released before
-        // the avatar stands, so that the run never teleports it back.
+        // the avatar stands, so that the run never teleports it back: the
+        // place stays kept (RlvHandler::onSitOrStand uses it only while
+        // @standtp is held, and clears it then).
         Step::Say(Who::Controller, "@standtp=n"),
         Step::Expect(
             "@standtp is held",
@@ -403,8 +405,11 @@ pub(super) fn phase2() -> Vec<Case> {
         ),
         Step::Say(Who::Controller, "@standtp=y"),
         Step::Expect(
-            "no return is owed once @standtp is released",
-            holds(|w, c| w.rlva.stand_origin.is_none() || c.foreign_rules(w), "a return is still owed"),
+            "the place stays kept once @standtp is released, but no rule asks for it",
+            holds(
+                |w, c| w.rlva.stand_origin.is_some() && (!w.rlva.has("standtp") || c.foreign_rules(w)),
+                "the place is lost, or @standtp is still held",
+            ),
         ),
         Step::Say(Who::Controller, "@unsit=n"),
         Step::Expect("the seat is locked", holds(seat(|w, i| w.rlva_locked_seat(i)), "not locked")),
@@ -458,21 +463,34 @@ pub(super) fn phase2() -> Vec<Case> {
                 item_id: script_item(c),
             }),
         ),
-        Step::Refused(
-            "renaming in the seat's contents is refused",
-            build(false, |_, c, handle, local_ids| BuildCmd::UpdateTaskInventory {
-                handle,
-                local_id: local_ids[0],
-                item: Box::new(aurora_net::build::TaskItem {
-                    item_id: script_item(c),
-                    parent_id: c.prims.first().map_or(Uuid::nil(), |p| p.id),
-                    owner_id: c.agent,
-                    asset_type: 10,
-                    inv_type: 10,
-                    name: "renamed".to_owned(),
-                    ..Default::default()
-                }),
-            }),
+        // LLTaskInvFVBridge::isItemRenameable (llpanelobjectinventory.cpp)
+        // keeps the names in a locked attachment only: an item of the seat
+        // is renamed. Asked of the rule, never sent.
+        Step::Now(
+            "renaming in the seat's contents stays allowed, as in the Legacy Viewer",
+            holds(
+                |w, c| {
+                    c.prims.first().is_some_and(|p| {
+                        can(
+                            w,
+                            &NetCommand::Build(BuildCmd::UpdateTaskInventory {
+                                handle: p.handle,
+                                local_id: p.local_id,
+                                item: Box::new(aurora_net::build::TaskItem {
+                                    item_id: script_item(c),
+                                    parent_id: p.id,
+                                    owner_id: c.agent,
+                                    asset_type: 10,
+                                    inv_type: 10,
+                                    name: "renamed".to_owned(),
+                                    ..Default::default()
+                                }),
+                            }),
+                        )
+                    })
+                },
+                "refused",
+            ),
         ),
         // handle_selected_script_action (llviewermenu.cpp) only keeps the
         // scripts of a locked attachment: those of the seat can be reset and
@@ -534,7 +552,7 @@ pub(super) fn phase2() -> Vec<Case> {
         setup(),
         case(
             "W03",
-            "@rez and @interact refuse a new prim; @rez keeps its own prim",
+            "@rez and @interact refuse rezzing; @rez keeps its own prim",
             vec![
                 Step::Say(Who::Controller, "@rez=n"),
                 Step::Expect("rezzing refused", holds(|w, _| !w.rlva_can_rez(None), "still allowed")),
@@ -571,9 +589,14 @@ pub(super) fn phase2() -> Vec<Case> {
                     "rezzing refused under @interact",
                     holds(|w, _| !w.rlva_can_rez(None), "still allowed"),
                 ),
-                Step::Refused(
-                    "creating a prim is refused under @interact",
-                    make(|w, c| Cmd::send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
+                // (the Create tool asks @interact, `rlva_can_rez`; the send
+                // boundary leaves a new prim to @rez, cmdline_rezplat)
+                Step::Now(
+                    "the boundary leaves a new prim to @rez",
+                    holds(
+                        |w, c| can(w, &NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z))))),
+                        "refused",
+                    ),
                 ),
                 Step::Say(Who::Controller, "@interact=y"),
                 Step::Expect("allowed again once released", holds(|w, _| w.rlva_can_rez(None), "still refused")),

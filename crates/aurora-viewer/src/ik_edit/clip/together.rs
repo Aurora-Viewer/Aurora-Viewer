@@ -90,7 +90,7 @@ impl Editor {
         let followers: Vec<_> = self
             .clip_followers()
             .into_iter()
-            .filter(|f| *f < rig.len() && Some(*f) != skip && !self.pose_constrained(rig, *f))
+            .filter(|f| *f < rig.len() && Some(*f) != skip && !self.pose_constrained(*f))
             .collect();
         if followers.is_empty() || lead >= rig.len() {
             return;
@@ -128,7 +128,6 @@ impl Editor {
                     continue;
                 }
                 let goal = Goal {
-                    follow: None,
                     weight: 1.0,
                     bone,
                     root: ik::default_root(rig, bone),
@@ -151,7 +150,6 @@ impl Editor {
             let (_, rotation, position) = world[bone].to_scale_rotation_translation();
             let old = self.goals.iter().find(|g| g.bone == bone).cloned();
             let goal = Goal {
-                follow: None,
                 weight: 1.0,
                 bone,
                 root: if rotate {
