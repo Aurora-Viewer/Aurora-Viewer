@@ -712,10 +712,10 @@ pub struct App {
     look_at_privacy: Option<(bool, bool)>,
     /// What the simulator was told of the static eyes animation since the
     /// last arrival (FSStaticEyes).
-    static_eyes: crate::world::lookat::StaticEyes,
+    static_eyes: crate::world::lookat::SimAnimation,
     /// What the simulator was asked about the Bento idle pose: the same
     /// rule as the static eyes, asked again after every arrival.
-    bento_idle: crate::world::lookat::StaticEyes,
+    bento_idle: crate::world::lookat::SimAnimation,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -6311,7 +6311,7 @@ impl App {
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
     /// listener in llviewercontrol.cpp): the animation that holds the eyes
     /// still is started after every arrival, then started or stopped as the
-    /// setting changes (`StaticEyes`).
+    /// setting changes (`SimAnimation`).
     fn sync_static_eyes(&mut self) {
         if self.move_complete_at.is_none() {
             return;
