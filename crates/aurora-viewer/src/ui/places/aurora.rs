@@ -103,6 +103,7 @@ impl AuroraState {
     pub(super) fn history_reordered(&mut self) {
         // History rows use indices, so a merge or removal can move a row
         // to another visit (#798).
+        self.catalog = None;
         if matches!(self.selected, Some(Key::Visit(_))) {
             self.selected = None;
         }
@@ -1903,6 +1904,20 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn history_reordering_discards_cached_row_indices() {
+        let mut state = AuroraState {
+            catalog: Some(((0, 0, 2, 0, 0), Arc::new(Catalog::default()))),
+            selected: Some(Key::Visit(0)),
+            pending_click: Some((Key::Visit(1), 0.0)),
+            ..Default::default()
+        };
+        state.history_reordered();
+        assert!(state.catalog.is_none());
+        assert!(state.selected.is_none());
+        assert!(state.pending_click.is_none());
     }
 
     #[test]
