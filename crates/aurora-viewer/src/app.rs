@@ -4265,8 +4265,9 @@ impl App {
                 self.scene.particles.on_properties(&props);
                 self.interactions.on_properties(&props);
                 self.object_profile.on_properties(&props);
-                let props = self.area_search_build_properties(props, &area_reads);
+                // before the Area Search filter, which can drop the answer
                 self.ik_editor.update_poser_subject_names(&props);
+                let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(&self.world, props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),

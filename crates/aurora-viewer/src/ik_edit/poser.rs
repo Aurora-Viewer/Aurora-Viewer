@@ -301,12 +301,16 @@ impl State {
     }
 }
 impl Editor {
-    /// Keeps the names the subject menu asked for (`Request::ObjectName`);
-    /// the properties of every other object (hover tips, area search, the
-    /// build selection) are not the poser's to keep.
+    /// Keeps the names the poser asked for (`Request::ObjectName`), and
+    /// refreshes a name it already keeps from any properties of that object
+    /// (a rename in the build window); the properties of every other object
+    /// (hover tips, area search, the build selection) are not the poser's.
     pub(crate) fn update_poser_subject_names(&mut self, props: &[aurora_net::build::ObjectProps]) {
         for prop in props.iter().filter(|p| !p.name.trim().is_empty()) {
-            if self.poser.subject_name_requested.remove(&prop.object_id).is_some() {
+            let asked = self.poser.subject_name_requested.remove(&prop.object_id).is_some();
+            if let Some(name) = self.poser.subject_names.get_mut(&prop.object_id) {
+                name.clone_from(&prop.name);
+            } else if asked {
                 self.poser.subject_names.insert(prop.object_id, prop.name.clone());
             }
         }

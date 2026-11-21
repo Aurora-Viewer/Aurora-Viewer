@@ -38,11 +38,7 @@ pub(super) fn eligibility_reason_from(world: &World, id: Uuid, own_at: Option<Ve
     if !animesh_root(world, index, object) {
         return Some("not-root");
     }
-    // the simulator leaves OwnerID empty in most object updates and fills
-    // it only with ObjectProperties (a selection): the update flags say
-    // "you own this" for every prim, as permYouOwner (llviewerobject.cpp)
-    let you_own = object.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0;
-    if object.owner_id != world.agent_id && !(you_own && object.owner_id.is_nil()) {
+    if !owned(world, object) {
         return Some("not-owned");
     }
     let Some(own) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
@@ -54,13 +50,32 @@ pub(super) fn eligibility_reason_from(world: &World, id: Uuid, own_at: Option<Ve
     if world.mutes.is_muted_id(&id) {
         return Some("muted");
     }
-    if !Scene::object_transform(world, index, Instant::now(), 0)
-        .zip(own_at)
-        .is_some_and(|(a, b)| a.0.distance(b) <= 50.0)
-    {
+    if !distance_from(world, index, own_at).is_some_and(|d| d <= 50.0) {
         return Some("too-far");
     }
     None
+}
+/// Whether an object is yours to pose. The simulator leaves OwnerID empty
+/// in most object updates and fills it only with ObjectProperties (a
+/// selection), while the update flags say "you own this" for every prim:
+/// the Legacy Viewer's `permYouOwner` (llviewerobject.cpp) reads that flag
+/// alone. A group-owned animesh you may manage carries the flag with its
+/// group as owner, so the flag is trusted for a nil owner and for one of
+/// your groups. Stricter than the Legacy Viewer: an owner that is known and
+/// is neither you nor one of your groups wins over the flag.
+fn owned(world: &World, object: &crate::world::objects::Object) -> bool {
+    let owner = object.owner_id;
+    if owner == world.agent_id {
+        return true;
+    }
+    object.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+        && (owner.is_nil() || world.groups.groups.iter().any(|g| g.id == owner))
+}
+/// How far an object is from you (`own_position`), in metres.
+fn distance_from(world: &World, index: usize, own_at: Option<Vec3>) -> Option<f32> {
+    Scene::object_transform(world, index, Instant::now(), 0)
+        .zip(own_at)
+        .map(|(a, b)| a.0.distance(b))
 }
 /// Whether the poser can open on this subject now: an animesh whose
 /// skeleton is not posed yet (its rigged mesh still loading) has no frame,
@@ -178,6 +193,8 @@ impl Editor {
         if !allowed(world, id) || !has_frame(world, id) {
             return;
         }
+        // a Ctrl + click in the world names it as the menu does
+        self.request_subject_name(world, id);
         self.poser.subject = id;
         self.selected = None;
         self.poser.unselected = false;
@@ -186,6 +203,30 @@ impl Editor {
         self.drag = None;
         self.gizmo.cancel();
         self.pose_layers(world);
+    }
+    /// Asks the simulator for an animesh's object name (`Request::ObjectName`)
+    /// when it has none yet, at most once every 30 seconds: from the subject
+    /// menu and from a pick in the world. A resident is named elsewhere, and a
+    /// worn animesh by its inventory item.
+    pub(super) fn request_subject_name(&mut self, world: &World, id: Uuid) {
+        let Some(object) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
+            return;
+        };
+        let worn_name = object
+            .attachment_item_id()
+            .is_some_and(|item| world.inventory.items.contains_key(&item));
+        if id == world.agent_id || object.is_avatar() || worn_name || self.poser.subject_names.contains_key(&id) {
+            return;
+        }
+        if self
+            .poser
+            .subject_name_requested
+            .get(&id)
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30))
+        {
+            self.poser.subject_name_requested.insert(id, Instant::now());
+            self.poser.requests.push(Request::ObjectName(id));
+        }
     }
     pub(in crate::ik_edit) fn commit_poser_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) -> bool {
         let Some(bone) = self.selected else { return false };
@@ -378,25 +419,17 @@ impl Editor {
             let reason = eligibility_reason_from(world, id, own_at).or_else(|| (!has_frame(world, id)).then_some("no-pose"));
             match reason {
                 None => {
-                    // a worn animesh is named by its inventory item
-                    let worn_name = object
-                        .attachment_item_id()
-                        .is_some_and(|item| world.inventory.items.contains_key(&item));
-                    if !worn_name
-                        && !self.poser.subject_names.contains_key(&id)
-                        && self
-                            .poser
-                            .subject_name_requested
-                            .get(&id)
-                            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30))
-                    {
-                        self.poser.subject_name_requested.insert(id, Instant::now());
-                        self.poser.requests.push(Request::ObjectName(id));
-                    }
+                    self.request_subject_name(world, id);
                     let count = aurora_i18n::tr!("poser-edited-count", count = edited(self, id)).to_string();
                     let current = self.poser.subject == id;
                     let name = subject_name(world, &self.poser.subject_names, id);
-                    let count = Detail { text: count, end: None };
+                    // the distance, as the nearby residents' rows: it tells
+                    // apart several animesh whose names are not known yet
+                    let end = distance_from(world, index, own_at).map(|d| {
+                        let away = aurora_i18n::tr!("poser-distance", distance = aurora_i18n::number(f64::from(d), 1)).to_string();
+                        (away, range_color(p, d))
+                    });
+                    let count = Detail { text: count, end };
                     if person_row(ui, p, id, Avatar::Icon("accessible-filled"), &name, &count, current, None).0 {
                         pick = Some(id);
                     }
