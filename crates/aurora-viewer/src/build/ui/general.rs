@@ -765,7 +765,7 @@ fn ownership_permissions(
     let everyone = perm_state(&refs, |x| x.everyone_mask);
     let next = perm_state(&refs, |x| x.next_owner_mask);
     let first_column_width = (!super::legacy::active(ui)).then(|| {
-        let text_width = [aurora_i18n::tr!("common-move"), aurora_i18n::tr!("common-edit")]
+        let text_width = [aurora_i18n::tr!("common-move"), aurora_i18n::tr!("common-modify")]
             .into_iter()
             .map(|caption| {
                 egui::WidgetText::from(RichText::new(caption).size(12.0))
@@ -806,7 +806,7 @@ fn ownership_permissions(
             let (v, t) = bit(next, mask);
             // Transfer remains enabled by the next owner's Copy bit (LLPanelPermissions).
             let (caption, tentative, enabled) = match mask {
-                perm::MODIFY => (aurora_i18n::tr!("common-edit"), t, next_ok && base.0 & perm::MODIFY != 0),
+                perm::MODIFY => (aurora_i18n::tr!("common-modify"), t, next_ok && base.0 & perm::MODIFY != 0),
                 perm::COPY => (
                     aurora_i18n::tr!("common-copy-2"),
                     t || !can_copy,
