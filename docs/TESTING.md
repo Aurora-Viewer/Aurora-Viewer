@@ -4075,8 +4075,21 @@ To check with these scenarios:
 | `AURORA_DEMO_SEAT_KILL=1` | A seat deleted under the resident sitting on it |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
+| `AURORA_DEMO_CLOTH=1\|spin\|walk` | Our avatar wears a rigged flared dress and long hair that swing with cloth physics |
 
 ### Details
+
+`AURORA_DEMO_CLOTH` (`demo_cloth.rs`, `scene/cloth/`): at frame 240 our
+avatar wears a rigged flared dress and long hair cards built by the demo,
+skinned as most Second Life skirts and hair are and carrying no sign that
+they should swing; cloth physics is on for our avatar whatever the
+preferences say. `1`: drive the avatar yourself; `spin`: from frame 360 it
+turns back and forth on the spot; `walk`: from frame 360 it paces 3 m along
+x and back; both place the camera beside it. Look for the hem trailing and
+settling back, the hair swinging from the scalp, and nothing passing
+through the legs. The log's `cloth weights:`, `cloth member:` and
+`cloth motion:` lines give what was judged free and the cloth's cost per
+frame.
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
@@ -12726,11 +12739,18 @@ What the inventory must show with these scenarios:
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those opaque to the eye and the fainter ones lying on a solid surface (default), none, all, or `none` by turns |
+| `AURORA_CLOTH=1\|own\|all\|0` | Cloth physics on our own avatar (`1`, `own`), on nearby avatars too (`all`), or off (`0`), over the preferences |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 | `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
 
 ### Details
 
+- **`AURORA_CLOTH=1|own|all|0`** (`scene/cloth/mod.rs`): forces cloth
+  physics for the launch, over Preferences › Graphics › Cloth physics and
+  its cog. `1` or `own`: our own avatar's rigged attachments; `all`: the
+  nearest avatars' too; `0` or `off`: none. Without it,
+  `AURORA_DEMO_CLOTH` turns it on for our avatar. The kinds of attachment
+  (hair, clothing, tails) still follow the cog.
 - **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
   `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer
   statistics to the region's `ViewerStats` capability once the agent has

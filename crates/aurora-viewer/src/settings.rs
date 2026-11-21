@@ -1875,6 +1875,15 @@ pub struct Settings {
     /// RenderAvatarPhysicsLODFactor, 0 to 1: at 1 every avatar moves; below,
     /// avatars small on screen keep their shape; 0 stops the physics.
     pub avatar_physics_detail: f32,
+    /// Cloth physics (Aurora's own, scene/cloth): worn rigged meshes swing
+    /// as the avatar moves, worked out by this viewer alone. Off by default.
+    pub cloth_enabled: bool,
+    /// Also on the nearest avatars, not only ours.
+    pub cloth_nearby: bool,
+    /// Which worn meshes swing: hair, clothing (skirts, capes, hems), tails.
+    pub cloth_hair: bool,
+    pub cloth_clothing: bool,
+    pub cloth_tails: bool,
     /// Per-avatar exceptions (LLRenderMuteList): avatar id -> 1 never render
     /// fully (silhouette), 2 always render fully.
     pub render_exceptions: Vec<(String, u8)>,
@@ -2873,6 +2882,11 @@ impl Default for Settings {
             complexity_mode: 0,
             avatar_physics: true,
             avatar_physics_detail: 1.0,
+            cloth_enabled: false,
+            cloth_nearby: true,
+            cloth_hair: true,
+            cloth_clothing: true,
+            cloth_tails: true,
             render_exceptions: Vec::new(),
             tag_complexity: true,
             tag_complexity_too_complex_only: true,

@@ -6810,9 +6810,12 @@ impl App {
         self.weather_wind
             .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
         let weather_wind = range.1 > 0.0;
+        self.scene.weather_wind = None;
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
+            // (the flexis and the cloth feel it, sheltered as we are)
+            self.scene.weather_wind = Some(region_wind);
         }
         let agent = &self.world.agent;
         // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
@@ -10892,6 +10895,10 @@ impl App {
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
+            crate::demo::cloth::tick(&mut self.world, &mut self.scene, self.frame_count);
+            if let Some((eye, at)) = crate::demo::cloth::view(self.frame_count, self.world.agent.position) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::alpha_sort::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -11592,6 +11599,13 @@ impl App {
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
             self.scene.set_foot_scope_limit(self.settings.ground_feet_max_avatars);
+            self.scene.set_cloth_config(crate::scene::cloth::Config::new(
+                self.settings.cloth_enabled,
+                self.settings.cloth_nearby,
+                self.settings.cloth_hair,
+                self.settings.cloth_clothing,
+                self.settings.cloth_tails,
+            ));
             self.scene.body_physics = crate::scene::body_physics::Config {
                 enabled: self.settings.avatar_physics,
                 detail: self.settings.avatar_physics_detail,

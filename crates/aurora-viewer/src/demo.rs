@@ -88,6 +88,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// AURORA_DEMO_CLOTH: a rigged skirt and long hair swinging (scene/cloth).
+#[path = "demo_cloth.rs"]
+pub mod cloth;
 /// AURORA_DEMO_CLOUDS: volumetric clouds under a fixed sky.
 #[path = "demo_clouds.rs"]
 pub mod clouds;

@@ -183,9 +183,12 @@ impl Scene {
             state.last = now;
             let region = world.regions.get(&o.key.region);
             let offset = world.region_offset(o.key.region).unwrap_or(Vec3::ZERO);
+            let weather = self.weather_wind;
             state.sim.update(p, pos, rot, dt, |sample| {
                 if hud {
                     Vec3::ZERO
+                } else if let Some(w) = weather {
+                    w
                 } else {
                     region.map_or(Vec3::ZERO, |r| r.wind.velocity(sample - offset, r.heightmap.size_x as f32))
                 }

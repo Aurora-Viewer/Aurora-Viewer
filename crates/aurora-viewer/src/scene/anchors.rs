@@ -837,6 +837,8 @@ impl Scene {
                 moved.push(index..index + 1);
             }
         }
+        // the cloth of our rigged attachments, from the skeleton as posed
+        self.update_cloth(world, now, &mut moved);
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);

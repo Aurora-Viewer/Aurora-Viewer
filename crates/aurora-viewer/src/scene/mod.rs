@@ -15,6 +15,7 @@ pub mod blend_order;
 mod blender_live;
 pub mod body_physics;
 pub mod build_hologram;
+pub(crate) mod cloth;
 pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
@@ -1206,6 +1207,11 @@ pub struct Scene {
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
     pub live_morphs: live_morphs::LiveMorphs,
+    /// Cloth physics of our rigged attachments (cloth/, AURORA_CLOTH).
+    cloth: cloth::Cloth,
+    /// The weather's wind as it blows now (weather/mod.rs), when the weather
+    /// has one: it blows the flexis instead of the region's, and the cloth.
+    pub(crate) weather_wind: Option<Vec3>,
     /// Avatar body physics: which avatars move, and their motions.
     pub body_physics: body_physics::Config,
     physics_rig: Option<Arc<body_physics::PhysicsRig>>,
@@ -1902,6 +1908,8 @@ impl Scene {
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
+            cloth: Default::default(),
+            weather_wind: None,
             body_physics: body_physics::Config::default(),
             physics_rig,
             physics: Default::default(),
@@ -2528,6 +2536,7 @@ impl Scene {
         self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+        self.cloth.clear();
     }
 
     /// The GPU device is lost (app/gpu_recovery.rs): what the scene holds on
@@ -4529,6 +4538,12 @@ impl Scene {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
                 rec.flags[2] = binds;
+                // its cloth offsets, when it swings (cloth/mod.rs)
+                if let Some([first, vertex, count]) = self.cloth_face(world, idx, g.geom, owner, fi, alloc) {
+                    rec.identity[1] = first;
+                    rec.identity[2] = vertex;
+                    rec.identity[3] = count;
+                }
             }
             // texture animation: written once, evaluated by the vertex shaders
             let pbr = rec.flags[0] & flags::PBR != 0;

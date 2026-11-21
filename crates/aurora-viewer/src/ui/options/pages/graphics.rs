@@ -635,6 +635,30 @@ fn quality(cx: &mut Cx) {
                 },
             );
         });
+        cx.toggle(
+            tr!("ui-options-cloth-physics"),
+            tr!("ui-options-cloth-physics-help"),
+            &field!(cloth_enabled),
+        );
+        let off = !cx.s.cloth_enabled;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-cloth-nearby"),
+                tr!("ui-options-cloth-nearby-help"),
+                &field!(cloth_nearby),
+            );
+            cx.toggle(tr!("ui-options-cloth-hair"), tr!("ui-options-cloth-hair-help"), &field!(cloth_hair));
+            cx.toggle(
+                tr!("ui-options-cloth-clothing"),
+                tr!("ui-options-cloth-clothing-help"),
+                &field!(cloth_clothing),
+            );
+            cx.toggle(
+                tr!("ui-options-cloth-tails"),
+                tr!("ui-options-cloth-tails-help"),
+                &field!(cloth_tails),
+            );
+        });
     });
     // the photo window's own switch, also here: a PC that crashes as soon
     // as the window opens with it on can still turn it off

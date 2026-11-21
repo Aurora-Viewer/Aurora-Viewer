@@ -126,7 +126,18 @@ fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
     return result;
 }
 
-fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
+// Cloth (Aurora's own, aurora-viewer scene/cloth): the offset of a vertex
+// of a swinging rigged mesh from its skinned place, in the mesh's bind
+// space, one vector per vertex in the palette buffer. identity.y: the first
+// vector (0: no cloth), z: the face's first vertex, w: its vertex count.
+fn cloth_delta(rec: DrawRecord, in: VsIn) -> vec3<f32> {
+    if (rec.identity.y != 0u && in.vertex >= rec.identity.z && in.vertex - rec.identity.z < rec.identity.w) {
+        return palette_vector(rec.identity.y + in.vertex - rec.identity.z).xyz;
+    }
+    return vec3<f32>(0.0);
+}
+
+fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0] + cloth_delta(rec, in); }
 
 // Terrain reuses the unskinned parallel stream for two octahedral snorm16
 // directions. See pack_terrain_frame: no extra buffer or vertex stride.
