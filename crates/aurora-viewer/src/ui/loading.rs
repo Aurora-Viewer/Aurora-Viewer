@@ -62,6 +62,7 @@ impl PlaceFacts {
     /// otherwise only the world map may know it, and its residents are asked
     /// for (MapItemRequest, throttled by the map).
     pub fn gather(
+        ctx: &egui::Context,
         world: &mut crate::world::World,
         tiles: &mut super::map_tiles::MapTiles,
         name: &str,
@@ -87,7 +88,12 @@ impl PlaceFacts {
             return facts;
         };
         let sim = world.map.sims.get(&key);
-        let size = sim.map_or(256.0, |s| s.size_x.max(1) as f32);
+        let (size_x, size_y) = main
+            .and_then(|handle| world.regions.get(&handle))
+            .map(|region| (region.heightmap.size_x, region.heightmap.size_y))
+            .or_else(|| sim.map(|sim| (sim.size_x, sim.size_y)))
+            .unwrap_or((256, 256));
+        let (cells_x, cells_y) = super::map_tiles::region_cells(size_x, size_y);
         facts.maturity = match main.and_then(|h| world.regions.get(&h)).and_then(|r| r.info.as_ref()) {
             Some(info) => super::bars::maturity_name(info.sim_access),
             None => sim.map_or("", |s| super::bars::maturity_name(s.access)),
@@ -103,8 +109,8 @@ impl PlaceFacts {
                     .map(|spots| spots.iter().map(|(_, _, count)| (*count).max(0) as usize).sum())
             }
         };
-        facts.tile = tiles.get(1, key.0, key.1, true).ok();
-        facts.pin = position.map(|pos| (pos.x / size, pos.y / size));
+        facts.tile = tiles.region_picture(ctx, key.0, key.1, cells_x, cells_y).ok();
+        facts.pin = position.map(|pos| super::map_tiles::region_pin(pos.x, pos.y, size_x as f32, size_y as f32));
         facts
     }
 }
@@ -608,7 +614,7 @@ mod tests {
         assert_eq!(banner_place(&world, "Lagune (128, 64, 30)"), ("Lagune".to_owned(), Some(point)));
         assert_eq!(banner_place(&world, ""), (here.clone(), None));
         let mut tiles = crate::ui::map_tiles::MapTiles::new();
-        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
         assert_eq!(facts.position, "128, 64, 30");
         assert!(facts.pin.is_some());
 
@@ -628,7 +634,7 @@ mod tests {
             assert!(!name.contains("Lagune") && name != here && !name.is_empty(), "{dest:?}: {name}");
             assert_eq!(arrival, None);
         }
-        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
         assert!(facts.position.is_empty() && facts.maturity.is_empty());
         assert!(facts.residents.is_none() && facts.tile.is_none() && facts.pin.is_none());
     }

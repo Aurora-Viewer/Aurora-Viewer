@@ -142,9 +142,11 @@ fn tile(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, pics: &Pictures
     if let Some(uv) = uv
         && v.same_region
     {
-        let size = world.regions.get(&v.handle).map_or(256.0, |r| r.heightmap.size_x.max(256) as f32);
+        let (size_x, size_y) = world.regions.get(&v.handle).map_or((256.0, 256.0), |r| {
+            (r.heightmap.size_x.max(256) as f32, r.heightmap.size_y.max(256) as f32)
+        });
         let pos = world.agent.position;
-        let (u, t) = (pos.x / size, 1.0 - pos.y / size);
+        let (u, t) = (pos.x / size_x, 1.0 - pos.y / size_y);
         if uv.x_range().contains(u) && uv.y_range().contains(t) {
             let at = egui::pos2(
                 rect.left() + (u - uv.min.x) / uv.width() * rect.width(),
