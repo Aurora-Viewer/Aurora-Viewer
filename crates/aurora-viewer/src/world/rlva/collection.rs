@@ -502,6 +502,68 @@ mod tests {
         assert!(crate::world::appearance::plan(&world.inventory, plan, &Default::default()).is_ok());
     }
 
+    /// `@getinv` and `@getinvworn` name the child folders in the same order,
+    /// the folder UUID order of the Legacy Viewer, not the name order the
+    /// windows show (`~` folders last).
+    #[test]
+    fn rlva_getinv_lists_folders_in_uuid_order_like_getinvworn() {
+        use super::super::Command;
+        use crate::world::World;
+        let (mut inv, base) = fixture();
+        // Created in the display (natural name) order, as `sort_children`
+        // leaves them; the UUIDs (the numbers) say another one.
+        folder(&mut inv, 22, base, "Alpha");
+        folder(&mut inv, 25, base, "mid");
+        folder(&mut inv, 20, base, "Zulu");
+        folder(&mut inv, 21, base, "~New");
+        folder(&mut inv, 24, base, "~Old");
+        let hidden = folder(&mut inv, 23, base, ".Hidden");
+        folder(&mut inv, 19, hidden, "Under hidden");
+        folder(&mut inv, 18, base, "");
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inv;
+        world.rlva.configure(true);
+        let mut query = |text| world.rlva_inventory_query(&Command::parse(text).unwrap(), Uuid::nil()).unwrap();
+        assert_eq!(
+            query("getinv:Outfit=123"),
+            "Zulu,~New,Alpha,~Old,mid",
+            "UUID order; the `.` folder and the empty name are left out"
+        );
+        assert_eq!(
+            query("getinvworn:Outfit=123"),
+            "|00,Zulu|00,~New|00,Alpha|00,~Old|00,mid|00",
+            "the same folders in the same order"
+        );
+        // The `~` folders are not pushed to the end: a long list cut at 1023
+        // characters keeps the ones the UUID order puts early.
+        assert!(query("getinv:Outfit=123").find("~New") < query("getinv:Outfit=123").find("Alpha"));
+    }
+
+    /// The Legacy Viewer compares the 16 bytes of a UUID one after the other
+    /// (`LLUUID::operator<`, "DON'T optimize these w/ U32s"), so the first
+    /// byte outweighs a later one whatever the machine's word order.
+    #[test]
+    fn rlva_getinv_orders_uuids_byte_by_byte() {
+        use super::super::Command;
+        use crate::world::World;
+        let (mut inv, base) = fixture();
+        // First byte 0x01 against fourth byte 0x01: bytewise the second one
+        // is smaller, a little-endian 32-bit word compare would say the
+        // opposite. The names order them differently from both.
+        folder(&mut inv, 1 << 120, base, "A first byte");
+        folder(&mut inv, 1 << 96, base, "B fourth byte");
+        folder(&mut inv, (1 << 120) | 1, base, "C first byte and last");
+        folder(&mut inv, (1 << 120) | 0xFF, base, "D first byte and 0xFF");
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inv;
+        world.rlva.configure(true);
+        let mut query = |text| world.rlva_inventory_query(&Command::parse(text).unwrap(), Uuid::nil()).unwrap();
+        assert_eq!(
+            query("getinv:Outfit=123"),
+            "B fourth byte,A first byte,C first byte and last,D first byte and 0xFF"
+        );
+    }
+
     #[test]
     fn rlva_getpath_returns_one_original_path_and_getpathnew_preserves_cof_order_and_duplicates() {
         use super::super::Command;

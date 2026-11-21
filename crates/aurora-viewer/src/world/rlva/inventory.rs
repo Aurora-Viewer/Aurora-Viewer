@@ -1721,6 +1721,16 @@ impl World {
                     && !folded(&f.info.name, self.rlva.preferences.legacy_naming)
             })
             .collect();
+        // Both replies list the folders in the Legacy Viewer's order, the UUID
+        // order of the folder (LLUUID::operator< compares the 16 bytes one by
+        // one, as `Uuid`'s `Ord` does). Its @getinvworn gets it from a
+        // std::map<LLUUID, …>; its @getinv (RlvHandler::onGetInv) lists the
+        // array of LLInventoryModel::getDirectDescendentsOf, which the
+        // grid's folder order fills, and on the main grid that order is the
+        // UUID one. The windows keep their own name order (`sort_children`).
+        // A reply to a script is cut at 1023 characters, so the order decides
+        // which folders a collar's menu gets.
+        children.sort_by_key(|folder| folder.info.id);
         if c.behaviour == "getinv" {
             return Some(children.iter().map(|f| f.info.name.as_str()).collect::<Vec<_>>().join(","));
         }
@@ -1731,8 +1741,6 @@ impl World {
             .chain(self.active_gestures.iter().copied())
             .collect();
         // One ancestry walk per collected item, shared by all returned rows.
-        // The reference's getinvworn map orders child folders by UUID.
-        children.sort_by_key(|folder| folder.info.id);
         let mut counts = std::collections::HashMap::<(Uuid, bool), (usize, usize)>::new();
         let mut ancestors = Vec::new();
         for entry in &collected {
