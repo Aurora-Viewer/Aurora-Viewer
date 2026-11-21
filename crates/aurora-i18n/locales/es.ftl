@@ -13487,7 +13487,6 @@ bridge-object-info-result =
     Su posición actual: { $observer }
 bridge-query-timeout = El bridge no devolvió a tiempo la información solicitada. Inténtelo de nuevo.
 bridge-query-interrupted = La solicitud de información se interrumpió por un cambio de región o de conexión del bridge. Inténtelo de nuevo.
-ao-bootstrap-interrupted = Ya existe una importación de AO sin terminar en #Aurora. Revísela en el inventario antes de volver a intentarlo.
 ao-states = Estados
 ao-combine = Combinar…
 ao-combine-title = Combinar animaciones

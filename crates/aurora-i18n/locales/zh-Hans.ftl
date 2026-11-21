@@ -13394,7 +13394,6 @@ bridge-object-info-result =
     您的当前位置：{ $observer }
 bridge-query-timeout = 桥接器未及时返回所请求的信息。请重试。
 bridge-query-interrupted = 信息请求因区域或桥接器连接变更而中断。请重试。
-ao-bootstrap-interrupted = #Aurora 中已有未完成的 AO 导入。请先在库存中查看后再次重试。
 ao-states = 状态
 ao-combine = 合并…
 ao-combine-title = 合并动画
