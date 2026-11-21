@@ -17,8 +17,10 @@
 //
 // Glass: a ray that nothing stops goes on through the blended faces (the
 // `GLASS` instances, rt_common.wgsl `glass_passes`), and what they leave of
-// the sun's red, green and blue is `out_glass` (the frame's binding 29,
-// common.wgsl `sun_glass`): 1 where it meets none.
+// the sun's red, green and blue is `out_glass`: 1 where it meets none. Its
+// ray goes to another point of the sun's disc each frame, as the shadow's:
+// the lights' passes average it as they do the shadow (rt_lights.wgsl
+// `glass_history`) into the frame's binding 29 (common.wgsl `sun_glass`).
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -114,10 +116,17 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     var glass = vec3<f32>(1.0);
     if (shadow < 0.5) {
         let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
-        // (the placed objects' glass: worn glass is not traced yet)
         rayQueryInitialize(&rq, scene_tlas, pane);
         while (rayQueryProceed(&rq)) {
             glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), false, dir);
+        }
+        // the moving faces are the posed level's (a pane being carried);
+        // worn glass is not traced yet
+        if (params.mode.w > 0.5) {
+            rayQueryInitialize(&rq, posed_tlas, pane);
+            while (rayQueryProceed(&rq)) {
+                glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), true, dir);
+            }
         }
     }
     textureStore(out_glass, pixel, vec4<f32>(glass, 1.0));

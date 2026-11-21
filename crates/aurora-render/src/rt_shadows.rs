@@ -2085,6 +2085,12 @@ pub(crate) struct LightTargets {
     tint_ping: [wgpu::TextureView; 2],
     /// The point lights are traced: the tint is kept.
     tinted: bool,
+    /// What the glass leaves of the sun: this frame's ray (the sun's pass
+    /// writes it here rather than to [`Targets::glass`]) and its history
+    /// (rt_lights.wgsl `glass_history`), which the filter writes to
+    /// [`Targets::glass`].
+    sun_glass: wgpu::TextureView,
+    glass: [wgpu::TextureView; 2],
 }
 
 const CHOICE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -3327,6 +3333,11 @@ impl Targets {
                 tint: [tint("rt light tint"), tint("rt light tint")],
                 tint_ping: [tint("rt light tint denoise"), tint("rt light tint denoise")],
                 tinted: options.lights,
+                sun_glass: view("rt sun glass ray", RESULT_FORMAT),
+                glass: [
+                    view("rt sun glass history", SHARE_FORMAT),
+                    view("rt sun glass history", SHARE_FORMAT),
+                ],
             }
         });
         static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -4016,7 +4027,8 @@ impl RtShadows {
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&t.glass),
+                    // with the traced lights, their passes average it
+                    resource: wgpu::BindingResource::TextureView(t.lights.as_ref().map_or(&t.glass, |l| &l.sun_glass)),
                 },
             ],
         });
@@ -4570,6 +4582,9 @@ impl Lights {
                 texture_entry(16, wgpu::TextureSampleType::Uint),
                 texture_entry(17, unfiltered),
                 storage_texture_entry(18, SHARE_FORMAT),
+                texture_entry(20, unfiltered),
+                texture_entry(21, unfiltered),
+                storage_texture_entry(22, SHARE_FORMAT),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4580,6 +4595,8 @@ impl Lights {
                 texture_entry(10, unfiltered),
                 storage_texture_entry(11, RESULT_FORMAT),
                 texture_entry(19, unfiltered),
+                texture_entry(23, unfiltered),
+                storage_texture_entry(24, RESULT_FORMAT),
             ],
         });
         let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
@@ -4888,6 +4905,9 @@ impl RtShadows {
                 view(16, &lt.mid),
                 view(17, &lt.tint[read]),
                 view(18, &lt.tint[write]),
+                view(20, &lt.sun_glass),
+                view(21, &lt.glass[read]),
+                view(22, &lt.glass[write]),
             ],
         });
         let groups = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
@@ -4952,6 +4972,8 @@ impl RtShadows {
                 view(10, &lt.sun),
                 view(11, &t.result),
                 view(19, denoised_tint.unwrap_or(&lt.tint[write])),
+                view(23, &lt.glass[write]),
+                view(24, &t.glass),
             ],
         });
         {

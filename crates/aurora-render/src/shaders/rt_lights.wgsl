@@ -41,7 +41,9 @@
 // a shadow moved off a still surface (a walking avatar's, off the floor)
 // keeps the history within what this frame's rays found around the pixel,
 // as AMD's FidelityFX shadow denoiser does, so the floor clears at once
-// instead of holding a trail.
+// instead of holding a trail. The colour the glass gives the sun
+// (rt_shadows.wgsl `out_glass`, its ray as noisy as the shadow's) is
+// averaged the same way beside it (`glass_history`).
 // `cs_lights_filter`: the denoised tint and sun, written with the contact
 // shadows into the mask the frame binds: `.r` the sun's shadow (1 in
 // shadow, the darker of the traced and the contact shadow), `.gba` the
@@ -184,6 +186,15 @@ const MID_DRAWN: u32 = 0x200u;
 @group(0) @binding(17) var prev_tint: texture_2d<f32>;
 @group(0) @binding(18) var out_tint: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(19) var tint_tex: texture_2d<f32>;
+// What the glass leaves of the sun: this frame's ray (rt_shadows.wgsl
+// `out_glass`) and its history, rgb and a the frames it averages
+// (cs_lights_reuse), then what the frame binds (cs_lights_filter, the
+// frame's binding 29: common.wgsl `sun_glass`).
+@group(0) @binding(20) var sun_glass_now: texture_2d<f32>;
+@group(0) @binding(21) var prev_glass: texture_2d<f32>;
+@group(0) @binding(22) var out_glass_history: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(23) var glass_kept: texture_2d<f32>;
+@group(0) @binding(24) var out_glass: texture_storage_2d<rgba8unorm, write>;
 
 // common.wgsl `ll_light_atten`.
 fn light_atten(d: f32, falloff: f32) -> f32 {
@@ -357,26 +368,38 @@ fn light_fresh(i: u32) -> f32 {
 // What the glass on the ray from `origin` up to `far` leaves of a light's
 // red, green and blue (rt_common.wgsl `glass_passes`, the rule of PR #3821),
 // the panes of the light's own prim aside (`own`, as rt_common.wgsl
-// `shadows_but`): a lamp's bulb is often a blended face. The placed
-// objects' glass: worn glass is not traced yet (rt_shadows.rs `look`).
-fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32) -> vec3<f32> {
+// `shadows_but`): a lamp's bulb is often a blended face. The still faces'
+// level and, with `posed`, the moving faces' (a pane being carried); worn
+// glass is not traced yet (rt_shadows.rs `look`).
+fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: bool) -> vec3<f32> {
     var through = vec3<f32>(1.0);
     if (far <= 0.0) {
         return through;
     }
+    let ray = RayDesc(SHADOW_CULL, GLASS, 0.0, far, origin, dir);
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(SHADOW_CULL, GLASS, 0.0, far, origin, dir));
+    rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        let c = rayQueryGetCandidateIntersection(&rq);
-        if (own > 0.5 && c.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
-            let h = hit_of(false, c.instance_custom_data, c.geometry_index, c.primitive_index);
-            if (f32(cull_faces[h.record].object + 1u) == own) {
-                continue;
-            }
+        through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own);
+    }
+    if (posed) {
+        rayQueryInitialize(&rq, posed_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own);
         }
-        through *= glass_passes(c, false, dir);
     }
     return through;
+}
+
+// `glass_passes`, 1 for a pane of the light's own prim (`own`).
+fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32) -> vec3<f32> {
+    if (own > 0.5 && c.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
+        let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+        if (f32(cull_faces[h.record].object + 1u) == own) {
+            return vec3<f32>(1.0);
+        }
+    }
+    return glass_passes(c, posed, dir);
 }
 
 // The ray from `origin` to the point `u` (two numbers in 0..1) of the disc
@@ -424,7 +447,7 @@ fn light_ray(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> vec4<f
     }
     if (t < 0.0) {
         // the glass over the same way as the opaque test's
-        return vec4<f32>(glass_along(origin, dir, select(reach, last, past), select(0.0, own, past)), -1.0);
+        return vec4<f32>(glass_along(origin, dir, select(reach, last, past), select(0.0, own, past), posed), -1.0);
     }
     return vec4<f32>(vec3<f32>(0.0), min(2.0 * size * t / max(span - t, 0.05), 4.0));
 }
@@ -628,6 +651,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         textureStore(out_choice, pixel, vec4<f32>(0.0));
         textureStore(out_share, pixel, vec4<f32>(1.0, 1.0, 0.0, 0.0));
         textureStore(out_guide, pixel, vec4<f32>(0.0));
+        textureStore(out_glass_history, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
         if (tinted) {
             textureStore(out_tint, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
         }
@@ -790,6 +814,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     let sun_now = 1.0 - textureLoad(sun_tex, pixel, 0).g;
     var sun = sun_now;
     var sun_frames = 1.0;
+    // and the colour the glass gives it, the same way (`glass_history`)
+    let glass_now = textureLoad(sun_glass_now, pixel, 0).rgb;
+    var glass = vec4<f32>(glass_now, 1.0);
     let back = history_pixel(pixel, world, dist);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back.xy, 0);
@@ -837,12 +864,48 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         sun = mix(was, sun_now, 1.0 / sun_frames);
         // (the mask has 8 bits: nearer than that to lit or dark is it)
         sun = select(sun, round(sun), abs(sun - round(sun)) < 0.002);
+        glass = glass_history(pixel, size, back.xy, glass_now, longest);
     }
     textureStore(out_share, pixel, vec4<f32>(share, sun, sun_frames, frames));
+    textureStore(out_glass_history, pixel, glass);
     textureStore(out_guide, pixel, vec4<f32>(pack_normal(n), dist, moment));
     if (tinted) {
         textureStore(out_tint, pixel, vec4<f32>(tint, 0.0));
     }
+}
+
+// The colour the glass gives the sun at `pixel`, averaged over the frames
+// as the sun's shadow is (cs_lights_reuse): its ray goes to another point
+// of the sun's disc each frame, so a pane's edge is a penumbra of colour.
+// A history this frame's rays around the pixel disagree with (a pane
+// carried off) comes to them at once, its length down by as much. `back`
+// is last frame's pixel; rgb the colour, a the frames.
+fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec2<i32>, now: vec3<f32>, longest: f32) -> vec4<f32> {
+    let h = textureLoad(prev_glass, back, 0);
+    var was = h.rgb;
+    var frames = min(h.a + 1.0, longest);
+    let off = max(max(abs(was.r - now.r), abs(was.g - now.g)), abs(was.b - now.b));
+    if (off > 0.002) {
+        var lo = now;
+        var hi = now;
+        for (var y = -SUN_RANGE; y <= SUN_RANGE; y++) {
+            for (var x = -SUN_RANGE; x <= SUN_RANGE; x++) {
+                // (every other pixel of the square, as the sun's)
+                if (((x + y) & 1) != 0) {
+                    continue;
+                }
+                let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+                let v = textureLoad(sun_glass_now, q, 0).rgb;
+                lo = min(lo, v);
+                hi = max(hi, v);
+            }
+        }
+        let within = clamp(was, lo, hi);
+        let moved = max(max(abs(within.r - was.r), abs(within.g - was.g)), abs(within.b - was.b));
+        frames = max(frames * (1.0 - moved), 1.0);
+        was = within;
+    }
+    return vec4<f32>(mix(was, now, 1.0 / frames), frames);
 }
 
 @compute @workgroup_size(8, 8)
@@ -859,4 +922,5 @@ fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
         tint = clamp(textureLoad(tint_tex, pixel, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     textureStore(out_mask, pixel, vec4<f32>(max(shadow, ray.r), tint));
+    textureStore(out_glass, pixel, vec4<f32>(textureLoad(glass_kept, pixel, 0).rgb, 1.0));
 }
