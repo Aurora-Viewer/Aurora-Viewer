@@ -302,7 +302,7 @@ pub fn window(
                 let mut tab = shown_tab(ui.ctx());
                 let labels = Tab::ALL.map(|tab| (tab.label(), true));
                 let mut index = tab as usize;
-                if widgets::tabs(ui, p, &mut index, &labels) {
+                if widgets::wrapping_tabs(ui, p, &mut index, &labels) {
                     tab = Tab::ALL[index.min(Tab::ALL.len() - 1)];
                     set_tab(ui.ctx(), tab);
                 }

@@ -1921,7 +1921,15 @@ when unfocused") is ignored during a screenshot.
   land) and `AURORA_DEMO_CLICKS=4000,900,440,menu`, capture frame 700: a right
   click on the ground inside the frame must open the land menu (About Land,
   Edit land), never the frame's menu with the frame outlined.
-- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]"`**:
+- **Object View while building (#3927):** `AURORA_DEMO_CLICKS=1000,object-view`
+  opens Build/Edit and the camera controls, enables Object View and sends
+  ordinary clicks through the asynchronous world picker. Add
+  `AURORA_DEMO_BUILD=move,object:118` and `AURORA_DEMO_BUILD_FRAME=560` to
+  begin with a selected object. Each resolved click logs `demo object view:
+  PASS` when Build stays open, the selection is unchanged and the camera
+  enters `FocusOrbit`; capture after frame 740. Turn Object View off to
+  check normal build selection again; Alt camera gestures should still work.
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus|object-view]"`**:
   one click on the world every `ms` milliseconds (250 if the value is not a
   number) once the world is displayed, button held 60 ms, through the same
   path as a mouse button (`app/click_pick.rs`), without ever taking the real

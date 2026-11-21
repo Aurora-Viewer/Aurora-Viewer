@@ -2327,6 +2327,34 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
     tabs_row(ui, p, selected, labels, false, false).0
 }
 
+/// Keep tab labels whole by starting another row when their measured
+/// widths do not fit. Selection still uses the original tab index.
+pub fn wrapping_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    let widths = tab_widths(ui, labels, &control_font(ui, 12.0));
+    let available = ui.available_width();
+    let mut changed = false;
+    let mut start = 0;
+    while start < labels.len() {
+        let mut end = start + 1;
+        let mut width = widths[start];
+        while end < labels.len() && width + TAB_GAP + widths[end] <= available {
+            width += TAB_GAP + widths[end];
+            end += 1;
+        }
+        let mut index = if (start..end).contains(selected) {
+            *selected - start
+        } else {
+            usize::MAX
+        };
+        if tabs(ui, p, &mut index, &labels[start..end]) {
+            *selected = start + index;
+            changed = true;
+        }
+        start = end;
+    }
+    changed
+}
+
 /// The flat tab strip, with the rect of each tab (a tab that opens when
 /// something is dragged over it).
 pub fn tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
@@ -2348,6 +2376,15 @@ pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labe
     tabs_row(ui, p, selected, labels, true, false).0
 }
 
+const TAB_GAP: f32 = 4.0;
+
+fn tab_widths(ui: &egui::Ui, labels: &[(&str, bool)], font: &egui::FontId) -> Vec<f32> {
+    labels
+        .iter()
+        .map(|(label, _)| ui.fonts_mut(|f| f.layout_no_wrap((*label).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
+        .collect()
+}
+
 fn tabs_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -2359,7 +2396,7 @@ fn tabs_row(
     let mut changed = false;
     let mut rects = Vec::with_capacity(labels.len());
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = TAB_GAP;
         let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
         let minimum_height = if compact { 22.0 } else { 30.0 };
@@ -2368,10 +2405,7 @@ fn tabs_row(
         } else {
             minimum_height
         };
-        let text_w: Vec<f32> = labels
-            .iter()
-            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
-            .collect();
+        let text_w = tab_widths(ui, labels, &font);
         let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
         let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
@@ -4044,5 +4078,53 @@ mod segmented_disabled_tests {
             chosen.push((selected, clicks_work));
         }
         assert_eq!(chosen, vec![(0, false), (1, true)]);
+    }
+}
+
+#[cfg(test)]
+mod wrapping_tabs_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+
+    #[test]
+    fn wrapped_tab_labels_stay_whole_and_clicks_keep_their_index() {
+        let labels = ["Track", "Camera", "Look", "Output", "Filters", "Library"].map(|label| (label, true));
+        let p = crate::theme::Theme::default().palette();
+        for width in [220.0, 340.0] {
+            for font_size in [12.0, 24.0] {
+                let mut frames = Frames::new();
+                let mut selected = 0;
+                let draw = |frames: &mut Frames, events, selected: &mut usize| {
+                    frames.run(events, |ui| {
+                        ui.set_width(width);
+                        ui.style_mut().override_font_id = Some(egui::FontId::proportional(font_size));
+                        wrapping_tabs(ui, &p, selected, &labels);
+                    })
+                };
+                draw(&mut frames, Vec::new(), &mut selected);
+                let texts = draw(&mut frames, Vec::new(), &mut selected);
+                for (label, _) in &labels {
+                    assert!(!painted(&texts, label).cut, "{label} at width {width}, font {font_size}");
+                }
+                let last = painted(&texts, "Library").rect.center();
+                if width == 220.0 || font_size == 24.0 {
+                    assert!(last.y > painted(&texts, "Track").rect.center().y);
+                }
+                draw(&mut frames, vec![egui::Event::PointerMoved(last)], &mut selected);
+                for pressed in [true, false] {
+                    draw(
+                        &mut frames,
+                        vec![egui::Event::PointerButton {
+                            pos: last,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        }],
+                        &mut selected,
+                    );
+                }
+                assert_eq!(selected, 5);
+            }
+        }
     }
 }

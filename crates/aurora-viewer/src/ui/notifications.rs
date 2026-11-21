@@ -743,23 +743,26 @@ pub(super) fn card(
                 } => {
                     ui.add_space(8.0);
                     let width = (ui.available_width() - 12.0) / 3.0;
+                    let size = Vec2::new(width, ui.spacing().interact_size.y.max(24.0));
                     // Reverse rows, never the labels or their wire indices.
+                    // A button taller than the requested size must not shift
+                    // the next column down in a vertically centered row.
                     for row in script_rows(b.len()) {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             for index in row.clone() {
-                                if button_sized(ui, p, &b[index], false, Some(Vec2::new(width, 24.0))).clicked() {
+                                if button_sized(ui, p, &b[index], false, Some(size)).clicked() {
                                     out = Some(Response::Button(index));
                                 }
                             }
                             for _ in row.len()..3 {
-                                ui.allocate_space(Vec2::new(width, 24.0));
+                                ui.allocate_space(size);
                             }
                         });
                     }
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             if button_sized(ui, p, aurora_i18n::tr!("common-ignore"), false, Some(Vec2::new(72.0, 22.0))).clicked() {
                                 out = Some(Response::Dismiss);
                             }
@@ -1647,6 +1650,23 @@ mod tests {
             };
             for _ in 0..3 {
                 frame(vec![]);
+            }
+            let (output, _) = frame(vec![]);
+            for row in labels.chunks(3) {
+                let centers: Vec<_> = row
+                    .iter()
+                    .map(|label| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos.y + t.galley.size().y * 0.5),
+                                _ => None,
+                            })
+                            .expect("button visible")
+                    })
+                    .collect();
+                assert!(centers.iter().all(|y| (y - centers[0]).abs() < 0.5), "aurora={aurora}: {centers:?}");
             }
             for (index, label) in labels.iter().enumerate() {
                 let (output, _) = frame(vec![]);
