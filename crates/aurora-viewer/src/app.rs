@@ -11258,20 +11258,7 @@ impl App {
                 self.settings.camera.auto_move_while_posing,
                 crate::camera::AutoCameraMove::AutomaticTracking,
             );
-            let poser_eye_follow = crate::camera::camera_auto_move_allowed(
-                self.ik_editor.posing(),
-                self.settings.camera.auto_move_while_posing,
-                crate::camera::AutoCameraMove::FollowEyes,
-            );
-            let mut camera_settings = self.settings.camera.clone();
-            if !poser_auto_moves {
-                camera_settings.track_focus_object = false;
-                camera_settings.reset_on_movement = false;
-                camera_settings.third_person_follow_joint = None;
-            }
-            if !poser_eye_follow {
-                camera_settings.mouselook_follow_eyes = false;
-            }
+            let camera_settings = self.settings.camera.while_posing(self.ik_editor.posing());
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),

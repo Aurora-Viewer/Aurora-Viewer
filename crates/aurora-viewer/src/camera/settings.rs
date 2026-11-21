@@ -18,6 +18,25 @@ pub fn camera_auto_move_allowed(posing: bool, setting: bool, _cause: AutoCameraM
     !posing || setting
 }
 
+impl CameraSettings {
+    /// The settings a camera frame uses: while posing with automatic moves
+    /// off, the focus tracking, the movement reset, the body-part follow and
+    /// the first-person eye follow are off; otherwise unchanged.
+    pub fn while_posing(&self, posing: bool) -> CameraSettings {
+        let allowed = |cause| camera_auto_move_allowed(posing, self.auto_move_while_posing, cause);
+        let mut s = self.clone();
+        if !allowed(AutoCameraMove::AutomaticTracking) {
+            s.track_focus_object = false;
+            s.reset_on_movement = false;
+            s.third_person_follow_joint = None;
+        }
+        if !allowed(AutoCameraMove::FollowEyes) {
+            s.mouselook_follow_eyes = false;
+        }
+        s
+    }
+}
+
 #[cfg(test)]
 mod first_person_tests {
     use super::*;
@@ -35,6 +54,32 @@ mod first_person_tests {
             AutoCameraMove::MovementReset,
         ] {
             assert!(!camera_auto_move_allowed(true, false, cause));
+        }
+    }
+
+    #[test]
+    fn posing_with_camera_moves_off_stops_every_automatic_follow() {
+        let chosen = CameraSettings {
+            track_focus_object: true,
+            reset_on_movement: true,
+            mouselook_follow_eyes: true,
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            auto_move_while_posing: false,
+            ..CameraSettings::default()
+        };
+        let still = chosen.while_posing(true);
+        assert!(!still.track_focus_object && !still.reset_on_movement && !still.mouselook_follow_eyes);
+        assert_eq!(still.third_person_follow_joint, None, "the camera does not follow a posed joint");
+        for unchanged in [
+            chosen.while_posing(false),
+            CameraSettings {
+                auto_move_while_posing: true,
+                ..chosen.clone()
+            }
+            .while_posing(true),
+        ] {
+            assert!(unchanged.track_focus_object && unchanged.reset_on_movement && unchanged.mouselook_follow_eyes);
+            assert_eq!(unchanged.third_person_follow_joint, Some(CameraFollowJoint::Head));
         }
     }
 
