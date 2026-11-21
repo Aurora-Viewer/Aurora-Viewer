@@ -358,43 +358,66 @@ pub fn draw(
         }
     }
 
-    if dv.skeletons {
+    if dv.skeletons
+        && let Some(skeleton) = &world.avatar_lib.skeleton
+    {
         let rig = &world.avatar_lib.rig;
-        let mut bone = vec![false; rig.parent.len()];
-        for (name, &j) in &rig.names {
-            if let Some(b) = bone.get_mut(j) {
-                *b = name.starts_with('m');
-            }
-        }
+        let bones = skeleton_bones(skeleton, rig.len());
+        let rest: Vec<Mat4> = rig.default_world_inv.iter().map(Mat4::inverse).collect();
         let pelvis = world.avatar_lib.pelvis;
-        for (idx, o) in world.objects.avatars() {
-            let Some(poses) = world.avatar_poses.get(&o.full_id) else {
+        // every skeleton posed this frame, avatars and animesh alike, placed
+        // by the model matrix their rigged meshes are drawn with
+        for (owner, poses) in &world.avatar_poses {
+            let Some(&model) = world.avatar_models.get(owner) else {
                 continue;
             };
-            let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
-                continue;
-            };
-            if pp.distance(eye) > SKELETON_RANGE {
+            if model.transform_point3(pelvis).distance(eye) > SKELETON_RANGE {
                 continue;
             }
-            let joint = |j: usize| -> Option<Vec3> {
-                let m = poses.get(j)?;
-                let rest = rig.default_world_inv.get(j)?.inverse().w_axis.truncate();
-                Some(pp + pr * (m.transform_point3(rest) - pelvis))
-            };
-            for j in 0..rig.parent.len().min(poses.len()) {
-                let Some(parent) = rig.parent[j] else {
-                    continue;
-                };
-                if !(bone[j] && bone.get(parent).copied().unwrap_or(false)) {
-                    continue;
-                }
-                if let (Some(a), Some(b)) = (joint(j), joint(parent)) {
-                    lines.seg(a, b, Color32::from_rgb(250, 204, 21));
-                }
+            for (a, b) in bone_segments(&bones, poses, &rest, model) {
+                lines.seg(a, b, BONE);
             }
         }
     }
+}
+
+/// The colour of a bone (LLVOAvatar::renderBones' OTHER_COLOR_OCCLUDED: the
+/// overlay has no depth test, so the colour of a bone seen through the body).
+const BONE: Color32 = Color32::from_rgb(0, 255, 0);
+
+/// The bones the skeleton view draws, with their end in their own space:
+/// every bone of avatar_skeleton.xml, neither a collision volume nor an
+/// attachment point the rig adds after them. The rig's joints are the
+/// skeleton file's in the same order (`anim::Rig::new`). Read from the file,
+/// not from the rig's names: those also hold the aliases ("hip", "lCollar",
+/// "avatar_mPelvis"…), and a joint met under an alias was left out.
+fn skeleton_bones(skeleton: &aurora_assets::Skeleton, joints: usize) -> Vec<(usize, Vec3)> {
+    skeleton
+        .joints
+        .iter()
+        .take(joints)
+        .enumerate()
+        .filter(|(_, joint)| !joint.is_collision_volume)
+        .map(|(index, joint)| (index, joint.end))
+        .collect()
+}
+
+/// Port of LLVOAvatar::renderBones (indra/newview/llvoavatar.cpp, originally
+/// LGPL 2.1): each bone from its origin to its end (LLJoint::getEnd), both
+/// through the joint's posed world matrix. `poses` are the scene's rest to
+/// posed matrices (`World::avatar_poses`), `rest` the default rig's joint
+/// matrices, `model` the skeleton's place in the world
+/// (`World::avatar_models`).
+fn bone_segments<'a>(
+    bones: &'a [(usize, Vec3)],
+    poses: &'a [Mat4],
+    rest: &'a [Mat4],
+    model: Mat4,
+) -> impl Iterator<Item = (Vec3, Vec3)> + 'a {
+    bones.iter().filter_map(move |&(joint, end)| {
+        let world = model * *poses.get(joint)? * *rest.get(joint)?;
+        Some((world.transform_point3(Vec3::ZERO), world.transform_point3(end)))
+    })
 }
 
 #[cfg(test)]
@@ -411,6 +434,45 @@ mod tests {
             distance,
             rigged,
         }
+    }
+
+    /// Every bone of the skeleton file is drawn, those with aliases included
+    /// ("hip", "abdomen", "lCollar"…), and no collision volume nor
+    /// attachment point.
+    #[test]
+    fn the_skeleton_view_draws_every_bone_of_the_skeleton_file() {
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let skeleton = lib.skeleton.as_ref().expect("the skeleton file");
+        let bones = skeleton_bones(skeleton, lib.rig.len());
+        let expected = skeleton.joints.iter().filter(|j| !j.is_collision_volume).count();
+        assert!(expected > 130, "{expected}");
+        assert_eq!(bones.len(), expected);
+        for name in ["mPelvis", "mTorso", "mChest", "mNeck", "mHead", "mCollarLeft", "mShoulderLeft", "mHipRight", "mFaceRoot"] {
+            let joint = lib.rig.names[name];
+            assert_eq!(lib.rig.canonical_names[joint], name);
+            assert!(bones.iter().any(|b| b.0 == joint), "{name} is missing");
+        }
+        for (index, joint) in skeleton.joints.iter().enumerate() {
+            assert_eq!(bones.iter().any(|b| b.0 == index), !joint.is_collision_volume, "{}", joint.name);
+        }
+        assert!(bones.iter().all(|b| b.0 < skeleton.joints.len()));
+    }
+
+    /// A bone goes from its posed origin to its posed end, placed by the
+    /// skeleton's model matrix; a joint without a pose is not drawn.
+    #[test]
+    fn a_bone_runs_from_its_posed_origin_to_its_end() {
+        let hip = Vec3::new(0.0, 0.0, 1.0);
+        let bones = [(0, Vec3::new(0.5, 0.0, 0.0)), (1, Vec3::X)];
+        let rest = [Mat4::from_translation(hip), Mat4::IDENTITY];
+        // a quarter turn about the hip, and the figure standing at (10, 0, 0)
+        let turn = Mat4::from_translation(hip) * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * Mat4::from_translation(-hip);
+        let model = Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)) * Mat4::from_translation(-hip);
+        let segments: Vec<_> = bone_segments(&bones, &[turn], &rest, model).collect();
+        assert_eq!(segments.len(), 1);
+        let (a, b) = segments[0];
+        assert!(a.abs_diff_eq(Vec3::new(10.0, 0.0, 0.0), 1e-5), "{a}");
+        assert!(b.abs_diff_eq(Vec3::new(10.0, 0.5, 0.0), 1e-5), "{b}");
     }
 
     #[test]
