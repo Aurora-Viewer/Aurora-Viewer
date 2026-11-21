@@ -16,6 +16,7 @@ mod controls;
 mod data;
 mod document;
 mod kinematics;
+mod legacy_pose;
 mod overlay;
 mod scale_gizmo;
 mod silhouette;
@@ -95,7 +96,7 @@ impl Default for Config {
             compact: false,
             natural: true,
             dof: false,
-            sensitivity: 0.5,
+            sensitivity: super::gizmo::DEFAULT_SENSITIVITY,
             also_bvh: false,
             unlock_pelvis: false,
             confirm_overwrite: false,
@@ -103,14 +104,13 @@ impl Default for Config {
         }
     }
 }
-/// What the poser window asks of the app, which owns the consent state and
-/// the Preferences: the subject menu lists the nearby avatars with their
+/// What the poser window asks of the app, which owns the consent state
+/// and the bridge: the subject menu lists the nearby avatars with their
 /// consent action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Ask(Uuid),
     Cancel(Uuid),
-    OpenPrivacy,
     /// The bridge's Repair, offered when its query service is silent or failed.
     RepairBridge,
 }
@@ -289,6 +289,11 @@ pub(super) const COMPACT_WINDOW: &str = "poser-compact";
 pub(super) fn window_id(compact: bool) -> &'static str {
     if compact { COMPACT_WINDOW } else { FULL_WINDOW }
 }
+impl State {
+    pub(super) fn cancel_scale_gizmo(&mut self) {
+        self.scale_gizmo.cancel();
+    }
+}
 impl Editor {
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
@@ -447,13 +452,25 @@ impl Editor {
     pub fn poser_owns_pointer(&self) -> bool {
         self.poser.active && self.poser.pointer_owned
     }
+    pub fn manipulator_owns_pointer(&self) -> bool {
+        self.poser_owns_pointer() || self.manipulator_hovered
+    }
     /// The consent and Preferences actions chosen in the window since the
     /// last call.
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.poser.requests)
     }
+    /// A consent action asked from another window (the animation editor's
+    /// couple mode), sent the poser's way.
+    pub(in crate::ik_edit) fn push_poser_request(&mut self, request: Request) {
+        self.poser.requests.push(request);
+    }
     pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
         self.poser.bridge = state;
+    }
+    /// The bridge's request state, for the couple mode's Ask list.
+    pub(in crate::ik_edit) fn poser_bridge(&self) -> crate::world::bridge::QueryState {
+        self.poser.bridge
     }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);
@@ -467,7 +484,7 @@ impl Editor {
             self.poser.config.sensitivity = if config.sensitivity.is_finite() {
                 config.sensitivity.clamp(0.05, 2.0)
             } else {
-                0.5
+                super::gizmo::DEFAULT_SENSITIVITY
             };
             self.poser.settings_loaded = true;
             self.space = if self.poser.natural { Space::Local } else { Space::World };
@@ -479,6 +496,15 @@ impl Editor {
             false
         }
     }
+    pub(super) fn set_poser_sensitivity(&mut self, sensitivity: f32) {
+        let sensitivity = if sensitivity.is_finite() {
+            sensitivity.clamp(0.05, 2.0)
+        } else {
+            super::gizmo::DEFAULT_SENSITIVITY
+        };
+        self.poser.sensitivity = sensitivity;
+        self.poser.config.sensitivity = sensitivity;
+    }
     pub fn open_poser(&mut self) {
         if self.poser.active {
             self.open = true;
@@ -489,8 +515,6 @@ impl Editor {
         *self = Self {
             clip,
             open: true,
-            initialized: true,
-            ignore_script_ik: true,
             poser: State {
                 active: true,
                 name: aurora_i18n::tr!("poser-new-name").to_string(),
@@ -546,7 +570,6 @@ impl Editor {
         self.poser.active = false;
         self.leave_clip();
         self.open = false;
-        self.cancel_link_pick();
         self.drag = None;
         self.gizmo.cancel();
     }
@@ -581,6 +604,7 @@ impl Editor {
                     let sample = ik::animations::Sample {
                         animation: Arc::new(BoundAnim::bind(animation, &world.avatar_lib.rig)),
                         frame: 0,
+                        time_seconds: None,
                     };
                     ik::animations::apply(&world.avatar_lib.rig, &mut pose, Vec3::ZERO, &[sample]);
                     let selective = matches!(mode, document::LoadMode::Selective | document::LoadMode::SelectiveRotations);

@@ -3,14 +3,16 @@
 //! canRemove (rlvlocks.h), as LLObjectBridge, LLWearableBridge and
 //! LLAppearanceMgr::getCanAddToCOF / getCanRemoveFromCOF / getCanReplaceCOF
 //! use them (llinventorybridge.cpp, llappearancemgr.cpp, originally LGPL 2.1).
-//! The menus see the inventory, not the world: one snapshot a frame answers
-//! them, and the folder locks it holds are kept while their inputs stay equal.
+//! The menus see the inventory, not the world: one snapshot answers them,
+//! kept while what it was built from stays the same ([`LockInputs`]), as
+//! RlvFolderLocks keeps its lookups until something marks them dirty. A
+//! window that asks every frame then costs one comparison, not a rebuild.
 
 use super::super::{World, appearance};
 use super::inventory::{FolderLocks, LAYERS, LockInputs};
 use crate::world::inventory::Inventory;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use uuid::Uuid;
 
 /// What a lock leaves of wearing an item: adding it beside what is worn,
@@ -30,18 +32,22 @@ impl Wear {
 }
 
 #[derive(Default)]
-pub(crate) struct FolderSets {
+struct FolderSets {
     /// Folders whose items cannot be worn (RLV_LOCK_ADD).
     no_add: HashSet<Uuid>,
     /// Folders whose items cannot be taken off (RLV_LOCK_REMOVE).
     no_remove: HashSet<Uuid>,
 }
 
-/// The last folder resolution and its inputs.
+/// The last snapshot, what it was built from, and the revision of the last
+/// seen points it copied.
 #[derive(Default)]
-pub(crate) struct FolderSetsCache(Mutex<Option<(LockInputs, Arc<FolderSets>)>>);
+pub(crate) struct WearLocksCache(Mutex<Option<(LockInputs, u64, Arc<WearLocks>)>>);
 
-#[derive(Clone, Default)]
+/// No wear lock: everything is allowed.
+static UNLOCKED: LazyLock<Arc<WearLocks>> = LazyLock::new(Arc::default);
+
+#[derive(Default)]
 pub struct WearLocks {
     /// RLVa is on and a wear lock is set; otherwise everything is allowed.
     active: bool,
@@ -58,7 +64,7 @@ pub struct WearLocks {
     closed_layers: HashSet<u8>,
     /// Wearable types worn by an item that cannot come off: add only.
     held_layers: HashSet<u8>,
-    folders: Arc<FolderSets>,
+    folders: FolderSets,
     /// The point each object was last seen attached to (`LastPoints`).
     last_points: std::collections::HashMap<Uuid, u8>,
 }
@@ -139,9 +145,19 @@ impl WearLocks {
 }
 
 impl World {
-    pub fn rlva_wear_locks(&self) -> WearLocks {
+    pub fn rlva_wear_locks(&self) -> Arc<WearLocks> {
         if !self.rlva.inventory_locked() {
-            return WearLocks::default();
+            return UNLOCKED.clone();
+        }
+        let worn = self.rlva_worn_attachment_points();
+        let inputs = self.rlva_lock_inputs(worn.iter().map(|(item, at)| (*item, *at)));
+        let points = self.rlva.last_points.revision();
+        let cache = &self.rlva.wear_locks.0;
+        if let Some((cached, seen, locks)) = cache.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+            && *cached == inputs
+            && *seen == points
+        {
+            return locks.clone();
         }
         let nil = Uuid::nil();
         let mut locks = WearLocks {
@@ -151,7 +167,6 @@ impl World {
             last_points: self.rlva.last_points.snapshot(),
             ..Default::default()
         };
-        let worn = self.rlva_worn_attachment_points();
         for (item, at) in &worn {
             if !self.rlva_can_remove(*item, nil) {
                 locks.fixed.insert(*item);
@@ -171,35 +186,49 @@ impl World {
         locks.closed_layers = (0..LAYERS.len() as u8)
             .filter(|kind| self.rlva_layer_locked("addoutfit", *kind, nil))
             .collect();
-        locks.folders = self.rlva_folder_sets(worn);
+        locks.folders = self.rlva_folder_sets();
+        let locks = Arc::new(locks);
+        *cache.lock().unwrap_or_else(PoisonError::into_inner) = Some((inputs, points, locks.clone()));
         locks
     }
 
-    /// Every folder's add and remove lock, kept while the rules, the
-    /// inventory and the worn attachments stay the same.
-    fn rlva_folder_sets(&self, worn: std::collections::HashMap<Uuid, u8>) -> Arc<FolderSets> {
+    /// The folders with an add or a remove lock. A "…this" lock reaches only
+    /// the folders it names and what is under them, so only those are
+    /// checked, not every folder of the inventory. @sharedwear, @sharedunwear
+    /// and their unshared twins lock by where a folder is, whatever it is:
+    /// with one of them set, every folder is checked.
+    fn rlva_folder_sets(&self) -> FolderSets {
+        let mut sets = FolderSets::default();
         if !self.rlva_has_folder_rule() {
-            return Arc::default();
-        }
-        let inputs = self.rlva_lock_inputs(worn);
-        let cache = &self.rlva.wear_folders.0;
-        if let Some((cached, sets)) = cache.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
-            && *cached == inputs
-        {
-            return sets.clone();
+            return sets;
         }
         let shared = FolderLocks::default();
-        let mut sets = FolderSets::default();
-        for (id, _) in self.inventory.folders.iter().filter(|(_, f)| !f.library) {
-            if !self.rlva_folder_allowed_in(&shared, *id, true, Uuid::nil()) {
-                sets.no_add.insert(*id);
+        let mut check = |id: Uuid| {
+            if !self.rlva_folder_allowed_in(&shared, id, true, Uuid::nil()) {
+                sets.no_add.insert(id);
             }
-            if !self.rlva_folder_allowed_in(&shared, *id, false, Uuid::nil()) {
-                sets.no_remove.insert(*id);
+            if !self.rlva_folder_allowed_in(&shared, id, false, Uuid::nil()) {
+                sets.no_remove.insert(id);
             }
+        };
+        if self.rlva_has_placement_rule() {
+            for (id, _) in self.inventory.folders.iter().filter(|(_, f)| !f.library) {
+                check(*id);
+            }
+            return sets;
         }
-        let sets = Arc::new(sets);
-        *cache.lock().unwrap_or_else(PoisonError::into_inner) = Some((inputs, sets.clone()));
+        let mut seen = HashSet::new();
+        let mut stack = shared.roots(self);
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(f) = self.inventory.folders.get(&id).filter(|f| !f.library) else {
+                continue;
+            };
+            stack.extend(f.children.iter().copied());
+            check(id);
+        }
         sets
     }
 }

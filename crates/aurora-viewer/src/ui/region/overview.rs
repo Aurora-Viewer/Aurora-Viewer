@@ -324,7 +324,7 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(aurora_i18n::tr!("common-view-profile"));
             if r.clicked() && !v.owner.is_nil() {
-                crate::ui::profile::request_open(ui.ctx(), v.owner);
+                crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, v.owner);
             }
             let mut line = role_name(Role::Owner).to_owned();
             if v.manages() && !managers.is_empty() {
@@ -1001,7 +1001,8 @@ mod tests {
         };
         let sunday = schedule_text(&s);
         assert!(sunday.contains("06:00"), "{sunday}");
-        assert!(sunday.chars().next().is_some_and(char::is_uppercase), "{sunday}");
+        // a capital where the language has cases (Japanese has none)
+        assert!(sunday.chars().next().is_some_and(|c| !c.is_lowercase()), "{sunday}");
         s.days = [true; 7];
         assert!(schedule_text(&s).starts_with(aurora_i18n::tr!("region-schedule-every-day")));
     }

@@ -5,11 +5,35 @@ use super::*;
 use crate::demo::link::{Delivery, DemoLink, Keys};
 use crate::own_motion::Intent;
 
+/// LLAgent::getRunning, with the setters' RLVa checks: "Always run" stands on
+/// its own, a temporary run (double tap, double click) only while @temprun
+/// allows it. @alwaysrun acts on `always_run` itself (`set_always_run`).
+fn run_state(always_run: bool, temporary: bool, temprun_blocked: bool) -> bool {
+    always_run || (temporary && !temprun_blocked)
+}
+
+/// Whether a change of @temprun must reach the simulator: a double-tap run
+/// it ended (clearTempRun), or the autopilot's run, which it masks or gives
+/// back without the autopilot changing.
+pub(super) fn temprun_resync(ended_double_tap: bool, changed: bool, autopilot_run: bool) -> bool {
+    ended_double_tap || (changed && autopilot_run)
+}
+
 impl App {
     /// The run state the simulator was told (SetAlwaysRun): "Always run",
     /// a double-tap run, or the run to a double-clicked point.
     pub(super) fn running(&self) -> bool {
-        self.always_run || self.temp_run.is_some() || self.autopilot.as_ref().is_some_and(|a| a.run)
+        run_state(
+            self.always_run,
+            self.temp_run.is_some() || self.autopilot.as_ref().is_some_and(|a| a.run),
+            self.world.rlva.has("temprun"),
+        )
+    }
+
+    /// What SetAlwaysRun carries (LLAgent::sendWalkRun): `running` or a
+    /// joystick run; `send_from` masks it while VR walking overrides it.
+    pub(super) fn walk_run(&self) -> bool {
+        self.running() || self.joystick.running
     }
 
     /// Offline with AURORA_DEMO_LINK: the keys go to the stand-in simulator
@@ -133,23 +157,7 @@ impl App {
                 );
             }
             240 => {}
-            300 => {
-                let seat = self
-                    .world
-                    .objects
-                    .iter()
-                    .filter(|(_, o)| o.parent_id == 0 && !o.is_avatar() && !o.is_tree() && o.attachment_point() == 0)
-                    .filter(|(_, o)| Some(o.key.region) == self.world.main_region && o.scale.max_element() < 4.0)
-                    .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
-                    .map(|(_, o)| o.full_id);
-                if let (Some(target), Some(handle)) = (seat, self.world.main_region) {
-                    self.send(NetCommand::RequestSit {
-                        handle,
-                        target,
-                        offset: Vec3::ZERO,
-                    });
-                }
-            }
+            300 => self.demo_sit_on_nearest_prim(),
             420 => {
                 log::info!("demo sit tp: before the teleport, seated {}", self.world.agent.seated);
                 let (x, y) = (me.x - 6.0, me.y - 4.0);
@@ -177,6 +185,27 @@ impl App {
                     drawn.iter().any(|a| a.id == crate::ao::SIT_GENERIC)
                 );
             }
+        }
+    }
+
+    /// Offline: our avatar sits on the nearest small prim of the plaza
+    /// (AURORA_DEMO_SIT_TP, AURORA_DEMO_STAND_FLY=object).
+    pub(super) fn demo_sit_on_nearest_prim(&mut self) {
+        let me = self.world.agent.position;
+        let seat = self
+            .world
+            .objects
+            .iter()
+            .filter(|(_, o)| o.parent_id == 0 && !o.is_avatar() && !o.is_tree() && o.attachment_point() == 0)
+            .filter(|(_, o)| Some(o.key.region) == self.world.main_region && o.scale.max_element() < 4.0)
+            .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+            .map(|(_, o)| o.full_id);
+        if let (Some(target), Some(handle)) = (seat, self.world.main_region) {
+            self.send(NetCommand::RequestSit {
+                handle,
+                target,
+                offset: Vec3::ZERO,
+            });
         }
     }
 
@@ -319,7 +348,12 @@ impl App {
         let now = Instant::now();
         let link = self.demo_link.as_ref().map(|l| l.cfg.clone());
         let wanted = link.as_ref().and_then(|c| c.prediction).unwrap_or(self.settings.predict_own_motion);
-        let on = wanted && (!self.demo || link.is_some()) && self.world.movement_complete && !self.world.teleporting;
+        // Flying in mouselook, the region moves the avatar along the camera's
+        // pitch (the body rotation it receives, LLToolGun / gAgent.pitch); the
+        // intent and its calibration only know level motion, so the lead steps
+        // aside and the simulator's motion alone is drawn, as in the Legacy Viewer
+        let pitched_flight = self.world.agent.follows_camera_pitch(mouselook);
+        let on = wanted && (!self.demo || link.is_some()) && self.world.movement_complete && !self.world.teleporting && !pitched_flight;
         self.world.agent.set_predicting(on);
         let rtt = match &link {
             Some(c) => c.ping,
@@ -353,4 +387,26 @@ impl App {
 /// `AURORA_DEMO_SIT_TP=ao-local|ao-region` (`App::demo_sit_teleport`).
 fn demo_sit_tp_ao() -> bool {
     std::env::var("AURORA_DEMO_SIT_TP").is_ok_and(|m| m.trim().starts_with("ao-"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_state, temprun_resync};
+
+    #[test]
+    fn temprun_stops_a_temporary_run_and_leaves_always_run_alone() {
+        assert!(run_state(false, true, false));
+        assert!(!run_state(false, true, true), "@temprun refuses a double tap or double click run");
+        assert!(run_state(true, false, true), "@temprun does not stop Always run");
+        assert!(run_state(true, true, true));
+        assert!(!run_state(false, false, false));
+    }
+
+    #[test]
+    fn a_change_of_temprun_reaches_the_simulator_only_with_a_run_to_change() {
+        assert!(temprun_resync(true, true, false), "a double-tap run it ended");
+        assert!(temprun_resync(false, true, true), "an autopilot run it masks or gives back");
+        assert!(!temprun_resync(false, true, false), "nothing was running");
+        assert!(!temprun_resync(false, false, true), "no change");
+    }
 }
