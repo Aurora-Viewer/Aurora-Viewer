@@ -4714,6 +4714,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_RT_WALK=1` | Our avatar, heavy and in a hat, walks: its ray-traced shadow follows it |
 | `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
+| `AURORA_DEMO_STAINED_GLASS=sun\|lamp` | Red, green and blue panes over a white slab: the traced light they let through is coloured |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
@@ -5001,6 +5002,17 @@ both open states and the selection count. Capture at frame 620.
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
   (`AURORA_SSIL=alt`) the box's sides and the foot of the walls take the
   light of the floor and of the walls near them.
+- **`AURORA_DEMO_STAINED_GLASS=sun|lamp`**: ahead of the start position, a
+  canopy of three panes 2.2 m over a white slab, red, green and blue at an
+  alpha of 0.3, 0.5 and 0.7 (the panes of PR #3821's demo). With the
+  shadows traced (the default where the card can), the sun's light through
+  them colours the slab under each pane: a pale red, a green, a dark blue,
+  each pane letting through mix(1, rgb, a) * (1 - a) of the light; where
+  two pane shadows overlap they multiply. Ray tracing off, the shadow maps
+  let blended faces cast nothing, as the Legacy Viewer's: the slab stays
+  white. `lamp` adds a white lamp 1.4 m over the middle pane: at night
+  (`AURORA_DEMO_TOD=4`) the slab under the panes takes their colours from
+  the lamp too, and the lamp's own sphere tints nothing.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
