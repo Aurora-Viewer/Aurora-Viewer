@@ -212,6 +212,9 @@ pub struct View<'a> {
     pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
+    /// RLVa holds the view (`Rlva::camera_view_held`): the free camera
+    /// switch is greyed.
+    pub free_refused: bool,
     /// The photo quality is lowered to stay within the video memory.
     pub quality_reduced: bool,
     /// The last 360° panorama made, for the 360° format's preview.
@@ -860,7 +863,7 @@ impl SnapshotUi {
             }
         });
         row(ui, p, aurora_i18n::tr!("photo-free-camera"), None, |ui| {
-            widgets::switch(ui, p, &mut self.free.on);
+            ui.add_enabled_ui(!view.free_refused, |ui| widgets::switch(ui, p, &mut self.free.on));
         });
         free_camera_hint(ui, p, view.back_key.as_ref());
         if widgets::action_button(
@@ -1297,7 +1300,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
 /// A level of the photo's (shadows, occlusion) on Preferences' stepped
 /// slider: Preferences' `current` until one is chosen; under the photo
 /// quality's boost, never past it.
-fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
+pub(crate) fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
     use crate::snapshot::light::photo_level;
     ui.horizontal(|ui| {
         let mut level = photo_level(true, *value, current, boost);
@@ -1307,11 +1310,11 @@ fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, curren
     });
 }
 
-/// The photo's quick light (Phototools' Quick Environments, the sky, water
-/// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
-/// the photo mode gives the user's own back, unless "Keep this
-/// light".
+/// The photo's quick light (the time of day, the sky, water and day cycle
+/// lists, Pause Clouds, Attached Lights, Exposure, and the sun of
+/// "Personal lighting"). Closing the photo mode gives the user's own back,
+/// unless "Keep this light", except Pause Clouds, a switch of the session
+/// that Phototools shares.
 fn light_rows(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1427,7 +1430,7 @@ const ENV_LABEL_W: f32 = 86.0;
 /// The photo's time of day, sky, water, day cycle and sun over the
 /// environment shown (`world::eep_photo`); each row's restore button gives
 /// the user's own back.
-fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, env: &EnvView) {
+pub(crate) fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, env: &EnvView) {
     use crate::world::env_select::SettingsKind;
     ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
     ui.horizontal_wrapped(|ui| {
@@ -2035,6 +2038,7 @@ mod tests {
                 loading: false,
             },
             back_key: None,
+            free_refused: false,
             quality_reduced: false,
             pano: None,
         }

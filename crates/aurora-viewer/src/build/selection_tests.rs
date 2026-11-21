@@ -1994,3 +1994,54 @@ fn creator_navigation_shift_skips_selected_neighbors_in_both_directions() {
         assert_eq!(tool.selection, full);
     }
 }
+
+/// LLToolSelectRect::handleRectangleSelection (llglsandbox.cpp): under
+/// @fartouch its distance stands for MaxSelectDistance, limit or no limit,
+/// and under @interact no rectangle selects anything.
+#[test]
+fn rlva_rectangles_follow_fartouch_and_select_nothing_under_interact() {
+    use crate::ui::context::flags::{OBJECT_MOVE, OBJECT_YOU_OWNER};
+    let (mut world, mut tool, mut settings) = fixture();
+    let mine = object(&world, 99614);
+    let position = world.objects.get(mine).unwrap().position;
+    let eye = position - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    tool.cam = geom::Cam::new(eye, position, projection * view, 1.0, 800.0, 800.0, 1.0);
+    world.agent.position = eye;
+    set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
+    let root = world.objects.get(root_of(&world, mine)).unwrap().key;
+    let issuer = world.objects.get(mine).unwrap().full_id;
+    let agent = world.agent_id;
+    world.rlva_configure(true);
+    let restrict = |world: &mut World, text: &str| {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Controller".to_owned(),
+            source_id: issuer,
+            owner_id: agent,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: text.to_owned(),
+        }));
+    };
+    let take = |world: &mut World, tool: &mut BuildTool, settings: &BuildSettings| {
+        tool.deselect_all(world);
+        tool.rect_select(world, settings, None, (0.0, 0.0), (800.0, 800.0), false);
+        tool.selection.contains(&root)
+    };
+    settings.select_owned_only = true;
+    (settings.limit_select_distance, settings.max_select_distance) = (true, 5.0);
+    assert!(!take(&mut world, &mut tool, &settings), "farther than MaxSelectDistance");
+    restrict(&mut world, "@fartouch:12=n");
+    assert!(take(&mut world, &mut tool, &settings), "the @fartouch distance stands for it");
+    restrict(&mut world, "@fartouch:12=y");
+    settings.limit_select_distance = false;
+    assert!(take(&mut world, &mut tool, &settings));
+    restrict(&mut world, "@fartouch:5=n");
+    assert!(!take(&mut world, &mut tool, &settings), "@fartouch limits with the setting off");
+    restrict(&mut world, "@fartouch:5=y");
+    restrict(&mut world, "@interact=n");
+    assert!(!take(&mut world, &mut tool, &settings) && tool.selection.is_empty());
+}

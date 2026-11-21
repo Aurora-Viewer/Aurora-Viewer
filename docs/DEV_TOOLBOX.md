@@ -152,7 +152,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | O2 | Detail levels (LOD) | toggle | The level of the objects near the pointer, with distance and radius |
 | O3 | Culling | toggle | Tested spheres, green drawn, red culled |
 | O4 | Freeze culling | toggle | Keeps the culling view to move around it |
-| O5 | Skeletons | toggle | Bones of the avatars within 32 m |
+| O5 | Skeletons | toggle | Bones of the avatars and animated objects within 32 m, each from its joint to its end, in green, like the Legacy Viewer's Render Metadata › Joints |
 | O6 | Complexity in name tags | toggle | |
 | O7 | Inspect objects | window | Inspect Objects on the target |
 | O8 | Avatar health | window | Stop animations, undeform, rebake, refresh attachments, reset skeleton |
@@ -192,8 +192,8 @@ What a run does:
   when the avatar has none) with six copies of a Library object and one
   link. It never renames, moves, trashes or deletes anything, its own items
   included: a later run finds them again by name, place and owner.
-- **Worn objects**: its controller on Hind Right Foot, a second object on
-  Hind Left Foot, the forced-wear cases on Tail Tip. What the avatar wears
+- **Worn objects**: its controller on Right Hind Foot, a second object on
+  Left Hind Foot, the forced-wear cases on Tail Tip. What the avatar wears
   on these three points may be taken off; a case that would replace
   someone else's object on Tail Tip is skipped instead. Two of the objects
   get a small relay script (`world/bridge/selftest_relay.lsl`): it listens

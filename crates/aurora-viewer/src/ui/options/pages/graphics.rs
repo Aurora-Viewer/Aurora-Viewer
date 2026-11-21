@@ -83,6 +83,31 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
+        // an Aurora difference: the world drawn on a round planet
+        cx.experimental().toggle(
+            tr!("ui-options-planet-curvature"),
+            tr!("ui-options-planet-curvature-help"),
+            &field!(planet_curvature),
+        );
+        let flat = !cx.s.planet_curvature;
+        cx.subs(flat, |cx| {
+            cx.row(
+                tr!("ui-options-planet-radius"),
+                tr!("ui-options-planet-radius-help"),
+                &field!(planet_radius_km),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.planet_radius_km, crate::settings::PLANET_RADIUS_KM_RANGE)
+                            .logarithmic(true)
+                            .step_by(1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .suffix(" km")
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
         cx.toggle(
             tr!("ui-options-keep-environment"),
             tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -1139,6 +1164,11 @@ fn depth_of_field(cx: &mut Cx) {
                     (FocusMode::Click, tr!("ui-options-dof-focus-click"), true),
                     (FocusMode::Locked, tr!("ui-options-dof-focus-locked"), true),
                 ],
+            );
+            cx.toggle(
+                tr!("ui-options-dof-show-focus-point"),
+                tr!("ui-options-dof-show-focus-point-help"),
+                &field!(dof.show_focus_point),
             );
             cx.row(
                 tr!("ui-options-dof-aperture"),

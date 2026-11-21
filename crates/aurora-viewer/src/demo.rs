@@ -33,6 +33,10 @@ pub mod texture_library;
 #[path = "demo_water.rs"]
 pub mod water;
 
+/// Planet curvature over the void sea (AURORA_DEMO_HORIZON).
+#[path = "demo_horizon.rs"]
+pub mod horizon;
+
 pub(crate) const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
@@ -7864,6 +7868,14 @@ pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uu
         NetEvent::MainRegionChanged { handle },
         NetEvent::AgentMovementComplete { handle, position, look_at },
     ])
+}
+
+/// AURORA_DEMO_TP_AWAY=snow (#3664): the same trip over lying snow. The
+/// ground fills with snow at frame 300 in calm weather (the Weather window's
+/// snow-fill button), and the arrivals go through the app as from the
+/// network, which cleans the snow left behind.
+pub fn away_snow() -> bool {
+    std::env::var("AURORA_DEMO_TP_AWAY").is_ok_and(|v| v == "snow")
 }
 
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,

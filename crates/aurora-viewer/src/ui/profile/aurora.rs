@@ -201,6 +201,12 @@ fn region_of(world: &World, id: &Uuid, own: bool) -> Option<String> {
     if world.rlva.has("showloc") {
         return None;
     }
+    // Another resident's region comes from the avatars around us, which
+    // RlvActions::canShowNearbyAgents (indra/newview/rlvactions.cpp) hides
+    // from the nearby list and the radar under @shownearby.
+    if !own && world.rlva.has("shownearby") {
+        return None;
+    }
     if own {
         return Some(world.region_name()).filter(|n| !n.is_empty());
     }
@@ -2168,3 +2174,29 @@ impl Edit {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    #[test]
+    fn another_residents_region_is_hidden_under_shownearby_but_ours_is_not() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        // a resident known by the coarse locations of our region
+        let handle = world.main_region.expect("the demo has a region");
+        let near = Uuid::from_u128(0x5eed);
+        world.coarse.entry(handle).or_default().push((near, glam::Vec3::ONE));
+        assert!(world.regions.get(&handle).is_some_and(|r| !r.name.is_empty()));
+        assert!(region_of(&world, &near, false).is_some());
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert_eq!(region_of(&world, &near, false), None, "who stands around is hidden");
+        let own = world.agent_id;
+        assert!(region_of(&world, &own, true).is_some(), "our own region is not nearby information");
+        world.rlva_console_input("@shownearby=y");
+        assert!(region_of(&world, &near, false).is_some());
+    }
+}

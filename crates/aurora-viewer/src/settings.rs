@@ -768,6 +768,10 @@ pub struct Settings {
     pub env_persist: bool,
     /// The weather of this viewer (the Environment window's "Weather").
     pub weather: crate::weather::WeatherSettings,
+    /// Sky, water and day cycle lists A–Z instead of the inventory's order
+    /// (an Aurora switch on the lists, off: the order since #812; the
+    /// Legacy Viewer's lists are always by name).
+    pub env_lists_by_name: bool,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -797,6 +801,11 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Planet curvature (aurora_render::curvature, Aurora's own; the
+    /// Legacy Viewer draws the regions flat): off by default.
+    pub planet_curvature: bool,
+    /// The planet's radius (km), the Earth's by default.
+    pub planet_radius_km: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1974,6 +1983,10 @@ pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
 
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
+/// Planet curvature's radius (km): the Earth's, and the slider's range.
+pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
+pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
+    aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2444,6 +2457,7 @@ impl Default for Settings {
             env_manual_transition: 0.0,
             env_persist: true,
             weather: Default::default(),
+            env_lists_by_name: false,
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2456,6 +2470,8 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            planet_curvature: false,
+            planet_radius_km: PLANET_RADIUS_KM,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -3243,6 +3259,12 @@ impl Settings {
         self.joystick.enabled = false;
     }
 
+    /// The radius of the planet the world is drawn on (m), None while the
+    /// curvature is off (FrameParams::curvature).
+    pub(crate) fn planet_radius(&self) -> Option<f32> {
+        self.planet_curvature.then_some(self.planet_radius_km * 1000.0)
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self.settings_version <= SETTINGS_VERSION {
             self.gamepad.migrate_gamepad_layout();
@@ -3669,6 +3691,12 @@ impl Settings {
         } else {
             BLOOM_STRENGTH
         };
+        self.planet_radius_km = if self.planet_radius_km.is_finite() {
+            self.planet_radius_km
+                .clamp(*PLANET_RADIUS_KM_RANGE.start(), *PLANET_RADIUS_KM_RANGE.end())
+        } else {
+            PLANET_RADIUS_KM
+        };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };
         self.large_surface_prim_threshold = area(self.large_surface_prim_threshold, 75.0);
@@ -3847,6 +3875,21 @@ impl Settings {
             }
             copy.write_saved(&path);
         });
+    }
+
+    /// `save`, with the view angle `fov` (radians) written as the user's
+    /// own: the viewfinder puts its focal length in `camera.fov` while it
+    /// is on and gives the user's back when it closes, so a save made in
+    /// the meantime must not keep the focal length.
+    pub fn save_with_fov(&self, fov: Option<f32>) {
+        match fov {
+            Some(fov) if (fov - self.camera.fov).abs() > 1e-6 => {
+                let mut copy = self.clone();
+                copy.camera.fov = fov;
+                copy.save();
+            }
+            _ => self.save(),
+        }
     }
 
     /// What is written to the file: the user's own graphics values while
@@ -4353,6 +4396,24 @@ mod tests {
             }
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn planet_curvature_is_off_by_default_on_the_earth_and_kept_on_its_slider() {
+        let s = super::Settings::default();
+        assert!(!s.planet_curvature);
+        assert_eq!(s.planet_radius(), None);
+        assert_eq!(s.planet_radius_km, 6371.0);
+        for (asked, kept) in [(1.0, 1000.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
+            let s = super::Settings {
+                planet_curvature: true,
+                planet_radius_km: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.planet_radius_km, kept, "{asked} km");
+            assert_eq!(s.planet_radius(), Some(kept * 1000.0));
         }
     }
 
@@ -6139,6 +6200,21 @@ mod tests {
             .join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&dir).expect("scratch folder");
         dir.join("settings.json")
+    }
+
+    #[test]
+    fn glow_off_survives_saving_and_loading_settings() {
+        let path = scratch_settings_file();
+        let settings = Settings {
+            glow: false,
+            ..Settings::default()
+        };
+
+        settings.save_to(&path);
+        let loaded = Settings::load_from(&path);
+
+        assert!(!loaded.glow);
+        let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
     }
 
     fn read_back(path: &Path) -> serde_json::Value {

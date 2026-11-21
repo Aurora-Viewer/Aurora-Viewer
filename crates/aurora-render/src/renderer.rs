@@ -20,6 +20,7 @@
 //! (main_thread.rs): the backend only sees the handles a packet carries,
 //! and it alone uses the queue.
 
+use crate::curvature::Curvature;
 use crate::gpu_cull::{
     BIN_PROBE, BIN_PROBE_SHADOW, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1,
     COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
@@ -224,6 +225,8 @@ struct FrameU {
     /// x: how far the snow lying is drawn (m), whatever falls
     /// (`RainLook::snow_distance`); yzw unused.
     snow_far: [f32; 4],
+    /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
+    curvature: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -2160,6 +2163,8 @@ pub(crate) struct Backend {
     shadow_path: u32,
     /// Inverse view-projection of the last rendered frame (picking).
     last_inv_vp: Mat4,
+    /// The planet's curvature the last frame was drawn with (picking).
+    last_curvature: Curvature,
     msaa_supported: Vec<u32>,
     /// Set by the device-lost callback: the GPU is never waited on again
     /// (device_lost.rs).
@@ -4585,6 +4590,7 @@ impl Backend {
             anim_now: [0; 4],
             shadow_path: crate::shadow_cull::path::NEW,
             last_inv_vp: Mat4::IDENTITY,
+            last_curvature: Curvature::FLAT,
             msaa_supported,
             lost,
             gpu_frames,
@@ -7568,6 +7574,9 @@ impl Backend {
         u.lightning = f.rain_look.lightning;
         u.aurora = f.rain_look.aurora;
         u.snow_far = [f.rain_look.snow_distance, 0.0, 0.0, 0.0];
+        // centred on the main camera in every pass (`f` is the main view's,
+        // reflections and probes included)
+        u.curvature = Curvature::new(f.camera_pos, f.curvature).uniform();
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -8475,6 +8484,7 @@ impl Backend {
             &self.targets.depth_ss,
             previous_scene,
             self.last_inv_vp,
+            self.last_curvature,
             picks,
         );
         // a 360° capture's faces share the snapshot targets; any other frame
@@ -9205,7 +9215,11 @@ impl Backend {
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
         // (asked in window pixels: a photo frame answers none of them)
         let drawn_px = if snapshot.is_none() {
-            self.drawn_pick.begin((self.config.width, self.config.height), main_vp.inverse())
+            self.drawn_pick.begin(
+                (self.config.width, self.config.height),
+                main_vp.inverse(),
+                Curvature::new(f.camera_pos, f.curvature),
+            )
         } else {
             None
         };
@@ -9222,6 +9236,9 @@ impl Backend {
             // (HUD records are in screen space: nothing to take away)
             hud.eye_view_proj = hud.view_proj;
             hud.eye = [0.0; 4];
+            // nor a planet under it: the curvature would lower every HUD face
+            // by the drop at the camera's place in the region
+            hud.curvature = [0.0; 4];
             hud.screen = [
                 self.config.width as f32,
                 self.config.height as f32,
@@ -9283,6 +9300,13 @@ impl Backend {
         };
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
+            // The mirror flips z after the bend: a point bent down by the
+            // drop would come out raised by it, its reflection twice the
+            // drop too high. Bent up, it comes out as the reflection of the
+            // flat world bent down, as the water it is seen in (exact for
+            // this horizontal plane; a mirror's tilted plane is near the
+            // camera, where the drop is nothing)
+            u.curvature[2] = -u.curvature[2];
             u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));
@@ -9370,6 +9394,8 @@ impl Backend {
             // eye: the card takes those of its real distance
             u.sky_ll[1] = 0.0;
             u.fog[3] = 0.0;
+            // flat: the card is bent where it stands (vs_impostor)
+            u.curvature = [0.0; 4];
             let r = IMPOSTOR_TILE as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[3 + i], 0, bytemuck::bytes_of(&u));
@@ -12022,6 +12048,7 @@ impl Backend {
             &self.targets.depth_ss,
             world_size,
             unjittered_vp.inverse(),
+            Curvature::new(f.camera_pos, f.curvature),
         );
         let enc_scene = std::mem::replace(
             &mut encoder,
@@ -12155,6 +12182,7 @@ impl Backend {
         self.prev_view_proj = Some(unjittered_vp);
         self.prev_motion_view = Some((f.proj, f.view));
         self.last_inv_vp = unjittered_vp.inverse();
+        self.last_curvature = Curvature::new(f.camera_pos, f.curvature);
 
         // ---- automatic exposure, from the resolved scene and the glow of
         // the last frame, into the post uniforms the glow, the bloom and the
@@ -13036,6 +13064,7 @@ impl Backend {
             width: self.scene_size().0,
             height: self.scene_size().1,
             inv_view_proj: self.last_inv_vp,
+            curvature: self.last_curvature,
         };
         self.depth_pick
             .blocking(&self.device, &self.queue, &self.lost, &self.targets.depth_ss, px)
