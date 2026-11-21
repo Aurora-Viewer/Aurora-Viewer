@@ -1026,6 +1026,7 @@ impl App {
                     self.send(NetCommand::ActivateGroup(id));
                 }
             }
+            CtxAction::JoinGroup(id) => self.group_profile_ui.request_join(&mut self.world, id),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
             CtxAction::LeaveGroup(id) => {
                 if self.world.rlva_can_leave_group(id) {

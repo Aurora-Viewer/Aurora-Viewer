@@ -970,3 +970,78 @@ fn post_links_ability_follows_the_region() {
     world.apply(features(false));
     assert!(!view::View::of(&world, DEMO_GROUP1).post_links);
 }
+
+#[test]
+fn object_group_context_join_waits_for_profile_then_confirms() {
+    let mut world = world(false, 0);
+    world.balance = Some(1000);
+    world.search.groups.remove(&DEMO_GROUP1);
+
+    let mut st = GroupProfileUi::default();
+    st.request_join(&mut world, DEMO_GROUP1);
+
+    assert_eq!(st.pending_join, Some(DEMO_GROUP1));
+    assert!(world.search.take_commands().iter().any(|cmd| {
+        matches!(
+            cmd,
+            aurora_net::NetCommand::GroupProfileRequest(id)
+                if *id == DEMO_GROUP1
+        )
+    }));
+
+    // A missing profile must not trigger a premature join.
+    let (_, actions) = texts(&mut st, &world, false);
+    assert_eq!(st.pending_join, Some(DEMO_GROUP1));
+    assert!(st.confirm.is_none());
+    assert!(!actions.iter().any(|a| matches!(a, GroupAction::Join(_))));
+
+    // The server supplies the group's enrollment details.
+    world.apply(NetEvent::GroupProfile(Box::new(GroupProfile {
+        id: DEMO_GROUP1,
+        name: "Aurora Builders".into(),
+        open_enrollment: true,
+        membership_fee: 250,
+        ..Default::default()
+    })));
+
+    let (_, actions) = texts(&mut st, &world, false);
+
+    assert_eq!(st.pending_join, None);
+    assert!(matches!(
+        &st.confirm,
+        Some(Confirm::Join {
+            group,
+            fee: 250,
+            ..
+        }) if *group == DEMO_GROUP1
+    ));
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::Join(_))),
+        "joining still requires confirmation"
+    );
+}
+
+#[test]
+fn object_group_context_join_respects_membership_and_enrollment() {
+    // A member cannot request to join the same group again.
+    let mut member_world = world(true, MEMBER);
+    let mut st = GroupProfileUi::default();
+    st.request_join(&mut member_world, DEMO_GROUP1);
+    assert_eq!(st.pending_join, None);
+
+    // An invitation-only group cannot trigger a join confirmation.
+    let mut closed_world = world(false, 0);
+    closed_world
+        .search
+        .groups
+        .get_mut(&DEMO_GROUP1)
+        .expect("group profile")
+        .open_enrollment = false;
+
+    st.request_join(&mut closed_world, DEMO_GROUP1);
+    let (_, actions) = texts(&mut st, &closed_world, false);
+
+    assert_eq!(st.pending_join, None);
+    assert!(st.confirm.is_none());
+    assert!(!actions.iter().any(|a| matches!(a, GroupAction::Join(_))));
+}

@@ -619,6 +619,7 @@ pub enum CtxAction {
     GroupChat(Uuid),
     /// Make a group active (ActivateGroup), pin it in the lists, leave it.
     ActivateGroup(Uuid),
+    JoinGroup(Uuid),
     PinGroup(Uuid),
     LeaveGroup(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
