@@ -590,7 +590,7 @@ fn the_photo_quality_and_the_steps_keep_the_users_values() {
         },
     );
     s.autotune_hold = Some(h);
-    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Duration::from_secs(20), Instant::now());
+    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Instant::now());
     s.draw_stepping = Some(steps);
     s.draw_distance = value;
     assert_eq!(s.to_saved().draw_distance, 256.0, "saved during the steps: the user's");
@@ -688,7 +688,7 @@ fn a_change_of_the_avatars_during_the_steps_is_the_users() {
             max_avatars: 8,
         },
     );
-    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Duration::from_secs(20), Instant::now());
+    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Instant::now());
     s.draw_stepping = Some(steps);
     s.draw_distance = value;
     // the user sets 10 avatars in Preferences during the steps
