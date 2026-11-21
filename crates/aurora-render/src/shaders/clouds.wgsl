@@ -446,6 +446,40 @@ fn jitter_of(p: vec2u) -> f32 {
 }
 fn sky_off() -> vec2f { return u.cam.xy + u.drift.xy; }
 
+// A trace or history texel with no cloud sample: an object stands in front
+// of the sky there. It is not "no cloud" (T = 1): taken as one, it widened
+// the reconstruction's clamp and stayed in the history, and the sky beside a
+// silhouette lost its clouds in 4x4 blocks that crawled with the camera.
+const NO_SAMPLE: vec4f = vec4f(0.0, 0.0, 0.0, -1.0);
+fn has_sample(s: vec4f) -> bool { return s.a >= 0.0; }
+
+// Bilinear read at `p` (in texels, a texel's centre on an integer), weighted
+// over the texels that hold a sample only. NO_SAMPLE when none of the four
+// does.
+fn bilinear_samples(img: texture_2d<f32>, p: vec2f) -> vec4f {
+    let dim = vec2i(textureDimensions(img));
+    let i = vec2i(floor(p));
+    let f = p - floor(p);
+    var sum = vec4f(0.0);
+    var w = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2i(k & 1, k >> 1);
+        let s = textureLoad(img, clamp(i + o, vec2i(0), dim - 1), 0);
+        let wt = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+        if has_sample(s) {
+            sum += s * wt;
+            w += wt;
+        }
+    }
+    if w <= 1e-6 { return NO_SAMPLE; }
+    return sum / w;
+}
+
+// The half-resolution image (or a still's) at a screen uv.
+fn read_samples(uv: vec2f) -> vec4f {
+    return bilinear_samples(hist_t, uv * vec2f(textureDimensions(hist_t)) - 0.5);
+}
+
 // ---------------------------------------------------------------- main-view trace (sky pixels, half res, a quarter a frame)
 @compute @workgroup_size(8, 8)
 fn trace(@builtin(global_invocation_id) id: vec3u) {
@@ -454,7 +488,7 @@ fn trace(@builtin(global_invocation_id) id: vec3u) {
     let hp = id.xy * 2u + checker(u.misc.x);
     let fpx = (vec2f(hp) + 0.5) * 2.0;
     if any(hp >= u.sizes.zw) || !near_sky(hp) {
-        textureStore(trace_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
+        textureStore(trace_w, id.xy, NO_SAMPLE);
         textureStore(tdepth_w, id.xy, vec4f(FAR_KM));
         return;
     }
@@ -531,18 +565,25 @@ fn recon(@builtin(global_invocation_id) id: vec3u) {
     if any(hp >= u.sizes.zw) { return; }
     let fpx = (vec2f(hp) + 0.5) * 2.0;
     if !near_sky(hp) {
-        textureStore(hist_w, hp, vec4f(0.0, 0.0, 0.0, 1.0));
+        textureStore(hist_w, hp, NO_SAMPLE);
         return;
     }
     let c = vec2i(hp / 2u);
     let ts = vec2i(textureDimensions(trace_t)) - 1;
+    // The clamp's range and the fallback mean, over the samples only.
     var mn = vec4f(1e9);
     var mx = vec4f(-1e9);
+    var sum = vec4f(0.0);
+    var n = 0.0;
     for (var dy = -1; dy <= 1; dy++) {
         for (var dx = -1; dx <= 1; dx++) {
             let s = textureLoad(trace_t, clamp(c + vec2i(dx, dy), vec2i(0), ts), 0);
-            mn = min(mn, s);
-            mx = max(mx, s);
+            if has_sample(s) {
+                mn = min(mn, s);
+                mx = max(mx, s);
+                sum += s;
+                n += 1.0;
+            }
         }
     }
     let fresh = textureLoad(trace_t, c, 0);
@@ -559,13 +600,30 @@ fn recon(@builtin(global_invocation_id) id: vec3u) {
     let ndc = clip.xy / clip.w;
     let puv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     let valid = u.misc.w == 1u && clip.w > 0.0 && all(puv >= vec2f(0.0)) && all(puv <= vec2f(1.0));
-    var o = fresh;
+    var h = NO_SAMPLE;
     if valid {
-        let h = clamp(textureSampleLevel(hist_t, samp, puv, 0.0), mn, mx);
-        if is_fresh {
+        h = read_samples(puv);
+    }
+    // The pixel is near the sky, so it always leaves with a sample: the
+    // history, else (sky just uncovered by a moving object) the trace read
+    // bilinearly at this pixel (this frame's samples sit at `checker`), else
+    // its neighbours' mean, and "no cloud" only when an object hides the
+    // whole neighbourhood.
+    var o = vec4f(0.0, 0.0, 0.0, 1.0);
+    if has_sample(h) {
+        if n > 0.0 {
+            h = clamp(h, mn, mx);
+        }
+        o = h;
+        if is_fresh && has_sample(fresh) {
             o = mix(h, fresh, 0.25);
-        } else {
-            o = h;
+        }
+    } else {
+        let fill = bilinear_samples(trace_t, (vec2f(hp) - vec2f(checker(u.misc.x))) * 0.5);
+        if has_sample(fill) {
+            o = fill;
+        } else if n > 0.0 {
+            o = sum / n;
         }
     }
     textureStore(hist_w, hp, o);
@@ -583,8 +641,9 @@ fn vs_clouds(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
 }
 
 fn clouds_pixel(pos: vec4f) -> vec4f {
-    let uv = pos.xy / vec2f(u.sizes.xy);
-    return textureSampleLevel(hist_t, samp, uv, 0.0);
+    let s = read_samples(pos.xy / vec2f(u.sizes.xy));
+    // A texel with no sample lies under an object, drawn over this later.
+    return select(vec4f(0.0, 0.0, 0.0, 1.0), s, has_sample(s));
 }
 
 @fragment
