@@ -139,15 +139,20 @@ pub fn on_panel(c: Color32) -> Color32 {
     if let Some((_, out)) = seen.iter().find(|(k, _)| *k == c) {
         return *out;
     }
-    let [r, g, b, a] = c.to_srgba_unmultiplied();
-    let moved = readable(Color32::from_rgb(r, g, b), *ground, TEXT);
-    let out = Color32::from_rgba_unmultiplied(moved.r(), moved.g(), moved.b(), a);
+    let out = on_ground(c, *ground);
     // a handful of colours: the chat's settings and the contact sets'
     if seen.len() > 64 {
         seen.clear();
     }
     seen.push((c, out));
     out
+}
+
+/// `on_panel`'s rule on a given background, its alpha kept.
+pub fn on_ground(c: Color32, ground: Color32) -> Color32 {
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    let moved = readable(Color32::from_rgb(r, g, b), ground, TEXT);
+    Color32::from_rgba_unmultiplied(moved.r(), moved.g(), moved.b(), a)
 }
 
 /// What the readability rules would move for `colors` over the skin.

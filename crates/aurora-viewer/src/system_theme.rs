@@ -17,8 +17,8 @@
 //! A colour the user chose in Preferences wins over the system's (`colors`).
 //! Dark keeps the skin's own background and text; on Windows and macOS a
 //! system with no preference counts as dark, the viewer's own look, but on
-//! Linux the portal's "no preference" is GNOME's light style
-//! (`scheme_from_portal`).
+//! Linux the portal's "no preference" counts as light, as it is the light
+//! style of GNOME before 47 (`scheme_from_portal`).
 
 use crate::interface_colors::InterfaceColors;
 use crate::settings::Rgba;
@@ -148,7 +148,7 @@ pub fn start(wait: bool) {
 }
 
 /// Whether the option is on now (every frame): the thread outlives it, and
-/// a read that repeats stops while nothing follows it.
+/// a read that repeats (Windows' accent) stops while nothing follows it.
 pub fn set_active(on: bool) {
     ACTIVE.store(on, Ordering::Relaxed);
 }
@@ -179,10 +179,14 @@ pub fn window_theme(theme: Option<winit::window::Theme>) {
     update(|look| look.scheme = scheme);
 }
 
-/// The portal's `color-scheme`: only "prefer dark" (1) is dark. GNOME's
-/// light style sends "no preference" (0), never "prefer light" (2), and
-/// the GTK apps beside the viewer draw light on it; an unknown value counts
-/// as no preference, as the portal's documentation asks.
+/// The portal's `color-scheme`: only "prefer dark" (1) is dark, and every
+/// other value is light. GNOME before 47 sends "no preference" (0) for its
+/// light style, never "prefer light" (2), and the GTK apps beside the viewer
+/// draw light on it. So a desktop whose portal reports no preference (Sway,
+/// Hyprland or i3 with xdg-desktop-portal-gtk) turns the viewer light, and
+/// so does an unknown value, where the portal's documentation would have it
+/// count as no preference. A portal with no `color-scheme` at all leaves
+/// the skin's background and text.
 #[cfg(any(target_os = "linux", test))]
 fn scheme_from_portal(value: u32) -> Scheme {
     match value {
@@ -344,6 +348,12 @@ mod backend {
         }
         reported(mode);
         let _ = ready.send(());
+        // Once started, this thread and its bus connection live until the
+        // viewer quits, even with the option turned off again: a change
+        // still updates `LOOK`, ready for when it is back on. zbus follows the
+        // portal's name to a new owner, so a restarted portal's signals
+        // still arrive, but the values are not read again: a change made
+        // while the portal was down shows at its next change.
         for msg in signals {
             match msg.body().deserialize::<(String, String, OwnedValue)>() {
                 Ok((namespace, key, value)) if namespace == APPEARANCE => apply(&key, &value),

@@ -223,12 +223,7 @@ impl Role {
         if !k.relation_names {
             return p.ink;
         }
-        // a tag that would not read on a light interface moves, and further
-        // than on a window: the plate is glass, so the world darkens it
-        let on_plate = |tag: Color32| {
-            let moved = crate::interface_colors::on_panel(tag);
-            if moved == tag { tag } else { moved.lerp_to_gamma(p.ink, 0.5) }
-        };
+        let on_plate = |tag| on_plate(tag, p.ink, crate::interface_colors::on_panel);
         match self {
             Role::Resident => p.ink,
             Role::Own => on_plate(c(k.tag_me)),
@@ -237,6 +232,15 @@ impl Role {
             Role::Blocked => on_plate(c(k.tag_muted)),
         }
     }
+}
+
+/// A relation tag on the plate, for every chosen light background, not only
+/// the system theme's: a tag that would not read (`on_panel`, the chat's
+/// rule) moves, and further toward `ink` than on a window, as the plate is
+/// glass and the world darkens it; on the skin's own panel it stays.
+fn on_plate(tag: Color32, ink: Color32, on_panel: impl Fn(Color32) -> Color32) -> Color32 {
+    let moved = on_panel(tag);
+    if moved == tag { tag } else { moved.lerp_to_gamma(ink, 0.5) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
