@@ -2369,7 +2369,9 @@ fn rain_ring_detail(footprint: f32) -> f32 {
 
 // Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
 // place; the normal tilts across each ring's expanding crest. The cells'
-// lattice is turned to an angle of its own for each layer (`salt`) and bent
+// lattice is turned to an angle of its own for each layer (`salt`: about
+// 25, 65 and 12 degrees off the world's axes, a square lattice repeating
+// every 90; a salt near an axis brings its rows back) and bent
 // by slow noise (up to half a cell each way): square cells along the world's
 // axes set the drops out at an even spacing, which showed as a grid along a
 // lamp's reflection.
@@ -2452,7 +2454,7 @@ fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f
     let bend = rain_ripple_bend(xy);
     var slope = rain_ripples_layer(xy, time, 0.6, 0.9, 0u, bend);
     if (quality >= 1 && heavy > 0.25) {
-        slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x9e3779b9u, bend) * smoothstep(0.25, 0.65, heavy);
+        slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x165667b1u, bend) * smoothstep(0.25, 0.65, heavy);
     }
     if (quality >= 2 && heavy > 0.55) {
         slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu, bend) * smoothstep(0.55, 0.95, heavy);
