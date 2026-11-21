@@ -12,9 +12,11 @@ use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::{self, Ctx};
 use crate::ui::{colors, menu, place_card, widgets};
+use crate::world::names::NameScope;
 use crate::world::place_details::{Place, Source, Stage};
 use crate::world::profiles::{self, Online};
 use crate::world::search::{self, Key, Row, RowIcon, Tab, Value};
+use aurora_i18n::UiUpper;
 use aurora_net::profile::classified_flags;
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Vec2};
 use glam::DVec3;
@@ -100,7 +102,7 @@ fn stats(ui: &mut egui::Ui, p: &Palette, items: &[(&str, String)]) {
 fn caps(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(2.0);
     ui.label(
-        RichText::new(text.to_uppercase())
+        RichText::new(text.ui_upper())
             .size(11.0)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),
@@ -142,8 +144,12 @@ fn person(
         wanted_pics.insert(id);
     }
     c.want_names.insert(id);
-    let name = world.social.avatar_names.complete(&id).unwrap_or_else(|| row_name.to_owned());
-    let gear = |ui: &mut egui::Ui| context::avatar_list_menu(ui, p, world, id, context::AvatarList::Name);
+    let name = world
+        .social
+        .avatar_names
+        .complete_in(NameScope::Roster, &id)
+        .unwrap_or_else(|| row_name.to_owned());
+    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Search);
     let buttons = [
         Btn::new("user-filled", aurora_i18n::tr!("search-aurora-profile")).primary(),
         Btn::new("message-circle-filled", aurora_i18n::tr!("search-aurora-message")).enabled(!own),
@@ -184,7 +190,7 @@ fn person(
         // the legacy reply (no AgentProfile capability) has no groups
         if !pr.legacy {
             let mut groups: Vec<&str> = pr.groups.iter().map(|g| g.name.as_str()).collect();
-            groups.sort_by_key(|g| g.to_lowercase());
+            groups.sort_by_key(|g| crate::natural_order::key(g));
             let text = if groups.is_empty() {
                 aurora_i18n::tr!("common-none").to_owned()
             } else {
@@ -197,7 +203,7 @@ fn person(
     });
     let act = |a: CtxAction| context::request(ui.ctx(), a);
     match clicked {
-        Some(0) => act(CtxAction::Profile(id)),
+        Some(0) => act(CtxAction::RosterProfile(id)),
         Some(1) => act(CtxAction::Im(id)),
         Some(2) => act(CtxAction::OfferTeleport(id)),
         Some(3) => act(CtxAction::AddFriend(id)),
@@ -471,17 +477,11 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         // onBtnEventReminder: LLEventNotifier is not ported
         Btn::new("bell-filled", aurora_i18n::tr!("search-aurora-remind")).not_yet(),
     ];
-    let start = info
-        .map(|e| e.date_utc as i64)
-        .filter(|t| *t > 0)
-        .or_else(|| match row.and_then(|r| r.values.first()) {
-            Some(Value::Dated { unix, .. }) => Some(*unix as i64),
-            _ => None,
-        });
+    let start = super::event_start(info.map_or(0, |e| e.date_utc), row.and_then(|r| r.values.first()));
     let clicked = pane(ui, p, ("aurora-search-event", Key::Event(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         if let Some(t) = start {
-            date_banner(ui, p, t, info.map(|e| search::event_duration(e.duration)));
+            date_banner(ui, p, t, info.map_or(0, |e| e.duration));
         }
         ui.add_space(4.0);
         let Some(e) = info else {
@@ -495,7 +495,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         };
         head(ui, p, &e.name, None, Some(content), &e.category);
         ui.add_space(4.0);
-        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &e.date);
+        let date = super::event_date_text(&e.date, start.unwrap_or_default(), crate::ui::bars::clock::zone());
+        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &date);
         text_field(
             ui,
             p,
@@ -533,8 +534,11 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
 
 /// The event's day in large type, its time and duration beside it, and
 /// "Started" once its start is past.
-fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<String>) {
-    let (_, month, day, _, hour, minute, _) = crate::ui::land::slt_parts(start);
+/// The start of an event: month, day, and its hours from start to end in
+/// the clock's zone, which the line under them names (#1754).
+fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, minutes: u32) {
+    let zone = crate::ui::bars::clock::zone();
+    let (_, month, day, ..) = super::event_parts(start, zone);
     let width = ui.available_width();
     egui::Frame::new()
         .fill(p.field)
@@ -548,7 +552,7 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<Stri
                 let font = crate::ui::fonts::semibold(ui.ctx());
                 let mon = crate::ui::land::months()[(month.max(1) - 1).min(11)]
                     .trim_end_matches('.')
-                    .to_uppercase();
+                    .ui_upper();
                 let m = ui.painter().layout_no_wrap(mon, FontId::new(11.0, font.clone()), p.violet_light);
                 widgets::paint_ink_centered(ui.painter(), m, Pos2::new(rect.center().x, rect.top() + 7.0), p.violet_light);
                 let d = ui.painter().layout_no_wrap(day.to_string(), FontId::new(24.0, font), p.ink);
@@ -556,11 +560,14 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<Stri
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(3.0);
-                    ui.label(RichText::new(format!("{hour:02}:{minute:02}")).size(15.0).strong().color(p.ink));
-                    let mut sub = aurora_i18n::tr!("search-aurora-slt").to_owned();
-                    if let Some(d) = duration {
-                        sub = format!("{sub} · {d}");
-                    }
+                    let hours = super::event_hours(start, minutes, zone);
+                    ui.label(RichText::new(hours).size(15.0).strong().color(p.ink));
+                    let sub = match zone {
+                        crate::settings::ClockZone::Slt => aurora_i18n::tr!("search-aurora-slt").to_owned(),
+                        crate::settings::ClockZone::Local => {
+                            super::event_zone_range(start, minutes, |t| crate::ui::bars::clock::zone_name(zone, t))
+                        }
+                    };
                     ui.label(RichText::new(sub).size(12.0).color(p.muted));
                 });
                 if start <= super::unix_now() {

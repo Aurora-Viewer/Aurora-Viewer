@@ -98,6 +98,9 @@ pub struct GesturesUi {
     editor_order: Vec<Uuid>,
     raise_editor: Option<Uuid>,
     pub message: String,
+    /// Gestures (item, asset) that could not be loaded, with why: shown on
+    /// their row, and not loaded again in the background until Refresh.
+    pub failed: BTreeMap<(Uuid, Uuid), String>,
     selected: BTreeSet<Uuid>,
     anchor: Option<Uuid>,
     filter: String,
@@ -133,7 +136,7 @@ impl GesturesUi {
             .filter(|it| it.asset_type == 21 && !rules::library(inv, it.id) && !rules::in_type(inv, it.id, 14))
             .map(|it| it.id)
             .collect();
-        self.catalog.sort_by_cached_key(|id| inv.items[id].name.to_lowercase());
+        self.catalog.sort_by_cached_key(|id| crate::natural_order::key(&inv.items[id].name));
         self.selected.retain(|id| inv.items.contains_key(id));
     }
 }
@@ -185,7 +188,12 @@ pub fn show(
             let empty = state.rows.is_empty();
             let (mut list, foot) = widgets::above_footer(ui);
             let rows = &state.rows;
-            egui::ScrollArea::vertical()
+            let target = state
+                .anchor
+                .filter(|id| state.selected.contains(id))
+                .or_else(|| state.selected.first().copied());
+            let selected_row = rows.iter().position(|id| Some(*id) == target);
+            widgets::search_scroll_to_row(&list, egui::ScrollArea::vertical(), selected_row, 24.0)
                 .max_height(list.available_height())
                 .auto_shrink([false, false])
                 .show_rows(&mut list, 24.0, rows.len(), |ui, range| {
@@ -195,8 +203,12 @@ pub fn show(
                         ui.push_id(id, |ui| {
                             let active = manager.active.contains(&id);
                             let selected = state.selected.contains(&id);
-                            let response = ui.add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, ""));
+                            let failed = state.failed.get(&(id, it.asset_id));
+                            let mut response = ui.add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, ""));
                             response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &it.name));
+                            if let Some(reason) = failed {
+                                response = response.on_hover_text(reason.as_str());
+                            }
                             ui.scope_builder(
                                 egui::UiBuilder::new()
                                     .max_rect(response.rect)
@@ -208,6 +220,8 @@ pub fn show(
                                     }
                                     let text = RichText::new(&it.name).color(if selected {
                                         p.on_accent
+                                    } else if failed.is_some() {
+                                        p.warn
                                     } else if active {
                                         p.ink
                                     } else {
@@ -346,11 +360,12 @@ pub fn show(
                     ) {
                         out.push(Action::Active(state.selected.iter().copied().collect(), activate));
                     }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.filter)
-                            .hint_text(aurora_i18n::tr!("gesture-filter"))
-                            .desired_width(ui.available_width() - 30.0),
-                    );
+                    {
+                        let width = ui.available_width();
+                        crate::ui::widgets::search_text_edit(ui, p, &mut state.filter, |edit| {
+                            edit.hint_text(aurora_i18n::tr!("gesture-filter")).desired_width(width - 30.0)
+                        })
+                    };
                     if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), !state.selected.is_empty()) {
                         out.push(Action::Delete(state.selected.iter().copied().collect()));
                     }
@@ -434,11 +449,13 @@ impl GesturesUi {
             let it = &inv.items[id];
             let gesture = manager.entries.get(id);
             let primary = match self.sort {
-                1 => gesture.map_or_else(String::new, |e| e.definition.trigger.to_lowercase()),
-                2 => gesture.map_or_else(String::new, |e| keys::shortcut(e.definition.key, e.definition.mask)),
-                _ => it.name.to_lowercase(),
+                1 => gesture.map_or_else(Default::default, |e| crate::natural_order::key(&e.definition.trigger)),
+                2 => gesture.map_or_else(Default::default, |e| {
+                    crate::natural_order::key(&keys::shortcut(e.definition.key, e.definition.mask))
+                }),
+                _ => crate::natural_order::key(&it.name),
             };
-            (primary, it.name.to_lowercase(), *id)
+            (primary, crate::natural_order::key(&it.name), *id)
         });
         if self.descending {
             rows.reverse();

@@ -570,7 +570,7 @@ mod tests {
         let mut old = crate::demo::action_avatar(false);
         old.full_id = friend();
         old.position = Vec3::new(60.0, 200.0, 2500.0);
-        w.objects.upsert_at(destination(), old.clone(), None);
+        w.objects.upsert(destination(), old.clone());
         w.coarse.insert(destination(), vec![(friend(), Vec3::new(60.0, 200.0, 2500.0))]);
         arrive(&mut w, destination());
         assert!(w.finish_friend_join(Instant::now(), false).is_none());
@@ -616,7 +616,7 @@ mod tests {
                 5 => w.map.set_track_altitude(1000.0),
                 6 => now += POSITION_TIMEOUT,
                 7 => {
-                    w.apply(NetEvent::TeleportStarted);
+                    w.apply(NetEvent::TeleportStarted { flags: 0 });
                 }
                 _ => {}
             }

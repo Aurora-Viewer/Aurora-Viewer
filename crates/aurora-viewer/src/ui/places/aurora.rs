@@ -18,19 +18,21 @@
 //! landmark are edited where they are shown.
 
 use super::model::{self, Catalog, Key, Place, PlacesSort};
-use super::{Confirm, PlacesAction, PlacesUi, history_sections, now_secs, slurl_at, system_folder};
+use super::{Confirm, PlacesAction, PlacesUi, history_offset, history_sections, now_secs, slurl_at, system_folder};
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::{self, Ctx};
+use crate::ui::widgets::rail_row;
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::inventory::Inventory;
 use crate::world::inventory::actions;
 use crate::world::landmarks::{Landmarks, Resolved};
-use crate::world::place_details::{Source as Profile, Stage};
+use crate::world::place_details::{Place as PlaceProfile, Source as Profile, Stage};
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::WorldMap;
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -78,6 +80,8 @@ pub struct AuroraState {
     pub(super) pending_click: Option<(Key, f64)>,
     /// The place profile asked for the preview (OpenProfile sent).
     previewed: Option<Profile>,
+    /// A profile was opened from outside the lists (`PlacesUi::show_profile`).
+    pub(super) opened: bool,
     /// The notes being typed, for that place.
     note: Option<(Key, String)>,
     /// The new name being typed.
@@ -91,6 +95,8 @@ pub struct AuroraState {
     /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
     /// opened) once the list has one.
     pub demo_open: bool,
+    /// Landmark folders of the rail whose children are hidden (#3001).
+    collapsed_folders: HashSet<Uuid>,
 }
 
 impl AuroraState {
@@ -147,8 +153,11 @@ pub struct Env<'a> {
 /// The profile the preview asks for a place.
 fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option<Profile> {
     if let Some(item) = place.item {
-        let asset = inv.items.get(&item).map_or(Uuid::nil(), |it| it.asset_id);
-        return Some(Profile::Landmark { item, asset });
+        let original = crate::world::landmarks::inventory_item(inv, item)?;
+        return Some(Profile::Landmark {
+            item: original.id,
+            asset: original.asset_id,
+        });
     }
     let entry = history.get(place.history?)?;
     Some(Profile::History {
@@ -196,7 +205,7 @@ fn paint_icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
 
 /// A small caps section title ("LANDMARK FOLDERS").
 fn section(ui: &egui::Ui, p: &Palette, text: &str, at: Pos2) {
-    let g = line(ui, &text.to_uppercase(), 11.0, p.muted, true, 400.0);
+    let g = line(ui, &text.ui_upper(), 11.0, p.muted, true, 400.0);
     ui.painter().galley(at, g, p.muted);
 }
 
@@ -275,7 +284,7 @@ pub fn toggle_favorite(inv: &Inventory, place: &Place) -> Option<Mutation> {
             let favorites = system_folder(inv, model::FOLDER_FAVORITES)?;
             let item = place.item?;
             let it = inv.items.get(&item)?;
-            if it.owner_mask & actions::COPY != 0 {
+            if actions::held(inv, it) & actions::COPY != 0 {
                 Some(Mutation {
                     copies: vec![CopyItem {
                         item,
@@ -310,7 +319,7 @@ pub fn move_to_folder(inv: &Inventory, place: &Place, folder: Uuid) -> Option<Mu
     }
     let fav = place.favorite?;
     let it = inv.items.get(&fav)?;
-    if it.owner_mask & actions::COPY != 0 {
+    if actions::held(inv, it) & actions::COPY != 0 {
         Some(Mutation {
             copies: vec![CopyItem {
                 item: fav,
@@ -334,6 +343,12 @@ pub fn delete_place(inv: &Inventory, place: &Place) -> Option<Mutation> {
     actions::move_selection(inv, &items_of(place), trash, &none, &none).ok()
 }
 
+/// The landmark profile to show instead of the lists: place links and parcels
+/// stay in the preview, and a line's own profile never counts.
+fn opened_landmark(opened: bool, panel: Option<&PlaceProfile>) -> Option<&PlaceProfile> {
+    panel.filter(|place| opened && matches!(place.source, Profile::Landmark { .. }))
+}
+
 /// The lines of the list: a place, or a section title of the history.
 /// A frame's list is short-lived: its places stay inline.
 #[allow(clippy::large_enum_variant)]
@@ -351,6 +366,11 @@ struct RowOut {
 impl PlacesUi {
     /// The body of Aurora's window.
     pub(super) fn aurora_body(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, actions: &mut Vec<PlacesAction>) {
+        if let Some(place) = opened_landmark(self.aurora.opened, c.world.place_details.panel.as_ref()).cloned() {
+            self.opened_profile(ui, c, &place, actions);
+            return;
+        }
+        self.aurora.opened = false;
         let world = c.world;
         let history = &world.tp_storage.items;
         // rebuilt only when the inventory, a landmark asset, the history or
@@ -435,6 +455,26 @@ impl PlacesUi {
         self.folder_dialogs(ui.ctx(), c.p, &world.inventory, actions);
     }
 
+    /// A landmark's profile opened from elsewhere, with the Legacy tabs' way
+    /// back. The lists may not hold that landmark: they only read the
+    /// Landmarks and Favorites folders.
+    fn opened_profile(&mut self, ui: &mut egui::Ui, c: &mut Ctx, place: &PlaceProfile, actions: &mut Vec<PlacesAction>) {
+        let mut inner = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(ui.max_rect().shrink2(Vec2::new(12.0, 10.0)))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        let asked = actions.len();
+        self.profile_view(&mut inner, c, place, true, actions);
+        // back to the list: the preview has lost its profile, so it asks
+        // again for the line it shows
+        if actions[asked..].iter().any(|a| matches!(a, PlacesAction::CloseProfile)) {
+            self.aurora.opened = false;
+            self.aurora.selected = None;
+            self.aurora.previewed = None;
+        }
+    }
+
     /// Select a line and ask for its profile.
     fn select(&mut self, key: Key, place: &Place, inv: &Inventory, history: &[HistoryItem], actions: &mut Vec<PlacesAction>) {
         self.aurora.pending_click = None;
@@ -467,7 +507,8 @@ impl PlacesUi {
                 .collect(),
             Source::History => {
                 let mut out = Vec::new();
-                for (section, indices) in history_sections(history, "", now_secs()) {
+                let now = now_secs();
+                for (section, indices) in history_sections(history, "", now, history_offset(self.history_zone, now)) {
                     let mut first = true;
                     for i in indices {
                         let Some(place) = cat.place(Key::Visit(i), history) else { continue };
@@ -536,7 +577,7 @@ impl PlacesUi {
         tb.spacing_mut().item_spacing.x = 10.0;
         let sort_w = widgets::action_button_fit(&tb, "arrows-sort", self.sort_label(env.sort)) + 18.0;
         let w = (tb.available_width() - sort_w - 10.0).max(80.0);
-        widgets::pills::search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
+        widgets::clearable_search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
         self.sort_button(&mut tb, p, c.world, env.sort, actions);
 
         let body = Rect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
@@ -550,7 +591,13 @@ impl PlacesUi {
 
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink2(Vec2::new(8.0, 10.0))));
         r.set_clip_rect(rail);
-        self.rail(&mut r, p, c.world, cat, env);
+        // The rail used to paint every folder without a scroll area, so a
+        // tall tree clipped with no way to reach the bottom, and no way to
+        // collapse nested folders (#3001).
+        egui::ScrollArea::vertical()
+            .id_salt("places-rail")
+            .auto_shrink([false, false])
+            .show(&mut r, |ui| self.rail(ui, p, c.world, cat, env));
 
         let mut l = ui.new_child(egui::UiBuilder::new().max_rect(list));
         l.set_clip_rect(list);
@@ -585,6 +632,7 @@ impl PlacesUi {
             }
             Source::History => {
                 menu::check(ui, p, "history", aurora_i18n::tr!("ui-places-sort-newest"), true, false);
+                super::history_zone_menu(ui, p, self.history_zone, actions);
                 menu::separator(ui, p);
                 if menu::item_if(
                     ui,
@@ -646,10 +694,23 @@ impl PlacesUi {
         let at = ui.cursor().min + Vec2::new(10.0, 0.0);
         section(ui, p, aurora_i18n::tr!("ui-places-folders"), at);
         ui.add_space(22.0);
-        for f in model::folders(&world.inventory) {
+        let folders = model::folders(&world.inventory);
+        let has_children: HashSet<Uuid> = folders.windows(2).filter(|w| w[1].depth > w[0].depth).map(|w| w[0].id).collect();
+        let mut skip_deeper_than = None::<usize>;
+        for f in &folders {
+            if let Some(depth) = skip_deeper_than {
+                if f.depth > depth {
+                    continue;
+                }
+                skip_deeper_than = None;
+            }
             let n = cat.landmarks.iter().filter(|pl| pl.folder == Some(f.id)).count();
-            let resp = rail_row(
+            let branch = has_children.contains(&f.id);
+            let collapsed = branch && self.aurora.collapsed_folders.contains(&f.id);
+            let id = ui.make_persistent_id(("places-folder", f.id));
+            let (resp, caret) = widgets::rail_tree_row(
                 ui,
+                id,
                 p,
                 "folder-filled",
                 p.muted,
@@ -657,9 +718,19 @@ impl PlacesUi {
                 Some(n),
                 self.aurora.source == Source::Folder(f.id),
                 f.depth,
+                branch.then_some(!collapsed),
             );
-            if resp.clicked() {
+            if caret.is_some_and(|c| c.clicked()) {
+                if collapsed {
+                    self.aurora.collapsed_folders.remove(&f.id);
+                } else {
+                    self.aurora.collapsed_folders.insert(f.id);
+                }
+            } else if resp.clicked() {
                 self.set_source(Source::Folder(f.id));
+            }
+            if collapsed {
+                skip_deeper_than = Some(f.depth);
             }
             menu::context_menu(&resp, p, |ui| {
                 let inv = &world.inventory;
@@ -765,13 +836,17 @@ impl PlacesUi {
             return;
         }
         let reorder = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         let mut rects: Vec<(Rect, Uuid)> = Vec::new();
         for l in lines {
             let (key, place) = match l {
                 Line::Title(t) => {
                     ui.add_space(10.0);
                     let at = ui.cursor().min + Vec2::new(10.0, 0.0);
-                    section(ui, p, t, at);
+                    let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 20.0));
+                    if ui.is_rect_visible(bounds) {
+                        section(ui, p, t, at);
+                    }
                     ui.add_space(20.0);
                     continue;
                 }
@@ -787,7 +862,19 @@ impl PlacesUi {
                 Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
                 None => place.thumbnail,
             };
-            let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
+            let out = place_row(
+                ui,
+                p,
+                c,
+                place,
+                selected,
+                snapshot,
+                self.aurora.source == Source::Favorites,
+                wide,
+                self.history_zone,
+            );
+            widgets::reveal_search_selection(ui, &out.resp, selected);
+            let visible = ui.is_rect_visible(out.resp.rect);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -802,9 +889,7 @@ impl PlacesUi {
             }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
-            if let Some(s) = spot
-                && ui.is_rect_visible(out.resp.rect)
-            {
+            if visible && let Some(s) = spot {
                 self.want_snapshots.push(s);
             }
             if let Some(fav) = place.favorite.filter(|_| reorder) {
@@ -829,11 +914,14 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            // asked every frame: the menu shows as long as it is open
-            menu::context_menu(&out.resp, p, |ui| {
-                self.select(key, place, &world.inventory, history, actions);
-                self.place_menu(ui, p, world, key, place, actions);
-            });
+            // A menu stays under the pointer when its row scrolls out of view.
+            // The row still owns its reorder rank and its expanded narrow details.
+            if visible || (popup_open && out.resp.context_menu_opened()) {
+                menu::context_menu(&out.resp, p, |ui| {
+                    self.select(key, place, &world.inventory, history, actions);
+                    self.place_menu(ui, p, world, key, place, actions);
+                });
+            }
             if !wide && self.aurora.selected == Some(key) {
                 self.narrow_details(ui, c, place, actions);
             }
@@ -915,7 +1003,7 @@ impl PlacesUi {
                 global: entry.global,
                 title: entry.title.clone(),
             });
-        } else if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
+        } else if let Some(item) = place.item.and_then(|i| crate::world::landmarks::inventory_item(inv, i)) {
             self.confirm = Some(Confirm::Landmark {
                 asset: item.asset_id,
                 name: item.name.clone(),
@@ -936,7 +1024,10 @@ impl PlacesUi {
         ) {
             self.teleport(key, place, inv, history);
         }
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
+        // LLLandmarksPanel / LLTeleportHistoryPanel::isActionEnabled
+        // ("show_on_map"): not under @showworldmap
+        let mappable = place.global.is_some() && crate::ui::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = place.global
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -1157,7 +1248,7 @@ impl PlacesUi {
                 }
             }
             if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
+                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
                     widgets::action_button(
                         ui,
                         p,
@@ -1227,7 +1318,10 @@ impl PlacesUi {
         if !link {
             let visit = place.last_visit.map_or_else(
                 || aurora_i18n::tr!("ui-places-never-visited").to_owned(),
-                |d| model::visit_label(d, now_secs()),
+                |d| {
+                    let now = now_secs();
+                    model::visit_label(d, now, history_offset(self.history_zone, now))
+                },
             );
             kv(ui, p, aurora_i18n::tr!("ui-places-last-visit"), &visit);
             ui.add_space(6.0);
@@ -1460,7 +1554,7 @@ impl PlacesUi {
         }
         let w = ui.available_width();
         // in a row: the field takes the height of its line only
-        ui.horizontal(|ui| widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
+        ui.horizontal(|ui| widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
         ui.add_space(8.0);
         // the three tabs
         let favorites = model::favorites(cat, env.favorites).len();
@@ -1481,25 +1575,30 @@ impl PlacesUi {
         ui.add_space(8.0);
         // the folders of the Landmarks tab, in chips
         if current == Source::All {
-            egui::ScrollArea::horizontal()
-                .id_salt("places-chips")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), self.aurora.source == Source::All)
-                            .clicked()
-                        {
-                            self.set_source(Source::All);
-                        }
-                        for f in model::folders(&world.inventory) {
-                            let on = self.aurora.source == Source::Folder(f.id);
-                            if widgets::pills::filter_pill(ui, p, "", &f.name, on).clicked() {
-                                self.set_source(Source::Folder(f.id));
-                            }
-                        }
-                    });
-                });
+            // the wheel moves the row, and the chosen folder comes into view (#3872)
+            widgets::chip_row(ui, "places-chips", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mut chosen = None;
+                let all = self.aurora.source == Source::All;
+                let chip = widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), all);
+                if all {
+                    chosen = Some((egui::Id::unique("all"), chip.rect));
+                }
+                if chip.clicked() {
+                    self.set_source(Source::All);
+                }
+                for f in model::folders(&world.inventory) {
+                    let on = self.aurora.source == Source::Folder(f.id);
+                    let chip = widgets::pills::filter_pill(ui, p, "", &f.name, on);
+                    if on {
+                        chosen = Some((egui::Id::unique(f.id), chip.rect));
+                    }
+                    if chip.clicked() {
+                        self.set_source(Source::Folder(f.id));
+                    }
+                }
+                chosen
+            });
             ui.add_space(8.0);
         }
         // the narrow list keeps the landmarks of the Landmarks tab only
@@ -1533,7 +1632,14 @@ impl PlacesUi {
             _ => None,
         });
         let key = self.aurora.selected.unwrap_or(Key::Visit(usize::MAX));
-        let left = ui.max_rect().left() + 68.0;
+        let tp = aurora_i18n::tr!("common-teleport-3");
+        let map = aurora_i18n::tr!("common-map");
+        let tw = widgets::action_button_fit(ui, "location-filled", tp);
+        let mw = widgets::action_button_fit(ui, "map", map);
+        // Keep the LLPanelPlaces actions reachable in Aurora's inline details:
+        // large text can need the thumbnail's indentation as well as another row.
+        let indent = (ui.available_width() - 10.0 - tw.max(mw)).clamp(0.0, 68.0);
+        let left = ui.max_rect().left() + indent;
         let width = (ui.max_rect().right() - 10.0 - left).max(60.0);
         let rect = Rect::from_min_size(Pos2::new(left, ui.cursor().top() + 2.0), Vec2::new(width, 400.0));
         let mut d = ui.new_child(
@@ -1558,10 +1664,8 @@ impl PlacesUi {
                     .color(p.muted),
             );
         }
-        d.horizontal(|ui| {
+        d.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let tp = aurora_i18n::tr!("common-teleport-3");
-            let tw = widgets::action_button_fit(ui, "location-filled", tp);
             if widgets::action_button_if(
                 ui,
                 p,
@@ -1575,30 +1679,24 @@ impl PlacesUi {
             {
                 self.teleport(key, place, &world.inventory, history);
             }
-            let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
-            if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
-                    widgets::action_button(
-                        ui,
-                        p,
-                        "map",
-                        aurora_i18n::tr!("common-map"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(mw, 26.0),
-                    )
-                })
-                .inner
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                p,
+                "map",
+                map,
+                widgets::ActionKind::Flat,
+                Vec2::new(mw, 26.0),
+                place.global.is_some() && crate::ui::context::can_show_on_map(world),
+            )
+            .clicked()
                 && let Some(g) = place.global
             {
                 actions.push(PlacesAction::ShowOnMap(g));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
-                    .on_hover_text(aurora_i18n::tr!("ui-places-more"));
-                menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    self.place_menu(ui, p, world, key, place, actions);
-                });
+            let more = widgets::action_button(ui, p, "dots-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0))
+                .on_hover_text(aurora_i18n::tr!("ui-places-more"));
+            menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                self.place_menu(ui, p, world, key, place, actions);
             });
         });
         // the rename asked from the menu, under the actions
@@ -1687,44 +1785,6 @@ fn kv(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     });
 }
 
-/// A row of the rail: icon, name, count; `depth` indents a sub-folder.
-#[allow(clippy::too_many_arguments)]
-fn rail_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icon: &str,
-    tint: Color32,
-    label: &str,
-    count: Option<usize>,
-    on: bool,
-    depth: usize,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    if on {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised);
-    }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
-    paint_icon(
-        ui.painter(),
-        icon,
-        Rect::from_center_size(Pos2::new(x + 8.0, rect.center().y), Vec2::splat(16.0)),
-        if on && tint == p.muted { p.violet_pale } else { tint },
-    );
-    let num = count.map(|n| line(ui, &n.to_string(), 11.5, p.muted, false, 40.0));
-    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
-    let ink = if tint == p.violet_light { tint } else { p.ink };
-    let g = line(ui, label, 13.0, ink, false, rect.right() - num_w - x - 25.0);
-    widgets::paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
-    if let Some(g) = num {
-        let w = g.size().x;
-        widgets::paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
-    }
-    resp
-}
-
 /// The favourite star at a row's right end: true when clicked.
 fn star(ui: &mut egui::Ui, p: &Palette, place: &Place) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
@@ -1767,7 +1827,10 @@ fn place_row(
     picture_id: Uuid,
     grip: bool,
     wide: bool,
+    zone: crate::settings::HistoryZone,
 ) -> RowOut {
+    let now = now_secs();
+    let offset = history_offset(zone, now);
     let subtitle = if wide {
         let region = region_line(place, &c.world.map);
         if place.is_landmark() {
@@ -1782,7 +1845,7 @@ fn place_row(
             place.region.clone()
         };
         match place.last_visit {
-            Some(d) => format!("{region} · {}", model::visit_label(d, now_secs())),
+            Some(d) => format!("{region} · {}", model::visit_label(d, now, offset)),
             None => region,
         }
     };
@@ -1812,7 +1875,7 @@ fn place_row(
                 |ui| {
                     if let Some(d) = place.last_visit {
                         ui.add(
-                            egui::Label::new(egui::RichText::new(model::visit_label(d, now_secs())).size(12.0).color(p.muted)).truncate(),
+                            egui::Label::new(egui::RichText::new(model::visit_label(d, now, offset)).size(12.0).color(p.muted)).truncate(),
                         );
                     }
                 },
@@ -1836,6 +1899,149 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn only_a_landmark_opened_from_elsewhere_replaces_the_lists() {
+        use crate::world::place_details::PlaceDetails;
+        let open = |source| {
+            let mut details = PlaceDetails::default();
+            details.open_panel(source, &WorldMap::default(), &mut Landmarks::default(), std::time::Instant::now());
+            details
+        };
+        let landmark = open(Profile::Landmark { item: id(1), asset: id(2) });
+        // a notecard's landmark, the inventory's About Landmark, the map
+        assert!(opened_landmark(true, landmark.panel.as_ref()).is_some());
+        // a line of the list keeps its preview
+        assert!(opened_landmark(false, landmark.panel.as_ref()).is_none());
+        // a place link or a parcel stays in the preview
+        let parcel = open(Profile::Parcel(id(3)));
+        assert!(opened_landmark(true, parcel.panel.as_ref()).is_none());
+        // Back closed the profile
+        assert!(opened_landmark(true, None).is_none());
+    }
+
+    /// A landmark opened from outside, here one the lists do not hold: its
+    /// profile replaces the list, Back returns to a list that works, and the
+    /// wide preview asks for its line again instead of waiting on the profile
+    /// Back closed.
+    #[test]
+    fn back_from_an_opened_landmark_returns_to_a_working_list() {
+        use crate::scene::avatar::AvatarLibrary;
+        use std::collections::HashMap;
+
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let library = Arc::new(AvatarLibrary::load());
+        let opened = Profile::Landmark {
+            item: id(300),
+            asset: id(3000),
+        };
+        for width in [400.0, 900.0] {
+            let wide = width >= WIDE;
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let mut world = World::new(Arc::clone(&library));
+            world.inventory = inventory();
+            let images = HashMap::new();
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let mut names = HashSet::new();
+            let mut wanted_images = HashSet::new();
+            let mut groups = HashSet::new();
+            let mut places = PlacesUi::default();
+            let mut time = 0.0;
+            let mut frame = |events, places: &mut PlacesUi, world: &mut World| {
+                time += 0.1;
+                let mut actions = Vec::new();
+                let mut layer = egui::LayerId::background();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 800.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        layer = ui.layer_id();
+                        let env = Env {
+                            sort: PlacesSort::default(),
+                            favorites: &[id(200)],
+                        };
+                        let mut c = Ctx {
+                            p: &p,
+                            world,
+                            images: &images,
+                            emoji: &mut emoji,
+                            want_names: &mut names,
+                            wanted_images: &mut wanted_images,
+                            want_groups: &mut groups,
+                        };
+                        places.aurora_body(ui, &mut c, &env, &mut actions);
+                    },
+                );
+                output.textures_delta.clear();
+                // the profile's Back arrow, the first button of its header,
+                // where this frame laid it out
+                let back = ctx.viewport(|v| {
+                    v.prev_pass
+                        .widgets
+                        .get_layer(layer)
+                        .find(|w| w.sense.senses_click())
+                        .map(|w| w.interact_rect.center())
+                });
+                // what the app does with them, before the next frame
+                let closed = actions.iter().any(|a| matches!(a, PlacesAction::CloseProfile));
+                for action in actions {
+                    match action {
+                        PlacesAction::OpenProfile(source) => {
+                            let w = &mut *world;
+                            w.place_details
+                                .open_panel(source, &w.map, &mut w.landmarks, std::time::Instant::now());
+                        }
+                        PlacesAction::CloseProfile => world.place_details.close_panel(),
+                        _ => {}
+                    }
+                }
+                (back, closed)
+            };
+            let source = |world: &World| world.place_details.panel.as_ref().map(|place| place.source.clone());
+
+            frame(vec![], &mut places, &mut world);
+            let line = source(&world);
+            assert_eq!(line.is_some(), wide, "the wide preview shows its first line");
+
+            let w = &mut world;
+            w.place_details
+                .open_panel(opened.clone(), &w.map, &mut w.landmarks, std::time::Instant::now());
+            places.show_profile();
+            let (back, _) = frame(vec![], &mut places, &mut world);
+            let back = back.expect("the profile's Back arrow");
+            assert!(places.aurora.opened);
+            assert_eq!(source(&world).as_ref(), Some(&opened), "no line takes the profile's place");
+
+            frame(pointer(back, true), &mut places, &mut world);
+            let (_, closed) = frame(pointer(back, false), &mut places, &mut world);
+            assert!(closed, "Back closes the profile");
+            assert!(!places.aurora.opened);
+            assert_eq!(source(&world), None);
+
+            frame(vec![], &mut places, &mut world);
+            assert_eq!(source(&world), line, "the preview gets its line back");
+            assert_eq!(places.aurora.previewed, line);
+            assert_eq!(places.aurora.selected.is_some(), wide);
+        }
     }
 
     fn folder(n: u128, parent: u128, t: i32) -> InvFolder {
@@ -1891,6 +2097,261 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn landmark_link_profile_and_teleport_use_the_original_asset() {
+        let mut inv = inventory();
+        let link = inv.items.get_mut(&id(201)).expect("favorite");
+        link.asset_type = 24;
+        link.asset_id = id(101);
+        let place = Place {
+            item: Some(id(201)),
+            favorite: Some(id(201)),
+            ..Default::default()
+        };
+        assert!(matches!(profile_of(&place, &inv, &[]), Some(Profile::Landmark { item, asset }) if item == id(101) && asset == id(1001)));
+        let mut state = PlacesUi::default();
+        state.teleport(Key::Landmark(id(1001)), &place, &inv, &[]);
+        assert!(matches!(state.confirm, Some(Confirm::Landmark { asset, .. }) if asset == id(1001)));
+    }
+
+    #[test]
+    fn narrow_place_actions_stay_visible_and_clickable_with_large_text() {
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        let global = DVec3::new(256_040.0, 256_300.0, 22.0);
+        world.tp_storage.items.push(HistoryItem {
+            title: "Test visit".into(),
+            global,
+            date: 1.0,
+            slurl: String::new(),
+        });
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut names = HashSet::new();
+        let mut wanted_images = HashSet::new();
+        let mut groups = HashSet::new();
+        for width in [236.0, 296.0, 456.0] {
+            for text_size in [1.0, 1.5, 2.0] {
+                for source in [Source::Favorites, Source::All, Source::History] {
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, text_size);
+                    let p = theme.palette();
+                    let key = if source == Source::History {
+                        Key::Visit(0)
+                    } else {
+                        Key::Landmark(id(1000))
+                    };
+                    let place = Place {
+                        item: (source != Source::History).then_some(id(100)),
+                        asset: (source != Source::History).then_some(id(1000)),
+                        history: Some(0),
+                        global: Some(global),
+                        ..Default::default()
+                    };
+                    let mut state = PlacesUi::default();
+                    state.aurora.source = source;
+                    state.aurora.selected = Some(key);
+                    let mut time = 0.0;
+                    let mut frame = |events, state: &mut PlacesUi| {
+                        time += 0.1;
+                        let mut actions = Vec::new();
+                        let mut layer = egui::LayerId::background();
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0))),
+                                time: Some(time),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                layer = ui.layer_id();
+                                let mut c = Ctx {
+                                    p: &p,
+                                    world: &world,
+                                    images: &images,
+                                    emoji: &mut emoji,
+                                    want_names: &mut names,
+                                    wanted_images: &mut wanted_images,
+                                    want_groups: &mut groups,
+                                };
+                                state.narrow_details(ui, &mut c, &place, &mut actions);
+                            },
+                        );
+                        output.textures_delta.clear();
+                        let buttons: Vec<_> = ctx.viewport(|v| {
+                            v.prev_pass
+                                .widgets
+                                .get_layer(layer)
+                                .filter(|w| w.sense.senses_click())
+                                .map(|w| w.rect)
+                                .collect()
+                        });
+                        (actions, buttons, output.shapes)
+                    };
+                    frame(vec![], &mut state);
+                    let (_, buttons, shapes) = frame(vec![], &mut state);
+                    assert_eq!(buttons.len(), 3, "Teleport, Map, More");
+                    let bounds = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 700.0));
+                    for rect in &buttons {
+                        assert!(
+                            bounds.contains_rect(*rect),
+                            "clipped action: {source:?}, width {width}, text {text_size}: {rect:?}"
+                        );
+                    }
+                    for label in [aurora_i18n::tr!("common-teleport-3"), aurora_i18n::tr!("common-map")] {
+                        let text = shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::epaint::Shape::Text(t) if t.galley.text() == label => Some((t.visual_bounding_rect(), s.clip_rect)),
+                                _ => None,
+                            })
+                            .expect("action label drawn");
+                        assert!(
+                            text.1.contains_rect(text.0.shrink(0.5)),
+                            "clipped {label}, width {width}, text {text_size}"
+                        );
+                    }
+                    for i in 0..buttons.len() {
+                        for j in i + 1..buttons.len() {
+                            assert!(!buttons[i].intersects(buttons[j]), "actions overlap");
+                        }
+                    }
+                    frame(pointer(buttons[0].center(), true), &mut state);
+                    frame(pointer(buttons[0].center(), false), &mut state);
+                    assert!(state.confirm.is_some(), "Teleport reachable");
+                    state.confirm = None;
+                    frame(pointer(buttons[1].center(), true), &mut state);
+                    let (actions, ..) = frame(pointer(buttons[1].center(), false), &mut state);
+                    assert!(
+                        actions.iter().any(|a| matches!(a, PlacesAction::ShowOnMap(g) if *g == global)),
+                        "Map reachable"
+                    );
+                    frame(pointer(buttons[2].center(), true), &mut state);
+                    frame(pointer(buttons[2].center(), false), &mut state);
+                    assert!(egui::Popup::is_any_open(&ctx), "More reachable");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn folder_caret_keeps_the_place_filter_and_keyboard_target() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        // A deep branch and a sibling which moves when that branch folds.
+        world.inventory.apply(vec![FolderContents {
+            folder_id: id(11),
+            owner_id: Uuid::nil(),
+            version: 3,
+            folders: vec![folder(110, 11, -1)],
+            items: vec![],
+        }]);
+        for n in 110..127 {
+            let mut folders = vec![folder(n + 1, n, -1)];
+            if n == 110 {
+                folders.push(folder(150, n, -1));
+            }
+            world.inventory.apply(vec![FolderContents {
+                folder_id: id(n),
+                owner_id: Uuid::nil(),
+                version: 3,
+                folders,
+                items: vec![],
+            }]);
+        }
+        let cat = model::catalog(&world.inventory, &world.landmarks, &world.map, &[], false);
+        let env = Env {
+            sort: PlacesSort::default(),
+            favorites: &[],
+        };
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut places = PlacesUi {
+            filter: "lm100".into(),
+            ..Default::default()
+        };
+        let selected = Some(Key::Landmark(id(1000)));
+        places.aurora.selected = selected;
+
+        let frame = |places: &mut PlacesUi, events| {
+            let mut ids = [egui::Id::NULL; 3];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(180.0, 1000.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ids = [111, 126, 150].map(|n| ui.make_persistent_id(("places-folder", id(n))));
+                    places.rail(ui, &p, &world, &cat, &env);
+                },
+            );
+            output.textures_delta.clear();
+            ids
+        };
+        let [branch, deep, sibling] = frame(&mut places, vec![]);
+        let rect = |id| ctx.viewport(|v| v.prev_pass.widgets.get(id).map(|w| w.rect));
+        let visible = |id| rect(id).expect("visible folder control");
+        let caret = |id: egui::Id| id.with("rail_caret");
+        assert!(visible(deep).contains_rect(visible(caret(deep))), "deep caret fits in the rail");
+        let click = |places: &mut PlacesUi, pos| {
+            for pressed in [true, false] {
+                frame(
+                    places,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            frame(places, vec![]);
+        };
+        let before = visible(sibling).top();
+        click(&mut places, visible(caret(branch)).center());
+        assert!(visible(sibling).top() < before);
+        assert!(rect(deep).is_none());
+        assert_eq!(places.aurora.source, Source::All);
+        assert_eq!(places.aurora.selected, selected);
+        assert_eq!(places.filter, "lm100");
+
+        ctx.memory_mut(|m| m.request_focus(caret(branch)));
+        frame(
+            &mut places,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        frame(&mut places, vec![]);
+        assert_eq!(visible(sibling).top(), before);
+        assert_eq!(places.aurora.selected, selected);
+        click(&mut places, visible(sibling).center());
+        assert_eq!(places.aurora.source, Source::Folder(id(150)));
+        assert_eq!(places.aurora.selected, None);
+        assert_eq!(places.filter, "lm100");
     }
 
     fn place(inv: &Inventory, asset: u128) -> Place {

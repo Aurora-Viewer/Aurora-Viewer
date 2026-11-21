@@ -427,3 +427,91 @@ fn firestorm_key_codes_and_ctrl_g_default() {
         Some(crate::keybinds::Action::Gestures)
     );
 }
+
+/// A failed preload may retry, and a decoded sound may be evicted while a
+/// gesture waits. Neither can suspend an already-started gesture (#2931).
+#[test]
+fn gesture_preload_is_checked_once_before_steps_start() {
+    let mut manager = Manager::default();
+    let item = Uuid::from_u128(2931);
+    let sound = Uuid::from_u128(2932);
+    let now = Instant::now();
+    manager.play(
+        item,
+        Gesture {
+            steps: vec![
+                Step::Sound {
+                    name: String::new(),
+                    asset: sound,
+                    flags: 0,
+                },
+                Step::Wait {
+                    seconds: 0.3,
+                    flags: WAIT_TIME,
+                },
+                chat("done"),
+            ],
+            ..Default::default()
+        },
+        None,
+    );
+    assert!(manager.tick_ready(now, &BTreeSet::new(), |_| false).is_empty());
+    let loaded = now + Duration::from_secs(5);
+    assert_eq!(manager.tick_ready(loaded, &BTreeSet::new(), |_| true), [Effect::Sound(sound)]);
+    assert_eq!(
+        manager.tick_ready(loaded + Duration::from_millis(301), &BTreeSet::new(), |_| false),
+        [Effect::Chat("done".into())],
+        "later reloads must not stall the running steps"
+    );
+    assert!(!manager.is_playing(item));
+}
+
+/// #4167: saving a gesture with the shortcut and trigger of another active
+/// gesture keeps both active (LLGestureMgr::replaceGesture never deactivates
+/// similar gestures), and a press of the key plays one of them at random,
+/// as LLGestureMgr::triggerGesture does.
+#[test]
+fn a_saved_gesture_keeps_the_others_with_its_shortcut_active() {
+    let mut manager = Manager::default();
+    let gesture = |key, trigger: &str| Gesture {
+        key,
+        mask: 0,
+        trigger: trigger.into(),
+        steps: vec![chat("hi")],
+        ..Default::default()
+    };
+    let (kept, saved, other) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    for (id, definition) in [
+        (kept, gesture(b'9', "/wave")),
+        (saved, gesture(b'8', "/bow")),
+        (other, gesture(b'7', "/nod")),
+    ] {
+        manager.entries.insert(
+            id,
+            Entry {
+                asset: Uuid::nil(),
+                definition,
+            },
+        );
+        manager.active.insert(id);
+    }
+    manager.play(saved, gesture(b'8', "/bow"), None);
+    let revision = manager.revision;
+    manager.replace(
+        saved,
+        Entry {
+            asset: Uuid::from_u128(20),
+            definition: gesture(b'9', "/wave"),
+        },
+    );
+    assert!(!manager.is_playing(saved), "the saved gesture's playback stops");
+    assert_ne!(manager.revision, revision);
+    assert_eq!(manager.active, BTreeSet::from([kept, saved, other]), "no gesture is deactivated");
+    assert_eq!(manager.entries[&saved].definition.key, b'9');
+    let mut played = BTreeSet::new();
+    for _ in 0..64 {
+        played.extend(manager.key_trigger(b'9', 0));
+    }
+    assert_eq!(played, BTreeSet::from([kept, saved]), "either gesture on the shared key plays");
+    assert_eq!(manager.key_trigger(b'7', 0), Some(other));
+}

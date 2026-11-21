@@ -38,6 +38,13 @@ impl State {
             self.since = None;
             return;
         };
+        // Pictures stay available when text tooltips are off (#3008).
+        let text = prefs.show_hover_tooltips;
+        let picture = prefs.thumbnail_tooltips.then(|| asset(inv, id)).flatten();
+        if !text && picture.is_none() {
+            self.since = None;
+            return;
+        }
         if response.ctx.is_being_dragged(response.id) || response.ctx.input(|i| i.pointer.any_down()) {
             self.since = None;
             return;
@@ -47,7 +54,6 @@ impl State {
         if since.0 != response.id {
             *since = (response.id, now);
         }
-        let picture = prefs.thumbnail_tooltips.then(|| asset(inv, id)).flatten();
         if picture.is_some() && now - since.1 < DELAY {
             response
                 .ctx
@@ -66,6 +72,9 @@ impl State {
                 } else {
                     ui.add_sized(Vec2::splat(SIZE), egui::Label::new(aurora_i18n::tr!("common-loading-2")));
                 }
+            }
+            if !text {
+                return;
             }
             if let Some(it) = inv.items.get(&id) {
                 ui.label(&it.name);
@@ -94,30 +103,11 @@ fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if !inv.can_preview(0) {
         return None;
     }
-    let thumbnail = thumbnail::image(inv, id);
-    if !thumbnail.is_nil() {
-        return Some(thumbnail);
-    }
-    let original = rules::original(inv, id)?;
-    let thumbnail = thumbnail::image(inv, original);
-    if !thumbnail.is_nil() {
-        return Some(thumbnail);
-    }
-    if let Some(item) = inv.items.get(&original) {
-        return (item.asset_type == 0 && !item.asset_id.is_nil()).then_some(item.asset_id);
-    }
-    let folder = inv.folders.get(&original)?;
-    if folder.info.type_default != 47 || folder.state != FetchState::Fetched {
-        return None;
-    }
-    // Legacy outfit pictures: exactly one direct texture, including links.
-    // Never walk or fetch a folder tree just because its row is hovered.
-    let mut textures = folder.items.iter().filter_map(|id| {
-        let item = inv.items.get(&rules::original(inv, *id)?)?;
-        (item.asset_type == 0).then_some(item.asset_id)
-    });
-    let texture = textures.next()?;
-    (!texture.is_nil() && textures.next().is_none()).then_some(texture)
+    // the entry's picture, else a texture shows itself
+    thumbnail::shown(inv, id).or_else(|| {
+        let item = inv.items.get(&rules::original(inv, id)?)?;
+        (item.asset_type == 0 && !item.asset_id.is_nil()).then_some(item.asset_id)
+    })
 }
 
 fn mode() -> Option<&'static str> {
@@ -224,7 +214,11 @@ mod tests {
         inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
         let picture = inv.items[&item].asset_id;
         let images = HashMap::from([(picture, texture.clone())]);
-        let prefs = InventoryPreferences::default();
+        let prefs = InventoryPreferences {
+            show_hover_tooltips: true,
+            thumbnail_tooltips: true,
+            ..Default::default()
+        };
         let p = crate::theme::Theme::default().palette();
         let mut state = State::default();
         let mut wanted = HashSet::new();
@@ -280,6 +274,7 @@ mod tests {
             let item = id(8104);
             inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
             let prefs = InventoryPreferences {
+                show_hover_tooltips: true,
                 thumbnail_tooltips: restricted,
                 ..Default::default()
             };
@@ -297,6 +292,85 @@ mod tests {
     }
 
     #[test]
+    fn inventory_hover_tooltip_is_off_by_default_without_text_or_requests() {
+        let mut frames = Frames::new();
+        let mut inv = super::super::tests::view_inventory(false);
+        let item = id(8104);
+        inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
+        let prefs = InventoryPreferences {
+            show_hover_tooltips: false,
+            thumbnail_tooltips: false,
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let mut state = State::default();
+        let mut wanted = HashSet::new();
+        let texts = frames.hover(egui::pos2(40.0, 20.0), |ui| {
+            let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
+            state.record(&response, item, None);
+            state.show(&p, &inv, &prefs, &Default::default(), &mut wanted);
+        });
+        assert!(wanted.is_empty());
+        assert!(!texts.iter().any(|text| text.source == "Photo description"));
+        assert!(state.since.is_none());
+    }
+
+    /// Pictures on hover still load when text tooltips are off (#3008).
+    #[test]
+    fn inventory_hover_pictures_work_with_text_tooltips_off() {
+        let mut frames = Frames::new();
+        let ctx = frames.ctx.clone();
+        let texture = ctx.load_texture(
+            "hover only picture",
+            egui::ColorImage::filled([64, 32], egui::Color32::WHITE),
+            Default::default(),
+        );
+        let mut inv = super::super::tests::view_inventory(false);
+        let item = id(8104);
+        inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
+        let picture = inv.items[&item].asset_id;
+        let images = HashMap::from([(picture, texture.clone())]);
+        let prefs = InventoryPreferences {
+            show_hover_tooltips: false,
+            thumbnail_tooltips: true,
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let mut state = State::default();
+        let mut wanted = HashSet::new();
+        let pos = egui::pos2(40.0, 20.0);
+        let mut draw = |ui: &mut egui::Ui| {
+            let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
+            state.record(&response, item, None);
+            state.show(&p, &inv, &prefs, &images, &mut wanted);
+        };
+        frames.run(vec![], &mut draw);
+        frames.run(vec![egui::Event::PointerMoved(pos)], &mut draw);
+        for _ in 0..20 {
+            frames.run(vec![], &mut draw);
+        }
+        let texts = frames.hover(pos, |ui| {
+            let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
+            state.record(&response, item, None);
+            state.show(&p, &inv, &prefs, &images, &mut wanted);
+        });
+        assert_eq!(wanted, HashSet::from([picture]));
+        assert!(!texts.iter().any(|text| text.source == "Photo description"), "text tip stays off");
+        let shapes = frames.shapes(vec![], |ui| {
+            let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
+            state.record(&response, item, None);
+            state.show(&p, &inv, &prefs, &images, &mut wanted);
+        });
+        assert!(
+            shapes.iter().any(|shape| matches!(
+                shape,
+                egui::Shape::Rect(rect) if rect.fill_texture_id() == texture.id()
+            )),
+            "picture still paints"
+        );
+    }
+
+    #[test]
     fn inventory_hover_picture_uses_both_inventory_presentations_without_selecting() {
         for width in [0.0, 440.0, 800.0, 1180.0] {
             let mut frames = Frames::new();
@@ -309,6 +383,8 @@ mod tests {
             };
             let mut prefs = InventoryPreferences {
                 show_details: false,
+                show_hover_tooltips: true,
+                thumbnail_tooltips: true,
                 ..Default::default()
             };
             let facts = Facts::default();

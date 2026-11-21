@@ -13,11 +13,13 @@ pub mod protocol;
 pub(crate) mod shape;
 #[cfg(test)]
 mod tests;
+mod token;
 mod transport;
 mod ui;
 
 pub use demo::fixture as demo_fixture;
 pub use demo::static_fixture as demo_static_fixture;
+pub(crate) use installer::{Removal as AddonRemoval, remove_everywhere as remove_addon_everywhere};
 
 use parking_lot::Mutex;
 use std::{
@@ -71,6 +73,9 @@ pub(crate) struct Shared {
 
 struct Server {
     shared: Arc<Shared>,
+    // Dropped with the server: the add-on can no longer connect once
+    // stopped. Only the transport tests run without one.
+    _token: Option<token::File>,
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -284,9 +289,21 @@ impl Live {
         if self.running() {
             return;
         }
-        match transport::start(self.port, supported, rest_axes, ctx.clone(), Some(pool)) {
-            Ok(shared) => {
-                self.server = Some(Server { shared });
+        // The secret is written before the port opens, so the add-on never
+        // meets a listening preview with a stale file.
+        let token = token::folder()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+            .and_then(|folder| token::File::write(&folder, self.port));
+        let started = token.and_then(|token| {
+            let shared = transport::start(self.port, token.secret().to_owned(), supported, rest_axes, ctx.clone(), Some(pool))?;
+            Ok(Server {
+                shared,
+                _token: Some(token),
+            })
+        });
+        match started {
+            Ok(server) => {
+                self.server = Some(server);
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),

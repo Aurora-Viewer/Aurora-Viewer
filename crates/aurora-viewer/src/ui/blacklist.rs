@@ -7,10 +7,15 @@
 //! (also in the rows' right-click menu) and "Clear temporary". Sound Explorer
 //! adds sound assets and owner categories to this same list. Textures and
 //! animations remain preserved from imported files without being applied.
+//! The Legacy Viewer's list has no UUID column nor copy: here the UUID of a
+//! sound or animation asset is written and copied only when the asset id
+//! rule allows it (`world::inventory::asset_ids`); the entry keeps its id
+//! and blocks the same either way.
 
 use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
 use crate::world::derender::{Derender, Entry, Kind, RowId};
+use crate::world::inventory::asset_ids::AssetIds;
 use egui::{Rect, RichText, Sense, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -133,10 +138,23 @@ fn row_kind(e: &Entry, id: RowId) -> Kind {
     }
 }
 
-fn cell_text(e: &Entry, column: Column, id: RowId) -> String {
+/// Whether the row's UUID may be written and copied: an object's or a
+/// resident's always, a sound or animation asset's by the asset id rule.
+fn id_shown(e: &Entry, id: RowId, ids: &AssetIds) -> bool {
+    match e.kind {
+        Kind::Sound(0) | Kind::Animation => ids.shown(&id.id),
+        Kind::Object | Kind::Resident | Kind::Sound(_) => true,
+    }
+}
+
+fn uuid_text(e: &Entry, id: RowId, ids: &AssetIds) -> String {
+    if id_shown(e, id, ids) { id.id.to_string() } else { String::new() }
+}
+
+fn cell_text(e: &Entry, column: Column, id: RowId, ids: &AssetIds) -> String {
     match column {
         Column::Name => name_of(e).to_owned(),
-        Column::Uuid => id.id.to_string(),
+        Column::Uuid => uuid_text(e, id, ids),
         Column::Region => region_of(e).to_owned(),
         Column::Type => kind_label(row_kind(e, id)).to_owned(),
         Column::Date => date_text(e.date),
@@ -145,12 +163,20 @@ fn cell_text(e: &Entry, column: Column, id: RowId) -> String {
     }
 }
 
-/// The Legacy Viewer's name filter, extended to UUIDs so sound assets can
-/// be found independently of the resident name saved with them.
-fn rows<'a>(list: impl Iterator<Item = (&'a Uuid, &'a Entry)>, filter: &str, sort: Option<(Column, bool)>) -> Vec<(RowId, &'a Entry)> {
+/// The Legacy Viewer's name filter, extended to the UUIDs the list writes so
+/// sound assets can be found independently of the resident name saved with
+/// them.
+fn rows<'a>(
+    list: impl Iterator<Item = (&'a Uuid, &'a Entry)>,
+    filter: &str,
+    sort: Option<(Column, bool)>,
+    ids: &AssetIds,
+) -> Vec<(RowId, &'a Entry)> {
     let filter = filter.trim().to_lowercase();
     let mut rows: Vec<(RowId, &Entry)> = list
-        .filter(|(id, e)| filter.is_empty() || name_of(e).to_lowercase().contains(&filter) || id.to_string().contains(&filter))
+        .filter(|(id, e)| {
+            filter.is_empty() || name_of(e).to_lowercase().contains(&filter) || uuid_text(e, RowId::whole(**id), ids).contains(&filter)
+        })
         .flat_map(|(id, e)| {
             let flags = match e.kind {
                 Kind::Sound(flags) => flags,
@@ -162,14 +188,14 @@ fn rows<'a>(list: impl Iterator<Item = (&'a Uuid, &'a Entry)>, filter: &str, sor
                 .map(move |flag| (RowId { id: *id, flag }, e))
         })
         .collect();
-    let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+    let text = |a: &str, b: &str| crate::natural_order::cmp(a, b);
     rows.sort_by(|(ia, a), (ib, b)| {
         let order = match sort {
             None => b.date.cmp(&a.date),
             Some((column, descending)) => {
                 let o = match column {
                     Column::Name => text(name_of(a), name_of(b)),
-                    Column::Uuid => ia.id.cmp(&ib.id),
+                    Column::Uuid => uuid_text(a, *ia, ids).cmp(&uuid_text(b, *ib, ids)),
                     Column::Region => text(region_of(a), region_of(b)),
                     Column::Type => text(kind_label(row_kind(a, *ia)), kind_label(row_kind(b, *ib))),
                     Column::Date => a.date.cmp(&b.date),
@@ -260,7 +286,7 @@ impl BlacklistUi {
     }
 
     /// Draw the window while `open`.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, list: &Derender, open: &mut bool) -> Option<BlacklistAction> {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, list: &Derender, ids: &AssetIds, open: &mut bool) -> Option<BlacklistAction> {
         if !*open {
             return None;
         }
@@ -276,10 +302,10 @@ impl BlacklistUi {
             const BUTTONS: f32 = 26.0;
             let w = ui.available_width();
             ui.allocate_ui_with_layout(Vec2::new(w, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
+                widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
             });
             ui.add_space(6.0);
-            let shown = rows(list.entries(), &self.filter, self.sort);
+            let shown = rows(list.entries(), &self.filter, self.sort, ids);
             let order: Vec<RowId> = shown.iter().map(|(id, _)| *id).collect();
             self.selected.retain(|id| list.has_row(*id));
             let footer = BUTTONS + 6.0 + ui.spacing().item_spacing.y;
@@ -299,6 +325,14 @@ impl BlacklistUi {
                         let radius = ui.visuals().window_corner_radius;
                         for (id, entry) in &shown {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                self.anchor
+                                    .filter(|id| self.selected.contains(id))
+                                    .or_else(|| self.selected.iter().next().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }
@@ -319,7 +353,7 @@ impl BlacklistUi {
                                     }
                                     continue;
                                 }
-                                let text = cell_text(entry, column, *id);
+                                let text = cell_text(entry, column, *id, ids);
                                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
                                 let color = if column == Column::Name { p.ink } else { p.muted };
                                 let font = if column == Column::Uuid {
@@ -329,8 +363,11 @@ impl BlacklistUi {
                                 };
                                 widgets::paint_elided(ui, &text, left, cell.width() - 12.0, font, color);
                             }
-                            resp.clone()
-                                .on_hover_text(format!("{}\n{}\n{}", name_of(entry), cell_text(entry, Column::Type, *id), id.id));
+                            let mut tip = format!("{}\n{}", name_of(entry), cell_text(entry, Column::Type, *id, ids));
+                            if id_shown(entry, *id, ids) {
+                                tip.push_str(&format!("\n{}", id.id));
+                            }
+                            resp.clone().on_hover_text(tip);
                             if resp.clicked() {
                                 let modifiers = ui.input(|i| i.modifiers);
                                 self.click(*id, &order, modifiers);
@@ -343,14 +380,15 @@ impl BlacklistUi {
                                 self.anchor = Some(*id);
                             }
                             super::menu::context_menu(&resp, p, |ui| {
-                                if super::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("build-ui-general-copy-uuid")) {
-                                    let mut seen = HashSet::new();
-                                    let ids: Vec<_> = order
-                                        .iter()
-                                        .filter(|id| self.selected.contains(id) && seen.insert(id.id))
-                                        .map(|id| id.id.to_string())
-                                        .collect();
-                                    ui.ctx().copy_text(ids.join("\n"));
+                                let mut seen = HashSet::new();
+                                let copied: Vec<_> = shown
+                                    .iter()
+                                    .filter(|(id, e)| self.selected.contains(id) && id_shown(e, *id, ids) && seen.insert(id.id))
+                                    .map(|(id, _)| id.id.to_string())
+                                    .collect();
+                                let label = aurora_i18n::tr!("build-ui-general-copy-uuid");
+                                if super::menu::item_if(ui, p, "copy-filled", label, !copied.is_empty()) {
+                                    ui.ctx().copy_text(copied.join("\n"));
                                     ui.close();
                                 }
                                 if super::menu::item(ui, p, "trash-filled", aurora_i18n::tr!("common-remove")) {
@@ -412,6 +450,11 @@ impl BlacklistUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rule with every id written out (demo mode's).
+    pub(super) fn every() -> AssetIds {
+        AssetIds::new(&crate::world::inventory::Inventory::default(), [], true)
+    }
     use std::collections::HashMap;
 
     fn entry(name: &str, date: i64, permanent: bool) -> Entry {
@@ -433,8 +476,9 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        let every = every();
         let names = |filter: &str, sort| {
-            rows(list.iter(), filter, sort)
+            rows(list.iter(), filter, sort, &every)
                 .into_iter()
                 .map(|(_, e)| e.name.clone())
                 .collect::<Vec<_>>()
@@ -446,12 +490,15 @@ mod tests {
         // an object without a name, and without a region
         let unnamed = entry("", 0, false);
         let id = RowId::whole(Uuid::nil());
-        assert_eq!(cell_text(&unnamed, Column::Name, id), aurora_i18n::tr!("blacklist-unknown-object"));
         assert_eq!(
-            cell_text(&unnamed, Column::Region, id),
+            cell_text(&unnamed, Column::Name, id, &every),
+            aurora_i18n::tr!("blacklist-unknown-object")
+        );
+        assert_eq!(
+            cell_text(&unnamed, Column::Region, id, &every),
             aurora_i18n::tr!("blacklist-unknown-region")
         );
-        assert_eq!(cell_text(&unnamed, Column::Date, id), "");
+        assert_eq!(cell_text(&unnamed, Column::Date, id, &every), "");
     }
 
     #[test]
@@ -463,12 +510,48 @@ mod tests {
             ..entry("Same demo owner", 10, true)
         };
         let list = HashMap::from([(a, sound()), (b, sound())]);
-        let selected = rows(list.iter(), "FEDCBA98-7654", None);
+        let every = every();
+        let selected = rows(list.iter(), "FEDCBA98-7654", None, &every);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].0.id, a);
-        assert_eq!(cell_text(selected[0].1, Column::Uuid, selected[0].0), a.to_string());
-        let sorted = rows(list.iter(), "demo owner", Some((Column::Uuid, false)));
+        assert_eq!(cell_text(selected[0].1, Column::Uuid, selected[0].0, &every), a.to_string());
+        let sorted = rows(list.iter(), "demo owner", Some((Column::Uuid, false)), &every);
         assert_eq!(sorted.iter().map(|(id, _)| id.id).collect::<Vec<_>>(), [b, a]);
+    }
+
+    #[test]
+    fn an_asset_uuid_is_written_and_found_by_the_asset_id_rule_only() {
+        let a = Uuid::parse_str("fedcba98-7654-4321-9abc-0123456789ab").unwrap();
+        let owner = Uuid::from_u128(45);
+        let sound = Entry {
+            kind: Kind::Sound(0),
+            ..entry("Demo owner", 10, true)
+        };
+        let worn = Entry {
+            kind: Kind::Sound(1),
+            ..entry("Demo resident", 10, true)
+        };
+        let animation = Entry {
+            kind: Kind::Animation,
+            ..entry("Dance", 10, true)
+        };
+        let hidden = AssetIds::new(&crate::world::inventory::Inventory::default(), [], false);
+        let id = RowId::whole(a);
+        for e in [&sound, &animation] {
+            assert_eq!(cell_text(e, Column::Uuid, id, &hidden), "");
+            assert!(!id_shown(e, id, &hidden));
+        }
+        let object = entry("Lantern", 10, true);
+        assert_eq!(cell_text(&object, Column::Uuid, id, &hidden), a.to_string(), "an object id stays");
+        let owner_row = RowId { id: owner, flag: 1 };
+        assert_eq!(
+            cell_text(&worn, Column::Uuid, owner_row, &hidden),
+            owner.to_string(),
+            "an owner id stays"
+        );
+        let list = HashMap::from([(a, sound.clone())]);
+        assert!(rows(list.iter(), "fedcba98", None, &hidden).is_empty(), "no search on a hidden id");
+        assert_eq!(rows(list.iter(), "demo owner", None, &hidden).len(), 1, "the name still finds it");
     }
 
     #[test]
@@ -483,7 +566,7 @@ mod tests {
             aurora_i18n::tr!("blacklist-clear-temporary"),
             BlacklistUi::default,
             |ui, ctx, p| {
-                ui.show(ctx, p, &list, &mut true);
+                ui.show(ctx, p, &list, &every(), &mut true);
             },
         );
     }
@@ -516,10 +599,10 @@ mod tests {
         let mut e = entry("Demo resident", 10, true);
         e.kind = Kind::Sound(7);
         let list = HashMap::from([(owner, e)]);
-        let shown = rows(list.iter(), "DEMO", None);
+        let shown = rows(list.iter(), "DEMO", None, &every());
         let order: Vec<_> = shown.iter().map(|(id, _)| *id).collect();
         assert_eq!(order, [1, 2, 4].map(|flag| RowId { id: owner, flag }));
-        let labels: Vec<_> = shown.iter().map(|(id, e)| cell_text(e, Column::Type, *id)).collect();
+        let labels: Vec<_> = shown.iter().map(|(id, e)| cell_text(e, Column::Type, *id, &every())).collect();
         assert_eq!(
             labels,
             [
