@@ -51,7 +51,7 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
-pub use copy_on_click::copy_on_click;
+pub use copy_on_click::{copied_feedback, copy_on_click, show_copied};
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
@@ -577,8 +577,9 @@ pub struct Floater<'a> {
     pub title: String,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
-    /// A text action at the right end of the secondary header row.
-    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool, Option<String>)>,
+    /// A text action at the right end of the secondary header row; a click
+    /// writes the action's rect, for feedback drawn beside it.
+    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut Option<egui::Rect>)>,
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
@@ -1173,7 +1174,7 @@ impl<'a> Floater<'a> {
                             }
                         });
                     };
-                    if let Some((icon, label, tip, clicked, feedback)) = &mut self.header_status_action {
+                    if let Some((icon, label, tip, clicked)) = &mut self.header_status_action {
                         ui.horizontal(|ui| {
                             let width = (ui.available_width() - 65.0).max(1.0);
                             ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
@@ -1182,31 +1183,7 @@ impl<'a> Floater<'a> {
                                     .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
                                     .on_hover_text(*tip);
                                 if action.clicked() {
-                                    **clicked = true;
-                                }
-                                if let Some(message) = feedback {
-                                    let ctx = ui.ctx();
-                                    let above = action.rect.top() >= ctx.content_rect().top() + 32.0;
-                                    let (pivot, y) = if above {
-                                        (egui::Align2::RIGHT_BOTTOM, action.rect.top() - 5.0)
-                                    } else {
-                                        (egui::Align2::RIGHT_TOP, action.rect.bottom() + 5.0)
-                                    };
-                                    egui::Area::new(egui::Id::unique((self.id, "uuid_copy_feedback")))
-                                        .order(egui::Order::Tooltip)
-                                        .pivot(pivot)
-                                        .fixed_pos(egui::pos2(action.rect.right(), y))
-                                        .interactable(false)
-                                        .fade_in(false)
-                                        .show(ctx, |ui| {
-                                            overlay(ui, p, egui::Margin::symmetric(8, 4), |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    glyph(ui, "check", p.success, 12.0);
-                                                    ui.label(RichText::new(message.as_str()).size(12.0).color(p.ink));
-                                                });
-                                            });
-                                        });
+                                    **clicked = Some(action.rect);
                                 }
                                 glyph(ui, icon, p.violet_light, 13.0);
                             });
