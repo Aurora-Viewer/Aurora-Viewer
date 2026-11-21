@@ -13411,7 +13411,6 @@ bridge-object-info-result =
     Din nåværende posisjon: { $observer }
 bridge-query-timeout = Broen returnerte ikke den forespurte informasjonen i tide. Prøv igjen.
 bridge-query-interrupted = Forespørselen om informasjon ble avbrutt av et bytte av region eller brotilkobling. Prøv igjen.
-ao-bootstrap-interrupted = En uferdig AO-import finnes allerede i #Aurora. Se gjennom den i beholdningen før du prøver igjen.
 ao-states = Tilstander
 ao-combine = Kombiner…
 ao-combine-title = Kombiner animasjoner
