@@ -5306,6 +5306,12 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] { $number } éléments non copiables quitteront votre inventaire.
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = Les éléments seront déplacés dans la corbeille.
+ui-inventory-dialogs-detach-and-delete = Détacher et supprimer
+ui-inventory-dialogs-detach-and-delete-body = Certains de ces éléments sont portés par votre avatar. Ils seront enlevés, puis déplacés dans la corbeille.
+ui-inventory-delete-detach-cannot = Les éléments portés ne peuvent plus être enlevés et supprimés.
+ui-inventory-delete-detach-refused = Cet élément ne peut pas être enlevé et supprimé.
+ui-inventory-delete-detach-busy = Une autre modification de l'inventaire est en cours. Réessayez quand elle sera terminée.
+ui-inventory-delete-detach-timeout = Les éléments portés n'ont pas été enlevés : ils n'ont pas été supprimés.
 ui-environment-sunrise = Lever
 ui-bars-sunrise = Lever du soleil
 build-ui-tools-link = Lien

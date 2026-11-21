@@ -5300,6 +5300,12 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] { $number } no-copy items will leave your inventory.
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = Items will be moved to trash.
+ui-inventory-dialogs-detach-and-delete = Detach and Delete
+ui-inventory-dialogs-detach-and-delete-body = Some of these items are worn on your avatar. They will be taken off, then moved to trash.
+ui-inventory-delete-detach-cannot = The worn items can no longer be taken off and deleted.
+ui-inventory-delete-detach-refused = This item cannot be taken off and deleted.
+ui-inventory-delete-detach-busy = Another inventory change is under way. Try again once it is done.
+ui-inventory-delete-detach-timeout = The worn items did not come off, so they were not deleted.
 ui-environment-sunrise = Sunrise
 ui-bars-sunrise = Sunrise
 build-ui-tools-link = Link
