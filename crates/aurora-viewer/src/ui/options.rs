@@ -1135,8 +1135,9 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
-    choice_combo(ui, id, value, devices, width, default_label, false)
+    choice_combo(ui, id, value, devices, width, default_label, listing)
 }
 
 fn choice_combo(

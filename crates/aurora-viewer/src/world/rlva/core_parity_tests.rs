@@ -267,6 +267,26 @@ fn core_g10_uuid_options_take_the_legacy_forms_only() {
     assert_eq!(held(&r, "recvimfrom"), 0, "35 characters with the last dash read a wrong digit");
 }
 
+/// RlvBehaviourHandler<RLV_BHVR_SETOVERLAY_TOUCH>::onCommand
+/// (rlvhandler.cpp) never reads its option: with one, the restriction is
+/// still held and still blocks the touch through the overlay.
+#[test]
+fn core_setoverlay_touch_takes_any_option() {
+    let mut r = enabled();
+    say(&mut r, A, "@setoverlay_touch:anything=n");
+    say(&mut r, B, "@setoverlay_touch=n");
+    let held = |r: &Rlva| {
+        r.rules_for("setoverlay_touch", Uuid::nil())
+            .map(|(source, _)| source)
+            .collect::<Vec<_>>()
+    };
+    let mut sources = held(&r);
+    sources.sort();
+    assert_eq!(sources, [A, B]);
+    say(&mut r, A, "@setoverlay_touch:anything=y");
+    assert_eq!(held(&r), [B]);
+}
+
 /// RlvExtGetSet: convertToBOOL takes "t" and "f", convertToU32 wraps a
 /// minus, and no "default" exists; @getdebug_<name>_sec asks for a setting
 /// of that name, which has none.

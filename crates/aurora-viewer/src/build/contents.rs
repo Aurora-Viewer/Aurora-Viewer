@@ -159,16 +159,22 @@ impl BuildTool {
     /// Whether an item of the object `idx`'s contents opens in a preview
     /// (`actions::task_preview_allowed`), and RLVa lets it be seen.
     pub fn task_preview_allowed(&self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem) -> bool {
+        world.inventory.can_preview(item.asset_type) && self.task_preview_offered(world, idx, item)
+    }
+
+    /// Whether its Open entry shows: the permissions only. RLVa greys the
+    /// entry out rather than hiding it (LLTaskInvFVBridge::buildContextMenu;
+    /// `World::rlva_task_open_blocked`).
+    pub fn task_preview_offered(&self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem) -> bool {
         let group = world.groups.group(&item.group_id);
-        world.inventory.can_preview(item.asset_type)
-            && crate::world::inventory::actions::task_preview_allowed(
-                item,
-                world.agent_id,
-                group.is_some(),
-                group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
-                self.can_modify(world, idx),
-                world.god_level,
-            )
+        crate::world::inventory::actions::task_preview_allowed(
+            item,
+            world.agent_id,
+            group.is_some(),
+            group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
+            self.can_modify(world, idx),
+            world.god_level,
+        )
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?

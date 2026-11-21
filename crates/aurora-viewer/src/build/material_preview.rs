@@ -95,7 +95,7 @@ impl BuildTool {
         let active = self.open
             && (self.tool == Tool::Edit || (settings.legacy_window && self.tool != Tool::Land))
             && settings.expanded
-            && self.tab == 3
+            && self.section_visible(3)
             && !self.replacement_active();
         if !active {
             self.material_preview_selection.clear();
