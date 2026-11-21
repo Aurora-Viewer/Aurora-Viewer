@@ -8,6 +8,7 @@ mod material;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
+pub mod xml_export;
 pub mod xml_import;
 use crate::{
     scene::{Scene, jobs::Jobs},
@@ -45,6 +46,14 @@ impl Draft {
             .items
             .get(&self.item.id)
             .is_some_and(|i| crate::world::inventory::actions::agent_mask(i, world.agent_id) & 0x4000 != 0)
+    }
+    /// Export XML: `actions::appearance_xml_export_allowed`.
+    pub fn can_export_xml(&self, world: &World) -> bool {
+        world
+            .inventory
+            .items
+            .get(&self.item.id)
+            .is_some_and(|i| crate::world::inventory::actions::appearance_xml_export_allowed(i, world.agent_id))
     }
     pub fn can_copy(&self, world: &World) -> bool {
         world
@@ -115,6 +124,10 @@ pub struct State {
     model_requested: Instant,
     /// Import of an appearance XML into the draft.
     pub xml: xml_import::Import,
+    /// Export of the draft to an appearance XML.
+    pub xml_export: xml_export::Export,
+    /// Appearance > Export shape XML of our avatar's menu.
+    pub xml_menu: xml_export::MenuExport,
 }
 impl Default for State {
     fn default() -> Self {
@@ -160,6 +173,8 @@ impl Default for State {
             model_rx,
             model_requested: Instant::now() - Duration::from_secs(1),
             xml: xml_import::Import::default(),
+            xml_export: xml_export::Export::default(),
+            xml_menu: xml_export::MenuExport::default(),
         }
     }
 }

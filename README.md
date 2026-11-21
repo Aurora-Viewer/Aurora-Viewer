@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
@@ -111,35 +111,38 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.12 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Region Tracker, like the Legacy Viewer</h3>
-      Watch a list of regions from World › Region tracker or the map's
-      Track region: whether each one is up and how many avatars are there,
-      without opening the map.
+      <h3>Fifteen languages</h3>
+      German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian,
+      Norwegian, Brazilian and European Portuguese, Simplified and
+      Traditional Chinese join English, French and Japanese, built on the
+      community's translations. Translators can load a language file of
+      their own.
     </td>
     <td width="50%" valign="top">
-      <h3>Find your contacts in the world</h3>
-      A contact set can mark its members with a small circle or diamond,
-      seen through walls and held at the screen's edge when they are out of
-      view. Off by default, chosen set by set.
+      <h3>Like the LL viewer 26.5</h3>
+      Game Controls drive the avatar, the camera and scripts with a game
+      controller; direct messages sent from another device show up in the
+      conversation; a Second Life account is created from the login
+      screen; the microphone closes while you are muted.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Emojis and chat</h3>
-      A row of your recent emojis by the chat field, favourite emojis if
-      you want them, recent GIFs in the picker, Alt+Enter for ((OOC)) chat,
-      and Request teleport next to Offer teleport.
+      <h3>A look for the world</h3>
+      Keep a photo look or a LUT on the world every day, with JuicyBomb's
+      30 new looks. A redesigned Aurora Weather window holds every weather
+      setting, and a second camera window keeps your avatar in view.
     </td>
     <td valign="top">
-      <h3>Your avatar, your view</h3>
-      Import an appearance XML into the shape and clothing editors, hide
-      the face lights other avatars wear, hide every name tag in one click,
-      and keep avatar tips with world tooltips off.
+      <h3>Faster arrivals, richer inventory</h3>
+      Avatars you have already seen show at once from a local copy while
+      the region sends them. The inventory gets a gallery view, notecards
+      get find and replace, and Linux installs its updates in place.
     </td>
   </tr>
 </table>
@@ -372,8 +375,8 @@ are planned or in progress: they are not in the viewer yet.
   whole-pose actions. Save poses to a library, export them as BVH or import
   them as an animation, with Ctrl+Z / Ctrl+Y as you go. The pose is seen by
   you only ([details](docs/POSER.md)).
-- **An IK workbench**: reusable pose projects that keep chosen bones on their
-  targets, with contacts that compatible viewers apply to nearby avatars
+- **An IK workbench**: pose your own skeleton bone by bone, with IK chains,
+  limb holds and animation layers, as a base for the animation creator
   ([details](docs/IK_EDIT.md)).
 - **Build tools that stay out of the way**: a compact editor you can arrange
   yourself, larger material previews for Blinn-Phong and PBR, a live preview
@@ -413,7 +416,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In English, French and Japanese (日本語)**: the whole interface follows
+- **In fifteen languages** (English, French, Japanese, German, Spanish,
+  Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
+  Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -442,8 +447,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Write with ease**: a spell checker with suggestions in the chat bars,
   conversations and notecards, auto-replace (`brb`…) if you like, `@` to
   mention someone in the conversation, names completed as you type, and `/`
-  in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
-  line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
+  in nearby chat to find and play a gesture. Shift+Enter starts a new
+  line, and pasted paragraphs keep their shape; the chat's keys can be
+  changed in Preferences › Controls › Shortcuts. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations. A long
   IM goes out as several messages instead of being cut off.
 - **Messages that matter, in front of you**: a message an estate manager
@@ -540,7 +546,7 @@ are planned or in progress: they are not in the viewer yet.
   credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
-  motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
+  motion, sounds…), with a button on the login screen. A high-contrast palette, a setting that turns off the glass, the OpenDyslexic font, and
   volume sliders that follow your ear are a click away, and the chat can
   have a text size of its own.
 - **Your colours**: pick the accent, window background and text colours in
@@ -554,7 +560,7 @@ are planned or in progress: they are not in the viewer yet.
   downloads it in the background, checks it against its published hash,
   installs it and restarts your session, and rolls back if anything goes
   wrong. Before you agree, it tells you whether your cache and settings are
-  kept. On Linux and macOS it shows the new release instead
+  kept. On macOS it shows the new release instead
   ([details](docs/UPDATES.md)).
 
 ### Only in Aurora
@@ -572,10 +578,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
   history or search results, and walk, run or fly through it to teleport.
-  A portal opens where you may build, like rezzing an object. Other Aurora
-  users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in. The portal back home
-  is yours alone on land where you may not build.
+  A portal opens where you may build, like rezzing an object, and only you
+  see it; a portal that opens on you never pulls you in. The way back opens
+  behind you when you arrive.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -667,7 +672,7 @@ frame on your own PC.
   to the body/HUD.
 - **Posing** — a [poser](docs/POSER.md) for yourself, your animesh and
   consenting nearby avatars, with a pose library, BVH export and animation
-  import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
+  import; an [IK workbench](docs/IK_EDIT.md) for local skeleton posing.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
@@ -675,8 +680,8 @@ frame on your own PC.
   on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
-  walk-through portals shared with other Aurora users, with friend/group
-  access and protection against portals appearing on top of someone;
+  walk-through portals of your own, with a way back and protection against
+  a portal opening on top of you;
   parcel content isolation, a grid status window, and a live particle
   editor; OpenSim grids and the Hypergrid, with a grid manager, avatars
   baked by the viewer where the grid does not bake, large regions, and
@@ -722,17 +727,17 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
-  palette, custom interface colours, text up to twice the size and the
+  palette, a setting that turns off the glass, custom interface colours, text up to twice the size and the
   OpenDyslexic font.
-- **Windows updates** — release checks, cancellable verified downloads,
-  installation and restart with rollback. The prompt explains whether cache
-  and settings will be preserved, migrated or reset.
+- **Updates in place** (Windows and Linux) — release checks, cancellable
+  verified downloads, installation and restart with rollback. The prompt
+  explains whether cache and settings will be preserved, migrated or reset.
 
 Voice calls, photo uploads, environment saving and several group / region
 operations are implemented and tested in the offline demo, but still need
@@ -746,8 +751,6 @@ completed work from features awaiting that validation.
 
 - Depth exports and 360° snapshots.
 - Automatic updates on macOS (the viewer points to the new release).
-- Automatic installation of updates on Linux (the viewer points to the
-  new release instead).
 
 Voice is WebRTC only; Vivox is not supported.
 
@@ -786,18 +789,25 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English, French and Japanese (日本語): system
-language detection, a choice saved in Preferences and applied at once. The
+The viewer ships English, French, Japanese (日本語), Simplified Chinese
+(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
+Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
+(Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
+(Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
+detects the system language
+by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
-UI or MS UI Gothic) and writes dates the Japanese way. Fluent catalogues make
-it possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+UI or MS UI Gothic) and writes dates the Japanese way. The other languages
+use the Second Life terms of the Legacy Viewer's interface in that language,
+and Chinese draws with the system's Chinese fonts (Microsoft YaHei or
+Microsoft JhengHei on Windows). Fluent catalogues make it possible to add a
+language; see [the translation guide](docs/TRANSLATING.md).
 
-The viewer first follows the language saved in **Preferences › Interface ›
-Language**, then the system's if "System language" is selected. English is
-the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like the Legacy Viewer. The translations are in
-`crates/aurora-i18n/locales/`.
+Find the language picker and the custom Fluent file option in
+**Preferences › Language and updates**. Untranslated messages appear in
+English. The "Language visible to scripts" setting is on by default, like
+the Legacy Viewer. The translations are in `crates/aurora-i18n/locales/`.
 
 ### Frame limiter
 
@@ -868,6 +878,14 @@ and wears the confirmed copy; Copy permission is required. **Cancel** restores
 the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
+
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
 
 ### Hover height
 
@@ -1067,8 +1085,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
@@ -1122,9 +1141,13 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
 With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
 Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
@@ -1147,6 +1170,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
@@ -1242,10 +1266,7 @@ its own task in its own git worktree:
 - [docs/BRANDING.md](docs/BRANDING.md) — palette, logos, icons and UI rules
 - [docs/TESTING.md](docs/TESTING.md) — test switches (demo scenarios,
   captures, diagnostics) and profiling
-- [docs/HAND_CONTACTS.md](docs/HAND_CONTACTS.md) — local motorcycle wrist
-  contact prototype and the creator's LSL script
-- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
-  offsets and general bone-contact authoring for LSL
+- [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor
 
 Pull requests follow the [pull request template](.github/pull_request_template.md):
 a check lists what a description is missing, and maintainers review a PR
@@ -1284,6 +1305,11 @@ openly.
 
 Questions and answers, and the details:
 [AI use policy](https://aurora-viewer.org/ai-policy/).
+
+## Security
+
+Found a vulnerability? Please report it privately, not in a public issue:
+[SECURITY.md](SECURITY.md) explains how, and what happens next.
 
 ## Privacy
 

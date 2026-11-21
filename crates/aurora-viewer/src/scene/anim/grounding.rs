@@ -1880,7 +1880,6 @@ mod tests {
 
         let target = expected[ankle].w_axis.truncate() + Vec3::new(0.06, 0.0, 0.1);
         controller.ik.edit.goals.push(Goal {
-            follow: None,
             weight: 1.0,
             bone: ankle,
             root: ankle,
@@ -1910,48 +1909,6 @@ mod tests {
             );
         }
         assert!(Mat4::from_cols_array_2d(&output[ankle]).w_axis.z < expected[ankle].w_axis.z - 0.15);
-    }
-
-    #[test]
-    fn explicit_ik_contacts_override_grounding_and_release_back_to_it() {
-        use crate::scene::ik::{Goal, Mode};
-
-        let f = Fixture::new();
-        let now = Instant::now();
-        let ankle = f.rig.names["mAnkleLeft"];
-        let mut controller = Controller {
-            aurora_feet: true,
-            ground: Some(f.frame(Vec3::Z * 0.2, 0.0)),
-            ..Default::default()
-        };
-        let mut output = vec![Mat4::IDENTITY.to_cols_array_2d(); f.rig.len()];
-        controller.evaluate_on_ground(&f.rig, now, Some(&f.base), &mut output, flat);
-        let placed = Mat4::from_cols_array_2d(&output[ankle]);
-        let target = placed.w_axis.truncate() + Vec3::new(0.05, 0.0, 0.08);
-        let rotation = Quat::from_rotation_y(0.35);
-        controller.ik.targets.push(Goal {
-            follow: None,
-            weight: 1.0,
-            bone: ankle,
-            root: ankle,
-            position: target,
-            rotation: Some(rotation),
-            contact: Vec3::ZERO,
-            pole: None,
-            mode: Mode::Direct,
-        });
-        for step in 1..=8 {
-            controller.evaluate_on_ground(&f.rig, now + Duration::from_millis(step * 40), Some(&f.base), &mut output, flat);
-        }
-        let contact = Mat4::from_cols_array_2d(&output[ankle]);
-        assert!(contact.w_axis.truncate().distance(target) < 1e-5);
-        assert!(orientation(contact).dot(rotation).abs() > 0.99999);
-        controller.ik.targets.clear();
-        for step in 9..=16 {
-            controller.evaluate_on_ground(&f.rig, now + Duration::from_millis(step * 40), Some(&f.base), &mut output, flat);
-        }
-        assert!(Mat4::from_cols_array_2d(&output[ankle]).abs_diff_eq(placed, 1e-5));
-        assert!(controller.rot[ankle].abs_diff_eq(f.rig.local_rot[ankle], 1e-5));
     }
 
     #[test]

@@ -29,6 +29,8 @@ const VERSION: u32 = 1;
 const THIS_PC: &[&str] = &[
     "username",
     "remember_username",
+    // the proxies of this PC's network (Preferences › Network › Proxy)
+    "proxy",
     "last_login",
     "remember_password",
     "grid",
@@ -42,9 +44,11 @@ const THIS_PC: &[&str] = &[
     "window_maximized",
     "cache_location",
     "chat_log_location",
+    // a file of this PC (Preferences › Language and updates)
+    "custom_language_file",
 ];
 /// The same inside `audio`: the devices of this PC.
-const THIS_PC_AUDIO: &[&str] = &["output_device", "input_device"];
+const THIS_PC_AUDIO: &[&str] = &["output_device", "voice_output_device", "input_device"];
 /// The same inside `gifs`: the user's own service keys, and this viewer's
 /// random id. A backup file is carried around and shared; keys are not.
 const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
@@ -56,6 +60,8 @@ const THIS_PC_NESTED: &[(&str, &[&str])] = &[("audio", THIS_PC_AUDIO), ("gifs", 
 pub(super) fn is_this_pc(key: &str) -> bool {
     match key.split_once('.') {
         None => THIS_PC.contains(&key),
+        // a section of THIS_PC is this PC's with all its settings
+        Some((section, _)) if THIS_PC.contains(&section) => true,
         Some((section, inner)) => THIS_PC_NESTED.iter().any(|(name, keys)| *name == section && keys.contains(&inner)),
     }
 }
@@ -288,7 +294,9 @@ impl Settings {
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
+        self.custom_language_file = current.custom_language_file.clone();
         self.audio.output_device = current.audio.output_device.clone();
+        self.audio.voice_output_device = current.audio.voice_output_device.clone();
         self.audio.input_device = current.audio.input_device.clone();
         self.gifs.giphy_key = current.gifs.giphy_key.clone();
         self.gifs.klipy_key = current.gifs.klipy_key.clone();
@@ -333,6 +341,7 @@ mod tests {
             ..Settings::default()
         };
         s.audio.output_device = "Speakers".into();
+        s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
         s.gifs.giphy_key = "giphy-key-of-this-pc".into();
         s.gifs.klipy_key = "klipy-key-of-this-pc".into();
@@ -351,6 +360,7 @@ mod tests {
             "D:\\\\cache",
             "D:\\\\logs",
             "Speakers",
+            "Headset",
             "Microphone",
             "giphy-key-of-this-pc",
             "klipy-key-of-this-pc",
@@ -391,6 +401,7 @@ mod tests {
         other.colors.chat_direct = [1, 2, 3, 255];
         other.window_width = 640;
         other.audio.output_device = "Elsewhere".into();
+        other.audio.voice_output_device = "Other headset".into();
         other.gifs.giphy_key = "giphy-key-elsewhere".into();
         other.gifs.rating = crate::gif_search::Rating::Strict;
         let backup = Backup::parse(&Backup::new(&other, Some("layout".into())).to_bytes().unwrap()).unwrap();

@@ -143,7 +143,12 @@ What each part tells the one who fixes it:
   Meta, Virtual Desktop, Monado, Windows Mixed Reality or other), and
   whether it created the Vulkan device. Only shown when one was loaded.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, the tightest video memory
+  preset, memory (the viewer's working set, and what it has committed,
+  resident or paged out), the PC's memory (available / total, and on
+  Windows the commit charge of all programs against its limit, RAM and
+  page file: at the limit every allocation fails, so an out of memory with
+  a viewer far below it means another program filled the PC), video
+  memory used / budget, the tightest video memory
   headroom of the last 60 seconds (the driver's budget less what it
   counted for the viewer, in MB, negative while the viewer was past its
   budget: a card shared with another program, where the driver moves
@@ -202,12 +207,32 @@ inlined functions included, to functions and source lines. It then:
   the process start and the system modules are skipped, so the same crash
   keeps its signature across versions and offsets. Without symbols
   (development build, release older than the symbols), the signature is the
-  build's debug id and its first offsets;
+  build's debug id and its first offsets. A stack with no frame of the
+  viewer at all (a thread of another program's DLL loaded in the process)
+  is signed by that module's first three offsets and its debug or code ID.
+  This groups the same DLL crashing at the same place across viewer builds.
+  If both IDs are missing, the report needs manual duplicate triage;
 - when an open issue already has the same signature, comments there with
   the new occurrence (version, system, GPU) and closes the new issue as its
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
   sets the Bug type;
 - adds the `crash-triaged` label to the issue it signed.
+
+A GPU loss (`GPU device lost`, `GPU device lost at startup`) or an
+`Unexpected shutdown` is signed differently, since its stack shows the
+driver or the last state seen, not the cause. Its signature is the card
+family from the GPU row (`NVIDIA RTX 30`, `AMD RX 9000`, `AMD integrated`,
+`Intel Arc`, `Apple M2`, with ` laptop` for a laptop chip) and the system
+(Windows, macOS, Linux). A GPU loss adds the work the card had in hand
+(`hang`, `fault`, `at startup`, from the "GPU work at the loss" row). An
+unexpected shutdown adds how it ended (system restarted, viewer and
+watcher stopped together, ended from outside, or the exit code) and the
+window (never shown, not answering, answering). The version, the driver
+and the model inside the family stay out, so the reports of one group
+land on one issue, renamed for example
+`Crash: GPU device lost, NVIDIA RTX 30, hang (Windows)`. The comment of
+each duplicate on it also gives its risk factors (the settings that were
+on), so what tells the reports of a group apart stays visible.
 
 The signature lives in a hidden comment, the last line of the triage
 section. An open issue is a reference only when it carries the

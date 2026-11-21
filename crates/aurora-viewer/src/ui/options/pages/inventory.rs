@@ -67,6 +67,11 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-worn-tab"), "", &field!(inventory.show_worn));
         cx.toggle(tr!("ui-inventory-controls-favorites-tab"), "", &field!(inventory.show_favorites));
         cx.toggle(
+            tr!("inventory-favorites-show-parent-folders"),
+            tr!("inventory-favorites-show-parent-folders-help"),
+            &field!(inventory.favorites_show_parent_folders),
+        );
+        cx.toggle(
             tr!("ui-inventory-controls-separate-search-in-each-tab"),
             "",
             &field!(inventory.separate_searches),
@@ -87,6 +92,13 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("task-transfer-preferences"), |cx| {
         cx.toggle(tr!("task-transfer-warn-move"), "", &field!(inventory.warn_task_move));
         cx.toggle(tr!("task-transfer-warn-scripted"), "", &field!(inventory.warn_scripted_task_move));
+    });
+    cx.group(tr!("ui-options-before-acting"), |cx| {
+        cx.toggle(
+            tr!("ui-options-confirm-inventory-delete"),
+            tr!("ui-options-confirm-inventory-delete-help"),
+            &field!(inventory.confirm_delete),
+        );
     });
     cx.group(tr!("ui-inventory-controls-also-search-in"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-library"), "", &field!(inventory.search_library));

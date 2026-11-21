@@ -1,7 +1,7 @@
 //! The build floater (LLFloaterTools, floater_tools.xml, Firestorm) in the
 //! Aurora skin: five editing sections and five tools in one navigation
 //! rail. General holds object information and ownership permissions.
-//! The active section supplies the title; edit selection/actions belong
+//! The five object sections share a Build title; edit selection/actions belong
 //! to the main panel. The title bar folds it away (FSToolboxExpanded).
 //! Also the build keyboard shortcuts
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
@@ -14,6 +14,8 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+mod detach;
+pub(crate) mod export;
 mod features;
 mod floaters;
 pub(crate) mod general;
@@ -27,6 +29,7 @@ mod mesh;
 mod object;
 pub(crate) mod particles;
 mod replace;
+mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
 mod tools;
@@ -36,7 +39,7 @@ use super::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::media::entry::ObjectMediaData;
 use crate::theme::Palette;
 use crate::ui::texture_picker::TexturePicker;
-use crate::ui::widgets::Floater;
+use crate::ui::widgets::{self, Floater};
 use crate::world::World;
 use crate::world::objects::ObjKey;
 use egui::Vec2;
@@ -79,8 +82,8 @@ pub enum Request {
     BuyLand,
     Profile(Uuid),
     GroupProfile(Uuid),
-    /// "p" of the Object tab: read the system clipboard for this vector
-    /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
+    /// Read a transform vector from the system clipboard (0 position, 1 size,
+    /// 2 rotation); shared by Aurora's actions and the Legacy "p" button.
     PasteVector(usize),
     CopyKeys,
     Script {
@@ -159,11 +162,58 @@ pub enum Confirm {
     Probe,
 }
 
+/// The Contents list filters, after the inventory's (types and required
+/// rights), the rights being the next owner's: what someone would get from
+/// these items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContentsFilters {
+    /// One bit per inventory type (LLInventoryType); every bit: no filter.
+    pub types: u32,
+    /// Rights the next owner must get (copy, modify, transfer bits).
+    pub next_owner: u32,
+}
+
+impl Default for ContentsFilters {
+    fn default() -> Self {
+        Self {
+            types: u32::MAX,
+            next_owner: 0,
+        }
+    }
+}
+
+impl ContentsFilters {
+    pub fn active(&self) -> bool {
+        *self != Self::default()
+    }
+
+    /// The item passes the filters. Objects stored as a coalesced set count
+    /// as objects, as in the inventory; the next owner's rights are the
+    /// next-owner mask within the base mask.
+    pub fn matches(&self, item: &aurora_net::build::TaskItem) -> bool {
+        let kind = if item.inv_type == 17 { 6 } else { i32::from(item.inv_type) };
+        if self.types != u32::MAX && (!(0..32).contains(&kind) || self.types & (1_u32 << kind) == 0) {
+            return false;
+        }
+        item.next_owner_mask & item.base_mask & self.next_owner == self.next_owner
+    }
+}
+
+/// The material of the selected faces, waiting for its name (the Legacy
+/// Viewer's SaveMaterialAs notification).
+pub struct MaterialSaveDraft {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub rights: crate::build::texture_copy::MaterialSave,
+}
+
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
     /// Active presentation, mirrored before input routing (not a preference).
     legacy_window: bool,
+    transform_height: Option<f32>,
+    status_notice: Option<(String, f64)>,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
@@ -173,6 +223,24 @@ pub struct FloaterState {
     color_focused: bool,
     /// Texture tab: 0 Classic (Blinn-Phong), 1 PBR, 2 Media.
     pub tex_tab: usize,
+    /// A block being dragged out of the build window with Alt.
+    pub detach_drag: Option<crate::build::layout::Block>,
+    /// Each detached window's rect when the button went down, to tell a
+    /// move by its title (put back when dropped on the build window).
+    detach_press: std::collections::BTreeMap<crate::build::layout::Block, egui::Rect>,
+    /// Section tabs taken out of the build window (shown or not).
+    pub detached_tabs: Vec<usize>,
+    /// Section tabs shown this frame in a window of their own.
+    pub detached_shown: Vec<usize>,
+    /// The build window's body height last frame, and the height its shared
+    /// controls need without any section (`detach::fit_window`).
+    body_height: Option<f32>,
+    sectionless_body: Option<f32>,
+    /// Windows just taken out, fitting their height to their content for
+    /// these many more frames.
+    detach_fit: std::collections::BTreeMap<crate::build::layout::Block, u8>,
+    /// "Save material as": the name being typed, and what Save will store.
+    pub material_save: Option<MaterialSaveDraft>,
     /// PBR transform channel (All, Color, Normal, (O)RM, Emissive).
     pub pbr_channel: usize,
     /// Blinn-Phong UV channel (Diffuse, Normal, Specular).
@@ -187,13 +255,21 @@ pub struct FloaterState {
     /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    /// The Contents filters: item types and the next owner's rights.
+    pub contents_filters: ContentsFilters,
+    pub contents_filters_open: bool,
     /// Independent from every personal/folder inventory window.
-    pub contents_show_next_owner: bool,
+    pub contents_rights: crate::ui::inventory::permissions::Rights,
+    /// The language picked for "New script"; None follows the region (Lua
+    /// where SLua runs, as LLPanelContents::getState resets it).
+    pub new_script_lua: Option<bool>,
     pub contents_selection: contents_selection::Selection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
+    /// (object, item) of the contents to open in its window: a notecard,
+    /// or the preview of a texture, a sound or an animation.
     pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,
@@ -218,13 +294,17 @@ pub struct FloaterState {
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: contents_permissions::BulkState,
-    /// Contents item whose properties are shown.
-    pub item_properties: Option<item_properties::TaskProperties>,
+    /// Contents items whose properties windows are open, oldest first.
+    pub item_properties: Vec<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
     pub reveal_faces: bool,
+    /// The panel is the object profile's, not the build tools': its names
+    /// follow LLSidepanelTaskInfo::refreshAll under RLVa's `@shownames`
+    /// (`general::Names`).
+    pub object_profile: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,
@@ -357,12 +437,16 @@ pub fn show(
     floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
+        tool.ui.status_notice = None;
+        tool.status.clear();
         tool.dismiss_texture_picker();
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         tool.ui.layout.open = false;
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
+        detach::hide(tool);
+        detach::park(ctx, s);
         return false;
     }
     press_takes_build_field_focus(ctx);
@@ -401,6 +485,7 @@ pub fn show(
     }
     workspace::prepare(ctx, env.demo, s);
     tool.ui.legacy_window = s.legacy_window;
+    common::set_wheel_on_hover(ctx, s.wheel_on_hover);
     let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
     if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
         ctx.data_mut(|d| d.insert_temp(preview, true));
@@ -409,11 +494,29 @@ pub fn show(
             s.transform_expanded = false;
         }
     }
+    let demo_notice = egui::Id::unique("build-demo-notice");
+    if env.demo
+        && let Some(item) = ctx.data(|data| data.get_temp::<crate::build::layout::Item>(egui::Id::unique("build-demo-layout-drag")))
+    {
+        tool.ui.layout.open = true;
+        tool.ui.layout.organizing = true;
+        if ctx.cumulative_frame_nr() >= 700 {
+            tool.ui.layout.drag = Some(item);
+        }
+    }
+    if env.demo && ctx.cumulative_frame_nr() >= 700 && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false) {
+        ctx.data_mut(|data| data.insert_temp(demo_notice, true));
+        tool.status = aurora_i18n::tr!("build-link-pending").into();
+    }
     let width = egui::AreaState::load(ctx, egui::Id::unique(INSPECTOR_ID))
         .and_then(|state| state.size)
         .unwrap_or(workspace::DEFAULT_SIZE)
         .x;
     s.layout.normalize();
+    if !s.legacy_window {
+        // Aurora uses the floater's standard minimize/restore button.
+        s.expanded = true;
+    }
     if s.legacy_window && tool.tab == 1 {
         tool.tab = 5;
     }
@@ -422,26 +525,28 @@ pub fn show(
     }
     if !s.legacy_window
         && tool.tool == Tool::Edit
-        && !s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .any(|item| layout::section(*item) == Some(tool.tab))
+        && (detach::tab_detached(s, tool.tab) || !s.layout.in_bars().iter().any(|item| layout::section(*item) == Some(tool.tab)))
     {
-        tool.tab = s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .find_map(|item| layout::section(*item))
+        // A section in a window of its own leaves the build window to the
+        // next one still in it (none: the build window shows no section).
+        let navigation = s.layout.in_bars();
+        let mut tabs = navigation.iter().filter_map(|item| layout::section(*item));
+        tool.tab = tabs
+            .clone()
+            .find(|tab| !detach::tab_detached(s, *tab))
+            .or_else(|| detach::tab_detached(s, tool.tab).then_some(tool.tab))
+            .or_else(|| tabs.next())
             .unwrap_or(6);
     }
+    detach::prepare(tool, s);
+    detach::park(ctx, s);
     tool.ui.layout.targets.clear();
     tool.ui.layout.zones.clear();
+    tool.ui.layout.footer_cells.clear();
     let mut open = true;
-    let mut toggle_sections = false;
     let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
-    let mut toggle_settings = false;
+    let mut summary_clicked = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -462,11 +567,7 @@ pub fn show(
         .steady_size()
         .silent();
     if !s.legacy_window {
-        floater = floater.framed_header(title_icon).action(
-            if s.expanded { "caret-up-filled" } else { "caret-down-filled" },
-            aurora_i18n::tr!("build-compact-collapse"),
-            &mut toggle_sections,
-        );
+        floater = floater.framed_header(title_icon);
         floater.header_status = compact::object_status(tool, world, p);
         floater.header_status_action = Some((
             "clipboard-text-filled",
@@ -474,15 +575,28 @@ pub fn show(
             aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
             &mut copy_uuid,
         ));
+        if tool.tool == Tool::Edit {
+            floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
+            if !tool.selection.is_empty() {
+                floater.header_summary_action = Some(&mut summary_clicked);
+            }
+        } else {
+            // the selection line's room, so the bars do not move between tools
+            floater.header_summary = Some(egui::RichText::new(" ").size(common::BODY).into());
+        }
     }
-    if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
-        floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
-    }
+    // Keep the user's Build size. Large Appearance › Text size reflows inside
+    // the floater (shape fields and Legacy Texture slots); it must not shove
+    // the window wider or taller on its own.
     floater.min_size = if s.legacy_window {
         legacy::MIN_SIZE
     } else {
         compact::minimum_size(tool, s)
     };
+    if detach::sectionless(tool, s) {
+        // Its height is set to its shared controls (detach::fit_window).
+        floater.min_size.y = 100.0;
+    }
     if !s.expanded {
         floater.default_size.x = ctx
             .data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size")))
@@ -497,6 +611,12 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if !s.legacy_window {
+        detach::fit_window(ctx, tool, s);
+    }
+    if summary_clicked {
+        tool.ui.weights_open = !tool.ui.weights_open;
+    }
     if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
         match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {
@@ -504,12 +624,8 @@ pub fn show(
             Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
         }
     }
-    toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
-    }
-    if toggle_settings {
-        tool.ui.layout.open = !tool.ui.layout.open;
     }
     if !tool.ui.layout.open {
         tool.ui.layout.organizing = false;
@@ -519,11 +635,13 @@ pub fn show(
         tool.ui.layout.open = true;
         tool.ui.grid_options_open = false;
     }
+    detach::finish(ctx, p, tool, s);
+    detach::windows(ctx, p, tool, world, s, mods, env);
     layout::settings(ctx, p, tool, world, s, mods);
     layout::finish(ctx, p, tool, s);
     notecards::show(ctx, p, tool, world, s);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
-    if toggle_sections {
+    if legacy_toggle_sections {
         let size_id = egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size");
         if s.expanded {
             if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID))) {
@@ -555,7 +673,40 @@ pub fn show(
         tool.dismiss_texture_picker();
         tool.close(world, s);
     }
+    status_notice(ctx, p, tool);
     *s != before || *env.property_lines != property_lines_before
+}
+
+fn status_notice(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
+    let now = ctx.input(|input| input.time);
+    if !tool.status.is_empty() {
+        tool.ui.status_notice = Some((std::mem::take(&mut tool.status), now + 6.0));
+    }
+    if !tool.open || tool.ui.status_notice.as_ref().is_some_and(|(_, until)| now >= *until) {
+        tool.ui.status_notice = None;
+    }
+    let Some((text, until)) = &tool.ui.status_notice else { return };
+    let Some(anchor) = ctx.memory(|memory| memory.area_rect(egui::Id::unique(INSPECTOR_ID))) else {
+        return;
+    };
+    // An opaque themed surface keeps text legible over emissive objects and
+    // bright skies without changing the editor's measured content height.
+    let opaque = Palette {
+        panel_alpha: u8::MAX,
+        ..*p
+    };
+    egui::Area::new(egui::Id::unique("construction-status-notice"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(anchor.left_bottom() + egui::vec2(0.0, 6.0))
+        .constrain_to(ctx.content_rect().shrink(6.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.set_width(anchor.width().max(120.0));
+            widgets::overlay(ui, &opaque, egui::Margin::same(8), |ui| {
+                common::text(ui, &opaque, text);
+            });
+        });
+    ctx.request_repaint_after(std::time::Duration::from_secs_f64((*until - now).max(0.0)));
 }
 
 impl BuildTool {
@@ -618,7 +769,8 @@ impl BuildTool {
             let n = self.num_faces(world, idx) as i32;
             let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
             let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
-            let f = if all && next {
+            // A sole selected face is already the cursor, not a bulk selection.
+            let f = if all && next && (n > 1 || self.selection.len() > 1) {
                 0
             } else if next {
                 cur + 1
@@ -626,10 +778,12 @@ impl BuildTool {
                 cur - 1
             };
             if (0..n).contains(&f) {
-                let entry = self.faces.entry(key).or_default();
                 if !include {
-                    entry.clear();
+                    let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
+                    self.deselect(world, &others);
+                    self.faces.clear();
                 }
+                let entry = self.faces.entry(key).or_default();
                 if !entry.contains(&(f as u8)) {
                     entry.push(f as u8);
                 }
@@ -652,7 +806,11 @@ impl BuildTool {
             .collect();
         let Some(pos) = list.iter().position(|&i| i == idx) else { return };
         let n = list.len();
-        let target = if next { list[(pos + 1) % n] } else { list[(pos + n - 1) % n] };
+        // LLToolsSelectNextPartFace skips selected links when extending a selection.
+        let target = (1..=n)
+            .map(|step| list[if next { (pos + step) % n } else { (pos + n - step) % n }])
+            .find(|&idx| !include || world.objects.get(idx).is_some_and(|o| !self.is_selected(&o.key)));
+        let Some(target) = target else { return };
         let Some(unit) = world.objects.get(target).map(|o| o.key) else {
             return;
         };

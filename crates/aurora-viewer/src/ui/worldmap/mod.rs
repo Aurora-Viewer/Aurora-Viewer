@@ -71,6 +71,10 @@ pub struct WorldMapUi {
     /// Pointer the zoom keeps fixed, relative to the view center.
     zoom_pivot: Option<Vec2>,
     was_open: bool,
+    focus_search: bool,
+    /// The next opening comes from a script (llMapDestination) without
+    /// BEACON_FOCUS_MAP: it must not take the keyboard.
+    opened_by_script: bool,
     tiles_complete: bool,
     search: String,
     selected: Option<(u32, u32)>,
@@ -86,6 +90,9 @@ pub struct WorldMapUi {
     pub want_folders: HashSet<Uuid>,
     /// AURORA_DEMO_MAP=legacy: the side panel without touching the setting.
     pub demo_style: Option<WorldMapStyle>,
+    /// The teleport history's days in the drawer: the zone of Places
+    /// (`tp_history_zone`), set by the app before each frame.
+    pub history_zone: crate::settings::HistoryZone,
 }
 
 impl Default for WorldMapUi {
@@ -98,6 +105,8 @@ impl Default for WorldMapUi {
             target_zoom: -1.0,
             zoom_pivot: None,
             was_open: false,
+            focus_search: false,
+            opened_by_script: false,
             tiles_complete: false,
             search: String::new(),
             selected: None,
@@ -108,6 +117,7 @@ impl Default for WorldMapUi {
             wanted_pics: HashSet::new(),
             want_folders: HashSet::new(),
             demo_style: None,
+            history_zone: crate::settings::HistoryZone::default(),
         }
     }
 }
@@ -141,6 +151,12 @@ struct MapInput {
 }
 
 impl WorldMapUi {
+    /// The map is about to open for a script (llMapDestination) without
+    /// BEACON_FOCUS_MAP: its search does not take the keyboard.
+    pub fn open_for_script(&mut self) {
+        self.opened_by_script = true;
+    }
+
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
     pub fn demo_search(&mut self, world: &mut World, text: &str) {
         self.search = text.to_owned();
@@ -187,13 +203,23 @@ impl WorldMapUi {
         open: &mut bool,
     ) -> Vec<WorldMapAction> {
         let mut actions = Vec::new();
+        // RlvUIEnabler::onToggleShowWorldMap (rlvui.cpp) closes the floater
+        // and its generic floater filter (filterFloaterGeneric) refuses to
+        // show it while @showworldmap holds, whatever asked for it: no frame
+        // is drawn and no map item is asked for.
+        *open &= !world.rlva.has("showworldmap");
         if !*open {
             self.was_open = false;
+            self.focus_search = false;
             return actions;
         }
         if !self.was_open {
-            // LLFloaterWorldMap::onOpen: back on our position, items reloaded
+            // LLFloaterWorldMap::onOpen: back on our position, items reloaded,
+            // and the location editor takes the keyboard when the floater
+            // opens focused: always for the user (toolbar, menus, Ctrl+M, "show
+            // on map"), with BEACON_FOCUS_MAP for a script
             self.was_open = true;
+            self.focus_search = !std::mem::take(&mut self.opened_by_script);
             self.pan = Vec2::ZERO;
             self.target_pan = Vec2::ZERO;
             self.zoom = (opts.world_scale.max(1.0) / 256.0).log2().clamp(ZOOM_MIN, ZOOM_MAX);
@@ -650,7 +676,8 @@ impl WorldMapUi {
                 None
             };
             let teleport = resp.double_clicked() && opts.world_double_click_tp;
-            let z = world.agent.position.z;
+            // a god arrives at 200 m (GODLY_TELEPORT_HEIGHT, LLWorldMapView)
+            let z = if world.god_level > 0 { 200.0 } else { world.agent.position.z };
             match item.filter(|h| !matches!(h.1, ItemKind::Infohub | ItemKind::Telehub)) {
                 Some((_, kind, i)) => {
                     let ty = item_type(kind);
@@ -734,21 +761,27 @@ impl WorldMapUi {
         ui.label(RichText::new(&name).size(12.5).color(p.ink));
         let (mut lx, mut ly, mut lz) = ((x - ox) as f32, (y - oy) as f32, z);
         let before = (lx, ly, lz);
-        let responses = ui
-            .horizontal(|ui| {
-                [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)].map(|(label, value, max)| {
-                    ui.label(RichText::new(label).size(12.0).color(p.muted));
-                    ui.add(
-                        egui::DragValue::new(value)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .range(0.0..=max)
-                            .speed(1.0)
-                            .max_decimals(0)
-                            .update_while_editing(false),
-                    )
+        // each axis keeps its letter beside its field when the row wraps
+        let width = SIDE_W.min(ui.available_width());
+        let responses = column_row(ui, width, |ui| {
+            [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)].map(|(label, value, max)| {
+                column_item(ui, egui::Id::unique(("worldmap-axis", label)), |ui| {
+                    let pair = ui.horizontal(|ui| {
+                        ui.label(RichText::new(label).size(12.0).color(p.muted));
+                        ui.add(
+                            egui::DragValue::new(value)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(0.0..=max)
+                                .speed(1.0)
+                                .max_decimals(0)
+                                .update_while_editing(false),
+                        )
+                    });
+                    let width = pair.response.rect.width();
+                    (pair.inner, width)
                 })
             })
-            .inner;
+        });
         // TextEdit reports a change while a DragValue is still typing.
         // Track only a committed numeric change (or a drag of the value).
         if (lx, ly, lz) != before {
@@ -801,7 +834,7 @@ impl WorldMapUi {
             }
             // LLFloaterWorldMap's Go Home button: greyed under RLVa @tplm + @tploc
             let home = ui
-                .add_enabled_ui(world.rlva_can_teleport_home(), |ui| {
+                .add_enabled_ui(world.rlva_home_button_enabled(), |ui| {
                     widgets::flat_button(ui, p, aurora_i18n::tr!("common-home"))
                         .on_hover_text(aurora_i18n::tr!("common-go-home"))
                         .clicked()
@@ -914,12 +947,19 @@ impl WorldMapUi {
         ui.add_space(4.0);
         let mut go = false;
         ui.horizontal(|ui| {
-            let r = widgets::search_field(
-                ui,
-                &mut self.search,
-                aurora_i18n::tr!("ui-worldmap-regions-by-name"),
-                ui.available_width() - 84.0,
-            );
+            // asked by id before the field is drawn, so that it has the
+            // keyboard in the very frame it takes it; not in the window's
+            // sizing pass (its first frame), whose widgets cannot keep it
+            if self.focus_search && !ui.is_sizing_pass() {
+                self.focus_search = false;
+                ui.memory_mut(|m| m.request_focus(side_search_id()));
+            }
+            let width = ui.available_width() - 84.0;
+            let r = widgets::search_text_edit(ui, p, &mut self.search, |edit| {
+                edit.id(side_search_id())
+                    .hint_text(aurora_i18n::tr!("ui-worldmap-regions-by-name"))
+                    .desired_width(width)
+            });
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 go = true;
             }
@@ -971,7 +1011,7 @@ impl WorldMapUi {
                                 } else {
                                     format!("{name}  ·  {}", access_label(*access))
                                 };
-                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                                widgets::search_list_item(ui, sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
                             })
                             .inner;
                         if clicked {
@@ -999,6 +1039,9 @@ impl WorldMapUi {
     }
 
     fn position_panel(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, cam: &MapCamera, actions: &mut Vec<WorldMapAction>) {
+        // the column's own width: the rows above (the list's, the X / Y / Z
+        // fields) can have widened the layout past it
+        let width = SIDE_W.min(ui.available_width());
         ui.add_space(4.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-worldmap-position"))
@@ -1035,10 +1078,12 @@ impl WorldMapUi {
         // greyed when RLVa would refuse it (the same check as the send)
         let tp_allowed = tp_target.as_ref().is_some_and(|c| world.rlva_allows_command(c, Uuid::nil()));
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(tp_allowed, egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
-                .clicked()
+        let id = |button: &str| egui::Id::unique(("worldmap-footer", button));
+        column_row(ui, width, |ui| {
+            if column_widget(ui, id("teleport"), |ui| {
+                ui.add_enabled(tp_allowed, egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
+            })
+            .clicked()
                 && let Some(c) = tp_target.clone()
             {
                 match c {
@@ -1053,21 +1098,23 @@ impl WorldMapUi {
                     glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z),
                 ))
             });
-            if ui
-                .add_enabled(
+            if column_widget(ui, id("slurl"), |ui| {
+                ui.add_enabled(
                     slurl.is_some() && !world.rlva.has("showloc"),
                     egui::Button::new(aurora_i18n::tr!("common-copy-slurl")),
                 )
-                .clicked()
+            })
+            .clicked()
                 && !world.rlva.has("showloc")
                 && let Some(u) = slurl
             {
                 ui.ctx().copy_text(u);
             }
             let tracked = world.map.track.as_ref().map(|t| (t.x, t.y));
-            if ui
-                .add_enabled(tracked.is_some(), egui::Button::new(aurora_i18n::tr!("ui-worldmap-show-selection")))
-                .clicked()
+            if column_widget(ui, id("show"), |ui| {
+                ui.add_enabled(tracked.is_some(), egui::Button::new(aurora_i18n::tr!("ui-worldmap-show-selection")))
+            })
+            .clicked()
                 && let Some((x, y)) = tracked
             {
                 self.center_on(world, cam, x, y);
@@ -1080,17 +1127,18 @@ impl WorldMapUi {
                 .as_ref()
                 .filter(|_| !world.rlva.has("showloc"))
                 .and_then(|t| world.map.sim_at_global(t.x, t.y).map(|(_, s)| s.name.clone()));
-            if ui
-                .add_enabled(
+            if column_widget(ui, id("track"), |ui| {
+                ui.add_enabled(
                     track_name.is_some(),
                     egui::Button::new(aurora_i18n::tr!("region-tracker-track-region")),
                 )
-                .clicked()
+            })
+            .clicked()
                 && let Some(name) = track_name
             {
                 actions.push(WorldMapAction::TrackRegion(name));
             }
-            self.clear_button(ui, world);
+            column_widget(ui, id("clear"), |ui| self.clear_button(ui, world));
         });
     }
 
@@ -1576,6 +1624,11 @@ mod coordinate_tests {
     }
 }
 
+/// The side panel layout's region search.
+fn side_search_id() -> egui::Id {
+    egui::Id::unique("worldmap-side-search")
+}
+
 /// Where the side column's position footer keeps its measured height.
 fn side_footer_id() -> egui::Id {
     egui::Id::unique("worldmap-position-height")
@@ -1583,6 +1636,50 @@ fn side_footer_id() -> egui::Id {
 
 /// The position footer's height until it has been measured once.
 const SIDE_FOOTER_GUESS: f32 = 180.0;
+
+/// A row of the side column that wraps within `width`, as
+/// `horizontal_wrapped` would within the column. egui widens a layout's
+/// rect to whatever it holds: with the text twice as large, the scrolled
+/// list (its widest rows) and the X / Y / Z fields measured wider than the
+/// column and gave the rows under them that extra room, so they no longer
+/// wrapped and the column cut them. A button wider than `width` wraps its
+/// label on two lines. Its items sit at the top of their line: centred,
+/// a group taller than the line's first height (an axis and its field at
+/// a large text) came out lower than the one before it.
+fn column_row<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let layout = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+    ui.allocate_ui_with_layout(vec2(width, ui.spacing().interact_size.y), layout, add)
+        .inner
+}
+
+/// One item of a `column_row`: it starts a new line when its width on one
+/// line, as `add` measured it last frame (a float kept under `id`, stored
+/// again only when it changes), does not fit what is left of the current
+/// one. egui's own wrap makes a new line as tall as the tallest line above
+/// it (a label on two lines spread the buttons under it apart), and moves
+/// an axis' letter without its field; a line started here
+/// (`Ui::end_row`) is as tall as its own items.
+fn column_item<R>(ui: &mut egui::Ui, id: egui::Id, add: impl FnOnce(&mut egui::Ui) -> (R, f32)) -> R {
+    let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    if ui.cursor().min.x > ui.max_rect().min.x && ui.available_size_before_wrap().x < width {
+        ui.end_row();
+    }
+    let (inner, measured) = add(ui);
+    if measured != width {
+        ui.data_mut(|d| d.insert_temp(id, measured));
+    }
+    inner
+}
+
+/// A widget as a `column_item`, measured by its unwrapped width (a button
+/// whose label wraps on two lines reports its label on one).
+fn column_widget(ui: &mut egui::Ui, id: egui::Id, add: impl FnOnce(&mut egui::Ui) -> egui::Response) -> egui::Response {
+    column_item(ui, id, |ui| {
+        let response = add(ui);
+        let width = response.intrinsic_size().map_or(response.rect.width(), |s| s.x);
+        (response, width)
+    })
+}
 
 /// The position footer's height as last measured.
 fn side_footer_height(ctx: &egui::Context) -> f32 {
@@ -1762,9 +1859,11 @@ mod size_tests {
     }
 
     /// The side panel layout made as small as it goes: the position footer's
-    /// buttons stay whole inside the window, across and down, at every
-    /// interface scale and text size. Without a minimum, `steady_size` let
-    /// the column slide out of the window's right edge.
+    /// buttons and coordinates stay whole inside the window, across and
+    /// down, at every interface scale and text size. Without a minimum,
+    /// `steady_size` let the column slide out of the window's right edge;
+    /// with the text twice as large, the list's widest rows and the X / Y / Z
+    /// row widened the column's layout and the buttons ran past the column.
     #[test]
     fn the_side_panel_layout_at_its_smallest_keeps_its_buttons_whole() {
         let library = Arc::new(AvatarLibrary::load());
@@ -1791,16 +1890,15 @@ mod size_tests {
             let across = crate::ui::widgets::floater_chrome(ctx).x / 2.0;
             let padding = ctx.global_style().spacing.button_padding;
             let room = window.shrink(across).shrink2(padding).expand(0.5);
-            for label in labels {
+            // a label wider than the column (French at text × 2) wraps on
+            // two lines inside it; the X / Y / Z fields of the tracked place
+            // (200, 150, 25) wrap with their letter instead of running out of
+            // the column, at that size in every language
+            for label in labels.into_iter().chain(["X", "Y", "Z", "200", "150", "25"]) {
                 let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
                 assert!(!found.is_empty(), "{case}: {label:?} is drawn");
                 for t in found {
-                    // a label wider than the column (French at text × 2) is
-                    // cut by the column at any window size (the ⬜ follow-up
-                    // of #2669): what the column can show stays in the window
-                    let mut shown = t.rect;
-                    shown.max.x = shown.max.x.min(shown.min.x + SIDE_W - 2.0 * padding.x);
-                    assert!(room.contains_rect(shown), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
+                    assert!(room.contains_rect(t.rect), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
                 }
             }
             // the column's list keeps a few rows above the footer
@@ -1831,5 +1929,230 @@ mod size_tests {
             "narrowed by the drag: {rect:?} then {last:?}"
         );
         assert_eq!(last.left(), rect.left(), "the left edge stays");
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    struct Bench {
+        ctx: egui::Context,
+        map: WorldMapUi,
+        world: World,
+        tiles: MapTiles,
+        camera: MapCamera,
+        settings: MapSettings,
+        images: HashMap<Uuid, egui::TextureHandle>,
+        avatars: HashMap<Uuid, egui::TextureHandle>,
+        style: WorldMapStyle,
+        time: f64,
+    }
+
+    impl Bench {
+        fn new(style: WorldMapStyle) -> Self {
+            let mut world = World::new(Arc::new(AvatarLibrary::load()));
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            let mut bench = Self {
+                ctx: egui::Context::default(),
+                map: WorldMapUi::default(),
+                world,
+                tiles: MapTiles::new(),
+                camera: MapCamera {
+                    pos: glam::Vec3::new(128.0, 128.0, 70.0),
+                    dir: glam::Vec3::X,
+                    hfov: 1.0,
+                    far: 128.0,
+                },
+                settings: MapSettings::default(),
+                images: HashMap::new(),
+                avatars: HashMap::new(),
+                style,
+                time: 0.0,
+            };
+            bench.frame(false, vec![]);
+            bench
+        }
+
+        fn frame(&mut self, open: bool, events: Vec<egui::Event>) {
+            self.time += 0.1;
+            let ctx = self.ctx.clone();
+            let p = crate::theme::Theme::default().palette();
+            let pictures = MapPictures {
+                images: &self.images,
+                avatars: &self.avatars,
+            };
+            let mut open = open;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1000.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |_| {
+                    self.map.show(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &mut self.tiles,
+                        &self.camera,
+                        &mut self.settings,
+                        self.style,
+                        &pictures,
+                        &mut open,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+
+        /// The search of the map's layout.
+        fn query(&self) -> &str {
+            match self.style {
+                WorldMapStyle::Legacy => &self.map.search,
+                WorldMapStyle::Aurora => &self.map.ov.query,
+            }
+        }
+    }
+
+    #[test]
+    fn opening_the_map_focuses_search_and_types_in_both_layouts() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // opened by the user (toolbar, menu, Ctrl+M); the side panel
+            // window's first frame is a sizing pass
+            bench.frame(true, vec![]);
+            bench.frame(true, vec![]);
+            let search = match style {
+                WorldMapStyle::Legacy => side_search_id(),
+                WorldMapStyle::Aurora => overlay::search_id(),
+            };
+            assert!(
+                bench.ctx.memory(|memory| memory.has_focus(search)),
+                "map search should receive focus for {style:?}"
+            );
+            bench.frame(true, vec![egui::Event::Text("ab".into())]);
+            assert_eq!(bench.query(), "ab", "typed text should reach {style:?} map search");
+        }
+    }
+
+    #[test]
+    fn programmatic_map_open_does_not_take_keyboard_focus() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // llMapDestination without BEACON_FOCUS_MAP
+            bench.map.open_for_script();
+            bench.frame(true, vec![]);
+            assert!(
+                bench.ctx.memory(|memory| memory.focused().is_none()),
+                "a programmatic {style:?} map open must not take focus"
+            );
+            bench.frame(true, vec![egui::Event::Text("ab".into())]);
+            assert_eq!(bench.query(), "", "typed text must not reach {style:?} map search");
+        }
+    }
+
+    #[test]
+    fn a_later_user_opening_takes_the_keyboard_again() {
+        let mut bench = Bench::new(WorldMapStyle::Aurora);
+        bench.map.open_for_script();
+        bench.frame(true, vec![]);
+        bench.frame(false, vec![]);
+        bench.frame(true, vec![]);
+        assert!(bench.ctx.memory(|memory| memory.has_focus(overlay::search_id())));
+    }
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use crate::ui::widgets::elide_tests::Frames;
+    use std::sync::Arc;
+
+    #[test]
+    fn the_world_map_is_neither_drawn_nor_asks_items_under_showworldmap() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.rlva.configure(true);
+        restrict(&mut world, "@showworldmap=n");
+        assert!(world.rlva.has("showworldmap"));
+        let (mut map, mut tiles, mut opts) = (WorldMapUi::default(), MapTiles::new(), MapSettings::default());
+        let cam = MapCamera {
+            pos: glam::Vec3::new(128.0, 128.0, 30.0),
+            dir: glam::Vec3::X,
+            hfov: 1.2,
+            far: 128.0,
+        };
+        let images = HashMap::new();
+        let pictures = MapPictures {
+            images: &images,
+            avatars: &images,
+        };
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = Frames::new();
+        let mut open = true;
+        let texts = frames.run(vec![], |ui| {
+            map.show(
+                ui.ctx(),
+                &p,
+                &mut world,
+                &mut tiles,
+                &cam,
+                &mut opts,
+                WorldMapStyle::Legacy,
+                &pictures,
+                &mut open,
+            );
+        });
+        assert!(!open, "the window closes whoever opened it");
+        assert!(texts.is_empty(), "nothing of the map is drawn");
+        assert!(
+            !world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::MapItemRequest { .. })),
+            "no map item is asked for"
+        );
+        restrict(&mut world, "@showworldmap=y");
+        let mut open = true;
+        frames.run(vec![], |ui| {
+            map.show(
+                ui.ctx(),
+                &p,
+                &mut world,
+                &mut tiles,
+                &cam,
+                &mut opts,
+                WorldMapStyle::Legacy,
+                &pictures,
+                &mut open,
+            );
+        });
+        assert!(open, "the released map opens again");
+        assert!(
+            world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::MapItemRequest { .. })),
+            "the opened map asks its items"
+        );
+    }
+    fn restrict(world: &mut World, command: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: command.into(),
+        }));
     }
 }

@@ -267,20 +267,6 @@ pub fn volume_from_ui(u: &ShapeUi, prev_ty: usize, flexible: bool) -> VolumePara
     v
 }
 
-/// Small isometric drawing of a shape's outline (Create palette).
-pub fn shape_preview(ui: &egui::Ui, rect: egui::Rect, params: &VolumeParams, rot: Quat, color: Color32) {
-    let edges = crate::build::silhouette::preview_edges(params);
-    let view = Quat::from_rotation_x(-0.6) * Quat::from_rotation_z(0.75) * rot;
-    let s = rect.width().min(rect.height()) * 0.62;
-    let proj = |v: Vec3| {
-        let q = view * v;
-        egui::pos2(rect.center().x + q.x * s, rect.center().y - q.z * s)
-    };
-    for (a, b) in edges.iter() {
-        ui.painter().line_segment([proj(*a), proj(*b)], egui::Stroke::new(1.0, color));
-    }
-}
-
 /// "<x, y, z>" with the decimal precision (LLPanelObject::onCopyPos...).
 pub fn vector_text(v: Vec3, decimals: usize) -> String {
     format!("<{:.*}, {:.*}, {:.*}>", decimals, v.x, decimals, v.y, decimals, v.z)
@@ -293,8 +279,9 @@ pub fn parse_vector(t: &str) -> Option<Vec3> {
     (parts.len() == 3).then(|| Vec3::new(parts[0], parts[1], parts[2]))
 }
 
-/// Icon of the paste entries, the one of the paste buttons.
+/// System clipboard paste uses the same icon as the other paste menus.
 const PASTE: &str = "clipboard-text-filled";
+const PASTE_STORED: &str = "clipboard-data-filled";
 
 #[allow(clippy::too_many_arguments)]
 fn vec_block(
@@ -309,6 +296,9 @@ fn vec_block(
     decimals: usize,
     enabled: bool,
     mixed: [bool; 3],
+    collapse: Option<&mut bool>,
+    inline: bool,
+    vertical: bool,
 ) -> (Edit, Option<Vec3>, bool) {
     if super::legacy::active(ui) {
         return legacy_vec_block(ui, p, tool, which, title, v, increment, range, decimals, enabled, mixed);
@@ -323,112 +313,190 @@ fn vec_block(
         aurora_i18n::tr!("build-compact-size"),
         aurora_i18n::tr!("build-compact-rotation"),
     ][which];
-    // LLPanelObject::onCopyPos/Size/Rot keeps a separate value per vector.
-    // Keep each pair on its own caption line, independent of the manipulator.
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(title).size(super::common::BODY).color(p.muted));
+    // Three cells cut out of one row: equal widths from edge to edge and one
+    // baseline, whatever the length of the values; or, `vertical`, one under
+    // the other at the whole width.
+    const GAP: f32 = 6.0;
+    const ROW_GAP: f32 = 3.0;
+    const HEIGHT: f32 = 28.0;
+    const MARK: f32 = 2.0;
+    const LETTER: f32 = super::common::SMALL;
+    // LLPanelObject::onCopyPos/Size/Rot and onPastePosClip/SizeClip/RotClip
+    // (indra/newview/llpanelobject.cpp) keep internal and system pastes separate.
+    let mut buttons = |ui: &mut egui::Ui| {
         super::compact::actions(ui, |ui| {
-            if super::compact::icon_button(
+            let system = super::compact::icon_button(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-system"), enabled);
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-system-paste", which)), system.rect));
+            if system.clicked() {
+                tool.ui.requests.push(Request::PasteVector(which));
+            }
+            let stored = super::compact::icon_button(
                 ui,
                 p,
-                PASTE,
-                &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
+                PASTE_STORED,
+                aurora_i18n::tr!("build-compact-paste-vector"),
                 enabled && tool.ui.vec_clipboard[which].is_some(),
-            )
-            .clicked()
-            {
+            );
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-stored-paste", which)), stored.rect));
+            if stored.clicked() {
                 paste = tool.ui.vec_clipboard[which];
             }
-            if super::compact::icon_button(
+            let copy_button = super::compact::icon_button(
                 ui,
                 p,
                 "copy-filled",
                 &aurora_i18n::tr!("build-ui-object-copy", n = vector_name),
                 enabled,
-            )
-            .clicked()
-            {
+            );
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-copy", which)), copy_button.rect));
+            if copy_button.clicked() {
                 copy = true;
             }
         });
-    });
-    // Three cells cut out of one row: equal widths from edge to edge and one
-    // baseline, whatever the length of the values.
-    const GAP: f32 = 6.0;
-    const HEIGHT: f32 = 28.0;
-    const MARK: f32 = 2.0;
-    const LETTER: f32 = super::common::SMALL;
-    let row = ui.add_enabled_ui(enabled, |ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT), egui::Sense::hover());
-        let width = ((rect.width() - 2.0 * GAP) / 3.0).max(40.0);
-        let radius = ui.visuals().window_corner_radius;
-        for (axis, value) in v.iter_mut().enumerate() {
-            let left = rect.left() + axis as f32 * (width + GAP);
-            let cell = egui::Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(width, HEIGHT));
-            let color = crate::build::draw::axis_color(p, axis);
+    };
+    let mut cells = |ui: &mut egui::Ui, row_width: f32| {
+        ui.add_enabled_ui(enabled, |ui| {
+            let height = if vertical { 3.0 * HEIGHT + 2.0 * ROW_GAP } else { HEIGHT };
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(row_width, height), egui::Sense::hover());
+            let width = if vertical {
+                rect.width()
+            } else {
+                ((rect.width() - 2.0 * GAP) / 3.0).max(40.0)
+            };
+            let radius = ui.visuals().window_corner_radius;
+            for (axis, value) in v.iter_mut().enumerate() {
+                let min = if vertical {
+                    egui::pos2(rect.left(), rect.top() + axis as f32 * (HEIGHT + ROW_GAP))
+                } else {
+                    egui::pos2(rect.left() + axis as f32 * (width + GAP), rect.top())
+                };
+                let cell = egui::Rect::from_min_size(min, egui::vec2(width, HEIGHT));
+                let color = crate::build::draw::axis_color(p, axis);
+                ui.painter()
+                    .rect(cell, radius, p.field, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+                // axis mark on the left edge, in the color of the manipulator's axis
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(cell.min, egui::vec2(MARK, HEIGHT)),
+                    egui::CornerRadius {
+                        nw: radius.nw,
+                        sw: radius.sw,
+                        ne: 0,
+                        se: 0,
+                    },
+                    color,
+                );
+                let inner = egui::Rect::from_min_max(
+                    egui::pos2(cell.left() + MARK + 5.0, cell.top() + 1.0),
+                    egui::pos2(cell.right() - 2.0, cell.bottom() - 1.0),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(inner)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.spacing_mut().interact_size.y = 23.0;
+                        ui.spacing_mut().button_padding.y = 3.0;
+                        // the value sits in the cell itself: no second face under it
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                        widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                        widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                        widgets.active.bg_stroke = egui::Stroke::NONE;
+                        // The letter is smaller than the value: the row would
+                        // level their tops. Lowered by half the difference of
+                        // their capital heights (about 0.7 em), it sits on the
+                        // middle of the digits.
+                        let value_size = egui::TextStyle::Button.resolve(ui.style()).size;
+                        let galley =
+                            ui.painter()
+                                .layout_no_wrap(["X", "Y", "Z"][axis].to_owned(), egui::FontId::proportional(LETTER), color);
+                        let (letter, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                        let drop = 0.35 * (value_size - LETTER).max(0.0);
+                        ui.painter().galley(letter.min + egui::vec2(0.0, drop), galley, color);
+                        e = e.or(super::common::transform_spin(
+                            ui,
+                            value,
+                            increment,
+                            range[axis].clone(),
+                            decimals,
+                            (inner.right() - letter.right() - 2.0).max(20.0),
+                            mixed[axis],
+                            if which == 2 { 1 } else { 3 },
+                        ));
+                    },
+                );
+            }
+        })
+    };
+    let row = if inline {
+        // title | values | buttons: the title column fits the longest of
+        // the three titles, so the values line up from one vector to the next
+        let title_width = [
+            aurora_i18n::tr!("build-compact-position"),
+            aurora_i18n::tr!("build-compact-size"),
+            aurora_i18n::tr!("build-compact-rotation"),
+        ]
+        .iter()
+        .map(|text| {
             ui.painter()
-                .rect(cell, radius, p.field, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
-            // axis mark on the left edge, in the color of the manipulator's axis
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(cell.min, egui::vec2(MARK, HEIGHT)),
-                egui::CornerRadius {
-                    nw: radius.nw,
-                    sw: radius.sw,
-                    ne: 0,
-                    se: 0,
-                },
-                color,
+                .layout_no_wrap((*text).to_owned(), egui::FontId::proportional(super::common::BODY), p.muted)
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max)
+            + 8.0;
+        ui.horizontal(|ui| {
+            let (label, _) = ui.allocate_exact_size(egui::vec2(title_width, HEIGHT), egui::Sense::hover());
+            ui.painter().text(
+                egui::pos2(label.left(), label.center().y),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(super::common::BODY),
+                p.muted,
             );
-            let inner = egui::Rect::from_min_max(
-                egui::pos2(cell.left() + MARK + 5.0, cell.top() + 1.0),
-                egui::pos2(cell.right() - 2.0, cell.bottom() - 1.0),
-            );
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(inner)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.spacing_mut().interact_size.y = 23.0;
-                    ui.spacing_mut().button_padding.y = 3.0;
-                    // the value sits in the cell itself: no second face under it
-                    let widgets = &mut ui.visuals_mut().widgets;
-                    widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-                    widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                    widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                    widgets.active.bg_stroke = egui::Stroke::NONE;
-                    // The letter is smaller than the value: the row would
-                    // level their tops. Lowered by half the difference of
-                    // their capital heights (about 0.7 em), it sits on the
-                    // middle of the digits.
-                    let value_size = egui::TextStyle::Button.resolve(ui.style()).size;
-                    let galley = ui
-                        .painter()
-                        .layout_no_wrap(["X", "Y", "Z"][axis].to_owned(), egui::FontId::proportional(LETTER), color);
-                    let (letter, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                    let drop = 0.35 * (value_size - LETTER).max(0.0);
-                    ui.painter().galley(letter.min + egui::vec2(0.0, drop), galley, color);
-                    e = e.or(super::common::transform_spin(
-                        ui,
-                        value,
-                        increment,
-                        range[axis].clone(),
-                        decimals,
-                        (inner.right() - letter.right() - 2.0).max(20.0),
-                        mixed[axis],
-                        if which == 2 { 1 } else { 3 },
-                    ));
-                },
-            );
-        }
-    });
+            // the three buttons of the vector (22 wide, 2 apart) after a gap
+            let width = (ui.available_width() - 3.0 * 22.0 - 2.0 * 2.0 - GAP).max(3.0 * 40.0 + 2.0 * GAP);
+            let row = cells(ui, width);
+            ui.add_space(GAP - ui.spacing().item_spacing.x);
+            buttons(ui);
+            row
+        })
+        .inner
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(title).size(super::common::BODY).color(p.muted));
+            if let Some(expanded) = collapse {
+                // a wide target, centred over the values
+                const FOLD: egui::Vec2 = egui::vec2(64.0, 24.0);
+                ui.add_space((ui.max_rect().center().x - ui.cursor().min.x - FOLD.x / 2.0).max(3.0));
+                if super::compact::icon_button_sized(ui, p, "caret-down-filled", aurora_i18n::tr!("build-layout-transform"), true, FOLD)
+                    .clicked()
+                {
+                    *expanded = false;
+                }
+            }
+            buttons(ui);
+        });
+        let width = ui.available_width();
+        cells(ui, width)
+    };
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("build-vector-fields", which)), row.response.rect));
     // The row menu also accepts vectors from the system clipboard.
     menu::context_menu(&row.response, p, |ui| {
         if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("build-compact-copy-vector"), enabled) {
             copy = true;
         }
         let stored = enabled && tool.ui.vec_clipboard[which].is_some();
-        if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-vector"), stored) {
+        if menu::item_if(ui, p, PASTE_STORED, aurora_i18n::tr!("build-compact-paste-vector"), stored) {
             paste = tool.ui.vec_clipboard[which];
         }
         if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-system"), enabled) {
@@ -526,13 +594,56 @@ fn legacy_vec_block(
     (edit, paste, copy)
 }
 
+/// How the Position / Size / Rotation block is laid out: each vector's
+/// title over its values, one value under the other below its title (a
+/// narrow window), one line per vector (title, values, buttons), or the
+/// three vectors on a single line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformArrange {
+    Stacked,
+    Vertical,
+    Lines,
+    Single,
+}
+
+impl TransformArrange {
+    /// The block in a window of its own: the wider, the fewer lines.
+    pub fn for_width(width: f32) -> Self {
+        if width >= 1100.0 {
+            Self::Single
+        } else if width >= 500.0 {
+            Self::Lines
+        } else if width >= 250.0 {
+            Self::Stacked
+        } else {
+            Self::Vertical
+        }
+    }
+}
+
 pub fn show_transform(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
     world: &mut World,
     s: &mut BuildSettings,
+    mods: crate::build::Mods,
+) {
+    show_transform_arranged(ui, p, tool, world, s, mods, TransformArrange::Stacked, true);
+}
+
+/// The block laid out as `arrange` says; `foldable` shows its fold arrow
+/// (the build window's block, not the detached one).
+#[allow(clippy::too_many_arguments)]
+pub fn show_transform_arranged(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
     _mods: crate::build::Mods,
+    arrange: TransformArrange,
+    foldable: bool,
 ) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
@@ -551,8 +662,18 @@ pub fn show_transform(
     let decimals = s.decimal_precision.min(7) as usize;
 
     let mixed = mixed_vectors(tool, world, s);
-    let can_move = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Move);
-    let can_scale = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Stretch);
+    // LLSelectMgr::selectGetEditMoveLinksetPermissions and
+    // LLPanelObject::getState (indra/newview/llselectmgr.cpp, llpanelobject.cpp)
+    // require the complete selection's properties and operation rights.
+    let known = tool.selection.iter().all(|key| {
+        world
+            .objects
+            .index_of(key)
+            .and_then(|idx| world.objects.get(idx))
+            .is_some_and(|o| tool.props.get(&o.full_id).is_some_and(|props| props.full))
+    });
+    let can_move = known && crate::build::manip::can_transform_selection(world, &tool.selection, s.edit_linked, EditMode::Move);
+    let can_scale = known && crate::build::manip::can_transform_selection(world, &tool.selection, s.edit_linked, EditMode::Stretch);
     let (z, y, x) = if local { local_rot } else { wr }.to_euler(EulerRot::ZYX);
     let wrap = |a: f32| {
         let d = (a.to_degrees() / 0.05).round() * 0.05;
@@ -571,8 +692,31 @@ pub fn show_transform(
         .get(&key.region)
         .map(|r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32))
         .unwrap_or((256.0, 256.0));
+    // A single line: three slots side by side, one vector in each.
+    const SLOT_GAP: f32 = 14.0;
+    let line = (arrange == TransformArrange::Single).then(|| {
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 31.0), egui::Sense::hover())
+            .0
+    });
+    let inline = matches!(arrange, TransformArrange::Lines | TransformArrange::Single);
+    let vertical = arrange == TransformArrange::Vertical;
+    let slot = |ui: &mut egui::Ui, which: usize| {
+        line.map(|line| {
+            let width = (line.width() - 2.0 * SLOT_GAP) / 3.0;
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("transform-slot", which))
+                    .max_rect(egui::Rect::from_min_size(
+                        egui::pos2(line.left() + which as f32 * (width + SLOT_GAP), line.top()),
+                        egui::vec2(width, line.height()),
+                    ))
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            )
+        })
+    };
+    let mut slot_ui = slot(ui, 0);
     let (e, paste, copy) = vec_block(
-        ui,
+        slot_ui.as_mut().unwrap_or(&mut *ui),
         p,
         tool,
         0,
@@ -587,6 +731,9 @@ pub fn show_transform(
         decimals,
         can_move,
         mixed[0],
+        (!s.legacy_window && foldable && !inline).then_some(&mut s.transform_expanded),
+        inline,
+        vertical,
     );
     if copy {
         copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
@@ -603,8 +750,9 @@ pub fn show_transform(
     }
     let mut size = scale.to_array();
     let limits = world.prim_limits();
+    let mut slot_ui = slot(ui, 1);
     let (e, paste, copy) = vec_block(
-        ui,
+        slot_ui.as_mut().unwrap_or(&mut *ui),
         p,
         tool,
         1,
@@ -615,6 +763,9 @@ pub fn show_transform(
         decimals,
         can_scale,
         mixed[1],
+        None,
+        inline,
+        vertical,
     );
     if copy {
         copy_vector(ui, tool, 1, Vec3::from_array(size), decimals);
@@ -624,8 +775,9 @@ pub fn show_transform(
     } else if e.changed {
         tool.set_transform(world, s, None, Some(Vec3::from_array(size)), None, e.commit);
     }
+    let mut slot_ui = slot(ui, 2);
     let (e, paste, copy) = vec_block(
-        ui,
+        slot_ui.as_mut().unwrap_or(&mut *ui),
         p,
         tool,
         2,
@@ -636,6 +788,9 @@ pub fn show_transform(
         decimals,
         can_move,
         mixed[2],
+        None,
+        inline,
+        vertical,
     );
     if copy {
         copy_vector(ui, tool, 2, Vec3::from_array(rot), decimals);
@@ -665,46 +820,59 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             .and_then(|o| tool.props.get(&o.full_id))
             .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
     }));
-    if let Some(v) = check(
-        ui,
-        p,
-        locked.unwrap_or(false),
-        locked_mixed,
-        aurora_i18n::tr!("build-ui-object-locked"),
-        self_owned,
-    ) {
-        tool.set_perm(world, perm_field::OWNER, !v, perm::MOVE | perm::MODIFY);
-    }
     let root_ok = editable && is_root;
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_USE_PHYSICS != 0,
-        false,
-        aurora_i18n::tr!("build-ui-object-physics"),
-        root_ok && !flexible,
-    ) {
-        tool.set_flags(world, Some(v), None, None);
+    let checks = [
+        (
+            aurora_i18n::tr!("build-ui-object-locked"),
+            locked.unwrap_or(false),
+            locked_mixed,
+            self_owned,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-physics"),
+            flags & FLAGS_USE_PHYSICS != 0,
+            false,
+            root_ok && !flexible,
+        ),
+        (
+            aurora_i18n::tr!("common-temporary"),
+            flags & FLAGS_TEMPORARY_ON_REZ != 0,
+            false,
+            root_ok,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-phantom"),
+            flags & FLAGS_PHANTOM != 0,
+            false,
+            root_ok && !flexible,
+        ),
+    ];
+    let mut changes = [None; 4];
+    let mut column = |ui: &mut egui::Ui, indices: &[usize]| {
+        for &index in indices {
+            let (caption, value, mixed, enabled) = checks[index];
+            changes[index] = check(ui, p, value, mixed, caption, enabled);
+        }
+    };
+    if super::legacy::active(ui) {
+        column(ui, &[0, 1, 2, 3]);
+    } else {
+        ui.columns(2, |columns| {
+            column(&mut columns[0], &[0, 1]);
+            column(&mut columns[1], &[2, 3]);
+        });
     }
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_TEMPORARY_ON_REZ != 0,
-        false,
-        aurora_i18n::tr!("common-temporary"),
-        root_ok,
-    ) {
-        tool.set_flags(world, None, Some(v), None);
+    if let Some(value) = changes[0] {
+        tool.set_perm(world, perm_field::OWNER, !value, perm::MOVE | perm::MODIFY);
     }
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_PHANTOM != 0,
-        false,
-        aurora_i18n::tr!("build-ui-object-phantom"),
-        root_ok && !flexible,
-    ) {
-        tool.set_flags(world, None, None, Some(v));
+    if let Some(value) = changes[1] {
+        tool.set_flags(world, Some(value), None, None);
+    }
+    if let Some(value) = changes[2] {
+        tool.set_flags(world, None, Some(value), None);
+    }
+    if let Some(value) = changes[3] {
+        tool.set_flags(world, None, None, Some(value));
     }
 }
 
@@ -718,7 +886,14 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         return;
     }
     let editable = tool.can_modify(world, idx);
-    let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
+    let single = tool.sel_prims(world).len() == 1;
+    // LLPanelObject::getState clears geometry without Modify or with several
+    // selected volumes. Mesh LOD statistics above remain public, as in
+    // activateMeshFields; sculpt maps and shape parameters do not.
+    if !editable || !single {
+        super::common::small(ui, p, "—");
+        return;
+    }
     let mut chosen_type = None;
     let legacy = super::legacy::active(ui);
     ui.horizontal(|ui| {
@@ -858,9 +1033,20 @@ fn shape_pair(
         return edit;
     }
     ui.horizontal(|ui| {
-        let label_width = (ui.available_width() - 182.0).max(70.0);
+        // Prefer the field strip next to the label (Heeks: no empty middle).
+        // Grow with text size when there is room; never wider than the floater
+        // so Appearance › Text size does not force the window to grow.
+        let scale = super::common::font_scale(ui);
+        let available = ui.available_width();
+        let label_min = 48.0;
+        let fields = (182.0 * scale).min((available - label_min).max(90.0));
+        let fit = (fields / 182.0).max(0.5);
+        let spin_w = 49.0 * fit;
+        let axis_w = 30.0 * fit;
+        let label_width = (available - fields).max(label_min);
+        let row_h = 26.0 * scale;
         ui.allocate_ui_with_layout(
-            Vec2::new(label_width, 26.0),
+            Vec2::new(label_width, row_h),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(label_width);
@@ -869,10 +1055,10 @@ fn shape_pair(
             },
         );
         for ((value, axis), range) in values.into_iter().zip(axes).zip(ranges) {
-            ui.allocate_ui_with_layout(Vec2::new(30.0, 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(axis_w, row_h), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(axis).size(super::common::SMALL).color(p.muted));
             });
-            edit = edit.or(spin(ui, value, increment, range, decimals, 49.0, false));
+            edit = edit.or(spin(ui, value, increment, range, decimals, spin_w, false));
         }
     });
     edit
@@ -891,8 +1077,11 @@ fn shape_scalar(
         super::common::label(ui, p, title);
         return spin(ui, value, increment, range, decimals, ui.available_width().max(50.0), false);
     }
-    let width = (ui.available_width() - 63.0).max(70.0);
-    row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, 58.0, false))
+    let scale = super::common::font_scale(ui);
+    let available = ui.available_width();
+    let spin_w = (58.0 * scale).min((available - 48.0).max(50.0));
+    let width = (available - spin_w - 5.0).max(48.0);
+    row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, spin_w, false))
 }
 
 fn shape_column(
@@ -950,7 +1139,9 @@ fn shape_column(
                 1,
             ));
             let mut hollow_shape = |ui: &mut egui::Ui| {
-                if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
+                let scale = if legacy { 1.0 } else { super::common::font_scale(ui) };
+                let combo_w = (120.0 * scale).min(ui.available_width().max(80.0));
+                if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), combo_w, u.hollow > 0.0) {
                     u.hole = h;
                     e = e.or(Edit {
                         changed: true,
@@ -963,7 +1154,10 @@ fn shape_column(
                 super::common::label(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"));
                 hollow_shape(ui);
             } else {
-                let width = (ui.available_width() - 125.0).max(70.0);
+                let scale = super::common::font_scale(ui);
+                let available = ui.available_width();
+                let combo_w = (120.0 * scale).min((available - 48.0).max(80.0));
+                let width = (available - combo_w - 5.0).max(48.0);
                 row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, hollow_shape);
             }
             // LLPanelObject::getState exposes all transforms for parametric prims,
@@ -1199,6 +1393,18 @@ impl BuildTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_detached_transform_block_takes_fewer_lines_the_wider_it_is() {
+        assert_eq!(TransformArrange::for_width(150.0), TransformArrange::Vertical);
+        assert_eq!(TransformArrange::for_width(249.9), TransformArrange::Vertical);
+        assert_eq!(TransformArrange::for_width(250.0), TransformArrange::Stacked);
+        assert_eq!(TransformArrange::for_width(499.9), TransformArrange::Stacked);
+        assert_eq!(TransformArrange::for_width(500.0), TransformArrange::Lines);
+        assert_eq!(TransformArrange::for_width(1099.9), TransformArrange::Lines);
+        assert_eq!(TransformArrange::for_width(1100.0), TransformArrange::Single);
+        assert_eq!(TransformArrange::for_width(3000.0), TransformArrange::Single);
+    }
 
     #[test]
     fn a_sculpt_map_the_agent_cannot_copy_is_copied_as_the_default_one() {

@@ -1,15 +1,22 @@
-//! Explicit, region-scoped photo-posing consent. No viewer detection or probes.
+//! Photo-posing consent, asked by our own bridge the way any posing HUD asks
+//! it: a standard script dialog (llDialog) shows the resident a Yes / No
+//! question, then once they accept how to stop, with a Stop button and
+//! `stop` on [`POSE_STOP_CHANNEL`] in nearby chat (`world/bridge/query.lsl`).
+//! It works whatever viewer the resident uses, and nothing goes from our
+//! viewer to theirs (Second Life's shared experience policy; AGENTS.md, "No
+//! data of our own in shared places"). The pose itself is drawn on our
+//! screen only (`ik_edit::poser`). A consent holds while both stay in the
+//! region: it ends when either leaves, when they stop it, or when we cancel.
 use super::World;
 use aurora_net::{
     NetCommand,
     bridge::{
         Endpoint,
-        query::{PoseKind, Query},
+        query::{POSE_STOP_CHANNEL, PoseDialog, PoseKind, Query},
     },
 };
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -17,19 +24,6 @@ use uuid::Uuid;
 const TIMEOUT: Duration = Duration::from_secs(60);
 const COOLDOWN: Duration = Duration::from_secs(600);
 const LIMIT: usize = 64;
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Policy {
-    Everyone,
-    #[default]
-    Friends,
-    Nobody,
-}
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct Preferences {
-    pub policy: Policy,
-    pub blocked: HashSet<Uuid>,
-}
 #[derive(Clone, Copy)]
 pub struct Request {
     pub id: Uuid,
@@ -44,21 +38,22 @@ pub enum Status {
     Refused,
     NoAnswer,
 }
+/// What our bridge is told to do: show a resident the dialog, or forget
+/// what it asked them (cancelled, timed out, ended).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Out {
+    Ask { request: Uuid, peer: Uuid },
+    Forget { request: Uuid, peer: Uuid },
+}
 #[derive(Default)]
 pub struct State {
     agent: Uuid,
     region: Option<u64>,
-    pub preferences: Preferences,
-    pub incoming: VecDeque<Request>,
     outgoing: HashMap<Uuid, Request>,
-    pub granted_to: HashMap<Uuid, Uuid>,
     accepted: HashMap<Uuid, Uuid>,
     refused: HashMap<Uuid, (Instant, bool)>,
-    inbound_cooldown: HashMap<Uuid, Instant>,
-    ended: HashMap<(Uuid, Uuid), Instant>,
-    out: VecDeque<(Uuid, PoseKind, Uuid)>,
+    out: VecDeque<Out>,
     pub notice: Option<&'static str>,
-    pub dirty: bool,
 }
 #[cfg(test)]
 mod tests;
@@ -100,16 +95,26 @@ pub fn name(world: &World, peer: Uuid) -> String {
         .or_else(|| world.person_name(&peer))
         .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").to_string())
 }
+/// The dialog's texts, in our language: the resident reads what we wrote.
+pub fn dialog() -> PoseDialog {
+    use aurora_i18n::tr;
+    let channel = POSE_STOP_CHANNEL.to_string();
+    PoseDialog::new(
+        &tr!("poser-consent-dialog-question", channel = channel.clone()),
+        tr!("poser-consent-dialog-yes"),
+        tr!("poser-consent-dialog-no"),
+        &tr!("poser-consent-dialog-granted", channel = channel),
+        tr!("poser-consent-dialog-stop"),
+        tr!("poser-consent-dialog-stopped"),
+    )
+}
 impl State {
     pub fn sync(&mut self, world: &World, now: Instant) {
+        // a region change ends every consent; the bridge forgets them too
         if self.agent != world.agent_id || self.region != world.main_region || world.teleporting {
-            let prefs = self.preferences.clone();
-            let dirty = self.dirty;
             *self = Self {
                 agent: world.agent_id,
                 region: world.main_region,
-                preferences: prefs,
-                dirty,
                 ..Default::default()
             };
         }
@@ -118,10 +123,6 @@ impl State {
             self.cancel(p);
             self.notice = Some("poser-consent-ended");
         }
-        let ended: Vec<_> = self.granted_to.keys().copied().filter(|p| !present(world, *p)).collect();
-        for peer in ended {
-            self.withdraw(peer);
-        }
         let expired: Vec<_> = self
             .outgoing
             .values()
@@ -129,38 +130,14 @@ impl State {
             .copied()
             .collect();
         for r in expired {
-            self.outgoing.remove(&r.peer);
-            self.out.retain(|(id, kind, _)| *id != r.id || *kind != PoseKind::Request);
+            self.cancel(r.peer);
             self.refused.insert(r.peer, (now, true));
-            self.send(r.id, PoseKind::Cancel, r.peer);
-        }
-        let expired: Vec<_> = self
-            .incoming
-            .iter()
-            .filter(|r| now.duration_since(r.at) >= TIMEOUT || !nearby(world, r.peer))
-            .copied()
-            .collect();
-        for r in expired {
-            self.answer(r, false, false, now);
         }
         self.refused.retain(|_, (at, _)| now.duration_since(*at) < COOLDOWN);
-        self.inbound_cooldown.retain(|_, at| now.duration_since(*at) < COOLDOWN);
-        self.ended.retain(|_, at| now.duration_since(*at) < COOLDOWN);
-        let permitted: HashSet<_> = self.incoming.iter().filter(|r| self.allowed(world, r.peer)).map(|r| r.id).collect();
-        self.incoming.retain(|r| permitted.contains(&r.id));
     }
-    fn allowed(&self, world: &World, peer: Uuid) -> bool {
-        nearby(world, peer)
-            && !self.preferences.blocked.contains(&peer)
-            && match self.preferences.policy {
-                Policy::Everyone => true,
-                Policy::Friends => world.social.friends.iter().any(|f| f.id == peer),
-                Policy::Nobody => false,
-            }
-    }
-    fn send(&mut self, id: Uuid, kind: PoseKind, peer: Uuid) {
+    fn send(&mut self, out: Out) {
         if self.out.len() < LIMIT * 2 {
-            self.out.push_back((id, kind, peer));
+            self.out.push_back(out);
         }
     }
     pub fn request(&mut self, world: &World, peer: Uuid, now: Instant) -> bool {
@@ -177,7 +154,7 @@ impl State {
             at: now,
         };
         self.outgoing.insert(peer, request);
-        self.send(request.id, PoseKind::Request, peer);
+        self.send(Out::Ask { request: request.id, peer });
         true
     }
     pub fn status(&self, peer: Uuid) -> Status {
@@ -191,45 +168,29 @@ impl State {
             Status::Ask
         }
     }
+    /// The avatars whose owners accepted our request, nearby or not
+    /// (`can_pose` says whether one may be posed now).
+    pub fn accepted_peers(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.accepted.keys().copied()
+    }
     pub fn can_pose(&self, world: &World, peer: Uuid) -> bool {
         self.accepted.contains_key(&peer) && nearby(world, peer)
     }
     pub fn cancel(&mut self, peer: Uuid) {
         if let Some(r) = self.outgoing.remove(&peer) {
-            self.out.retain(|(id, _, _)| *id != r.id);
-            self.send(r.id, PoseKind::Cancel, peer);
+            // an ask not sent yet is simply dropped
+            let queued = self.out.len();
+            self.out.retain(|o| *o != Out::Ask { request: r.id, peer });
+            if self.out.len() == queued {
+                self.send(Out::Forget { request: r.id, peer });
+            }
         }
         if let Some(id) = self.accepted.remove(&peer) {
-            self.send(id, PoseKind::Cancel, peer);
+            self.send(Out::Forget { request: id, peer });
         }
     }
-    pub fn withdraw(&mut self, peer: Uuid) {
-        if let Some(id) = self.granted_to.remove(&peer) {
-            if self.ended.len() < LIMIT * 2 {
-                self.ended.insert((peer, id), Instant::now());
-            }
-            self.out.retain(|(request, _, _)| *request != id);
-            self.send(id, PoseKind::Withdraw, peer);
-        }
-    }
-    pub fn answer(&mut self, request: Request, accept: bool, block: bool, now: Instant) {
-        if !self.incoming.iter().any(|r| r.id == request.id && r.peer == request.peer) {
-            return;
-        }
-        self.incoming.retain(|r| r.id != request.id);
-        if block && self.preferences.blocked.len() < 256 {
-            self.preferences.blocked.insert(request.peer);
-            self.dirty = true;
-        }
-        if accept && now.duration_since(request.at) < TIMEOUT {
-            self.granted_to.insert(request.peer, request.id);
-            self.send(request.id, PoseKind::Accept, request.peer);
-        } else {
-            self.inbound_cooldown.insert(request.peer, now);
-            self.send(request.id, PoseKind::Refuse, request.peer);
-        }
-    }
-    /// Called only after the worn bridge root and its owner/region were checked.
+    /// Called only after the worn bridge root and its owner/region were
+    /// checked: `peer` is the avatar who answered our bridge's dialog.
     pub fn receive(&mut self, world: &World, text: &str, now: Instant) {
         if text.len() > 160 {
             return;
@@ -248,18 +209,6 @@ impl State {
             return;
         }
         match kind {
-            PoseKind::Request => {
-                if !self.allowed(world, peer)
-                    || self.ended.contains_key(&(peer, id))
-                    || self.inbound_cooldown.contains_key(&peer)
-                    || self.incoming.len() >= LIMIT
-                    || self.incoming.iter().any(|r| r.peer == peer)
-                    || self.granted_to.contains_key(&peer)
-                {
-                    return;
-                }
-                self.incoming.push_back(Request { id, peer, at: now });
-            }
             PoseKind::Accept | PoseKind::Refuse => {
                 let Some(r) = self
                     .outgoing
@@ -276,22 +225,7 @@ impl State {
                     self.refused.insert(peer, (now, false));
                 }
             }
-            PoseKind::Cancel => {
-                if self.ended.len() < LIMIT * 2 {
-                    self.ended.insert((peer, id), now);
-                }
-                self.incoming.retain(|r| r.peer != peer || r.id != id);
-                self.out.retain(|(request, _, _)| *request != id);
-                if self.granted_to.get(&peer) == Some(&id) {
-                    self.granted_to.remove(&peer);
-                }
-            }
             PoseKind::Withdraw => {
-                if self.outgoing.get(&peer).is_some_and(|r| r.id == id) {
-                    self.outgoing.remove(&peer);
-                    self.out.retain(|(request, _, _)| *request != id);
-                    self.notice = Some("poser-consent-ended");
-                }
                 if self.accepted.get(&peer) == Some(&id) {
                     self.accepted.remove(&peer);
                     self.notice = Some("poser-consent-ended");
@@ -303,23 +237,47 @@ impl State {
         let Some(endpoint) = endpoint else { return Vec::new() };
         self.out
             .drain(..)
-            .map(|(request, kind, target)| NetCommand::BridgeQuery {
-                request: Uuid::new_v4(),
-                endpoint: endpoint.clone(),
-                query: Query::Pose { request, kind, target },
+            .map(|out| {
+                let (request, target, ask) = match out {
+                    Out::Ask { request, peer } => (request, peer, Some(dialog())),
+                    Out::Forget { request, peer } => (request, peer, None),
+                };
+                NetCommand::BridgeQuery {
+                    request: Uuid::new_v4(),
+                    endpoint: endpoint.clone(),
+                    query: Query::Pose { request, target, ask },
+                }
             })
             .collect()
     }
     /// Offline fixture only; callers gate this on the application's demo mode.
+    /// The compact demo's stand-in for the peer: a request to `peer` older
+    /// than `after` is accepted, as her answer to the dialog would be.
+    pub fn demo_accept(&mut self, world: &World, peer: Uuid, after: Duration) {
+        let now = Instant::now();
+        if let Some(r) = self.outgoing.get(&peer).filter(|r| now.duration_since(r.at) >= after) {
+            let id = r.id;
+            self.receive(world, &format!("<auroraPose>{id}|accept|{peer}</auroraPose>"), now);
+        }
+    }
     pub fn demo(&mut self, world: &World, peer: Uuid, mode: &str, frame: u64) {
         let now = Instant::now();
-        if frame == 450 {
-            if mode == "consent-request" || mode == "consent-reminder" {
-                let id = Uuid::new_v4();
-                self.receive(world, &format!("<auroraPose>{id}|request|{peer}</auroraPose>"), now);
-            } else {
-                self.request(world, peer, now);
+        // consent-reply: nothing asked by itself; whoever the user asks
+        // accepts two seconds later, as a resident would
+        if mode == "consent-reply" {
+            let due: Vec<Request> = self
+                .outgoing
+                .values()
+                .filter(|r| now.duration_since(r.at) >= Duration::from_secs(2))
+                .copied()
+                .collect();
+            for r in due {
+                self.receive(world, &format!("<auroraPose>{}|accept|{}</auroraPose>", r.id, r.peer), now);
             }
+            return;
+        }
+        if frame == 450 {
+            self.request(world, peer, now);
         }
         if frame == 480 {
             if mode == "consent-timeout" {
@@ -327,18 +285,13 @@ impl State {
                     r.at = now - TIMEOUT - Duration::from_secs(1);
                 }
                 self.sync(world, now);
-            } else if mode == "consent-reminder" {
-                if let Some(r) = self.incoming.front().copied() {
-                    self.answer(r, true, false, now);
-                }
-            } else if mode != "consent-request"
-                && let Some(r) = self.outgoing.get(&peer)
-            {
+            } else if let Some(r) = self.outgoing.get(&peer) {
                 let id = r.id;
                 let kind = if mode == "consent-refuse" { "refuse" } else { "accept" };
                 self.receive(world, &format!("<auroraPose>{id}|{kind}|{peer}</auroraPose>"), now);
             }
         }
+        // consent-withdraw: she presses Stop, or types stop in nearby chat
         if frame == 560
             && mode == "consent-withdraw"
             && let Some(id) = self.accepted.get(&peer).copied()

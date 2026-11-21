@@ -179,10 +179,10 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     ui.interact(all, ui.scope_id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let contacts_sub = if friends.is_some() {
-            sidebar::ContactsSub::Friends
-        } else {
-            sidebar::ContactsSub::Lists
+        let contacts_sub = match &friends {
+            Some(f) if f.st.pane_groups => sidebar::ContactsSub::Groups,
+            Some(_) => sidebar::ContactsSub::Friends,
+            None => sidebar::ContactsSub::Lists,
         };
         let contacts_clicked = sidebar::show(
             ui,
@@ -309,12 +309,11 @@ pub(super) fn pane(
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.add(
-                egui::TextEdit::singleline(q)
-                    .id(find::filter_id(st.selected))
+            crate::ui::widgets::search_text_edit(ui, p, q, |edit| {
+                edit.id(find::filter_id(st.selected))
                     .hint_text(aurora_i18n::tr!("ui-chat-filter"))
-                    .desired_width(width - 24.0),
-            );
+                    .desired_width(width - 24.0)
+            });
         });
     }
     let conv_input = egui::Id::unique(("conv_input", st.selected));
@@ -322,7 +321,9 @@ pub(super) fn pane(
         search.open_find();
     }
     // (the find field is in the head's row: the messages keep their height)
-    let lines_h = (pane.bottom() - ui.cursor().top() - compose::height(ui.ctx(), st.selected, st.recent_emojis.height())).max(60.0);
+    let recent = st.recent_emojis.height();
+    let cap = compose::field_cap(pane.bottom() - ui.cursor().top(), recent);
+    let lines_h = (pane.bottom() - ui.cursor().top() - compose::height(ui.ctx(), st.selected, recent, cap)).max(60.0);
     // ---- the messages, and the members beside them
     let read = mark_read(world, st.selected);
     note_new_line(ui, world, st, read);
@@ -379,7 +380,7 @@ pub(super) fn pane(
         // the hint over the faded messages; over the pane, where `drops`
         // outlines the zone, it takes the ink
         let area = egui::Rect::from_min_size(egui::pos2(pane.left(), body_top), egui::vec2(lines_w, lines_h));
-        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ui.ctx()).is_some();
+        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::give_count(ui.ctx()).is_some();
         give_drop::hint(ui.painter(), p, give_id, area, over, &world.session_title(&id), fade);
     }
     let mut quote = None;
@@ -398,7 +399,7 @@ pub(super) fn pane(
     }
     // ---- the field
     let strip_top = after_lines.max(ui.cursor().top() - 1.0);
-    compose::show(ui, p, icons, emoji, gestures, w, st, actions, quote);
+    compose::show(ui, p, icons, emoji, gestures, w, st, actions, quote, cap);
     // the strip between the messages and the box keeps the normal cursor
     // unless a drag goes through it (#422)
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
@@ -604,7 +605,8 @@ impl NewLines {
                 .max(first);
             // (without the focus, what is shown is not seen yet)
             self.seen.insert(conv, from);
-            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own());
+            // (a blocked resident's line, kept in the history, is no news)
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own() || l.blocked);
             match (from..next).find(|&seq| !mine(seq)) {
                 Some(seq) => {
                     self.at.insert(conv, seq);

@@ -116,10 +116,27 @@ fn can_terraform_region(world: &World, h: RegionHandle) -> bool {
         .is_none_or(|i| i.region_flags & REGION_FLAGS_BLOCK_TERRAFORM == 0)
 }
 
+/// LLToolSelectLand::handleHover / handleMouseUp (indra/newview/lltoolselectland.cpp):
+/// show the same 4 m cells while dragging and after release. Keep the raw anchor.
+fn parcel_rect(a: Vec2, b: Vec2) -> (Vec2, Vec2) {
+    if (a - b).length() < 0.5 {
+        let lo = (a / PARCEL_GRID).floor() * PARCEL_GRID;
+        return (lo, lo + Vec2::splat(PARCEL_GRID));
+    }
+    let lo = (a.min(b) / PARCEL_GRID).floor() * PARCEL_GRID;
+    let hi = (a.max(b) / PARCEL_GRID).ceil() * PARCEL_GRID;
+    (lo, hi.max(lo + Vec2::splat(PARCEL_GRID)))
+}
+
 impl LandTool {
     pub fn cancel(&mut self) {
         self.brushing = None;
         self.dragging = None;
+    }
+
+    /// Feedback still held by the land tool, including pending join refusals.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
     }
 
     pub fn take_message(&mut self) -> Option<String> {
@@ -131,16 +148,7 @@ impl LandTool {
         if let Some((a, b)) = self.dragging.take() {
             self.request_parcel = true;
             self.parcel = None;
-            if (a - b).length() >= 0.5 {
-                // round outwards to the parcel grid (LLToolSelectLand::roundXY)
-                let lo = (a.min(b) / PARCEL_GRID).floor() * PARCEL_GRID;
-                let hi = (a.max(b) / PARCEL_GRID).ceil() * PARCEL_GRID;
-                self.selection = Some((lo, hi.max(lo + Vec2::splat(PARCEL_GRID))));
-            } else {
-                // a click: the 4 m square under it
-                let lo = (a / PARCEL_GRID).floor() * PARCEL_GRID;
-                self.selection = Some((lo, lo + Vec2::splat(PARCEL_GRID)));
-            }
+            self.selection = Some(parcel_rect(a, b));
         }
     }
 
@@ -155,6 +163,7 @@ impl LandTool {
         cursor: (f32, f32),
         _out: &mut Vec<BuildCmd>,
     ) -> bool {
+        self.message = None;
         let (o, d) = cam.ray(cursor.0, cursor.1);
         // land under the mouse: the picked point when it is not an object
         let p = match (hit, target) {
@@ -333,7 +342,7 @@ impl LandTool {
 
     /// The answer to `ask_parcel`.
     pub fn on_selected_parcel(&mut self, handle: RegionHandle, sequence: i32, parcel: std::sync::Arc<aurora_net::ParcelInfo>) {
-        if sequence == self.parcel_seq {
+        if sequence == self.parcel_seq && !self.request_parcel && self.dragging.is_none() && self.selection.is_some() {
             self.parcel = Some((handle, parcel));
         }
     }
@@ -349,6 +358,61 @@ impl LandTool {
     /// Area of the selection (m²).
     pub fn selection_area(&self) -> f32 {
         self.selection.map(|(a, b)| (b.x - a.x) * (b.y - a.y)).unwrap_or(0.0)
+    }
+
+    /// LLPanelLandInfo::refresh (indra/newview/llpanelland.cpp): a dragged
+    /// rectangle larger than one cell. These requests use SnapSelection=false,
+    /// so an equal area does not mean that a whole parcel was selected.
+    /// Ownership of an aggregate reply is not a join permission check; the
+    /// simulator checks the parcels' rights, as in the Legacy Viewer.
+    pub fn can_join(&self, world: &World) -> bool {
+        if self.request_parcel || self.dragging.is_some() || self.selection_area() <= PARCEL_GRID * PARCEL_GRID {
+            return false;
+        }
+        let Some((handle, west, south, east, north)) = self.selection_local(world) else {
+            return false;
+        };
+        let Some(region) = world.regions.get(&handle) else { return false };
+        // selectLand rejects a rectangle crossing a region boundary. Wait for
+        // this rectangle's reply instead of borrowing the avatar's parcel.
+        [west, south, east, north].iter().all(|v| v.is_finite())
+            && west >= 0.0
+            && south >= 0.0
+            && east > west
+            && north > south
+            && east <= region.heightmap.size_x as f32
+            && north <= region.heightmap.size_y as f32
+            && self.parcel.as_ref().is_some_and(|(h, p)| {
+                *h == handle
+                    && matches!(
+                        p.request_result,
+                        aurora_net::land::PARCEL_RESULT_SUCCESS | aurora_net::land::PARCEL_RESULT_MULTIPLE
+                    )
+            })
+    }
+
+    /// LLViewerParcelMgr::startJoinLand / callbackJoinLand
+    /// (indra/newview/llviewerparcelmgr.cpp). Used before confirmation and again
+    /// before sending, so a stale or single-parcel selection cannot be joined.
+    pub fn join_command(&mut self, world: &World) -> Option<BuildCmd> {
+        if !self.can_join(world)
+            || !self
+                .parcel
+                .as_ref()
+                .is_some_and(|(_, p)| p.request_result == aurora_net::land::PARCEL_RESULT_MULTIPLE)
+        {
+            self.message = Some(aurora_i18n::tr!("build-land-join-select-multiple-parcels").into());
+            return None;
+        }
+        let (handle, west, south, east, north) = self.selection_local(world)?;
+        self.message = None;
+        Some(BuildCmd::ParcelJoin {
+            handle,
+            west,
+            south,
+            east,
+            north,
+        })
     }
 
     /// Undo the last stroke (UndoLand to every region it touched).
@@ -405,7 +469,10 @@ impl LandTool {
         // land selection: yellow walls around it (renderRect / renderHighlightSegments);
         // a selected parcel only with RenderParcelSelection
         // (LLViewerParcelMgr::render), the rectangle being dragged always
-        let rect = self.dragging.or(self.selection.filter(|_| s.parcel_selection_outline));
+        let rect = self
+            .dragging
+            .map(|(a, b)| parcel_rect(a, b))
+            .or(self.selection.filter(|_| s.parcel_selection_outline));
         if let Some((a, b)) = rect {
             let (lo, hi) = (a.min(b), a.max(b));
             let yellow = rgba(1.0, 1.0, 0.0, 1.0);
@@ -435,6 +502,99 @@ impl LandTool {
 mod tests {
     use super::*;
 
+    fn join_fixture() -> (World, LandTool, RegionHandle) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let off = world.region_offset(handle).expect("region offset").truncate();
+        let tool = LandTool {
+            selection: Some((off + Vec2::new(4.0, 4.0), off + Vec2::new(12.0, 8.0))),
+            parcel: Some((
+                handle,
+                std::sync::Arc::new(aurora_net::ParcelInfo {
+                    request_result: aurora_net::land::PARCEL_RESULT_MULTIPLE,
+                    owner_id: uuid::Uuid::nil(),
+                    area: 32,
+                    ..Default::default()
+                }),
+            )),
+            ..Default::default()
+        };
+        (world, tool, handle)
+    }
+
+    #[test]
+    fn parcel_join_uses_the_aggregate_reply_and_region_local_rectangle() {
+        let (world, mut tool, handle) = join_fixture();
+        assert!(tool.can_join(&world));
+        let Some(BuildCmd::ParcelJoin {
+            handle: h,
+            west,
+            south,
+            east,
+            north,
+        }) = tool.join_command(&world)
+        else {
+            panic!("multi-parcel selection can be joined");
+        };
+        assert_eq!((h, west, south, east, north), (handle, 4.0, 4.0, 12.0, 8.0));
+        // Matching the parcel's area is not SnapSelection=true.
+        assert_eq!(tool.selection_area(), tool.parcel.as_ref().unwrap().1.area as f32);
+    }
+
+    #[test]
+    fn parcel_join_rechecks_single_pending_stale_and_cross_region_selections() {
+        let (world, mut tool, handle) = join_fixture();
+        std::sync::Arc::make_mut(&mut tool.parcel.as_mut().unwrap().1).request_result = aurora_net::land::PARCEL_RESULT_SUCCESS;
+        assert!(tool.can_join(&world)); // Legacy enables the button, then explains.
+        assert!(tool.join_command(&world).is_none());
+        assert!(tool.take_message().is_some());
+        std::sync::Arc::make_mut(&mut tool.parcel.as_mut().unwrap().1).request_result = aurora_net::land::PARCEL_RESULT_MULTIPLE;
+        tool.request_parcel = true;
+        assert!(!tool.can_join(&world));
+        assert!(tool.join_command(&world).is_none());
+        tool.request_parcel = false;
+        tool.parcel.as_mut().unwrap().0 = handle.wrapping_add(1);
+        assert!(!tool.can_join(&world));
+        tool.parcel.as_mut().unwrap().0 = handle;
+        let (lo, hi) = tool.selection.unwrap();
+        tool.selection = Some((lo, lo + Vec2::splat(4.0)));
+        assert!(!tool.can_join(&world));
+        tool.selection = Some((lo, hi + Vec2::new(world.regions[&handle].heightmap.size_x as f32, 0.0)));
+        assert!(!tool.can_join(&world));
+        assert!(tool.join_command(&world).is_none());
+        tool.selection = None;
+        assert!(tool.join_command(&world).is_none());
+    }
+
+    #[test]
+    fn parcel_join_ignores_a_previous_selection_reply_before_the_new_request() {
+        let (world, mut tool, handle) = join_fixture();
+        let parcel = tool.parcel.as_ref().unwrap().1.clone();
+        let mut commands = Vec::new();
+        tool.ask_parcel(&world, &mut commands);
+        let old_seq = tool.parcel_seq;
+        tool.dragging = tool.selection;
+        tool.mouse_up();
+        tool.on_selected_parcel(handle, old_seq, parcel.clone());
+        assert!(tool.parcel.is_none());
+        tool.update(
+            &world,
+            &BuildSettings::default(),
+            &Cam::default(),
+            (0.0, 0.0),
+            true,
+            0.016,
+            &mut commands,
+        );
+        tool.on_selected_parcel(handle, old_seq, parcel.clone());
+        assert!(tool.parcel.is_none());
+        tool.on_selected_parcel(handle, tool.parcel_seq, parcel);
+        assert!(tool.can_join(&world));
+    }
+
     #[test]
     fn selection_rounds_to_parcel_grid() {
         let mut t = LandTool {
@@ -445,5 +605,95 @@ mod tests {
         let (lo, hi) = t.selection.unwrap();
         assert_eq!(lo, Vec2::new(4.0, 0.0));
         assert_eq!(hi, Vec2::new(16.0, 12.0));
+    }
+
+    #[test]
+    fn selection_preview_stays_on_cells_until_the_cursor_crosses_the_grid() {
+        let a = Vec2::new(5.0, 9.0);
+        let bounds = (Vec2::new(4.0, 0.0), Vec2::new(16.0, 12.0));
+        for b in [Vec2::new(12.1, 0.1), Vec2::new(13.5, 3.0), Vec2::new(15.9, 3.9)] {
+            assert_eq!(parcel_rect(a, b), bounds);
+            assert_eq!(parcel_rect(b, a), bounds);
+        }
+        assert_eq!(parcel_rect(a, Vec2::new(16.1, 3.0)), (bounds.0, Vec2::new(20.0, 12.0)));
+    }
+
+    #[test]
+    fn selection_preview_matches_release_in_every_direction_and_for_clicks() {
+        let a = Vec2::new(-5.0, 9.0);
+        for b in [
+            a,
+            a + Vec2::splat(0.1),
+            Vec2::new(-13.5, 3.0),
+            Vec2::new(1.5, 3.0),
+            Vec2::new(-13.5, 17.0),
+            Vec2::new(1.5, 17.0),
+            Vec2::new(-4.0, 12.0),
+            Vec2::new(-5.0, 17.0),
+        ] {
+            let preview = parcel_rect(a, b);
+            let (lo, hi) = preview;
+            assert_eq!(lo % PARCEL_GRID, Vec2::ZERO);
+            assert_eq!(hi % PARCEL_GRID, Vec2::ZERO);
+            assert!(hi.cmpge(lo + Vec2::splat(PARCEL_GRID)).all());
+            let mut t = LandTool {
+                dragging: Some((a, b)),
+                ..Default::default()
+            };
+            t.mouse_up();
+            assert_eq!(t.selection, Some(preview));
+        }
+        assert_eq!(parcel_rect(a, a), (Vec2::new(-8.0, 8.0), Vec2::new(-4.0, 12.0)));
+    }
+
+    #[test]
+    fn selection_draws_the_final_cell_walls_during_the_drag() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let cam = Cam {
+            eye: Vec3::new(12.0, -20.0, 24.0),
+            view_proj: glam::Mat4::from_scale(Vec3::splat(0.04)) * glam::Mat4::from_rotation_x(0.7),
+            width: 640.0,
+            height: 640.0,
+            ..Default::default()
+        };
+        let draw = |tool: &LandTool, outline| {
+            let ctx = egui::Context::default();
+            let settings = BuildSettings {
+                land_action: 6,
+                parcel_selection_outline: outline,
+                ..Default::default()
+            };
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 640.0))),
+                    ..Default::default()
+                },
+                |_| {
+                    let mut painter = Painter3d::new(
+                        ctx.layer_painter(egui::LayerId::background()),
+                        &cam,
+                        crate::theme::Theme::default().palette(),
+                    );
+                    tool.draw(&mut painter, &world, &settings);
+                },
+            );
+            crate::ui::login::test_output(output).shapes
+        };
+        let committed = LandTool {
+            selection: Some((Vec2::new(4.0, 0.0), Vec2::new(16.0, 12.0))),
+            ..Default::default()
+        };
+        let expected = draw(&committed, true);
+        let empty = draw(&LandTool::default(), true);
+        assert_ne!(expected, empty);
+        for b in [Vec2::new(12.1, 0.1), Vec2::new(15.9, 3.9)] {
+            let dragging = LandTool {
+                dragging: Some((Vec2::new(5.0, 9.0), b)),
+                ..Default::default()
+            };
+            assert_eq!(draw(&dragging, true), expected);
+            assert_eq!(draw(&dragging, false), expected);
+        }
+        assert_eq!(draw(&committed, false), empty);
     }
 }
