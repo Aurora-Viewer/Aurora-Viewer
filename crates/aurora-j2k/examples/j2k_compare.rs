@@ -177,6 +177,8 @@ fn main() {
                     bump(if oracle { &whole.outcome_oracle_only } else { &whole.outcome_ours_only });
                     note(format!("WHOLE {} reduce {reduce}: oracle {} / ours {:?}", name(path), if oracle { "ok" } else { "refused" }, b.as_ref().map(|_| "ok").map_err(|e| *e)));
                 }
+                // a file of the cache can be a download that stopped early
+                Verdict::Differ { .. } if b.as_ref().is_ok_and(|img| img.cut_in_decoded) => bump(&whole.kept_more),
                 Verdict::Differ { comp, at, count } => {
                     bump(&whole.unexplained);
                     note(format!("WHOLE {} reduce {reduce}: {count} samples differ, first in component {comp} at {at}", name(path)));
