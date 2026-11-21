@@ -3607,6 +3607,8 @@ impl App {
         if !self.demo {
             self.settings.release_hover_account();
         }
+        // a parcel's saved preset goes with the session
+        self.panels.time_of_day = self.settings.time_of_day;
         self.hover_height_ui = Default::default();
         // the marks go with the session's World; their window too
         self.avatar_mark_ui = None;
@@ -4432,6 +4434,16 @@ impl App {
                     Default::default()
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
+                };
+                // the environments saved for parcels, on the grid of the
+                // login; the demo keeps them in memory
+                self.world.parcel_env.saves = if self.demo {
+                    Default::default()
+                } else {
+                    let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                    crate::world::parcel_env::Saves::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::parcel_env::file_name(&grid)),
+                    )
                 };
                 // the saved smart searches of the inventory; the demo keeps
                 // them in memory
@@ -9574,7 +9586,7 @@ impl App {
         let Some(path) = self.local_env_path() else {
             return;
         };
-        match self.world.eep.saved_local().filter(|_| self.settings.env_persist) {
+        match self.world.eep.saved_session().filter(|_| self.settings.env_persist) {
             Some(data) => {
                 if let Some(dir) = path.parent() {
                     let _ = std::fs::create_dir_all(dir);
@@ -10320,6 +10332,12 @@ impl App {
         if self.demo && std::env::var("AURORA_DEMO_PARCEL_VISIBILITY").is_ok_and(|mode| mode == "crossings") {
             crate::demo::parcel_visibility::check_crossings(&self.world, self.frame_count);
         }
+        if self.demo
+            && let Some(mode) = crate::demo::parcel_env::mode()
+        {
+            crate::demo::parcel_env::frame(&mut self.world, &mut self.panels.time_of_day, &mode, self.frame_count);
+            crate::demo::parcel_visibility::update_agent_parcel(&mut self.world, "", self.frame_count);
+        }
         for c in self.world.land.take_commands() {
             self.send(c);
         }
@@ -11047,6 +11065,7 @@ impl App {
             if self.env_scan && self.env_ui.scan_left != 0 {
                 self.env_ui.scan_left = crate::world::env_select::scan_step(&mut self.world.inventory);
             }
+            self.parcel_environment_frame();
             self.save_local_environment();
             for id in self.world.eep.take_failed() {
                 // FailedToFindSettings
@@ -13542,7 +13561,10 @@ impl App {
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
             gfx.renderer.apply_settings(self.photo_render_settings());
-            self.panels.time_of_day = self.settings.time_of_day;
+            // (a parcel's saved preset is not in the settings: it stays shown)
+            if !self.world.eep.parcel_held() {
+                self.panels.time_of_day = self.settings.time_of_day;
+            }
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
@@ -17786,6 +17808,7 @@ impl App {
         self.options_ui.friends_only = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only());
         self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
+        self.options_ui.parcel_environments = self.world.parcel_env.saves.rows();
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
             self.options_ui.anti_spam_blocks = self
@@ -17872,6 +17895,12 @@ impl App {
         }
         if let Some((queue, source)) = res.unblock_anti_spam {
             self.world.anti_spam.unblock(queue, source);
+        }
+        if let Some((region, local_id)) = res.forget_parcel_environment {
+            self.world.parcel_env.saves.forget(region, local_id);
+        }
+        if res.forget_all_parcel_environments {
+            self.world.parcel_env.saves.clear();
         }
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -21159,8 +21188,9 @@ impl App {
                 self.settings.appearance_tab = u8::try_from(self.appearance_ui.tab).unwrap_or(0);
                 self.settings.show_ao = self.panels.ao;
                 // (the photo's time of day is its own layer, never saved)
-                if self.panels.time_of_day != self.settings.time_of_day {
-                    self.settings.time_of_day = self.panels.time_of_day;
+                let time_of_day = self.world.eep.session_time_of_day(self.panels.time_of_day);
+                if time_of_day != self.settings.time_of_day {
+                    self.settings.time_of_day = time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
                     log::info!("alert: {msg}");
@@ -22820,6 +22850,9 @@ impl ApplicationHandler for App {
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY") {
                 crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, &mode);
+            }
+            if crate::demo::parcel_env::mode().is_some() {
+                crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, "off");
             }
             // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
             // command, in a conversation and in the bubbles

@@ -198,6 +198,8 @@ pub enum InvAction {
     },
     Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
+    /// Apply to myself and keep it for the parcel under the agent.
+    EnvironmentSaveParcel(Uuid, u32),
     ExportTextures {
         items: Vec<Uuid>,
         png: bool,
@@ -272,6 +274,8 @@ pub struct Facts {
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
+    /// RLVa @setenv holds the environment: no save for a parcel.
+    pub environment_locked: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
     pub rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
@@ -330,6 +334,7 @@ impl Facts {
                 .filter(|friend| friend.online)
                 .map(|friend| friend.id)
                 .collect(),
+            environment_locked: world.eep.rlva_locked,
             parcel_environment: world
                 .land
                 .sel
