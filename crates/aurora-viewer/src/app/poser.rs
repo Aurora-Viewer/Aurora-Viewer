@@ -122,6 +122,10 @@ impl App {
                     egui::pos2(1000.0, 90.0),
                     crate::ik_edit::poser::COMPACT_SIZE,
                 );
+            } else if mode == "frame" {
+                // the framed joint sits at the centre of the view: the
+                // window stays on the left, clear of it
+                widgets::place_floater(&self.egui_ctx, "poser", egui::pos2(10.0, 70.0), egui::vec2(700.0, 760.0));
             } else {
                 widgets::place_floater(
                     &self.egui_ctx,
