@@ -624,6 +624,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     s.sort_received_items = true;
     s.received_items_since = 123;
     s.reduce_motion = true;
+    s.disable_glass = true;
     s.audio.lip_sync = false;
     s.audio.media_autoplay = true;
     s.language_is_public = false;
@@ -642,6 +643,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     assert_eq!(s.received_items_since, 0);
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
+    assert!(!s.disable_glass);
     reset_page_settings(Page::Media, &mut s);
     assert!(!s.audio.media_autoplay);
     reset_page_settings(Page::Privacy, &mut s);
@@ -1761,6 +1763,7 @@ fn the_accessibility_page_shows_the_settings_of_other_pages() {
         tr!("ui-options-text-size"),
         tr!("ui-options-bundled-fonts"),
         tr!("ui-options-high-contrast"),
+        tr!("ui-options-disable-glass"),
         tr!("ui-options-name-distance"),
         tr!("ui-options-accent-color"),
         tr!("ui-options-surface-color"),
@@ -1837,8 +1840,10 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     // the Accessibility reset puts back its own rows only
     s.font_scale = 1.2;
     s.reduce_motion = true;
+    s.disable_glass = true;
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
+    assert!(!s.disable_glass);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
 }
 
