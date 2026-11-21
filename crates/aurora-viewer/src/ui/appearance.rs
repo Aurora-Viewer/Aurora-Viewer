@@ -867,8 +867,9 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
 }
 
 /// LLWearingContextMenu (llpanelwearing.cpp, menu_wearing_tab.xml) on the
-/// worn `selected` items: Touch, Edit and Show original need one; Take off /
-/// Detach and the favorites take them all. In the outfit editor (`edit`) the
+/// worn `selected` items: Touch, Edit and Show original need one (Touch and
+/// Edit stay greyed for several, Show original is hidden); Take off / Detach
+/// and the favorites take them all. In the outfit editor (`edit`) the
 /// rows keep the COF menus' entries (menu_cof_attachment.xml,
 /// menu_cof_clothing.xml, menu_cof_body_part.xml): Touch / Edit and Take off
 /// / Detach only.
@@ -886,9 +887,7 @@ fn item_menu(
     let inv = &world.inventory;
     menu::context_menu(response, p, |ui| {
         let items: Vec<&InvItem> = selected.iter().filter_map(|id| inv.items.get(id)).collect();
-        if let [it] = items.as_slice() {
-            items::worn_touch_edit_menu(ui, p, world, it);
-        }
+        items::worn_touch_edit_menu(ui, p, world, &items);
         items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
         if edit {
             return;
@@ -3023,7 +3022,8 @@ mod tests {
 
     /// `label_position` in an open menu: its row rather than a button of the
     /// same name that the menu covers. A menu is clipped to the screen, the
-    /// window's widgets to the window.
+    /// window's widgets to the window. The label must be the row's whole
+    /// text.
     fn menu_label_position(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, label: &str) -> egui::Pos2 {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
         let input = egui::RawInput {
@@ -3034,8 +3034,18 @@ mod tests {
             .1
             .iter()
             .filter(|s| s.clip_rect.contains_rect(screen))
-            .find_map(|s| text_position(&s.shape, label))
+            .find_map(|s| menu_text_position(&s.shape, label))
             .expect(label)
+    }
+
+    /// `text_position` on the whole text of a menu row, so that "Edit" does
+    /// not find "Edit outfit" whichever is drawn first.
+    fn menu_text_position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == label => Some(text.pos + egui::vec2(3.0, 5.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| menu_text_position(s, label)),
+            _ => None,
+        }
     }
 
     pub(super) fn draw_output(
@@ -3281,22 +3291,8 @@ mod tests {
             (aurora_i18n::tr!("common-add-to-favorites").to_string(), "favorite"),
             (aurora_i18n::tr!("ui-context-edit-outfit").to_string(), "edit-outfit"),
         ] {
-            let ctx = egui::Context::default();
-            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let (ctx, mut world, mut st) = worn_objects(&[item]);
             let _icons = icons::Icons::load(&ctx, None);
-            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-            world.agent_id = crate::demo::DEMO_AGENT;
-            model::seed_demo(&mut world.inventory, world.agent_id);
-            world.objects.upsert(1, crate::demo::action_avatar(false));
-            let mut object = crate::demo::hud::object(2, false);
-            object.full_id = Uuid::from_u128(80_717);
-            object.name_values = format!("AttachItemID STRING RW SV {item}");
-            object.update_flags |= crate::ui::context::flags::HANDLE_TOUCH;
-            world.objects.upsert(1, object);
-            assert!(items::worn_items(&world).contains(&item));
-
-            let mut st = AppearanceUi::default();
-            st.open(2, false);
             for _ in 0..4 {
                 draw(&ctx, &mut world, &mut st, None);
             }
@@ -3322,6 +3318,200 @@ mod tests {
                 "favorite" => assert!(matches!(actions.as_slice(), [Action::Favorite(id)] if *id == item), "{actions:?}"),
                 "edit-outfit" => assert!(st.editing, "Edit outfit opens the editor"),
                 _ => unreachable!(),
+            }
+        }
+    }
+
+    /// A world where our avatar wears an object from each of `items`, with
+    /// the Worn tab drawn.
+    fn worn_objects(items: &[Uuid]) -> (egui::Context, World, AppearanceUi) {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        for (n, item) in items.iter().enumerate() {
+            let mut object = crate::demo::hud::object(2 + n as u8, false);
+            object.full_id = Uuid::from_u128(80_000 + item.as_u128());
+            object.name_values = format!("AttachItemID STRING RW SV {item}");
+            object.update_flags |= crate::ui::context::flags::HANDLE_TOUCH;
+            world.objects.upsert(1, object);
+            assert!(items::worn_items(&world).contains(item));
+        }
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        (ctx, world, st)
+    }
+
+    fn rlva_command(world: &mut World, message: String) {
+        let command = aurora_net::ChatMessage {
+            from_name: String::new(),
+            source_id: Uuid::from_u128(9000),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message,
+        };
+        assert!(world.rlva.receive(&command), "{}", command.message);
+    }
+
+    /// Clicks Edit in the menu of the row `name` and returns what it asked.
+    fn click_edit(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, name: &str) -> Vec<crate::ui::context::CtxAction> {
+        click_row(ctx, world, st, name, egui::Modifiers::NONE, egui::PointerButton::Secondary);
+        click_menu(ctx, world, st, aurora_i18n::tr!("common-edit"));
+        let requests = crate::ui::context::take_requests(ctx);
+        if requests.is_empty() {
+            assert!(egui::Popup::is_any_open(ctx), "a greyed Edit keeps the menu open");
+            draw_input(
+                ctx,
+                world,
+                st,
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }],
+                    ..Default::default()
+                },
+            );
+            for _ in 0..4 {
+                draw(ctx, world, st, None);
+            }
+        }
+        requests
+    }
+
+    /// get_is_item_editable (llinventoryfunctions.cpp): RlvActions::canEdit
+    /// greys Edit on a worn attachment under `@edit`, `@editattach` and
+    /// `@editobj:<id>`, and the release enables it again.
+    #[test]
+    fn worn_attachment_edit_is_greyed_under_rlva_edit_restrictions() {
+        let item = Uuid::from_u128(717);
+        let object = Uuid::from_u128(80_717);
+        for behaviour in ["edit".to_string(), "editattach".into(), format!("editobj:{object}")] {
+            let (ctx, mut world, mut st) = worn_objects(&[item]);
+            let _icons = icons::Icons::load(&ctx, None);
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            world.rlva.configure(true);
+            let name = world.inventory.items[&item].name.clone();
+            let edit = |requests: &[crate::ui::context::CtxAction]| matches!(requests, [crate::ui::context::CtxAction::EditWorn(id)] if *id == item);
+            assert!(
+                edit(&click_edit(&ctx, &mut world, &mut st, &name)),
+                "{behaviour}: Edit before the restriction"
+            );
+            rlva_command(&mut world, format!("@{behaviour}=n"));
+            assert!(
+                click_edit(&ctx, &mut world, &mut st, &name).is_empty(),
+                "@{behaviour} must grey Edit"
+            );
+            rlva_command(&mut world, format!("@{behaviour}=y"));
+            assert!(
+                edit(&click_edit(&ctx, &mut world, &mut st, &name)),
+                "{behaviour}: Edit after the release"
+            );
+        }
+    }
+
+    /// LLAgentWearables::isWearableModifiable: Edit is greyed on a worn
+    /// clothing item without the modify right, in the Worn tab and in the
+    /// outfit editor's rows.
+    #[test]
+    fn worn_clothing_edit_is_greyed_without_modify() {
+        use crate::world::inventory::actions::MODIFY;
+        let item = Uuid::from_u128(714);
+        for editor in [false, true] {
+            let (ctx, mut world, mut st) = worn_objects(&[]);
+            let _icons = icons::Icons::load(&ctx, None);
+            assert_eq!(world.inventory.items[&item].asset_type, 5, "a clothing item");
+            st.open(2, editor);
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let name = world.inventory.items[&item].name.clone();
+            world.inventory.items.get_mut(&item).expect("item").owner_mask &= !MODIFY;
+            assert!(
+                click_edit(&ctx, &mut world, &mut st, &name).is_empty(),
+                "editor={editor}: a no-modify item must grey Edit"
+            );
+            world.inventory.items.get_mut(&item).expect("item").owner_mask |= MODIFY;
+            assert!(
+                matches!(click_edit(&ctx, &mut world, &mut st, &name).as_slice(), [crate::ui::context::CtxAction::EditWorn(id)] if *id == item),
+                "editor={editor}: Edit with the modify right"
+            );
+        }
+    }
+
+    /// LLWearingContextMenu::updateMenuItemsVisibility: with several worn
+    /// items selected, Touch (attachments alone) and Edit stay in the menu,
+    /// greyed.
+    #[test]
+    fn several_worn_items_show_touch_and_edit_greyed() {
+        let objects = [Uuid::from_u128(717), Uuid::from_u128(720)];
+        let clothing = [Uuid::from_u128(714), Uuid::from_u128(715)];
+        for (selected, touch) in [(objects, true), (clothing, false)] {
+            let (ctx, mut world, mut st) = worn_objects(&objects);
+            let _icons = icons::Icons::load(&ctx, None);
+            let kind = if touch { 6 } else { 5 };
+            assert!(selected.iter().all(|id| world.inventory.items[id].asset_type == kind));
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let names = selected.map(|id| world.inventory.items[&id].name.clone());
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &names[0],
+                egui::Modifiers::NONE,
+                egui::PointerButton::Primary,
+            );
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &names[1],
+                egui::Modifiers::CTRL,
+                egui::PointerButton::Primary,
+            );
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &names[0],
+                egui::Modifiers::NONE,
+                egui::PointerButton::Secondary,
+            );
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+            let in_menu = |world: &mut World, st: &mut AppearanceUi, label: &str| {
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                };
+                draw_output(&ctx, world, st, input)
+                    .1
+                    .iter()
+                    .any(|s| s.clip_rect.contains_rect(screen) && menu_text_position(&s.shape, label).is_some())
+            };
+            let touch_label = aurora_i18n::tr!("ui-context-touch");
+            assert_eq!(in_menu(&mut world, &mut st, touch_label), touch, "Touch for attachments alone");
+            for label in [touch_label, aurora_i18n::tr!("common-edit")] {
+                if !in_menu(&mut world, &mut st, label) {
+                    continue;
+                }
+                assert!(click_menu(&ctx, &mut world, &mut st, label).is_empty(), "{label}");
+                assert!(crate::ui::context::take_requests(&ctx).is_empty(), "{label} is greyed for several");
+                assert!(egui::Popup::is_any_open(&ctx), "{label}: a greyed row keeps the menu open");
             }
         }
     }
