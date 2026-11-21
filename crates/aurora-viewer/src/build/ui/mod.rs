@@ -227,13 +227,17 @@ pub struct FloaterState {
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: contents_permissions::BulkState,
-    /// Contents item whose properties are shown.
-    pub item_properties: Option<item_properties::TaskProperties>,
+    /// Contents items whose properties windows are open, oldest first.
+    pub item_properties: Vec<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
     pub reveal_faces: bool,
+    /// The panel is the object profile's, not the build tools': its names
+    /// follow LLSidepanelTaskInfo::refreshAll under RLVa's `@shownames`
+    /// (`general::Names`).
+    pub object_profile: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,
@@ -412,6 +416,7 @@ pub fn show(
     }
     workspace::prepare(ctx, env.demo, s);
     tool.ui.legacy_window = s.legacy_window;
+    common::set_wheel_on_hover(ctx, s.wheel_on_hover);
     let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
     if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
         ctx.data_mut(|d| d.insert_temp(preview, true));
@@ -510,6 +515,9 @@ pub fn show(
     if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
+    // Keep the user's Build size. Large Appearance › Text size reflows inside
+    // the floater (shape fields and Legacy Texture slots); it must not shove
+    // the window wider or taller on its own.
     floater.min_size = if s.legacy_window {
         legacy::MIN_SIZE
     } else {
@@ -685,7 +693,8 @@ impl BuildTool {
             let n = self.num_faces(world, idx) as i32;
             let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
             let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
-            let f = if all && next {
+            // A sole selected face is already the cursor, not a bulk selection.
+            let f = if all && next && (n > 1 || self.selection.len() > 1) {
                 0
             } else if next {
                 cur + 1
@@ -693,10 +702,12 @@ impl BuildTool {
                 cur - 1
             };
             if (0..n).contains(&f) {
-                let entry = self.faces.entry(key).or_default();
                 if !include {
-                    entry.clear();
+                    let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
+                    self.deselect(world, &others);
+                    self.faces.clear();
                 }
+                let entry = self.faces.entry(key).or_default();
                 if !entry.contains(&(f as u8)) {
                     entry.push(f as u8);
                 }
@@ -719,7 +730,11 @@ impl BuildTool {
             .collect();
         let Some(pos) = list.iter().position(|&i| i == idx) else { return };
         let n = list.len();
-        let target = if next { list[(pos + 1) % n] } else { list[(pos + n - 1) % n] };
+        // LLToolsSelectNextPartFace skips selected links when extending a selection.
+        let target = (1..=n)
+            .map(|step| list[if next { (pos + step) % n } else { (pos + n - step) % n }])
+            .find(|&idx| !include || world.objects.get(idx).is_some_and(|o| !self.is_selected(&o.key)));
+        let Some(target) = target else { return };
         let Some(unit) = world.objects.get(target).map(|o| o.key) else {
             return;
         };

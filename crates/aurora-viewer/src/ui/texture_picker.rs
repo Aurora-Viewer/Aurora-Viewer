@@ -78,6 +78,12 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
         .is_some_and(|item| actions::held(inv, item) & actions::COPY != 0 || actions::library(inv, original))
 }
 
+/// "Multiple" over the preview of a tentative picker, like the swatch that
+/// opened it (LLFloaterTexturePicker::draw's mTentativeLabel).
+fn tentative_label(ui: &egui::Ui, p: &Palette, rect: egui::Rect) {
+    widgets::picture_label(ui, p, rect, aurora_i18n::tr!("build-ui-common-multiple"), 12.0);
+}
+
 #[derive(Default)]
 pub struct TexturePicker {
     drop_target: Option<super::resource_drop::Target>,
@@ -99,6 +105,7 @@ pub struct TexturePicker {
     tree: tree::Tree,
     local_open: [bool; 2],
     source: usize,
+    restore_source: bool,
     library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     uuid_error: bool,
     footer_height: f32,
@@ -138,6 +145,16 @@ pub struct TexturePicker {
     original: Uuid,
     live_value: Uuid,
     cancelled: bool,
+    /// The targets hold different values and nothing was chosen since: the
+    /// preview is marked "Multiple" and OK waits for a choice
+    /// (LLUICtrl::setTentative on LLTextureCtrl and its floater,
+    /// indra/newview/lltexturectrl.cpp).
+    tentative: bool,
+    /// The value comes from Default, Blank, Transparent or None: no
+    /// inventory item stands behind it, even one that holds the same asset
+    /// (LLFloaterTexturePicker::onBtnSetToDefault, onBtnBlank, onBtnNone:
+    /// `setCanApply(true, true)` and the list's selection cleared).
+    preset: bool,
     pub(crate) generation: u64,
 }
 
@@ -150,21 +167,28 @@ impl TexturePicker {
     /// Keep a drop's target separate from an open picker's target. A refused
     /// drop must not redirect that picker's next choice or Cancel.
     pub(crate) fn drop_target_slot(&mut self, ui: &egui::Ui, rect: egui::Rect, materials: bool, enabled: bool, slot: usize) {
-        let Some(target) = super::resource_drop::Target::hovered(ui, rect, materials, enabled) else {
-            return;
-        };
-        self.drop_target = Some(target);
-        self.drop_slot = slot;
-        self.drop_copy_transfer = false;
+        self.register_drop(ui, rect, materials, enabled, slot, false);
     }
 
     /// `drop_target` for a texture that leaves this viewer in what it makes
     /// (the particle editor's script): copy and transfer textures only.
     pub(crate) fn drop_target_copy_transfer(&mut self, ui: &egui::Ui, rect: egui::Rect, enabled: bool) {
-        self.drop_target_slot(ui, rect, false, enabled, 0);
-        if self.drop_target.is_some() {
-            self.drop_copy_transfer = true;
-        }
+        self.drop_target_slot_copy_transfer(ui, rect, enabled, 0);
+    }
+
+    /// `drop_target_slot` for a control whose DnD filter is copy and transfer
+    /// (LLTextureCtrl::setDnDFilterPermMask(PERM_COPY | PERM_TRANSFER)).
+    pub(crate) fn drop_target_slot_copy_transfer(&mut self, ui: &egui::Ui, rect: egui::Rect, enabled: bool, slot: usize) {
+        self.register_drop(ui, rect, false, enabled, slot, true);
+    }
+
+    fn register_drop(&mut self, ui: &egui::Ui, rect: egui::Rect, materials: bool, enabled: bool, slot: usize, copy_transfer: bool) {
+        let Some(target) = super::resource_drop::Target::hovered(ui, rect, materials, enabled) else {
+            return;
+        };
+        self.drop_target = Some(target);
+        self.drop_slot = slot;
+        self.drop_copy_transfer = copy_transfer;
     }
 
     pub(crate) fn dropped_slot(&self) -> Option<usize> {
@@ -253,6 +277,7 @@ impl TexturePicker {
         self.selected_item = None;
         self.selected_lookup = None;
         self.source = 0;
+        self.restore_source = true;
         self.reveal_selection = true;
         self.tree.opened(current);
         self.local_open = [true; 2];
@@ -277,7 +302,21 @@ impl TexturePicker {
         self.original = current;
         self.live_value = current;
         self.cancelled = false;
+        self.tentative = false;
+        self.preset = false;
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// `open` for a control that lists and takes copy and transfer textures
+    /// only: LLTextureCtrl::setImmediateFilterPermMask and
+    /// setDnDFilterPermMask with PERM_COPY | PERM_TRANSFER, as
+    /// LLPanelLandOptions::postBuild (indra/newview/llfloaterland.cpp) and
+    /// LLPanelLandMedia::postBuild (indra/newview/llpanellandmedia.cpp) set
+    /// them. The other textures stay listed, greyed out.
+    pub(crate) fn open_copy_transfer(&mut self, title: &str, current: Uuid) {
+        self.open(title, current);
+        self.required_permissions = actions::COPY | actions::TRANSFER;
+        self.drop_permissions = actions::COPY | actions::TRANSFER;
     }
 
     /// The build floater's picker: "Default" (`default`), "Blank",
@@ -367,9 +406,30 @@ impl TexturePicker {
         self.reveal_selection = true;
     }
 
+    /// LLTextureCtrl::setTentative: `current` stands for targets whose values
+    /// differ (the first one's). Set after `open` or `follow`; any choice made
+    /// in the picker clears it (LLFloaterTexturePicker::setImageIDFromItem,
+    /// onBtnSetToDefault, onBtnBlank, onBtnNone, onPipetteSelect).
+    pub(crate) fn set_tentative(&mut self, tentative: bool) {
+        self.tentative = tentative;
+    }
+
+    /// OK takes what the picker shows: a valid choice the item's rights allow
+    /// here, and not the stand-in of a tentative control
+    /// (LLFloaterTexturePicker::draw: `mSelectBtn->setEnabled(mActive &&
+    /// mCanApply && valid_dims && !getTentative())`).
+    fn can_confirm(&self, inv: &Inventory, agent: Uuid) -> bool {
+        self.selected.is_some() && !self.tentative && !self.uuid_error && !self.confirm_blocked(inv, agent)
+    }
+
     #[cfg(test)]
     pub(crate) fn shown(&self) -> Option<Uuid> {
         self.selected
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tentative(&self) -> bool {
+        self.tentative
     }
 
     /// Reuse the library's worker-built GPU preview for this selection only.
@@ -395,6 +455,8 @@ impl TexturePicker {
         self.selected_item = item;
         self.preview = preview.then_some(asset);
         self.material_model = None;
+        self.tentative = false;
+        self.preset = false;
     }
 
     fn refresh_uuid_text(&mut self, world: &World) {
@@ -449,9 +511,10 @@ impl TexturePicker {
         let lookup = (world.inventory.generation, self.selected);
         if self.selected_lookup != Some(lookup) {
             self.selected_lookup = Some(lookup);
-            if !self
-                .selected_item
-                .is_some_and(|id| inventory_asset(&world.inventory, id, self.materials) == self.selected)
+            if !self.preset
+                && !self
+                    .selected_item
+                    .is_some_and(|id| inventory_asset(&world.inventory, id, self.materials) == self.selected)
             {
                 self.selected_item = self.selected.and_then(|asset| {
                     world
@@ -464,10 +527,16 @@ impl TexturePicker {
                 });
             }
         }
-        // LLFloaterTexturePicker::setImageID reveals the current inventory
-        // item. A previous Local/Library tab and a virtualized, scrolled list
-        // must not hide that selection when another control is opened (#2362).
-        if self.reveal_selection && self.source == 0 {
+        // Keep an explicit source choice between controls. Without a preference,
+        // reveal the current asset as LLFloaterTexturePicker::setImageID does;
+        // inventory scrolling still reveals the selected item (#2362).
+        let remembered_source = ctx.data_mut(|data| data.get_persisted::<usize>(egui::Id::unique("texture_picker_source")));
+        if std::mem::take(&mut self.restore_source)
+            && let Some(source) = remembered_source
+        {
+            self.source = if source == 1 && !self.allow_local { 0 } else { source.min(2) };
+        }
+        if remembered_source.is_none() && self.reveal_selection && self.source == 0 {
             if self.allow_local && self.selected.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
                 self.source = 1;
             } else if self
@@ -514,6 +583,9 @@ impl TexturePicker {
                         if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
                             widgets::local_texture::paint(ui, p, response.rect);
                         }
+                        if self.tentative {
+                            tentative_label(ui, p, response.rect);
+                        }
                         self.preview_drop(ui, p, world, response.rect);
                         return;
                     }
@@ -558,7 +630,9 @@ impl TexturePicker {
                         }
                     }
 
-                    if self.materials || (self.selected.is_some() && preview_texture.is_none()) {
+                    if self.tentative {
+                        tentative_label(ui, p, rect);
+                    } else if self.materials || (self.selected.is_some() && preview_texture.is_none()) {
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -608,6 +682,7 @@ impl TexturePicker {
                 });
             });
             ui.add_space(8.0);
+            let before_source = self.source;
             widgets::tabs(
                 ui,
                 p,
@@ -618,11 +693,26 @@ impl TexturePicker {
                     (aurora_i18n::tr!("picker-aurora-tab"), true),
                 ],
             );
+            if self.source != before_source {
+                ctx.data_mut(|data| data.insert_persisted(egui::Id::unique("texture_picker_source"), self.source));
+            }
             if self.source == 1 && !self.allow_local {
                 self.source = 0;
             }
             if self.source != 0 {
                 self.stop_pipette(ctx);
+            }
+            let sort_key = egui::Id::unique("texture_picker_local_newest");
+            let mut newest = ctx.data_mut(|data| data.get_persisted::<bool>(sort_key).unwrap_or(true));
+            if self.source == 1 {
+                let before = newest;
+                ui.horizontal(|ui| {
+                    widgets::radio_value(ui, p, &mut newest, true, aurora_i18n::tr!("picker-local-newest"));
+                    widgets::radio_value(ui, p, &mut newest, false, aurora_i18n::tr!("picker-local-name"));
+                });
+                if newest != before {
+                    ctx.data_mut(|data| data.insert_persisted(sort_key, newest));
+                }
             }
             let inv = &world.inventory;
             if self.library_lookup.map(|(generation, root, _)| (generation, root)) != Some((inv.generation, inv.root)) {
@@ -717,7 +807,16 @@ impl TexturePicker {
                     self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
                 })
                 .collect();
-            locals.sort_by(|a, b| super::inventory::view::picker_name_cmp(&a.1.0, &b.1.0).then_with(|| a.0.cmp(b.0)));
+            locals.sort_by(|a, b| {
+                let order = if newest {
+                    world.local_asset_order.get(b.0).cmp(&world.local_asset_order.get(a.0))
+                } else {
+                    std::cmp::Ordering::Equal
+                };
+                order
+                    .then_with(|| super::inventory::view::picker_name_cmp(&a.1.0, &b.1.0))
+                    .then_with(|| a.0.cmp(b.0))
+            });
             let tab = usize::from(!self.filter.trim().is_empty());
             let local_count = if self.allow_local && self.source == 1 {
                 1 + if self.local_open[tab] { locals.len() } else { 0 }
@@ -867,6 +966,7 @@ impl TexturePicker {
                                 }
                             } else if let Some(asset) = asset {
                                 self.reveal_selection = false;
+                                self.tentative = false;
                                 self.selected = Some(asset);
                                 self.selected_item = (!local).then_some(id);
                                 self.uuid_text = asset.to_string();
@@ -879,6 +979,7 @@ impl TexturePicker {
                         }
                         if !folder
                             && response.double_clicked()
+                            && !self.tentative
                             && !Self::confirm_blocked_with(owned_target, self.selected_item, &world.inventory, world.agent_id)
                         {
                             chosen = self.selected;
@@ -954,6 +1055,7 @@ impl TexturePicker {
                                 && let Some(asset) = asset
                             {
                                 self.select(asset, None, true);
+                                self.preset = true;
                             }
                         }
                     });
@@ -1038,10 +1140,9 @@ impl TexturePicker {
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     if ui
-                        .add_enabled_ui(
-                            self.selected.is_some() && !self.uuid_error && !self.confirm_blocked(&world.inventory, world.agent_id),
-                            |ui| widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(72.0, 26.0)),
-                        )
+                        .add_enabled_ui(self.can_confirm(&world.inventory, world.agent_id), |ui| {
+                            widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(72.0, 26.0))
+                        })
                         .inner
                         .clicked()
                     {
@@ -1084,6 +1185,32 @@ fn wearable_demo_input() -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn ok_waits_for_a_choice_while_the_picker_is_tentative() {
+        let inv = Inventory::default();
+        let agent = Uuid::from_u128(0xd0);
+        let (first, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut picker = TexturePicker::default();
+        picker.open("Texture", first);
+        assert!(picker.can_confirm(&inv, agent));
+        picker.set_tentative(true);
+        assert!(!picker.can_confirm(&inv, agent), "the first target's value is not a choice");
+        // a choice made in the picker ends it
+        picker.select(other, None, true);
+        assert!(!picker.tentative() && picker.can_confirm(&inv, agent));
+        // the caller's targets change: tentative again, whatever was chosen
+        picker.follow(first);
+        picker.set_tentative(true);
+        assert!(!picker.can_confirm(&inv, agent));
+        // "None" shown for targets that differ is no choice either
+        picker.follow(Uuid::nil());
+        picker.set_tentative(true);
+        assert!(!picker.can_confirm(&inv, agent));
+        // a new opening starts clean
+        picker.open("Texture", first);
+        assert!(!picker.tentative() && picker.can_confirm(&inv, agent));
+    }
+
     #[test]
     fn a_worn_object_greys_out_a_texture_without_copy_and_transfer() {
         let agent = Uuid::from_u128(0xd0);
@@ -1134,6 +1261,54 @@ pub(crate) mod tests {
         assert!(picker.confirm_blocked(&inv, agent));
         picker.selected_item = Some(both_item);
         assert!(!picker.confirm_blocked(&inv, agent));
+    }
+
+    #[test]
+    fn a_preset_button_stands_for_no_inventory_item() {
+        // LLFloaterTexturePicker::onBtnBlank: setCanApply(true, true), and no
+        // item of the list stays selected, even one that holds this asset.
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let item = Uuid::from_u128(0xb1a0);
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                asset_id: BLANK_TEXTURE,
+                asset_type: 0,
+                inv_type: 0,
+                owner_mask: actions::COPY,
+                ..Default::default()
+            },
+        );
+        let mut ui = PickerUi::new();
+        let mut picker = TexturePicker::default();
+        let mut chosen = Vec::new();
+        for current in [Uuid::from_u128(77), BLANK_TEXTURE] {
+            picker.open_with_defaults("Texture", current, None, true);
+            picker.owned_target = false;
+            ui.settle(|ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            if current == BLANK_TEXTURE {
+                // the value the picker opened on is this item's
+                assert_eq!(picker.selected_item, Some(item));
+                assert!(picker.confirm_blocked(&world.inventory, world.agent_id));
+            }
+            // the live choice, which OK then keeps
+            ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+                chosen.extend(picker.show_live(ctx, p, &mut world, &HashMap::new()));
+            });
+            ui.settle(|ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            assert_eq!(picker.selected_item, None);
+            assert!(picker.can_confirm(&world.inventory, world.agent_id));
+            ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            assert!(!picker.open && !picker.cancelled(), "OK confirms Blank");
+        }
+        assert!(!chosen.is_empty() && chosen.iter().all(|asset| *asset == BLANK_TEXTURE));
     }
 
     #[test]
@@ -1244,6 +1419,94 @@ pub(crate) mod tests {
             vec![Uuid::from_u128(open.as_u128() + 0x100)],
             "copy without transfer is refused"
         );
+    }
+
+    #[test]
+    fn a_copy_and_transfer_control_filters_its_list_and_each_of_its_slots() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let agent = Uuid::from_u128(0xa9e);
+        world.agent_id = agent;
+        world.inventory.owner = agent;
+        let both = actions::COPY | actions::TRANSFER;
+        let item = |n: u128, owner: Uuid, group_owned: bool, owner_mask: u32, everyone_mask: u32| {
+            let id = Uuid::from_u128(0xd100 + n);
+            (
+                id,
+                aurora_net::inventory::InvItem {
+                    id,
+                    asset_id: Uuid::from_u128(0xd200 + n),
+                    asset_type: 0,
+                    inv_type: 0,
+                    owner,
+                    group_owned,
+                    owner_mask,
+                    everyone_mask,
+                    ..Default::default()
+                },
+            )
+        };
+        let other = Uuid::from_u128(0x07e2);
+        // (item, taken)
+        let cases = [
+            (item(0, agent, false, actions::FULL, 0), true),
+            (item(1, agent, false, both, 0), true),                                 // no modify
+            (item(2, agent, false, actions::COPY | actions::MODIFY, 0), false),     // no transfer
+            (item(3, agent, false, actions::MODIFY | actions::TRANSFER, 0), false), // no copy
+            (item(4, other, false, actions::FULL, actions::COPY), false),           // someone else's
+            (item(5, other, false, actions::FULL, both), true),
+            (item(6, agent, true, actions::FULL, actions::COPY), false), // group-owned
+        ];
+        for ((id, item), _) in &cases {
+            world.inventory.items.insert(*id, item.clone());
+        }
+        let mut picker = TexturePicker::default();
+        let mut ui = PickerUi::new();
+        let rect = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(100.0, 100.0));
+        let mut choices = Vec::new();
+        let draw =
+            |picker: &mut TexturePicker, world: &mut World, choices: &mut Vec<(Uuid, Option<usize>)>, ctx: &egui::Context, p: &Palette| {
+                egui::Area::new(egui::Id::unique("copy_transfer_slot_test"))
+                    .fixed_pos(rect.min)
+                    .show(ctx, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+                        picker.drop_target_slot_copy_transfer(ui, rect, true, 1);
+                    });
+                if let Some(asset) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                    choices.push((asset, picker.dropped_slot()));
+                }
+            };
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p));
+        for ((id, _), _) in &cases {
+            egui::DragAndDrop::set_payload(&ui.ctx, super::super::inventory::InvDrag(*id));
+            ui.frame(vec![egui::Event::PointerMoved(rect.center())], |ctx, p| {
+                draw(&mut picker, &mut world, &mut choices, ctx, p)
+            });
+            ui.frame(
+                vec![egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+                |ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p),
+            );
+        }
+        let taken: Vec<_> = cases
+            .iter()
+            .filter(|(_, taken)| *taken)
+            .map(|((_, item), _)| (item.asset_id, Some(1)))
+            .collect();
+        assert_eq!(choices, taken);
+
+        // The picker of such a control greys out the same items, and takes
+        // the same drops on its preview.
+        picker.open_copy_transfer("Picture", Uuid::nil());
+        assert_eq!((picker.required_permissions, picker.drop_permissions), (both, both));
+        for ((_, item), taken) in &cases {
+            assert_eq!(!lacks_rights(item, agent, picker.required_permissions), *taken);
+        }
+        picker.open("Picture", Uuid::nil());
+        assert_eq!((picker.required_permissions, picker.drop_permissions), (0, 0));
     }
 
     use super::*;
@@ -2587,5 +2850,59 @@ pub(crate) mod tests {
                 "resized height lost: {reopened:?}"
             );
         }
+    }
+
+    #[test]
+    fn creator_picker_remembers_local_across_instances_and_respects_disallowed_local() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+        picker.allow_local = true;
+        let mut labels = HashMap::new();
+        for i in 0..5 {
+            labels = frame(&ctx, &mut picker, &mut world, i as f64 / 60.0, vec![]);
+        }
+        click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-local-tab")]);
+        assert_eq!(picker.source, 1);
+        for (cycle, (materials, allowed, expected)) in [(false, true, 1), (false, false, 0), (true, true, 1)].into_iter().enumerate() {
+            let mut reopened = TexturePicker::default();
+            if materials {
+                reopened.open_materials("Material", Uuid::nil());
+            } else {
+                reopened.open("Texture", Uuid::nil());
+            }
+            reopened.allow_local = allowed;
+            for i in 0..4 {
+                frame(&ctx, &mut reopened, &mut world, 2.0 + cycle as f64 + i as f64 / 60.0, vec![]);
+            }
+            assert_eq!(reopened.source, expected);
+            assert!(reopened.take_preview().is_none());
+        }
+    }
+
+    #[test]
+    fn creator_picker_newest_sort_is_independent_of_names_and_can_switch_to_name() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for (n, name) in [(1, "A old"), (2, "Z new")] {
+            let id = Uuid::from_u128(n);
+            world.local_assets.insert(id, (name.into(), false));
+            world.local_asset_order.insert(id, n as usize);
+        }
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+        picker.allow_local = true;
+        picker.source = 1;
+        let mut labels = HashMap::new();
+        for i in 0..5 {
+            labels = frame(&ctx, &mut picker, &mut world, i as f64 / 60.0, vec![]);
+        }
+        assert!(labels["Z new"].y < labels["A old"].y);
+        click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-local-name")]);
+        labels = frame(&ctx, &mut picker, &mut world, 1.2, vec![]);
+        assert!(labels["A old"].y < labels["Z new"].y);
     }
 }

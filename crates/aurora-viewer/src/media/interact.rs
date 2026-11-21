@@ -205,24 +205,20 @@ impl MediaManager {
         Some(pick::media_pixel(st, tex, media))
     }
 
-    /// May the agent touch this face (RLVa)? perms_interact is not checked
+    /// May the agent click this face (RLVa)? perms_interact is not checked
     /// here: LLToolPie::handleMediaClick gives the click to the page anyway
     /// and LLVOVolume::mediaNavigated only refuses the navigation it leads
     /// to (`MediaImpl::may_navigate`). Refusing the click sent it to the
     /// object's script instead: a HUD page with interaction set to nobody
-    /// closed at the first click.
-    fn may_touch(&self, world: &World, key: &MediaKey, position: Option<Vec3>) -> bool {
+    /// closed at the first click. RLVa asks nothing either
+    /// (handleMediaClick runs before RlvActions::canInteract and canTouch
+    /// are asked): only under @interact is no face picked at all, a HUD's
+    /// included (`World::rlva_drops_picks`).
+    fn may_touch(&self, world: &World, key: &MediaKey) -> bool {
         let MediaKey::Prim { object, .. } = key else {
             return false;
         };
-        let Some(om) = self.objects.get(object) else {
-            return false;
-        };
-        !world.rlva.enabled()
-            || world
-                .objects
-                .get(om.idx)
-                .is_some_and(|o| world.rlva_can_touch_at(o.key.region, o.key.local_id, position))
+        self.objects.contains_key(object) && !(world.rlva.enabled() && world.rlva_drops_picks())
     }
 
     /// Owner and group of the linkset of a media face, from its
@@ -267,7 +263,7 @@ impl MediaManager {
             return false;
         };
         let position = Some(ray.0 + ray.1 * hit.t);
-        if !self.may_touch(world, &hit.key, position) {
+        if !self.may_touch(world, &hit.key) {
             return false;
         }
         let owner = self.owner_of(world, &hit.key, props);
@@ -357,7 +353,7 @@ impl MediaManager {
             .hit_test(world, scene, ray.0, ray.1, depth_t, hud, None)
             .filter(|h| h.key == focus)?;
         let position = Some(ray.0 + ray.1 * hit.t);
-        if !self.may_touch(world, &focus, position) {
+        if !self.may_touch(world, &focus) {
             self.unfocus();
             return None;
         }
@@ -393,7 +389,7 @@ impl MediaManager {
             return false;
         };
         let position = Some(ray.0 + ray.1 * hit.t);
-        if !self.may_touch(world, &focus, position) {
+        if !self.may_touch(world, &focus) {
             self.unfocus();
             return false;
         }
@@ -439,7 +435,7 @@ impl MediaManager {
         if world.rlva.enabled()
             && self
                 .focus
-                .is_some_and(|key| matches!(key, MediaKey::Prim { .. }) && !self.may_touch(world, &key, self.last_surface))
+                .is_some_and(|key| matches!(key, MediaKey::Prim { .. }) && !self.may_touch(world, &key))
         {
             self.unfocus();
         }

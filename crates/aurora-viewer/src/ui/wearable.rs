@@ -836,4 +836,19 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn picker_finish_with_blank_texture_on_tattoo_layer_succeeds_without_error() {
+        let (world, mut state, _) = crate::wearable_editor::tests::fixture(14);
+        let slot = editor::slots(14)[0];
+        state.open_picker(&world, slot);
+        assert!(state.picker.open);
+        let changed = state.finish_picker(&world, Some(aurora_prim::te::BLANK_TEXTURE));
+        assert!(changed);
+        assert!(state.message.is_empty());
+        assert_eq!(
+            state.draft.as_ref().unwrap().edited.textures.get(&slot),
+            Some(&aurora_prim::te::BLANK_TEXTURE)
+        );
+    }
 }

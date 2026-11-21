@@ -8,6 +8,8 @@ use crate::ik_edit::visibility::Group;
 /// The hit radius of a dot: a target of at least 16 px.
 const HIT: f32 = 8.0;
 const _: () = assert!(HIT * 2.0 >= 14.0, "a dot's target stays at least 14 px wide");
+/// How much wider than tall the figure may be drawn, to spread its dots.
+const WIDEN: f32 = 1.35;
 /// Room kept around the figure for the enlarged and ringed dots.
 const MARGIN: f32 = 12.0;
 /// How far the front views look down on the avatar. A joint ahead of another
@@ -138,6 +140,9 @@ fn place(dots: &[Dot], keep: impl Fn(&Dot) -> bool, rect: egui::Rect, points: &m
     };
     let size = (max - min).max(egui::Vec2::splat(1e-4));
     let scale = (rect.width() / size.x).min(rect.height() / size.y).max(0.0);
+    // the figure is spread up to a third wider where the panel has room:
+    // the shoulders, collars and spine are easier to tell apart and to hit
+    let scale = egui::vec2((rect.width() / size.x).min(scale * WIDEN).max(0.0), scale);
     let middle = (min + max) * 0.5;
     for (index, dot) in kept() {
         points[index] = rect.center() + (dot.at - middle) * scale;
@@ -201,7 +206,7 @@ impl Editor {
         let figures = self.clip.picker.figures(rig);
         let dots = &figures[view.index()];
         let width = ui.available_width().max(1.0);
-        let height = (width * 0.6).clamp(180.0, 260.0);
+        let height = (width * 0.7).clamp(200.0, 300.0);
         let (rect, mut response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
         let points = fit(view, dots, rect.shrink(MARGIN));
         let hovered = response.hover_pos().and_then(|pointer| hit(&points, pointer, HIT));
@@ -246,6 +251,8 @@ impl Editor {
             let bone = dots[index].bone;
             let lit = Some(index) == hovered;
             let chosen = Some(index) == selected;
+            // a joint that follows the selected one (`together`)
+            let follower = self.clip_follows(bone);
             let radius = if lit {
                 6.0
             } else if chosen {
@@ -253,10 +260,14 @@ impl Editor {
             } else {
                 3.5
             };
+            let radius = if follower && !lit { 4.5 } else { radius };
+            if follower {
+                painter.circle_stroke(points[index], radius + 1.5, egui::Stroke::new(1.5, palette.teal));
+            }
             if keyed.contains(&bone) {
                 painter.circle_stroke(points[index], radius + 2.5, egui::Stroke::new(1.5, palette.violet_light));
             }
-            let color = if chosen {
+            let color = if chosen || follower {
                 palette.teal
             } else if lit {
                 palette.ink
@@ -273,7 +284,8 @@ impl Editor {
         if response.clicked() {
             // a bone picked here shows its handles, whatever Display hides
             self.visibility.reveal(name);
-            self.select(bone, rig, frame);
+            let add = ui.input(|i| crate::ik_edit::adds_to_selection(i.modifiers));
+            self.clip_click_bone(bone, rig, frame, add);
         }
     }
 }

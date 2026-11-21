@@ -381,6 +381,12 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "avatar-picker-url": the grid's Avatar Welcome Pack page
+    /// (LFSimFeatureHandler::avatarPickerURL). `None` when the region does
+    /// not name the key: only then does the login response's page count; a
+    /// key given empty means "no welcome pack" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub avatar_picker_url: Option<String>,
     /// "destination-guide-url": the grid's Destination Guide page
     /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
     /// does not name the key: only then does the login response's page
@@ -429,6 +435,9 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            avatar_picker_url: extras
+                .has("avatar-picker-url")
+                .then(|| extras["avatar-picker-url"].to_string_value().trim().to_owned()),
             destination_guide_url: extras
                 .has("destination-guide-url")
                 .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
@@ -513,6 +522,16 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Answer of a `NetCommand::ChatServiceRequest`. `status` is the HTTP
+    /// status, 0 for a transport failure (timeout, connection) and 499 for
+    /// an LLSD body that does not parse, as LLCoreHttpUtil reports them.
+    /// `body` is the LLSD of a success only; an array root (the list) is
+    /// given as it is.
+    ChatServiceResponse {
+        id: u64,
+        status: u16,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -700,7 +719,14 @@ pub enum NetEvent {
         /// "GroupChatPostLinksEnabled": the region applies the group ability
         /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
         group_chat_post_links: bool,
+        /// "GameControlEnabled": the region reads GameControlData
+        /// (LLViewerRegion::gameControlEnabled).
+        game_control: bool,
     },
+    /// SimStats' LL_SIM_STAT_FPS of any region (process_sim_stats): the
+    /// simulator's frame rate, which paces GameControlData
+    /// (LLGameControl::setServerFrameRate).
+    SimFrameRate(f32),
     HoverHeightUpdated {
         region: RegionHandle,
         request: u64,
@@ -817,6 +843,10 @@ pub enum NetEvent {
     TeleportFailed {
         reason: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },
@@ -1014,6 +1044,9 @@ pub enum NetEvent {
     LoadUrl {
         object_name: String,
         object_id: Uuid,
+        /// The object's owner, a resident or a group (OwnerIsGroup).
+        owner_id: Uuid,
+        owner_is_group: bool,
         message: String,
         url: String,
     },
@@ -1543,6 +1576,26 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
+/// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
+/// view by default, everything while the 360° snapshot window is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterestListMode {
+    #[default]
+    Default,
+    Capture360,
+}
+
+impl InterestListMode {
+    /// The capability's `mode` (IL_MODE_DEFAULT, IL_MODE_360).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterestListMode::Default => "default",
+            InterestListMode::Capture360 => "360",
+        }
+    }
+}
+
 /// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchSurface {
@@ -1565,6 +1618,15 @@ impl Default for TouchSurface {
         }
     }
 }
+/// Progress of an outgoing inventory offer on its original reliable circuit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryOfferStatus {
+    /// The datagram was handed to the socket, possibly on a retry.
+    Transmitted,
+    /// The simulator acknowledged that datagram. Acceptance by the resident is separate.
+    Acknowledged,
+}
+
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
@@ -1600,6 +1662,17 @@ pub enum NetCommand {
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,
+    /// One request of the grid's direct IM history
+    /// (LLChatServiceHistory::request, LL viewer 26.5): a GET of the
+    /// conversation list when `body` is None, else a POST of one history
+    /// page. `url` is the capability of the context the viewer sampled, so
+    /// that a region change in between does not send it elsewhere. Answered
+    /// by `NetEvent::ChatServiceResponse` with the same `id`.
+    ChatServiceRequest {
+        id: u64,
+        url: String,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// Answer a friendship offer received while offline: by the
     /// AcceptFriendship / DeclineFriendship capability, else by message when
     /// it came with a transaction id.
@@ -1770,6 +1843,11 @@ pub enum NetCommand {
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),
+    /// The interest list mode (LLAgent::changeInterestListMode): posted to
+    /// the InterestList capability of every region that has it, and again
+    /// to the agent's region when its capabilities arrive while the mode is
+    /// not the default (the 360° snapshot window).
+    SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
@@ -1779,6 +1857,9 @@ pub enum NetCommand {
     /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
     /// then send_agent_update in FSAvatarAlignBase::applyRotation).
     ForceAgentUpdate,
+    /// GameControlData to the agent's region, unreliable (sendGameControlData,
+    /// llappviewer.cpp): the viewer decides when it is due.
+    GameControlData(GameControlPacket),
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -1813,6 +1894,22 @@ pub enum NetCommand {
         position: [f64; 3],
         color: [u8; 4],
         duration: f32,
+    },
+    /// An inventory offer (IM_INVENTORY_OFFERED) scoped to this login. The
+    /// unbounded receipt channel closes on circuit loss or exhausted retries.
+    OfferInventory {
+        session: Uuid,
+        to: Uuid,
+        id: Uuid,
+        message: String,
+        bucket: Vec<u8>,
+        receipt: crossbeam_channel::Sender<InventoryOfferStatus>,
+    },
+    /// Check reserved originals in this login's inventory after an uncertain offer.
+    CheckInventoryOffer {
+        session: Uuid,
+        items: Vec<Uuid>,
+        reply: crossbeam_channel::Sender<crate::inventory::ais::ItemReads>,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -2532,6 +2629,21 @@ pub mod control {
 /// The typing bit of AgentUpdate's State (AGENT_STATE_TYPING, llagent.cpp).
 pub const AGENT_STATE_TYPING: u8 = 0x04;
 
+/// One GameControlData message, packed as sendGameControlData does: the
+/// trailing zero axes are already cut, and a button mask of zero is `None`
+/// (the server reads anything left out as zero).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameControlPacket {
+    /// Wraps at 255, never reset (LLGameControl::getNextPacketNum).
+    pub packet: u8,
+    /// AgentControlMode: 0 avatar, 1 mouselook, 2 flycam, 3 captive, 4 cursor.
+    pub action_mode: u8,
+    pub axes: Vec<i16>,
+    pub buttons: Option<u32>,
+    pub mode_axes: Vec<i16>,
+    pub mode_buttons: Option<u32>,
+}
+
 /// Agent state the viewer writes each frame and the network layer sends by
 /// the rule of `agent_update.rs`.
 #[derive(Debug, Clone, Copy)]
@@ -2597,6 +2709,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("avatar-picker-url", " https://avatars.example/[GRID_LOWERCASE]/ "),
                 ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
@@ -2607,6 +2720,15 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(read.avatar_picker_url.as_deref(), Some("https://avatars.example/[GRID_LOWERCASE]/"));
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("avatar-picker-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).avatar_picker_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).avatar_picker_url, None);
         assert_eq!(
             read.destination_guide_url.as_deref(),
             Some("https://guide.example/[GRID_LOWERCASE]/")

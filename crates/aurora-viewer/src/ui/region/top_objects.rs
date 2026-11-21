@@ -299,7 +299,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
                 .clicked()
                     && let Some(id) = avatar
                 {
-                    crate::ui::profile::request_open(ui.ctx(), id);
+                    crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
                 }
                 let kick_label = aurora_i18n::tr!("region-int-kick");
                 if widgets::action_button_if(

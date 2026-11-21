@@ -66,6 +66,7 @@ impl App {
         }
         self.imports.poll_local_registry();
         self.sync_local_picker_bindings();
+        self.imports.sync_attachment_targets(&self.world);
         let expired = self.imports.expire_local_appearances(&mut self.world.objects);
         self.build
             .forget_expired_local_picker_appearances(&expired, &self.imports.local_appearance_targets);
@@ -701,7 +702,10 @@ impl App {
                     self.imports.open_map_picker(id, slot);
                 }
                 Action::MapDrop(id, slot, target) => {
-                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |_| true) {
+                    let god = self.world.god_level > 0;
+                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |item| {
+                        crate::ui::texture_library::map_source(&self.world.inventory, item, god)
+                    }) {
                         self.imports.drop_map(id, slot, resource.asset);
                     }
                 }
@@ -1106,13 +1110,25 @@ impl App {
                 }
                 entry.local_published = true;
                 entry.local_generation = prepared.generation;
+                self.egui_ctx.request_repaint();
             } else {
                 entry.local_failed_generation = Some(prepared.generation);
                 self.imports.message = aurora_i18n::tr!("import-local-staging-busy").into();
             }
             entry.local_pending = false;
         }
+        self.world.local_asset_order = self
+            .imports
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.local)
+            .map(|(order, entry)| (entry.id, order))
+            .collect();
         self.imports.local_uploads = pending;
+        if !self.imports.local_uploads.is_empty() {
+            self.egui_ctx.request_repaint_after(Duration::from_millis(33));
+        }
         let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
         for (asset, slot) in previous_slots {
             if !referenced.contains(&asset) {

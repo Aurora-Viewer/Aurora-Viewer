@@ -11,6 +11,9 @@ fn overlaps(a: Rect, b: Rect) -> bool {
     a.intersect(b).is_positive()
 }
 
+/// The Legacy Viewer's ToastGap default, which the stacks start with.
+const GAP: f32 = crate::settings::TOAST_GAP;
+
 const ROOM: Rect = Rect::from_min_max(Pos2::new(8.0, 56.0), Pos2::new(1272.0, 680.0));
 
 fn sizes(n: usize) -> Vec<Vec2> {
@@ -24,7 +27,7 @@ fn sizes(n: usize) -> Vec<Vec2> {
 fn toasts_start_from_their_edge_and_stack_away_from_it() {
     let s = sizes(3);
     for at in PresencePosition::ALL {
-        let rects: Vec<Rect> = stack(ROOM, at, &s, &[]).into_iter().map(|r| r.expect("fits")).collect();
+        let rects: Vec<Rect> = stack(ROOM, at, &s, &[], GAP).into_iter().map(|r| r.expect("fits")).collect();
         for (r, size) in rects.iter().zip(&s) {
             assert_eq!(r.size(), *size, "{at:?}");
             assert!(ROOM.contains_rect(*r), "{at:?} {r:?}");
@@ -52,12 +55,26 @@ fn toasts_start_from_their_edge_and_stack_away_from_it() {
 fn the_chat_lines_shorten_the_room_from_below() {
     let chat = Rect::from_min_max(Pos2::new(8.0, 560.0), Pos2::new(560.0, 674.0));
     let s = sizes(2);
-    let left = stack(ROOM, PresencePosition::BottomLeft, &s, &[chat]);
+    let left = stack(ROOM, PresencePosition::BottomLeft, &s, &[chat], GAP);
     let first = left[0].expect("fits");
     assert_eq!(first.bottom(), chat.top() - GAP);
     assert!(left.iter().flatten().all(|r| !overlaps(*r, chat)));
-    let right = stack(ROOM, PresencePosition::BottomRight, &s, &[chat]);
+    let right = stack(ROOM, PresencePosition::BottomRight, &s, &[chat], GAP);
     assert_eq!(right[0].expect("fits").bottom(), ROOM.bottom());
+}
+
+/// The gap chosen in Preferences (ToastGap) is the room between two
+/// toasts and above the chat lines: none at 0, 30 px at its top.
+#[test]
+fn the_toast_gap_spaces_the_stack_and_the_chat_lines() {
+    let chat = Rect::from_min_max(Pos2::new(8.0, 560.0), Pos2::new(560.0, 674.0));
+    for gap in [0.0, GAP, crate::settings::TOAST_GAP_MAX] {
+        let rects = stack(ROOM, PresencePosition::BottomLeft, &sizes(3), &[chat], gap);
+        let r: Vec<Rect> = rects.into_iter().map(|r| r.expect("fits")).collect();
+        assert_eq!(r[0].bottom(), chat.top() - gap, "{gap}");
+        assert_eq!(r[1].bottom(), r[0].top() - gap, "{gap}");
+        assert_eq!(r[2].bottom(), r[1].top() - gap, "{gap}");
+    }
 }
 
 /// A room lower than the stack keeps the newest toasts that fit, never
@@ -66,7 +83,7 @@ fn the_chat_lines_shorten_the_room_from_below() {
 fn a_low_room_keeps_the_newest_that_fit() {
     let low = Rect::from_min_max(Pos2::new(8.0, 56.0), Pos2::new(1272.0, 160.0));
     for at in PresencePosition::ALL {
-        let rects = stack(low, at, &sizes(4), &[]);
+        let rects = stack(low, at, &sizes(4), &[], GAP);
         assert_eq!(
             rects.iter().map(Option::is_some).collect::<Vec<_>>(),
             [false, false, true, true],
@@ -75,7 +92,11 @@ fn a_low_room_keeps_the_newest_that_fit() {
         assert!(rects.iter().flatten().all(|r| low.contains_rect(*r)), "{at:?}");
     }
     let tiny = Rect::from_min_max(Pos2::new(8.0, 56.0), Pos2::new(1272.0, 90.0));
-    assert!(stack(tiny, PresencePosition::TopRight, &sizes(2), &[]).iter().all(Option::is_none));
+    assert!(
+        stack(tiny, PresencePosition::TopRight, &sizes(2), &[], GAP)
+            .iter()
+            .all(Option::is_none)
+    );
 }
 
 /// While busy a new toast waits; it shows when the place is free if it
@@ -146,6 +167,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         fps: 60.0,
         flying: false,
         seated: false,
+        clouds_paused: false,
         ping_ms: 38,
         balance: Some(1000),
         show_balance: true,
@@ -169,11 +191,13 @@ fn status(classic: bool) -> StatusInfo<'static> {
         slow_motion_animations: false,
         release_keys: false,
         marketplace: false,
+        avatar_welcome: false,
         linden_home: false,
         destinations: false,
         parcel_landmark: None,
         can_set_home: false,
         can_go_home: true,
+        home_entry: true,
         release_notes: false,
         region_console: false,
         god_level: 0,
@@ -361,6 +385,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 restart: None,
                 presence_at: at,
                 classic_bars: classic,
+                toast_gap: crate::settings::TOAST_GAP,
             };
             crate::ui::notification_center::show(ui.ctx(), &p, &icons, &world, &mut list, &mut history, &mut notif, &mut env, false);
         });
@@ -477,6 +502,7 @@ impl Clicks {
                 restart: None,
                 presence_at: at,
                 classic_bars: false,
+                toast_gap: crate::settings::TOAST_GAP,
             };
             answers = crate::ui::notification_center::show(
                 ui.ctx(),

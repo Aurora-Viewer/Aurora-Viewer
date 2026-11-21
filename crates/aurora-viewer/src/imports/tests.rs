@@ -948,6 +948,36 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
     mesh::Draft::new(scene, HashMap::new())
 }
 
+/// Shared corners let the automatic reducer change geometry without a UV/normal seam.
+pub(super) fn reducible_mesh_fixture() -> mesh::Draft {
+    let mut draft = mesh_fixture();
+    let model = &mut Arc::make_mut(&mut draft.scene).models[0];
+    model.center = glam::Vec3::ZERO;
+    model.size = glam::Vec3::ONE;
+    model.faces.truncate(1);
+    let face = &mut model.faces[0];
+    let prototype = face.vertices[0].clone();
+    face.vertices = [-0.5, 0.5]
+        .into_iter()
+        .flat_map(|x| {
+            let prototype = prototype.clone();
+            [-0.5, 0.5].into_iter().flat_map(move |y| {
+                let prototype = prototype.clone();
+                [-0.5, 0.5].into_iter().map(move |z| aurora_assets::import_mesh::Vertex {
+                    position: [x, y, z],
+                    normal: [0.0, 0.0, 1.0],
+                    uv: [0.0; 2],
+                    ..prototype.clone()
+                })
+            })
+        })
+        .collect();
+    face.indices = vec![
+        0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5,
+    ];
+    draft
+}
+
 pub(super) fn invalid_physics_fixture() -> mesh::Draft {
     let mut draft = mesh_fixture();
     for lod in &mut draft.lods[..3] {
@@ -1210,7 +1240,7 @@ fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
 
 #[test]
 fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
-    let mut draft = mesh_fixture();
+    let mut draft = reducible_mesh_fixture();
     for lod in &mut draft.lods[..3] {
         lod.error = 0.0;
     }

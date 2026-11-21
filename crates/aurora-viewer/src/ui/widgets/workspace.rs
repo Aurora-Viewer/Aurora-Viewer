@@ -3,10 +3,13 @@
 use super::*;
 use egui::AtomExt;
 
+/// The padding around a row's label in the user tree and object contents.
+pub(crate) const INVENTORY_LABEL_PADDING: egui::Vec2 = egui::vec2(2.0, 1.0);
+
 /// The user tree and object contents share row density and interaction styling.
 pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().button_padding = INVENTORY_LABEL_PADDING;
     ui.spacing_mut().interact_size.y = 20.0;
 }
 
@@ -527,6 +530,10 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("build_tools") {
         return "box";
     }
+    // One window per contents item: task_item_props_<object>_<item>.
+    if id.starts_with("task_item_props") {
+        return "file-info-filled";
+    }
     if id == super::super::animation_explorer::WINDOW {
         return "run";
     }
@@ -534,10 +541,13 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",
+        // the toolbar's conversation_log command
+        "conversation_log" => "file-text-filled",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -546,6 +556,8 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
         "controls" | "camera_controls" => "video-filled",
+        "director" => "movie",
+        "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
@@ -557,7 +569,6 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "media_settings" => "device-tv-filled",
         "bulk_perms" => "lock-filled",
         "region_restarting" => "alert-triangle-filled",
-        "task_item_props" => "file-info-filled",
         "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" | "import_launcher" => "file-upload-filled",
         "import_textures" => "photo-filled",
         "import_sounds" => "file-music-filled",
@@ -825,6 +836,14 @@ impl Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_contents_item_properties_window_keeps_its_icon() {
+        let object = uuid::Uuid::from_u128(0xa1);
+        let item = uuid::Uuid::from_u128(0xb2);
+        assert_eq!(window_icon(&format!("task_item_props_{object}_{item}")), "file-info-filled");
+        assert_eq!(window_icon("task_item_props"), "file-info-filled");
+    }
 
     #[test]
     fn a_modal_ground_shows_the_part_of_the_picture_under_it() {

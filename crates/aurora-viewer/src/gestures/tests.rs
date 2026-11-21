@@ -605,3 +605,53 @@ fn alt_pressed_alone_is_a_gesture_key_but_alt_with_a_key_is_not() {
         Some(1)
     );
 }
+
+/// #4167: saving a gesture with the shortcut and trigger of another active
+/// gesture keeps both active (LLGestureMgr::replaceGesture never deactivates
+/// similar gestures), and a press of the key plays one of them at random,
+/// as LLGestureMgr::triggerGesture does.
+#[test]
+fn a_saved_gesture_keeps_the_others_with_its_shortcut_active() {
+    let mut manager = Manager::default();
+    let gesture = |key, trigger: &str| Gesture {
+        key,
+        mask: 0,
+        trigger: trigger.into(),
+        steps: vec![chat("hi")],
+        ..Default::default()
+    };
+    let (kept, saved, other) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    for (id, definition) in [
+        (kept, gesture(b'9', "/wave")),
+        (saved, gesture(b'8', "/bow")),
+        (other, gesture(b'7', "/nod")),
+    ] {
+        manager.entries.insert(
+            id,
+            Entry {
+                asset: Uuid::nil(),
+                definition,
+            },
+        );
+        manager.active.insert(id);
+    }
+    manager.play(saved, gesture(b'8', "/bow"), None);
+    let revision = manager.revision;
+    manager.replace(
+        saved,
+        Entry {
+            asset: Uuid::from_u128(20),
+            definition: gesture(b'9', "/wave"),
+        },
+    );
+    assert!(!manager.is_playing(saved), "the saved gesture's playback stops");
+    assert_ne!(manager.revision, revision);
+    assert_eq!(manager.active, BTreeSet::from([kept, saved, other]), "no gesture is deactivated");
+    assert_eq!(manager.entries[&saved].definition.key, b'9');
+    let mut played = BTreeSet::new();
+    for _ in 0..64 {
+        played.extend(manager.key_trigger(b'9', 0));
+    }
+    assert_eq!(played, BTreeSet::from([kept, saved]), "either gesture on the shared key plays");
+    assert_eq!(manager.key_trigger(b'7', 0), Some(other));
+}

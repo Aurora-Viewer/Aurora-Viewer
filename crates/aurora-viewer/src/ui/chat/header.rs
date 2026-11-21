@@ -34,6 +34,8 @@ struct Identity {
     subtitle: Option<String>,
     /// The avatar of a conversation with one resident.
     avatar: Option<uuid::Uuid>,
+    /// The group of a role group's conversation.
+    group: Option<uuid::Uuid>,
     /// A Tabler icon instead of a picture (the nearby chat).
     icon: Option<&'static str>,
 }
@@ -44,29 +46,52 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
             subtitle: Some(world.rlva_region_label()).filter(|r| !r.is_empty()),
             avatar: None,
+            group: None,
             icon: Some("message-filled"),
         },
-        Some(other) if world.is_group_session(&other) => {
-            let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
-            Identity {
-                title: world.session_title(&other),
-                subtitle: (n > 0).then(|| aurora_i18n::tr!("ui-chat-participants", n = n.to_string())),
-                avatar: None,
-                icon: None,
+        Some(other) => match super::sidebar::kind(world, &other) {
+            super::sidebar::Kind::Group => {
+                let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
+                let title = world
+                    .groups
+                    .sessions
+                    .get(&other)
+                    .filter(|s| !s.name.is_empty())
+                    .map(|s| s.name.clone())
+                    .or_else(|| world.groups.group(&other).map(|g| g.name.clone()))
+                    .unwrap_or_else(|| world.session_title(&other));
+                Identity {
+                    title,
+                    subtitle: (n > 0).then(|| aurora_i18n::tr!("ui-chat-participants", n = n.to_string())),
+                    avatar: None,
+                    group: Some(other),
+                    icon: None,
+                }
             }
-        }
-        Some(other) => {
-            let names = &world.social.avatar_names;
-            let cached = names.get(&other);
-            Identity {
-                title: cached
-                    .map(|n| n.display(&names.options))
-                    .unwrap_or_else(|| world.session_title(&other)),
-                subtitle: cached.and_then(|n| n.chat_username(&names.options)),
-                avatar: Some(other),
-                icon: None,
+            super::sidebar::Kind::Conference => {
+                let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
+                Identity {
+                    title: world.session_title(&other),
+                    subtitle: (n > 0).then(|| aurora_i18n::tr!("ui-chat-participants", n = n.to_string())),
+                    avatar: None,
+                    group: None,
+                    icon: None,
+                }
             }
-        }
+            super::sidebar::Kind::Private => {
+                let names = &world.social.avatar_names;
+                let cached = names.get_in(crate::world::names::NameScope::Roster, &other);
+                Identity {
+                    title: cached
+                        .map(|n| n.display(&names.options))
+                        .unwrap_or_else(|| world.session_title(&other)),
+                    subtitle: cached.and_then(|n| n.chat_username(&names.options)),
+                    avatar: Some(other),
+                    group: None,
+                    icon: None,
+                }
+            }
+        },
     }
 }
 
@@ -83,7 +108,9 @@ pub(super) fn show(
 ) {
     let who = identity(world, st);
     let status = who.avatar.map(|a| presence::of(world, &a));
-    let group = st.selected.is_some_and(|s| world.is_group_session(&s));
+    let group = st
+        .selected
+        .is_some_and(|s| super::sidebar::kind(world, &s) != super::sidebar::Kind::Private);
     // buttons at the right: their count fixes the room the names keep
     // (a conversation's own close button among them)
     let snooze = st.selected.filter(|s| super::can_snooze(world, s));
@@ -211,20 +238,31 @@ fn picture_and_names(
     names_w: f32,
 ) {
     // ---- picture and its status
-    let (rect, pic_resp) = ui.allocate_exact_size(egui::vec2(PIC, PIC), egui::Sense::click());
-    match (who.avatar, who.icon) {
-        (Some(a), _) => {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(PIC, PIC), egui::Sense::hover());
+    let pic_resp = ui.interact(rect, super::classic_id("head-pic"), egui::Sense::click());
+    match (who.avatar, who.group, who.icon) {
+        (Some(a), _, _) => {
             st.wanted_pics.insert(a);
             crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&a), &who.title, false);
             if let Some(s) = status {
                 presence::paint_dot(ui.painter(), p, rect, s, p.bar);
                 pic_resp.clone().on_hover_text(s.label());
             }
-            if pic_resp.clicked() {
+            if pic_resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 actions.push(ConvAction::Profile(a));
             }
         }
-        (None, Some(icon)) => {
+        (_, Some(g), _) => {
+            crate::ui::widgets::avatar_picture(ui, p, rect, None, &who.title, false);
+            if pic_resp
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(aurora_i18n::tr!("ui-group-profile-view"))
+                .clicked()
+            {
+                crate::ui::group_profile::request_open(ui.ctx(), g);
+            }
+        }
+        (None, None, Some(icon)) => {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
             if let Some(t) = icons.get(icon) {
                 ui.painter().image(
@@ -235,7 +273,7 @@ fn picture_and_names(
                 );
             }
         }
-        (None, None) => crate::ui::widgets::avatar_picture(ui, p, rect, None, &who.title, false),
+        (None, None, None) => crate::ui::widgets::avatar_picture(ui, p, rect, None, &who.title, false),
     }
     ui.add_space(4.0);
     // ---- names
@@ -251,7 +289,7 @@ fn picture_and_names(
             let title = RichText::new(&who.title).size(14.0).strong().color(color);
             let r = ui.add(crate::ui::widgets::elided_label(ui, title, names_w - pill_w).sense(egui::Sense::click()));
             if let Some(a) = who.avatar {
-                super::name_menu(&r, p, world, a);
+                super::name_menu(&r, p, world, a, crate::world::names::NameScope::Roster);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()
@@ -259,6 +297,12 @@ fn picture_and_names(
                     actions.push(ConvAction::Profile(a));
                 }
                 crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &a), 10.0);
+            } else if let Some(g) = who.group
+                && r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("ui-group-profile-view"))
+                    .clicked()
+            {
+                crate::ui::group_profile::request_open(ui.ctx(), g);
             }
             if let Some(s) = status.filter(|s| s.pill()) {
                 status_pill(ui, p, s);
@@ -380,7 +424,13 @@ pub(super) fn more_items(
                         actions.push(ConvAction::OpenInventory);
                     }
                 }
-                if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay")) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "coin-filled",
+                    aurora_i18n::tr!("ui-chat-pay"),
+                    crate::ui::context::can_pay_resident(world),
+                ) {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(other));
                 }
                 // FSFloaterIM's sysinfo button (SysinfoButtonInIM), as a menu row

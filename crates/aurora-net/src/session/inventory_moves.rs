@@ -7,6 +7,7 @@ use crate::circuit::Circuit;
 use crate::inventory::operations::InventoryMove;
 use crate::stats::NetStats;
 use aurora_msg::msgs::{MoveInventoryFolder, MoveInventoryItem, move_inventory_folder, move_inventory_item};
+#[cfg(test)]
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -52,7 +53,14 @@ impl Session<'_> {
     }
 }
 
-fn send(circuit: &mut Circuit, socket: &UdpSocket, stats: &NetStats, agent: Uuid, session: Uuid, movement: InventoryMove) -> u32 {
+fn send(
+    circuit: &mut Circuit,
+    socket: &impl crate::circuit_socket::DatagramOut,
+    stats: &NetStats,
+    agent: Uuid,
+    session: Uuid,
+    movement: InventoryMove,
+) -> u32 {
     if movement.folder {
         let mut message = MoveInventoryFolder::default();
         message.agent_data.agent_id = agent;

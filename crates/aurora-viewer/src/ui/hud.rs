@@ -181,9 +181,15 @@ impl NameTagVisibility {
     }
 }
 
+/// LLVOAvatar::idleUpdateNameTag (indra/newview/llvoavatar.cpp) draws our own
+/// tag on `RenderNameShowSelf && AvatarNameTagMode`: Avatar Name Tags on Off
+/// hides every tag, ours included (#3855). Aurora's mode is Off when neither
+/// the friends' nor the other residents' tags show
+/// (`quick_prefs::NameTags::of`); the own tag's switch keeps its value and
+/// applies again once one of them is back on.
 fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: bool) -> bool {
     if own {
-        settings.show_own_name_tag
+        settings.show_own_name_tag && (settings.show_friend_name_tags || settings.show_other_name_tags)
     } else if friend {
         settings.show_friend_name_tags
     } else {
@@ -198,6 +204,35 @@ fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: boo
 /// it, so that the renderer draws it before the HUD attachments too.
 pub fn world_painter(ctx: &egui::Context) -> egui::Painter {
     ctx.layer_painter(egui::LayerId::background())
+}
+
+/// The floating text `object` shows for `raw` (llSetText), as
+/// LLHUDText::setString (indra/newview/llhudtext.cpp) sets it: nothing when
+/// RlvActions::canShowHoverText refuses it (@showhovertext*), else the
+/// places (RlvUtil::filterLocation) and the names (RlvUtil::filterNames,
+/// which ends with filterMentions) hidden when it came, kept until it
+/// changes or a restriction LLHUDText::refreshAllObjectText follows comes
+/// or goes (`HoverTexts`).
+pub fn hover_text(world: &World, object: uuid::Uuid, hud: bool, raw: &str) -> String {
+    if !world.rlva.enabled() {
+        return raw.to_owned();
+    }
+    if !world.rlva.hover_visible(object, hud) {
+        return String::new();
+    }
+    world.rlva.hover_texts.get(&world.rlva, object, raw, |raw| {
+        let names = world.rlva_hover_privacy.apply(raw);
+        world.rlva_freeze_mentions(&names).into_owned()
+    })
+}
+
+/// The first line of the floating text object `id` shows (`hover_text`),
+/// for a panel that names an object by it; None when it shows none.
+pub fn hover_text_title(world: &World, id: uuid::Uuid) -> Option<String> {
+    let index = world.objects.index_of_uuid(&id)?;
+    let o = world.objects.get(index)?;
+    let text = hover_text(world, o.full_id, world.hud_root(index).is_some(), &o.text);
+    Some(text.lines().next().unwrap_or("").to_owned()).filter(|line| !line.is_empty())
 }
 
 /// llSetText on our HUD attachments, without world-distance fading. Painted
@@ -235,7 +270,7 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         }
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-        let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
+        let text = hover_text(world, o.full_id, true, &o.text);
         super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom, None);
     }
 }
@@ -350,7 +385,13 @@ fn plate_content(
         }
     };
     let blocked = !own && world.is_avatar_blocked(&id);
-    let friend = !own && world.social.is_friend(&id);
+    // RLVa @shownames: what tells who stands behind a hidden name goes with
+    // it, as in LLVOAvatar::idleUpdateNameTagText (no group title, never a
+    // friend) and LGGContactSets::colorize (no relation colour, no set).
+    // Aurora's own picture, staff mark and set appearance follow the rule;
+    // "Blocked" stays a status, as "(Muted)" does on the Legacy Viewer's tag.
+    let named = world.rlva_can_name(id);
+    let friend = !own && world.rlva_shown_friend(&id);
     // the same rule as the classic tag (FSTagShowARW and its two options)
     let detail = complexity.and_then(|tc| {
         let shown = (own && tc.own) || (!own && (!tc.only_too_complex || tc.too_complex.contains(&idx)));
@@ -372,12 +413,12 @@ fn plate_content(
         })
     });
     Content {
-        appearance: world.contact_sets.appearance(&id).clone(),
+        appearance: world.rlva_contact_appearance(&id).clone(),
         name,
         username,
-        title: o.group_title().filter(|_| world.group_titles.shows(own)),
+        title: o.group_title().filter(|_| named && world.group_titles.shows(own)),
         detail,
-        role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
+        role: Role::of(own, named && blocked, named && super::colors::is_linden(&legacy), friend),
         presence,
         in_voice,
         // FSShowTypingStateInNameTag. Our own plate too, from our typing
@@ -391,7 +432,7 @@ fn plate_content(
         // distinguishes an explicit rendering choice from an automatic limit.
         render_never: !own && too_complex && settings.render_exception(&id) == 1,
         blocked,
-        mark: crate::world::staff::mark_named(&id, &legacy),
+        mark: crate::world::staff::mark_named(&id, &legacy).filter(|_| named),
         distance: Distance::of(agent_distance, own, settings.tag_distance, settings.tag_distance_colors),
     }
 }
@@ -482,7 +523,8 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        // the animation editor's mirror of us has no name tag
+        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) || world.is_mirror(&o.full_id) {
             continue;
         }
         if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
@@ -493,9 +535,9 @@ pub fn draw(
             if avatar_tags == AvatarTags::Hidden {
                 continue;
             }
-            if world.rlva.has("shownearby") && o.full_id != world.agent_id {
-                continue;
-            }
+            // RLVa @shownearby empties the lists of who is around, never the
+            // tags: only @shownametags hides them (RlvActions::canShowNameTag
+            // in LLVOAvatar::idleUpdateNameTag), and @shownames their names
             let own = o.full_id == world.agent_id;
             if own && !show_own {
                 continue;
@@ -503,19 +545,27 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
             // from us, not from the camera: the RLVa limits and the tags'
             // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
             let agent_distance = pos.distance(world.agent.position);
-            if !world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance) {
-                continue;
-            }
+            let rlva_tag = world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance);
             // a resident with a bubble shows it under their name whatever
-            // the name tags' settings, their distance and their timer
-            // (LLVOAvatar::idleUpdateNameTag: visible_chat)
+            // the name tags' settings, their distance, their timer and
+            // @shownametags (LLVOAvatar::idleUpdateNameTag, llvoavatar.cpp:
+            // render_name = visible_chat || visible_typing || (fRlvShowAvTag && ...))
             let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
-            let names = avatar_tags == AvatarTags::Shown && name_tag_enabled(settings, own, world.social.is_friend(&o.full_id));
-            if !chatting && (!names || d > settings.name_tag_distance) {
+            // a hidden name's tag follows the other residents' switch: the
+            // friends' one would tell which strangers are friends
+            let names = avatar_tags == AvatarTags::Shown && name_tag_enabled(settings, own, world.rlva_shown_friend(&o.full_id));
+            if !chatting && (!rlva_tag || !names || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
@@ -544,6 +594,9 @@ pub fn draw(
                 let too = too_complex.contains(&idx) || demo_too_complex == Some(id);
                 // a picture is asked for until the profile says there is none
                 let picture = match pictures.get(&id) {
+                    // a profile picture names its resident as well as the
+                    // name RLVa hides
+                    _ if !world.rlva_can_name(id) => Picture::None,
                     Some(texture) => Picture::Loaded(texture),
                     None if world.profiles.get(&id).is_some_and(|pr| pr.sl_image.is_nil()) => Picture::None,
                     None => Picture::Wanted,
@@ -601,7 +654,12 @@ pub fn draw(
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));
                 }
             }
-            if let Some(t) = o.group_title().filter(|_| world.group_titles.shows(o.full_id == world.agent_id)) {
+            // never the title of a resident whose name RLVa hides
+            // (`render_title && fRlvShowAvName` in idleUpdateNameTagText)
+            if let Some(t) = o
+                .group_title()
+                .filter(|_| world.rlva_can_name(o.full_id) && world.group_titles.shows(o.full_id == world.agent_id))
+            {
                 lines.push((t, p.muted, 11.0));
             }
             // LLVOAvatar::idleUpdateNameTagText: the display name, then the
@@ -611,7 +669,9 @@ pub fn draw(
             let (name, username, custom, legacy) = match names.get(&o.full_id) {
                 Some(n) => {
                     let (main, user) = n.tag_lines(&names.options);
-                    let custom = names.options.use_display_names && !n.is_default;
+                    // (by the name itself, not by the stand-in RLVa shows
+                    // for it: LLVOAvatar::getNameTagColor asks the cache)
+                    let custom = names.options.use_display_names && names.raw(&o.full_id).is_some_and(|n| !n.is_default);
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {
@@ -735,7 +795,7 @@ pub fn draw(
                 distance: d,
                 at: anchor,
                 screen: sp,
-                text: world.rlva_hover_privacy.apply(&o.text).into_owned(),
+                text: hover_text(world, o.full_id, false, &o.text),
                 color: Color32::from_rgba_unmultiplied(c[0], c[1], c[2], alpha as u8),
                 background,
                 highlighted,
@@ -743,6 +803,11 @@ pub fn draw(
         }
     }
     visibility.finish();
+    // the filtered texts of the objects gone are forgotten
+    let cached = world.rlva.hover_texts.count();
+    if cached > 256 && cached > 2 * world.objects.texted().count() {
+        world.rlva.hover_texts.retain(|id| world.objects.index_of_uuid(id).is_some());
+    }
     // the floating texts under the name tags, far first; the highlighted
     // one last, over everything (LLHUDObject's hud_object_further_away)
     texts.sort_by(|a, b| b.distance.total_cmp(&a.distance));
@@ -917,8 +982,82 @@ mod tests {
         assert!(!own.too_complex && !own.render_never, "our own avatar has no rendering-limit badge");
     }
 
+    /// RLVa @shownames: a plate tells nothing of who stands behind a hidden
+    /// name (LLVOAvatar::idleUpdateNameTagText: no title, never a friend).
     #[test]
-    fn name_tag_categories_are_independent_and_self_takes_priority() {
+    fn rlva_hidden_names_keep_title_friendship_and_contact_set_off_their_plate() {
+        use super::super::nameplate::Role;
+        use crate::world::contact_sets::{Appearance, Visuals};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let (idx, id) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id && o.group_title().is_some() && !world.is_avatar_blocked(&o.full_id))
+            .map(|(idx, o)| (idx, o.full_id))
+            .expect("a demo avatar with a group title");
+        if !world.social.is_friend(&id) {
+            world.social.friends.push(crate::world::social::Friend {
+                id,
+                online: true,
+                rights_given: 0,
+                rights_has: 0,
+            });
+        }
+        let sets = &mut world.contact_sets;
+        sets.add_set("Team");
+        sets.add_to_set(&[id], "Team", |_| true);
+        sets.set_color("Team", [0.6, 0.2, 0.8, 1.0]);
+        sets.set_visuals(
+            "Team",
+            Visuals {
+                border: true,
+                ..Default::default()
+            },
+        );
+        world.rlva_configure(true);
+        let settings = crate::settings::Settings::default();
+        let content = |world: &World| {
+            let avatar = world.objects.get(idx).expect("the demo avatar");
+            plate_content(world, idx, avatar, false, None, false, &settings, false, 5.0)
+        };
+        let shown = content(&world);
+        assert!(shown.friend && shown.title.is_some());
+        assert_ne!(*shown.appearance, Appearance::default());
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Plate fixture".into(),
+            source_id: uuid::Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let hidden = content(&world);
+        assert_ne!(hidden.name, shown.name);
+        assert_eq!(
+            (hidden.title, hidden.friend, hidden.role, hidden.mark),
+            (None, false, Role::Resident, None)
+        );
+        assert_eq!(*hidden.appearance, Appearance::default());
+        // ours is never hidden
+        let (idx, avatar) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id == world.agent_id)
+            .expect("our demo avatar");
+        assert_eq!(
+            plate_content(&world, idx, avatar, false, None, false, &settings, false, 0.0).role,
+            Role::Own
+        );
+    }
+
+    #[test]
+    fn name_tag_categories_follow_their_switches_and_off_hides_our_own() {
         for own in [false, true] {
             for friends in [false, true] {
                 for others in [false, true] {
@@ -928,8 +1067,9 @@ mod tests {
                         show_other_name_tags: others,
                         ..Default::default()
                     };
-                    assert_eq!(name_tag_enabled(&settings, true, false), own);
-                    assert_eq!(name_tag_enabled(&settings, true, true), own);
+                    // ours: its switch, while the residents' tags are not all off
+                    assert_eq!(name_tag_enabled(&settings, true, false), own && (friends || others));
+                    assert_eq!(name_tag_enabled(&settings, true, true), own && (friends || others));
                     assert_eq!(name_tag_enabled(&settings, false, true), friends);
                     assert_eq!(name_tag_enabled(&settings, false, false), others);
                 }
@@ -1087,6 +1227,95 @@ mod tests {
                 "expired tags cannot receive clicks, classic={classic}"
             );
         }
+    }
+
+    /// RLVa: @shownearby leaves the name tags alone, @shownames sends a
+    /// friend's tag to the other residents' switch, @shownametags hides all
+    /// but ours (RlvActions::canShowNameTag in LLVOAvatar::idleUpdateNameTag).
+    #[test]
+    fn rlva_shownearby_keeps_name_tags_that_shownametags_hides() {
+        use std::collections::HashSet;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = super::super::icons::Icons::default();
+        let proj = Projector {
+            view_proj: Mat4::from_scale(Vec3::splat(1.0 / 512.0)),
+            width: 1600.0,
+            height: 900.0,
+            ppp: 1.0,
+        };
+        let empty = HashMap::new();
+        let frame = |world: &World, settings: &crate::settings::Settings| {
+            let mut hits = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                hits = draw(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    world,
+                    &scene,
+                    &proj,
+                    Vec3::new(128.0, 128.0, 5.0),
+                    true,
+                    AvatarTags::Shown,
+                    settings,
+                    &mut NameTagVisibility::default(),
+                    &empty,
+                    &settings.audio,
+                    &mut super::super::voice_tag::VoiceTags::default(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            });
+            output.textures_delta.clear();
+            hits.into_iter().map(|tag| tag.id).collect::<HashSet<_>>()
+        };
+        let restrict = |world: &mut World, command: &str| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Tag fixture".into(),
+                source_id: uuid::Uuid::from_u128(4),
+                owner_id: world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: command.into(),
+            }));
+            world.refresh_rlva_privacy();
+        };
+        let mut settings = crate::settings::Settings {
+            name_tag_distance: 128.0,
+            ..Default::default()
+        };
+        let all = frame(&world, &settings);
+        let friends: HashSet<_> = all.iter().copied().filter(|id| world.social.is_friend(id)).collect();
+        assert!(all.contains(&world.agent_id) && !friends.is_empty() && all.len() > friends.len() + 1);
+        world.rlva_configure(true);
+        restrict(&mut world, "@shownearby=n");
+        assert!(world.rlva.has("shownearby"));
+        assert_eq!(frame(&world, &settings), all, "@shownearby hides no name tag");
+        settings.show_other_name_tags = false;
+        let mut kept = friends.clone();
+        kept.insert(world.agent_id);
+        assert_eq!(frame(&world, &settings), kept);
+        restrict(&mut world, "@shownames=n");
+        assert_eq!(
+            frame(&world, &settings),
+            HashSet::from([world.agent_id]),
+            "a hidden name is not shown as a friend's"
+        );
+        settings.show_other_name_tags = true;
+        assert_eq!(frame(&world, &settings), all);
+        restrict(&mut world, "@shownametags=n");
+        assert_eq!(frame(&world, &settings), HashSet::from([world.agent_id]));
     }
 
     /// LLVOAvatar::idleUpdateNameTag's `visible_chat`: a resident who
@@ -1350,3 +1579,7 @@ mod tests {
         assert_eq!(floating_text_background(&s, false, 1.0, white), Some(Color32::from_black_alpha(0)));
     }
 }
+
+#[cfg(test)]
+#[path = "hud/privacy_tests.rs"]
+mod privacy_tests;

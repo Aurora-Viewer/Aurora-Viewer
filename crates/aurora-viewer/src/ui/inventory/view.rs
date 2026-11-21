@@ -380,6 +380,10 @@ pub struct InventoryPreferences {
     /// Aurora's window shows the selection's details: the card at the
     /// bottom of the narrow and medium widths, the pane of the wide one.
     pub show_details: bool,
+    /// Aurora's dual-panel layout: two panes side by side in the Inventory
+    /// window, each with its own folder, search and selection. Off by
+    /// default (the Legacy Viewer has one pane).
+    pub dual_panel: bool,
     /// Folder icon colors (`folder_colors.rs`): this viewer only, on by default.
     pub folder_colors_enabled: bool,
     pub folder_colors: std::collections::BTreeMap<Uuid, [u8; 3]>,
@@ -394,8 +398,11 @@ impl Default for InventoryPreferences {
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
+            // RecentItemsSortOrder = SO_DATE only (indra/newview/app_settings/settings.xml,
+            // indra/newview/llinventoryfilter.h): system folders compete by date too.
             recent_sort: Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             },
             received_sort: Sort {
@@ -428,6 +435,7 @@ impl Default for InventoryPreferences {
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,
+            dual_panel: false,
             folder_colors_enabled: true,
             folder_colors: Default::default(),
         }
@@ -446,6 +454,13 @@ pub struct ExplorerPreferences {
     pub show_kind: bool,
     pub show_rights: bool,
     pub show_date: bool,
+    /// How the explorer shows its folder: rows, tiles, or both.
+    pub view: ExplorerView,
+    /// The side of a tile's picture; 0 is the Legacy Viewer's 128.
+    pub tile_size: u16,
+    /// The height of the tiles above the rows in the combination view; 0
+    /// shares the room between them.
+    pub gallery_height: u16,
 }
 
 impl Default for ExplorerPreferences {
@@ -458,8 +473,26 @@ impl Default for ExplorerPreferences {
             show_kind: true,
             show_rights: true,
             show_date: true,
+            view: ExplorerView::List,
+            tile_size: 0,
+            gallery_height: 0,
         }
     }
+}
+
+/// The views of the Legacy Viewer's single folder mode (LLPanelMainInventory
+/// ::setViewMode, indra/newview/llpanelmaininventory.cpp): the list, the
+/// gallery of every entry, or the combination of a gallery of the entries
+/// that have a picture above a list of the others. Aurora difference: the
+/// choice is kept, and the explorer starts with its list as before (the
+/// Legacy Viewer starts each single folder mode in the combination view).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerView {
+    #[default]
+    List,
+    Gallery,
+    Combination,
 }
 
 impl InventoryPreferences {
@@ -819,9 +852,13 @@ impl ViewCache {
             within(inv, &favorites)
         };
         // Advanced search: patterns and creator names resolved once, then
-        // shared by the parallel walk. Its Date rules keep their own clock;
-        // the Recent tab still limits to since logout.
+        // shared by the parallel walk. Its Date rules keep their own clock.
+        // The Recent tab keeps its since-logout limit under rules on other
+        // fields; a Date rule replaces it, as the finder's hours ago replace
+        // "Since Logoff" on the Recent Items panel
+        // (LLInventoryFilter::setHoursAgo resets the date range).
         let recent = recent_cutoff(prefs, time);
+        let recent_limit = tab == 2 && !smart.is_some_and(|q| q.uses(SmartField::Date));
         let matcher = smart.map(|q| Matcher::new(q, &query.names, recent, time));
         let folder_names: HashMap<Uuid, &str> = if smart.is_some_and(|q| q.uses(SmartField::Folder)) {
             self.entries.iter().filter(|e| e.folder).map(|e| (e.id, e.name.as_str())).collect()
@@ -896,7 +933,7 @@ impl ViewCache {
                     }
                     let original_id = rules::original(inv, e.id).unwrap_or(e.id);
                     let original = inv.items.get(&original_id).unwrap_or(it);
-                    if tab == 2 && (e.date <= 0 || e.date < recent) {
+                    if recent_limit && (e.date <= 0 || e.date < recent) {
                         return false;
                     }
                     if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
@@ -1938,6 +1975,43 @@ mod tests {
         assert_eq!(search(&inv, &facts, &hour, &Filters::default(), 2), [id(11), id(10)]);
     }
 
+    /// A date filter set on the Recent tab replaces its since-logout limit,
+    /// as the finder's hours ago replace "Since Logoff" on the Recent Items
+    /// panel (LLInventoryFilter::setHoursAgo resets the date range): in the
+    /// quick filters and as a Date rule of the advanced search.
+    #[test]
+    fn a_date_filter_on_the_recent_tab_replaces_the_since_logout_limit() {
+        use super::super::smart::{Field, Node, Rule};
+        let (inv, facts) = fixture();
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        assert_eq!(search(&inv, &facts, &prefs, &Filters::default(), 2), [id(11)], "since logout alone");
+        let quick = Filters {
+            age: Age::Newer,
+            hours: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            search(&inv, &facts, &prefs, &quick, 2),
+            [id(11), id(10)],
+            "quick filter: the last hour"
+        );
+        let mut rule = Rule::of(Field::Date);
+        rule.age = Age::Newer;
+        rule.hours = 1;
+        assert_eq!(
+            search(&inv, &facts, &prefs, &smart(vec![Node::Rule(rule)], false), 2),
+            [id(11), id(10)],
+            "advanced search: the same Date rule"
+        );
+        // a rule on another field keeps the Recent tab's limit
+        let mut types = Rule::of(Field::Type);
+        types.bits = 1 << 6;
+        assert_eq!(search(&inv, &facts, &prefs, &smart(vec![Node::Rule(types)], false), 2), [id(11)]);
+    }
+
     #[test]
     fn filtered_items_keep_all_ancestors_without_unrelated_items() {
         let (mut inv, facts) = fixture();
@@ -2226,6 +2300,7 @@ mod tests {
             prefs.recent_sort,
             Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             }
         );
@@ -2255,6 +2330,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            dual_panel: true,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");
@@ -2312,6 +2388,64 @@ mod tests {
         }
     }
 
+    fn recent_tree_order(inv: &Inventory, facts: &Facts, prefs: &InventoryPreferences) -> Vec<Uuid> {
+        let mut view = ViewCache::default();
+        view.search(inv, inv.root, "", prefs, &Filters::default(), 2, None, facts, facts.agent, 1000);
+        let mut tree = TreeState::default();
+        tree.prepare(&view, inv.root, 2, true);
+        tree.order
+    }
+
+    #[test]
+    fn recent_ranks_root_folders_by_their_newest_item_unless_system_first_is_chosen() {
+        let (mut inv, facts) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 20, root, -1, "Store delivery");
+        inv.add_items(vec![item(30, id(4), "Old texture", 200), item(31, id(20), "New box", 600)]);
+        let mut prefs = InventoryPreferences {
+            last_logout: 1,
+            ..Default::default()
+        };
+        let root_order = |inv: &Inventory, prefs: &InventoryPreferences| {
+            recent_tree_order(inv, &facts, prefs)
+                .into_iter()
+                .filter(|entry| [id(4), id(20)].contains(entry))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(root_order(&inv, &prefs), [id(20), id(4)], "newer ordinary folder first");
+        prefs.recent_sort.system_first = true;
+        assert_eq!(root_order(&inv, &prefs), [id(4), id(20)], "explicit system grouping still works");
+        prefs.recent_sort.system_first = false;
+        inv.add_items(vec![item(32, id(4), "Newest texture", 800)]);
+        assert_eq!(root_order(&inv, &prefs), [id(4), id(20)], "system folders also compete by date");
+    }
+
+    #[test]
+    fn recent_keeps_support_folders_first_and_trash_last_even_with_newer_contents() {
+        let (mut inv, facts) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 20, root, -1, "Store delivery");
+        folder(&mut inv, 21, root, -1, "#Aurora");
+        folder(&mut inv, 22, root, -1, "#RLV");
+        inv.add_items(vec![
+            item(30, id(4), "Old texture", 200),
+            item(31, id(20), "New box", 600),
+            item(32, id(5), "Newest discarded box", 900),
+            item(33, id(21), "Support item", 100),
+            item(34, id(22), "Shared item", 100),
+        ]);
+        let prefs = InventoryPreferences {
+            last_logout: 1,
+            search_trash: true,
+            ..Default::default()
+        };
+        let order: Vec<_> = recent_tree_order(&inv, &facts, &prefs)
+            .into_iter()
+            .filter(|entry| [id(4), id(5), id(20), id(21), id(22)].contains(entry))
+            .collect();
+        assert_eq!(order, [id(21), id(22), id(20), id(4), id(5)]);
+    }
+
     #[test]
     fn recent_sort_is_independent_and_survives_reload() {
         let mut prefs: InventoryPreferences =
@@ -2320,6 +2454,7 @@ mod tests {
             prefs.recent_sort,
             Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             }
         );
@@ -2360,7 +2495,7 @@ mod tests {
         assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);
         assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
         let built = cache.built;
-        prefs.recent_sort.system_first = false;
+        prefs.recent_sort.system_first = !prefs.recent_sort.system_first;
         assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
         assert_eq!(cache.built, built, "Recent changes do not rebuild All");
         assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);

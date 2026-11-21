@@ -50,21 +50,7 @@ impl App {
             self.world.avatar_studio = false;
             return;
         }
-        let restricted = self.world.rlva.camera_owner().is_some()
-            || [
-                "setcam_unlock",
-                "setcam_avdistmin",
-                "setcam_avdistmax",
-                "setcam_origindistmin",
-                "setcam_origindistmax",
-                "setcam_eyeoffset",
-                "setcam_focusoffset",
-                "setcam_mouselook",
-                "setcam_fovmin",
-                "setcam_fovmax",
-            ]
-            .iter()
-            .any(|name| self.world.rlva.has(name));
+        let restricted = self.world.rlva_studio_refused();
         let switch = if !self.in_world() || self.world.teleporting || renderer.vr_engaged() || restricted {
             self.panels.avatar_studio = false;
             self.studio_transition.cancel();
@@ -161,6 +147,16 @@ impl App {
         // Publish the eased value after updating it, so the rendered pose and
         // the Studio's current state do not diverge by one frame.
         self.scene.studio_hover_height = if active { self.avatar_studio.display_hover_height } else { 0.0 };
+        // Person B's own hover lasts as long as their couple mode
+        if self.world.couple_partner.is_none() {
+            self.avatar_studio.partner_hover_height = None;
+            self.avatar_studio.hover_partner = false;
+        }
+        self.world.couple_hover = if active {
+            self.avatar_studio.display_partner_hover_height
+        } else {
+            0.0
+        };
         self.studio_photo_frame(renderer);
     }
 
@@ -454,11 +450,18 @@ impl App {
                             &mut self.avatar_studio.pose,
                             demo_menu.as_deref() == Some("pose-menu") && self.frame_count == 800,
                         );
+                        let couple = self.world.couple_partner.is_some();
+                        // AURORA_DEMO_COUPLE=hover opens the menu once Nova is B
+                        let couple_hover_demo = self.demo
+                            && couple
+                            && self.frame_count == 1300
+                            && std::env::var("AURORA_DEMO_COUPLE").is_ok_and(|mode| mode == "hover");
                         studio_hover_menu(
                             ui,
                             &self.palette,
-                            &mut self.avatar_studio.hover_height,
-                            demo_menu.as_deref() == Some("hover-menu") && self.frame_count == 800,
+                            &mut self.avatar_studio,
+                            couple,
+                            (demo_menu.as_deref() == Some("hover-menu") && self.frame_count == 800) || couple_hover_demo,
                         );
                         studio_lighting_menu(
                             ui,
@@ -584,6 +587,7 @@ impl App {
             let lighting = self.avatar_studio.lighting;
             let animation_editor = self.avatar_studio.animation_editor;
             let hover_height = self.avatar_studio.hover_height;
+            let (partner_hover, hover_partner) = (self.avatar_studio.partner_hover_height, self.avatar_studio.hover_partner);
             self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
             self.avatar_studio.floor_offset = offset;
             self.avatar_studio.podium_center = podium_center;
@@ -591,6 +595,8 @@ impl App {
             self.avatar_studio.lighting = lighting;
             self.avatar_studio.animation_editor = animation_editor;
             self.avatar_studio.hover_height = hover_height;
+            self.avatar_studio.partner_hover_height = partner_hover;
+            self.avatar_studio.hover_partner = hover_partner;
         }
     }
 }
@@ -716,9 +722,22 @@ fn studio_pose_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, pose: &mut Pos
     });
 }
 
-fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, hover_height: &mut f32, open: bool) {
+/// The Hover menu. In the animation editor's couple mode it also sets
+/// Person B's hover: a choice of You or Person B picks whose the slider is;
+/// B follows the user's hover until their own is set.
+fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, studio: &mut Studio, couple: bool, open: bool) {
     use crate::ui::{menu, widgets};
-    let height = format!("{:.2}", *hover_height);
+    if !couple {
+        studio.hover_partner = false;
+    }
+    let shown = |studio: &Studio| {
+        if studio.hover_partner {
+            studio.partner_hover_height.unwrap_or(studio.hover_height)
+        } else {
+            studio.hover_height
+        }
+    };
+    let height = format!("{:.2}", shown(studio));
     let response = widgets::action_button(
         ui,
         p,
@@ -738,17 +757,40 @@ fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, hover_height:
         ui.add_space(4.0);
         ui.add(egui::Label::new(aurora_i18n::tr!("avatar-studio-hover-height-hint")).wrap());
         ui.add_space(8.0);
+        if couple {
+            let mut whose = usize::from(studio.hover_partner);
+            let you = aurora_i18n::tr!("avatar-studio-hover-you");
+            let partner = aurora_i18n::tr!("anim-couple-person-b");
+            if widgets::segmented(ui, p, &mut whose, &[(you, true), (partner, true)]) {
+                studio.hover_partner = whose == 1;
+            }
+            ui.add_space(6.0);
+        }
+        let mut value = shown(studio);
+        let before = value;
         ui.add_sized(
             egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
-            egui::Slider::new(hover_height, 0.0..=1.0)
+            egui::Slider::new(&mut value, 0.0..=1.0)
                 .step_by(0.01)
                 .fixed_decimals(2)
                 .suffix(aurora_i18n::tr!("avatar-studio-hover-height-suffix")),
         );
         ui.add_space(6.0);
-        studio_hover_reset_row(ui, hover_height);
+        studio_hover_reset_row(ui, &mut value);
         ui.add_space(4.0);
+        if value != before {
+            set_hover(studio, value);
+        }
     });
+}
+
+/// Set the hover the menu shows: the user's, or Person B's own.
+fn set_hover(studio: &mut Studio, value: f32) {
+    if studio.hover_partner {
+        studio.partner_hover_height = Some(value);
+    } else {
+        studio.hover_height = value;
+    }
 }
 
 fn studio_hover_reset_row(ui: &mut egui::Ui, hover_height: &mut f32) -> egui::Response {
@@ -887,6 +929,7 @@ mod tests {
             objects: vec![seats[0].clone()],
         });
         let expected = seats[0].position + seats[0].rotation * expected_center;
+        world.objects.settle_drawables();
         let now = Instant::now() + std::time::Duration::from_secs(2);
         assert!(
             studio_podium_center(&world, anchor, now)
@@ -938,6 +981,7 @@ mod tests {
             });
             // Let report-correction smoothing reach each fixture orientation;
             // entry follows the rendered pose, not an undrawn server update.
+            world.objects.settle_drawables();
             let now = Instant::now() + std::time::Duration::from_secs(2);
             let mut studio = Studio::default();
             studio.enter(studio_facing(&world, now), 1.8);

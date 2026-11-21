@@ -197,7 +197,7 @@ impl State {
                     .galley
                     .pos_from_cursor(CCursor::new(end))
                     .translate(output.galley_pos.to_vec2());
-                let label = format!("⋯ {} {}", block.lines, aurora_i18n::tr!("script-fold-lines"));
+                let label = format!("⋯ {}", aurora_i18n::tr!("script-fold-line-count", count = block.lines));
                 let galley = ui.painter().layout_no_wrap(label, egui::FontId::proportional(11.0), p.muted);
                 let label_rect = Rect::from_min_size(egui::pos2(anchor.left() + 8.0, anchor.top()), galley.size());
                 ui.painter().galley(label_rect.min, galley, p.muted);

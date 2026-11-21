@@ -110,7 +110,20 @@ pub struct ScriptSettings {
     pub recompile: bool,
     pub external_editor: String,
     pub help_follows_cursor: bool,
+    /// ExternalWebsocketSyncEnable: the local server an outside editor
+    /// connects to (`crate::editor_sync`). Off here where the Legacy Viewer
+    /// has it on: a server open on the computer only when asked for (the
+    /// human's decision of 2026-11-17).
+    pub websocket_sync: bool,
+    /// ExternalWebsocketSyncPort.
+    pub websocket_port: u16,
+    /// ExternalWebsocketForwardDebug: a followed script's run-time errors
+    /// go to the editor.
+    pub websocket_forward_debug: bool,
 }
+
+/// ExternalWebsocketSyncPort's default.
+pub const WEBSOCKET_PORT: u16 = 9020;
 
 impl Default for ScriptSettings {
     fn default() -> Self {
@@ -131,6 +144,9 @@ impl Default for ScriptSettings {
             recompile: false,
             external_editor: String::new(),
             help_follows_cursor: false,
+            websocket_sync: false,
+            websocket_port: WEBSOCKET_PORT,
+            websocket_forward_debug: true,
         }
     }
 }
@@ -155,6 +171,10 @@ mod tests {
         assert!(!settings.search_prefer_left && !settings.search_inline);
         assert!(settings.convert_tabs && settings.optimize && settings.switches && settings.lazy_lists);
         assert!(!settings.preprocessor && !settings.disk_includes && !settings.owner_say_debug && !settings.recompile);
+        // the editor sync: off (stricter than the Legacy Viewer), port 9020,
+        // run-time errors forwarded
+        assert!(!settings.websocket_sync && settings.websocket_forward_debug);
+        assert_eq!(settings.websocket_port, 9020);
         let p = crate::theme::Theme::default().palette();
         settings.colors.insert(ColorRole::Function, p.teal.to_srgba_unmultiplied());
         settings.preprocessor = true;
