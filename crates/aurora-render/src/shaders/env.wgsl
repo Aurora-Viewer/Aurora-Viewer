@@ -956,11 +956,13 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let nv=max(dot(n,v),0.001);let nl=max(dot(n,l),0.0);
         let fresnel=0.02037+0.97963*pow(1.0-nv,5.0);
         let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
-        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*min(glint,2.0)*sh)*wet;
+        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*min(glint,2.0)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
     }
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh, a);
+        // (a classic sky's `sh` is not lifted: `sun_shadow` leaves that to
+        // `classic_shadowed`, so the caustics lift it here)
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustic_light(in.world_pos,n)*shadow_lift(sh), a);
         var color=hazed*water_scene_light(in.world_pos);
         if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
@@ -997,7 +999,8 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
         color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
             + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * sh, a);
+        // (the caustics lift the classic sky's shadow themselves, as above)
+        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
         if (water_fogs_source(in.world_pos)) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
@@ -1652,7 +1655,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // smallest step an 8-bit image can show), or the foam.
     var shadow = 1.0;
     if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR) {
-        shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
+        shadow = shadow_lift(shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist));
     }
     let punctual = glint_lit * shadow;
 
@@ -3135,6 +3138,9 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     if (cover <= 0.002) { return vec4<f32>(0.0); }
     let view = normalize(cam - world);
     let shade = shadow_factor(world, n, dist);
+    // with the shadow intensity, for what is lit outside the classic sky's
+    // sun (`ll_classic_diffuse` lifts its own, in `classic_shadowed`)
+    let lifted = shadow_lift(shade);
     // the sun as it lights objects (its colour, at most 1), for the glints
     // and the sheen: the sky's own sun colour is far brighter
     let sunlit = frame.sky_obj_light.rgb * frame.sun_dir.w;
@@ -3151,7 +3157,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     let radius = max(0.12, pixel * 0.7);
     let point = (1.0 - smoothstep(radius * 0.5, radius, length(fract(cells) - spot))) * min(0.0144 / (radius * radius), 1.0);
     let half = normalize(frame.sun_dir.xyz + view);
-    let glint = step(0.985, g) * point * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * shade * 1.5;
+    let glint = step(0.985, g) * point * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * lifted * 1.5;
     // the hollows a little shaded, the packed snow of a print greyer
     // (deep snow: the lower the view meets it, the more its walls shade it)
     let cavity = (0.86 + 0.14 * height) * (1.0 - 0.4 * pressed) * mix(0.62, 1.0, risen);
@@ -3165,7 +3171,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
         let cr = sample_tex_level(color_slot, xy / 1.6, lod);
         albedo = clamp(cr.rgb / 0.93, vec3<f32>(0.6), vec3<f32>(1.15));
         let smooth_ = 1.0 - cr.a;
-        sheen = sunlit * shade * pow(max(dot(sn, half), 0.0), mix(12.0, 60.0, smooth_)) * smooth_ * 0.25;
+        sheen = sunlit * lifted * pow(max(dot(sn, half), 0.0), mix(12.0, 60.0, smooth_)) * smooth_ * 0.25;
     }
     // lit as the terrain beside it is (the classic sky's atmospherics and
     // haze, or the PBR shading, the lamps with them), its albedo about
@@ -3177,7 +3183,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
         let a = ll_atmos(world - cam);
         color = ll_haze(ll_classic_diffuse(base, sn, world, shade, clip, a) + sheen + glint, a);
     } else {
-        color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, shade, clip, false) + sheen + glint, world);
+        color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, lifted, clip, false) + sheen + glint, world);
     }
     return vec4<f32>(color * cover, cover);
 }

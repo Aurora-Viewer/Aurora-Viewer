@@ -253,8 +253,8 @@ impl Timeline {
 
 /// The GPU effects and quality switches on, as the report's fixed words
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
-/// from one that is not. Conditions follow the renderer: the contact shadows
-/// need the shadows, the indirect light needs the GTAO. `drawn` is the shadow
+/// from one that is not. Conditions follow the renderer: the contact and the
+/// soft shadows need the shadows, the indirect light needs the GTAO. `drawn` is the shadow
 /// quality and the ambient occlusion the world is drawn with (the photo
 /// window's over Preferences', `App::photo_shadow_quality`).
 pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
@@ -274,6 +274,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
     word(shadows, format_args!("shadows{shadow_quality}"));
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
+    word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
     word(ao && settings.ao_method == 0, format_args!("ao-legacy{ssao}"));
     word(ao && settings.ao_method == 1, format_args!("ao-gtao{}", settings.gtao_quality));
     word(settings.ssr, format_args!("ssr"));
@@ -597,6 +598,7 @@ mod tests {
         let mut settings = crate::settings::Settings {
             shadow_quality: 3,
             contact_shadows: true,
+            soft_shadows: true,
             ssao: 2,
             ao_method: 1,
             gtao_quality: 2,
@@ -610,6 +612,7 @@ mod tests {
         for word in [
             "shadows3",
             "contact-shadows",
+            "soft-shadows",
             "ao-gtao2",
             "aa-smaa",
             "bloom",
