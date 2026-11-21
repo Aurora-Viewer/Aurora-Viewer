@@ -1318,7 +1318,9 @@ impl App {
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let soft = aurora_render::soft_shadow_tile_reach(self.settings.soft_shadows);
         let guard = snapshot::TILE_GUARD
+            .max(soft)
             .max(aurora_render::bloom_tile_reach(bloom))
             .max(dof)
             .max(contact);
@@ -2409,6 +2411,7 @@ LUT_3D_SIZE {n}
                 ambient_occlusion: self.settings.ssao,
                 quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 free_refused: self.world.rlva.camera_view_held(),
@@ -2497,6 +2500,7 @@ LUT_3D_SIZE {n}
                 ambient_occlusion: self.settings.ssao,
                 quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 free_refused: self.world.rlva.camera_view_held(),
@@ -2813,6 +2817,22 @@ LUT_3D_SIZE {n}
     /// The exposure the frame is drawn with: the photo's, else Preferences'.
     pub(super) fn photo_exposure(&self) -> f32 {
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
+    }
+
+    /// The sun's shadows the frame is drawn with (softness, intensity): the
+    /// photo's while its window is open, else Preferences'.
+    pub(super) fn photo_shadows(&self) -> (f32, f32) {
+        snapshot::light::drawn_shadows(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
+    }
+
+    /// Preferences' shadow values and the soft shadows' state, for the
+    /// Light section's rows.
+    fn photo_shadow_view(&self) -> crate::ui::snapshot::ShadowView {
+        crate::ui::snapshot::ShadowView {
+            softness: self.settings.shadow_softness,
+            intensity: self.settings.shadow_intensity,
+            soft: self.settings.soft_shadows,
+        }
     }
 
     /// The clouds are held still: a switch of the session (never saved)

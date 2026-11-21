@@ -1625,6 +1625,25 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
+    if let Some(v) = std::env::var("AURORA_SHADOW_SOFTNESS")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+    {
+        settings.shadow_softness = v.clamp(0.0, crate::settings::SHADOW_SOFTNESS_MAX);
+    }
+    if let Some(v) = std::env::var("AURORA_SHADOW_INTENSITY")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+    {
+        settings.shadow_intensity = v.clamp(0.0, 1.0);
+    }
+    // the soft shadows scenario shows them on, at the Preferences' softness
+    if crate::demo::soft_shadows::enabled() {
+        settings.soft_shadows = true;
+        settings.shadow_quality = settings.shadow_quality.max(3);
+    }
     if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
         settings.blend_order = v.min(crate::graphics_presets::BLEND_ORDER_STOCHASTIC);
     }
@@ -6599,7 +6618,8 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        let raining = self.weather_now.rain() > 0.0;
+        // (and while thunder rolls: indoors it stays muffled to its end)
+        let raining = self.weather_now.rain() > 0.0 || self.thunder.rumbling();
         self.scene
             .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
         // rain prototype: its sound, leaning toward the open sky
@@ -6650,23 +6670,36 @@ impl App {
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
+            // the 3D sound for headphones, as the world sounds have it
+            binaural: crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
             audible: matches!(self.screen, Screen::World) && !demo_silent,
         };
-        // AURORA_THUNDER_AT=<s>: a strike a kilometre away that long after
-        // the start (demo captures of the flash)
-        static AT: std::sync::OnceLock<Option<(Instant, f32)>> = std::sync::OnceLock::new();
-        if let Some((start, s)) = *AT.get_or_init(|| {
-            std::env::var("AURORA_THUNDER_AT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .map(|s| (Instant::now(), s))
+        // AURORA_THUNDER_AT=<s>[:<m>]: a strike that far away (a kilometre
+        // by default) that long after the start (demo captures of the flash,
+        // the thunder heard near and far)
+        static AT: std::sync::OnceLock<Option<(Instant, f32, f32)>> = std::sync::OnceLock::new();
+        if let Some((start, s, m)) = *AT.get_or_init(|| {
+            let v = std::env::var("AURORA_THUNDER_AT").ok()?;
+            let (s, m) = v.split_once(':').unwrap_or((v.as_str(), "1000"));
+            let parsed = (s.trim().parse::<f32>().ok(), m.trim().parse::<f32>().ok());
+            match parsed {
+                (Some(s), Some(m)) if s.is_finite() && m.is_finite() => Some((
+                    Instant::now(),
+                    s,
+                    m.clamp(crate::scene::thunder::NEAREST, crate::scene::thunder::FARTHEST),
+                )),
+                _ => {
+                    log::warn!("AURORA_THUNDER_AT={v}: expected <seconds>[:<metres>]");
+                    None
+                }
+            }
         }) && start.elapsed().as_secs_f32() >= s
             && !self.thunder_demo_done
         {
             self.thunder_demo_done = true;
-            self.thunder.strike(Instant::now(), Some(1000.0));
+            self.thunder.strike(Instant::now(), Some(m));
         }
         self.thunder.update(self.audio_engine.as_ref(), &input, Instant::now());
     }
@@ -9018,13 +9051,7 @@ impl App {
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
     /// FSLetterKeysFocusNearbyChatBar, on by default).
     fn start_chat_with(&mut self, text: &str) {
-        if self.panels.chat && ui::chat::local_chat_shown(&self.egui_ctx, &self.chat_ui) {
-            self.chat_ui.draft_mut(None).push_str(text);
-            self.chat_ui.conv_focus_request = true;
-        } else {
-            self.chat_ui.input.push_str(text);
-            self.chat_ui.focus_request = true;
-        }
+        self.chat_ui.start_nearby_with(&self.egui_ctx, self.panels.chat, text);
     }
 
     /// The chat bar has the keyboard and hands its movement keys to the
@@ -9266,7 +9293,8 @@ impl App {
         i.down |= self.joystick.motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
-            self.world.agent.flying,
+            // A swimmer descends with the key, as in flight (crouch_toggle.rs).
+            self.world.agent.flying || self.movement_runtime.state.swimming(),
             self.world.agent.is_sitting(),
             i.down,
             i.up || joystick_up,
@@ -12551,6 +12579,7 @@ impl App {
         } else {
             aurora_render::ProbeFrame::default()
         };
+        let photo_shadows = self.photo_shadows();
         // Aurora Weather: the Weather window's clean-up button: the
         // footprints and the snow on avatars go now, the renderer's memory
         // (snow lying, wet ground, puddles) with this frame
@@ -12735,6 +12764,8 @@ impl App {
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
             shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
+            shadow_softness: photo_shadows.0,
+            shadow_intensity: photo_shadows.1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
@@ -15347,18 +15378,13 @@ impl App {
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
                     }
-                    crate::build::demo::Step::ContentsProperties => {
+                    crate::build::demo::Step::ContentsProperties(count) => {
                         if let Some(idx) = self.build.contents_target(&self.world)
                             && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
-                            && let Some(item) = self
-                                .build
-                                .contents
-                                .objects
-                                .get(&object)
-                                .and_then(|inv| inv.items.iter().find(|it| !it.is_folder))
-                                .cloned()
+                            && let Some(inv) = self.build.contents.objects.get(&object)
                         {
-                            self.build.open_task_item_properties(object, &item);
+                            let items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).take(count).cloned().collect();
+                            self.build.open_task_items_properties(object, &items);
                         }
                     }
                     crate::build::demo::Step::ContentsNew => {
@@ -19418,6 +19444,8 @@ impl App {
                 self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
+                // AURORA_DEMO_EMOTES=…:on: for the run, nothing saved
+                self.chat_ui.group_emotes = self.settings.group_emotes || (self.demo && crate::demo::emotes_grouped());
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 // the Legacy chat style keeps its own switch; both are off by
                 // default, the demo switch shows the row whatever they say
@@ -20032,6 +20060,7 @@ impl App {
                 let mut open = self.panels.appearance;
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
+                self.appearance_ui.sort = self.settings.appearance_outfit_sort;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -20048,6 +20077,10 @@ impl App {
                 }
                 if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
                     self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
+                    self.settings.save();
+                }
+                if self.settings.appearance_outfit_sort != self.appearance_ui.sort {
+                    self.settings.appearance_outfit_sort = self.appearance_ui.sort;
                     self.settings.save();
                 }
                 self.panels.appearance = open;
@@ -22610,6 +22643,17 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
             }
+            // AURORA_DEMO_EMOTES=<style>[:on]: the nearby chat in the
+            // Conversations window of that workspace style
+            if let Some(scene) = crate::demo::emotes_scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = true;
+                self.chat_ui.selected = None;
+                self.chat_ui.demo_style = Some(scene.style);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+            }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
             if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
@@ -23300,6 +23344,9 @@ impl ApplicationHandler for App {
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
+                }
+                if let Some(sort) = crate::world::appearance::demo_outfit_sort() {
+                    self.settings.appearance_outfit_sort = sort;
                 }
                 for cmd in crate::world::appearance::sync_commands(
                     &self.world.inventory,
@@ -24542,6 +24589,14 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
+        // The voice threads end before the process does, the current
+        // session's and those of the sessions left moments ago: still
+        // running at the exit, an HTTPS logout found the TLS library's
+        // random generator freed by the exit and aborted the viewer on
+        // Linux. 3 s, the budget of LLWebRTCVoiceClient::drainConnections.
+        if !self.voice.close_for_exit().wait(Duration::from_secs(3)) {
+            log::warn!("a voice session was still closing at exit");
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
