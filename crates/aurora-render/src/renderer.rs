@@ -1062,6 +1062,9 @@ struct Pipelines {
     /// The four above in their lean variants (`SCENE_VARIANT` 1 to 4,
     /// scene_variant.rs): opaque, opaque 2s, mask, mask 2s in each.
     lean: [[wgpu::RenderPipeline; 4]; 4],
+    /// `blend`, `blend_depth` and `blend_depth_color` in the same lean
+    /// variants.
+    lean_blend: [[SidedPipelines; 3]; 4],
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
     water_mask: wgpu::RenderPipeline,
@@ -5299,6 +5302,46 @@ impl Backend {
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
             ..base("blend rigged colour", "vs_main", "fs_blend")
         });
+        // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
+        let lean_blend_constants = [1.0, 2.0, 3.0, 4.0].map(|v| {
+            [
+                [
+                    ("BLEND_EARLY_DISCARD", if blend_discard != BlendDiscard::Late { 1.0 } else { 0.0 }),
+                    ("WATER_CLIP", 1.0),
+                    ("SCENE_VARIANT", v),
+                ],
+                [("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0), ("SCENE_VARIANT", v)],
+            ]
+        });
+        let lean_blend = [0, 1, 2, 3].map(|v| {
+            let [plain, early] = &lean_blend_constants[v];
+            [
+                sided_pipe(PipeDesc {
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: static_compare,
+                    constants: plain,
+                    ..base("blend lean", "vs_main", "fs_blend")
+                }),
+                sided_pipe(PipeDesc {
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: true,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    constants: early,
+                    ..base("blend rigged lean", "vs_main", "fs_blend")
+                }),
+                sided_pipe(PipeDesc {
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::GreaterEqual,
+                    constants: early,
+                    ..base("blend rigged colour lean", "vs_main", "fs_blend")
+                }),
+            ]
+        });
         // `RiggedBlendDepth::Split` (#935): first the texels at least half
         // covered, each writing its depth as it is drawn, as the Legacy
         // Viewer's rigged alpha pass does from 1/255 (LLDrawPoolAlpha::
@@ -6169,6 +6212,7 @@ impl Backend {
             mask: mask.resolve(&mut done),
             mask_2s: mask_2s.resolve(&mut done),
             lean: lean.resolve(&mut done),
+            lean_blend: lean_blend.resolve(&mut done),
             water: water.resolve(&mut done),
             water_unclipped: water_unclipped.resolve(&mut done),
             water_mask: water_mask.resolve(&mut done),
@@ -11291,6 +11335,17 @@ impl Backend {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // the variant of the scene shader's pipelines this frame, opaque and
+        // blended alike: a lean one when no face can take a path it leaves
+        // out (scene_variant.rs)
+        let variant = crate::scene_variant::choose(crate::scene_variant::FrameState {
+            light_mode: scene_light_mode,
+            classic: scene_classic,
+            water_effects: self.water_effects.shown_flags,
+            rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
+            portal_records,
+        });
+        stats.scene_variant = variant;
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -11379,16 +11434,6 @@ impl Backend {
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_pbr);
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
-            // the lean variant when no face can take a path it leaves out
-            // (scene_variant.rs)
-            let variant = crate::scene_variant::choose(crate::scene_variant::FrameState {
-                light_mode: scene_light_mode,
-                classic: scene_classic,
-                water_effects: self.water_effects.shown_flags,
-                rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
-                portal_records,
-            });
-            stats.scene_variant = variant;
             let [opaque, opaque_2s, mask, mask_2s] = match variant {
                 0 => [
                     &self.pipelines.opaque,
@@ -11779,12 +11824,25 @@ impl Backend {
         let split = (n_depth > 0 || exact.is_some()) && !st_on;
         // the first blended face the last part still draws over the others
         let rest_from = if exact.is_some() { bn } else { n_depth };
+        // the blended faces' pipelines in this frame's variant of the scene
+        // shader (scene_variant.rs; `blend_late` is a comparison, full only)
+        let [blend_lean, blend_depth_pipe, blend_depth_color_pipe] = match variant {
+            0 => [
+                &self.pipelines.blend,
+                &self.pipelines.blend_depth,
+                &self.pipelines.blend_depth_color,
+            ],
+            v => {
+                let l = &self.pipelines.lean_blend[v as usize - 1];
+                [&l[0], &l[1], &l[2]]
+            }
+        };
         let blend_pipe = self
             .pipelines
             .blend_late
             .as_ref()
             .filter(|_| f.blend_late_discard)
-            .unwrap_or(&self.pipelines.blend);
+            .unwrap_or(blend_lean);
         // blended faces `from..to`, back to front; a glowing one adds its glow
         // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
         let blended = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32| {
@@ -12096,13 +12154,13 @@ impl Backend {
                 RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.blend);
-                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                    blended(&mut pass, blend_depth_pipe, 0, n_depth);
                 }
                 RiggedBlendDepth::HalfCovered => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.blend);
                     draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
-                    blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
+                    blended(&mut pass, blend_depth_color_pipe, 0, n_depth);
                 }
                 RiggedBlendDepth::Layered => {
                     // their colour as the Legacy Viewer draws it, each
@@ -12114,7 +12172,7 @@ impl Backend {
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
                         let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.blend);
-                        blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                        blended(&mut pass, blend_depth_pipe, 0, n_depth);
                     }
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
@@ -12170,7 +12228,7 @@ impl Backend {
                                 // the hair drawn after them in straight
                                 // edges (#2121)
                                 draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
-                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                                blended(&mut pass, blend_depth_color_pipe, from, end);
                             } else {
                                 blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
                                 draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
@@ -12196,7 +12254,7 @@ impl Backend {
                         if end <= from {
                             continue;
                         }
-                        blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                        blended(&mut pass, blend_depth_color_pipe, from, end);
                         draw_sided(
                             &mut pass,
                             &self.pipelines.blend_depth_mask,

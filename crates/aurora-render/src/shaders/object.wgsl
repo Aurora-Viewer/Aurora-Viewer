@@ -1978,7 +1978,9 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         discard;
     }
     var c = shade_material(in, m).color;
-    c.a = c.a * rez_alpha(rec, in);
+    if (scene_rez()) {
+        c.a = c.a * rez_alpha(rec, in);
+    }
     if (c.a < 0.004) {
         discard;
     }
