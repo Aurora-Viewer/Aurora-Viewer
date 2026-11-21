@@ -86,9 +86,28 @@ pub struct ControlsUi {
     pub tab: Tab,
     /// The flags of the last frame, to see which one was just raised.
     was: (bool, bool),
-    /// The name being typed for a new camera position.
-    shot_name: String,
-    naming: bool,
+    naming: ShotNaming,
+}
+
+/// The name being typed for a new camera position (the Legacy Viewer's
+/// LLFloaterSaveCameraPreset, inline).
+#[derive(Default)]
+struct ShotNaming {
+    open: bool,
+    /// Give the field the keyboard once, on its next frame. A request on
+    /// every frame interrupts the input method each time (egui's
+    /// `Memory::request_focus`, which egui-winit turns into
+    /// `set_ime_allowed` off then on): a Japanese name could not be
+    /// composed and the IME stalled the viewer (#3889).
+    focus: bool,
+    name: String,
+}
+
+impl ShotNaming {
+    fn start(&mut self) {
+        self.open = true;
+        self.focus = true;
+    }
 }
 
 /// What the window shows of the world.
@@ -187,9 +206,7 @@ impl ControlsUi {
                     size,
                 )
                 .auto_height()
-                .show(ctx, p, camera, |ui| {
-                    classic_camera(ui, p, view, (&mut self.naming, &mut self.shot_name), &mut out)
-                });
+                .show(ctx, p, camera, |ui| classic_camera(ui, p, view, &mut self.naming, &mut out));
             }
             if *movement {
                 let size = Vec2::new(230.0, 140.0);
@@ -354,8 +371,8 @@ impl ControlsUi {
     fn shots(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, grid: &ButtonGrid) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
-            if self.naming {
-                name_row(ui, p, (&mut self.naming, &mut self.shot_name), grid.field, out);
+            if self.naming.open {
+                name_row(ui, p, &mut self.naming, grid.field, out);
                 return;
             }
             let text = if view.shots.is_empty() {
@@ -394,7 +411,7 @@ impl ControlsUi {
                 }
             });
             if square_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip")) {
-                self.naming = true;
+                self.naming.start();
             }
         });
     }
@@ -1074,7 +1091,7 @@ fn mode_locked(view: &View, action: &ControlAction) -> bool {
 
 /// Firestorm's camera window: views on top, the joysticks and the zoom,
 /// then its presets (floater_camera.xml).
-fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: (&mut bool, &mut String), out: &mut Output) {
+fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut ShotNaming, out: &mut Output) {
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
@@ -1099,7 +1116,7 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: (&mut boo
     roll_controls(ui, p, view, out);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if *naming.0 {
+        if naming.open {
             let width = ui.available_width() - BUTTON_H - ROW_GAP;
             name_row(ui, p, naming, width, out);
             return;
@@ -1116,7 +1133,7 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: (&mut boo
             });
         // save_preset_btn of floater_camera.xml ("Save as Preset")
         if widgets::icon_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip"), true) {
-            *naming.0 = true;
+            naming.start();
         }
         if widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("controls-reset-camera"), true) {
             out.actions.push(ControlAction::ResetCamera);
@@ -1166,22 +1183,30 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
 /// The name of a new camera preset being typed and its save button (the
 /// Legacy Viewer's LLFloaterSaveCameraPreset, inline): Enter or the button
 /// saves, Escape gives up. A view's name ("Front View") replaces that view
-/// (`CameraPreset::from_preset_name`, in the app).
-fn name_row(ui: &mut egui::Ui, p: &Palette, (naming, name): (&mut bool, &mut String), width: f32, out: &mut Output) {
+/// (`CameraPreset::from_preset_name`, in the app). The field takes the
+/// keyboard once as it opens, like the dialog's line editor; a click
+/// elsewhere then keeps it.
+fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32, out: &mut Output) {
     let edit = ui.add_sized(
         Vec2::new(width, BUTTON_H),
-        egui::TextEdit::singleline(name).hint_text(aurora_i18n::tr!("controls-shot-name")),
+        egui::TextEdit::singleline(&mut naming.name).hint_text(aurora_i18n::tr!("controls-shot-name")),
     );
-    edit.request_focus();
+    if std::mem::take(&mut naming.focus) {
+        edit.request_focus();
+    }
     let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    let typed = name.trim().to_owned();
+    let typed = naming.name.trim().to_owned();
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        *naming = false;
+        naming.open = false;
     }
     if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !typed.is_empty() {
         out.actions.push(ControlAction::SaveShot(typed));
-        *naming = false;
-        name.clear();
+        naming.open = false;
+        naming.name.clear();
+    } else if enter {
+        // an empty name saves nothing and the editor keeps the keyboard
+        // (LLFloaterSaveCameraPreset::onBtnSave returns on an empty name)
+        naming.focus = true;
     }
 }
 
@@ -1587,6 +1612,95 @@ fn key_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Vec<KeyPart>, &str)], gap: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs the camera preset's name field for one frame with these events.
+    fn name_frame(
+        ctx: &egui::Context,
+        p: &Palette,
+        naming: &mut ShotNaming,
+        events: Vec<egui::Event>,
+    ) -> (Output, Option<egui::output::IMEOutput>) {
+        let mut out = Output::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.horizontal(|ui| name_row(ui, p, naming, 200.0, &mut out));
+            },
+        );
+        // no renderer here: the font atlas would trip TexturesDelta's drop check
+        output.textures_delta.clear();
+        (out, output.platform_output.ime)
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_camera_preset_name_composed_with_an_ime_is_saved() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut naming = ShotNaming::default();
+        naming.start();
+        name_frame(&ctx, &p, &mut naming, vec![]);
+        assert!(ctx.memory(|m| m.focused().is_some()), "the field takes the keyboard as it opens");
+        // #3889: a focus request on every frame interrupted the composition
+        for _ in 0..5 {
+            let (_, ime) = name_frame(&ctx, &p, &mut naming, vec![]);
+            let ime = ime.expect("the focused field drives the IME");
+            assert!(!ime.should_interrupt_composition, "an open field must leave the IME composing");
+        }
+        let preedit = egui::ImeEvent::Preedit {
+            text: "かめら".to_owned(),
+            active_range_chars: Some(0..3),
+        };
+        name_frame(&ctx, &p, &mut naming, vec![egui::Event::Ime(preedit)]);
+        let (_, ime) = name_frame(
+            &ctx,
+            &p,
+            &mut naming,
+            vec![egui::Event::Ime(egui::ImeEvent::Commit("カメラ".to_owned()))],
+        );
+        assert!(!ime.is_some_and(|i| i.should_interrupt_composition));
+        assert_eq!(naming.name, "カメラ");
+        let (out, _) = name_frame(&ctx, &p, &mut naming, vec![key(egui::Key::Enter)]);
+        assert!(matches!(out.actions.as_slice(), [ControlAction::SaveShot(name)] if name == "カメラ"));
+        assert!(!naming.open && naming.name.is_empty());
+    }
+
+    #[test]
+    fn the_camera_preset_name_field_focuses_once() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut naming = ShotNaming::default();
+        naming.start();
+        name_frame(&ctx, &p, &mut naming, vec![]);
+        // Enter on an empty name saves nothing and keeps the keyboard
+        let (out, _) = name_frame(&ctx, &p, &mut naming, vec![key(egui::Key::Enter)]);
+        assert!(out.actions.is_empty());
+        name_frame(&ctx, &p, &mut naming, vec![]);
+        assert!(naming.open && ctx.memory(|m| m.focused().is_some()));
+        // the keyboard given elsewhere is not taken back
+        ctx.memory_mut(|m| m.stop_text_input());
+        for _ in 0..3 {
+            name_frame(&ctx, &p, &mut naming, vec![]);
+        }
+        assert!(naming.open && ctx.memory(|m| m.focused().is_none()));
+    }
 
     #[test]
     fn a_long_roll_press_never_drags_or_snaps_its_floater() {

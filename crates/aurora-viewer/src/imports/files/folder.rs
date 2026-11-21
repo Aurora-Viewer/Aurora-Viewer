@@ -1,15 +1,8 @@
 //! Folder imports retain mesh families and separately selectable glTF materials.
 use super::*;
 
-pub(in crate::imports) fn load(
-    root: &Path,
-    prefs: &Preferences,
-    options: import_texture::Options,
-    sound_limit: u32,
-    existing: usize,
-    mut retained: usize,
-) -> Vec<Entry> {
-    let discovered = match folders::discover(root, 256.min(512usize.saturating_sub(existing))) {
+pub(in crate::imports) fn load(root: &Path, prefs: &Preferences, options: import_texture::Options, sound_limit: u32) -> Vec<Entry> {
+    let discovered = match folders::discover(root) {
         Ok(files) if !files.is_empty() => files,
         Ok(_) => {
             return vec![Entry::new(
@@ -23,33 +16,13 @@ pub(in crate::imports) fn load(
     let paths: Vec<_> = discovered.iter().map(|(path, _)| path.clone()).collect();
     let mut consumed = HashSet::new();
     let mut loaded_rows = Vec::new();
-    let mut count = existing;
     for index in lods::order(&paths, prefs) {
         let (path, relative) = &discovered[index];
         if consumed.contains(&lods::identity(path)) {
             continue;
         }
         let mut loaded = super::load_selected(path, Choice::Bulk, options, sound_limit, prefs, false, [true; 5])
-            .unwrap_or_else(|error| vec![Entry::new(path.clone(), Err(error.to_string()), options)]);
-        let size = loaded
-            .iter()
-            .filter_map(|entry| entry.source.as_ref())
-            .filter(|source| !matches!(source, Source::Mesh(_)))
-            .map(Source::retained_bytes)
-            .sum::<usize>();
-        if retained.saturating_add(size) > 1024 * 1024 * 1024 || count + loaded.len() > 512 {
-            loaded_rows.push((
-                index,
-                vec![Entry::new(
-                    path.clone(),
-                    Err(aurora_i18n::tr!("import-batch-limit").into()),
-                    options,
-                )],
-            ));
-            break;
-        }
-        retained += size;
-        count += loaded.len();
+            .unwrap_or_else(|error| vec![Entry::new(path.clone(), Err(load_error(error)), options)]);
         for entry in &mut loaded {
             entry.source_folders.clone_from(relative);
             if let Some(Source::Mesh(draft)) = &entry.source {

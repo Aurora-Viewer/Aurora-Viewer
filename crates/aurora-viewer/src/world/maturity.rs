@@ -78,6 +78,16 @@ impl MaturityPreference {
         self.out.retain(|(actor, _)| actor.is_nil());
     }
 
+    /// A refused teleport sent again (restartFailedTeleportRequest): it
+    /// waits for the preference like any teleport (startTeleportRequest).
+    pub fn restart(&mut self, teleport: NetCommand, actor: Uuid) {
+        if self.synced() {
+            self.out.push((actor, teleport));
+        } else {
+            self.hold(teleport, actor);
+        }
+    }
+
     pub fn holds_teleport(&self) -> bool {
         self.held.is_some()
     }

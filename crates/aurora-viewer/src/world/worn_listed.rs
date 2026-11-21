@@ -87,7 +87,8 @@ impl World {
             .children_of(&av.key)
             .iter()
             .filter_map(|&i| self.objects.get(i))
-            .filter(|o| !o.is_avatar())
+            // (not the copies drawn from the cache, world/avatar_cache)
+            .filter(|o| !o.is_avatar() && !o.is_client_preview())
             .map(|o| (o.full_id, o.attachment_item_id()))
             .collect();
         let appearance = self.listed_worn.contains_key(&av.full_id);

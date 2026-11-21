@@ -1,5 +1,5 @@
-//! Local IK authoring: frozen rendered skeleton, joint handles, read-only
-//! object picking and offsets in the target prim's unscaled local axes.
+//! Local IK posing: frozen rendered skeleton, joint handles and IK goals,
+//! for this viewer only. The Poser and the animation editor share it.
 use crate::{
     scene::{
         Scene,
@@ -20,18 +20,12 @@ use uuid::Uuid;
 
 mod animations;
 mod authoring;
-mod bindings;
 mod clip;
+mod enable;
 pub(crate) mod gizmo;
-mod graph;
-mod links;
-mod object_data;
 mod poles;
 mod pose;
 pub(crate) mod poser;
-mod prim_targets;
-mod profiles;
-mod project;
 mod rig_controls;
 mod segments;
 mod visibility;
@@ -54,28 +48,18 @@ pub struct Editor {
     /// The last world press went to a worn HUD (the app's press path): the
     /// poser's click beside the joints leaves the selection as it is.
     pub press_on_hud: bool,
-    pub picking: bool,
-    pub target: Option<Uuid>,
-    pub target_name: String,
     pub goals: Vec<Goal>,
     authoring: authoring::State,
-    bindings: Vec<bindings::Binding>,
     disabled: Vec<usize>,
-    initialized: bool,
-    ignore_script_ik: bool,
-    canonical_names: Vec<String>,
     weight: f32,
     visibility: visibility::Visibility,
     animations: animations::Stack,
     tab: u8,
-    graph: graph::State,
+    /// The height the options footer took last frame, kept free below the
+    /// scrolling page.
+    footer_height: f32,
     clip: clip::State,
     poser: poser::State,
-    prims: prim_targets::State,
-    links: links::State,
-    profiles: profiles::State,
-    project: project::State,
-    object_data: object_data::State,
     selected: Option<usize>,
     root: usize,
     mode: Mode,
@@ -93,10 +77,13 @@ pub struct Editor {
     symmetry: bool,
     mirrors: Mirrors,
     limb_controls: bool,
+    /// Object Edit's handles are dragged, rect-selecting or under the
+    /// cursor: they take the click where they overlap the pose handles.
+    object_handles: bool,
     control: Control,
     pole: Option<Vec3>,
     pole_orbit: Option<poles::Orbit>,
-    /// The session base the edits and contacts were last carried to
+    /// The session base the edits were last carried to
     /// (`follow_edit_base`).
     edit_base: Option<std::sync::Arc<ik::EditBase>>,
 }
@@ -163,15 +150,6 @@ impl Frame {
         }
         Some(Self { model, joints, at })
     }
-}
-
-/// Prim scale deliberately does not enter: LSL's position offset is metric.
-#[cfg(test)]
-pub fn offsets(joint: Mat4, contact: Vec3, target_p: Vec3, target_q: Quat) -> Option<(Vec3, Quat)> {
-    let (_, q, _) = joint.to_scale_rotation_translation();
-    let p = target_q.inverse() * (joint.transform_point3(contact) - target_p);
-    let q = (target_q.inverse() * q).normalize();
-    (p.is_finite() && q.is_finite()).then_some((p, q))
 }
 
 /// Whether a click with these modifiers adds its joint to the selection
@@ -262,9 +240,9 @@ impl Editor {
     }
 
     /// The drag scale of the shared move and rotate handles. The Poser's
-    /// Posing sensitivity is the Poser's setting: in the IK editor, on the
-    /// virtual bones and in the animation editor a handle follows the
-    /// pointer one to one, whatever was saved there.
+    /// Posing sensitivity is the Poser's setting: in the IK editor and in the
+    /// animation editor a handle follows the pointer one to one, whatever
+    /// was saved there.
     fn gizmo_sensitivity(&self) -> f32 {
         if self.poser.active {
             self.poser.sensitivity
@@ -401,12 +379,7 @@ impl Editor {
         }
         if frame == 420 {
             self.toggle();
-            if ["library-empty", "library-new", "library-profile", "library-profile-name"].contains(&mode) {
-                self.library_creation_demo(world, mode);
-                return;
-            }
             if let Some(pose) = Frame::new(world) {
-                self.library_demo(world, "");
                 let rig = &world.avatar_lib.rig;
                 self.select(rig.names["mWristLeft"], rig, &pose);
                 self.contact = Vec3::new(0.0, 0.055, -0.015);
@@ -414,8 +387,6 @@ impl Editor {
                     .model
                     .inverse()
                     .transform_point3(pose.joints[rig.names["mWristLeft"]].transform_point3(self.contact));
-                self.target = Some(crate::demo::action_id(crate::demo::hand_ik::LEFT));
-                self.target_name = "Left".into();
                 self.filter = "mWrist".into();
                 self.tool = if mode == "gizmo-rotate" { Tool::Rotate } else { Tool::Move };
                 self.space = if mode == "gizmo-local" { Space::Local } else { Space::World };
@@ -425,106 +396,10 @@ impl Editor {
                     self.orient = true;
                 }
                 self.commit();
-                if mode.starts_with("links-") {
-                    self.initialized = true;
-                    self.visibility.body();
-                    self.tab = if mode == "links-visible" { 3 } else { 1 };
-                    if mode == "links-offsets" {
-                        self.select(rig.names["mWristRight"], rig, &pose);
-                        self.links.reveal_offsets = true;
-                    }
-                    let source = self.selected.unwrap_or(rig.pelvis);
-                    if mode == "links-add" {
-                        self.links.source = Some(source);
-                    } else if mode == "links-bone-pick" {
-                        self.begin_link(world, &pose, source, false);
-                    } else if mode == "links-bone" {
-                        self.begin_link(world, &pose, source, false);
-                        self.picked_bone(
-                            world,
-                            &pose,
-                            crate::world::rig_graph::Target::Bone {
-                                avatar: Uuid::nil(),
-                                bone: "mHead".into(),
-                            },
-                        );
-                    } else if [
-                        "links-prim",
-                        "links-menu",
-                        "links-pose",
-                        "links-offsets",
-                        "links-multiple",
-                        "links-search",
-                    ]
-                    .contains(&mode)
-                    {
-                        self.links.source = Some(source);
-                        self.finish_link(
-                            world,
-                            &pose,
-                            crate::world::rig_graph::Target::Prim {
-                                id: crate::demo::action_id(if mode == "links-offsets" {
-                                    crate::demo::hand_ik::RIGHT
-                                } else {
-                                    crate::demo::hand_ik::LEFT
-                                }),
-                                name: if mode == "links-offsets" { "Right" } else { "Left" }.into(),
-                            },
-                        );
-                        self.links.reveal_menu = mode == "links-menu";
-                        if ["links-multiple", "links-search"].contains(&mode) {
-                            self.graph.definition.bindings[0].weight = 0.4;
-                            self.links.adding = true;
-                            self.bind_target(
-                                world,
-                                &pose,
-                                source,
-                                crate::world::rig_graph::Target::Prim {
-                                    id: crate::demo::action_id(crate::demo::hand_ik::RIGHT),
-                                    name: "Right".into(),
-                                },
-                            );
-                            self.graph.definition.bindings[1].weight = 0.6;
-                            if mode != "links-search" {
-                                self.links.reveal_offsets = true;
-                            }
-                        }
-                        if mode == "links-pose" {
-                            self.tab = 0;
-                        }
-                    }
-                }
-                if mode.starts_with("build-") {
-                    self.attach(world, &pose);
-                    self.tab = 1;
-                    self.visibility.body();
-                }
-                if mode.starts_with("profiles") || mode.starts_with("library") {
-                    self.graph_demo(world, &pose, "graph");
-                    self.graph.selected = None;
-                    self.ensure_profiles(world, &pose);
-                    self.animations.demo(rig, "animations");
-                    self.add_profile(true, world, &pose);
-                    self.graph.definition.profiles[1].name = "Gas only".into();
-                    self.tab = if mode == "profiles-animations" { 2 } else { 1 };
-                    if mode.starts_with("library") {
-                        self.library_demo(world, mode);
-                        if mode.starts_with("library-target") {
-                            self.project_target_demo(mode);
-                        }
-                    }
-                }
                 if mode.starts_with("animations") {
-                    self.attach(world, &pose);
                     self.animations.demo(rig, mode);
                     self.tab = 2;
                     self.visibility.body();
-                }
-                if mode.starts_with("graph") {
-                    self.tab = 4;
-                    if mode != "graph-empty" {
-                        self.graph_demo(world, &pose, mode);
-                    }
                 }
                 if mode.starts_with("clip") {
                     self.clip_demo(world, &pose, mode);
@@ -565,48 +440,8 @@ impl Editor {
                         self.visibility.only(visibility::Group::Arms);
                         self.tab = 3;
                     }
-                    if ["rig-bindings", "rig-activation", "rig-weight", "rig-disabled", "rig-released"].contains(&mode) {
-                        self.tab = 1;
-                        for limb in limbs(rig) {
-                            self.select(limb.end, rig, &pose);
-                            self.target = Some(crate::demo::action_id(if limb.right {
-                                crate::demo::hand_ik::RIGHT
-                            } else {
-                                crate::demo::hand_ik::LEFT
-                            }));
-                            self.target_name = if limb.right { "Right".into() } else { "Left".into() };
-                            self.weight = if mode == "rig-weight" { 0.5 } else { 1.0 };
-                            self.position += Vec3::X * 0.08;
-                            self.attach(world, &pose);
-                        }
-                        self.select(rig.names["mWristLeft"], rig, &pose);
-                        if mode == "rig-activation" {
-                            for binding in &mut self.bindings {
-                                binding.definition.activation = crate::world::rig_graph::Activation {
-                                    distance: 0.5,
-                                    ease_in: 0.6,
-                                    ease_out: 0.8,
-                                };
-                            }
-                        }
-                    }
-                }
-                let virtual_node = self.graph.selected;
-                self.ensure_profiles(world, &pose);
-                if self.graph.definition.profiles.is_empty() {
-                    self.add_profile(false, world, &pose);
-                }
-                if mode == "links-search" {
-                    self.links.filter = "Right".into();
-                }
-                if let Some(id) = virtual_node {
-                    self.select_virtual_node(id);
                 }
             }
-        }
-        if (mode.starts_with("seat-reload") || matches!(mode, "library-object-import" | "library-object-waiting")) && frame == 460 {
-            self.tab = 5;
-            self.object_data.requested = Some(crate::demo::action_id(crate::demo::hand_ik::ROOT));
         }
         if ["pose-hierarchy", "pose-toes"].contains(&mode)
             && let Some(pose) = Frame::new(world)
@@ -616,7 +451,7 @@ impl Editor {
                 self.goals.clear();
                 self.authoring = authoring::State::default();
                 self.filter.clear();
-                self.tab = 1;
+                self.tab = 0;
             }
             let edit = match frame {
                 460 => Some(("mHead", Vec3::X, 0.25)),
@@ -647,7 +482,7 @@ impl Editor {
         {
             self.goals.clear();
             self.filter.clear();
-            self.tab = 1;
+            self.tab = 0;
             let rig = &world.avatar_lib.rig;
             self.select(
                 rig.names[if mode == "segments-toe" { "mToeLeft" } else { "mShoulderLeft" }],
@@ -699,7 +534,6 @@ impl Editor {
         if self.open {
             self.leave_clip();
             self.open = false;
-            self.cancel_link_pick();
             self.drag = None;
             self.gizmo.cancel();
         } else {
@@ -708,9 +542,6 @@ impl Editor {
                 clip,
                 open: true,
                 limb_controls: true,
-                initialized: true,
-                ignore_script_ik: true,
-                tab: 1,
                 ..Default::default()
             };
         }
@@ -726,7 +557,6 @@ impl Editor {
         if self.clip.active {
             return ik::EditRequest {
                 active: true,
-                suppress_script_ik: true,
                 animations: if self.clip.waiting_source() {
                     self.animations.samples()
                 } else {
@@ -742,44 +572,18 @@ impl Editor {
                     .cloned()
                     .collect(),
                 joints: self.authoring.request(&self.goals, &self.disabled),
-                released: (0..self.canonical_names.len()).collect(),
             };
         }
         ik::EditRequest {
             active: self.open,
-            suppress_script_ik: self.ignore_script_ik,
             animations: self.animations.samples(),
             suppress_live: self.animations.suppress_live,
             joints: self.authoring.request(&self.goals, &self.disabled),
             goals: self
                 .goals
                 .iter()
-                .filter(|g| {
-                    !self.disabled.contains(&g.bone)
-                        && !self.authoring.owns(g.bone)
-                        && !self.bindings.iter().any(|b| b.bone == g.bone && !b.available)
-                        && !self
-                            .graph
-                            .definition
-                            .bindings
-                            .iter()
-                            .any(|b| self.canonical_names.get(g.bone) == Some(&b.bone))
-                })
+                .filter(|g| !self.disabled.contains(&g.bone) && !self.authoring.owns(g.bone))
                 .cloned()
-                .chain(self.graph.request_goals().into_iter().filter(|g| !self.disabled.contains(&g.bone)))
-                .collect(),
-            released: self
-                .disabled
-                .iter()
-                .copied()
-                .chain(self.bindings.iter().filter(|b| !b.available).map(|b| b.bone))
-                .chain(
-                    self.graph
-                        .definition
-                        .bindings
-                        .iter()
-                        .filter_map(|b| self.canonical_names.iter().position(|n| n == &b.bone)),
-                )
                 .collect(),
         }
     }
@@ -787,8 +591,7 @@ impl Editor {
     fn select(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
         if self.clip.active && !self.poser.active {
             // every way of picking a joint in the animation editor (handle,
-            // bone, picker, Tracks row, timeline, joint list, pole, binding,
-            // link…) keeps the joints picked together right: a joint of the
+            // bone, picker, Tracks row, timeline, joint list, pole…) keeps the joints picked together right: a joint of the
             // selection leads the others, any other joint is selected alone
             self.clip_retarget_followers(bone);
         }
@@ -801,24 +604,8 @@ impl Editor {
             self.select_pose_bone(bone, rig, frame);
             return;
         }
-        self.graph.selected = None;
-        self.graph.binding = self.graph.binding_index(bone, &rig.canonical_names);
         self.mirrors.initialize(rig);
-        if self.canonical_names.is_empty() {
-            self.canonical_names.clone_from(&rig.canonical_names);
-        }
         self.weight = 1.0;
-        if let Some(binding) = self.bindings.iter().find(|b| b.bone == bone) {
-            self.target = Some(binding.definition.target);
-            self.target_name.clone_from(&binding.name);
-            self.graph.target = crate::world::rig_graph::Target::Prim {
-                id: binding.definition.target,
-                name: binding.name.clone(),
-            };
-        }
-        if let Some(binding) = self.graph.binding.and_then(|index| self.graph.definition.bindings.get(index)) {
-            self.graph.target = binding.target.clone();
-        }
         self.control = Control::Bone;
         // the animation editor keeps the Move or Rotate chosen from joint to joint
         if !self.clip.active {
@@ -843,10 +630,7 @@ impl Editor {
         self.position = p;
         let (z, y, x) = q.to_euler(EulerRot::ZYX);
         self.degrees = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
-        let bound = (!self.clip.active)
-            .then(|| self.graph.binding.and_then(|index| self.graph.binding_goal(index, rig)))
-            .flatten();
-        if let Some(goal) = bound.as_ref().or_else(|| self.goals.iter().find(|g| g.bone == bone)) {
+        if let Some(goal) = self.goals.iter().find(|g| g.bone == bone) {
             self.weight = goal.weight;
             self.position = goal.position;
             self.root = goal.root;
@@ -859,14 +643,7 @@ impl Editor {
                 self.degrees = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
             }
         }
-        if self.disabled.contains(&bone)
-            || (!self.clip.active
-                && self
-                    .graph
-                    .binding
-                    .and_then(|i| self.graph.definition.bindings.get(i))
-                    .is_some_and(|b| !b.enabled))
-        {
+        if self.disabled.contains(&bone) {
             self.released_pose(frame);
         } else if self.authoring.owns(bone) {
             self.position = local.transform_point3(self.contact);
@@ -877,11 +654,6 @@ impl Editor {
 
     fn commit(&mut self) {
         if self.clip.waiting_source() {
-            return;
-        }
-        if self.graph.selected.is_some() {
-            self.graph
-                .capture_node(crate::world::rig_graph::Transform::new(self.position, self.rotation()));
             return;
         }
         let Some(bone) = self.selected else {
@@ -898,7 +670,6 @@ impl Editor {
             return;
         }
         let goal = Goal {
-            follow: None,
             weight: self.weight,
             bone,
             root: self.root,
@@ -915,16 +686,6 @@ impl Editor {
             self.disabled.retain(|b| *b != goal.bone);
             if self.clip.active {
                 self.clip.mark(&goal);
-            } else {
-                self.graph.capture(&goal, &self.canonical_names);
-                if let Some(index) = self.graph.binding_index(goal.bone, &self.canonical_names)
-                    && let Some(binding) = self.graph.definition.bindings.get_mut(index)
-                {
-                    binding.enabled = true;
-                }
-                if let Some(binding) = self.bindings.iter_mut().find(|b| b.bone == goal.bone) {
-                    binding.capture(&goal, self.canonical_names.get(goal.root).map(String::as_str));
-                }
             }
             if let Some(old) = self.goals.iter_mut().find(|g| g.bone == goal.bone) {
                 *old = goal;
@@ -936,8 +697,7 @@ impl Editor {
 
     fn show_gizmo(&mut self, ctx: &egui::Context, palette: &Palette, proj: &Projector, frame: &Frame, rig: &Rig) -> bool {
         let modifiers = ctx.input(|i| i.modifiers);
-        if (!self.poser.active
-            && (self.clip.waiting_source() || self.graph.selected.is_some() || self.picking || self.prims.object_handles))
+        if (!self.poser.active && (self.clip.waiting_source() || self.object_handles))
             || !self.gizmo_visible(modifiers)
             || modifiers.alt
             || self.drag.is_some()
@@ -964,7 +724,7 @@ impl Editor {
             } else {
                 frame.model.transform_point3(self.control_position())
             }
-        } else if tool == Tool::Rotate && self.mode == Mode::Ik && !self.pose_constrained(rig, bone) {
+        } else if tool == Tool::Rotate && self.mode == Mode::Ik && !self.pose_constrained(bone) {
             frame.joints[bone].w_axis.truncate()
         } else {
             frame.joints[bone].transform_point3(self.contact)
@@ -1016,6 +776,22 @@ impl Editor {
         owns
     }
 
+    /// Object Edit's handles keep precedence over the pose handles: IK Edit
+    /// and the Build tool may stay open together.
+    pub fn sync_build(
+        &mut self,
+        world: &World,
+        build: &crate::build::BuildTool,
+        settings: &crate::build::BuildSettings,
+        cursor: (f32, f32),
+        mods: crate::build::Mods,
+    ) {
+        self.object_handles = self.open
+            && !self.poser.active
+            && build.open
+            && (build.manip.dragging() || build.rect.is_some() || build.manipulator_at(world, settings, cursor, mods));
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, proj: &Projector) {
         self.manipulator_hovered = false;
         if !self.open {
@@ -1027,15 +803,6 @@ impl Editor {
             } else {
                 self.show_poser(ctx, palette, world, proj);
             }
-            return;
-        }
-        if let Some(frame) = self.editor_frame(world) {
-            self.poll_object_data(world, &frame);
-        }
-        if self.library_loading_ui(ctx, palette) {
-            return;
-        }
-        if self.library_start_ui(ctx, palette, world) {
             return;
         }
         if !ctx.input(|i| i.pointer.primary_down()) {
@@ -1059,8 +826,6 @@ impl Editor {
             self.capture_clip(world, &frame);
         } else {
             self.follow_edit_base(world);
-            self.update_bindings(world, &frame);
-            self.update_graph(world, &frame);
         }
         let names: Vec<_> = rig
             .canonical_names
@@ -1077,16 +842,11 @@ impl Editor {
             );
             self.refresh = false;
         }
-        if self.graph.selected.is_none()
-            && self.selected.is_some_and(|b| self.disabled.contains(&b))
-            && self.drag.is_none()
-            && !self.gizmo.dragging()
-        {
+        if self.selected.is_some_and(|b| self.disabled.contains(&b)) && self.drag.is_none() && !self.gizmo.dragging() {
             self.released_pose(&frame);
         }
         self.sync_clip_selection(&frame);
         self.sync_authored_selection(&frame);
-        self.sync_prim_draft();
         if !self.bone_overlays_visible() {
             // A clean playback preview needs no bone picking, handles, or gizmo
             // work. Preserve the selection and restore overlays when paused.
@@ -1106,14 +866,7 @@ impl Editor {
             {
                 painter.circle_stroke(point, 7.0, Stroke::new(2.0, palette.teal));
             }
-            let graph_owns = !self.clip.active && self.graph_overlay(ctx, palette, world, proj, &frame);
-            // A selected virtual bone owns the shared manipulator. Do not let the
-            // real-bone renderer cancel its in-progress modifier drag afterwards.
-            let gizmo_owns = if self.graph.selected.is_some() {
-                graph_owns
-            } else {
-                self.show_gizmo(ctx, palette, proj, &frame, rig) || graph_owns
-            };
+            let gizmo_owns = self.show_gizmo(ctx, palette, proj, &frame, rig);
             self.manipulator_hovered = gizmo_owns;
             let selected_pole = self.control == Control::Pole;
             if !selected_pole {
@@ -1126,10 +879,7 @@ impl Editor {
             } else {
                 Vec::new()
             };
-            if (!self.picking || self.links.bone_pick)
-                && (!self.prims.object_handles || self.links.bone_pick)
-                && !ctx.input(|i| i.modifiers.alt)
-            {
+            if !self.object_handles && !ctx.input(|i| i.modifiers.alt) {
                 let chosen = self.selected;
                 let handles = names
                     .iter()
@@ -1147,9 +897,7 @@ impl Editor {
                     let selected = self.selected == Some(joint);
                     let follower = self.clip_follows(joint);
                     let limb = limb_list.iter().find(|l| l.end == joint);
-                    let point = if self.links.bone_pick {
-                        frame.joints[joint].w_axis.truncate()
-                    } else if selected {
+                    let point = if selected {
                         frame.joints[joint].transform_point3(self.contact)
                     } else if limb.is_some() {
                         let contact = self.goals.iter().find(|g| g.bone == joint).map_or(Vec3::ZERO, |g| g.contact);
@@ -1168,9 +916,7 @@ impl Editor {
                         .movable(false)
                         .interactable(!gizmo_owns && !self.clip.waiting_source())
                         .show(ctx, |ui| {
-                            let sense = if self.links.bone_pick {
-                                Sense::click()
-                            } else if gizmo_owns || self.clip.waiting_source() {
+                            let sense = if gizmo_owns || self.clip.waiting_source() {
                                 Sense::hover()
                             } else {
                                 Sense::click_and_drag()
@@ -1201,18 +947,6 @@ impl Editor {
                     // a press on a joint's handle is the editor's: Avatar Studio
                     // would otherwise also turn its camera with the drag
                     self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
-                    if self.links.bone_pick && response.clicked() {
-                        self.picked_bone(
-                            world,
-                            &frame,
-                            crate::world::rig_graph::Target::Bone {
-                                avatar: Uuid::nil(),
-                                bone: name.to_owned(),
-                            },
-                        );
-                        response.on_hover_text(name);
-                        continue;
-                    }
                     if response.clicked() || response.drag_started() {
                         if !self.clip.active {
                             self.select(joint, rig, &frame);
@@ -1271,13 +1005,12 @@ impl Editor {
             // Studio's. Resumed later from IK Edit it needs its timeline and
             // its way back, which Studio would have drawn.
             self.clip.forget_avatar_studio();
-            self.cancel_link_pick();
             self.drag = None;
             self.gizmo.cancel();
         }
     }
 
-    /// The IK contacts window. Creating or resuming an animation in its
+    /// The IK posing window. Creating or resuming an animation in its
     /// Animations page hands over to the animation editor's window.
     fn ik_window_ui(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, frame: &Frame) {
         let mut open = self.open;
@@ -1289,66 +1022,112 @@ impl Editor {
         );
         floater.min_size.x = 530.0;
         floater.show(ctx, palette, &mut open, |ui| {
-            self.library_title_ui(ui);
-            self.project_tabs_ui(ui, palette);
-            self.link_pick_status_ui(ui, palette, world);
-            let footer = if self.links.footer_height > 0.0 {
-                self.links.footer_height + ui.spacing().item_spacing.y
+            self.tabs_ui(ui, palette);
+            let footer = if self.footer_height > 0.0 {
+                self.footer_height + ui.spacing().item_spacing.y
             } else {
                 190.0
             };
-            let mut body = egui::ScrollArea::vertical()
+            egui::ScrollArea::vertical()
                 .id_salt(("ik-editor-body", self.tab))
                 .auto_shrink([false, false])
-                .max_height((ui.available_height() - footer).max(60.0));
-            if self.links.reveal_offsets {
-                body = body.vertical_scroll_offset(110.0);
-            }
-            body.show(ui, |ui| match self.tab {
-                5 => self.library_browser_ui(ui, palette, world),
-                3 => self.visibility_ui(ui, palette, world, frame),
-                2 => {
-                    self.clip_entry_ui(ui, palette, world, frame);
-                    if !self.clip.active {
-                        self.ensure_profiles(world, frame);
-                        let mut profile = self.graph.profile.unwrap_or(0);
-                        ui.horizontal(|ui| {
-                            ui.strong(aurora_i18n::tr!("ik-profile-title"));
-                            let width = ui.available_width().max(80.0);
-                            self.profile_selector_ui(ui, &mut profile, "ik-animation-profile", width);
-                        });
-                        if self.graph.profile != Some(profile) {
-                            self.switch_profile(profile, world, frame);
+                .max_height((ui.available_height() - footer).max(60.0))
+                .show(ui, |ui| match self.tab {
+                    3 => self.visibility_ui(ui, palette, world, frame),
+                    2 => {
+                        self.clip_entry_ui(ui, palette, world, frame);
+                        if !self.clip.active {
+                            self.animations.show(ui, palette, &world.inventory);
                         }
-                        self.animations.show(ui, palette, &world.inventory);
                     }
-                }
-                0 => {
-                    if !self.picking {
-                        self.manipulation_ui(ui);
-                        self.pose_ui(ui, palette, world, frame);
-                    }
-                }
-                4 => {
-                    if !self.picking {
-                        self.nodes_ui(ui, palette, world, frame);
-                    }
-                }
-                _ => self.links_ui(ui, palette, world, frame),
-            });
+                    _ => self.selected_pose_ui(ui, palette, world, frame),
+                });
             // The animation editor takes over from the next frame once
             // creation started above.
             if !self.clip.active {
-                // Measure once per frame so wrapping, diagnostics and font/window
+                // Measure once per frame so wrapping and font or window
                 // changes reserve their real height without replaying actions.
                 let footer = ui.scope(|ui| self.footer_ui(ui, palette, world, frame));
-                if (self.links.footer_height - footer.response.rect.height()).abs() > 0.5 {
-                    self.links.footer_height = footer.response.rect.height();
+                if (self.footer_height - footer.response.rect.height()).abs() > 0.5 {
+                    self.footer_height = footer.response.rect.height();
                     ctx.request_repaint();
                 }
             }
         });
         self.open = open;
+    }
+
+    /// The pages of the IK and animation editors' windows.
+    fn tabs_ui(&mut self, ui: &mut egui::Ui, p: &Palette) {
+        const PAGES: [u8; 3] = [0, 2, 3];
+        let mut selected = PAGES.iter().position(|t| *t == self.tab).unwrap_or(0);
+        let labels = [
+            (aurora_i18n::tr!("ik-edit-tab-pose"), true),
+            (aurora_i18n::tr!("ik-edit-tab-animations"), true),
+            (aurora_i18n::tr!("ik-edit-tab-visible"), true),
+        ];
+        widgets::tabs(ui, p, &mut selected, &labels);
+        self.tab = PAGES[selected];
+    }
+
+    /// The Pose page: the gizmo's keys, then the selected bone's card.
+    fn selected_pose_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
+        self.manipulation_ui(ui);
+        let rig = &world.avatar_lib.rig;
+        let Some(bone) = self.selected else { return };
+        let name = rig.canonical_names[bone].clone();
+        pose::selected_bone_ui(ui, palette, &name, |ui| {
+            if ui.button(aurora_i18n::tr!("ik-edit-reset-bone")).clicked() {
+                self.reset_bone(bone);
+            }
+            self.pose_ui(ui, palette, world, frame);
+            self.chain_ui(ui, palette, world, frame, bone);
+        });
+    }
+
+    /// The options under every page: gizmo space, symmetry, the whole pose's
+    /// reset and the four limbs.
+    fn footer_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
+        widgets::surface(ui, palette, |ui| {
+            ui.set_min_width(ui.available_width());
+            widgets::section_header(ui, palette, "settings-filled", aurora_i18n::tr!("ik-edit-options"));
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            let ppp = ui.pixels_per_point();
+            let limb_width = limbs(&world.avatar_lib.rig)
+                .iter()
+                .map(|limb| {
+                    ui.painter()
+                        .layout_no_wrap(aurora_i18n::text(limb.label).to_owned(), font.clone(), palette.ink)
+                        .size()
+                        .x
+                        + ui.spacing().icon_width
+                        + ui.spacing().icon_spacing
+                })
+                .fold(ui.spacing().interact_size.y, f32::max);
+            let limb_width = (limb_width * ppp).ceil() / ppp;
+            let right_width = 2.0 * limb_width + ui.spacing().item_spacing.x;
+            // Round each checkbox column up and the flexible column down:
+            // pixel rounding must not feed a wider footer into the floater.
+            let left_width = ((ui.available_width() - right_width - ui.spacing().item_spacing.x) * ppp)
+                .floor()
+                .max(1.0)
+                / ppp;
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(left_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(left_width);
+                    ui.horizontal_wrapped(|ui| {
+                        self.space_ui(ui, palette);
+                        self.manipulation_options_ui(ui, palette);
+                        if ui.button(aurora_i18n::tr!("ik-edit-reset-all")).clicked() {
+                            self.reset_pose();
+                        }
+                    });
+                });
+                ui.allocate_ui_with_layout(egui::vec2(right_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    self.limb_options_ui(ui, palette, world, frame, 2);
+                });
+            });
+        });
     }
 
     /// The window the editor shows: the animation editor has its own.

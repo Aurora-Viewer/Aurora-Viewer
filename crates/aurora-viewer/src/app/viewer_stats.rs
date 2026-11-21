@@ -175,7 +175,7 @@ impl App {
         let inventory = &self.world.inventory;
         ViewerSide {
             version: format!("{} {}", aurora_net::login::CHANNEL, aurora_version::login_version()),
-            language: aurora_i18n::language().to_owned(),
+            language: aurora_i18n::grid_language().to_owned(),
             run_time: now.duration_since(t.started).as_secs_f64(),
             foreground_time: t.foreground_time,
             foreground_frames: t.foreground_frames,
