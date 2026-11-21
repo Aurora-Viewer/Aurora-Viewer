@@ -371,7 +371,7 @@ pub struct Entry {
     pub local_saved: Option<persistence::Asset>,
     pub status: Status,
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Status {
     Ready,
     Error(String),

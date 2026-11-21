@@ -262,15 +262,16 @@ impl App {
     /// renderer could be made.
     fn replace_renderer(&mut self, event_loop: &ActiveEventLoop, safe: bool) -> Option<Instant> {
         let old = self.gfx.take()?;
+        let old_win = old.window?;
         let started = Instant::now();
         let plan = WindowPlan {
-            size: old.window.inner_size().into(),
-            position: old.window.outer_position().ok(),
-            active: old.window.has_focus(),
-            fullscreen: old.window.fullscreen(),
+            size: old_win.inner_size().into(),
+            position: old_win.outer_position().ok(),
+            active: old_win.has_focus(),
+            fullscreen: old_win.fullscreen(),
         };
-        let maximized = old.window.is_maximized();
-        let Gfx { mut renderer, window, .. } = old;
+        let maximized = old_win.is_maximized();
+        let mut renderer = old.renderer;
         let released = Instant::now();
         self.forget_gpu_scene(&mut renderer);
         // (#2997: a scene paged out to the disk once took over 10 s here)
@@ -281,7 +282,7 @@ impl App {
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);
-        self.retired_window = Some(window);
+        self.retired_window = Some(old_win);
         if safe {
             self.safe_graphics_after_losses();
         }
@@ -306,8 +307,8 @@ impl App {
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
             renderer,
-            egui_state,
-            window,
+            egui_state: Some(egui_state),
+            window: Some(window),
             shown: false,
             maximize_on_show: maximized,
         });

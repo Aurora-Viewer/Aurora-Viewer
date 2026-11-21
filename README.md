@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Aurora MCP Fork (`drakkhis/Aurora-Viewer` · `feat/aurora-mcp`):** This fork adds a native Rust **Model Context Protocol (MCP)** server (`crates/aurora-mcp`) and main-thread viewer bridge (`125` tools, HTTP/SSE on `:3847` + `aurora-mcp-stdio` proxy, `1.5ms`/frame budget, Linkset Data, Bento Poser, LSL/SLua, and `DemoSim` support). See **[docs/MCP.md](docs/MCP.md)** for architecture and quickstart instructions.
+
 <div align="center">
 
 <img src="assets/branding/aurora-logo.svg" alt="Aurora Viewer" width="180">
