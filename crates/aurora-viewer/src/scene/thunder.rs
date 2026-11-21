@@ -556,7 +556,7 @@ impl Thunder {
                 from: c.from,
                 gain: c.gain * LEVEL,
                 muffle: c.muffle,
-                until: now + clip.duration(),
+                until: now + clip.played_duration(),
                 binaural: input.binaural,
                 dir: Vec3::ZERO,
                 level: 0.0,
