@@ -160,17 +160,22 @@ mod bus {
 
     pub(super) fn listen_as(name: String) -> Option<Receiver<String>> {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let bus = match Connection::session() {
+        // Served through the builder, which waits until the object server's
+        // task reads the method calls before the connection reads anything.
+        // `object_server().at` on a built connection starts that task in the
+        // background: a call that arrived before it subscribed found no reader
+        // and was dropped unanswered, and the launch waited its whole timeout
+        // (seen on loaded CI runners, a few milliseconds after the name).
+        let bus = match zbus::blocking::connection::Builder::session()
+            .and_then(|b| b.serve_at(PATH, Links(tx)))
+            .and_then(|b| b.build())
+        {
             Ok(bus) => bus,
             Err(e) => {
                 log::warn!("startup links: no session bus ({e})");
                 return None;
             }
         };
-        if let Err(e) = bus.object_server().at(PATH, Links(tx)) {
-            log::warn!("startup links: {e}");
-            return None;
-        }
         match bus.request_name_with_flags(name.as_str(), RequestNameFlags::DoNotQueue.into()) {
             Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
                 *OWNER.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((bus, name));

@@ -36,7 +36,6 @@ pub(crate) struct LocationDrag {
     pub target: Target,
     pub position: egui::Pos2,
     pub released: bool,
-    pub shift: bool,
 }
 
 pub(crate) fn location_world_drag(ctx: &egui::Context) -> Option<LocationDrag> {
@@ -52,7 +51,6 @@ pub(crate) fn location_world_drag(ctx: &egui::Context) -> Option<LocationDrag> {
             target,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
-            shift: i.modifiers.shift,
         })
     })
 }

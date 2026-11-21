@@ -23,6 +23,7 @@ pub mod model;
 
 use super::place_details::{self, ButtonLook, Ctx};
 use super::widgets::{self, Floater};
+use crate::settings::HistoryZone;
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::inventory::{FetchState, Inventory};
@@ -41,16 +42,14 @@ pub const TAB_HISTORY: usize = 2;
 /// FT_FAVORITE / FT_LANDMARK folder types.
 const FOLDER_FAVORITES: i32 = 23;
 pub(crate) const FOLDER_LANDMARKS: i32 = 3;
-/// AT_LANDMARK.
-const ASSET_LANDMARK: i32 = 3;
-
 /// AURORA_DEMO_PLACES and the like: a tab by its name or index (the former
 /// French names are still accepted).
 pub fn tab_from_name(name: &str) -> Option<usize> {
     match name.trim().to_lowercase().as_str() {
         "favorites" | "favoris" | "0" => Some(TAB_FAVORITES),
         "landmarks" | "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
-        "history" | "historique" | "2" => Some(TAB_HISTORY),
+        // history-big: same tab, a large demo history (#2955)
+        "history" | "historique" | "history-big" | "2" => Some(TAB_HISTORY),
         _ => None,
     }
 }
@@ -105,6 +104,8 @@ pub enum PlacesAction {
     OpenWindow(Source),
     /// The order of Aurora's lists.
     Sort(model::PlacesSort),
+    /// The history's time zone (FSTPHistoryTZ).
+    HistoryZone(HistoryZone),
 }
 
 /// One line of a landmarks tab.
@@ -139,8 +140,8 @@ fn has_match(inv: &Inventory, folder: Uuid, filter: &str, depth: usize) -> bool 
         && (f
             .items
             .iter()
-            .filter_map(|i| inv.items.get(i))
-            .any(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
+            .filter_map(|i| crate::world::landmarks::inventory_item(inv, *i))
+            .any(|i| matches(&i.name, filter))
             || f.children.iter().any(|c| has_match(inv, *c, filter, depth + 1)))
 }
 
@@ -197,35 +198,38 @@ fn add_rows(
     let mut items: Vec<_> = f
         .items
         .iter()
-        .filter_map(|i| inv.items.get(i))
-        .filter(|i| i.asset_type == ASSET_LANDMARK && matches(&i.name, filter))
+        .filter_map(|id| crate::world::landmarks::inventory_item(inv, *id).map(|item| (*id, item)))
+        .filter(|(_, i)| matches(&i.name, filter))
         .collect();
     if by_date {
-        items.sort_by(|a, b| {
-            b.created_at
-                .cmp(&a.created_at)
+        items.sort_by(|(a_id, a), (b_id, b)| {
+            inv.items[b_id]
+                .created_at
+                .cmp(&inv.items[a_id].created_at)
                 .then_with(|| crate::natural_order::cmp(&a.name, &b.name))
         });
     } else {
-        items.sort_by_key(|i| crate::natural_order::key(&i.name));
+        items.sort_by_key(|(_, i)| crate::natural_order::key(&i.name));
     }
-    rows.extend(items.into_iter().map(|i| Row {
+    rows.extend(items.into_iter().map(|(id, i)| Row {
         depth,
-        id: i.id,
+        id,
         name: i.name.clone(),
         folder: None,
     }));
 }
 
 /// The history in its sections (LLTeleportHistoryPanel::refresh): newest
-/// first, filtered by title; empty sections are left out.
-pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64) -> Vec<(usize, Vec<usize>)> {
+/// first, filtered by title; empty sections are left out. `offset`: the
+/// zone's, `history_offset`.
+pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64, offset: f64) -> Vec<(usize, Vec<usize>)> {
     let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+    let section_for = tphistory::history_section_lookup(now, offset);
     for (i, it) in items.iter().enumerate().rev() {
         if !tphistory::history_matches(&it.title, filter) {
             continue;
         }
-        let s = tphistory::history_section(it.date, now);
+        let s = section_for(it.date);
         match out.last_mut() {
             Some((last, v)) if *last == s => v.push(i),
             _ => out.push((s, vec![i])),
@@ -235,11 +239,11 @@ pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64) -> Vec<(u
 }
 
 /// The region of a SLURL for a global position: the map's, else the region
-/// part of a history title ("Parcel, Region").
+/// part of a history title ("Parcel, Region"). Under @showloc a connected
+/// region is "(Hidden region)" in it (`slurl::make`), as
+/// LLTeleportHistoryPanel::onCopySLURL copies LLSLURL::getSLURLString
+/// (llpanelteleporthistory.cpp, llslurl.cpp) with no RLVa test of its own.
 fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
-    if world.rlva.has("showloc") {
-        return None;
-    }
     let region = world
         .map
         .sim_at_global(global.x, global.y)
@@ -255,6 +259,35 @@ fn now_secs() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// Seconds to add to UTC for the history's zone at `now`, as
+/// LLStringOps::getPacificTimeOffset and getLocalTimeOffset give it (the
+/// offset of the moment, for every entry).
+pub(crate) fn history_offset(zone: HistoryZone, now: f64) -> f64 {
+    use crate::settings::ClockZone;
+    let clock = match zone {
+        HistoryZone::Utc => return 0.0,
+        HistoryZone::Slt => ClockZone::Slt,
+        HistoryZone::Local => ClockZone::Local,
+    };
+    super::bars::clock::offset(clock, now as i64) as f64
+}
+
+/// menu_teleport_history_gear.xml's "Select Timezone..." (FS:Beq): UTC,
+/// SLT or local time for the days and hours of the history, both looks.
+fn history_zone_menu(ui: &mut egui::Ui, p: &Palette, zone: HistoryZone, actions: &mut Vec<PlacesAction>) {
+    super::menu::submenu(ui, p, "clock-filled", aurora_i18n::tr!("ui-places-history-time-zone"), true, |ui| {
+        for (choice, label) in [
+            (HistoryZone::Utc, aurora_i18n::tr!("ui-places-history-zone-utc")),
+            (HistoryZone::Slt, aurora_i18n::tr!("ui-options-clock-zone-slt")),
+            (HistoryZone::Local, aurora_i18n::tr!("ui-options-clock-zone-local")),
+        ] {
+            if super::menu::check(ui, p, "clock-filled", label, zone == choice, true) && zone != choice {
+                actions.push(PlacesAction::HistoryZone(choice));
+            }
+        }
+    });
 }
 
 #[derive(Default)]
@@ -287,12 +320,24 @@ pub struct PlacesUi {
     /// show its three equal buttons whole, as measured last frame (0 before
     /// it is drawn). The window's minimum width follows it.
     legacy_bar_width: f32,
+    /// The history's time zone, `Settings::tp_history_zone`, set by the app
+    /// before each frame.
+    pub history_zone: HistoryZone,
+    /// AURORA_DEMO_PLACES=…:utc / :local: that zone for the run, until one
+    /// is chosen in the menu (not saved).
+    pub demo_zone: Option<HistoryZone>,
     /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
     /// whatever Preferences › Aurora › Places says (not saved).
     pub demo_classic: bool,
 }
 
 impl PlacesUi {
+    /// The session ended: a question left open ends with it.
+    pub fn forget_question(&mut self) {
+        self.confirm = None;
+        self.dont_ask = false;
+    }
+
     /// "open_landmark_tab" / "open_teleport_history_tab": the lists on a tab.
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
@@ -497,7 +542,7 @@ impl PlacesUi {
                 aurora_i18n::tr!("ui-places-show-sorting-options"),
                 |ui| {
                     if history {
-                        self.history_gear_menu(ui, p, world);
+                        self.history_gear_menu(ui, p, world, actions);
                     } else {
                         self.sorting_menu(ui, p, world, by_date, actions);
                     }
@@ -554,7 +599,7 @@ impl PlacesUi {
     /// The landmark selected, with its asset.
     fn selected_landmark<'w>(&self, world: &'w World) -> Option<&'w aurora_net::inventory::InvItem> {
         match self.selected {
-            Some(Sel::Item(id)) => world.inventory.items.get(&id).filter(|i| i.asset_type == ASSET_LANDMARK),
+            Some(Sel::Item(id)) => crate::world::landmarks::inventory_item(&world.inventory, id),
             _ => None,
         }
     }
@@ -612,12 +657,11 @@ impl PlacesUi {
                 None => "map-pin-filled",
             };
             // a landmark's region, once its asset is read and the region known
-            let rating = world.inventory.items.get(&row.id).filter(|_| row.folder.is_none()).and_then(|it| {
-                match world.landmarks.peek(it.asset_id) {
+            let rating =
+                crate::world::landmarks::inventory_item(&world.inventory, row.id).and_then(|it| match world.landmarks.peek(it.asset_id) {
                     Resolved::Ready { global, .. } => world.map.sim_at_global(global.x, global.y).map(|(_, s)| s.access),
                     _ => None,
-                }
-            });
+                });
             let r = list_row(
                 ui,
                 p,
@@ -639,7 +683,7 @@ impl PlacesUi {
             }
             if r.response.clicked() || r.response.secondary_clicked() {
                 self.selected = Some(sel);
-                if let Some(it) = world.inventory.items.get(&row.id) {
+                if let Some(it) = crate::world::landmarks::inventory_item(&world.inventory, row.id) {
                     self.want_landmarks.insert(it.asset_id);
                 }
             }
@@ -666,7 +710,7 @@ impl PlacesUi {
                 None => {
                     // LLLandmarkBridgeAction::doIt: TeleportFromLandmark
                     if r.response.double_clicked()
-                        && let Some(it) = world.inventory.items.get(&row.id)
+                        && let Some(it) = crate::world::landmarks::inventory_item(&world.inventory, row.id)
                     {
                         self.confirm = Some(Confirm::Landmark {
                             asset: it.asset_id,
@@ -786,7 +830,9 @@ impl PlacesUi {
                 name: it.name.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), resolved.is_some())
+        // LLLandmarksPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = resolved.is_some() && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = resolved
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -875,7 +921,8 @@ impl PlacesUi {
     fn history_list(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
         let items = &world.tp_storage.items;
         let filter = self.filter.trim().to_owned();
-        let sections = history_sections(items, &filter, now_secs());
+        let now = now_secs();
+        let sections = history_sections(items, &filter, now, history_offset(self.history_zone, now));
         if sections.is_empty() {
             // no_teleports_msg / no_matched_teleports_msg (the search is not
             // ported yet)
@@ -887,6 +934,7 @@ impl PlacesUi {
             ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).wrap());
             return;
         }
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         for (section, indices) in sections {
             // every section opens while filtering
             let open = !filter.is_empty() || !self.collapsed.contains(&section);
@@ -942,7 +990,9 @@ impl PlacesUi {
                         title: it.title.clone(),
                     });
                 }
-                super::menu::context_menu(&r.response, p, |ui| self.history_item_menu(ui, p, world, actions));
+                if ui.is_rect_visible(r.response.rect) || (popup_open && r.response.context_menu_opened()) {
+                    super::menu::context_menu(&r.response, p, |ui| self.history_item_menu(ui, p, world, actions));
+                }
             }
         }
     }
@@ -971,7 +1021,9 @@ impl PlacesUi {
         {
             actions.push(history_profile(it));
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), some)
+        // LLTeleportHistoryPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = some && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some((_, it)) = &sel
         {
             actions.push(PlacesAction::ShowOnMap(it.global));
@@ -991,8 +1043,9 @@ impl PlacesUi {
     }
 
     /// menu_teleport_history_gear.xml.
-    fn history_gear_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
-        let present: Vec<usize> = history_sections(&world.tp_storage.items, "", now_secs())
+    fn history_gear_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
+        let now = now_secs();
+        let present: Vec<usize> = history_sections(&world.tp_storage.items, "", now, history_offset(self.history_zone, now))
             .into_iter()
             .map(|(s, _)| s)
             .collect();
@@ -1017,6 +1070,7 @@ impl PlacesUi {
             self.collapsed.extend(0..tphistory::history_sections().len());
             self.selected = None;
         }
+        history_zone_menu(ui, p, self.history_zone, actions);
         // FIRE-31025
         if super::menu::item_if(
             ui,
@@ -1079,7 +1133,8 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-map"),
                 aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                map_target.is_some(),
+                // LLTeleportHistoryPanel::updateVerbs: not under @showworldmap
+                map_target.is_some() && super::context::can_show_on_map(world),
                 w,
             )) && let Some(g) = map_target
             {
@@ -1164,7 +1219,8 @@ impl PlacesUi {
                     look,
                     aurora_i18n::tr!("common-map"),
                     aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                    place.global.is_some(),
+                    // LLPanelPlaces::updateVerbs: not under @showworldmap
+                    place.global.is_some() && super::context::can_show_on_map(world),
                 ) && let Some(g) = place.global
                 {
                     actions.push(PlacesAction::ShowOnMap(g));
@@ -1223,6 +1279,14 @@ fn list_row(
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
     widgets::reveal_search_selection(ui, &response, selected);
+    // large Teleport History (#2955): skip paint and text layout off screen
+    if !ui.is_rect_visible(rect) {
+        return RowResponse {
+            response,
+            toggle: false,
+            info: false,
+        };
+    }
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));
@@ -1585,6 +1649,15 @@ mod tests {
         assert!(actions.is_empty());
         assert!(ui.confirm.is_none() && !ui.dont_ask);
 
+        // A checkbox ticked without answering belongs to the session that ended.
+        let mut ui = pending();
+        assert!(answer_confirm(&mut ui, true, &[dont_ask]).is_empty());
+        assert!(ui.dont_ask);
+        ui.forget_question();
+        assert!(ui.confirm.is_none());
+        ui.confirm_landmark(asset, "Landmark".into());
+        assert!(matches!(&answer_confirm(&mut ui, true, &[teleport])[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
+
         // turned off: no question, a history entry too
         let mut ui = pending();
         let actions = answer_confirm(&mut ui, false, &[]);
@@ -1679,32 +1752,63 @@ mod tests {
     }
 
     #[test]
+    fn landmark_links_are_listed_and_filtered_by_the_original_name() {
+        let mut inv = inventory();
+        let id = Uuid::from_u128;
+        let mut link = landmark(300, 20, "Stale link name", 400);
+        link.asset_type = 24;
+        link.asset_id = id(100);
+        inv.items.insert(link.id, link);
+        inv.folders.get_mut(&id(20)).expect("subfolder").items.push(id(300));
+        let rows = landmark_rows(&inv, id(10), "Plage", true, &HashSet::new(), false);
+        assert!(rows.iter().any(|row| row.id == id(20) && row.folder == Some(true)));
+        assert!(rows.iter().any(|row| row.id == id(300) && row.name == "Plage"));
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inv;
+        let ui = PlacesUi {
+            selected: Some(Sel::Item(id(300))),
+            ..Default::default()
+        };
+        let target = ui.selected_landmark(&world).expect("selected link resolves");
+        assert_eq!(target.id, id(100));
+        assert_eq!(target.asset_id, id(1100));
+    }
+
+    #[test]
     fn landmark_tree_sorting_and_folders() {
         let inv = inventory();
         let root = system_folder(&inv, FOLDER_LANDMARKS).expect("landmarks folder");
         let none = HashSet::new();
-        // folders first by name, then the newest landmark first
+        // folders first by name, then the newest landmark first; the
+        // Shopping folder's name is the catalogue's, so the two folders'
+        // order is derived from their names (ショッピング sorts after Vide)
+        let shopping = aurora_i18n::tr!("common-shopping");
+        let shopping_first = crate::natural_order::key(shopping) < crate::natural_order::key("Vide");
+        let folders = |shops: &[&'static str]| -> Vec<&'static str> {
+            let (mut first, mut second) = (shops.to_vec(), vec!["Vide"]);
+            if !shopping_first {
+                std::mem::swap(&mut first, &mut second);
+            }
+            first.into_iter().chain(second).collect()
+        };
         let rows = landmark_rows(&inv, root, "", true, &none, true);
-        assert_eq!(
-            names(&rows),
-            [aurora_i18n::tr!("common-shopping"), "Vide", "Plage", "Musée", "Arbre"]
-        );
-        assert_eq!(rows[0].folder, Some(false));
+        let expected: Vec<&str> = folders(&[shopping]).into_iter().chain(["Plage", "Musée", "Arbre"]).collect();
+        assert_eq!(names(&rows), expected);
+        let shops_row = rows.iter().position(|r| r.name == shopping).expect("the Shopping folder");
+        assert_eq!(rows[shops_row].folder, Some(false));
         // by name, and an opened folder shows its landmarks one level down
         let open: HashSet<Uuid> = [Uuid::from_u128(20)].into();
         let rows = landmark_rows(&inv, root, "", false, &open, true);
-        assert_eq!(
-            names(&rows),
-            [
-                aurora_i18n::tr!("common-shopping"),
-                "Boutique du Loup",
-                "Vide",
-                "Arbre",
-                "Musée",
-                "Plage"
-            ]
-        );
-        assert_eq!(rows[1].depth, 1);
+        let expected: Vec<&str> = folders(&[shopping, "Boutique du Loup"])
+            .into_iter()
+            .chain(["Arbre", "Musée", "Plage"])
+            .collect();
+        assert_eq!(names(&rows), expected);
+        let shop = rows
+            .iter()
+            .position(|r| r.name == "Boutique du Loup")
+            .expect("the opened folder's landmark");
+        assert_eq!(rows[shop].depth, 1);
         // Favorites-style: empty folders are not shown
         let rows = landmark_rows(&inv, root, "", true, &none, false);
         assert_eq!(names(&rows), [aurora_i18n::tr!("common-shopping"), "Plage", "Musée", "Arbre"]);
@@ -1736,9 +1840,9 @@ mod tests {
             item("Matin", now - 2.0 * 3600.0),
             item(aurora_i18n::tr!("common-midday"), now - 60.0),
         ];
-        let s = history_sections(&items, "", now);
+        let s = history_sections(&items, "", now, 0.0);
         assert_eq!(s, vec![(0, vec![4, 3]), (1, vec![2]), (2, vec![1]), (8, vec![0])]);
-        let s = history_sections(&items, "MAT", now);
+        let s = history_sections(&items, "MAT", now, 0.0);
         assert_eq!(s, vec![(0, vec![3])]);
     }
 
@@ -1752,5 +1856,24 @@ mod tests {
         assert_eq!(tab_from_name("reperes"), Some(TAB_LANDMARKS));
         assert_eq!(tab_from_name("historique"), Some(TAB_HISTORY));
         assert_eq!(tab_from_name("autre"), None);
+    }
+
+    /// LLTeleportHistoryPanel::onCopySLURL: under RLVa @showloc the place
+    /// the agent is in copies as "(Hidden region)", it is no longer refused;
+    /// a region the agent is not connected to keeps its address.
+    #[test]
+    fn showloc_copies_the_history_place_here_as_the_hidden_slurl() {
+        let world = crate::world::rlva_location_tests::showloc_world();
+        let here = world.region_name();
+        crate::slurl::set_hidden_regions(world.rlva_slurl_hidden_regions());
+        let global = world.agent_global().expect("arrived");
+        let slurl = slurl_at(&world, global, &format!("Parcel, {here}"));
+        let far = slurl_at(&world, DVec3::new(9_000_000.0, 9_000_000.0, 20.0), "Parcel, Far Away");
+        crate::slurl::set_hidden_regions(None);
+        assert_eq!(
+            slurl.as_deref(),
+            Some(format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region")).as_str())
+        );
+        assert!(far.is_some_and(|s| s.contains("/Far%20Away/")));
     }
 }

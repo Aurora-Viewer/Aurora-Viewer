@@ -1,4 +1,4 @@
-//! Bounded glTF/GLB resources shared by PBR and mesh imports. Material
+//! Validated glTF/GLB resources shared by PBR and mesh imports. Material
 //! extraction follows LLMaterialEditor::loadMaterialFromFile / setFromGltfModel
 //! (Firestorm indra/newview, originally LGPL 2.1).
 
@@ -9,13 +9,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const MAX_BYTES: usize = 256 * 1024 * 1024;
+/// TinyGLTF::GetMaxExternalFileSize, used by LLTinyGLTFHelper::loadModel.
+/// This is per external resource, not the main document or its decoded pixels.
+pub const MAX_EXTERNAL_BYTES: u64 = i32::MAX as u64;
+
+pub fn check_external_size(bytes: u64) -> Result<(), AssetError> {
+    if bytes > MAX_EXTERNAL_BYTES {
+        return Err(AssetError::GltfResourceSize {
+            bytes,
+            limit: MAX_EXTERNAL_BYTES,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct Document {
     pub json: Value,
     pub buffers: Vec<Arc<[u8]>>,
-    mesh: bool,
 }
 #[derive(Debug, Clone)]
 pub enum Image {
@@ -33,19 +44,15 @@ pub struct Material {
 
 impl Document {
     pub fn parse(data: &[u8], mut load: impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Self, AssetError> {
-        Self::parse_inner(data, &mut load, false)
+        Self::parse_inner(data, &mut load)
     }
 
-    /// Mesh imports follow LLGLTFLoader's file acceptance; material-only
-    /// imports keep their existing bounded resource policy.
+    /// Mesh and material imports share the Legacy Viewer's file acceptance.
     pub fn parse_mesh(data: &[u8], mut load: impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Self, AssetError> {
-        Self::parse_inner(data, &mut load, true)
+        Self::parse_inner(data, &mut load)
     }
 
-    fn parse_inner(data: &[u8], load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>, mesh: bool) -> Result<Self, AssetError> {
-        if !mesh && data.len() > MAX_BYTES {
-            return Err(AssetError::TooLarge("glTF"));
-        }
+    fn parse_inner(data: &[u8], load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Self, AssetError> {
         let mut binary = None;
         let json = if data.starts_with(b"glTF") {
             let number = |offset| {
@@ -84,19 +91,13 @@ impl Document {
             return Err(AssetError::Unsupported("glTF version".into()));
         }
         let mut buffers = Vec::new();
-        // A GLB's embedded buffer is already included in the file length.
-        let mut total = data.len();
         let mut resources = HashMap::<String, Arc<[u8]>>::new();
         for (index, buffer) in json["buffers"].as_array().into_iter().flatten().enumerate() {
-            let embedded = index == 0 && buffer.get("uri").is_none() && binary.is_some();
-            if !mesh && buffers.len() >= 4096 {
-                return Err(AssetError::TooLarge("glTF buffers"));
-            }
             let bytes = if let Some(uri) = buffer["uri"].as_str() {
                 if let Some(cached) = resources.get(uri) {
                     cached.clone()
                 } else {
-                    let bytes: Arc<[u8]> = resource(uri, load, mesh)?.into();
+                    let bytes: Arc<[u8]> = resource(uri, load)?.into();
                     resources.insert(uri.into(), bytes.clone());
                     bytes
                 }
@@ -109,13 +110,9 @@ impl Document {
             if expected > bytes.len() as u64 || bytes.len() as u64 > expected + 3 {
                 return Err(AssetError::invalid("buffer length mismatch"));
             }
-            total = total
-                .checked_add(if embedded { 0 } else { bytes.len() })
-                .filter(|n| mesh || *n <= MAX_BYTES)
-                .ok_or(AssetError::TooLarge("glTF resources"))?;
             buffers.push(bytes);
         }
-        Ok(Self { json, buffers, mesh })
+        Ok(Self { json, buffers })
     }
 
     pub fn view(&self, index: usize) -> Result<&[u8], AssetError> {
@@ -143,7 +140,7 @@ impl Document {
             if let Ok(id) = Uuid::parse_str(uri) {
                 return Ok(Image::Existing(id));
             }
-            return Ok(Image::Bytes(resource(uri, &mut load, self.mesh)?));
+            return Ok(Image::Bytes(resource(uri, &mut load)?));
         }
         let index = image["bufferView"]
             .as_u64()
@@ -155,9 +152,6 @@ impl Document {
         let materials = self.json["materials"]
             .as_array()
             .ok_or_else(|| AssetError::invalid("glTF has no materials"))?;
-        if !self.mesh && materials.len() > 4096 {
-            return Err(AssetError::TooLarge("material count"));
-        }
         materials
             .iter()
             .enumerate()
@@ -216,10 +210,10 @@ impl Document {
     }
 }
 
-fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>, mesh: bool) -> Result<Vec<u8>, AssetError> {
+fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Vec<u8>, AssetError> {
     if let Some(data) = uri.strip_prefix("data:") {
         let (header, data) = data.split_once(',').ok_or_else(|| AssetError::invalid("data URI"))?;
-        if !header.ends_with(";base64") || (!mesh && data.len() > MAX_BYTES) {
+        if !header.ends_with(";base64") {
             return Err(AssetError::Unsupported("data URI encoding".into()));
         }
         return base64::engine::general_purpose::STANDARD
@@ -230,15 +224,73 @@ fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError
         return Err(AssetError::Unsupported("remote glTF resource".into()));
     }
     let bytes = load(uri)?;
-    if !mesh && bytes.len() > MAX_BYTES {
-        return Err(AssetError::TooLarge("glTF resource"));
-    }
+    check_external_size(bytes.len() as u64)?;
     Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_glb_can_exceed_256_mib() {
+        let mut json = br#"{"asset":{"version":"2.0"},"materials":[{"name":"Large document"}]}"#.to_vec();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        // Unknown chunks are legal GLB padding and do not allocate decoded
+        // images. Exercise the old whole-file cap without a huge fixture.
+        let padding = 256 * 1024 * 1024;
+        let length = 12 + 8 + json.len() + 8 + padding;
+        let mut glb = Vec::with_capacity(length);
+        glb.extend_from_slice(b"glTF");
+        glb.extend_from_slice(&2u32.to_le_bytes());
+        glb.extend_from_slice(&(length as u32).to_le_bytes());
+        glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        glb.extend_from_slice(&0x4e4f534au32.to_le_bytes());
+        glb.extend_from_slice(&json);
+        glb.extend_from_slice(&(padding as u32).to_le_bytes());
+        glb.extend_from_slice(&0x12345678u32.to_le_bytes());
+        glb.resize(length, 0);
+        let doc = Document::parse(&glb, |_| panic!("no external resource")).expect("large GLB");
+        assert_eq!(doc.materials().unwrap()[0].name, "Large document");
+    }
+
+    #[test]
+    fn material_documents_keep_all_materials_and_shared_buffers_above_4096() {
+        let json = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "materials": vec![serde_json::json!({}); 4097],
+            "buffers": vec![serde_json::json!({"byteLength": 4, "uri": "shared.bin"}); 4097],
+        });
+        let mut reads = 0;
+        let doc = Document::parse(&serde_json::to_vec(&json).unwrap(), |_| {
+            reads += 1;
+            Ok(vec![0; 4])
+        })
+        .expect("all materials and buffers");
+        assert_eq!(doc.materials().unwrap().len(), 4097);
+        assert_eq!(doc.buffers.len(), 4097);
+        assert_eq!(reads, 1);
+        assert!(Arc::ptr_eq(&doc.buffers[0], &doc.buffers[4096]));
+    }
+
+    #[test]
+    fn external_resource_limit_matches_tinygltf_and_reports_both_sizes() {
+        assert!(check_external_size(256 * 1024 * 1024 + 1).is_ok());
+        assert!(check_external_size(i32::MAX as u64).is_ok());
+        let error = check_external_size(i32::MAX as u64 + 1).unwrap_err();
+        assert!(matches!(
+            error,
+            AssetError::GltfResourceSize {
+                bytes: 2147483648,
+                limit: 2147483647
+            }
+        ));
+        assert!(error.to_string().contains("2147483648"));
+        assert!(error.to_string().contains("2147483647"));
+    }
+
     #[test]
     fn multiple_materials_share_image_indices_and_keep_existing_uuid() {
         let data = br#"{"asset":{"version":"2.0"},"images":[{"uri":"local.png"},{"uri":"11111111-2222-3333-4444-555555555555"}],"textures":[{"source":0},{"source":1}],"materials":[{"name":"A","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},{"name":"B","normalTexture":{"index":0},"emissiveTexture":{"index":1},"alphaMode":"MASK"}]}"#;

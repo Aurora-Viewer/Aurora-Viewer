@@ -218,7 +218,9 @@ mod tests {
             let rect = ctx
                 .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("movelock_control", index))))
                 .expect("control rectangle");
-            let pos = rect.center();
+            // The control's own glyph, at its left: a short label (Japanese)
+            // leaves the centre in the gap between the switch and its label.
+            let pos = rect.left_center() + egui::vec2(6.0, 0.0);
             let click = |pressed| egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,

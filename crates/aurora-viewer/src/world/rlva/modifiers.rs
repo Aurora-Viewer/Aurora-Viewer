@@ -111,7 +111,7 @@ impl Rlva {
                     r.behaviour.clone()
                 },
                 option: r.option.clone(),
-                active: Uuid::parse_str(&r.option).is_ok_and(|id| !id.is_nil()) && self.is_exception(&r.behaviour, &r.option),
+                active: super::numeric::uuid_set(&r.option).is_some_and(|id| !id.is_nil()) && self.is_exception(&r.behaviour, &r.option),
             })
             .collect()
     }
@@ -125,8 +125,10 @@ impl Rlva {
             self.rules_for(name, Uuid::nil()).filter_map(|(id, option)| {
                 if option.is_empty() {
                     Some((default, id))
+                } else if super::numeric::uuid_set(option).is_some() {
+                    None
                 } else {
-                    option.parse().ok().map(|value| (value, id))
+                    super::numeric::stof(option).filter(|v| !v.is_nan()).map(|value| (value, id))
                 }
             }),
             false,
@@ -207,7 +209,7 @@ pub fn hide_texture_ids(rows: &mut [(Uuid, String)], ids: impl FnOnce() -> Asset
             if canonical(name) != "setcam_textures" {
                 return None;
             }
-            let id = Uuid::parse_str(option).ok()?;
+            let id = Uuid::parse_str(option).ok().or_else(|| super::numeric::parse_uuid(option))?;
             let option_start = name.len() + 1;
             Some((text, option_start, id))
         })

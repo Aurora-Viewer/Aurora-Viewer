@@ -5,24 +5,120 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+impl CameraSettings {
+    /// While posing with "Keep the camera still while posing" on (Aurora,
+    /// #2477): the camera does not move on its own.
+    pub fn keeps_still(&self, posing: bool) -> bool {
+        posing && self.still_while_posing
+    }
+
+    /// The settings a camera frame uses: while the camera keeps still for
+    /// the poser, the focus tracking, the movement reset, the body-part
+    /// follow and the first-person eye follow are off; otherwise unchanged.
+    pub fn while_posing(&self, posing: bool) -> CameraSettings {
+        let mut s = self.clone();
+        if self.keeps_still(posing) {
+            s.track_focus_object = false;
+            s.reset_on_movement = false;
+            s.third_person_follow_joint = None;
+            s.mouselook_follow_eyes = false;
+        }
+        s
+    }
+}
+
 #[cfg(test)]
 mod first_person_tests {
     use super::*;
+
+    #[test]
+    fn posing_with_the_camera_kept_still_stops_every_automatic_follow() {
+        let chosen = CameraSettings {
+            track_focus_object: true,
+            reset_on_movement: true,
+            mouselook_follow_eyes: true,
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            still_while_posing: true,
+            ..CameraSettings::default()
+        };
+        assert!(chosen.keeps_still(true));
+        let still = chosen.while_posing(true);
+        assert!(!still.track_focus_object && !still.reset_on_movement && !still.mouselook_follow_eyes);
+        assert_eq!(still.third_person_follow_joint, None, "the camera does not follow a posed joint");
+        // not posing, or the option at its default: today's follows stay
+        let default_still = CameraSettings {
+            still_while_posing: false,
+            ..chosen.clone()
+        };
+        assert!(!chosen.keeps_still(false) && !default_still.keeps_still(true));
+        for unchanged in [chosen.while_posing(false), default_still.while_posing(true)] {
+            assert!(unchanged.track_focus_object && unchanged.reset_on_movement && unchanged.mouselook_follow_eyes);
+            assert_eq!(unchanged.third_person_follow_joint, Some(CameraFollowJoint::Head));
+        }
+    }
+
+    #[test]
+    fn the_poser_camera_options_default_to_todays_behaviour_and_keep_a_saved_choice() {
+        // an existing settings file, and a fresh one: no framing, the
+        // camera's own moves while posing as before (#2477)
+        let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
+        for s in [&migrated, &CameraSettings::default()] {
+            assert!(!s.frame_while_posing, "the poser does not frame unless asked");
+            assert!(!s.still_while_posing, "the automatic moves while posing stay as before");
+            assert!(!s.keeps_still(true));
+        }
+        let chosen = CameraSettings {
+            frame_while_posing: true,
+            still_while_posing: true,
+            ..migrated
+        };
+        let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&chosen).unwrap()).unwrap();
+        assert!(loaded.frame_while_posing && loaded.still_while_posing);
+    }
+
+    #[test]
+    fn vr_preferences_ignore_old_view_and_keep_comfort_options() {
+        let defaults: CameraSettings = serde_json::from_str("{}").expect("defaults");
+        assert!(!defaults.vr.mouse_look);
+        assert_eq!(defaults.vr.resolution, None);
+        assert!(serde_json::from_str::<CameraSettings>(r#"{"vr_view":"DesktopCamera"}"#).is_ok());
+        let saved = CameraSettings {
+            vr: VrSettings {
+                mouse_look: true,
+                resolution: Some([2048, 2304]),
+                resolution_custom: true,
+                gamma: 0.8,
+                vibrancy: 1.1,
+            },
+            ..defaults
+        };
+        let document = serde_json::to_value(&saved).expect("saved document");
+        assert_eq!(document["vr_resolution"], serde_json::json!([2048, 2304]));
+        let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&saved).expect("save")).expect("load");
+        assert!(loaded.vr.mouse_look && loaded.vr.resolution_custom);
+        assert_eq!(loaded.vr.resolution, Some([2048, 2304]));
+    }
 
     #[test]
     fn first_person_options_default_off_and_keep_a_saved_choice() {
         let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
         assert!(!migrated.show_avatar_in_mouselook);
         assert!(!migrated.mouselook_follow_eyes);
+        assert_eq!(migrated.third_person_follow_joint, None);
+        assert_eq!(migrated.third_person_follow_intensity, 100);
         let chosen = CameraSettings {
             show_avatar_in_mouselook: true,
             mouselook_follow_eyes: true,
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            third_person_follow_intensity: 75,
             ..migrated
         };
         let saved = serde_json::to_string(&chosen).unwrap();
         let loaded: CameraSettings = serde_json::from_str(&saved).unwrap();
         assert!(loaded.show_avatar_in_mouselook);
         assert!(loaded.mouselook_follow_eyes);
+        assert_eq!(loaded.third_person_follow_joint, Some(CameraFollowJoint::Head));
+        assert_eq!(loaded.third_person_follow_intensity, 75);
     }
 }
 
@@ -191,6 +287,126 @@ impl ViewValues {
     }
 }
 
+/// Skeleton joint available as the anchor for the third-person bone camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CameraFollowJoint {
+    Head,
+    Neck,
+    Chest,
+    Torso,
+    Pelvis,
+    LeftCollar,
+    RightCollar,
+    LeftShoulder,
+    RightShoulder,
+    LeftElbow,
+    RightElbow,
+    LeftWrist,
+    RightWrist,
+    LeftHip,
+    RightHip,
+    LeftKnee,
+    RightKnee,
+    LeftAnkle,
+    RightAnkle,
+    LeftFoot,
+    RightFoot,
+    LeftToe,
+    RightToe,
+}
+
+impl CameraFollowJoint {
+    pub const ALL: [Self; 23] = [
+        Self::Head,
+        Self::Neck,
+        Self::Chest,
+        Self::Torso,
+        Self::Pelvis,
+        Self::LeftCollar,
+        Self::RightCollar,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::LeftElbow,
+        Self::RightElbow,
+        Self::LeftWrist,
+        Self::RightWrist,
+        Self::LeftHip,
+        Self::RightHip,
+        Self::LeftKnee,
+        Self::RightKnee,
+        Self::LeftAnkle,
+        Self::RightAnkle,
+        Self::LeftFoot,
+        Self::RightFoot,
+        Self::LeftToe,
+        Self::RightToe,
+    ];
+
+    pub const fn rig_name(self) -> &'static str {
+        match self {
+            Self::Head => "mHead",
+            Self::Neck => "mNeck",
+            Self::Chest => "mChest",
+            Self::Torso => "mTorso",
+            Self::Pelvis => "mPelvis",
+            Self::LeftCollar => "mCollarLeft",
+            Self::RightCollar => "mCollarRight",
+            Self::LeftShoulder => "mShoulderLeft",
+            Self::RightShoulder => "mShoulderRight",
+            Self::LeftElbow => "mElbowLeft",
+            Self::RightElbow => "mElbowRight",
+            Self::LeftWrist => "mWristLeft",
+            Self::RightWrist => "mWristRight",
+            Self::LeftHip => "mHipLeft",
+            Self::RightHip => "mHipRight",
+            Self::LeftKnee => "mKneeLeft",
+            Self::RightKnee => "mKneeRight",
+            Self::LeftAnkle => "mAnkleLeft",
+            Self::RightAnkle => "mAnkleRight",
+            Self::LeftFoot => "mFootLeft",
+            Self::RightFoot => "mFootRight",
+            Self::LeftToe => "mToeLeft",
+            Self::RightToe => "mToeRight",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Head => aurora_i18n::tr!("ui-options-camera-joint-head"),
+            Self::Neck => aurora_i18n::tr!("ui-options-camera-joint-neck"),
+            Self::Chest => aurora_i18n::tr!("ui-options-camera-joint-chest"),
+            Self::Torso => aurora_i18n::tr!("ui-options-camera-joint-torso"),
+            Self::Pelvis => aurora_i18n::tr!("ui-options-camera-joint-pelvis"),
+            Self::LeftCollar => aurora_i18n::tr!("ui-options-camera-joint-left-collar"),
+            Self::RightCollar => aurora_i18n::tr!("ui-options-camera-joint-right-collar"),
+            Self::LeftShoulder => aurora_i18n::tr!("ui-options-camera-joint-left-shoulder"),
+            Self::RightShoulder => aurora_i18n::tr!("ui-options-camera-joint-right-shoulder"),
+            Self::LeftElbow => aurora_i18n::tr!("ui-options-camera-joint-left-elbow"),
+            Self::RightElbow => aurora_i18n::tr!("ui-options-camera-joint-right-elbow"),
+            Self::LeftWrist => aurora_i18n::tr!("ui-options-camera-joint-left-wrist"),
+            Self::RightWrist => aurora_i18n::tr!("ui-options-camera-joint-right-wrist"),
+            Self::LeftHip => aurora_i18n::tr!("ui-options-camera-joint-left-hip"),
+            Self::RightHip => aurora_i18n::tr!("ui-options-camera-joint-right-hip"),
+            Self::LeftKnee => aurora_i18n::tr!("ui-options-camera-joint-left-knee"),
+            Self::RightKnee => aurora_i18n::tr!("ui-options-camera-joint-right-knee"),
+            Self::LeftAnkle => aurora_i18n::tr!("ui-options-camera-joint-left-ankle"),
+            Self::RightAnkle => aurora_i18n::tr!("ui-options-camera-joint-right-ankle"),
+            Self::LeftFoot => aurora_i18n::tr!("ui-options-camera-joint-left-foot"),
+            Self::RightFoot => aurora_i18n::tr!("ui-options-camera-joint-right-foot"),
+            Self::LeftToe => aurora_i18n::tr!("ui-options-camera-joint-left-toe"),
+            Self::RightToe => aurora_i18n::tr!("ui-options-camera-joint-right-toe"),
+        }
+    }
+
+    pub fn choices() -> [(Option<Self>, &'static str); 24] {
+        let mut choices: [(Option<Self>, &'static str); 24] = [(None, aurora_i18n::tr!("common-disabled")); 24];
+        for (choice, joint) in choices[1..].iter_mut().zip(Self::ALL) {
+            *choice = (Some(joint), joint.label());
+        }
+        choices
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
@@ -218,6 +434,15 @@ pub struct CameraSettings {
     pub disable_wheel_zoom: bool,
     /// ClickOnAvatarKeepsCamera.
     pub click_avatar_keeps_camera: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477; its poser, FSFloaterPoser,
+    /// never moves the camera): opening the poser frames the avatar, and a
+    /// click that selects a joint frames that joint. Off by default.
+    pub frame_while_posing: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477): while a pose is edited the
+    /// camera stops moving on its own (focus tracking, the reset on
+    /// movement, the body-part and eye follows). Off by default: those moves
+    /// stay as in the Legacy Viewer.
+    pub still_while_posing: bool,
     /// FSResetCameraOnMovement.
     pub reset_on_movement: bool,
     /// FSResetCameraOnTP.
@@ -234,6 +459,10 @@ pub struct CameraSettings {
     pub show_avatar_in_mouselook: bool,
     /// Optional animated eye position; mouse aim never follows head rotation.
     pub mouselook_follow_eyes: bool,
+    /// Move the third-person avatar camera and focus with this animated joint.
+    pub third_person_follow_joint: Option<CameraFollowJoint>,
+    /// Strength of the selected joint's translation, in percent (100 = full).
+    pub third_person_follow_intensity: u16,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
     /// The angle of the right-button zoom in mouselook, remembered from one
@@ -245,28 +474,61 @@ pub struct CameraSettings {
     pub mouselook_alt_right_menu: bool,
     /// FSShowMouselookInstructions: "Press Esc to return to world view".
     pub show_mouselook_instructions: bool,
+    /// FSMouselookCombatFeatures (off): the name and distance of the avatar
+    /// ahead under the crosshair; ExodusMouselookIFF (off): arrows toward
+    /// the avatars out of view within ExodusMouselookIFFRange (380 m)
+    /// (`ui::mouselook_combat`).
+    pub mouselook_combat: bool,
+    pub mouselook_iff: bool,
+    pub mouselook_iff_range: f32,
     /// FSShowInterfaceInMouselook (FIRE-8868, off): the bars stay in
     /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
     /// the chat bar only shows with text in it.
     pub show_interface_in_mouselook: bool,
-    /// Where the headset view starts when VR is entered (Aurora-specific).
-    pub vr_view: VrView,
-    /// Set up VR at each start (Preferences › Camera › VR), so the VR
-    /// button enters it at once. Off by default: loading a VR runtime at
-    /// every start crashed PCs that never use VR (#2309); the first
-    /// "Restart in VR" turns it on.
     pub vr_at_start: bool,
+    /// Kept flat in the saved file for compatibility with earlier VR builds.
+    #[serde(flatten)]
+    pub vr: VrSettings,
 }
 
-/// Where the headset view starts on VR entry (Preferences › Camera › VR).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VrSettings {
+    #[serde(rename = "vr_mouse_look")]
+    pub mouse_look: bool,
+    #[serde(rename = "vr_resolution")]
+    pub resolution: Option<[u32; 2]>,
+    #[serde(rename = "vr_resolution_custom")]
+    pub resolution_custom: bool,
+    #[serde(rename = "vr_gamma")]
+    pub gamma: f32,
+    #[serde(rename = "vr_vibrancy")]
+    pub vibrancy: f32,
+}
+
+impl Default for VrSettings {
+    fn default() -> Self {
+        Self {
+            mouse_look: false,
+            resolution: None,
+            resolution_custom: false,
+            gamma: 1.0,
+            vibrancy: 1.0,
+        }
+    }
+}
+
+/// Headset camera mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum VrView {
     /// At the avatar's eyes, as in mouselook: the head and what is worn on
     /// it are hidden the same way.
     #[default]
     FirstPerson,
-    /// Where the desktop camera was when VR was entered.
-    DesktopCamera,
+    /// Native avatar orbit, pan and target travel with level headset viewing
+    /// and translation-only automatic framing.
+    Avatar,
+    Flycam,
 }
 
 impl Default for CameraSettings {
@@ -290,6 +552,8 @@ impl Default for CameraSettings {
             ignore_sim_constraints: false,
             disable_wheel_zoom: false,
             click_avatar_keeps_camera: false,
+            frame_while_posing: false,
+            still_while_posing: false,
             reset_on_movement: true,
             reset_on_teleport: true,
             reset_view_turns_avatar: false,
@@ -298,14 +562,19 @@ impl Default for CameraSettings {
             enable_mouselook: true,
             show_avatar_in_mouselook: false,
             mouselook_follow_eyes: false,
+            third_person_follow_joint: None,
+            third_person_follow_intensity: 100,
             wheel_exits_mouselook: true,
             // no zoom until the wheel is turned once while the button is held
             mouselook_zoom_fov: None,
             mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
+            mouselook_combat: false,
+            mouselook_iff: false,
+            mouselook_iff_range: 380.0,
             show_interface_in_mouselook: false,
-            vr_view: VrView::FirstPerson,
             vr_at_start: false,
+            vr: VrSettings::default(),
         }
     }
 }
@@ -444,6 +713,7 @@ impl CameraSettings {
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
+        self.mouselook_iff_range = fix(self.mouselook_iff_range, 0.0, 500.0, d.mouselook_iff_range);
         self
     }
 }

@@ -37,19 +37,22 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!("demo double click: {action:?} at {point:?}");
         }
-        // LLToolPie::walkToClickedLocation / teleportToClickedLocation: under
-        // RLVa a point that a local teleport may not reach (@tplocal, @sittp,
-        // @unsit while seated) is refused, walking there included
         let global = self
             .world
             .main_origin()
             .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
-        if action != DoubleClick::Nothing && global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
-            self.world.system_notice(
-                aurora_i18n::tr!("rlva-blocked-autopilot"),
-                crate::world::notice_topics::Topic::Warning,
-            );
-            return;
+        match self.world.rlva_double_click(global) {
+            crate::world::rlva::DoubleClickRlva::Go => {}
+            crate::world::rlva::DoubleClickRlva::Ignored => return,
+            crate::world::rlva::DoubleClickRlva::Blocked => {
+                if action != DoubleClick::Nothing {
+                    self.world.system_notice(
+                        aurora_i18n::tr!("rlva-blocked-autopilot"),
+                        crate::world::notice_topics::Topic::Warning,
+                    );
+                }
+                return;
+            }
         }
         match action {
             DoubleClick::Nothing => {}
@@ -106,7 +109,7 @@ impl App {
 
     /// walkToClickedLocation: not while flying or manually sitting. Our own
     /// idle anchor releases before the walk and does not cancel its handover.
-    fn walk_to(&mut self, point: Vec3, run: bool) {
+    pub(super) fn walk_to(&mut self, point: Vec3, run: bool) {
         let agent = &self.world.agent;
         if agent.flying || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) || !point.is_finite() {
             return;
@@ -378,7 +381,7 @@ impl App {
             self.input.nudge_fb = step.flags & control::FAST_AT == 0;
             self.input.up |= step.flags & control::UP_POS != 0;
             self.input.down |= step.flags & control::UP_NEG != 0;
-            self.input.run |= run;
+            self.input.run |= run && !self.world.rlva.has("temprun");
         }
     }
 

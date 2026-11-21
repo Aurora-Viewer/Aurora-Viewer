@@ -60,7 +60,12 @@ impl World {
         let index = self.worn_attachment(&item).or_else(|| self.objects.index_of_uuid(&item))?;
         let object = self.objects.get(index)?;
         let parent = self.objects.parent_of(object).and_then(|i| self.objects.get(i))?;
-        if object.is_avatar() || object.attachment_point() == 0 || !parent.is_avatar() || parent.full_id != self.agent_id {
+        if object.is_avatar()
+            || object.is_client_preview()
+            || object.attachment_point() == 0
+            || !parent.is_avatar()
+            || parent.full_id != self.agent_id
+        {
             return None;
         }
         Some(NetCommand::DetachObject {
@@ -823,6 +828,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n".to_owned(),
         };
@@ -1032,6 +1038,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.to_owned(),
         }));

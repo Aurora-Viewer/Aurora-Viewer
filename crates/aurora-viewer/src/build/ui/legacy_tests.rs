@@ -78,6 +78,7 @@ fn legacy_build_tabs_reuse_native_panels_and_ignore_hidden_aurora_sections() {
     for label in [
         aurora_i18n::tr!("rez-under-land-group"),
         aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        aurora_i18n::tr!("build-wheel-on-hover"),
     ] {
         assert!(
             texts.iter().any(|(text, _)| text == label),
@@ -141,6 +142,31 @@ fn legacy_build_radios_and_tool_buttons_follow_native_transitions() {
         !inspector.settings.edit_linked,
         "Align must use the native whole-linkset transition"
     );
+}
+
+/// #3648: the block above the tabs grew with the window's width, so a wide
+/// window pushed the tabs down and left their panel 30 points.
+#[test]
+fn legacy_build_tabs_keep_their_place_and_height_when_the_window_widens() {
+    let mut inspector = legacy();
+    let label = aurora_i18n::tr!("build-compact-general");
+    let mut measure = |width: f32| {
+        let (window, texts) = resize_inspector(&mut inspector, vec2(width, 820.0));
+        let tab = texts.iter().find(|(text, _)| text == label).unwrap().1;
+        let collapse = inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-collapse")))
+            .unwrap();
+        (tab.top() - window.top(), collapse.top() - tab.bottom())
+    };
+    let (narrow_top, narrow_body) = measure(400.0);
+    let (wide_top, wide_body) = measure(700.0);
+    let (wider_top, wider_body) = measure(1100.0);
+    assert!((wide_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wide_top}");
+    assert!((wide_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wide_body}");
+    assert!((wider_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wider_top}");
+    assert!((wider_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wider_body}");
+    assert!(narrow_body > 300.0, "the tabs keep their room: {narrow_body}");
 }
 
 #[test]
@@ -488,8 +514,15 @@ fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
 
 fn scroll_shape(inspector: &mut Inspector, delta: f32) {
     let (window, _) = inspector.show(vec![]);
+    // A wheel over a number field steps that field. The reserved scrollbar
+    // strip is beside the columns, and it stays clear while the content moves.
+    let at = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-scroll")))
+        .map(|content| egui::pos2(content.right() + 4.0, content.center().y))
+        .unwrap_or(egui::pos2(window.right() - 16.0, window.bottom() - 80.0));
     inspector.show(vec![
-        egui::Event::PointerMoved(egui::pos2(window.center().x, window.bottom() - 80.0)),
+        egui::Event::PointerMoved(at),
         egui::Event::MouseWheel {
             phase: egui::TouchPhase::Move,
             source: egui::MouseWheelSource::Wheel,
@@ -655,19 +688,13 @@ fn section_point(inspector: &Inspector, texts: &[(String, egui::Rect)], item: cr
 
 /// LLTabContainer::handleDragAndDrop with open_tabs_on_drag_and_drop: a rest
 /// on a hidden tab opens it; a pass, a rest that leaves, and a hover with no
-/// drag do not. Both presentations.
+/// drag do not. The Legacy tab strip. Aurora's rail opens from
+/// `drag_navigation::tab_held_over` (0.2 s) and is not this timer.
 #[test]
 fn an_inventory_drag_resting_on_a_build_tab_opens_it() {
-    for legacy_window in [false, true] {
-        let mut inspector = if legacy_window {
-            legacy()
-        } else {
-            let mut inspector = Inspector::new();
-            inspector.tool.tab = 6;
-            inspector.screen.y = 1400.0;
-            resize_inspector(&mut inspector, vec2(400.0, 1100.0));
-            inspector
-        };
+    let legacy_window = true;
+    {
+        let mut inspector = legacy();
         let (window, texts) = inspector.show(vec![]);
         let contents = section_point(
             &inspector,
@@ -680,17 +707,6 @@ fn an_inventory_drag_resting_on_a_build_tab_opens_it() {
         assert_eq!(inspector.tool.tab, 6, "legacy={legacy_window}: no drag");
 
         crate::ui::inventory::drag::demo_carry(&inspector.ctx, vec![uuid::Uuid::from_u128(1)]);
-        if !legacy_window {
-            let camera = section_point(
-                &inspector,
-                &texts,
-                crate::build::layout::Item::Camera,
-                aurora_i18n::tr!("build-compact-camera"),
-            );
-            hover_at(&mut inspector, camera, 40);
-            assert_eq!(inspector.tool.tool, Tool::Edit, "a tool button is not a tab");
-            assert_eq!(inspector.tool.tab, 6, "a tool button is not a tab");
-        }
         hover_at(&mut inspector, contents, 20);
         assert_eq!(inspector.tool.tab, 6, "legacy={legacy_window}: a passing drag");
         hover_at(&mut inspector, elsewhere, 40);
@@ -704,4 +720,48 @@ fn an_inventory_drag_resting_on_a_build_tab_opens_it() {
             "legacy={legacy_window}: Contents is showing"
         );
     }
+}
+
+#[test]
+fn legacy_texture_blinn_phong_keeps_rows_apart_at_large_text_size() {
+    let mut inspector = legacy();
+    crate::theme::Theme::default().apply(&inspector.ctx, 1.75);
+    crate::ui::fonts::apply(&inspector.ctx, crate::ui::fonts::DEFAULT);
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    inspector.screen = vec2(1600.0, 1400.0);
+    // Keep the normal Legacy width. Height is only enough to show the scaled
+    // Blinn-Phong canvas at 1.75×; the floater min_size itself does not grow.
+    let min = crate::build::ui::legacy::MIN_SIZE;
+    resize_inspector(&mut inspector, vec2(min.x, 900.0));
+    let (_, texts) = inspector.show(vec![]);
+    let glossiness = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-legacy-glossiness"))
+        .expect("Glossiness stays reachable at 1.75× text size")
+        .1;
+    let channel = [
+        aurora_i18n::tr!("build-ui-texture-diffuse"),
+        aurora_i18n::tr!("build-ui-texture-normal"),
+        aurora_i18n::tr!("build-ui-texture-specular"),
+    ]
+    .map(|label| {
+        texts
+            .iter()
+            .rev()
+            .find(|(text, rect)| *text == label && rect.top() >= glossiness.bottom() - 1.0)
+            .unwrap_or_else(|| panic!("{label} channel tab must sit below Glossiness"))
+            .1
+    });
+    assert!(
+        channel.windows(2).all(|pair| (pair[0].top() - pair[1].top()).abs() < 2.0),
+        "UV channel tabs stay on one row below the Blinn-Phong properties"
+    );
+    let maps = ["Diffuse", "Normal", "Specular"].map(|target| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", target.to_string()))))
+            .unwrap()
+    });
+    assert!(maps.windows(2).all(|pair| pair[0].bottom() <= pair[1].top() + 1.0));
 }

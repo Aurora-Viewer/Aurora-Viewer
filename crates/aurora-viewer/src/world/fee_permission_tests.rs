@@ -232,6 +232,18 @@ fn a_question_to_take_money_warns_and_its_answer_is_told_in_the_chat() {
 }
 
 #[test]
+fn closing_a_caution_permission_sends_nothing_and_adds_no_chat_line() {
+    let mut world = world();
+    world.apply(question(0x7201, 0x2));
+    let id = world.notifications.list.last().expect("permission question").id;
+    let lines = world.chat.len();
+    let (cmds, url) = world.respond_notification(id, Response::Dismiss);
+    assert!(cmds.is_empty() && url.is_none());
+    assert_eq!(world.chat.len(), lines);
+    assert!(!world.notifications.list.iter().any(|n| n.id == id));
+}
+
+#[test]
 fn an_ordinary_question_keeps_its_wording_and_tells_nothing() {
     let mut world = world();
     world.apply(question(0x7300, 0x10));
@@ -283,6 +295,43 @@ fn a_menu_of_a_blocked_owner_is_dropped_even_when_its_object_is_unknown() {
     assert_eq!(world.notifications.list.len(), count + 1);
     world.apply(menu(0x4D03, Uuid::from_u128(0x0BE)));
     assert_eq!(world.notifications.list.len(), count + 2);
+}
+
+/// A permission question follows the block rule of script dialogs: the
+/// object blocked by id or by name, or its owner blocked when the scene
+/// knows the object.
+#[test]
+fn a_question_follows_the_block_rule_of_script_dialogs() {
+    let mut world = world();
+    let (handle, mut object) = crate::demo::events()
+        .into_iter()
+        .find_map(|event| match event {
+            NetEvent::ObjectUpdates { handle, mut objects } => objects.pop().map(|o| (handle, o)),
+            _ => None,
+        })
+        .expect("a demo object");
+    object.owner_id = JANE;
+    object.full_id = Uuid::from_u128(0x5100);
+    world.objects.upsert(handle, object);
+    let count = world.notifications.list.len();
+    // nothing blocked: the question shows
+    world.apply(question(0x5100, 0x10));
+    assert_eq!(world.notifications.list.len(), count + 1);
+    // its owner blocked: the question of her object in the scene is dropped
+    world.block(JANE, "Jane Doe", MuteType::Agent).expect("blocked");
+    world.apply(question(0x5100, 0x10));
+    assert_eq!(world.notifications.list.len(), count + 1, "blocked owner");
+    // an object the scene does not know keeps its question (its owner is
+    // not in the message)
+    world.apply(question(0x5200, 0x10));
+    assert_eq!(world.notifications.list.len(), count + 2);
+    // the object blocked by id, then by name
+    world.block(Uuid::from_u128(0x5300), "Vendor", MuteType::Object).expect("blocked");
+    world.apply(question(0x5300, 0x10));
+    assert_eq!(world.notifications.list.len(), count + 2, "blocked object");
+    world.block(Uuid::nil(), "Tip jar", MuteType::ByName).expect("blocked");
+    world.apply(question(0x5400, 0x10));
+    assert_eq!(world.notifications.list.len(), count + 2, "blocked by name");
 }
 
 #[test]

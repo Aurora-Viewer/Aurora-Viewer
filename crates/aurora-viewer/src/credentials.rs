@@ -1,7 +1,9 @@
 //! Remembered login password, like Firestorm's "Remember password": only the
 //! `$1$` + md5 form the login sends is kept (never the password itself), in
-//! the system credential store (Windows Credential Manager, protected by the
-//! user's session) instead of Firestorm's bin_conf.dat file.
+//! the system credential store (Windows Credential Manager, the macOS
+//! keychain, the Secret Service on Linux, each protected by the user's
+//! session) instead of the Legacy Viewer's bin_conf.dat file. With no store
+//! at hand nothing is kept: there is no fallback file.
 
 const SERVICE: &str = "Aurora Viewer";
 const MFA_SERVICE: &str = "Aurora Viewer MFA";
@@ -182,15 +184,30 @@ pub fn load(grid: &str, username: &str) -> Option<String> {
     }
 }
 
-pub fn store(grid: &str, username: &str, hash: &str) {
+/// Keep `hash` for this user on this grid; false when it was not kept (Linux
+/// without a running Secret Service, a refused write).
+#[must_use]
+pub fn store(grid: &str, username: &str, hash: &str) -> bool {
     if !is_hash(hash) {
-        return;
+        return false;
     }
-    if let Some(e) = entry(grid, username)
-        && let Err(err) = e.set_password(hash)
-    {
-        log::warn!("password not remembered: {err}");
+    let Some(e) = entry(grid, username) else {
+        return false;
+    };
+    match e.set_password(hash) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("password not remembered: {err}");
+            false
+        }
     }
+}
+
+/// Whether "Remember password" stays on after a login: a password that was
+/// typed must have reached the store, or the account would claim a password
+/// it does not have; the one read back from the store is already there.
+pub fn stays_remembered(typed: bool, stored: impl FnOnce() -> bool) -> bool {
+    !typed || stored()
 }
 
 pub fn forget(grid: &str, username: &str) {
@@ -198,6 +215,93 @@ pub fn forget(grid: &str, username: &str) {
         match e.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(err) => log::warn!("remembered password not removed: {err}"),
+        }
+    }
+}
+
+/// The SOCKS 5 proxy's user name and password (Preferences › Network ›
+/// Proxy), like the Legacy Viewer's "SOCKS5" credential of LLSecAPI
+/// (LLFloaterPreferenceProxy::onBtnOk): one entry of the credential store,
+/// never the settings file, the log or a report. With no store at hand
+/// nothing is kept, and the login says the credentials are missing.
+const PROXY_SERVICE: &str = "Aurora Viewer Proxy";
+const PROXY_ACCOUNT: &str = "SOCKS5";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ProxySecret {
+    username: String,
+    password: String,
+}
+
+/// The proxy credential's entry, as (service, account), for the removal
+/// from this computer.
+pub fn proxy_store_entry() -> (&'static str, &'static str) {
+    (PROXY_SERVICE, PROXY_ACCOUNT)
+}
+
+fn proxy_entry() -> Option<keyring::Entry> {
+    if aurora_updater::test_environment().is_some() {
+        return None;
+    }
+    keyring::Entry::new(PROXY_SERVICE, PROXY_ACCOUNT)
+        .map_err(|_| log::warn!("credential store unavailable for the proxy"))
+        .ok()
+}
+
+fn proxy_secret() -> Option<ProxySecret> {
+    match proxy_entry()?.get_password() {
+        Ok(value) if value.len() <= 4 * 1024 => serde_json::from_str(&value).ok(),
+        Ok(_) | Err(keyring::Error::NoEntry) => None,
+        Err(_) => {
+            log::warn!("proxy credentials unreadable");
+            None
+        }
+    }
+}
+
+/// The saved proxy credentials, checked (1 to 255 bytes each).
+pub fn load_proxy() -> Option<aurora_proxy::Credentials> {
+    let secret = proxy_secret()?;
+    aurora_proxy::Credentials::new(secret.username, secret.password).ok()
+}
+
+/// The saved user name alone, for the Preferences (the password is never
+/// read back into the window).
+pub fn proxy_username() -> Option<String> {
+    proxy_secret().map(|secret| secret.username)
+}
+
+/// Keeps the proxy credentials; false when they are invalid or the store
+/// refused them.
+#[must_use]
+pub fn store_proxy(username: &str, password: &str) -> bool {
+    if aurora_proxy::Credentials::new(username.to_owned(), password.to_owned()).is_err() {
+        return false;
+    }
+    let Some(entry) = proxy_entry() else {
+        return false;
+    };
+    let Ok(value) = serde_json::to_string(&ProxySecret {
+        username: username.to_owned(),
+        password: password.to_owned(),
+    }) else {
+        return false;
+    };
+    match entry.set_password(&value) {
+        Ok(()) => true,
+        Err(_) => {
+            log::warn!("proxy credentials not saved");
+            false
+        }
+    }
+}
+
+/// Removes them (authentication back to none, as onBtnOk does).
+pub fn forget_proxy() {
+    if let Some(entry) = proxy_entry() {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(_) => log::warn!("proxy credentials not removed"),
         }
     }
 }
@@ -268,6 +372,14 @@ mod tests {
         assert_eq!(account(" Second Life ", " Prenom.Nom "), "Second Life|prenom.nom");
     }
 
+    #[test]
+    fn a_failed_save_turns_remember_password_off() {
+        assert!(stays_remembered(true, || true));
+        assert!(!stays_remembered(true, || false));
+        // Logging in with the stored hash saves nothing, and cannot fail.
+        assert!(stays_remembered(false, || panic!("nothing to save")));
+    }
+
     /// Real round trip through the system store (run by hand:
     /// `cargo test -p aurora-viewer credentials -- --ignored`).
     #[test]
@@ -275,7 +387,7 @@ mod tests {
     fn store_round_trip() {
         let (grid, user) = ("test-grid", "aurora-selftest");
         let h = "$1$00000000000000000000000000000000";
-        store(grid, user, h);
+        assert!(store(grid, user, h));
         assert_eq!(load(grid, user).as_deref(), Some(h));
         forget(grid, user);
         assert_eq!(load(grid, user), None);

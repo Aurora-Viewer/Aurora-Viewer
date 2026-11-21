@@ -9,6 +9,7 @@
 //! `profile`; what the photo shows is chosen by `isolate`; the window is
 //! `ui::snapshot`, the frames `app::snapshot`.
 
+pub mod capture_360;
 pub mod gallery;
 pub mod inventory;
 pub mod isolate;
@@ -223,6 +224,17 @@ pub struct Settings {
     /// The interface drawn on the photo (only with the window's proportions).
     pub interface: bool,
     pub huds: bool,
+    /// "Look at camera": while the photo window is open, our avatar's head
+    /// and eyes follow the camera (`app::photo_gaze`). Aurora's own, off.
+    pub look_at_camera: bool,
+    /// "Look intensity" (%): how far the head turns to the camera under
+    /// "Look at camera"; the eyes do the rest. 100 faces it, about 50 a
+    /// three-quarter turn, 0 a side glance of the eyes alone.
+    pub look_intensity: u8,
+    /// "Others look at camera": while the photo window is open, the nearby
+    /// avatars whose owners accepted our posing request look at the
+    /// camera too, on our viewer only (`app::photo_gaze`). Off.
+    pub look_at_camera_others: bool,
     /// The preview follows the camera.
     pub auto_refresh: bool,
     /// Date and time in the file name.
@@ -266,6 +278,22 @@ pub struct Settings {
     /// The settings of Aurora's looks by id (`knobs`), kept when a look is
     /// taken out.
     pub look_settings: std::collections::BTreeMap<String, Vec<f32>>,
+    /// The 360° snapshot window's (`capture_360`).
+    pub capture_360: capture_360::Settings,
+}
+
+/// The "Look intensity" steps of the viewfinder's quick menu, from full to
+/// a glance (%); a click takes the next one.
+pub const LOOK_INTENSITY_STEPS: [u8; 5] = [100, 75, 50, 25, 0];
+
+/// The step after `percent`: a value between steps goes to the next lower
+/// one, and after 0 back to 100.
+pub fn next_look_intensity(percent: u8) -> u8 {
+    LOOK_INTENSITY_STEPS
+        .iter()
+        .copied()
+        .find(|&s| s < percent)
+        .unwrap_or(LOOK_INTENSITY_STEPS[0])
 }
 
 impl Default for Settings {
@@ -280,6 +308,9 @@ impl Default for Settings {
             jpeg_quality: 75,
             interface: false,
             huds: false,
+            look_at_camera: false,
+            look_intensity: 100,
+            look_at_camera_others: false,
             auto_refresh: false,
             timestamp_names: true,
             folder: None,
@@ -298,6 +329,7 @@ impl Default for Settings {
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),
+            capture_360: Default::default(),
         }
     }
 }
@@ -307,6 +339,7 @@ impl Settings {
     pub fn sanitize(&mut self) {
         self.custom = [clamp_side(self.custom[0]), clamp_side(self.custom[1])];
         self.jpeg_quality = self.jpeg_quality.min(100);
+        self.look_intensity = self.look_intensity.min(100);
         if self.base_name.trim().is_empty() {
             self.base_name = "Snapshot".into();
         }
@@ -910,8 +943,9 @@ pub fn local_stamp() -> String {
     format!("{y:04}-{mo:02}-{d:02}_{h:02}{mi:02}{s:02}")
 }
 
+/// The local date and time: year, month, day, hour, minute, second.
 #[cfg(windows)]
-fn local_time() -> (u16, u16, u16, u16, u16, u16) {
+pub(crate) fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;
     // SAFETY: GetLocalTime only fills the structure it is given.
     let t = unsafe {
@@ -922,8 +956,9 @@ fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     (t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
 }
 
+/// The local date and time: year, month, day, hour, minute, second.
 #[cfg(not(windows))]
-fn local_time() -> (u16, u16, u16, u16, u16, u16) {
+pub(crate) fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     // the TZ variable, else the system zone (/etc/localtime)
     civil(&chrono::Local::now())
 }
