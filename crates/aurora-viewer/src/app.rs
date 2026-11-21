@@ -21010,12 +21010,15 @@ impl App {
                             self.settings.tp_history_zone = zone;
                             self.settings.save();
                         }
-                        PlacesAction::SetLegacyHistoryAutomatic(automatic) => self.world.tp_storage.set_import_automatic(automatic),
                         PlacesAction::ImportLegacyHistory => self.world.start_legacy_history_import(None, true),
-                        PlacesAction::ChooseLegacyHistoryFolder => self.choose_folder(
-                            ui::options::Folder::LegacyTeleports(self.world.agent_id),
-                            ui::options::FolderChoice::Pick,
-                        ),
+                        PlacesAction::ChooseLegacyHistoryFolder => {
+                            if self.world.legacy_history_available() {
+                                self.choose_folder(
+                                    ui::options::Folder::LegacyTeleports(self.world.agent_id),
+                                    ui::options::FolderChoice::Pick,
+                                );
+                            }
+                        }
                     }
                 }
                 // "Search"
@@ -22343,6 +22346,7 @@ impl ApplicationHandler for App {
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
+                self.places_ui.demo_import_menu = demo_tab == "history" && demo_how.split(',').any(|w| w == "import-menu");
                 self.places_ui.demo_zone = demo_how.split(',').find_map(|w| match w {
                     "utc" => Some(crate::settings::HistoryZone::Utc),
                     "local" => Some(crate::settings::HistoryZone::Local),

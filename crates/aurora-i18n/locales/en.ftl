@@ -16003,7 +16003,6 @@ phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours com
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
 
-ui-places-legacy-history-at-login = Import Legacy Viewer visits at login
 ui-places-legacy-history-import = Import from detected Legacy Viewers
 ui-places-legacy-history-folder = Choose Legacy Viewer folder…
 ui-places-legacy-history-not-found = No matching teleport history was found. Choose the viewer's data folder or this account's folder inside it.

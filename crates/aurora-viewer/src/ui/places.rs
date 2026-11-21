@@ -106,7 +106,6 @@ pub enum PlacesAction {
     Sort(model::PlacesSort),
     /// The history's time zone (FSTPHistoryTZ).
     HistoryZone(HistoryZone),
-    SetLegacyHistoryAutomatic(bool),
     ImportLegacyHistory,
     ChooseLegacyHistoryFolder,
 }
@@ -293,21 +292,11 @@ fn history_zone_menu(ui: &mut egui::Ui, p: &Palette, zone: HistoryZone, actions:
     });
 }
 
-fn legacy_history_menu(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
-    if !world.legacy_history_available() {
+fn legacy_history_menu(ui: &mut egui::Ui, p: &Palette, world: &World, demo_import_menu: bool, actions: &mut Vec<PlacesAction>) {
+    if !demo_import_menu && !world.legacy_history_available() {
         return;
     }
     super::menu::separator(ui, p);
-    let mut automatic = world.tp_storage.import_automatic();
-    if super::menu::toggle(
-        ui,
-        p,
-        "history",
-        aurora_i18n::tr!("ui-places-legacy-history-at-login"),
-        &mut automatic,
-    ) {
-        actions.push(PlacesAction::SetLegacyHistoryAutomatic(automatic));
-    }
     let ready = !world.tp_storage.import_busy();
     if super::menu::item_if(ui, p, "download", aurora_i18n::tr!("ui-places-legacy-history-import"), ready) {
         actions.push(PlacesAction::ImportLegacyHistory);
@@ -356,6 +345,8 @@ pub struct PlacesUi {
     /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
     /// whatever Preferences › Aurora › Places says (not saved).
     pub demo_classic: bool,
+    /// In the offline demo, show the import menu without looking for real histories.
+    pub demo_import_menu: bool,
 }
 
 impl PlacesUi {
@@ -565,7 +556,7 @@ impl PlacesUi {
             widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-places-show-options"), |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);
-                    legacy_history_menu(ui, p, world, actions);
+                    legacy_history_menu(ui, p, world, self.demo_import_menu, actions);
                 } else {
                     self.landmark_gear_menu(ui, p, world, by_date, actions);
                 }

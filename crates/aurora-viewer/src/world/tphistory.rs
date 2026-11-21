@@ -323,7 +323,8 @@ impl HistoryItem {
 
 #[derive(Debug, Default, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 struct ImportPolicy {
-    automatic: bool,
+    #[serde(default)]
+    initial_import_checked: bool,
     cleared_through: Option<f64>,
     removed: BTreeSet<[u8; 32]>,
 }
@@ -445,7 +446,7 @@ impl HistoryStorage {
     ) {
         // The destination is keyed by account UUID, not grid. Aditi can
         // share a UUID with Agni, and custom grid folder labels are ambiguous.
-        if account.grid != "agni" || !self.import_available() || self.import_busy() || (!manual && !self.import_automatic()) {
+        if account.grid != "agni" || !self.import_available() || self.import_busy() || (!manual && !self.check_initial_import()) {
             return;
         }
         let (sender, receiver) = crossbeam_channel::bounded(1);
@@ -465,18 +466,19 @@ impl HistoryStorage {
         self.legacy_history.is_some()
     }
 
-    pub fn import_automatic(&self) -> bool {
-        self.import_policy.as_ref().is_some_and(|p| p.automatic)
-    }
-
-    pub fn set_import_automatic(&mut self, automatic: bool) {
-        if let Some(policy) = &mut self.import_policy {
-            Arc::make_mut(policy).automatic = automatic;
-            if !automatic && self.legacy_history.as_ref().is_some_and(|(_, manual)| !manual) {
-                self.legacy_history = None;
-            }
-            self.save();
+    fn check_initial_import(&mut self) -> bool {
+        let Some(policy) = &mut self.import_policy else {
+            return false;
+        };
+        if policy.initial_import_checked {
+            return false;
         }
+        let empty = self.items.is_empty() && self.kept.is_empty() && policy.removed.is_empty() && policy.cleared_through.is_none();
+        // Record the choice even when the history already exists or no
+        // source is found. Later logins never re-seed a history.
+        Arc::make_mut(policy).initial_import_checked = true;
+        self.save();
+        empty
     }
 
     pub fn poll_legacy_import(&mut self) -> Option<LegacyImportReport> {
@@ -1316,12 +1318,6 @@ mod tests {
         }
 
         history.start_legacy_import(account.clone(), apps.to_vec(), None, false);
-        assert!(!history.import_busy(), "automatic import is opt-in");
-        history.set_import_automatic(true);
-        history.flush();
-        let mut history = HistoryStorage::load(path.clone());
-        assert!(history.import_automatic());
-        history.start_legacy_import(account.clone(), apps.to_vec(), None, false);
         // Wait for the worker while retaining its result for the normal poll.
         let visits = history
             .legacy_history
@@ -1336,9 +1332,11 @@ mod tests {
         let report = history.poll_legacy_import().unwrap();
         assert!(report.changed && !report.manual);
         history.flush();
-        let reloaded = HistoryStorage::load(path);
+        let mut reloaded = HistoryStorage::load(path);
         let titles: Vec<_> = reloaded.items.iter().map(|item| item.title.as_str()).collect();
         assert_eq!(titles, ["Plaza", "Sandbox"]);
+        reloaded.start_legacy_import(account.clone(), apps.to_vec(), None, false);
+        assert!(!reloaded.import_busy(), "later logins do not scan");
         assert_eq!(std::fs::read(source_path).unwrap(), source_bytes);
         let chosen = read_legacy_history(&account, &apps, Some(apps[1].clone()));
         assert_eq!(chosen.items.len(), 2);
@@ -1347,6 +1345,39 @@ mod tests {
         assert!(chosen.items.iter().all(|visit| visit.title == "Plaza"));
         let wrong = read_legacy_history(&account, &apps, Some(apps[1].join("jane_other")));
         assert!(!wrong.found && wrong.items.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_initial_import_check_is_remembered_without_an_import() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-first-login-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        assert!(history.check_initial_import(), "no history on first login");
+        history.flush();
+        assert!(
+            !HistoryStorage::load(path).check_initial_import(),
+            "a later login requires manual import"
+        );
+
+        let path = dir.join("existing").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        history.add("Plaza", DVec3::ONE, 1.0, String::new());
+        assert!(!history.check_initial_import(), "an existing history is skipped");
+        history.clear_at(2.0);
+        history.flush();
+        assert!(
+            !HistoryStorage::load(path).check_initial_import(),
+            "clearing never resets eligibility"
+        );
+
+        let path = dir.join("cleared").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        history.clear_at(2.0);
+        history.flush();
+        let mut reloaded = HistoryStorage::load(path);
+        assert!(!reloaded.check_initial_import(), "a clear before upgrading prevents auto-import");
+        reloaded.flush();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

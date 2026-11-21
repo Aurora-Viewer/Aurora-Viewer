@@ -16009,7 +16009,6 @@ phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre re
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
 
-ui-places-legacy-history-at-login = Importer les visites du Legacy Viewer à la connexion
 ui-places-legacy-history-import = Importer depuis les Legacy Viewers détectés
 ui-places-legacy-history-folder = Choisir le dossier du Legacy Viewer…
 ui-places-legacy-history-not-found = Aucun historique de téléportation correspondant. Choisissez le dossier de données du viewer ou le dossier de ce compte.

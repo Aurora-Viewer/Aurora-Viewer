@@ -656,7 +656,7 @@ impl PlacesUi {
 
     fn history_options(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
         super::history_zone_menu(ui, p, self.history_zone, actions);
-        super::legacy_history_menu(ui, p, world, actions);
+        super::legacy_history_menu(ui, p, world, self.demo_import_menu, actions);
         menu::separator(ui, p);
         if menu::item_if(
             ui,
@@ -1584,9 +1584,13 @@ impl PlacesUi {
                 let height = ui.spacing().interact_size.y;
                 let response = widgets::action_menu_button(ui, p, "settings-filled", "", false, height)
                     .on_hover_text(aurora_i18n::tr!("ui-places-show-options"));
-                menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    self.history_options(ui, p, world, actions);
-                });
+                if self.demo_import_menu {
+                    menu::dropdown_held(&response, p, true, None, |ui| self.history_options(ui, p, world, actions));
+                } else {
+                    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                        self.history_options(ui, p, world, actions);
+                    });
+                }
             }
         });
         ui.add_space(8.0);
