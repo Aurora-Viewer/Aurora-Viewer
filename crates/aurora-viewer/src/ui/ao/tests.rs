@@ -1161,6 +1161,74 @@ fn quick_pin_opens_the_persistent_mini_window() {
     assert!(!f.quick.as_ref().expect("quick").open);
 }
 
+fn shows_text(f: &mut Fixture, text: &str) -> bool {
+    let mut shapes = f.draw(Vec::new()).1;
+    shapes.iter_mut().any(|shape| contains_text(&shape.shape, text))
+}
+
+/// The popup's pin is LLFloaterReg::showInstance: it expands a minimized mini
+/// window, and it is hidden while the mini window is already shown.
+#[test]
+fn quick_pin_expands_a_minimized_mini_window_and_hides_while_it_is_shown() {
+    let mut f = quick_fixture(true);
+    let pin = aurora_i18n::tr!("ao-quick-pin");
+    f.click(pin);
+    assert!(f.account.mini_open);
+    f.settle();
+    f.click("AO");
+    f.settle();
+    assert!(f.quick.as_ref().is_some_and(|q| q.open));
+    assert!(!shows_text(&mut f, pin), "no pin while the mini window is shown");
+    super::super::widgets::minimize_floater(&f.ctx, mini::WINDOW);
+    f.settle();
+    assert!(super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW));
+    assert!(shows_text(&mut f, pin), "the pin comes back for a minimized window");
+    f.click(pin);
+    f.settle();
+    assert!(f.account.mini_open);
+    assert!(
+        !super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW),
+        "the pin expands the minimized mini window"
+    );
+}
+
+/// Unlike FloaterAO::onClickMore, which turns its one floater into the full
+/// AO, the mini window's Settings button opens the manager beside it.
+#[test]
+fn mini_ao_settings_opens_the_manager_and_keeps_the_mini_window_open() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(!f.manager_open);
+    f.click(aurora_i18n::tr!("ao-quick-manager"));
+    f.settle();
+    assert!(f.manager_open, "Settings opens the full AO window");
+    assert!(f.account.mini_open, "the mini window stays open");
+}
+
+/// A Sits switch whose save is refused says why in the window, as the
+/// manager does with `state.message`, until a later save succeeds.
+#[test]
+fn mini_ao_shows_a_failed_sits_save_in_the_window() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    let selected = f.account.selected;
+    let set = f.catalog.sets.iter_mut().find(|s| s.id == selected).expect("set");
+    let name = std::mem::replace(&mut set.name, "bad:name".into());
+    let reason = inventory::save_set(&f.inv, set).expect_err("a name with ':' is refused");
+    let reason = reason.as_str();
+    f.settle();
+    assert!(!shows_text(&mut f, reason));
+    let actions = f.click(aurora_i18n::tr!("ao-sits"));
+    assert!(!actions.iter().any(|a| matches!(a, Action::Edit(..))), "nothing to send");
+    assert!(shows_text(&mut f, reason), "the refusal is shown in the window");
+    f.catalog.sets.iter_mut().find(|s| s.id == selected).expect("set").name = name;
+    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+    assert!(!shows_text(&mut f, reason), "a saved switch clears the message");
+}
+
 #[test]
 fn mini_ao_open_at_login_keeps_swimming_while_the_ao_loads() {
     // The mini window stays open across logins: it is drawn before the AO

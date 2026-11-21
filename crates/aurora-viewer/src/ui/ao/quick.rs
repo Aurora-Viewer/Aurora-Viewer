@@ -103,11 +103,15 @@ pub(super) fn cycle_buttons(
 }
 
 /// Shared compact AO controls for the popup and persistent mini window.
+/// Differences with the Legacy Viewer's `animation_overrider_panel_small`
+/// (FloaterAO, indra/newview/ao.cpp), which has only the set list, Previous /
+/// Next, Sits and More: the auto-cycle button, the "now playing" line and the
+/// Enabled, Swimming and Water walk switches are Aurora's.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn body<'a>(
+pub(super) fn body(
     ui: &mut egui::Ui,
     p: &Palette,
-    catalog: &'a inventory::Catalog,
+    catalog: &inventory::Catalog,
     inv: &Inventory,
     runtime: &mut Runtime,
     account: &mut Account,
@@ -116,7 +120,10 @@ pub(super) fn body<'a>(
     combo_id: &'static str,
     list_open: &mut bool,
     out: &mut Vec<Action>,
-) -> Option<&'a Set> {
+) {
+    // A failed save of the Sits switch stays shown under the controls, as the
+    // manager shows its `state.message`, until a later save succeeds.
+    let message_id = egui::Id::unique((combo_id, "message"));
     ui.label(aurora_i18n::tr!("ao-set"));
     ui.horizontal(|ui| {
         let buttons = 3.0 * 30.0 + 2.0 * 4.0 + ui.spacing().item_spacing.x;
@@ -151,10 +158,19 @@ pub(super) fn body<'a>(
             let mut edit = set.clone();
             edit.sits = sits;
             match inventory::save_set(inv, &edit) {
-                Ok(change) => out.push(Action::Edit(change, None)),
-                Err(reason) => log::warn!("AO compact sit override: {reason}"),
+                Ok(change) => {
+                    out.push(Action::Edit(change, None));
+                    ui.data_mut(|d| d.remove::<String>(message_id));
+                }
+                Err(reason) => {
+                    log::warn!("AO compact sit override: {reason}");
+                    ui.data_mut(|d| d.insert_temp(message_id, reason));
+                }
             }
         }
+    }
+    if let Some(message) = ui.data(|d| d.get_temp::<String>(message_id)) {
+        ui.label(RichText::new(message).color(p.warn));
     }
     if let Some((state, name)) = now_playing(set, runtime) {
         ui.label(aurora_i18n::tr!("ao-now-playing", state = state.label(), name = name));
@@ -192,7 +208,6 @@ pub(super) fn body<'a>(
             super::swimming_warning(ui, p);
         }
     }
-    set
 }
 
 #[derive(Default)]
@@ -252,7 +267,7 @@ impl Quick {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(RichText::new(aurora_i18n::tr!("ao-title")).strong());
                     let mut set_list_open = false;
-                    let _set = body(
+                    body(
                         ui,
                         p,
                         catalog,
@@ -272,8 +287,12 @@ impl Quick {
                         widgets::open_floater(ctx, "ao", manager_open);
                         ui.close();
                     }
-                    if ui.button(aurora_i18n::tr!("ao-quick-pin")).clicked() {
-                        account.mini_open = true;
+                    // Hidden while the mini window is already shown; on a
+                    // minimized one it expands it (LLFloaterReg::showInstance),
+                    // as Settings does for the manager.
+                    let mini_shown = account.mini_open && !widgets::floater_minimized(ctx, mini::WINDOW);
+                    if !mini_shown && ui.button(aurora_i18n::tr!("ao-quick-pin")).clicked() {
+                        widgets::open_floater(ctx, mini::WINDOW, &mut account.mini_open);
                         ui.close();
                     }
                 });

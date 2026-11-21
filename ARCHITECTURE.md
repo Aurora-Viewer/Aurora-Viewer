@@ -4842,7 +4842,9 @@ menus keep the parent open; Escape/outside clicks dismiss it, and the manager
 button opens the existing floater. The popup and persistent `ui/ao/mini.rs`
 window share the state-step controls and show the current state and animation;
 the shared controls include the set's sit override. The mini window can be
-pinned from the popup, toggled from the toolbar, and is remembered per account.
+pinned from the popup (which expands it when minimized), toggled from the
+toolbar, and is remembered per account; its Settings button opens the manager
+beside it.
 `ui/ao/category.rs` partitions every state
 into General, Ground, Jumping, Flying and Swimming, in that order. General
 contains Standing, Sitting, Sitting on ground, Standing up, Typing and Always,

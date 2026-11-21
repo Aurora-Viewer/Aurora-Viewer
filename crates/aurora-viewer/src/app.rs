@@ -16334,7 +16334,7 @@ impl App {
                 // minimized one expands; flipping the flag closed it, and it
                 // came back minimized
                 let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
-                ui::widgets::toggle_floater(&self.egui_ctx, "ao_mini", &mut saved.mini_open);
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::ao::mini::WINDOW, &mut saved.mini_open);
                 self.panels.ao_mini = saved.mini_open;
                 if !self.demo {
                     self.settings.save();
@@ -23276,7 +23276,9 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_swimming_incomplete(&mut self.world.inventory, self.world.agent_id)
                 } else if matches!(mode.as_str(), "empty" | "quick-empty") {
                     uuid::Uuid::nil()
-                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick") {
+                } else if mode.starts_with("design-")
+                    || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick" | "mini")
+                {
                     crate::ao::demo::seed_movement_design(&mut self.world.inventory, self.world.agent_id)
                 } else {
                     crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id)
@@ -23286,6 +23288,8 @@ impl ApplicationHandler for App {
                     crate::ao::Account {
                         enabled: mode != "off",
                         selected,
+                        // the Mini AO window, open as after a relog
+                        mini_open: mode == "mini",
                         ..Default::default()
                     },
                 );
