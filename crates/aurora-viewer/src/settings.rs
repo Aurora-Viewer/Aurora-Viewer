@@ -477,6 +477,11 @@ pub struct DebugView {
     pub check_probe_sets: bool,
     pub probes: bool,
     pub skeletons: bool,
+    /// The avatars' hitboxes with the Legacy Viewer's Avatar Hitboxes parity
+    /// (Developer › Render Metadata › Avatar Hitboxes): the avatar's own
+    /// oriented box, half its scale in either direction. Visual parity only:
+    /// picking still tests the fixed click box (see `scene::picking`).
+    pub avatar_hitboxes: bool,
     /// Detail level of the objects around the pointer, with the distance
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
@@ -517,7 +522,14 @@ impl DebugView {
 
     /// An overlay drawn over the 3D view is on.
     pub fn any_overlay(&self) -> bool {
-        self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons || self.lod_info
+        self.bounds
+            || self.culling
+            || self.lights
+            || self.glow_objects
+            || self.probes
+            || self.skeletons
+            || self.avatar_hitboxes
+            || self.lod_info
     }
 }
 
@@ -953,6 +965,9 @@ pub struct Settings {
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
+    /// The order of the Appearance outfits (FSOutfitListSortOrder and
+    /// OutfitGallerySortOrder, saved like them).
+    pub appearance_outfit_sort: crate::world::outfit_folders::Sort,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -1015,6 +1030,11 @@ pub struct Settings {
     /// viewer's notices (#475, off by default; Preferences > Chat). Not in
     /// the Legacy Viewer.
     pub compact_automated_chat: bool,
+    /// An emote ("/me waves") joins its sender's group under one header in
+    /// the Aurora style, instead of standing alone (off by default;
+    /// Preferences > Chat). An Aurora option; the Legacy Viewer always groups
+    /// emotes.
+    pub group_emotes: bool,
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
@@ -2546,6 +2566,7 @@ impl Default for Settings {
             wearable_favorites_sort: Default::default(),
             wearable_favorites_order: Default::default(),
             appearance_tab: 0,
+            appearance_outfit_sort: Default::default(),
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
@@ -2578,6 +2599,7 @@ impl Default for Settings {
             script_errors_to_channel: false,
             script_errors_channel: 1,
             compact_automated_chat: false,
+            group_emotes: false,
             compact_im_system_lines: false,
             blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,

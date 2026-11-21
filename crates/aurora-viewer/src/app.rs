@@ -1722,6 +1722,30 @@ fn open_notification_to_type(
     Some(conversation)
 }
 
+/// The poser's framing request, applied only with "Frame the avatar while
+/// posing" on (an Aurora option, off by default: the Legacy Viewer's poser
+/// never moves the camera).
+fn apply_poser_framing(
+    camera: &mut crate::camera::Camera,
+    agent: &mut crate::agent::AgentState,
+    settings: &crate::camera::CameraSettings,
+    focus: Option<(Vec3, crate::camera::PoserFraming)>,
+) {
+    if settings.frame_while_posing
+        && let Some((focus, framing)) = focus
+    {
+        camera.frame_poser_joint(focus, framing, agent, settings);
+    }
+}
+
+/// A world press the poser keeps: one on our own body, while we pose
+/// ourselves, that nothing in the world took first (a touchable worn prim
+/// or rigged mesh returned before this is asked). Alt stays the camera's
+/// gesture, Build keeps selecting, and our name tag keeps its menu.
+fn world_press_stops_for_poser_subject(posing_self: bool, alt: bool, build_open: bool, on_own_body: bool) -> bool {
+    posing_self && !alt && !build_open && on_own_body
+}
+
 impl App {
     // Growing editor state must not accumulate large return-value temporaries
     // on the Windows main stack while the avatar library is being loaded.
@@ -5796,6 +5820,7 @@ impl App {
                 _ => axis.map(|t| o + d * t),
             }
         });
+        let on_own_body = avatar_hit.is_some();
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
             let (idx, p) = self.pick_name_tag(hit, ray)?;
@@ -5894,6 +5919,12 @@ impl App {
                 self.arm_world_mouse_walk();
             }
             self.activate_object_action(target, idx, point, ray);
+            return;
+        }
+        // Posing ourselves, a press on our body that the poser overlay did
+        // not use and that no worn touch target took above stops here: it
+        // must not turn the avatar or move the camera's focus.
+        if world_press_stops_for_poser_subject(self.ik_editor.posing_self(&self.world), alt, self.build.open, on_own_body) {
             return;
         }
         if alt {
@@ -6618,7 +6649,8 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        let raining = self.weather_now.rain() > 0.0;
+        // (and while thunder rolls: indoors it stays muffled to its end)
+        let raining = self.weather_now.rain() > 0.0 || self.thunder.rumbling();
         self.scene
             .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
         // rain prototype: its sound, leaning toward the open sky
@@ -6669,23 +6701,36 @@ impl App {
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
+            // the 3D sound for headphones, as the world sounds have it
+            binaural: crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
             audible: matches!(self.screen, Screen::World) && !demo_silent,
         };
-        // AURORA_THUNDER_AT=<s>: a strike a kilometre away that long after
-        // the start (demo captures of the flash)
-        static AT: std::sync::OnceLock<Option<(Instant, f32)>> = std::sync::OnceLock::new();
-        if let Some((start, s)) = *AT.get_or_init(|| {
-            std::env::var("AURORA_THUNDER_AT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .map(|s| (Instant::now(), s))
+        // AURORA_THUNDER_AT=<s>[:<m>]: a strike that far away (a kilometre
+        // by default) that long after the start (demo captures of the flash,
+        // the thunder heard near and far)
+        static AT: std::sync::OnceLock<Option<(Instant, f32, f32)>> = std::sync::OnceLock::new();
+        if let Some((start, s, m)) = *AT.get_or_init(|| {
+            let v = std::env::var("AURORA_THUNDER_AT").ok()?;
+            let (s, m) = v.split_once(':').unwrap_or((v.as_str(), "1000"));
+            let parsed = (s.trim().parse::<f32>().ok(), m.trim().parse::<f32>().ok());
+            match parsed {
+                (Some(s), Some(m)) if s.is_finite() && m.is_finite() => Some((
+                    Instant::now(),
+                    s,
+                    m.clamp(crate::scene::thunder::NEAREST, crate::scene::thunder::FARTHEST),
+                )),
+                _ => {
+                    log::warn!("AURORA_THUNDER_AT={v}: expected <seconds>[:<metres>]");
+                    None
+                }
+            }
         }) && start.elapsed().as_secs_f32() >= s
             && !self.thunder_demo_done
         {
             self.thunder_demo_done = true;
-            self.thunder.strike(Instant::now(), Some(1000.0));
+            self.thunder.strike(Instant::now(), Some(m));
         }
         self.thunder.update(self.audio_engine.as_ref(), &input, Instant::now());
     }
@@ -9037,13 +9082,7 @@ impl App {
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
     /// FSLetterKeysFocusNearbyChatBar, on by default).
     fn start_chat_with(&mut self, text: &str) {
-        if self.panels.chat && ui::chat::local_chat_shown(&self.egui_ctx, &self.chat_ui) {
-            self.chat_ui.draft_mut(None).push_str(text);
-            self.chat_ui.conv_focus_request = true;
-        } else {
-            self.chat_ui.input.push_str(text);
-            self.chat_ui.focus_request = true;
-        }
+        self.chat_ui.start_nearby_with(&self.egui_ctx, self.panels.chat, text);
     }
 
     /// The chat bar has the keyboard and hands its movement keys to the
@@ -9285,7 +9324,8 @@ impl App {
         i.down |= self.joystick.motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
-            self.world.agent.flying,
+            // A swimmer descends with the key, as in flight (crouch_toggle.rs).
+            self.world.agent.flying || self.movement_runtime.state.swimming(),
             self.world.agent.is_sitting(),
             i.down,
             i.up || joystick_up,
@@ -9398,7 +9438,10 @@ impl App {
         {
             self.world.agent.yaw = yaw;
         }
-        if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
+        // "Keep the camera still while posing" keeps the camera where the
+        // user put it: moving still walks, only the camera reset is skipped.
+        let movement_resets_camera = moving && !self.settings.camera.keeps_still(self.ik_editor.posing());
+        if movement_resets_camera && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
             let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad_movement;
@@ -11188,6 +11231,8 @@ impl App {
         self.update_wind_sound(dt);
         self.update_thunder();
         let mut late_camera_frame = None;
+        let mut late_camera_settings = None;
+        let mut late_poser_auto_moves = true;
         let mut late_controls = None;
         if self.in_world() {
             self.update_sounds();
@@ -11263,37 +11308,44 @@ impl App {
                 self.end_mouselook_zoom();
             }
             self.follow_awaited_zoom();
+            let poser_auto_moves = !self.settings.camera.keeps_still(self.ik_editor.posing());
+            let camera_settings = self.settings.camera.while_posing(self.ik_editor.posing());
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),
                 now: world_now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
-                edit_tracking: self
-                    .camera
-                    .focus_object_id()
-                    .filter(|id| self.build.edits_object(&self.world, id))
-                    .map(|_| self.settings.build.follow_edit_object),
+                edit_tracking: if poser_auto_moves {
+                    self.camera
+                        .focus_object_id()
+                        .filter(|id| self.build.edits_object(&self.world, id))
+                        .map(|_| self.settings.build.follow_edit_object)
+                } else {
+                    Some(false)
+                },
                 eye_offset: None,
                 follow_joint_offset: None,
                 head_offset: self.scene.head_offset(&self.world, &self.world.agent_id),
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
-            if frame.edit_tracking.is_some()
-                || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
-                || self.camera.needs_animated_joint(&self.settings.camera)
+            if poser_auto_moves
+                && (frame.edit_tracking.is_some()
+                    || self.camera.needs_animated_eyes(&self.world.agent, &camera_settings)
+                    || self.camera.needs_animated_joint(&camera_settings))
             {
                 // Evaluate the focused edit selection after the local drag,
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
+                late_camera_settings = Some(camera_settings.clone());
+                late_poser_auto_moves = poser_auto_moves;
             } else {
                 if self.vr_camera.is_some() {
-                    self.camera
-                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.camera.update_vr(&mut self.world, &camera_settings, &frame, self.vr_rig_yaw);
                     self.vr_counter_body_motion();
                 } else {
-                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                    self.camera.update(&mut self.world, &camera_settings, &frame);
                     self.director_aim();
                 }
             }
@@ -11392,7 +11444,7 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+            if late_camera_frame.is_some() && poser_auto_moves && self.camera.needs_animated_eyes(&self.world.agent, &camera_settings) {
                 late_controls = Some(c);
             } else {
                 self.net.set_controls(c);
@@ -11873,23 +11925,22 @@ impl App {
             self.flush_build();
             let camera_changed = late_camera_frame.is_some() || panned;
             if let Some(mut frame) = late_camera_frame {
+                let camera_settings = late_camera_settings.unwrap_or_else(|| self.settings.camera.clone());
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
-                frame.follow_joint_offset = self
-                    .settings
-                    .camera
+                frame.follow_joint_offset = camera_settings
                     .third_person_follow_joint
                     .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));
-                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
-                    || self.camera.needs_animated_joint(&self.settings.camera)
+                if late_poser_auto_moves
+                    && (self.camera.needs_animated_eyes(&self.world.agent, &camera_settings)
+                        || self.camera.needs_animated_joint(&camera_settings))
                 {
                     frame.now = now;
                 }
                 if self.vr_camera.is_some() {
-                    self.camera
-                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.camera.update_vr(&mut self.world, &camera_settings, &frame, self.vr_rig_yaw);
                     self.vr_counter_body_motion();
                 } else {
-                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                    self.camera.update(&mut self.world, &camera_settings, &frame);
                     self.director_aim();
                 }
                 if let Some(controls) = late_controls {
@@ -15369,18 +15420,13 @@ impl App {
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
                     }
-                    crate::build::demo::Step::ContentsProperties => {
+                    crate::build::demo::Step::ContentsProperties(count) => {
                         if let Some(idx) = self.build.contents_target(&self.world)
                             && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
-                            && let Some(item) = self
-                                .build
-                                .contents
-                                .objects
-                                .get(&object)
-                                .and_then(|inv| inv.items.iter().find(|it| !it.is_folder))
-                                .cloned()
+                            && let Some(inv) = self.build.contents.objects.get(&object)
                         {
-                            self.build.open_task_item_properties(object, &item);
+                            let items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).take(count).cloned().collect();
+                            self.build.open_task_items_properties(object, &items);
                         }
                     }
                     crate::build::demo::Step::ContentsNew => {
@@ -18317,6 +18363,9 @@ impl App {
                         ui::layout::set_move_area(&ctx, screen);
                         self.ik_editor.over_viewfinder = true;
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
+                        // the viewfinder's shot is the user's: never framed
+                        // (the editor asks for none here either)
+                        self.ik_editor.take_poser_focus_request();
                         self.ik_editor.over_viewfinder = false;
                     }
                     // the posing consent too, poser open or not: a request
@@ -19169,6 +19218,13 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
+                if let Some(focus) = self.ik_editor.take_poser_focus(&self.world) {
+                    let mut settings = self.settings.camera.clone();
+                    // AURORA_DEMO_POSER=frame: the option on for this launch
+                    // only, the shared settings untouched
+                    settings.frame_while_posing |= self.demo && std::env::var("AURORA_DEMO_POSER").is_ok_and(|m| m == "frame");
+                    apply_poser_framing(&mut self.camera, &mut self.world.agent, &settings, Some(focus));
+                }
                 for prepared in self.ik_editor.take_clip_imports() {
                     self.imports.authored_animation(
                         &self.world,
@@ -19451,6 +19507,8 @@ impl App {
                 self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
+                // AURORA_DEMO_EMOTES=…:on: for the run, nothing saved
+                self.chat_ui.group_emotes = self.settings.group_emotes || (self.demo && crate::demo::emotes_grouped());
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 // the Legacy chat style keeps its own switch; both are off by
                 // default, the demo switch shows the row whatever they say
@@ -20065,6 +20123,7 @@ impl App {
                 let mut open = self.panels.appearance;
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
+                self.appearance_ui.sort = self.settings.appearance_outfit_sort;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -20081,6 +20140,10 @@ impl App {
                 }
                 if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
                     self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
+                    self.settings.save();
+                }
+                if self.settings.appearance_outfit_sort != self.appearance_ui.sort {
+                    self.settings.appearance_outfit_sort = self.appearance_ui.sort;
                     self.settings.save();
                 }
                 self.panels.appearance = open;
@@ -21967,6 +22030,7 @@ impl ApplicationHandler for App {
                         "probes" => d.probes = true,
                         "skeletons" => d.skeletons = true,
                         "lod" => d.lod_info = true,
+                        "hitboxes" => d.avatar_hitboxes = true,
                         "shadows" => d.shadow_view = true,
                         "ao" => d.ao_view = true,
                         "check_lights" => d.check_light_sets = true,
@@ -22641,6 +22705,17 @@ impl ApplicationHandler for App {
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
+            }
+            // AURORA_DEMO_EMOTES=<style>[:on]: the nearby chat in the
+            // Conversations window of that workspace style
+            if let Some(scene) = crate::demo::emotes_scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = true;
+                self.chat_ui.selected = None;
+                self.chat_ui.demo_style = Some(scene.style);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
             }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
@@ -23336,6 +23411,9 @@ impl ApplicationHandler for App {
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
+                }
+                if let Some(sort) = crate::world::appearance::demo_outfit_sort() {
+                    self.settings.appearance_outfit_sort = sort;
                 }
                 for cmd in crate::world::appearance::sync_commands(
                     &self.world.inventory,
@@ -24578,6 +24656,14 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
+        // The voice threads end before the process does, the current
+        // session's and those of the sessions left moments ago: still
+        // running at the exit, an HTTPS logout found the TLS library's
+        // random generator freed by the exit and aborted the viewer on
+        // Linux. 3 s, the budget of LLWebRTCVoiceClient::drainConnections.
+        if !self.voice.close_for_exit().wait(Duration::from_secs(3)) {
+            log::warn!("a voice session was still closing at exit");
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -25565,6 +25651,40 @@ mod tests {
     use crate::keybinds::Mods;
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_poser_keeps_only_untaken_presses_on_our_own_body() {
+        let stops = super::world_press_stops_for_poser_subject;
+        // posing ourselves, a press on our body nothing took
+        assert!(stops(true, false, false, true), "the body press cannot steer or refocus");
+        assert!(!stops(true, true, false, true), "Alt stays the camera gesture");
+        assert!(!stops(true, false, true, true), "with Build open, the press selects as usual");
+        assert!(!stops(true, false, false, false), "away from our body (our name tag too) as usual");
+        assert!(!stops(false, false, false, true), "posing someone else, or not posing: as usual");
+    }
+
+    #[test]
+    fn the_poser_frames_only_with_its_option_on() {
+        use glam::Vec3;
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent.position = Vec3::new(128.0, 128.0, 25.0);
+        let joint = Vec3::new(128.0, 128.0, 25.4);
+        let request = Some((joint, crate::camera::PoserFraming::Joint));
+        let mut camera = crate::camera::Camera::default();
+        let off = crate::camera::CameraSettings::default();
+        let before = camera.focus_point();
+        super::apply_poser_framing(&mut camera, &mut world.agent, &off, request);
+        assert_eq!(camera.focus_point(), before, "the default leaves the camera alone");
+        let on = crate::camera::CameraSettings {
+            frame_while_posing: true,
+            ..off
+        };
+        super::apply_poser_framing(&mut camera, &mut world.agent, &on, request);
+        assert!(
+            camera.focus_point().is_some_and(|p| p.distance(joint) < 1e-4),
+            "framed with the option on"
+        );
+    }
 
     #[test]
     fn the_clouds_stay_legacy_unless_asked() {
