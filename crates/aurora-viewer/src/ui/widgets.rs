@@ -1887,6 +1887,10 @@ pub fn floater_above(ctx: &egui::Context, id: &str, other: &str) -> bool {
 /// visible layer that is not the background.
 pub fn floater_is_front(ctx: &egui::Context, id: &str) -> bool {
     let want = egui::Id::unique(id);
+    // in its window outside the viewer's: in front with the system's focus
+    if crate::outside::native(ctx, want) {
+        return crate::outside::in_focus(ctx, want);
+    }
     ctx.memory(|m| {
         m.layer_ids()
             .filter(|layer| layer.order != egui::Order::Background && m.areas().is_visible(layer))
@@ -1898,6 +1902,10 @@ pub fn floater_is_front(ctx: &egui::Context, id: &str) -> bool {
 /// The keyboard is inside the floater `id` (LLFloater::hasFocus).
 pub fn floater_holds_keyboard(ctx: &egui::Context, id: &str) -> bool {
     let want = egui::Id::unique(id);
+    // (the keys of a window outside with the focus are its own)
+    if crate::outside::native(ctx, want) {
+        return crate::outside::in_focus(ctx, want);
+    }
     let Some(focus) = ctx.memory(|m| m.focused()) else {
         return false;
     };
@@ -1907,7 +1915,9 @@ pub fn floater_holds_keyboard(ctx: &egui::Context, id: &str) -> bool {
 /// Bring the floater `id` to the front, expanding it when it is minimized
 /// (LLFloater::setVisibleAndFrontmost).
 pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
-    if floater_minimized(ctx, id) {
+    if crate::outside::native(ctx, egui::Id::unique(id)) {
+        crate::outside::raise(ctx, egui::Id::unique(id));
+    } else if floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else {
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));

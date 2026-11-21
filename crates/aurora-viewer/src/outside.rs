@@ -127,6 +127,33 @@ fn set_native(ctx: &egui::Context, window: egui::Id, native: bool) {
     });
 }
 
+fn front_id() -> egui::Id {
+    egui::Id::unique("aurora outside front")
+}
+
+fn raises_id() -> egui::Id {
+    egui::Id::unique("aurora outside raises")
+}
+
+/// The window `window` is in its window outside and that one has the
+/// system's focus: it is the front window, and the keyboard is its own.
+pub(crate) fn in_focus(ctx: &egui::Context, window: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<egui::Id>(front_id())) == Some(window)
+}
+
+/// Asks the system to bring the window outside of `window` in front, at
+/// the next frame: what brings a window inside to the top (a click on a
+/// notification, its toolbar button). The system may only signal it where
+/// it lets no program take the focus by itself (Wayland).
+pub(crate) fn raise(ctx: &egui::Context, window: egui::Id) {
+    ctx.data_mut(|d| {
+        let raises = d.get_temp_mut_or_default::<Vec<egui::Id>>(raises_id());
+        if !raises.contains(&window) {
+            raises.push(window);
+        }
+    });
+}
+
 /// Asks for a window outside, opened before the next pass.
 pub(crate) fn ask(ctx: &egui::Context, ask: Ask) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Ask>>(asks_id()).push(ask));
@@ -374,11 +401,33 @@ impl Outside {
         ctx: &egui::Context,
         attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
     ) {
-        let (asks, seen) = ctx.data_mut(|d| {
+        let (asks, seen, raises) = ctx.data_mut(|d| {
             (
                 d.remove_temp::<Vec<Ask>>(asks_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
+                d.remove_temp::<Vec<egui::Id>>(raises_id()).unwrap_or_default(),
             )
+        });
+        for window in raises {
+            if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
+                native.window.set_minimized(false);
+                native.window.focus_window();
+            }
+        }
+        let front = self
+            .shared
+            .borrow()
+            .windows
+            .iter()
+            .find(|(_, native)| native.of_interface && native.focused)
+            .map(|(id, _)| id.0);
+        ctx.data_mut(|d| match front {
+            Some(front) => {
+                d.insert_temp(front_id(), front);
+            }
+            None => {
+                d.remove::<egui::Id>(front_id());
+            }
         });
         let gone = unseen(
             self.shared.borrow().windows.iter().map(|(id, native)| (*id, native.of_interface)),
@@ -714,6 +763,22 @@ mod tests {
         assert!(!native(&ctx, window));
         want(&ctx, window, false);
         assert!(!wanted(&ctx, window));
+    }
+
+    #[test]
+    fn a_window_outside_is_raised_once_however_often_it_is_asked() {
+        let ctx = egui::Context::default();
+        let (chat, people) = (egui::Id::unique("conversations"), egui::Id::unique("people"));
+        raise(&ctx, chat);
+        raise(&ctx, people);
+        raise(&ctx, chat);
+        let raises = ctx.data(|d| d.get_temp::<Vec<egui::Id>>(raises_id())).unwrap_or_default();
+        assert_eq!(raises, [chat, people]);
+        // (no window outside has the focus until the host says so)
+        assert!(!in_focus(&ctx, chat));
+        ctx.data_mut(|d| d.insert_temp(front_id(), chat));
+        assert!(in_focus(&ctx, chat));
+        assert!(!in_focus(&ctx, people));
     }
 
     /// A restart: the layout is written at exit and read at the next start.
