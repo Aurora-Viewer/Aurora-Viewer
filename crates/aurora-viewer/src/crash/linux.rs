@@ -304,9 +304,10 @@ unsafe fn fault(info: *const libc::siginfo_t, context: *const c_void) -> (c_int,
 }
 
 /// Reads this process's memory through the kernel, which answers an
-/// unmapped address with an error where a plain read would fault. False
-/// when not all of `into` could be read. Async-signal-safe: one system call.
-fn read(address: usize, into: &mut [u8]) -> bool {
+/// unmapped address with an error where a plain read would fault: the bytes
+/// read, fewer than asked when a mapping ends within them, or -1 with the
+/// reason in errno when none could be. Async-signal-safe: one system call.
+fn read_some(address: usize, into: &mut [u8]) -> isize {
     let local = libc::iovec {
         iov_base: into.as_mut_ptr().cast(),
         iov_len: into.len(),
@@ -317,15 +318,21 @@ fn read(address: usize, into: &mut [u8]) -> bool {
     };
     // SAFETY: the kernel writes at most `into.len()` bytes into `into`, and
     // only reads the other range, with an error if it cannot.
-    let count = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
-    usize::try_from(count).is_ok_and(|count| count == into.len())
+    unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) }
 }
 
-/// Whether the bytes the unwinder may read at `address` are not all mapped.
-/// A read refused for another reason (a sandbox without this system call)
-/// tells nothing: the address is then taken as mapped, as before.
+/// False when not all of `into` could be read.
+fn read(address: usize, into: &mut [u8]) -> bool {
+    usize::try_from(read_some(address, into)).is_ok_and(|count| count == into.len())
+}
+
+/// Whether nothing is mapped at `address`. errno is this read's only when
+/// it failed: one that stops short, where the mapping ends within the bytes
+/// the unwinder may read, sets none, and the instruction is then mapped. A
+/// read refused for another reason (a sandbox without this system call)
+/// tells nothing: the address is taken as mapped too, as before.
 fn unmapped(address: usize) -> bool {
-    !read(address, &mut [0; PROBE]) && std::io::Error::last_os_error().raw_os_error() == Some(libc::EFAULT)
+    read_some(address, &mut [0; PROBE]) < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EFAULT)
 }
 
 /// The return address of the code that jumped where nothing is mapped: no
@@ -1121,6 +1128,35 @@ mod tests {
         let mut word = [0; 8];
         assert!(read(here.as_ptr() as usize, &mut word));
         assert_eq!(word, [7; 8]);
+    }
+
+    #[test]
+    fn an_instruction_at_the_end_of_a_mapping_is_mapped() {
+        // SAFETY: two private anonymous pages of our own, the second closed
+        // to reads and kept, where a hole could be another test's by now.
+        let (pages, page) = unsafe {
+            let page = usize::try_from(libc::sysconf(libc::_SC_PAGESIZE)).unwrap();
+            let pages = libc::mmap(
+                std::ptr::null_mut(),
+                2 * page,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            assert_ne!(pages, libc::MAP_FAILED);
+            assert_eq!(libc::mprotect(pages.byte_add(page), page, libc::PROT_NONE), 0);
+            (pages, page)
+        };
+        let last = pages as usize + page - PROBE / 2;
+        // An earlier call of this thread left EFAULT in errno.
+        assert!(unmapped(4096));
+        assert_eq!(read_some(last, &mut [0; PROBE]), (PROBE / 2) as isize);
+        assert!(!unmapped(last));
+        assert!(!read(last, &mut [0; PROBE]));
+        assert!(unmapped(last + PROBE / 2));
+        // SAFETY: the two pages mapped above.
+        assert_eq!(unsafe { libc::munmap(pages, 2 * page) }, 0);
     }
 
     /// The fatal signals belong to the whole process, and these tests end
