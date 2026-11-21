@@ -2605,6 +2605,7 @@ mod tests {
             chat_type: aurora_net::ChatType::OwnerSay,
             position: glam::Vec3::ZERO,
             message: "@showworldmap=n".into(),
+            region: None,
         }));
         assert!(world.rlva.has("showworldmap"));
         assert!(!enabled(&world, &[friend]), "@showworldmap hides the map");
