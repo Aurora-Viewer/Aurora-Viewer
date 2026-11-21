@@ -964,6 +964,7 @@ fn post_links_ability_follows_the_region() {
         export_supported: false,
         group_chat_post_links: enabled,
         game_control: false,
+        max_agent_attachments: None,
     };
     world.apply(features(true));
     assert!(view::View::of(&world, DEMO_GROUP1).post_links);

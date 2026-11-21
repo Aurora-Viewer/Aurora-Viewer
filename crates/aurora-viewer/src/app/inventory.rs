@@ -1127,7 +1127,12 @@ impl App {
                 attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
             }
         }
-        match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
+        match crate::world::appearance::plan_limited(
+            &self.world.inventory,
+            action,
+            &self.world.outfit_attachment_points(),
+            self.world.attachment_limit(),
+        ) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
