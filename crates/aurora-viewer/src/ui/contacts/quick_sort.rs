@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::keybinds::{Binding, Input};
+use aurora_i18n::UiUpper;
 use egui::{Pos2, Rect};
 use std::collections::BTreeSet;
 use winit::keyboard::KeyCode;
@@ -260,7 +261,7 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
 /// how many sets they got.
 fn up_next(ui: &mut egui::Ui, p: &Palette, world: &World, qs: &QuickSort, pics: &HashMap<Uuid, egui::TextureHandle>) {
     ui.label(
-        RichText::new(aurora_i18n::tr!("quick-sort-up-next").to_uppercase())
+        RichText::new(aurora_i18n::tr!("quick-sort-up-next").ui_upper())
             .size(10.5)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),

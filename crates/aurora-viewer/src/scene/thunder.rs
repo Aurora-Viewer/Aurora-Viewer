@@ -7,11 +7,16 @@
 //! all but the farthest a bolt in the sky, a new one each time (`bolts`:
 //! the main channel jagged by midpoint displacement, with a few forks lit by
 //! the first stroke only). Its thunder comes as late as
-//! sound takes to cover the distance (3 s a kilometre), from its side: a
-//! near strike cracks, a far one rolls, quieter and duller (the air takes
-//! the highs out first); under a roof all of it is softer and muffled.
+//! sound takes to cover the distance (3 s a kilometre), from its side (3D
+//! for headphones with the 3D sound on, the head-related filters of its
+//! direction in the sky, followed as the listener turns): only a near
+//! strike cracks, its sharpest highs softened, the others roll, quieter and
+//! duller the farther (the air takes the highs out first). Indoors the walls
+//! take the highs out and much of the level: in a closed room only a muffled
+//! rumble comes through, and the room's own reverb carries it; walking in or
+//! out while it rolls, it changes with you.
 
-use super::sound_reverb::Sky;
+use super::sound_reverb::{SEND_MAX, Sky};
 use aurora_audio::{AudioEngine, Channel, SoundClip};
 use aurora_render::{ParticleInstance, particle_flags};
 use glam::{Vec2, Vec3};
@@ -31,14 +36,49 @@ const LEVEL: f32 = 0.9;
 /// Speed of sound (m/s).
 const SOUND_SPEED: f32 = 343.0;
 /// No thunder below this much rain.
-const MIN_RAIN: f32 = 0.4;
+pub const MIN_RAIN: f32 = 0.4;
 /// Strikes' distances (m).
-const NEAREST: f32 = 300.0;
-const FARTHEST: f32 = 6000.0;
+pub(crate) const NEAREST: f32 = 300.0;
+pub(crate) const FARTHEST: f32 = 6000.0;
 /// Beyond this a strike is only a glow of the clouds, no bolt seen (m).
 const BOLT_FARTHEST: f32 = 4500.0;
 /// The shortest wait between two strikes (s).
 const SHORTEST_WAIT: f32 = 2.0;
+/// Strikes nearer than this crack (m); farther, the thunder rolls. Cracks
+/// were played up to 3 km (always under 1.2 km, half the time to 3 km): too
+/// sharp, too often (the team's feedback, 2026-11-16).
+const CRACK_FARTHEST: f32 = 700.0;
+/// A crack's least muffle: its sharpest highs taken off (a low-pass near
+/// 4.7 kHz), its level nearly kept (the occlusion cuts 12 dB at 1, so 3 dB
+/// here).
+const CRACK_MUFFLE: f32 = 0.25;
+/// Indoors (no rain in sight around the listener): the level kept, and the
+/// muffle (`AudioEngine::world_occlusion`: 0.5 one wall, 1 two) at least.
+/// The muffle cuts 12 dB of its own at 1: in a closed room the thunder is
+/// about 16 dB down and only its rumble left (it was 14 dB down, half
+/// muffled, its crack still heard).
+const INDOOR_LEVEL: f32 = 0.6;
+const INDOOR_MUFFLE: f32 = 0.95;
+/// A ringing thunder's muffle is sent again when it moved this much.
+const MUFFLE_STEP: f32 = 0.02;
+/// Its reverb send, when it moved this share of the most.
+const SEND_STEP: f32 = 0.05;
+/// The sky's measure glides to the last one in about this long (s), as the
+/// rain's does: in a doorway it varies from one measure to the next.
+const OPEN_GLIDE_SECS: f32 = 0.5;
+/// Close enough to the measure to take it (then the reverb send and muffle
+/// left short of it by their steps are sent).
+const SETTLED: f32 = 1e-3;
+/// The binaural rendering's level against `panned`'s: the head-related
+/// filters give a sound ahead 1 per ear (the world sounds' panning), this
+/// panning 0.707 (`hrtf.rs`); without it the 3D sound was 3 dB louder.
+const BINAURAL_LEVEL: f32 = std::f32::consts::FRAC_1_SQRT_2;
+/// How high in the sky the thunder comes from (the sine): above the
+/// horizon, from the clouds, not from the ground.
+const SKY_ELEVATION: f32 = 0.3;
+/// A thunder heard binaurally is turned again once the listener turned by
+/// this much (rad).
+const TURN_STEP: f32 = 0.05;
 
 /// Which recording: the near ones crack, the far ones roll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +91,99 @@ enum Clip {
 }
 
 struct Clips([SoundClip; 5]);
+
+/// Where a thunder is heard: through the head-related filters, from a
+/// direction in the listener's frame, or panned.
+#[derive(Debug, Clone, Copy)]
+enum Place {
+    Binaural(Vec3),
+    Panned(f32),
+}
+
+impl Ringing {
+    /// Its level, muffle and place for the listener now (`open`: the rain in
+    /// sight around them, `Sky::exposure`).
+    fn heard(&self, input: &ThunderInput, open: f32) -> (f32, f32, Place) {
+        let (level, indoor_muffle) = indoors(open);
+        let mut gain = self.gain * level;
+        let mut muffle = self.muffle.max(indoor_muffle);
+        if input.underwater {
+            gain *= 0.5;
+            muffle = 1.0;
+        }
+        let place = if input.binaural {
+            gain *= BINAURAL_LEVEL;
+            Place::Binaural(heard_from(self.from, input.forward))
+        } else {
+            Place::Panned(pan_of(self.from, input.forward))
+        };
+        (gain, muffle, place)
+    }
+
+    /// What was sent to the mixer.
+    fn mark(&mut self, binaural: bool, gain: f32, muffle: f32, place: Place) {
+        self.binaural = binaural;
+        self.level = gain;
+        self.sent_muffle = muffle;
+        self.dir = match place {
+            Place::Binaural(d) => d,
+            Place::Panned(p) => Vec3::new(p, 0.0, 0.0),
+        };
+    }
+}
+
+impl Clip {
+    /// One of the near strikes' recordings (a sharp crack).
+    fn cracks(self) -> bool {
+        matches!(self, Clip::Crack1 | Clip::Crack2 | Clip::Double)
+    }
+}
+
+/// The recording for a strike `d` metres away, `r` a draw in 0..1: a crack
+/// only near ([`CRACK_FARTHEST`]), a roll farther, the far roll far off.
+fn clip_for(d: f32, r: f32) -> Clip {
+    if d < CRACK_FARTHEST {
+        [Clip::Crack1, Clip::Crack2, Clip::Double][((r * 2.99) as usize).min(2)]
+    } else if d < 3000.0 {
+        if r < 0.8 { Clip::Roll } else { Clip::Far }
+    } else if r < 0.6 {
+        Clip::Far
+    } else {
+        Clip::Roll
+    }
+}
+
+/// The level kept and the least muffle for a listener with `open` of the
+/// falling rain in sight around them (`Sky::exposure`: 1 in the open, 0 in a
+/// closed room): indoors only a muffled rumble comes through.
+fn indoors(open: f32) -> (f32, f32) {
+    let closed = 1.0 - open.clamp(0.0, 1.0);
+    (1.0 - (1.0 - INDOOR_LEVEL) * closed, INDOOR_MUFFLE * closed)
+}
+
+/// Where a thunder from `from` (world, unit, flat) is heard, in the frame of
+/// a listener looking along `forward`: x to the right, y ahead, z up (as
+/// `AudioEngine::play_world_binaural`), from above the horizon.
+fn heard_from(from: Vec2, forward: Vec3) -> Vec3 {
+    let f = forward.normalize_or(Vec3::X);
+    let right = f.cross(Vec3::Z).normalize_or(Vec3::Y);
+    let up = right.cross(f);
+    let flat = from.normalize_or(Vec2::X) * (1.0 - SKY_ELEVATION * SKY_ELEVATION).sqrt();
+    let dir = Vec3::new(flat.x, flat.y, SKY_ELEVATION);
+    Vec3::new(dir.dot(right), dir.dot(f), dir.dot(up)).normalize_or(Vec3::Y)
+}
+
+/// The pan (-1 left .. 1 right) of a thunder from `from` for a listener
+/// looking along `forward`, broadly (thunder fills the sky).
+fn pan_of(from: Vec2, forward: Vec3) -> f32 {
+    let right = forward.cross(Vec3::Z).truncate().normalize_or(Vec2::X);
+    (from.dot(right) * 0.6).clamp(-1.0, 1.0)
+}
+
+/// (left, right) gains of `gain` at `pan`, constant power.
+fn panned(gain: f32, pan: f32) -> (f32, f32) {
+    (gain * ((1.0 - pan) * 0.5).sqrt(), gain * ((1.0 + pan) * 0.5).sqrt())
+}
 
 impl Clips {
     fn get(&self, c: Clip) -> &SoundClip {
@@ -90,15 +223,15 @@ pub struct ThunderInput {
     pub frequency: f32,
     /// Where the listener looks (for the panning).
     pub forward: Vec3,
+    /// World sounds rendered binaurally (Preferences › Sound, 3D sound for
+    /// headphones), as `Listener::binaural`.
+    pub binaural: bool,
     /// The sky around the listener, when measured (softer under a roof).
     pub sky: Option<Sky>,
     /// Under the water.
     pub underwater: bool,
     /// In the world, not a silent demo.
     pub audible: bool,
-    /// The region sets the weather: its seed and the clock (Unix seconds),
-    /// which make the same strikes for every viewer there.
-    pub shared: Option<(u64, f64)>,
 }
 
 /// One strike's flash: the stepped leader's time (s: the bolt grows down
@@ -146,17 +279,39 @@ struct Clap {
     from: Vec2,
 }
 
+/// A thunder playing: placed, muffled and sent to the room's reverb again
+/// as the listener turns or walks in or out, while it lasts.
+#[derive(Debug, Clone, Copy)]
+struct Ringing {
+    id: u64,
+    from: Vec2,
+    /// Its level and muffle in the open, as it came (distance, crack).
+    gain: f32,
+    muffle: f32,
+    until: Instant,
+    /// What was last sent: rendered binaurally or panned, where (in the
+    /// listener's frame; panned, its pan in x), at what level and muffle.
+    binaural: bool,
+    dir: Vec3,
+    level: f32,
+    sent_muffle: f32,
+    sent_send: f32,
+}
+
 #[derive(Debug)]
 pub struct Thunder {
     seed: u64,
     next: Option<Instant>,
     flashes: Vec<Flash>,
     claps: Vec<Clap>,
+    ringing: Vec<Ringing>,
     played: u64,
+    /// The rain in sight around the listener (`Sky::exposure`), glided, and
+    /// when it last was.
+    open: f32,
+    open_at: Option<Instant>,
     /// A storm was on the frame before.
     was_active: bool,
-    /// The last second drawn for a shared storm.
-    shared_slot: Option<i64>,
     /// How bright the lightning is now (0: none; about 1 for a strike a
     /// kilometre away).
     pub flash: f32,
@@ -176,9 +331,11 @@ impl Default for Thunder {
             next: None,
             flashes: Vec::new(),
             claps: Vec::new(),
+            ringing: Vec::new(),
             played: 0,
+            open: 1.0,
+            open_at: None,
             was_active: false,
-            shared_slot: None,
             flash: 0.0,
             flash_at: (Vec2::X, 0.3),
         }
@@ -294,18 +451,12 @@ impl Thunder {
         });
         // the thunder: a crack near, a roll farther, the far roll far off;
         // quieter and duller with the distance
-        let r = self.rand();
-        let clip = if d < 1200.0 {
-            [Clip::Crack1, Clip::Crack2, Clip::Double][((r * 2.99) as usize).min(2)]
-        } else if d < 3000.0 {
-            if r < 0.5 { Clip::Roll } else { Clip::Crack2 }
-        } else if r < 0.6 {
-            Clip::Far
-        } else {
-            Clip::Roll
-        };
+        let clip = clip_for(d, self.rand());
         let gain = (1500.0 / (500.0 + d)).clamp(0.12, 1.0);
-        let muffle = ((d - 800.0) / 5000.0).clamp(0.0, 0.7);
+        let mut muffle = ((d - 800.0) / 5000.0).clamp(0.0, 0.7);
+        if clip.cracks() {
+            muffle = muffle.max(CRACK_MUFFLE);
+        }
         self.claps.push(Clap {
             at: now + Duration::from_secs_f32(d / SOUND_SPEED),
             clip,
@@ -315,44 +466,10 @@ impl Thunder {
         });
     }
 
-    /// A storm the region sets, second by second: each second of the clock
-    /// strikes or not by a draw from the region's seed and that second, and
-    /// a strike's distance, direction and bolt come from it too, so every
-    /// viewer there sees and hears the same strikes at the same time (give
-    /// or take how far apart their clocks are). The same mean interval as
-    /// a viewer's own storm. Seconds missed (a slow frame) are drawn late,
-    /// up to five.
-    fn shared_strikes(&mut self, seed: u64, unix_secs: f64, mean: f32, now: Instant) {
-        let slot = unix_secs.floor() as i64;
-        let first = match self.shared_slot {
-            Some(last) if last == slot => return,
-            Some(last) if last < slot && slot - last <= 5 => last + 1,
-            _ => slot,
-        };
-        let chance = 1.0 - (-1.0 / mean.max(SHORTEST_WAIT)).exp();
-        for s in first..=slot {
-            let draw = crate::weather::region::mix(seed ^ (s as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let roll = (draw >> 40) as f32 / (1u64 << 24) as f32;
-            if roll < chance {
-                // the strike's own draws from the same second
-                self.seed = crate::weather::region::mix(draw) | 1;
-                self.strike(now, None);
-            }
-        }
-        self.shared_slot = Some(slot);
-    }
-
     /// One frame: maybe a strike, the thunder due, and the flash now.
     pub fn update(&mut self, engine: Option<&AudioEngine>, input: &ThunderInput, now: Instant) {
         let active = input.enabled && input.rain >= MIN_RAIN;
-        if !active || input.shared.is_none() {
-            self.shared_slot = None;
-        }
-        if active && let Some((seed, unix_secs)) = input.shared {
-            let _ = clips();
-            self.next = None;
-            self.shared_strikes(seed, unix_secs, Self::mean_interval(input.rain, input.frequency), now);
-        } else if active {
+        if active {
             // the clips start decoding with the first storm
             let _ = clips();
             match self.next {
@@ -406,6 +523,21 @@ impl Thunder {
         // the thunder due
         let (due, later): (Vec<Clap>, Vec<Clap>) = self.claps.iter().partition(|c| now >= c.at);
         self.claps = later;
+        self.ringing.retain(|r| now < r.until);
+        // the sky around the listener: glided while thunder rolls, taken at
+        // once otherwise (nothing to hear step)
+        let measured = input.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
+        let dt = self.open_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+        self.open_at = Some(now);
+        self.open = if self.ringing.is_empty() {
+            measured
+        } else {
+            let glided = self.open + (measured - self.open) * (1.0 - (-dt / OPEN_GLIDE_SECS).exp());
+            if (measured - glided).abs() < SETTLED { measured } else { glided }
+        };
+        let open = self.open;
+        // settled on the measure: what is still a step short is sent anyway
+        let settled = open == measured;
         let Some(engine) = engine else {
             return;
         };
@@ -415,26 +547,78 @@ impl Thunder {
         let Some(clips) = clips() else {
             return;
         };
-        let open = input.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
-        let right = input.forward.cross(Vec3::Z).truncate().normalize_or(Vec2::X);
         for c in due {
-            // from its side, but broadly (thunder fills the sky)
-            let pan = (c.from.dot(right) * 0.6).clamp(-1.0, 1.0);
-            let (l, r) = (((1.0 - pan) * 0.5).sqrt(), ((1.0 + pan) * 0.5).sqrt());
-            let mut gain = c.gain * LEVEL * (0.45 + 0.55 * open);
-            let mut muffle = c.muffle.max((1.0 - open) * 0.6);
-            if input.underwater {
-                gain *= 0.5;
-                muffle = 1.0;
-            }
             let id = VOICE_BASE + self.played;
             self.played += 1;
-            engine.play_world(id, Channel::Ambient, clips.get(c.clip), false, (gain * l, gain * r));
-            if muffle > 0.01 {
-                engine.world_occlusion(id, muffle);
+            let clip = clips.get(c.clip);
+            let mut r = Ringing {
+                id,
+                from: c.from,
+                gain: c.gain * LEVEL,
+                muffle: c.muffle,
+                until: now + clip.played_duration(),
+                binaural: input.binaural,
+                dir: Vec3::ZERO,
+                level: 0.0,
+                sent_muffle: 0.0,
+                sent_send: 0.0,
+            };
+            let (gain, muffle, place) = r.heard(input, open);
+            match place {
+                Place::Binaural(dir) => engine.play_world_binaural(id, Channel::Ambient, clip, false, gain, dir.to_array()),
+                Place::Panned(pan) => engine.play_world(id, Channel::Ambient, clip, false, panned(gain, pan)),
+            }
+            // (a voice not playing yet takes these at once)
+            engine.world_occlusion(id, muffle);
+            r.sent_send = (1.0 - open) * SEND_MAX;
+            engine.world_reverb_send(id, r.sent_send);
+            r.mark(input.binaural, gain, muffle, place);
+            self.ringing.push(r);
+        }
+        // the thunder still rolling: from the same side of the sky as the
+        // listener turns, muffled or not as they walk in or out, rendered as
+        // the 3D sound setting is now
+        for r in &mut self.ringing {
+            let (gain, muffle, place) = r.heard(input, open);
+            let moved = match place {
+                Place::Binaural(dir) => !r.binaural || dir.angle_between(r.dir) > TURN_STEP,
+                Place::Panned(pan) => r.binaural || (pan - r.dir.x).abs() > TURN_STEP,
+            } || (gain - r.level).abs() > r.level.max(1e-3) * 0.05;
+            if moved {
+                match place {
+                    Place::Binaural(dir) => engine.world_binaural(r.id, gain, dir.to_array()),
+                    Place::Panned(pan) => engine.world_gain(r.id, panned(gain, pan)),
+                }
+            }
+            // the reverb follows the room even where the muffle stays put
+            // (a far roll's own muffle above the indoor one)
+            let send = (1.0 - open) * SEND_MAX;
+            let off = (send - r.sent_send).abs();
+            if off > SEND_STEP * SEND_MAX || (settled && off > 1e-4) {
+                engine.world_reverb_send(r.id, send);
+                r.sent_send = send;
+            }
+            let muffle_off = (muffle - r.sent_muffle).abs();
+            let remuffle = muffle_off > MUFFLE_STEP || (settled && muffle_off > 1e-4);
+            if remuffle {
+                engine.world_occlusion(r.id, muffle);
+            }
+            let sent_muffle = if remuffle { muffle } else { r.sent_muffle };
+            if moved {
+                r.mark(input.binaural, gain, sent_muffle, place);
+            } else {
+                r.sent_muffle = sent_muffle;
             }
         }
     }
+
+    /// Whether thunder is on its way or still rolling (the sky around the
+    /// listener is measured meanwhile, even once the rain stopped: indoors it
+    /// stays muffled to its end).
+    pub fn rumbling(&self) -> bool {
+        !self.claps.is_empty() || !self.ringing.is_empty()
+    }
+
     /// The bolts seen now, as glowing line segments for the particle pass:
     /// `eye` the camera, `ground` the height of the ground far off (m),
     /// `reach` how far the frame draws (m). A bolt farther than that is
@@ -546,15 +730,152 @@ mod tests {
 
     fn input(rain: f32) -> ThunderInput {
         ThunderInput {
-            shared: None,
             enabled: true,
             rain,
             forward: Vec3::X,
+            binaural: false,
             frequency: 0.5,
             sky: None,
             underwater: false,
             audible: false,
         }
+    }
+
+    #[test]
+    fn only_near_strikes_crack_and_the_rest_roll() {
+        for k in 0..20 {
+            let r = k as f32 / 20.0;
+            assert!(clip_for(300.0, r).cracks(), "300 m, draw {r}");
+            assert!(clip_for(CRACK_FARTHEST - 1.0, r).cracks());
+            for d in [CRACK_FARTHEST, 1000.0, 1200.0, 2500.0, 4000.0, 6000.0] {
+                assert!(!clip_for(d, r).cracks(), "{d} m, draw {r}: a crack");
+            }
+        }
+    }
+
+    #[test]
+    fn a_near_strike_cracks_softened_and_a_far_one_rolls() {
+        let mut t = seeded();
+        t.strike(Instant::now(), Some(400.0));
+        let c = t.claps[0];
+        assert!(c.clip.cracks() && c.muffle >= CRACK_MUFFLE, "{c:?}");
+        t.strike(Instant::now(), Some(2000.0));
+        assert!(!t.claps[1].clip.cracks());
+        assert!(t.rumbling());
+    }
+
+    #[test]
+    fn a_ringing_thunder_follows_the_listener_in_and_out_and_the_3d_setting() {
+        let r = Ringing {
+            id: 1,
+            from: Vec2::X,
+            gain: 1.0,
+            muffle: 0.0,
+            until: Instant::now(),
+            binaural: false,
+            dir: Vec3::ZERO,
+            level: 0.0,
+            sent_muffle: 0.0,
+            sent_send: 0.0,
+        };
+        let mut i = input(1.0);
+        let (out_gain, out_muffle, place) = r.heard(&i, 1.0);
+        assert!(matches!(place, Place::Panned(_)) && out_muffle == 0.0);
+        let (in_gain, in_muffle, _) = r.heard(&i, 0.0);
+        assert!(in_gain < out_gain && in_muffle > 0.9);
+        i.binaural = true;
+        let (b_gain, _, place) = r.heard(&i, 1.0);
+        assert!(matches!(place, Place::Binaural(_)));
+        // as loud as panned ahead: the filters give 1 per ear, panning 0.707
+        assert!((b_gain - out_gain * BINAURAL_LEVEL).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_sky_glides_while_thunder_rolls_and_is_taken_at_once_otherwise() {
+        let t0 = Instant::now();
+        let mut t = Thunder::default();
+        let mut i = input(0.0);
+        i.sky = Some(Sky {
+            exposure: 0.0,
+            ..Sky::OPEN
+        });
+        // nothing rolling: a room is taken at once
+        t.update(None, &i, t0);
+        assert_eq!(t.open, 0.0);
+        t.ringing.push(Ringing {
+            id: 1,
+            from: Vec2::X,
+            gain: 1.0,
+            muffle: 0.0,
+            until: t0 + Duration::from_secs(10),
+            binaural: false,
+            dir: Vec3::ZERO,
+            level: 0.0,
+            sent_muffle: 0.0,
+            sent_send: 0.0,
+        });
+        // rolling, a doorway's measures jumping 0..1: it moves in steps of
+        // far less than the jump, toward the new measure
+        i.sky = Some(Sky::OPEN);
+        t.update(None, &i, t0 + Duration::from_millis(100));
+        assert!(t.open > 0.1 && t.open < 0.3, "{}", t.open);
+        let mid = t.open;
+        i.sky = Some(Sky {
+            exposure: 0.0,
+            ..Sky::OPEN
+        });
+        t.update(None, &i, t0 + Duration::from_millis(200));
+        assert!(t.open < mid && t.open > 0.1, "{}", t.open);
+        // and settles on a steady measure, exactly
+        i.sky = Some(Sky::OPEN);
+        t.update(None, &i, t0 + Duration::from_secs(5));
+        assert_eq!(t.open, 1.0);
+        // once it has rung out, taken at once again
+        t.update(None, &i, t0 + Duration::from_secs(11));
+        i.sky = Some(Sky {
+            exposure: 0.0,
+            ..Sky::OPEN
+        });
+        t.update(None, &i, t0 + Duration::from_millis(11_100));
+        assert_eq!(t.open, 0.0);
+    }
+
+    #[test]
+    fn indoors_the_thunder_is_a_muffled_rumble_and_outdoors_it_is_clear() {
+        assert_eq!(indoors(1.0), (1.0, 0.0));
+        let (level, muffle) = indoors(0.0);
+        assert!((level - INDOOR_LEVEL).abs() < 1e-6);
+        assert!(muffle > 0.9, "a closed room barely lets the highs through");
+        // a window: in between
+        let (l, m) = indoors(0.5);
+        assert!(l > INDOOR_LEVEL && l < 1.0 && m > 0.0 && m < INDOOR_MUFFLE);
+    }
+
+    #[test]
+    fn thunder_is_heard_from_its_side_of_the_sky_as_the_listener_turns() {
+        // looking north (+y), a strike to the east is on the right, above
+        let d = heard_from(Vec2::X, Vec3::Y);
+        assert!(d.x > 0.9 && d.y.abs() < 1e-5 && d.z > 0.2, "{d:?}");
+        // looking east, the same strike is ahead
+        let d = heard_from(Vec2::X, Vec3::X);
+        assert!(d.y > 0.9 && d.x.abs() < 1e-5, "{d:?}");
+        // looking west, behind
+        assert!(heard_from(Vec2::X, -Vec3::X).y < -0.9);
+        // a camera looking down still has a frame
+        assert!(heard_from(Vec2::X, Vec3::new(0.0, 0.01, -1.0)).is_finite());
+        // panned, the same side: right of a listener looking north, left
+        // looking south
+        assert!(pan_of(Vec2::X, Vec3::Y) > 0.5);
+        assert!(pan_of(Vec2::X, -Vec3::Y) < -0.5);
+        for k in 0..8 {
+            let a = k as f32 * 0.785;
+            let from = Vec2::new(a.cos(), a.sin());
+            let fwd = Vec3::new(0.3, 1.0, -0.2);
+            let (h, p) = (heard_from(from, fwd).x, pan_of(from, fwd));
+            assert!(h * p >= -1e-4, "{from:?}: heard {h}, pan {p}");
+        }
+        let (l, r) = panned(1.0, 0.0);
+        assert!((l - r).abs() < 1e-6 && (l * l + r * r - 1.0).abs() < 1e-5);
     }
 
     #[test]
@@ -599,39 +920,6 @@ mod tests {
             }
         }
         assert!((20..=120).contains(&strikes), "{strikes} in 10 minutes");
-    }
-
-    /// Two viewers in a region that sets the weather, their own seeds apart:
-    /// the same strikes at the same seconds, from the same way and distance,
-    /// with the same bolts; another region's seed, other strikes.
-    #[test]
-    fn a_region_storm_strikes_alike_for_every_viewer() {
-        let t0 = Instant::now();
-        let strikes = |own: u64, region: u64| {
-            let mut th = Thunder {
-                seed: own,
-                ..Thunder::default()
-            };
-            let mut all = Vec::new();
-            for s in 0..600u64 {
-                th.shared_strikes(region, 1_800_000_000.0 + s as f64, 20.0, t0 + Duration::from_secs(s));
-                for f in th.flashes.drain(..) {
-                    let bolt = f.bolt.map(|b| b.segments[3].b);
-                    all.push((s, f.from, f.distance, bolt));
-                }
-            }
-            all
-        };
-        let a = strikes(1, 42);
-        let b = strikes(0xABCD_EF01, 42);
-        assert!((10..=60).contains(&a.len()), "{} strikes in 10 minutes", a.len());
-        assert_eq!(a, b);
-        assert_ne!(a, strikes(1, 43));
-        // a slow frame: the seconds it skipped are drawn when it comes
-        let mut th = Thunder::default();
-        th.shared_strikes(42, 1_800_000_000.0, 20.0, t0);
-        th.shared_strikes(42, 1_800_000_003.0, 20.0, t0);
-        assert_eq!(th.shared_slot, Some(1_800_000_003));
     }
 
     #[test]

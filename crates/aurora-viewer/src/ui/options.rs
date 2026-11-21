@@ -7,8 +7,11 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// The rows of the Phototools window, borrowed from the pages.
+mod phototools;
 /// Aurora's own marked in its gradient, outside Preferences too.
 pub(crate) use pages::aurora::aurora_word;
+pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
@@ -22,6 +25,7 @@ use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::widgets;
+use aurora_i18n::UiUpper;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -66,6 +70,7 @@ pub enum Page {
     Inventory,
     Controls,
     Gamepad,
+    GameControls,
     Shortcuts,
     Commands,
     System,
@@ -74,7 +79,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 24] = [
+    pub const ALL: [Page; 25] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -94,6 +99,7 @@ impl Page {
         Page::Inventory,
         Page::Controls,
         Page::Gamepad,
+        Page::GameControls,
         Page::Shortcuts,
         Page::Commands,
         Page::System,
@@ -123,6 +129,7 @@ impl Page {
             Page::Inventory => "inventory",
             Page::Controls => "controls",
             Page::Gamepad => "gamepad",
+            Page::GameControls => "game-controls",
             Page::Shortcuts => "shortcuts",
             Page::Commands => "commands",
             Page::System => "system",
@@ -152,6 +159,7 @@ impl Page {
             Page::Inventory => aurora_i18n::tr!("common-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-page-controls"),
             Page::Gamepad => aurora_i18n::tr!("joystick-gamepad"),
+            Page::GameControls => aurora_i18n::tr!("game-control-title"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-shortcuts"),
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
@@ -182,6 +190,7 @@ impl Page {
             Page::Inventory => aurora_i18n::tr!("ui-options-about-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-about-controls"),
             Page::Gamepad => aurora_i18n::tr!("ui-options-about-gamepad"),
+            Page::GameControls => aurora_i18n::tr!("game-control-about"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"),
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
@@ -212,6 +221,9 @@ impl Page {
             Page::Inventory => "box",
             Page::Controls => "mouse-filled",
             Page::Gamepad => "device-gamepad-filled",
+            // (the gamepad's icon is the Gamepad page's; this one sends to
+            // scripts and maps actions)
+            Page::GameControls => "device-gamepad-2-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
@@ -403,6 +415,18 @@ pub struct OptionsUi {
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
     pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
+    /// Game Controls: the controllers and the data sent (set by the app).
+    pub game_control: crate::game_control::View,
+    /// The mode whose mappings are edited (None: the live one).
+    game_control_mode: Option<crate::game_control::Mode>,
+    /// A binding waiting for the controller's next input (the app stops
+    /// sending and driving meanwhile).
+    pub game_control_capture: Option<pages::game_controls::Capture>,
+    /// The device of the two device tabs.
+    game_control_device: String,
+    game_control_show_all: bool,
+    /// Auto calibrate under way (sampled by the app).
+    pub game_control_calibration: Option<pages::game_controls::Calibration>,
     pub vr_default_resolution: Option<[u32; 2]>,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
@@ -463,6 +487,9 @@ pub struct OptionsUi {
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
+    /// The width reserved for a number box, measured once per frame
+    /// (`Cx::new`): the frame, the font, the button padding, the width.
+    number_width: Option<(u64, egui::FontId, f32, f32)>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -554,6 +581,22 @@ pub struct OptionsUi {
 }
 
 impl OptionsUi {
+    /// What the app tells Preferences about the world, for a second window
+    /// of borrowed rows (Phototools has its own `OptionsUi`, so that the
+    /// two windows never share the sizes the rows measured): the fields the
+    /// rows of the pages it borrows from read.
+    pub fn share_from(&mut self, from: &OptionsUi) {
+        self.rlva_camera_preset_locked = from.rlva_camera_preset_locked;
+        self.rlva_camera_fov_locked = from.rlva_camera_fov_locked;
+        self.sky_tone_mapped = from.sky_tone_mapped;
+        self.vram = from.vram;
+        if self.gpu_in_use != from.gpu_in_use || self.gpus != from.gpus {
+            self.gpu_in_use.clone_from(&from.gpu_in_use);
+            self.gpus.clone_from(&from.gpus);
+        }
+        self.gpu_notice = from.gpu_notice;
+    }
+
     pub fn joystick_capturing(&self) -> bool {
         self.joystick_capture.is_some()
     }
@@ -701,8 +744,13 @@ pub struct OptionsResult {
     pub restore_layout: Option<String>,
     /// The camera settings went back to their defaults: the view follows.
     pub reset_camera: bool,
+    /// "Show the Contacts tab" turned on: a torn-off Contacts goes back
+    /// into Conversations.
+    pub show_contacts_tab_on: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
+    /// Open the World filters window (Graphics › Image).
+    pub open_world_look: bool,
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,
@@ -745,6 +793,9 @@ pub enum Folder {
     ChatLogs,
     /// A Legacy Viewer's transcripts, to import.
     LegacyLogs,
+    /// The interface language file (Language and updates): a file, asked
+    /// for the same way.
+    LanguageFile,
 }
 
 /// The window that shows what will be imported.
@@ -789,7 +840,9 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
     match failure {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
-        Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
+        // the media pack goes to the user's own data folder: `Protected`
+        // (a sandbox or another account's folder) never comes from it
+        Failure::Filesystem | Failure::Protected => aurora_i18n::tr!("media-plugins-error-filesystem"),
         // the media pack goes to the data folder: never a drive root's
         Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
@@ -1309,6 +1362,32 @@ pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
     });
 }
 
+/// One section of the Phototools window: the rows it borrows from the
+/// pages, drawn in `ui` (`options/phototools.rs`). `st` is Phototools' own
+/// `OptionsUi` (`share_from` gives it the app's fields). The result is
+/// Preferences' own (`changed`, and what a row asks of the app), for the app
+/// to handle like Preferences' result. `photo` is the photo window's layer
+/// while it is open: the rows it overrides are its own.
+pub fn phototools_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    st: &mut OptionsUi,
+    section: PhotoSection,
+    photo: Option<&mut PhotoLayer>,
+) -> OptionsResult {
+    let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
+    let mut r = OptionsResult::default();
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut cx = Cx::new(ui, *p, s, &d, st, &mut r, Mode::Show, "");
+    phototools::draw(&mut cx, section, photo);
+    let changed = cx.changed;
+    drop(cx);
+    r.changed |= changed;
+    st.defaults = Some(d);
+    r
+}
+
 /// Puts the rows of `page` (every page: `None`) back to their defaults.
 fn reset_rows(
     ui: &mut egui::Ui,
@@ -1726,7 +1805,7 @@ fn sidebar(
                 if let Some(title) = page.section() {
                     ui.add_space(10.0);
                     let font = egui::FontId::new(11.0, super::fonts::semibold(ui.ctx()));
-                    let galley = ui.painter().layout_no_wrap(title.to_uppercase(), font, p.violet_light);
+                    let galley = ui.painter().layout_no_wrap(title.ui_upper(), font, p.violet_light);
                     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
                     super::widgets::paint_row_text(ui.painter(), galley, rect.left() + 8.0, rect.center().y, p.violet_light);
                 }

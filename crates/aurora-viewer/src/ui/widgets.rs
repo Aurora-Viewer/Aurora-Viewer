@@ -264,6 +264,9 @@ const UNDER_DIVIDER: f32 = 5.0;
 const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+/// The outer height egui gives a window it opens without a default height
+/// (`egui::Window::new`): the room a fixed floater first lays its body in.
+const EGUI_WINDOW_HEIGHT: f32 = 420.0;
 
 /// What a floater of the usual layout (title row and divider, no status
 /// row, neither `flush_body` nor `framed_header`) adds around its body:
@@ -919,12 +922,26 @@ impl<'a> Floater<'a> {
             .frame(frame)
             .default_pos(self.default_pos)
             .resizable(false);
+        // A window sized by its content lays its body out in the room egui's
+        // window had the frame before, and only ever grows past it: squeezed
+        // once (the viewer's window made tiny), that room stayed small, and a
+        // body that fits it (a scroll area, wrapped text) kept the window
+        // small for good (the Director's, Aurora Weather's: the human's
+        // reports of 2026-11-17 and 2026-11-21). It gets at least the room
+        // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w.auto_sized().min_width(self.default_size.x).max_width(self.default_size.x);
+            w = w
+                .auto_sized()
+                .min_width(self.default_size.x)
+                .max_width(self.default_size.x)
+                .min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
-            w = w.default_width(self.default_size.x);
+            w = w
+                .default_width(self.default_size.x)
+                .min_width(self.default_size.x)
+                .min_height(EGUI_WINDOW_HEIGHT.min(work.height()));
         }
         // LLFloater::setMinimized keeps the expanded geometry. egui's Resize
         // otherwise retains the old height when the body disappears, and then
@@ -1227,7 +1244,13 @@ impl<'a> Floater<'a> {
                 if scrolls {
                     let above = ui.cursor().top() - ui.max_rect().top();
                     let room = (work.height() - above - BODY_CHROME).max(MIN_SCROLLED_BODY);
-                    let shown = egui::ScrollArea::vertical().id_salt("floater_body").max_height(room).show(ui, body);
+                    // exactly the room tall while it scrolls, not the
+                    // smaller room a squeeze left (`auto_height_body`)
+                    let shown = egui::ScrollArea::vertical()
+                        .id_salt("floater_body")
+                        .max_height(room)
+                        .min_scrolled_height(room)
+                        .show(ui, body);
                     still_too_tall = shown.content_size.y > room + 0.5;
                     out = Some(shown.inner);
                 } else {
@@ -2534,6 +2557,17 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// when clicked.
 pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     small_icon_button(ui, p, icon, tip, true, on)
+}
+
+/// The A–Z switch of a list drawn from the inventory: lit while `by_name`,
+/// off for the list's own order, `tip` saying which and what a click does;
+/// flips `by_name` and returns true when clicked.
+pub fn sort_by_name_toggle(ui: &mut egui::Ui, p: &Palette, by_name: &mut bool, tip: &str) -> bool {
+    let clicked = icon_toggle(ui, p, "sort-ascending-letters", tip, *by_name);
+    if clicked {
+        *by_name = !*by_name;
+    }
+    clicked
 }
 
 /// Flat icon toggle with a larger glyph and hit target, in logical points.

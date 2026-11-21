@@ -32,6 +32,9 @@ pub struct Settings {
     pub enabled: bool,
     /// RenderDepthOfFieldInEditMode (off).
     pub in_edit: bool,
+    /// FSFocusPointRender (off): a small crosshair on the focus point,
+    /// yellow when free and red when locked.
+    pub show_focus_point: bool,
     pub focus: FocusMode,
     /// CameraFNumber (9, 1..64).
     pub f_number: f32,
@@ -54,6 +57,7 @@ impl Default for Settings {
         Settings {
             enabled: false,
             in_edit: false,
+            show_focus_point: false,
             focus: FocusMode::Camera,
             f_number: 9.0,
             focal_length: 50.0,
@@ -156,6 +160,51 @@ impl PhotoDof {
         };
         (s, (self.focus == PhotoFocus::Manual).then_some(self.distance))
     }
+}
+
+/// Half the length of the focus point's axes (m): FSFocusPointRender's
+/// `size` (LLPipeline::renderFocusPoint).
+pub const FOCUS_MARK_HALF: f32 = 0.02;
+
+/// What decides whether the focus point's mark shows and where.
+pub struct FocusMarkInput {
+    /// The setting (FSFocusPointRender).
+    pub show: bool,
+    /// The effect is on, outside the conditions that turn it off (edit
+    /// mode, the poser, not in the world).
+    pub lens_on: bool,
+    /// The lens is the Director's, the picture a 360° one, or the viewfinder
+    /// focuses by itself: no point of this lens to mark.
+    pub blocked: bool,
+    /// Manual focus: a distance, no point.
+    pub manual: bool,
+    pub focus: FocusMode,
+    /// The point the lens last focused (`Focus::point`).
+    pub point: Option<glam::Vec3>,
+    /// The camera's focus point, where a lens in Click or Locked mode that
+    /// has none focuses.
+    pub target: glam::Vec3,
+}
+
+/// The point to mark and its colour (RGBA bytes), None when nothing shows:
+/// yellow (1, 1, 0, 0.5) while the focus is free, red (1, 0, 0, 0.5) when it
+/// is locked (FSFocusPointLocked), as renderFocusPoint draws them. In Click
+/// mode before a click the lens focuses the camera's point, so that is the
+/// one marked.
+pub fn focus_mark(m: &FocusMarkInput) -> Option<(glam::Vec3, [u8; 4])> {
+    if !m.show || !m.lens_on || m.blocked || m.manual {
+        return None;
+    }
+    let point = match m.focus {
+        FocusMode::Click | FocusMode::Locked => m.point.unwrap_or(m.target),
+        FocusMode::Camera | FocusMode::Pointer => m.point?,
+    };
+    let color = if m.focus == FocusMode::Locked {
+        [255, 0, 0, 128]
+    } else {
+        [255, 255, 0, 128]
+    };
+    Some((point, color))
 }
 
 /// The lens's focal length (mm) at the vertical field of view `fov_y`
@@ -529,5 +578,66 @@ mod tests {
         };
         s.sanitize();
         assert_eq!((s.f_number, s.quality, s.transition), (1.0, 0.7, 10.0));
+    }
+
+    fn mark_input() -> FocusMarkInput {
+        FocusMarkInput {
+            show: true,
+            lens_on: true,
+            blocked: false,
+            manual: false,
+            focus: FocusMode::Pointer,
+            point: Some(glam::Vec3::new(1.0, 2.0, 3.0)),
+            target: glam::Vec3::new(9.0, 9.0, 9.0),
+        }
+    }
+
+    #[test]
+    fn the_focus_point_is_marked_yellow_when_free_and_red_when_locked() {
+        let (at, color) = focus_mark(&mark_input()).expect("shown");
+        assert_eq!((at, color), (glam::Vec3::new(1.0, 2.0, 3.0), [255, 255, 0, 128]));
+        let locked = FocusMarkInput {
+            focus: FocusMode::Locked,
+            ..mark_input()
+        };
+        assert_eq!(focus_mark(&locked).expect("shown").1, [255, 0, 0, 128]);
+    }
+
+    #[test]
+    fn the_focus_point_is_marked_only_where_the_lens_has_one() {
+        let off = |f: &dyn Fn(&mut FocusMarkInput)| {
+            let mut m = mark_input();
+            f(&mut m);
+            focus_mark(&m)
+        };
+        assert!(off(&|m| m.show = false).is_none(), "the setting");
+        assert!(
+            off(&|m| m.lens_on = false).is_none(),
+            "no effect: off, edit mode, posing, not in the world"
+        );
+        assert!(
+            off(&|m| m.blocked = true).is_none(),
+            "the Director's lens, a 360 picture, the viewfinder's AF"
+        );
+        assert!(off(&|m| m.manual = true).is_none(), "a distance has no point");
+        assert!(off(&|m| m.point = None).is_none(), "the pointer is over nothing yet");
+    }
+
+    #[test]
+    fn click_and_locked_focus_the_cameras_point_before_one_is_chosen() {
+        for focus in [FocusMode::Click, FocusMode::Locked] {
+            let m = FocusMarkInput {
+                focus,
+                point: None,
+                ..mark_input()
+            };
+            assert_eq!(focus_mark(&m).expect("shown").0, m.target, "{focus:?}");
+        }
+        // Camera mode's point is the camera's, kept in `Focus::point`
+        let m = FocusMarkInput {
+            focus: FocusMode::Camera,
+            ..mark_input()
+        };
+        assert_eq!(focus_mark(&m).expect("shown").0, glam::Vec3::new(1.0, 2.0, 3.0));
     }
 }

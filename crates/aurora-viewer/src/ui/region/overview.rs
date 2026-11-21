@@ -322,7 +322,7 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(aurora_i18n::tr!("common-view-profile"));
             if r.clicked() && !v.owner.is_nil() {
-                crate::ui::profile::request_open(ui.ctx(), v.owner);
+                crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, v.owner);
             }
             let mut line = role_name(Role::Owner).to_owned();
             if v.manages() && !managers.is_empty() {

@@ -266,6 +266,7 @@ impl App {
             "O4" => d.freeze_culling,
             "O5" => d.skeletons,
             "O6" => d.complexity_tags,
+            "O10" => d.avatar_hitboxes,
             "O9" => self.scene.sculpt_watch_target().is_some(),
             "P3" => self.scene.slow_sync().is_some(),
             "P4" => self.scene.still.is_some(),
@@ -305,6 +306,7 @@ impl App {
             "O4" => d.freeze_culling = on,
             "O5" => d.skeletons = on,
             "O6" => d.complexity_tags = on,
+            "O10" => d.avatar_hitboxes = on,
             "O9" => {
                 let target = on.then(|| self.target_avatar()).flatten();
                 if on && target.is_none() {
@@ -429,13 +431,6 @@ impl App {
             "J3" => Some(warnings_text(50, &AssetIds::diagnostics(&self.world))),
             "J4" => Some(self.system_text(renderer)),
             "J5" => Some(tool_output_text(&AssetIds::diagnostics(&self.world))),
-            "J8" => {
-                let edit = self.ik_editor.request();
-                Some(
-                    self.world
-                        .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
-                )
-            }
             // #1492: the control skeleton of each animesh the target wears
             "J9" => Some(match self.target_avatar() {
                 Some(avatar) => crate::scene::animesh_report::text(
@@ -445,6 +440,7 @@ impl App {
                 None => tr!("dev-toolbox-no-target").to_string(),
             }),
             "N2" => Some(self.region_text()),
+            "J10" => Some(self.contacts_text()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
             "L3" => Some(warnings_text(20, &AssetIds::diagnostics(&self.world))),
@@ -716,6 +712,28 @@ impl App {
         let in_world = self.move_complete_at.map_or(0, |t| t.elapsed().as_secs() / 60);
         let _ = writeln!(out, "Language: {} · in world for {in_world} min", aurora_i18n::language());
         out
+    }
+
+    /// J10: the gates that hide the Contacts tab of Conversations, for a
+    /// report where the friends list does not show.
+    fn contacts_text(&self) -> String {
+        let style = self.chat_ui.demo_style.unwrap_or(self.chat_ui.style);
+        let torn_off = self.settings.contacts.torn_off;
+        tools::ContactsReport {
+            shown: self.settings.show_contacts_tab,
+            torn_off,
+            window_open: if torn_off { self.panels.contacts } else { self.panels.chat },
+            pane: if torn_off { self.panels.contacts } else { self.chat_ui.contacts },
+            workspace: style.workspace(),
+            column_collapsed: self.chat_ui.column.collapsed,
+            tab: self.settings.contacts.tab,
+            filter: self.chat_ui.column_filter(),
+            friends: self.world.social.friends.len(),
+            friends_online: self.world.social.friends.iter().filter(|f| f.online).count(),
+            groups: self.world.groups.groups.len(),
+            sets: self.world.contact_sets.set_names().len(),
+        }
+        .text()
     }
 
     /// N2: the region's state, without its name nor any address.

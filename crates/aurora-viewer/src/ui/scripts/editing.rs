@@ -302,13 +302,13 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String, scope: &d
     changed
 }
 
-pub(super) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {
+pub(crate) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {
     egui::TextEdit::load_state(ctx, id)
         .and_then(|s| s.cursor.char_range())
         .unwrap_or_default()
 }
 
-pub(super) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bool) {
+pub(crate) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bool) {
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
     state
         .cursor
@@ -319,7 +319,7 @@ pub(super) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bo
     }
 }
 
-pub(super) fn bytes(source: &str, range: CCursorRange) -> Range<usize> {
+pub(crate) fn bytes(source: &str, range: CCursorRange) -> Range<usize> {
     let [start, end] = range.sorted_cursors();
     source.byte_index_from_char_index(start.index).0..source.byte_index_from_char_index(end.index).0
 }
@@ -330,6 +330,15 @@ pub(super) fn replace(ctx: &egui::Context, id: Id, source: &mut String, range: R
     if source.len() - (end - start) + text.len() > aurora_net::scripts::MAX_SOURCE {
         return false;
     }
+    replace_text(ctx, id, source, range, text);
+    true
+}
+
+/// Replace the characters `range` of the editor `id` as one undo step, the
+/// cursor after the new text. No size limit: the caller checks its own.
+pub(crate) fn replace_text(ctx: &egui::Context, id: Id, source: &mut String, range: Range<usize>, text: &str) {
+    let start = source.byte_index_from_char_index(CharIndex(range.start)).0;
+    let end = source.byte_index_from_char_index(CharIndex(range.end)).0;
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
     let mut undo = state.undoer();
     undo.add_undo(&(cursor(ctx, id), source.clone()));
@@ -340,10 +349,24 @@ pub(super) fn replace(ctx: &egui::Context, id: Id, source: &mut String, range: R
     state.set_undoer(undo);
     state.store(ctx, id);
     ctx.data_mut(|d| d.insert_temp(Id::unique((id, "history_dirty")), true));
-    true
 }
 
-pub(super) fn undo(ctx: &egui::Context, id: Id, source: &mut String, redo: bool) {
+/// `source` with every character range of `ranges` (in order, apart)
+/// replaced by `replacement`: LLTextEditor::replaceTextAll's result.
+pub(crate) fn replaced_all(source: &str, ranges: &[Range<usize>], replacement: &str) -> String {
+    let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
+    let mut output = String::with_capacity(source.len());
+    let mut previous = 0;
+    for range in ranges {
+        output.push_str(&source[previous..boundaries[range.start]]);
+        output.push_str(replacement);
+        previous = boundaries[range.end];
+    }
+    output.push_str(&source[previous..]);
+    output
+}
+
+pub(crate) fn undo(ctx: &egui::Context, id: Id, source: &mut String, redo: bool) {
     let Some(mut state) = egui::TextEdit::load_state(ctx, id) else {
         return;
     };
@@ -402,7 +425,7 @@ pub(super) fn word(source: &str, at: usize, lua: bool) -> &str {
 }
 
 /// Unicode lowercase may change byte length: keep original character ranges.
-pub(super) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Range<usize>> {
+pub(crate) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Range<usize>> {
     if needle.is_empty() {
         return Vec::new();
     }
@@ -438,7 +461,7 @@ pub(super) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Rang
         .collect()
 }
 
-pub(super) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
+pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
     if up {
         ranges
             .iter()

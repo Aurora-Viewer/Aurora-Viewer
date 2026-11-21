@@ -238,7 +238,6 @@ mod tests {
         let target = Vec3::new(0.2, 0.1, 1.6);
         let rotation = Quat::from_rotation_x(0.7);
         pose.edit.goals.push(Goal {
-            follow: None,
             bone: head,
             root: head,
             position: target,

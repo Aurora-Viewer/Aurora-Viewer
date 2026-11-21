@@ -1284,7 +1284,7 @@ MediaRollOffRate,F32,unreviewed,,,Multiplier to change rate of media attenuation
 MediaShowOnOthers,Boolean,unreviewed,,field `show_on_others`,Whether or not to show media on other avatars
 MediaShowOutsideParcel,Boolean,unreviewed,,,Whether or not to show media from outside the current parcel
 MediaShowWithinParcel,Boolean,unreviewed,,,Whether or not to show media within the current parcel
-MediaSoundsEarLocation,S32,unreviewed,,named in Aurora: aurora-viewer/src/scene/sounds.rs:6,Location of the virtual ear for media and sounds
+MediaSoundsEarLocation,S32,unreviewed,,field `media_sounds_ear`,Location of the virtual ear for media and sounds
 MediaTentativeAutoPlay,Boolean,unreviewed,,field `tentative_autoplay`,"This is a tentative flag that may be temporarily set off by the user, until she teleports"
 MemoryLogFrequency,F32,unreviewed,,,Seconds between display of Memory in log (0 for never)
 MenuAccessKeyTime,F32,unreviewed,,,Time (seconds) in which the menu key must be tapped to move focus to the menu bar
@@ -2098,7 +2098,7 @@ StatsReportMaxDuration,F32,unreviewed,,,"Maximum seconds for viewer stats file d
 StatsReportSkipZeroDataSaves,Boolean,unreviewed,,,"In viewer stats data file, skip saving entry if there is no data"
 StatsSessionTrackFrameStats,Boolean,unreviewed,,,Track rendering and network statistics
 StatsSummaryFile,String,unreviewed,,,Filename for stats logging summary
-StopMicCaptureWhenMuted,S32,unreviewed,,,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
+StopMicCaptureWhenMuted,S32,in-aurora,,field `stop_mic_when_muted`,Check to stop microphone capture while muted. May cause a hiss on unmute but prevents bluetooth devices always being in voice mode.
 StreamMetadataAnnounceChannel,S32,unreviewed,,field `stream_title_announce`,Chat channel where stream metadata is announced to.
 StreamMetadataAnnounceToChat,Boolean,unreviewed,,field `stream_title_announce`,Announces stream metadata to a defined chat channel.
 SwitchToSharedEnvAfterTeleport,Boolean,unreviewed,,,Switch to Shared Environment after teleport

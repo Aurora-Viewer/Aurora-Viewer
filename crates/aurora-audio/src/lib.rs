@@ -43,6 +43,7 @@ mod record;
 mod resample;
 mod reverb;
 mod stream;
+mod tls;
 mod wind;
 
 use std::sync::Arc;
@@ -59,6 +60,7 @@ pub use processing::{EchoReference, MicProcessing};
 pub use record::{Block as RecordBlock, RECORD_BLOCK, RecordTap};
 pub use reverb::ReverbParams;
 pub use stream::{StreamError, StreamStatus};
+pub use tls::CertificateIssue;
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};

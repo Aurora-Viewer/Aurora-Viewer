@@ -363,9 +363,9 @@ impl LibraryUi {
         let Some(item) = catalogue::resource(&world.inventory, window.id).cloned() else {
             return false;
         };
-        if !world.inventory.can_preview(item.asset_type) {
-            return true;
-        }
+        // (`open_preview` refuses @viewtexture; a preview already open stays
+        // open, as RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp validates
+        // the opening of LLPreviewTexture alone)
         let material = item.asset_type == 57;
         let asset = catalogue::asset(&item);
         let path = super::super::inventory::inventory_path(&world.inventory, item.parent);

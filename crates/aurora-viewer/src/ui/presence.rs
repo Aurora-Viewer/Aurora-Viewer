@@ -80,7 +80,11 @@ pub fn of_avatar(world: &World, id: &Uuid) -> Status {
 }
 
 pub fn known(world: &World, id: &Uuid) -> Known {
-    let nearby = world.coarse.values().any(|v| v.iter().any(|(a, _)| a == id));
+    // Under RLVa's @shownearby, being around tells nothing: who stands
+    // around is what RlvActions::canShowNearbyAgents (rlvactions.cpp) hides
+    // from the nearby list and the radar, and the Legacy Viewer's
+    // conversations and contacts take a status from the friend list alone.
+    let nearby = !world.rlva.has("shownearby") && world.coarse.values().any(|v| v.iter().any(|(a, _)| a == id));
     let (away, busy) = if nearby {
         match of_avatar(world, id) {
             Status::Busy => (false, true),
@@ -110,19 +114,16 @@ pub fn of(world: &World, id: &Uuid) -> Status {
     decide(known(world, id))
 }
 
-/// `of` for a row that names `id` in `scope`. A list of people known
-/// besides the world names a friend RLVa's `@shownames` hides around us:
-/// what the scene tells of them (around, away, busy) is left out there, or
-/// the row would say which friend is the stranger next to us. The Legacy
-/// Viewer's friends list shows the friendship's online status alone.
-pub fn of_in(world: &World, scope: NameScope, id: &Uuid) -> Status {
-    let mut known = known(world, id);
-    if scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, *id) {
-        known.nearby = false;
-        known.away = false;
-        known.busy = false;
-    }
-    decide(known)
+/// `of` for a row that names `id` in `scope`: the same status in every
+/// place. A list of people known besides the world (`NameScope::Roster`)
+/// tells of a friend RLVa's `@shownames` hides around us what it tells of
+/// anyone, as the Legacy Viewer's lists do: FSFloaterContacts
+/// (indra/newview/fsfloatercontacts.cpp) and the group panels have no
+/// `@shownames` test, and their menus already say who stands around
+/// (`context::avatar_roster_menu`). A row of the world (`NameScope::World`)
+/// names nobody the restriction hides, so its status tells of no one.
+pub fn of_in(world: &World, _scope: NameScope, id: &Uuid) -> Status {
+    of(world, id)
 }
 
 /// The color of a status dot: the one place to change what the dots say.
@@ -288,6 +289,39 @@ mod tests {
         assert_eq!(color(&p, Status::Unknown), color(&p, Status::Offline));
     }
 
+    /// FSFloaterContacts has no `@shownames` test: the row of a friend the
+    /// restriction hides around us says what it says without it.
+    #[test]
+    fn a_roster_row_keeps_its_status_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let friend = Uuid::from_u128(7);
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: 0,
+        });
+        // around us, by the region's coarse locations
+        world.coarse.entry(1).or_default().push((friend, glam::Vec3::ONE));
+        assert_eq!(of(&world, &friend), Status::Online);
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Presence fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_shows_name(NameScope::World, friend));
+        for scope in [NameScope::Roster, NameScope::World] {
+            assert_eq!(of_in(&world, scope, &friend), Status::Online, "{scope:?}");
+        }
+    }
+
     /// #418: the shape tells the status without the colour —
     /// a disc online, a crescent away, a disc with a bar in do not
     /// disturb, a hollow ring offline (unknown reads as offline).
@@ -299,5 +333,43 @@ mod tests {
         // the cuts stay inside the mark
         const { assert!(Shape::BAR.0 < 2.0 && Shape::BAR.1 < 1.0 && Shape::RING < 1.0) };
         const { assert!(Shape::CUT_RADIUS < 1.0 && Shape::CUT_OFFSET < 0.0) };
+    }
+    /// Being around is nearby information: under @shownearby the status
+    /// comes from the friend list alone.
+    #[test]
+    fn being_around_tells_no_status_under_shownearby() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let stranger = Uuid::from_u128(8);
+        let friend = Uuid::from_u128(9);
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: rights::ONLINE_STATUS,
+        });
+        let region = world.coarse.entry(1).or_default();
+        region.push((stranger, glam::Vec3::ONE));
+        region.push((friend, glam::Vec3::ONE));
+        assert_eq!(of(&world, &stranger), Status::Online);
+        world.rlva.configure(true);
+        restrict(&mut world, "@shownearby=n");
+        assert!(!known(&world, &stranger).nearby);
+        assert_eq!(of(&world, &stranger), Status::Unknown, "a stranger around is not told online");
+        assert_eq!(of(&world, &friend), Status::Online, "a friend's granted status stays");
+        restrict(&mut world, "@shownearby=y");
+        assert_eq!(of(&world, &stranger), Status::Online);
+    }
+
+    fn restrict(world: &mut World, command: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: command.into(),
+        }));
     }
 }
