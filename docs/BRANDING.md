@@ -371,7 +371,8 @@ underpants or undershirt; until now they borrowed `walk`, `woman-filled`,
 (`assets/icons/aurora/clothing/`, read through
 `ui/inventory/category.rs`'s `CLOTHING_DRAWINGS`; their link icons are made
 by `scripts/generate-inventory-icons.py`). They are tinted like the other
-clothing (`rose`).
+clothing (`rose`). Zakka drew them as a favour and attached no licence
+conditions to them (NOTICE.md, Bundled assets).
 
 **System folder icons are Tabler combined, not drawn.** Each system folder
 (Textures, Sounds… Settings, Materials) is Tabler's `folder-filled` /
