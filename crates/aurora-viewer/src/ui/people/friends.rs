@@ -1070,10 +1070,11 @@ mod tests {
                 .viewport(|v| v.this_pass.widgets.get_layer(layer.expect("drawn")).cloned().collect());
             rects
         };
+        // the toolbar's line, under the Friends | Groups pills
         let toggle_of = |rects: &[egui::WidgetRect]| {
             rects
                 .iter()
-                .filter(|w| w.rect.size() == Vec2::splat(rows::TOOLBAR_H) && w.rect.top() < 20.0 + rows::TOOLBAR_H)
+                .filter(|w| w.rect.size() == Vec2::splat(rows::TOOLBAR_H) && w.rect.top() < 20.0 + 3.0 * rows::TOOLBAR_H)
                 .max_by(|a, b| a.rect.right().total_cmp(&b.rect.right()))
                 .map(|w| w.rect)
         };
@@ -1095,6 +1096,7 @@ mod tests {
             button = toggle_of(&frame(640.0, Vec::new(), &mut settings, &mut st));
         }
         let button = button.expect("the toggle is drawn");
+        let toolbar = button.top();
         let first = Some(Uuid::from_u128(0xF100));
         assert_eq!(st.sheet, first, "a wide pane shows the sheet beside the list");
         for events in click(button.center()) {
@@ -1130,7 +1132,7 @@ mod tests {
         assert!(settings.sheet_collapsed);
         let mut rows_at: Vec<Rect> = rects
             .iter()
-            .filter(|w| w.rect.width() > 300.0 && w.rect.top() > 20.0 + rows::TOOLBAR_H)
+            .filter(|w| w.rect.width() > 300.0 && w.rect.top() > toolbar + rows::TOOLBAR_H)
             .map(|w| w.rect)
             .collect();
         rows_at.sort_by(|a, b| a.top().total_cmp(&b.top()));
@@ -1156,7 +1158,7 @@ mod tests {
 
         // the search field keeps its focus when the pane narrows past the
         // sheet and the expand button appears in the toolbar beside it
-        let search = Pos2::new(100.0, 20.0 + rows::TOOLBAR_H / 2.0);
+        let search = Pos2::new(100.0, toolbar + rows::TOOLBAR_H / 2.0);
         for events in click(search) {
             frame(640.0, events, &mut settings, &mut st);
         }
