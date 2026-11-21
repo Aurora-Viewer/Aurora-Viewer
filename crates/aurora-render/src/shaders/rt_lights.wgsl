@@ -188,18 +188,16 @@ const MID_DRAWN: u32 = 0x200u;
 @group(0) @binding(18) var out_tint: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(19) var tint_tex: texture_2d<f32>;
 // What the glass leaves of the sun: this frame's ray (rt_shadows.wgsl
-// `out_glass`) and its history, rgb and a the frames it averages
-// (cs_lights_reuse), then what the frame binds (cs_lights_filter, the
-// frame's binding 29: common.wgsl `sun_glass`).
+// `out_glass`) and its history, rgb the colour times the light and a the
+// light (cs_lights_reuse, `glass_history`), then what the frame binds
+// (cs_lights_filter, the frame's binding 29: common.wgsl `sun_glass`).
 @group(0) @binding(20) var sun_glass_now: texture_2d<f32>;
 @group(0) @binding(21) var prev_glass: texture_2d<f32>;
 @group(0) @binding(22) var out_glass_history: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(23) var glass_kept: texture_2d<f32>;
 @group(0) @binding(24) var out_glass: texture_storage_2d<rgba8unorm, write>;
-// cs_lights_filter: this frame's share and guide as cs_lights_reuse wrote
-// them (`out_share`, `out_guide`), before the denoiser: the sun's light
-// the glass history goes with, and the surfaces (`glass_of`).
-@group(0) @binding(25) var share_now: texture_2d<f32>;
+// cs_lights_filter: this frame's guide as cs_lights_reuse wrote it
+// (`out_guide`): the surfaces (`glass_of`).
 @group(0) @binding(26) var guide_now: texture_2d<f32>;
 
 // common.wgsl `ll_light_atten`.
@@ -821,8 +819,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     var sun = sun_now;
     var sun_frames = 1.0;
     // and the colour the glass gives it, the same way (`glass_history`)
-    let glass_now = textureLoad(sun_glass_now, pixel, 0).rgb;
-    var glass = vec4<f32>(glass_now, 1.0);
+    var glass = vec4<f32>(textureLoad(sun_glass_now, pixel, 0).rgb, sun_now);
     let back = history_pixel(pixel, world, dist);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back.xy, 0);
@@ -870,7 +867,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         sun = mix(was, sun_now, 1.0 / sun_frames);
         // (the mask has 8 bits: nearer than that to lit or dark is it)
         sun = select(sun, round(sun), abs(sun - round(sun)) < 0.002);
-        glass = glass_history(pixel, size, back.xy, glass_now, longest);
+        glass = glass_history(pixel, size, glass_back(pixel, world, dist), glass, sun_frames);
     }
     textureStore(out_share, pixel, vec4<f32>(share, sun, sun_frames, frames));
     textureStore(out_glass_history, pixel, glass);
@@ -880,19 +877,58 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
+// Last frame's glass history where `pixel`'s surface stood, read between
+// the four pixels about that point (bilinear) of those that were of the
+// same surface (`history_pixel`'s test): the nearest pixel's alone, as the
+// share's, would draw a pane's coloured edge in steps where the view
+// moves. -1 where none was.
+fn glass_back(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> vec4<f32> {
+    let came = back_of(pixel, world, dist);
+    if (params.mode.w < 0.5 || came.at.x < 0.0) {
+        return vec4<f32>(-1.0);
+    }
+    let p = came.at - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    var sum = vec4<f32>(0.0);
+    var weight = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2<i32>(k & 1, k >> 1u);
+        let q = base + o;
+        if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.screen.xy))) {
+            continue;
+        }
+        let was = textureLoad(prev_guide, q, 0).z;
+        if (was <= 0.0 || abs(was - came.expected) >= came.tolerance) {
+            continue;
+        }
+        let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+        sum += textureLoad(prev_glass, q, 0) * w;
+        weight += w;
+    }
+    if (weight < 1e-3) {
+        return vec4<f32>(-1.0);
+    }
+    return sum / weight;
+}
+
 // The colour the glass gives the sun at `pixel` times its light (a stopped
-// ray's is 0, rt_shadows.wgsl), averaged over the frames as the sun's
-// shadow is (cs_lights_reuse): its ray goes to another point of the sun's
-// disc each frame, so a pane's edge is a penumbra of colour.
-// A history this frame's rays around the pixel disagree with (a pane
-// carried off) comes to them at once, its length down by as much. `back`
-// is last frame's pixel; rgb the colour, a the frames.
-fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec2<i32>, now: vec3<f32>, longest: f32) -> vec4<f32> {
-    let h = textureLoad(prev_glass, back, 0);
-    var was = h.rgb;
-    var frames = min(h.a + 1.0, longest);
-    let off = max(max(abs(was.r - now.r), abs(was.g - now.g)), abs(was.b - now.b));
-    if (off > 0.002) {
+// ray's is 0, rt_shadows.wgsl), and that light (a), averaged over the
+// frames as the sun's shadow is (cs_lights_reuse, `frames` its length):
+// its ray goes to another point of the sun's disc each frame, so a pane's
+// edge is a penumbra of colour. Both are averaged alike, so that their
+// ratio is the colour of the rays that arrived (`glass_of`). A history
+// this frame's rays around the pixel disagree with (a pane carried off)
+// comes to them at once, its length down by as much. `was` is
+// `glass_back`'s, `now` this frame's ray.
+fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec4<f32>, now: vec4<f32>, frames_in: f32) -> vec4<f32> {
+    if (back.a < 0.0) {
+        return now;
+    }
+    var was = back;
+    var frames = frames_in;
+    let d = abs(was - now);
+    if (max(max(d.r, d.g), max(d.b, d.a)) > 0.002) {
         var lo = now;
         var hi = now;
         for (var y = -SUN_RANGE; y <= SUN_RANGE; y++) {
@@ -902,22 +938,21 @@ fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec2<i32>, now: vec3<f
                     continue;
                 }
                 let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-                let v = textureLoad(sun_glass_now, q, 0).rgb;
+                let v = vec4<f32>(textureLoad(sun_glass_now, q, 0).rgb, 1.0 - textureLoad(sun_tex, q, 0).g);
                 lo = min(lo, v);
                 hi = max(hi, v);
             }
         }
         let within = clamp(was, lo, hi);
-        let moved = max(max(abs(within.r - was.r), abs(within.g - was.g)), abs(within.b - was.b));
-        frames = max(frames * (1.0 - moved), 1.0);
+        let m = abs(within - was);
+        frames = max(frames * (1.0 - max(max(m.r, m.g), max(m.b, m.a))), 1.0);
         was = within;
     }
-    return vec4<f32>(mix(was, now, 1.0 / frames), frames);
+    return mix(was, now, 1.0 / frames);
 }
 
 // The colour the glass gives the sunlight that arrives at `pixel`: the
-// glass history (the colour times the light) over the sun's light history,
-// over the pixels of its 3 × 3 on the same surface, which smooths what the
+// glass history's colour times the light over its light, over the pixels of its 3 × 3 on the same surface, which smooths what the
 // history's reprojection leaves of the rays' grain where the view moves.
 // A stopped ray counting white would pale a pane's colour within the
 // penumbra of another shadow; over the light, it does not count. Where
@@ -938,8 +973,9 @@ fn glass_of(pixel: vec2<i32>) -> vec3<f32> {
             if (g.z <= 0.0 || abs(g.z - centre.z) > 0.01 + 0.02 * centre.z || dot(n, unpack_normal(g.xy)) < 0.9) {
                 continue;
             }
-            colour += textureLoad(glass_kept, q, 0).rgb;
-            light += textureLoad(share_now, q, 0).g;
+            let kept = textureLoad(glass_kept, q, 0);
+            colour += kept.rgb;
+            light += kept.a;
         }
     }
     let through = clamp(colour / max(light, 1e-4), vec3<f32>(0.0), vec3<f32>(1.0));
