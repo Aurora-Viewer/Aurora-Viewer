@@ -119,7 +119,7 @@ pub(super) fn follow(rig: &Rig, before: &SubjectPose, after: &mut SubjectPose, l
                 return;
             }
             for &bone in &followers {
-                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset);
+                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset, false);
             }
         }
     }
@@ -204,12 +204,12 @@ mod tests {
         for step in 1..=20 {
             let before = after.clone();
             let target = was[lead].w_axis.truncate() + offset * (step as f32 / 20.0);
-            assert!(after.move_joint(rig, lead, target));
+            assert!(after.move_joint(rig, lead, target, false));
             follow(rig, &before, &mut after, lead, &[other], Change::Move);
         }
         let mut alone = start.clone();
         for step in 1..=20 {
-            alone.move_joint(rig, lead, was[lead].w_axis.truncate() + offset * (step as f32 / 20.0));
+            alone.move_joint(rig, lead, was[lead].w_axis.truncate() + offset * (step as f32 / 20.0), false);
         }
         let alone = rig.world_with(&alone.rotations, Vec3::ZERO, &alone.positions, &alone.scales);
         let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
