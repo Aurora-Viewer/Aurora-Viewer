@@ -394,6 +394,66 @@ fn protections_are_never_shared_nor_accepted() {
 }
 
 #[test]
+fn a_setting_also_on_a_page_never_shared_is_never_shared_whatever_the_order() {
+    // the no-transfer confirmation is on Graphics and Confirmations, the
+    // delete confirmation on Inventory and Confirmations: either order
+    let forward = Catalog::new([
+        ("graphics", "confirm_no_transfer_settings".to_owned()),
+        ("confirmations", "confirm_no_transfer_settings".to_owned()),
+        ("inventory", "inventory.confirm_delete".to_owned()),
+        ("confirmations", "inventory.confirm_delete".to_owned()),
+    ]);
+    let backward = Catalog::new([
+        ("confirmations", "confirm_no_transfer_settings".to_owned()),
+        ("graphics", "confirm_no_transfer_settings".to_owned()),
+        ("confirmations", "inventory.confirm_delete".to_owned()),
+        ("inventory", "inventory.confirm_delete".to_owned()),
+    ]);
+    for catalog in [forward, backward] {
+        assert_eq!(catalog.page("confirm_no_transfer_settings"), Some("confirmations"));
+        assert_eq!(catalog.page("inventory.confirm_delete"), Some("confirmations"));
+    }
+}
+
+#[test]
+fn confirmations_shown_on_a_shared_page_are_never_shared_nor_accepted() {
+    // built from the real pages, so a new row shown on a shared page and on
+    // a page never shared is caught too
+    let rows = crate::ui::options::setting_pages();
+    let catalog = Catalog::new(rows.iter().map(|(page, path, _)| (*page, path.clone())));
+    let mut s = Settings::default();
+    s.confirm_no_transfer_settings = !s.confirm_no_transfer_settings;
+    s.inventory.confirm_delete = !s.inventory.confirm_delete;
+    s.media.filter_trust_own_worn = !s.media.filter_trust_own_worn;
+    s.draw_distance = 222.0;
+    let text = export(&s, &catalog, SHARED_PAGES, "");
+    for key in ["confirm_no_transfer_settings", "confirm_delete", "filter_trust_own_worn"] {
+        assert!(!text.contains(key), "{key} in {text}");
+    }
+    assert!(text.contains("draw_distance"), "{text}");
+    // "Looks only" ticks Graphics: it still carries none of them
+    let text = export(&s, &catalog, LOOKS, "");
+    assert!(!text.contains("confirm_no_transfer_settings"), "{text}");
+
+    let defaults = Settings::default();
+    let code = format!(
+        "{HEADER}\npages: graphics, inventory, media\n\
+         confirm_no_transfer_settings = {}\ninventory.confirm_delete = {}\n\
+         media.filter_trust_own_worn = {}\n",
+        !defaults.confirm_no_transfer_settings,
+        !defaults.inventory.confirm_delete,
+        !defaults.media.filter_trust_own_worn,
+    );
+    let plan = Plan::new(&Code::parse(&code).unwrap(), &defaults, &catalog, &Locks::default(), false);
+    assert!(
+        plan.changes.is_empty(),
+        "{:?}",
+        plan.changes.iter().map(|c| &c.key).collect::<Vec<_>>()
+    );
+    assert_eq!(plan.refused, 3);
+}
+
+#[test]
 fn a_page_named_twice_is_kept_once() {
     let code = Code::parse(&format!("{HEADER}\npages: graphics, camera, graphics\n")).unwrap();
     assert_eq!(code.pages, ["graphics", "camera"]);

@@ -122,6 +122,7 @@ const PROTECTIVE: &[&str] = &[
     "media.autoplay_huds",
     "media.allow_scripted",
     "media.filter",
+    "media.filter_trust_own_worn",
     // posts on a chat channel, channel 0 included
     "audio.stream_title_announce",
     "audio.stream_title_channel",
@@ -139,10 +140,17 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn new(rows: impl IntoIterator<Item = (&'static str, String)>) -> Catalog {
-        let mut pages = HashMap::new();
+        let mut pages: HashMap<String, &'static str> = HashMap::new();
         for (page, path) in rows {
-            // the first page that declares it: a setting keeps one page
-            pages.entry(path).or_insert(page);
+            // A setting keeps one page: the first that declares it, unless
+            // a page never shared declares it too. Then that one, whatever
+            // the order of the pages, so that a protection shown on a shared
+            // page as well (the no-transfer confirmation on Graphics, the
+            // delete confirmation on Inventory) never travels in a code.
+            let at = pages.entry(path).or_insert(page);
+            if NEVER_SHARED.contains(&page) && !NEVER_SHARED.contains(at) {
+                *at = page;
+            }
         }
         Catalog { pages }
     }
