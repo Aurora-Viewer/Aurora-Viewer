@@ -362,36 +362,7 @@ impl HistoryStorage {
             return Err(std::io::Error::other("the saved history could not be read"));
         }
         let before = self.items.clone();
-        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, item) in self.items.iter().enumerate() {
-            by_title.entry(item.title.clone()).or_default().push(i);
-        }
-        let mut changed = 0;
-        for item in items.into_iter().filter(|item| !item.title.is_empty()) {
-            let same = by_title.entry(item.title.clone()).or_default();
-            // the latest of the entries in range: several can be, and any
-            // other choice would move a visit again at the next import
-            let found = same
-                .iter()
-                .copied()
-                .filter(|&i| (self.items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET)
-                .max_by(|&a, &b| self.items[a].date.total_cmp(&self.items[b].date));
-            match found {
-                Some(i) if self.items[i].date < item.date => {
-                    self.items[i].date = item.date;
-                    if !item.slurl.is_empty() {
-                        self.items[i].slurl = item.slurl;
-                    }
-                    changed += 1;
-                }
-                Some(_) => {}
-                None => {
-                    same.push(self.items.len());
-                    self.items.push(item);
-                    changed += 1;
-                }
-            }
-        }
+        let (changed, _) = merge_places(&mut self.items, items);
         if changed > 0 {
             self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
             if let Err(e) = self.write_now() {
@@ -512,12 +483,92 @@ impl HistoryStorage {
     }
 }
 
+/// A place another file can bring: titled, at a finite position and date.
+fn importable(item: &HistoryItem) -> bool {
+    !item.title.is_empty() && item.global.is_finite() && item.date.is_finite()
+}
+
+/// The 5 m cell of a position: two places closer than
+/// MAX_GLOBAL_POS_OFFSET are in the same cell or in neighbouring ones.
+fn cell(global: DVec3) -> [i64; 3] {
+    let c = (global / MAX_GLOBAL_POS_OFFSET).floor();
+    // finite here (`importable`); `as` saturates a far one
+    [c.x as i64, c.y as i64, c.z as i64]
+}
+
+/// `HistoryStorage::merge` on its items, without the save: the places
+/// added or updated, and the distances measured (for the tests). Each place
+/// is looked for among the entries of its title in its 5 m cell and the 26
+/// around it, not among all the entries of its title. Between several
+/// entries in range, the latest visit wins, the last one between equals:
+/// any other choice would move a visit again at the next import.
+fn merge_places(items: &mut Vec<HistoryItem>, new: Vec<HistoryItem>) -> (usize, usize) {
+    let mut cells: HashMap<String, HashMap<[i64; 3], Vec<usize>>> = HashMap::new();
+    // an entry of ours with no title, or not at a finite position, is in
+    // range of no importable place
+    for (i, item) in items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.title.is_empty() && item.global.is_finite())
+    {
+        cells
+            .entry(item.title.clone())
+            .or_default()
+            .entry(cell(item.global))
+            .or_default()
+            .push(i);
+    }
+    let (mut changed, mut measured) = (0, 0);
+    for item in new.into_iter().filter(importable) {
+        let by_cell = cells.entry(item.title.clone()).or_default();
+        let [x, y, z] = cell(item.global);
+        let mut found: Option<usize> = None;
+        for dx in -1..=1_i64 {
+            for dy in -1..=1_i64 {
+                for dz in -1..=1_i64 {
+                    let key = [x.saturating_add(dx), y.saturating_add(dy), z.saturating_add(dz)];
+                    for &i in by_cell.get(&key).into_iter().flatten() {
+                        measured += 1;
+                        if (items[i].global - item.global).length() >= MAX_GLOBAL_POS_OFFSET {
+                            continue;
+                        }
+                        let later = |f: usize| items[i].date.total_cmp(&items[f].date).then(i.cmp(&f)).is_gt();
+                        if found.is_none_or(later) {
+                            found = Some(i);
+                        }
+                    }
+                }
+            }
+        }
+        match found {
+            Some(i) if items[i].date < item.date => {
+                items[i].date = item.date;
+                if !item.slurl.is_empty() {
+                    items[i].slurl = item.slurl;
+                }
+                changed += 1;
+            }
+            Some(_) => {}
+            None => {
+                by_cell.entry([x, y, z]).or_default().push(items.len());
+                items.push(item);
+                changed += 1;
+            }
+        }
+    }
+    (changed, measured)
+}
+
 /// The places of a Legacy Viewer's `teleport_history.txt`, oldest first; a
-/// line that is not one is left out.
+/// line that is not one, or a place without a title or with a position or
+/// date that is not a number, is left out.
 pub fn places(bytes: &[u8]) -> Vec<HistoryItem> {
-    let (mut items, kept) = parse(bytes);
-    if !kept.is_empty() {
-        log::info!("teleport history: {} line(s) could not be read", kept.len());
+    let (items, kept) = parse(bytes);
+    let read = items.len();
+    let mut items: Vec<_> = items.into_iter().filter(importable).collect();
+    let skipped = kept.len() + read - items.len();
+    if skipped > 0 {
+        log::info!("teleport history: {skipped} line(s) could not be read");
     }
     items.sort_by(|a, b| a.date.total_cmp(&b.date));
     items
@@ -777,6 +828,110 @@ mod tests {
         let mut history = HistoryStorage::default();
         assert_eq!(history.merge(legacy.clone()).unwrap(), 3);
         assert_eq!(history.merge(legacy).unwrap(), 0);
+    }
+
+    /// The merge as it was, every entry of a title measured.
+    fn merge_places_by_title(items: &mut Vec<HistoryItem>, new: Vec<HistoryItem>) -> usize {
+        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, item) in items.iter().enumerate() {
+            by_title.entry(item.title.clone()).or_default().push(i);
+        }
+        let mut changed = 0;
+        for item in new.into_iter().filter(|item| !item.title.is_empty()) {
+            let same = by_title.entry(item.title.clone()).or_default();
+            let found = same
+                .iter()
+                .copied()
+                .filter(|&i| (items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET)
+                .max_by(|&a, &b| items[a].date.total_cmp(&items[b].date));
+            match found {
+                Some(i) if items[i].date < item.date => {
+                    items[i].date = item.date;
+                    if !item.slurl.is_empty() {
+                        items[i].slurl = item.slurl;
+                    }
+                    changed += 1;
+                }
+                Some(_) => {}
+                None => {
+                    same.push(items.len());
+                    items.push(item);
+                    changed += 1;
+                }
+            }
+        }
+        changed
+    }
+
+    /// Made-up places, the same each run: few titles, close together and
+    /// across cell borders, dates that repeat, some with a SLURL.
+    fn made_up_places(n: usize, seed: u64) -> Vec<HistoryItem> {
+        let mut s = seed;
+        let mut next = move |m: u64| {
+            s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (s >> 33) % m
+        };
+        (0..n)
+            .map(|_| HistoryItem {
+                title: ["Home", "Shop", "Pier", ""][next(4) as usize].into(),
+                global: DVec3::new(next(40) as f64 * 0.75 - 7.5, next(12) as f64 * 0.9, next(3) as f64 * 2.5),
+                date: next(20) as f64 * 10.0,
+                slurl: if next(3) == 0 {
+                    format!("hop://grid/{}", next(100))
+                } else {
+                    String::new()
+                },
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merge_by_cells_gives_what_merge_by_title_gave() {
+        for seed in 0..40 {
+            let ours: Vec<_> = made_up_places(60, seed).into_iter().filter(|item| !item.title.is_empty()).collect();
+            let legacy = made_up_places(120, seed + 1000);
+            let mut by_title = ours.clone();
+            let mut by_cells = ours;
+            let expected = merge_places_by_title(&mut by_title, legacy.clone());
+            assert_eq!(merge_places(&mut by_cells, legacy).0, expected, "seed {seed}");
+            assert_eq!(by_cells, by_title, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn a_long_history_of_one_title_is_merged_without_measuring_every_pair() {
+        // one title, a place every 10 m: measured pair by pair, 50 million
+        // distances
+        let n = 10_000;
+        let legacy: Vec<_> = (0..n).map(|i| place("Sandbox", i as f64 * 10.0, i as f64)).collect();
+        let mut items = Vec::new();
+        let (changed, measured) = merge_places(&mut items, legacy.clone());
+        assert_eq!(changed, n);
+        assert!(measured <= 2 * n, "{measured} distances measured");
+        let (changed, measured) = merge_places(&mut items, legacy);
+        assert_eq!(changed, 0);
+        assert!(measured <= 3 * n, "{measured} distances measured");
+        assert_eq!(items.len(), n);
+    }
+
+    #[test]
+    fn places_leave_out_the_untitled_and_what_is_not_a_number() {
+        let read = places(
+            b"{'date':d\"1970-01-01T00:00:50Z\",'global_pos':[r0,r0,r0],'slurl':'','title':''}\n\
+              {'date':d\"1970-01-01T00:00:50Z\",'global_pos':[rnan,r0,r0],'slurl':'','title':'Nan'}\n\
+              {'date':d\"1970-01-01T00:00:50Z\",'global_pos':[rinf,r0,r0],'slurl':'','title':'Far'}\n\
+              {'date':d\"1970-01-01T00:00:50Z\",'global_pos':[r1,r2,r3],'slurl':'','title':'Home'}\n",
+        );
+        let titles: Vec<_> = read.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(titles, ["Home"]);
+        // what the window counts is what the merge can add
+        let mut history = HistoryStorage::default();
+        assert_eq!(history.merge(read.clone()).unwrap(), read.len());
+        let mut bad = place("Home", f64::NAN, 10.0);
+        assert_eq!(merge_places(&mut history.items, vec![bad.clone()]).0, 0);
+        bad.global.x = 0.0;
+        bad.date = f64::INFINITY;
+        assert_eq!(merge_places(&mut history.items, vec![bad]).0, 0);
     }
 
     #[test]

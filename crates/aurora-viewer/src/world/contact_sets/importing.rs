@@ -29,7 +29,77 @@ impl ImportData {
     }
 
     pub fn from_xml(bytes: &[u8]) -> Result<Self, &'static str> {
-        let mut data = aurora_llsd::from_xml(bytes).map_err(|_| "invalid LLSD XML")?;
+        Self::from_llsd(aurora_llsd::from_xml(bytes).map_err(|_| "invalid LLSD XML")?)
+    }
+
+    /// A Legacy Viewer's own contact sets file (the lists' import): an entry
+    /// that `from_xml` would refuse is left out instead of the whole file
+    /// (a set without a set's fields, a resident that is not an id, a
+    /// nickname that is not text), and a colour that cannot be read takes
+    /// the default. The data and the number of entries left out; an error
+    /// when nothing in the file can be read.
+    pub fn from_legacy_xml(bytes: &[u8]) -> Result<(Self, usize), &'static str> {
+        let data = aurora_llsd::from_xml(bytes).map_err(|_| "invalid LLSD XML")?;
+        let map = data.as_map().ok_or("expected a contact sets map")?;
+        if map.is_empty() {
+            return Err(EMPTY_MAP);
+        }
+        let mut skipped = 0;
+        let mut kept = aurora_llsd::Map::new();
+        for (name, value) in map {
+            let Some(fields) = value.as_map().filter(|_| !name.trim().is_empty()) else {
+                skipped += 1;
+                continue;
+            };
+            let mut fields = fields.clone();
+            match name.as_str() {
+                GLOBAL_SETTINGS => {
+                    if fields.get("defaultColor").is_none_or(|c| validate_color(c).is_err()) {
+                        fields.insert("defaultColor".into(), color_llsd(GREY));
+                    }
+                }
+                EXTRA_AVS | PSEUDONYM => {
+                    let before = fields.len();
+                    fields.retain(|key, value| valid_resident(key, value, name == PSEUDONYM));
+                    skipped += before - fields.len();
+                }
+                name if ContactSets::is_internal(name) => {
+                    skipped += 1;
+                    continue;
+                }
+                _ => {
+                    if !["color", "friends", "notify"].iter().any(|k| fields.contains_key(*k)) {
+                        skipped += 1;
+                        continue;
+                    }
+                    if fields.get("color").is_some_and(|c| validate_color(c).is_err()) {
+                        fields.remove("color");
+                        skipped += 1;
+                    }
+                    if let Some(friends) = fields.get_mut("friends") {
+                        match friends {
+                            Llsd::Map(members) => {
+                                let before = members.len();
+                                members.retain(|key, value| valid_resident(key, value, false));
+                                skipped += before - members.len();
+                            }
+                            _ => {
+                                fields.remove("friends");
+                                skipped += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            kept.insert(name.clone(), Llsd::Map(fields));
+        }
+        if kept.is_empty() {
+            return Err("no contact set could be read");
+        }
+        Ok((Self::from_llsd(Llsd::Map(kept))?, skipped))
+    }
+
+    fn from_llsd(mut data: Llsd) -> Result<Self, &'static str> {
         if data.has("groupname") && !data["groupname"].is_map() {
             let Llsd::String(name) = &data["groupname"] else {
                 return Err("invalid set name");
@@ -89,11 +159,16 @@ impl ImportData {
 
 fn validate_ids(data: &Llsd, aliases: bool) -> Result<(), &'static str> {
     for (key, value) in data.as_map().ok_or("expected a resident map")? {
-        if Uuid::parse_str(key).map_or(true, |id| id.is_nil()) || (aliases && !matches!(value, Llsd::String(_))) {
+        if !valid_resident(key, value, aliases) {
             return Err("invalid resident");
         }
     }
     Ok(())
+}
+
+/// A resident's entry: a real id, and text when it is a nickname.
+fn valid_resident(key: &str, value: &Llsd, alias: bool) -> bool {
+    Uuid::parse_str(key).is_ok_and(|id| !id.is_nil()) && (!alias || matches!(value, Llsd::String(_)))
 }
 
 fn validate_color(data: &Llsd) -> Result<(), &'static str> {
@@ -169,6 +244,25 @@ impl ContactSets {
             write_file(path, &aurora_llsd::to_xml(&next.export()))?;
         }
         *self = next;
+        Ok(count)
+    }
+
+    /// [`Self::merge_import`] for the lists' import, which has to know at
+    /// once whether it worked: the merged file is published in one step
+    /// without a disk flush (a refused write changes nothing), then queued
+    /// again behind any save of the file still under way or waiting
+    /// (`queue_save`), flushed by the save thread, so an older save can
+    /// never land after it and undo the import.
+    pub fn merge_import_queued(&mut self, data: ImportData, is_friend: impl Fn(&Uuid) -> bool) -> std::io::Result<usize> {
+        let (next, count) = self.merged(data, is_friend);
+        if let Some(path) = &next.path {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::atomic_file::publish(path, &aurora_llsd::to_xml(&next.export()))?;
+        }
+        *self = next;
+        self.queue_save();
         Ok(count)
     }
 
@@ -313,6 +407,64 @@ mod tests {
         assert!(ImportData::from_xml(&aurora_llsd::to_xml(&data)).is_err());
         data.insert("groupname", EXTRA_AVS);
         assert!(ImportData::from_xml(&aurora_llsd::to_xml(&data)).is_err());
+    }
+
+    #[test]
+    fn a_legacy_file_leaves_out_its_bad_entries_and_keeps_the_rest() {
+        let xml = format!(
+            "<llsd><map>\
+             <key>Work</key><map><key>color</key><array><real>2.5</real><real>0</real><real>0</real></array>\
+             <key>friends</key><map><key>{good}</key><string></string><key>not-an-id</key><string></string>\
+             <key>{nil}</key><string></string></map></map>\
+             <key>Broken</key><string>not a set</string>\
+             <key>Empty</key><map><key>other</key><integer>1</integer></map>\
+             <key>{extra}</key><map><key>{good}</key><string></string><key>bad</key><string></string></map>\
+             <key>{pseudo}</key><map><key>{good}</key><string>Nick</string><key>{other}</key><integer>3</integer></map>\
+             </map></llsd>",
+            good = id(1),
+            other = id(2),
+            nil = Uuid::nil(),
+            extra = EXTRA_AVS,
+            pseudo = PSEUDONYM,
+        );
+        assert!(ImportData::from_xml(xml.as_bytes()).is_err(), "the window's import stays strict");
+        let (data, skipped) = ImportData::from_legacy_xml(xml.as_bytes()).expect("the good entries");
+        // the colour, two members, two sets, an extra resident, a nickname
+        assert_eq!(skipped, 7);
+        let mut cs = ContactSets::default();
+        cs.merge_import(data, |_| true).expect("merge");
+        assert_eq!(cs.set_names(), ["Work"]);
+        let work = cs.set("Work").expect("set");
+        assert_eq!(work.friends.iter().copied().collect::<Vec<_>>(), [id(1)]);
+        assert_eq!(cs.pseudonym(&id(1)), Some("Nick"));
+        assert_eq!(cs.pseudonym(&id(2)), None);
+    }
+
+    #[test]
+    fn a_legacy_file_with_nothing_readable_is_an_error() {
+        let xml = b"<llsd><map><key>Broken</key><string>x</string></map></llsd>";
+        assert!(ImportData::from_legacy_xml(xml).is_err());
+        assert_eq!(ImportData::from_legacy_xml(b"<llsd><map></map></llsd>").err(), Some(EMPTY_MAP));
+    }
+
+    #[test]
+    fn a_queued_import_is_what_the_file_holds_once_the_saves_are_written() {
+        let root = std::env::temp_dir().join(format!("aurora-contact-import-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("directory");
+        let path = root.join(CONTACT_SETS_FILE);
+        let mut cs = ContactSets::load(path.clone());
+        // an older state still waiting for the save thread
+        cs.add_set("Old");
+        assert_eq!(cs.merge_import_queued(parse(&exported("Work", id(1))), |_| false).expect("save"), 1);
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
+        assert_eq!(ContactSets::load(path.clone()).export(), cs.export());
+        assert!(cs.is_valid("Work") && cs.is_valid("Old"));
+
+        cs.path = Some(root.clone()); // a directory cannot be replaced by a file
+        let before = cs.export();
+        assert!(cs.merge_import_queued(parse(&exported("Other", id(2))), |_| false).is_err());
+        assert_eq!(cs.export(), before);
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

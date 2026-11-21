@@ -222,7 +222,15 @@ fn parse_date(s: &str) -> i64 {
     };
     let mut t = time.split(':');
     let (h, mi, sec) = (num(t.next()).unwrap_or(0), num(t.next()).unwrap_or(0), num(t.next()).unwrap_or(0));
-    aurora_net::profile::days_from_civil(y, m.clamp(1, 12) as u32, dd.clamp(1, 31) as u32) * 86_400 + h * 3600 + mi * 60 + sec
+    // a year or a time that overflows (a file of another viewer) is unreadable
+    if !(-1_000_000..=1_000_000).contains(&y) {
+        return 0;
+    }
+    let day = aurora_net::profile::days_from_civil(y, m.clamp(1, 12) as u32, dd.clamp(1, 31) as u32) * 86_400;
+    [h.checked_mul(3600), mi.checked_mul(60), Some(sec)]
+        .into_iter()
+        .try_fold(day, |total, part| total.checked_add(part?))
+        .unwrap_or(0)
 }
 
 pub fn now_secs() -> i64 {
@@ -1036,6 +1044,13 @@ mod tests {
         // LLDate keeps hundredths of a second
         assert_eq!(parse_date("2023-11-14 22:13:20.53"), 1_700_000_000);
         assert_eq!(parse_date("garbage"), 0);
+    }
+
+    #[test]
+    fn a_date_too_large_to_count_is_unreadable() {
+        assert_eq!(parse_date("9223372036854775807-01-01 00:00:00"), 0);
+        assert_eq!(parse_date("2023-11-14 9223372036854775807:00:00"), 0);
+        assert_eq!(parse_date("2023-11-14 00:00:9223372036854775807"), 0);
     }
 
     #[test]

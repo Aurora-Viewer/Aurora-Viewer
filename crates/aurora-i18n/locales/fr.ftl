@@ -15908,6 +15908,7 @@ ui-weather-wind-follow-region = Vent de la région
 ui-options-legacy-lists = Importer les listes du Legacy Viewer
 ui-options-legacy-lists-help = Ajoute l'historique des téléportations, la liste noire des ressources, la liste du filtre média et les cercles de ce compte. Les fichiers du Legacy Viewer sont seulement lus.
 ui-options-legacy-lists-button = Importer depuis le Legacy Viewer…
+ui-options-legacy-lists-no-account = Connectez-vous pour importer les listes de ce compte.
 ui-options-legacy-lists-title = Importer depuis le Legacy Viewer
 ui-options-legacy-lists-text = Tout est ajouté aux listes de ce compte et rien n'est retiré ici. Ce que nomme la liste noire des ressources quitte le monde aussitôt. Importer à nouveau ramène ce que vous avez retiré ici.
 ui-options-legacy-lists-searching = Recherche des dossiers du Legacy Viewer…

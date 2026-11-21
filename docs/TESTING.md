@@ -10360,14 +10360,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
 - **`AURORA_DEMO_LEGACY_LISTS=1|run|again|none|unreadable|other-grid`**: a
-  Legacy Viewer's folder is made up beside the demo account's and Preferences ›
+  Legacy Viewer's folder is made up in
+  `config\demo\accounts\<demo account uuid>\legacy-lists\` and Preferences ›
   Language and updates opens on it. `1` waits in the import window, `run`
   imports (an object of the plaza leaves the world, the row says what was
   added), `again` imports twice (the row says there is nothing new), `none`
   shows a folder missing, `unreadable` a media list that cannot be read and
   `other-grid` the warning of a grid whose folders cannot be told apart. The
-  four lists are in memory during the run, and the account's transcripts are
-  wiped.
+  four lists are in memory during the run; no transcript is written or
+  removed.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

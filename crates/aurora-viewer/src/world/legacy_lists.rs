@@ -204,8 +204,13 @@ pub fn read(folder: &Path) -> Lists {
         }
     }
     if let Some(data) = bytes(folder, CONTACT_SETS_FILE, &mut failed) {
-        match ImportData::from_xml(&data) {
-            Ok(sets) => lists.contact_sets = Some(sets),
+        match ImportData::from_legacy_xml(&data) {
+            Ok((sets, skipped)) => {
+                if skipped > 0 {
+                    log::info!("Legacy Viewer contact sets: {skipped} entries left out, unreadable");
+                }
+                lists.contact_sets = Some(sets);
+            }
             Err(EMPTY_MAP) => {}
             Err(e) => {
                 log::warn!("Legacy Viewer contact sets unreadable: {e}");
@@ -251,7 +256,7 @@ impl super::World {
             let adds = data.adds(&self.contact_sets);
             if adds > 0 {
                 let social = &self.social;
-                match self.contact_sets.merge_import(data, |id| social.is_friend(id)) {
+                match self.contact_sets.merge_import_queued(data, |id| social.is_friend(id)) {
                     Ok(_) => report.contact_sets = adds,
                     Err(e) => {
                         log::warn!("contact sets not saved: {e}");

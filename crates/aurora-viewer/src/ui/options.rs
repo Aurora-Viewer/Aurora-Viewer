@@ -610,6 +610,8 @@ pub struct OptionsUi {
     pub legacy_lists: legacy_lists::State,
     /// What the last one did.
     pub legacy_lists_status: String,
+    /// An account is logged in: its lists can be imported (set by the app).
+    pub legacy_lists_ready: bool,
     /// Files done and files to do of the import under way (set by the app).
     pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
