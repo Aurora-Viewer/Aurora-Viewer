@@ -466,6 +466,12 @@ pub struct ObjGpu {
     /// the reflections and probes, so that the subject keeps the scene's
     /// light (#2316).
     pub unseen: bool,
+    /// What our avatar wears and RLVa's @showself or @showselfhead hide: not
+    /// drawn, and not picked either, the ray going on to what is behind
+    /// (LLViewerJointAttachment::setAttachmentVisibility clears the bridge's
+    /// drawable type, which LLOctreeIntersect::check skips,
+    /// llspatialpartition.cpp).
+    pub rlva_hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -942,6 +948,9 @@ pub struct Scene {
     /// The kinds of objects not drawn (Advanced › Rendering types), set by
     /// the app at each frame, and those the objects were last flagged for.
     pub hidden_types: render_types::Hidden,
+    /// Planet curvature's radius (m), None for the flat regions: the void
+    /// water reaches the horizon and is drawn finely enough to bend.
+    pub planet_radius: Option<f32>,
     hidden_types_applied: render_types::Hidden,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
@@ -1149,6 +1158,8 @@ pub struct Scene {
     /// FirstPersonAvatarVisible while in mouselook; None otherwise.
     pub first_person: Option<bool>,
     rlva_render_state: (Option<Uuid>, bool, bool),
+    /// The glTF materials `@setcam_textures` covers (`rlva_pbr_snapshot`).
+    rlva_pbr_covered: HashSet<Uuid>,
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
     pub build_hologram: build_hologram::BuildHologram,
@@ -1408,6 +1419,23 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
         spec_color: [sl, sl, sl, 1.0],
         ..Default::default()
     }
+}
+
+/// The glTF materials of one object that `@setcam_textures` covers when it
+/// comes (`Scene::rlva_pbr_snapshot`): none on a worn object or one that is
+/// not a volume, and of the others the loaded materials of the faces
+/// without an override (setAllObjectPBRDefaultTextures: a face whose render
+/// material is not its plain material is left).
+fn rlva_pbr_covered_faces<'a>(
+    worn: bool,
+    faces: &'a [(u8, Uuid)],
+    overridden: impl Fn(u8) -> bool + 'a,
+    loaded: impl Fn(&Uuid) -> bool + 'a,
+) -> impl Iterator<Item = Uuid> + 'a {
+    faces
+        .iter()
+        .filter(move |(face, id)| !worn && !id.is_nil() && !overridden(*face) && loaded(id))
+        .map(|(_, id)| *id)
 }
 
 /// Texture animation fields of face `fi` of `o`, if it is animated.
@@ -1748,6 +1776,7 @@ impl Scene {
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,
             hidden_types: Default::default(),
+            planet_radius: None,
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
@@ -1842,6 +1871,7 @@ impl Scene {
             agent_idx: None,
             first_person: None,
             rlva_render_state: (None, false, false),
+            rlva_pbr_covered: HashSet::new(),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
             build_hologram: build_hologram::BuildHologram::default(),
@@ -3106,6 +3136,9 @@ impl Scene {
             world.rlva.has("showselfhead"),
         );
         if self.rlva_render_state != rlva_state {
+            if self.rlva_render_state.0 != rlva_state.0 {
+                self.rlva_pbr_snapshot(world, rlva_state.0.is_some());
+            }
             self.rlva_render_state = rlva_state;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(object) = object {
@@ -3158,7 +3191,7 @@ impl Scene {
 
         step(&mut slow, "origin");
         self.sync_terrain(renderer, world, view.eye);
-        self.water.sync(renderer, world);
+        self.water.sync(renderer, world, view.eye, self.planet_radius);
         step(&mut slow, "terrain");
 
         if self.gpu.len() < world.objects.slots.len() {
@@ -4256,6 +4289,7 @@ impl Scene {
         // its texture entry says
         let plant = plants::plant_face(o);
         let visible = world.rlva_object_visible(idx);
+        g.rlva_hidden = !visible;
         for (fi, face) in geom.faces.iter().enumerate() {
             if !visible {
                 continue;
@@ -4301,6 +4335,9 @@ impl Scene {
             let mut two_sided = false;
             // GLTF material?
             let mut base_tex = tf.texture;
+            // a face without a glTF material takes `@setcam_textures` while
+            // it is held (LLFace::getTexture)
+            let mut rlva_pbr_covered = true;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
                 // render material: the asset with the face's override on
@@ -4317,6 +4354,8 @@ impl Scene {
                             .and_then(crate::world::objects::LocalAppearance::surface)
                             .is_none()
                     });
+                // (`rlva_pbr_snapshot`: the shared material, no override)
+                rlva_pbr_covered = ov.is_none() && self.rlva_pbr_covered.contains(&mid);
                 let mut m = meshes::render_material(&self.materials.resolve(&mid), ov);
                 if let Some(appearance) = o.local_appearance(fi) {
                     appearance.apply_pbr(&mut m);
@@ -4443,7 +4482,8 @@ impl Scene {
                 source = TexSource::Asset;
             }
             if wearer.is_none()
-                && plant.is_none()
+                && plants::takes_camera_texture(o)
+                && rlva_pbr_covered
                 && let Some(texture) = world.rlva.camera_texture()
             {
                 base_tex = texture;
@@ -4642,6 +4682,33 @@ impl Scene {
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
+    /// LLViewerObjectList::setAllObjectPBRDefaultTextures (called by the
+    /// RLVa handler of `RLV_MODIFIER_SETCAM_TEXTURE`, rlvhandler.cpp): when
+    /// the forced texture comes or changes, the glTF materials then loaded on
+    /// the faces of the volumes present that are not worn and carry no
+    /// override get it as their base colour. The material is shared, so a
+    /// face that shows it later without an override takes it too; a
+    /// material loaded afterwards, or a face with an override, keeps its
+    /// own. Cleared when the texture goes.
+    fn rlva_pbr_snapshot(&mut self, world: &World, on: bool) {
+        if !on {
+            self.rlva_pbr_covered.clear();
+            return;
+        }
+        for (idx, o) in world.objects.slots.iter().enumerate() {
+            let Some(o) = o else {
+                continue;
+            };
+            let worn = o.pcode != aurora_prim::params::LL_PCODE_VOLUME || Self::wearer_avatar(world, idx).is_some();
+            let overrides = world.gltf_overrides.get(&o.key);
+            let overridden = |face: u8| overrides.is_some_and(|s| s.iter().any(|(f, _)| *f == face));
+            let materials = &self.materials;
+            let covered: Vec<Uuid> =
+                rlva_pbr_covered_faces(worn, &o.extra.render_materials, overridden, |id| materials.is_loaded(id)).collect();
+            self.rlva_pbr_covered.extend(covered);
+        }
+    }
+
     fn wearer_avatar(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
         for _ in 0..16 {
             let o = world.objects.get(idx)?;
@@ -5077,7 +5144,9 @@ impl Scene {
         }
         // (a hidden water draws neither itself nor its reflection pass)
         if !self.hidden_types.water {
-            self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+            self.lists
+                .water
+                .extend(self.water.draws(view, self.water_effects.geometry, self.planet_radius));
         }
 
         // nearest avatars in full (own avatar always), the others as
@@ -8668,5 +8737,18 @@ mod tests {
             drawn > 50 && casting > 100,
             "the scene exercises the tests ({drawn} drawn, {casting} casting)"
         );
+    }
+
+    /// setAllObjectPBRDefaultTextures: the loaded plain materials of the
+    /// volumes in the world at the toggle, not the worn ones nor a face with
+    /// an override.
+    #[test]
+    fn rlva_camera_texture_covers_the_plain_materials_loaded_at_the_toggle() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let faces = [(0, a), (1, b), (2, c), (3, Uuid::nil())];
+        let loaded = |id: &Uuid| *id != c;
+        let covered: Vec<Uuid> = rlva_pbr_covered_faces(false, &faces, |face| face == 1, loaded).collect();
+        assert_eq!(covered, vec![a], "b has an override, c is still loading");
+        assert_eq!(rlva_pbr_covered_faces(true, &faces, |_| false, loaded).count(), 0, "worn");
     }
 }

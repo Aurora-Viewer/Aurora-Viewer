@@ -1276,6 +1276,11 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Soft sun shadows (soft_shadows.rs, experimental): the penumbra of the
+    /// sun's shadows widens with the distance of the caster, from a
+    /// screen-space mask drawn once per frame. Off: the shadows are exactly
+    /// the ones of before (nothing is created or drawn).
+    pub soft_shadows: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
@@ -1335,6 +1340,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            soft_shadows: false,
             specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
@@ -1747,6 +1753,13 @@ pub struct FrameParams {
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
+    /// With soft shadows: the size of the light, 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = a light with no size, the shadows
+    /// of before (the Preferences' value, or the photo's own).
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
+    /// Preferences' value, or the photo's own).
+    pub shadow_intensity: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
     pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
@@ -1807,6 +1820,9 @@ pub struct FrameParams {
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
+    /// in metres; None: the flat regions, as the Legacy Viewer draws them.
+    pub curvature: Option<f32>,
 }
 
 /// The volumetric clouds' inputs that are not in the sky: where the camera
@@ -2049,6 +2065,9 @@ pub struct RenderStats {
     /// GPU time of the volumetric clouds' compute passes and weather map
     /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
     pub gpu_clouds: Option<f32>,
+    /// GPU time of the soft sun shadows alone (ms), part of
+    /// [`GpuElement::Effects`] (0 while off).
+    pub gpu_soft: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,

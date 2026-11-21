@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-21 — Aurora 0.9.12 : quinze langues, les Contrôles de jeu et un look pour le monde
+Aurora parle maintenant quinze langues : l'allemand, l'espagnol, l'italien, le polonais, le turc, le russe, l'ukrainien, le norvégien, le portugais et le chinois rejoignent l'anglais, le français et le japonais, grâce aux traductions de la communauté. Les Contrôles de jeu pilotent l'avatar, la caméra et les scripts avec une manette, comme le viewer LL 26.5. Les looks photo et les LUT peuvent rester sur le monde, avec 30 nouveaux looks de JuicyBomb. Les versions avant la 0.9.12 doivent se mettre à jour, sous 12 heures. Le cache est vidé une fois au premier lancement ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.12)
+
+## 2026-11-21 — Chat, avatars et inventaire
+Les messages privés envoyés depuis un autre appareil, l'application mobile comprise, apparaissent dans la conversation. Les avatars déjà vus s'affichent tout de suite depuis une copie locale, pendant que la région les envoie. L'inventaire a une Vue galerie, les notes ont Rechercher et remplacer, et la fenêtre Seconde caméra garde votre avatar en vue. La fenêtre Météo Aurora est repensée et réunit tous les réglages de la météo. Un compte Second Life se crée depuis l'écran de connexion, et Linux installe ses mises à jour sur place.
+
+## 2026-11-21 — Encore plus comme le Legacy Viewer
+La fenêtre Outils photo, les médias et les sons entendus depuis l'avatar, le micro fermé en sourdine, les permissions des objets dans les objets, Désactiver le verre en accessibilité, et RLVa comme dans le Legacy Viewer. Merci à anne-skydancer, circuskid, ClifHofmann, dash-sl, Gaalrauch, Glychd, Izusl, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik, PumpkinSpicePanda, et aux traducteurs 00JackWild00, 1615424277, DDynamic-Evolution, deontodi-ctrl, SmurfCat1234, wolfosbournesl.
+
 ## 2026-11-18 — Aurora 0.9.11 : un Director complet, le Mode jeu et les photos à 360°
 Le Director devient un vrai outil de machinima : plans prêts à l'emploi, rendus jusqu'en 4K, films avec leur son, montages, looks et LUT du mode photo, poignées sur les caméras, et ffmpeg téléchargé en un clic. Le Mode jeu met Aurora en retrait pendant que vous jouez : le monde n'est plus dessiné, la mémoire vidéo et la RAM reviennent au jeu, le chat et les sons continuent. La fenêtre photo prend des photos à 360°. Les versions avant la 0.9.11 doivent se mettre à jour, sous 12 heures. Le cache est vidé une fois au premier lancement ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.11)
