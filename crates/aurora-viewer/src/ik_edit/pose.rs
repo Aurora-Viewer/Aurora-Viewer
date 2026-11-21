@@ -309,8 +309,6 @@ impl Editor {
         }
         changed
     }
-    /// Switch the selected bone between its IK chain and a direct (FK) joint
-    /// edit, shared by the Pose page and the timeline's posing toggle.
     /// Move the selected joint alone, its chain left as it is (FK): what
     /// Location keying asks for. The next manipulation commits it.
     pub(super) fn free_joint(&mut self) {
@@ -322,6 +320,8 @@ impl Editor {
             self.gizmo.cancel();
         }
     }
+    /// Switch the selected bone between its IK chain and a direct (FK) joint
+    /// edit, shared by the Pose page and the timeline's posing toggle.
     pub(super) fn set_chain_ik(&mut self, ik: bool, rig: &Rig, frame: &Frame) {
         let Some(bone) = self.selected else { return };
         if rig.parent[bone].is_none() || (self.mode == Mode::Ik) == ik {

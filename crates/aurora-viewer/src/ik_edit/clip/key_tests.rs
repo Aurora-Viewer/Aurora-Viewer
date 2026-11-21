@@ -386,7 +386,7 @@ fn each_keying_choice_records_its_own_channels() {
     let key = |keying| {
         let mut document = Document::new();
         document
-            .record_keying(rig, &pose, 10, &[head, pelvis], &[], keying)
+            .record_keying(rig, &pose, 10, &[head, pelvis], &[], keying, &[head, pelvis])
             .expect("recorded");
         (channel_frames(&document, head), channel_frames(&document, pelvis))
     };
@@ -420,7 +420,7 @@ fn a_one_channel_key_on_a_rest_track_drops_its_other_rest_channel() {
     };
     let mut document = fresh();
     document
-        .record_keying(rig, &pose, 10, &[head], &[], Keying::Location)
+        .record_keying(rig, &pose, 10, &[head], &[], Keying::Location, &[head])
         .expect("recorded");
     assert_eq!(
         channel_frames(&document, head),
@@ -430,7 +430,7 @@ fn a_one_channel_key_on_a_rest_track_drops_its_other_rest_channel() {
 
     let mut document = fresh();
     document
-        .record_keying(rig, &pose, 10, &[pelvis], &[], Keying::Rotation)
+        .record_keying(rig, &pose, 10, &[pelvis], &[], Keying::Rotation, &[pelvis])
         .expect("recorded");
     assert_eq!(
         channel_frames(&document, pelvis),
@@ -440,7 +440,7 @@ fn a_one_channel_key_on_a_rest_track_drops_its_other_rest_channel() {
 
     // an authored track keeps what was keyed before
     document
-        .record_keying(rig, &pose, 20, &[pelvis], &[], Keying::Location)
+        .record_keying(rig, &pose, 20, &[pelvis], &[], Keying::Location, &[pelvis])
         .expect("recorded");
     assert_eq!(channel_frames(&document, pelvis), (vec![0, 10], vec![0, 20]));
     let animation = document.animation().expect("exports");
@@ -465,10 +465,10 @@ fn a_location_only_track_exports_without_rotation_keys() {
     let mut document = Document::new();
     document.range(0, 30);
     document
-        .record_keying(rig, &pose, 0, &[head], &[], Keying::Location)
+        .record_keying(rig, &pose, 0, &[head], &[], Keying::Location, &[head])
         .expect("recorded");
     document
-        .record_keying(rig, &pose, 30, &[head], &[], Keying::Location)
+        .record_keying(rig, &pose, 30, &[head], &[], Keying::Location, &[head])
         .expect("recorded");
     let animation = document.animation().expect("exports");
     let joint = animation.joints.iter().find(|joint| joint.joint_name == "mHead").expect("exported");
@@ -508,4 +508,78 @@ fn channel_picks_move_delete_and_copy_one_channel() {
     // a frame picked on the bone's row and on a channel row moves once
     assert_eq!(document.move_keys(&set(&[(Channel::Both, 20), (Channel::Location, 20)]), 2), 2);
     assert_eq!(channel_frames(&document, head), (vec![0], vec![0, 22, 30]));
+}
+
+#[test]
+fn a_key_pose_with_location_keying_leaves_unmoved_joints_located_at_rest() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let (head, neck, pelvis) = (rig.names["mHead"], rig.names["mNeck"], rig.pelvis);
+    let pose = frame(&lib, &rig.local_rot);
+    // Key pose (or auto-key): nothing picked by the Key button
+    let mut document = Document::new();
+    document
+        .record_keying(rig, &pose, 10, &[head, neck, pelvis], &[], Keying::LocationRotation, &[])
+        .expect("recorded");
+    assert_eq!(
+        channel_frames(&document, head),
+        (vec![10], vec![]),
+        "an unmoved joint keeps its shape's location"
+    );
+    assert_eq!(channel_frames(&document, pelvis), (vec![10], vec![0, 10]), "the pelvis, as Auto");
+    // the Key button picks the head: its location is keyed, the neck's not
+    document
+        .record_keying(rig, &pose, 20, &[head, neck], &[], Keying::LocationRotation, &[head])
+        .expect("recorded");
+    assert_eq!(channel_frames(&document, head), (vec![10, 20], vec![0, 20]));
+    assert_eq!(channel_frames(&document, neck), (vec![10, 20], vec![]));
+    // Location alone on joints with nothing to key records nothing
+    let mut document = Document::new();
+    assert_eq!(
+        document.record_keying(rig, &pose, 10, &[head, neck], &[], Keying::Location, &[]),
+        Err("anim-edit-no-bones")
+    );
+}
+
+#[test]
+fn a_one_channel_paste_or_drag_on_a_rest_track_drops_its_other_rest_channel() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let (head, pelvis) = (rig.names["mHead"], rig.pelvis);
+    let pose = frame(&lib, &rig.local_rot);
+    let rest = || {
+        let mut document = Document::new();
+        document.record(rig, &pose, 0, &[head, pelvis], &[]).expect("recorded");
+        for track in &mut document.tracks {
+            track.authored = false;
+        }
+        document
+    };
+    let mut source = Document::new();
+    for at in [10, 20] {
+        source
+            .record_keying(rig, &pose, at, &[head], &[], Keying::Location, &[head])
+            .expect("recorded");
+    }
+    let copied = source.copy_keys(&[(head, Channel::Location, 10), (head, Channel::Location, 20)].into_iter().collect());
+
+    let mut document = rest();
+    document.paste_keys(30, &copied);
+    assert_eq!(
+        channel_frames(&document, head),
+        (vec![], vec![30, 40]),
+        "its rest rotation would be exported"
+    );
+
+    // the pelvis's rest location dragged on its Location row
+    let mut document = rest();
+    document.move_track_keyframe(pelvis, Channel::Location, 0, 10);
+    assert_eq!(channel_frames(&document, pelvis), (vec![], vec![10]));
+    let mut document = rest();
+    document.move_keys(&[(pelvis, Channel::Rotation, 0)].into_iter().collect(), 5);
+    assert_eq!(channel_frames(&document, pelvis), (vec![5], vec![]));
+    // the bone's own row moves both, as before
+    let mut document = rest();
+    document.move_track_keyframe(pelvis, Channel::Both, 0, 10);
+    assert_eq!(channel_frames(&document, pelvis), (vec![10], vec![10]));
 }
