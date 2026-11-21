@@ -4,7 +4,9 @@
 
 use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
-use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
+use crate::build::edits::{
+    CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PHYSICS_SHAPE_NONE, PROBE_DEFAULT,
+};
 use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
@@ -37,6 +39,57 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
         (aurora_i18n::tr!("build-ui-features-prim"), 0),
         (aurora_i18n::tr!("build-ui-features-convex-hull"), 2),
     ]
+}
+
+/// The shapes the combo offers. The Legacy Viewer always lists None
+/// (LLPanelVolume::refresh, indra/newview/llpanelvolume.cpp), but the
+/// simulator refuses it on a root prim and the choice snaps back. Aurora lists
+/// None only when a child prim of a linkset is selected (stricter, the same
+/// final state), and keeps it while a prim already shows None.
+///
+/// Prim is listed for a prim, and for a mesh only when it has a physics shape
+/// of its own (LLPanelVolume::refresh: `gMeshRepo.hasPhysicsShape`); like
+/// None, it stays while the prim already shows it.
+fn physics_shape_choices(child_selected: bool, prim_allowed: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
+    physics_shapes()
+        .into_iter()
+        .filter(|&(_, v)| match v {
+            PHYSICS_SHAPE_NONE => child_selected || current == Some(v),
+            PHYSICS_SHAPE_PRIM => prim_allowed || current == Some(v),
+            _ => true,
+        })
+        .collect()
+}
+
+/// PHYSICS_SHAPE_PRIM (LLViewerObject::PHYSICS_SHAPE_*).
+const PHYSICS_SHAPE_PRIM: u8 = 0;
+
+/// Whether the mesh `id` has a physics shape of its own; `None` (Prim not
+/// listed, like the Legacy Viewer before its header and hulls arrive) while
+/// its collision blocks are fetched. The answer is kept: a mesh asset never
+/// changes.
+fn mesh_has_physics(tool: &mut BuildTool, meshes: &mut crate::scene::meshes::MeshStreamer, id: uuid::Uuid) -> Option<bool> {
+    if let Some(&known) = tool.mesh_physics.get(&id) {
+        return Some(known);
+    }
+    let known = meshes.view(&id).and_then(|view| {
+        let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
+        aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
+    });
+    if let Some(old) = tool.mesh_physics_fetch.take().filter(|old| *old != id || known.is_some()) {
+        // the physics shape display asks again while it needs the blocks
+        meshes.want_physics(old, false);
+    }
+    match known {
+        Some(known) => {
+            tool.mesh_physics.insert(id, known);
+        }
+        None => {
+            meshes.want_physics(id, true);
+            tool.mesh_physics_fetch = Some(id);
+        }
+    }
+    known
 }
 
 /// Reflection probe flags (LLReflectionProbeParams).
@@ -241,9 +294,30 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         |ui| {
             label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
             let phys = tool.physics.get(&key.local_id).copied();
+            let shape = phys.map(|x| x.shape_type);
+            let roots: Vec<bool> = tool
+                .sel_prims(world)
+                .into_iter()
+                .map(|i| crate::build::root_of(world, i) == i)
+                .collect();
+            let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
+            let mesh_id = volume.sculpt.filter(|sc| sc.is_mesh()).map(|sc| sc.texture);
+            let prim_allowed = mesh_id.is_none_or(|id| mesh_has_physics(tool, &mut env.scene.meshes, id) == Some(true));
+            let shapes = physics_shape_choices(child_selected, prim_allowed, shape);
             ui.horizontal(|ui| {
-                if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
+                if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
+                }
+                if root_selected {
+                    // why None is missing, or why a whole linkset set to None
+                    // still shows the root's shape: only child prims take it
+                    let _ = super::common::icon_button(
+                        ui,
+                        p,
+                        "info-circle-filled",
+                        aurora_i18n::tr!("build-ui-features-physics-none-root-hint"),
+                        true,
+                    );
                 }
                 let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
                 if super::common::icon_button(
@@ -683,6 +757,31 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prim_is_offered_only_for_a_mesh_with_its_own_physics_shape() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // a mesh without one (or not known yet): None and Convex hull
+        assert_eq!(values(physics_shape_choices(true, false, Some(2))), [PHYSICS_SHAPE_NONE, 2]);
+        assert_eq!(values(physics_shape_choices(false, false, Some(2))), [2]);
+        // a mesh already showing Prim keeps it in the list
+        assert_eq!(values(physics_shape_choices(false, false, Some(0))), [0, 2]);
+    }
+
+    #[test]
+    fn none_is_offered_only_for_a_child_prim() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // root or lone prim: Prim and Convex hull only
+        assert_eq!(values(physics_shape_choices(false, true, Some(0))), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, true, None)), [0, 2]);
+        // a child prim in the selection: None too, in the Legacy Viewer's order
+        assert_eq!(values(physics_shape_choices(true, true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
+        // a root already showing None keeps it in the list, so the combo can name it
+        assert_eq!(
+            values(physics_shape_choices(false, true, Some(PHYSICS_SHAPE_NONE))),
+            [PHYSICS_SHAPE_NONE, 0, 2]
+        );
+    }
 
     #[test]
     fn a_projector_the_agent_cannot_copy_leaves_the_target_its_own() {

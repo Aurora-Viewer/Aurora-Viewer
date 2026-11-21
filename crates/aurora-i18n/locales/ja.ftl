@@ -4210,6 +4210,7 @@ ui-options-input-used-for-voice = ボイスに使用する入力
 ui-environment-sky-environment = 空の環境
 ui-environment-water-environment = 水の環境
 build-ui-features-convex-hull = 凸包
+build-ui-features-physics-none-root-hint = 物理形状「なし」はリンクセットの子プリムだけに使えます。ルートプリムや単独のプリムは「プリム」または「凸包」のままです。
 common-environment = 環境
 ui-environment-shared-environment = 共有環境
 ui-options-shared-environment-region-parcel-eep-day-cycle = 共有環境＝リージョン／区画のＥＥＰデイサイクル

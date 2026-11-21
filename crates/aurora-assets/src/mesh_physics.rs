@@ -32,6 +32,25 @@ pub fn convex_hull(points: impl IntoIterator<Item = [f32; 3]>) -> Result<MeshFac
     })
 }
 
+/// Whether a mesh has a physics shape of its own, which the "Prim" physics
+/// shape type uses: a `physics_mesh` block, or a convex decomposition with
+/// at least one hull. Port of `LLMeshRepository::hasPhysicsShape`
+/// (indra/newview/llmeshrepository.cpp, originally LGPL 2.1), which also
+/// reads the hulls of `LLModel::Decomposition::fromLLSD` ("HullList" with
+/// "Positions"). `convex` is the `physics_convex` block once held; `None`
+/// while that block is still to be fetched, when the answer is not known yet.
+pub fn has_physics_shape(header: &crate::MeshHeader, convex: Option<&[u8]>) -> Option<bool> {
+    if header.physics_mesh.is_some() {
+        return Some(true);
+    }
+    if header.physics_convex.is_none() {
+        return Some(false);
+    }
+    // A damaged block counts as no hulls, as fromLLSD then leaves none.
+    let data = crate::mesh::unzip_llsd(convex?).unwrap_or_default();
+    Some(data.is_map() && data.has("Positions") && !data["HullList"].as_binary().is_empty())
+}
+
 pub fn decode(section: &[u8]) -> Result<Decomposition, AssetError> {
     let data = crate::mesh::unzip_llsd(section)?;
     // Secondary mesh models can carry an undefined decomposition.
@@ -124,6 +143,37 @@ mod tests {
             assert!(face.positions.contains(&[-2.0; 3]));
             assert!(face.positions.contains(&[3.0; 3]));
         }
+    }
+
+    #[test]
+    fn a_mesh_has_a_physics_shape_with_a_physics_mesh_or_analysed_hulls() {
+        let header = |physics_mesh: bool, physics_convex: bool| crate::MeshHeader {
+            header_size: 0,
+            lods: [None, None, None, Some((0, 1))],
+            skin: None,
+            physics_convex: physics_convex.then_some((10, 20)),
+            physics_mesh: physics_mesh.then_some((30, 40)),
+            version: 1,
+            creator: uuid::Uuid::nil(),
+        };
+        let hulls = compressed(llsd_map! {
+            "HullList" => Llsd::Binary(vec![8]),
+            "Positions" => Llsd::Binary(vec![0; 48]),
+            "BoundingVerts" => Llsd::Binary(vec![0; 48]),
+        });
+        // only the base hull the uploader always writes
+        let base_only = compressed(llsd_map! { "BoundingVerts" => Llsd::Binary(vec![0; 48]) });
+        assert_eq!(has_physics_shape(&header(true, false), None), Some(true), "a physics mesh");
+        assert_eq!(has_physics_shape(&header(true, true), None), Some(true), "no need for the hulls");
+        assert_eq!(has_physics_shape(&header(false, false), None), Some(false), "no physics block");
+        assert_eq!(has_physics_shape(&header(false, true), None), None, "hulls still to fetch");
+        assert_eq!(has_physics_shape(&header(false, true), Some(&hulls)), Some(true), "analysed hulls");
+        assert_eq!(has_physics_shape(&header(false, true), Some(&base_only)), Some(false));
+        assert_eq!(
+            has_physics_shape(&header(false, true), Some(&[1, 2, 3])),
+            Some(false),
+            "damaged block"
+        );
     }
 
     #[test]
