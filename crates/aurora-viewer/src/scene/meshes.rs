@@ -292,6 +292,8 @@ pub struct MeshView {
     pub header: MeshHeader,
     pub bytes: MeshBytes,
     pub skin: Option<Arc<SkinInfo>>,
+    /// Its skin block did not decode: it will never come.
+    pub skin_bad: bool,
 }
 
 impl MeshView {
@@ -447,6 +449,7 @@ impl MeshStreamer {
             header: e.header.clone()?,
             bytes: e.bytes.clone(),
             skin: e.skin.clone(),
+            skin_bad: e.skin_bad,
         })
     }
 

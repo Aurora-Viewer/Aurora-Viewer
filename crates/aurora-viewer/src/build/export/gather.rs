@@ -3,7 +3,7 @@
 //! (`rights::PrimFacts`), and their geometry, copied on the frame thread
 //! then generated on a worker (`generate`).
 
-use super::model::{SourceFace, SourcePrim};
+use super::model::{Pbr, SourceFace, SourcePrim};
 use super::rights::{PrimFacts, Shape};
 use crate::build::BuildTool;
 use crate::scene::Scene;
@@ -114,6 +114,22 @@ pub struct PrimInput {
     pub scale: Vec3,
     pub faces: Vec<TextureFace>,
     pub geometry: Geometry,
+    /// Each face's PBR material asset (RenderMaterial extra parameter).
+    pub materials: Vec<Option<Uuid>>,
+    /// Each face's PBR material as it will be written, filled by the app
+    /// (`app/object_export.rs`) once resolved and allowed.
+    pub pbr: Vec<Option<Arc<Pbr>>>,
+}
+
+/// The PBR material asset of a prim's face (the RenderMaterial extra
+/// parameter, LLRenderMaterialParams); none for a nil id.
+pub fn face_material(o: &crate::world::objects::Object, face: usize) -> Option<Uuid> {
+    o.extra
+        .render_materials
+        .iter()
+        .find(|(f, _)| *f as usize == face)
+        .map(|(_, id)| *id)
+        .filter(|id| !id.is_nil())
 }
 
 /// The highest detail of a prim's geometry, copied from the scene, or what
@@ -131,6 +147,10 @@ pub fn input(world: &World, scene: &mut Scene, key: ObjKey, now: Instant) -> Res
             let view = scene.meshes.view(&s.texture).ok_or(Waiting::Mesh)?;
             let best = view.header.actual_lod(3).and_then(|l| view.header.lods[l]);
             if !best.is_some_and(|range| view.bytes.holds(range)) {
+                return Err(Waiting::Mesh);
+            }
+            // a rigged mesh is written with its rigging: its skin block too
+            if view.header.skin.is_some() && view.skin.is_none() && !view.skin_bad {
                 return Err(Waiting::Mesh);
             }
             Geometry::Mesh(view)
@@ -152,6 +172,8 @@ pub fn input(world: &World, scene: &mut Scene, key: ObjKey, now: Instant) -> Res
         scale: o.scale,
         faces: (0..count).map(|i| te.as_ref().map(|te| *te.face(i)).unwrap_or_default()).collect(),
         geometry,
+        materials: (0..count).map(|i| face_material(o, i)).collect(),
+        pbr: vec![None; count],
     })
 }
 
@@ -160,11 +182,13 @@ pub fn input(world: &World, scene: &mut Scene, key: ObjKey, now: Instant) -> Res
 pub fn generate(input: PrimInput) -> SourcePrim {
     let detail = aurora_prim::volume::DETAIL_SCALES[3];
     let te = |i: usize| input.faces.get(i).copied().unwrap_or_default();
+    let pbr = |i: usize| input.pbr.get(i).cloned().flatten();
     let faces = match &input.geometry {
-        Geometry::Volume(params) => volume_faces(aurora_prim::generate_volume(params, detail), &te),
+        Geometry::Volume(params) => volume_faces(aurora_prim::generate_volume(params, detail), &te, &pbr),
         Geometry::Sculpt(params, map) => volume_faces(
             aurora_prim::generate_sculpt(params, detail, map.width, map.height, map.components, &map.pixels),
             &te,
+            &pbr,
         ),
         Geometry::Mesh(view) => match view.lod_section(3).map(aurora_assets::mesh::decode_mesh_lod) {
             Some(Ok(faces)) => faces
@@ -176,6 +200,9 @@ pub fn generate(input: PrimInput) -> SourcePrim {
                     uvs: f.uvs,
                     indices: f.indices.into_iter().map(u32::from).collect(),
                     te: te(i),
+                    joints: f.joints,
+                    weights: f.weights,
+                    pbr: pbr(i),
                 })
                 .collect(),
             Some(Err(e)) => {
@@ -185,15 +212,24 @@ pub fn generate(input: PrimInput) -> SourcePrim {
             None => Vec::new(),
         },
     };
+    let skin = match &input.geometry {
+        Geometry::Mesh(view) => view.skin.clone(),
+        _ => None,
+    };
     SourcePrim {
         position: input.position,
         rotation: input.rotation,
         scale: input.scale,
         faces,
+        skin,
     }
 }
 
-fn volume_faces(mesh: aurora_prim::VolumeMesh, te: &dyn Fn(usize) -> TextureFace) -> Vec<SourceFace> {
+fn volume_faces(
+    mesh: aurora_prim::VolumeMesh,
+    te: &dyn Fn(usize) -> TextureFace,
+    pbr: &dyn Fn(usize) -> Option<Arc<Pbr>>,
+) -> Vec<SourceFace> {
     mesh.faces
         .into_iter()
         .enumerate()
@@ -203,6 +239,8 @@ fn volume_faces(mesh: aurora_prim::VolumeMesh, te: &dyn Fn(usize) -> TextureFace
             uvs: f.uvs,
             indices: f.indices.into_iter().map(u32::from).collect(),
             te: te(i),
+            pbr: pbr(i),
+            ..Default::default()
         })
         .collect()
 }
