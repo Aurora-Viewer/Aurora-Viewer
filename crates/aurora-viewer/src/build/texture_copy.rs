@@ -221,6 +221,66 @@ impl BuildTool {
     }
 }
 
+/// The rights a material saved from the selected faces may give: the masks
+/// of the inventory item it comes from, or every right for the blank
+/// material; the creation defaults for materials narrow them before the
+/// upload (`permissions_out.accumulate(floater_perm)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaterialSave {
+    pub next_owner: u32,
+    pub group: u32,
+    pub everyone: u32,
+}
+
+impl BuildTool {
+    /// LLMaterialEditor::canSaveObjectsMaterial (can_use_objects_material
+    /// with PERM_COPY and PERM_MODIFY, ItemSource::AGENT,
+    /// indra/newview/llmaterialeditor.cpp): the first face with a material,
+    /// on an object the agent may modify (LLSelectedTEGetMatData, mIsOverride),
+    /// whose contents are not on their way, whose root gives copy and modify;
+    /// and, unless it is the blank material, an item of that asset in the
+    /// agent's inventory (Trash and Library included) with copy and modify.
+    /// None when it may not be saved. Stricter than the Legacy Viewer: the
+    /// group rights of an item do not count (`agent_mask`).
+    pub fn material_save_allowed(&self, world: &World, faces: &[(usize, u8)]) -> Option<MaterialSave> {
+        let (idx, material) = faces
+            .iter()
+            .filter(|&&(idx, _)| self.can_modify(world, idx))
+            .find_map(|&(idx, face)| BuildTool::gltf_asset(world, idx, face).map(|m| (idx, m)))?;
+        let o = world.objects.get(idx)?;
+        if self.contents.objects.get(&o.full_id).is_some_and(|inv| inv.loading) {
+            return None;
+        }
+        let both = OBJECT_COPY | OBJECT_MODIFY;
+        if world
+            .objects
+            .get(crate::build::root_of(world, idx))
+            .is_none_or(|root| root.update_flags & both != both)
+        {
+            return None;
+        }
+        if material == crate::scene::meshes::BLANK_MATERIAL {
+            return Some(MaterialSave {
+                next_owner: rules::FULL | aurora_net::build::perm::MOVE,
+                group: rules::FULL | aurora_net::build::perm::MOVE,
+                everyone: rules::FULL | aurora_net::build::perm::MOVE,
+            });
+        }
+        let need = rules::COPY | rules::MODIFY;
+        world
+            .inventory
+            .items
+            .values()
+            .filter(|i| i.asset_type == AT_MATERIAL && i.asset_id == material && rules::agent_mask(i, world.agent_id) & need == need)
+            .min_by_key(|i| i.id)
+            .map(|i| MaterialSave {
+                next_owner: i.next_owner_mask,
+                group: i.group_mask,
+                everyone: i.everyone_mask,
+            })
+    }
+}
+
 /// Why an item could not follow its id into a target's contents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Retain {

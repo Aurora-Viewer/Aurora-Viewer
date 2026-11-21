@@ -3914,6 +3914,21 @@ impl App {
                 self.outfit_hd_uploaded(result);
                 return;
             }
+            if self.build.material_uploads.remove(&request) {
+                match result {
+                    Ok(receipt) => {
+                        let id = receipt.item.id;
+                        self.build.status = aurora_i18n::tr!("build-material-saved", name = receipt.item.name.clone());
+                        self.world.inventory.add_items(vec![receipt.item]);
+                        self.inventory_ui.show_original(&self.world.inventory, id);
+                    }
+                    Err(reason) => {
+                        log::warn!("material save failed: {reason:?}");
+                        self.build.status = aurora_i18n::tr!("build-material-save-failed").into();
+                    }
+                }
+                return;
+            }
             let material_map = self.imports.uploading_entry(request);
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
@@ -8048,7 +8063,18 @@ impl App {
 
     /// Send what the build tools queued.
     fn flush_build(&mut self) {
-        for c in std::mem::take(&mut self.build.out) {
+        for mut c in std::mem::take(&mut self.build.out) {
+            // A material saved from the PBR panel: its item's rights narrowed
+            // by the creation defaults for materials (LLFloaterPerms "Materials",
+            // permissions_out.accumulate in can_use_objects_material).
+            if let NetCommand::UploadAsset { request, upload } = &mut c
+                && self.build.material_uploads.contains(request)
+            {
+                let defaults = self.settings.inventory.creation_permissions.materials.permissions();
+                upload.permissions.next_owner &= defaults.next_owner;
+                upload.permissions.group &= defaults.group;
+                upload.permissions.everyone &= defaults.everyone;
+            }
             if let NetCommand::Build(
                 aurora_net::build::BuildCmd::UpdateTaskInventory { item, .. } | aurora_net::build::BuildCmd::RezScript { item, .. },
             ) = &c

@@ -92,6 +92,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         {
             tool.request_contents(world, idx, true);
         }
+        let lit = tool.ui.contents_filters_open || tool.ui.contents_filters.active();
+        if crate::ui::widgets::icon_toggle(
+            ui,
+            p,
+            "adjustments-horizontal-filled",
+            aurora_i18n::tr!("build-ui-contents-filters"),
+            lit,
+        ) {
+            tool.ui.contents_filters_open = !tool.ui.contents_filters_open;
+        }
     });
     ui.horizontal(|ui| {
         // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
@@ -132,8 +142,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
+    let filters = tool.ui.contents_filters;
     let mut list: Vec<&TaskItem> = items
         .iter()
+        .filter(|i| filters.matches(i))
         .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));

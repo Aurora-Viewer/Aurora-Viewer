@@ -51,6 +51,8 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     super::contents_permissions::show(ctx, p, tool, world);
     super::item_properties::show(ctx, p, tool, world, env.images);
     confirm(ctx, p, tool, world, env);
+    save_material(ctx, p, tool, world);
+    contents_filters(ctx, p, tool);
     super::texture_preview::show(ctx, p, tool, world, env);
     // the picker's previews are wanted images too
     let w: Vec<uuid::Uuid> = tool.ui.picker.wanted_images.drain().collect();
@@ -623,6 +625,150 @@ pub(super) fn confirm_answer(ctx: &egui::Context, p: &Palette, c: &Confirm, id: 
         });
     });
     answer
+}
+
+/// The Contents filters window: the inventory's item types and required
+/// rights, the rights being the next owner's.
+fn contents_filters(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
+    fn toggle(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool {
+        ui.horizontal(|ui| {
+            let changed = crate::ui::widgets::switch(ui, p, value).changed();
+            ui.label(RichText::new(label).color(p.ink));
+            changed
+        })
+        .inner
+    }
+    let size = Vec2::new(410.0, 330.0);
+    let screen = ctx.content_rect();
+    let f = &mut tool.ui.contents_filters;
+    Floater::new(
+        "build_contents_filters",
+        aurora_i18n::tr!("build-ui-contents-filters"),
+        screen.center() - size / 2.0,
+        size,
+    )
+    .show(ctx, p, &mut tool.ui.contents_filters_open, |ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-item-types")).color(p.muted));
+        ui.horizontal(|ui| {
+            if flat_button(ui, p, aurora_i18n::tr!("common-all")).clicked() {
+                f.types = u32::MAX;
+            }
+            if flat_button(ui, p, aurora_i18n::tr!("common-none")).clicked() {
+                f.types = 0;
+            }
+        });
+        let types = crate::ui::inventory::view::types();
+        egui::Grid::new("build_contents_types").num_columns(2).show(ui, |ui| {
+            for (n, (kind, label)) in types.iter().enumerate() {
+                let bit = 1_u32 << kind;
+                let mut on = f.types & bit != 0;
+                if toggle(ui, p, label, &mut on) {
+                    if on {
+                        f.types |= bit;
+                    } else {
+                        f.types &= !bit;
+                    }
+                    // every known type on: unknown types come back too
+                    if types.iter().all(|(kind, _)| f.types & (1_u32 << kind) != 0) {
+                        f.types = u32::MAX;
+                    }
+                }
+                if n % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+        ui.add_space(5.0);
+        ui.label(RichText::new(aurora_i18n::tr!("build-ui-contents-next-owner-permissions")).color(p.muted));
+        ui.horizontal(|ui| {
+            use crate::world::inventory::actions as rules;
+            for (bit, label) in [
+                (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+                (rules::COPY, aurora_i18n::tr!("common-copy-2")),
+                (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
+            ] {
+                let mut on = f.next_owner & bit != 0;
+                if toggle(ui, p, label, &mut on) {
+                    if on {
+                        f.next_owner |= bit;
+                    } else {
+                        f.next_owner &= !bit;
+                    }
+                }
+            }
+        });
+    });
+}
+
+/// "Save material as" (the SaveMaterialAs notification of
+/// LLMaterialEditor::saveObjectsMaterialAs): the name, then the material goes
+/// to the Materials folder (LLMaterialEditor::createInventoryItem), with the
+/// creation defaults for materials applied when it is sent.
+fn save_material(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World) {
+    let Some(draft) = tool.ui.material_save.as_mut() else { return };
+    let mut answer = None;
+    crate::ui::widgets::Modal::new(egui::Id::unique("build_save_material")).show(ctx, |ui| {
+        ui.set_max_width(320.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("build-material-save-as"))
+                .size(14.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(4.0);
+        ui.label(RichText::new(aurora_i18n::tr!("build-material-save-name")).size(12.0).color(p.ink));
+        let edit = ui.add(egui::TextEdit::singleline(&mut draft.name).char_limit(63).desired_width(300.0));
+        if !edit.has_focus() && !edit.lost_focus() && ui.memory(|m| m.focused().is_none()) {
+            edit.request_focus();
+        }
+        if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            answer = Some(true);
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            use crate::ui::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(ui, p, "check", aurora_i18n::tr!("common-save"), ActionKind::Primary, size).clicked() {
+                answer = Some(true);
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    let Some(ok) = answer else { return };
+    let Some(draft) = tool.ui.material_save.take() else { return };
+    if !ok {
+        return;
+    }
+    // LLInventoryObject::correctInventoryName; an empty name saves nothing
+    let name = match crate::world::inventory::actions::clean_name(&draft.name) {
+        Ok(name) => name,
+        Err(reason) => {
+            tool.status = reason;
+            return;
+        }
+    };
+    use aurora_net::inventory::upload;
+    let folder = crate::world::inventory::actions::system(&world.inventory, 57).unwrap_or(world.inventory.root);
+    let request = uuid::Uuid::new_v4();
+    tool.material_uploads.insert(request);
+    tool.out.push(aurora_net::NetCommand::UploadAsset {
+        request,
+        upload: upload::Request {
+            kind: upload::Kind::Material,
+            folder,
+            name,
+            description: String::new(),
+            permissions: upload::Permissions {
+                next_owner: draft.rights.next_owner,
+                group: draft.rights.group,
+                everyone: draft.rights.everyone,
+            },
+            expected_cost: 0,
+            data: draft.data,
+        },
+    });
 }
 
 /// The confirmations, as modal dialogs.
