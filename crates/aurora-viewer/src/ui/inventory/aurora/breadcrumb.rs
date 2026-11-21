@@ -2,7 +2,7 @@
 //! location bar show it: the folders from the top down, each a link back
 //! to it and a place to drop cargo into; the chevron after a folder lists
 //! its subfolders to go into; a click in the empty part of the bar (or
-//! Ctrl+L, Alt+D, F4) turns it into a path to type, completed from the
+//! Ctrl+L, Alt+D) turns it into a path to type, completed from the
 //! folders' names. Aurora difference: the Legacy Viewer's single folder
 //! mode shows the folder's path as plain text (LLPanelMainInventory::
 //! updateNavButtons, `path_text`).
