@@ -107,12 +107,16 @@ if (Get-Command cmake -ErrorAction SilentlyContinue) {
     Write-Host 'CMake not found: the OpenXR loader is not built in, VR will need an openxr_loader.dll on this PC. Install CMake (winget install Kitware.CMake) to build it in.' -ForegroundColor Yellow
 }
 try {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
+    # Removed, not emptied: PowerShell 7 passes $null to a .NET string as
+    # '', and an empty AURORA_VERSION_TAG is a tag the build refuses.
+    Remove-Item -LiteralPath Env:AURORA_VERSION_TAG -ErrorAction SilentlyContinue
     # the Rust version this commit names, one install at a time for the PC
     Install-RustVersion $src
     Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer @features }
 } finally {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    if ($null -ne $previousVersionTag) {
+        [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    }
     Pop-Location
 }
 
