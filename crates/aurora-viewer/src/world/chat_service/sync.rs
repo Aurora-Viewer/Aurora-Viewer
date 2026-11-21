@@ -203,11 +203,12 @@ impl Manager {
             }
         }
         log::info!(
-            "Chat Service history: conversation-list accepted: entries={}, direct={}, group={}, adhoc={}, queued={queued}",
+            "Chat Service history: conversation-list accepted: entries={}, direct={}, group={}, adhoc={}, self={}, queued={queued}",
             list.total,
             list.direct,
             list.group,
-            list.adhoc
+            list.adhoc,
+            list.own
         );
         Some(confirm)
     }

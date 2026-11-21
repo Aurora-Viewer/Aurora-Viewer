@@ -101,12 +101,16 @@ pub struct ListEntry {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConversationList {
     /// Direct conversations with a resident, in list order; the null
-    /// participant (system traffic) is counted in `direct` but left out.
+    /// participant (system traffic) and the agent itself are counted in
+    /// `direct` but left out.
     pub entries: Vec<ListEntry>,
     pub total: usize,
     pub direct: usize,
     pub group: usize,
     pub adhoc: usize,
+    /// Direct conversations with the agent itself, left out (the LL viewer
+    /// refuses the whole list on one).
+    pub own: usize,
 }
 
 /// A validated history page (LLChatServiceHistoryCore::Page): the rows

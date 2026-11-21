@@ -408,7 +408,6 @@ pub enum ListFault {
         value: String,
         fault: IdFault,
     },
-    ParticipantIsAgent,
     /// A direct entry's `last_msg_id`, cut and escaped.
     LastMsgIdNotTimeUuid {
         value: String,
@@ -442,7 +441,6 @@ impl fmt::Display for ListFault {
             Self::ParticipantNotCanonical { value, fault } => {
                 write!(f, "other_participant_id \"{value}\" is not a canonical UUID ({fault})")
             }
-            Self::ParticipantIsAgent => f.write_str("other_participant_id is the agent itself"),
             Self::LastMsgIdNotTimeUuid { value, fault } => write!(f, "last_msg_id \"{value}\" is not a time UUID ({fault})"),
             Self::ConversationMismatch { value, resident } => {
                 write!(f, "direct conversation_id \"{value}\" does not match the pair with {resident}")
@@ -476,7 +474,9 @@ impl fmt::Display for ListRefusal {
 /// one malformed entry (unknown type, non-canonical id, a direct entry
 /// whose id is not this pair's, a repeated resident) refuses the whole
 /// list. Group and ad-hoc entries are checked, then left out; the null
-/// participant (system traffic) is accepted but has no history of its own.
+/// participant (system traffic) is accepted but has no history of its own,
+/// and a conversation with the agent itself is left out (unlike the LL
+/// viewer, which refuses the list on it: see `list_entry`).
 /// Port of LLChatServiceHistoryCore::validateConversationList.
 pub fn validate_conversation_list(value: &Llsd, agent_id: Uuid) -> Option<Vec<ListEntry>> {
     validate_conversation_list_checked(value, agent_id).ok().map(|list| list.entries)
@@ -484,7 +484,9 @@ pub fn validate_conversation_list(value: &Llsd, agent_id: Uuid) -> Option<Vec<Li
 
 /// [`validate_conversation_list`], with the counts of an accepted list and
 /// the reason of a refusal. The checks run in the LL viewer's order, so the
-/// reason is the first one it would have met.
+/// reason is the first one it would have met, except after a conversation
+/// with the agent itself: the LL viewer refuses the list there, this goes
+/// on to the next entry.
 pub fn validate_conversation_list_checked(value: &Llsd, agent_id: Uuid) -> Result<ConversationList, ListRefusal> {
     let Llsd::Array(list) = value else {
         return Err(ListRefusal {
@@ -517,6 +519,18 @@ pub fn validate_conversation_list_checked(value: &Llsd, agent_id: Uuid) -> Resul
 }
 
 /// One entry of the list, counted into `accepted` once it validated.
+///
+/// A direct entry whose `other_participant_id` is the agent itself (in
+/// canonical spelling; any other is a non-canonical refusal) is left out,
+/// like the null participant: there is no resident history to fetch.
+/// Deliberate difference from validateConversationList, which refuses the
+/// whole list on it: one such entry from the service stopped every history
+/// fetch of an account (#4499). It is skipped where the LL viewer refuses
+/// it: the checks before still apply (type, conversation id, participant
+/// id, a string token), those after do not (a time UUID token, the agent's
+/// own pair, one entry per resident), since the service's entry is only
+/// known to pass the first ones and nothing of it is kept. Every other
+/// refusal is unchanged; history pages stay all or nothing.
 fn list_entry(item: &Llsd, agent_id: Uuid, residents: &mut HashSet<Uuid>, accepted: &mut ConversationList) -> Result<(), ListFault> {
     if !item.is_map() {
         return Err(ListFault::EntryNotMap(llsd_kind(item)));
@@ -548,7 +562,9 @@ fn list_entry(item: &Llsd, agent_id: Uuid, residents: &mut HashSet<Uuid>, accept
         fault: canonical_fault(resident_text),
     })?;
     if resident == agent_id {
-        return Err(ListFault::ParticipantIsAgent);
+        accepted.direct += 1;
+        accepted.own += 1;
+        return Ok(());
     }
     if parse_time_uuid(token).is_none() {
         return Err(ListFault::LastMsgIdNotTimeUuid {
@@ -1205,8 +1221,6 @@ mod tests {
             }
         ));
 
-        assert_eq!(list_refusal(vec![list_entry(AGENT)]).fault, ListFault::ParticipantIsAgent);
-
         let mut v4 = list_entry(RESIDENT);
         v4.insert("last_msg_id", "00000001-0000-4000-8000-000000000000");
         assert_eq!(
@@ -1253,12 +1267,129 @@ mod tests {
         adhoc.insert("conversation_type", "adhoc");
         let value = Llsd::Array(vec![list_entry(RESIDENT), group.clone(), list_entry(Uuid::nil()), adhoc, group]);
         let list = validate_conversation_list_checked(&value, AGENT).expect("valid list");
-        assert_eq!((list.total, list.direct, list.group, list.adhoc), (5, 2, 2, 1));
+        assert_eq!((list.total, list.direct, list.group, list.adhoc, list.own), (5, 2, 2, 1, 0));
         assert_eq!(
             list.entries,
             validate_conversation_list(&value, AGENT).expect("the wrapper accepts it")
         );
         assert_eq!(list.entries.len(), 1, "the null participant has no history");
+    }
+
+    /// The direct conversation with the account itself that the service
+    /// listed for one account (#4499) is left out wherever it comes: it no
+    /// longer refuses the whole list.
+    #[test]
+    fn a_self_entry_is_left_out_wherever_it_is_listed() {
+        let mut group = Llsd::new_map();
+        group.insert("conversation_type", "group");
+        group.insert("conversation_id", Uuid::from_u128(7).to_string());
+        let others = [list_entry(RESIDENT), list_entry(Uuid::nil()), group];
+        for at in 0..=others.len() {
+            let mut entries = others.to_vec();
+            entries.insert(at, list_entry(AGENT));
+            let list = validate_conversation_list_checked(&Llsd::Array(entries), AGENT).expect("a self entry does not refuse the list");
+            assert_eq!(
+                (list.total, list.direct, list.group, list.adhoc, list.own),
+                (4, 3, 1, 0, 1),
+                "self entry at {at}"
+            );
+            let kept = [ListEntry {
+                resident_id: RESIDENT,
+                last_msg_id: SECOND.into(),
+            }];
+            assert_eq!(list.entries, kept, "only the resident is kept, self entry at {at}");
+        }
+    }
+
+    #[test]
+    fn a_list_of_only_a_self_entry_has_no_entries() {
+        let value = Llsd::Array(vec![list_entry(AGENT)]);
+        let list = validate_conversation_list_checked(&value, AGENT).expect("a self entry alone is accepted");
+        assert!(list.entries.is_empty(), "nothing to fetch");
+        assert_eq!((list.total, list.direct, list.own), (1, 1, 1));
+        assert_eq!(validate_conversation_list(&value, AGENT), Some(Vec::new()), "the wrapper agrees");
+    }
+
+    /// A self entry keeps only the checks the LL viewer makes before it
+    /// refuses one: the service's entry is not known to pass the later
+    /// ones, and nothing of it is kept.
+    #[test]
+    fn a_self_entry_needs_no_time_uuid_nor_its_own_pair_and_may_repeat() {
+        let mut other_pair = list_entry(AGENT);
+        other_pair.insert("conversation_id", direct_conversation_id(AGENT, RESIDENT));
+        let mut free_id = list_entry(AGENT);
+        free_id.insert("conversation_id", "a-conversation-with-oneself");
+        let mut v4 = list_entry(AGENT);
+        v4.insert("last_msg_id", "00000001-0000-4000-8000-000000000000");
+        let mut garbage = list_entry(AGENT);
+        garbage.insert("last_msg_id", "not-an-id");
+        let mut empty = list_entry(AGENT);
+        empty.insert("last_msg_id", "");
+        for (case, entry) in [other_pair, free_id, v4, garbage, empty].into_iter().enumerate() {
+            let value = Llsd::Array(vec![entry, list_entry(RESIDENT)]);
+            let list = validate_conversation_list_checked(&value, AGENT).unwrap_or_else(|refusal| panic!("case {case}: {refusal}"));
+            assert_eq!((list.own, list.entries.len()), (1, 1), "case {case}");
+        }
+
+        let value = Llsd::Array(vec![list_entry(AGENT), list_entry(RESIDENT), list_entry(AGENT)]);
+        let list = validate_conversation_list_checked(&value, AGENT).expect("a second self entry is skipped too");
+        assert_eq!((list.direct, list.own, list.entries.len()), (3, 2, 1));
+    }
+
+    #[test]
+    fn a_self_entry_keeps_the_shape_checks() {
+        let mut empty = list_entry(AGENT);
+        empty.insert("conversation_id", "");
+        assert_eq!(list_refusal(vec![empty]).fault, ListFault::EmptyConversationId);
+        let mut nul = list_entry(AGENT);
+        nul.insert("conversation_id", "a\0b");
+        assert_eq!(list_refusal(vec![nul]).fault, ListFault::ConversationId(TextFault::Nul));
+        let mut kind = list_entry(AGENT);
+        kind.insert("conversation_type", "Direct");
+        assert_eq!(list_refusal(vec![kind]).fault, ListFault::UnknownType("Direct".into()));
+        let mut token = list_entry(AGENT);
+        token.insert("last_msg_id", 5);
+        assert_eq!(
+            list_refusal(vec![token]).to_string(),
+            "last_msg_id is integer, expected string (entry 1 of 1)"
+        );
+        assert_eq!(
+            list_refusal(vec![without(list_entry(AGENT), "last_msg_id")]).to_string(),
+            "last_msg_id missing (entry 1 of 1)"
+        );
+
+        // Only the canonical spelling is the agent: another one is refused
+        // as for any resident.
+        let mut typed = list_entry(AGENT);
+        typed.insert("other_participant_id", AGENT);
+        assert_eq!(
+            list_refusal(vec![typed]).to_string(),
+            "other_participant_id is uuid, expected string (entry 1 of 1)"
+        );
+        let mut braced = list_entry(AGENT);
+        braced.insert("other_participant_id", format!("{{{AGENT}}}"));
+        assert!(matches!(
+            list_refusal(vec![braced]).fault,
+            ListFault::ParticipantNotCanonical {
+                fault: IdFault::Length(38),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_malformed_entry_after_a_self_entry_still_refuses_the_list() {
+        let mut v4 = list_entry(RESIDENT);
+        v4.insert("last_msg_id", "00000001-0000-4000-8000-000000000000");
+        let refusal = list_refusal(vec![list_entry(AGENT), v4]);
+        assert!(matches!(
+            refusal.fault,
+            ListFault::LastMsgIdNotTimeUuid {
+                fault: IdFault::Version(4),
+                ..
+            }
+        ));
+        assert_eq!((refusal.entry, refusal.total), (Some(1), 2), "the later entry is named");
     }
 
     #[test]
