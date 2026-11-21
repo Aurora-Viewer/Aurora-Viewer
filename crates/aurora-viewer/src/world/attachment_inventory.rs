@@ -156,7 +156,9 @@ impl World {
         }
         let mut missing = Vec::new();
         for id in &worn {
-            if self.inventory.items.contains_key(id) {
+            // (nor while its read is on its way: a slow answer on a huge
+            // inventory never uses up the attempts)
+            if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) {
                 continue;
             }
             let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0));
