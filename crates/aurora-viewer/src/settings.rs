@@ -2265,6 +2265,15 @@ pub struct AudioSettings {
     pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
+    /// Voice-only output device, the counterpart of the Legacy Viewer's
+    /// `VoiceOutputAudioDevice` (`LLPanelVoiceDeviceSettings`,
+    /// indra/newview/llpanelvoicedevicesettings.cpp). Two deliberate
+    /// differences: empty follows Aurora's `output_device`, where the Legacy
+    /// Viewer's "Default" is the system's default playout device
+    /// (indra/llwebrtc/llwebrtc.cpp); and a chosen device that is missing is
+    /// kept, voice playing on `output_device` until it comes back, where the
+    /// Legacy Viewer's panel rewrites the setting to "Default".
+    pub voice_output_device: String,
     /// Microphone name (empty = system default).
     pub input_device: String,
     /// Connect to voice chat.
@@ -2347,6 +2356,7 @@ impl Default for AudioSettings {
             stream_title_history: 10,
             mute_when_minimized: false,
             output_device: String::new(),
+            voice_output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
@@ -4293,6 +4303,25 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn voice_output_device_defaults_to_audio_output_and_survives_settings_round_trip() {
+        use super::Settings;
+
+        assert!(Settings::default().audio.voice_output_device.is_empty());
+        // An older settings file has no voice-specific output choice. Empty
+        // means the selected normal output remains in use.
+        let old: Settings = serde_json::from_str(r#"{"audio":{"output_device":"Speakers"}}"#).expect("older preferences");
+        assert_eq!(old.audio.output_device, "Speakers");
+        assert!(old.audio.voice_output_device.is_empty());
+
+        let mut settings = old;
+        settings.audio.voice_output_device = "Headset".into();
+        let saved = serde_json::to_vec(&settings).expect("save preferences");
+        let restored: Settings = serde_json::from_slice(&saved).expect("restore preferences");
+        assert_eq!(restored.audio.output_device, "Speakers");
+        assert_eq!(restored.audio.voice_output_device, "Headset");
+    }
+
     #[test]
     fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;
