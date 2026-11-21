@@ -168,6 +168,8 @@ pub struct FloaterState {
     legacy_window: bool,
     transform_height: Option<f32>,
     status_notice: Option<(String, f64)>,
+    /// When and how many object UUIDs the compact header last copied.
+    uuid_copied: Option<(f64, usize)>,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
@@ -246,6 +248,12 @@ pub struct FloaterState {
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
+const UUID_COPY_FEEDBACK_SECONDS: f64 = 0.8;
+
+/// The header shows a confirmation briefly; a second click restarts it.
+fn uuid_copy_feedback(copied: Option<(f64, usize)>, now: f64) -> Option<usize> {
+    copied.and_then(|(at, count)| (count > 0 && (0.0..UUID_COPY_FEEDBACK_SECONDS).contains(&(now - at))).then_some(count))
+}
 
 /// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
 /// focus on the press, so a field of the build window commits its typed
@@ -475,6 +483,15 @@ pub fn show(
     let mut open = true;
     let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
+    let now = ctx.input(|i| i.time);
+    let feedback_count = uuid_copy_feedback(tool.ui.uuid_copied, now);
+    if let Some((at, _)) = tool.ui.uuid_copied {
+        if feedback_count.is_some() {
+            ctx.request_repaint_after_secs((UUID_COPY_FEEDBACK_SECONDS - (now - at)) as f32);
+        } else {
+            tool.ui.uuid_copied = None;
+        }
+    }
     let mut summary_clicked = false;
     let mut toggle_settings = false;
     if s.legacy_window {
@@ -504,6 +521,13 @@ pub fn show(
             aurora_i18n::tr!("build-compact-uuid"),
             aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
             &mut copy_uuid,
+            feedback_count.map(|count| {
+                if count == 1 {
+                    aurora_i18n::tr!("build-ui-copied-object-uuid").to_owned()
+                } else {
+                    aurora_i18n::tr!("build-ui-copied-object-uuids").to_owned()
+                }
+            }),
         ));
         if tool.tool == Tool::Edit {
             floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
@@ -548,7 +572,12 @@ pub fn show(
         }
     }
     if copy_uuid && !tool.selection.is_empty() {
-        ctx.copy_text(tool.copy_keys(world, s, mods.shift));
+        let (keys, count) = tool.copy_keys_with_count(world, s, mods.shift);
+        if count > 0 {
+            ctx.copy_text(keys);
+            tool.ui.uuid_copied = Some((now, count));
+            ctx.request_repaint();
+        }
     }
     if toggle_settings {
         tool.ui.layout.open = !tool.ui.layout.open;
@@ -776,14 +805,36 @@ impl BuildTool {
     /// "Copy UUID": the roots' ids, or every selected prim with
     /// Shift / "Linked edit" (LLFloaterTools::onClickBtnCopyKeys).
     pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> String {
+        self.copy_keys_with_count(world, s, all_prims).0
+    }
+
+    /// Also return the number of IDs copied for accurate singular/plural feedback.
+    pub fn copy_keys_with_count(&self, world: &World, s: &BuildSettings, all_prims: bool) -> (String, usize) {
         let idxs = if all_prims || s.edit_linked {
             self.sel_prims(world)
         } else {
             self.roots(world)
         };
-        idxs.iter()
+        let ids: Vec<String> = idxs
+            .iter()
             .filter_map(|&i| world.objects.get(i).map(|o| o.full_id.to_string()))
-            .collect::<Vec<_>>()
-            .join(&s.copy_key_separator)
+            .collect();
+        let count = ids.len();
+        (ids.join(&s.copy_key_separator), count)
+    }
+}
+
+#[cfg(test)]
+mod copy_feedback_tests {
+    use super::uuid_copy_feedback;
+
+    #[test]
+    fn the_header_confirmation_expires_and_keeps_the_number_of_copied_keys() {
+        assert_eq!(uuid_copy_feedback(None, 10.0), None);
+        assert_eq!(uuid_copy_feedback(Some((10.0, 0)), 10.0), None);
+        assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 10.0), Some(1));
+        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 10.5), Some(3));
+        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 10.9), None);
+        assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 9.9), None);
     }
 }
