@@ -44,7 +44,29 @@ pub(super) fn keyboard_mods(mut mods: Mods, alt_graph: bool, text_owner: bool, c
     mods
 }
 
+/// Recover a Windows Ctrl+Alt character only when the layout changed the
+/// unmodified key. Ordinary Ctrl+Alt bindings and control characters stay keys.
+#[cfg(any(target_os = "windows", test))]
+fn ctrl_alt_character<'a>(text: Option<&'a str>, base: Option<&str>, ctrl: bool, alt: bool) -> Option<&'a str> {
+    text.filter(|text| ctrl && alt && Some(*text) != base && !text.is_empty() && text.chars().all(|c| !c.is_control()))
+}
+
 impl App {
+    #[cfg(target_os = "windows")]
+    pub(super) fn ctrl_alt_text(&self, key: &KeyEvent) -> Option<String> {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        if key.state != ElementState::Pressed
+            || self.options_ui.capture.is_some()
+            || !self.egui_ctx.egui_wants_keyboard_input()
+            || self.web_has_focus()
+            || self.media.focus.is_some()
+        {
+            return None;
+        }
+        let base = key.key_without_modifiers();
+        ctrl_alt_character(key.text_with_all_modifiers(), base.to_text(), self.ctrl, self.alt).map(str::to_owned)
+    }
+
     fn shortcut_text_owner(&self) -> bool {
         self.egui_ctx.egui_wants_keyboard_input() || self.web_has_focus() || self.media.focus.is_some()
     }
@@ -313,5 +335,19 @@ mod tests {
         );
         assert_eq!(keys.update_held_input(&mut down, &input, false, Mods::default()), None);
         assert!(down.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ctrl_alt_text_tests {
+    use super::ctrl_alt_character;
+    #[test]
+    fn iso_ctrl_alt_text_recovers_layout_symbols_without_typing_shortcuts() {
+        assert_eq!(ctrl_alt_character(Some("@"), Some("2"), true, true), Some("@"));
+        assert_eq!(ctrl_alt_character(Some("€"), Some("e"), true, true), Some("€"));
+        assert_eq!(ctrl_alt_character(Some("2"), Some("2"), true, true), None);
+        assert_eq!(ctrl_alt_character(Some("\u{3}"), Some("c"), true, true), None);
+        assert_eq!(ctrl_alt_character(Some("@"), Some("2"), true, false), None);
+        assert_eq!(ctrl_alt_character(None, Some("2"), true, true), None);
     }
 }
