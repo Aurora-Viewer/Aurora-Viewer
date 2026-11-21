@@ -4797,7 +4797,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
-| `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
+| `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
 
@@ -4852,8 +4852,16 @@ both open states and the selection count. Capture at frame 620.
   near map). `AURORA_THUNDER_AT=<s>` makes one strike
   1 km away, `s` seconds after the start, whether Thunder is on or not: its
   flash at once and, for most strikes, a bolt in the sky in its direction,
-  then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
-  demo mode). `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
+  then its thunder as sound travels, about 3 s later (heard only with
+  `AURORA_DEMO_SOUND` in demo mode). `AURORA_THUNDER_AT=<s>:<m>` strikes `m`
+  metres away instead (300 to 6000): under 700 m it cracks, its sharpest
+  highs softened (`4:400`, heard about 1.2 s later), farther it rolls
+  (`4:2000`); with Preferences › Sound's 3D sound it comes from its side of
+  the sky as you turn. Indoors (the falling rain in sight tells indoors from
+  out, measured while thunder is on its way, with or without rain) only a
+  muffled rumble comes through, and the room's reverb carries it; both
+  follow as you walk in or out while it rolls.
+  `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
   the world at this brightness (about 1 for a strike a kilometre away, up to
   1.6 for the nearest), to capture the lit sky and scene; it does not hold
   the bolt. A capture of the bolt itself: `AURORA_THUNDER_AT` with
