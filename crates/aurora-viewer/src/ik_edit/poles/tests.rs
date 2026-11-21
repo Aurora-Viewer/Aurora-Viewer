@@ -266,7 +266,7 @@ fn shift_freely_drags_effector_grips_by_the_pointer_delta_without_moving_their_p
     world.main_region = Some(1);
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::hand_ik::objects(0.0, true),
+        objects: vec![demo::action_avatar(false)],
     });
     world.avatar_poses.insert(
         world.agent_id,
@@ -280,8 +280,6 @@ fn shift_freely_drags_effector_grips_by_the_pointer_delta_without_moving_their_p
     for limb in limbs(rig) {
         let mut editor = Editor::default();
         editor.toggle();
-        editor.library_demo(&world, "");
-        assert!(editor.add_profile(false, &world, &frame));
         editor.enable(limb.end, true, rig, &frame);
         editor.orient = true;
         editor.commit();

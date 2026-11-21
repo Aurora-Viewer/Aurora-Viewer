@@ -60,7 +60,7 @@ impl Channel {
     }
 
     /// Bus index (everything except `Master`, which is not a bus).
-    fn bus(self) -> Option<usize> {
+    pub(crate) fn bus(self) -> Option<usize> {
         match self {
             Channel::Master => None,
             other => Some(other.index() - 1),
@@ -69,8 +69,8 @@ impl Channel {
 }
 
 /// Number of mixing buses (every channel except master).
-const NUM_BUSES: usize = 6;
-const BUS_CHANNELS: [Channel; NUM_BUSES] = [
+pub(crate) const NUM_BUSES: usize = 6;
+pub(crate) const BUS_CHANNELS: [Channel; NUM_BUSES] = [
     Channel::Ui,
     Channel::Ambient,
     Channel::Sfx,
@@ -211,7 +211,7 @@ impl GainSmoother {
         self.current
     }
 
-    #[cfg(test)]
+    /// The gain now (the film's sound takes the reverb at it, record.rs).
     pub(crate) fn value(&self) -> f32 {
         self.current
     }
@@ -227,9 +227,14 @@ pub(crate) struct PcmSource {
     bus: usize,
     cons: rtrb::Consumer<f32>,
     playing: bool,
+    started: bool,
     prebuffer: usize,
+    rebuffer: usize,
     max_latency: Option<usize>,
     kill: Option<Arc<AtomicBool>>,
+    starved: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    underruns: usize,
     fade: f32,
 }
 
@@ -242,14 +247,33 @@ impl PcmSource {
         max_latency_frames: Option<usize>,
         kill: Option<Arc<AtomicBool>>,
     ) -> Self {
+        Self::new_with_rebuffer(channel, cons, prebuffer_frames, prebuffer_frames, max_latency_frames, kill, None)
+    }
+
+    /// Creates a source with a deeper resume threshold and an optional
+    /// nonblocking starvation signal for its producer thread.
+    pub(crate) fn new_with_rebuffer(
+        channel: Channel,
+        cons: rtrb::Consumer<f32>,
+        prebuffer_frames: usize,
+        rebuffer_frames: usize,
+        max_latency_frames: Option<usize>,
+        kill: Option<Arc<AtomicBool>>,
+        starved: Option<Arc<AtomicBool>>,
+    ) -> Self {
         Self {
             // Master is not a bus; route stray master sources to UI.
             bus: channel.bus().unwrap_or(0),
             cons,
             playing: false,
+            started: false,
             prebuffer: prebuffer_frames * ENGINE_CHANNELS,
+            rebuffer: rebuffer_frames * ENGINE_CHANNELS,
             max_latency: max_latency_frames.map(|f| f * ENGINE_CHANNELS),
             kill,
+            starved,
+            #[cfg(test)]
+            underruns: 0,
             fade: 0.0,
         }
     }
@@ -279,8 +303,10 @@ impl PcmSource {
 
         let mut avail = self.cons.slots() & !1;
         if !self.playing {
-            if avail >= self.prebuffer.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
+            let threshold = if self.started { self.rebuffer } else { self.prebuffer };
+            if avail >= threshold.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
                 self.playing = true;
+                self.started = true;
                 self.fade = 0.0;
             } else {
                 return !(abandoned && avail == 0);
@@ -307,7 +333,14 @@ impl PcmSource {
             }
         }
         if n < want {
-            // Underrun: wait for the jitter buffer to refill.
+            // Underruns only signal the producer; logging stays off the audio callback.
+            if let Some(starved) = &self.starved {
+                starved.store(true, Ordering::Relaxed);
+            }
+            #[cfg(test)]
+            {
+                self.underruns += 1;
+            }
             self.playing = false;
         }
         !(abandoned && self.cons.is_empty())
@@ -343,6 +376,12 @@ impl ClipVoice {
             pos: 0,
             gain: sanitize_volume(gain),
         }
+    }
+
+    /// Plays from sample `pos` (a rotated clip's start).
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
     }
 
     fn mix_into(&mut self, bus: &mut [f32]) -> bool {
@@ -461,11 +500,22 @@ const BINAURAL_SWITCH_FRAMES: f32 = 256.0;
 /// also goes to the reverb's send (`reverb.rs`), at its distance gain times
 /// its send factor (more for a farther sound); the factor is 0, a dry
 /// voice, until the viewer gives one.
+///
+/// The Doppler shift plays the clip faster or slower: the read position
+/// moves by `rate` frames per output frame, between two frames read by
+/// linear interpolation, the rate gliding to its target over a buffer. At
+/// rate 1 from the start (the default) it reads frame after frame, bit for
+/// bit as without it.
 pub(crate) struct WorldVoice {
     pub(crate) id: u64,
     bus: usize,
     data: Arc<[f32]>,
     pos: usize,
+    /// Fraction of a frame past `pos` (0 while the rate stayed 1).
+    frac: f32,
+    /// Current and target playback rates (the Doppler shift; 1 unshifted).
+    rate: f32,
+    rate_target: f32,
     looped: bool,
     /// Current and target (left, right) gains of the panned rendering.
     gain: (f32, f32),
@@ -509,6 +559,9 @@ impl WorldVoice {
             bus: channel.bus().unwrap_or(0),
             data,
             pos: 0,
+            frac: 0.0,
+            rate: 1.0,
+            rate_target: 1.0,
             looped,
             gain: g,
             target: g,
@@ -530,6 +583,48 @@ impl WorldVoice {
         }
     }
 
+    /// New playback rate (the Doppler shift, [`MIN_RATE`]..[`MAX_RATE`]):
+    /// glided to over a buffer, at once before the voice played.
+    fn set_rate(&mut self, rate: f32) {
+        let r = if rate.is_finite() { rate.clamp(MIN_RATE, MAX_RATE) } else { 1.0 };
+        self.rate_target = r;
+        if self.fresh {
+            self.rate = r;
+        }
+    }
+
+    /// The mono sample at the read position: between this frame and the
+    /// next one (linear), this frame itself while no fraction is left.
+    #[inline(always)]
+    fn mono_at(&self, len: usize) -> f32 {
+        let a = (self.data[self.pos] + self.data[self.pos + 1]) * 0.5;
+        if self.frac == 0.0 {
+            return a;
+        }
+        let next = if self.pos + 3 < len {
+            self.pos + 2
+        } else if self.looped {
+            0
+        } else {
+            self.pos
+        };
+        let b = (self.data[next] + self.data[next + 1]) * 0.5;
+        a + (b - a) * self.frac
+    }
+
+    /// Moves the read position on by `rate` frames.
+    #[inline(always)]
+    fn advance(&mut self, rate: f32) {
+        if rate == 1.0 && self.frac == 0.0 {
+            self.pos += 2;
+            return;
+        }
+        let step = self.frac + rate;
+        let whole = step as usize;
+        self.frac = step - whole as f32;
+        self.pos += 2 * whole;
+    }
+
     /// New send factor to the reverb: glided to over a buffer, at once
     /// before the voice played.
     fn set_reverb_send(&mut self, factor: f32) {
@@ -543,6 +638,13 @@ impl WorldVoice {
     /// A voice placed by direction from its start (3D sound for
     /// headphones): `gain` the distance gain, `direction` in the listener's
     /// frame (x right, y ahead, z up).
+    /// Plays from sample `pos` (a rotated clip's start); a looping voice
+    /// wraps round to the beginning as usual.
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     pub(crate) fn new_binaural(id: u64, channel: Channel, data: Arc<[f32]>, looped: bool, gain: f32, direction: [f32; 3]) -> Self {
         let mut v = Self::new(id, channel, data, looped, (0.0, 0.0));
         v.start_binaural = Some((gain, direction));
@@ -644,21 +746,25 @@ impl WorldVoice {
             dg: (o1 - o0) / frames as f32,
         };
         let mut lowpass = self.lowpass;
+        // the Doppler rate's glide over this buffer
+        let rate = (self.rate, (self.rate_target - self.rate) / frames as f32);
+        self.rate = self.rate_target;
         let state = self.slot.and_then(|s| pool.get_mut(s));
         match state {
             Some(state) if self.binaural || self.blend > 0.0 => {
-                self.mix_binaural(bus, state, &mut ramp, &mut lowpass, (gl, gr), (dl, dr), &mut send);
+                self.mix_binaural(bus, state, &mut ramp, &mut lowpass, (gl, gr), (dl, dr), &mut send, rate);
             }
             _ => {
                 // panned (the Legacy Viewer's rendering)
+                let (mut rate, rate_step) = rate;
                 for f in 0..frames {
                     if self.pos + 1 >= len {
                         if !self.looped {
                             break;
                         }
-                        self.pos = 0;
+                        self.pos %= len;
                     }
-                    let m = ramp.apply((self.data[self.pos] + self.data[self.pos + 1]) * 0.5, &mut lowpass);
+                    let m = ramp.apply(self.mono_at(len), &mut lowpass);
                     gl += dl;
                     gr += dr;
                     bus[2 * f] += m * gl;
@@ -668,7 +774,8 @@ impl WorldVoice {
                         // panning)
                         s.add(f, m * gl.max(gr));
                     }
-                    self.pos += 2;
+                    rate += rate_step;
+                    self.advance(rate);
                 }
                 self.blend = 0.0;
             }
@@ -689,6 +796,7 @@ impl WorldVoice {
         (mut gl, mut gr): (f32, f32),
         (dl, dr): (f32, f32),
         send: &mut Option<Send>,
+        (mut rate, rate_step): (f32, f32),
     ) {
         let frames = bus.len() / 2;
         let len = self.data.len() & !1;
@@ -707,7 +815,7 @@ impl WorldVoice {
             for (i, x) in input.iter_mut().enumerate() {
                 if !ended && self.pos + 1 >= len {
                     if self.looped {
-                        self.pos = 0;
+                        self.pos %= len;
                     } else {
                         ended = true;
                     }
@@ -715,8 +823,9 @@ impl WorldVoice {
                 let m = if ended {
                     0.0
                 } else {
-                    let m = ramp.apply((self.data[self.pos] + self.data[self.pos + 1]) * 0.5, lowpass);
-                    self.pos += 2;
+                    let m = ramp.apply(self.mono_at(len), lowpass);
+                    rate += rate_step;
+                    self.advance(rate);
                     m
                 };
                 gl += dl;
@@ -743,6 +852,12 @@ impl WorldVoice {
 
 /// Most a voice sends to the reverb, over its distance gain.
 const MAX_SEND: f32 = 4.0;
+
+/// Bounds of a world voice's playback rate (the Doppler shift): an octave
+/// down or up at most, so that a glitch in a velocity (an object warped
+/// across the region) never sends a sound out of hearing.
+pub const MIN_RATE: f32 = 0.5;
+pub const MAX_RATE: f32 = 2.0;
 
 /// A voice's share of the reverb's mono send over one buffer, its factor
 /// ramped from the last value to the new one.
@@ -802,10 +917,15 @@ pub(crate) enum Command {
     WorldOcclusion(u64, f32),
     /// New send factor of a world voice to the reverb.
     WorldReverbSend(u64, f32),
+    /// New playback rate of a world voice (the Doppler shift).
+    WorldRate(u64, f32),
     /// The reverb of the surroundings on with these parameters, or off.
     Reverb(Option<ReverbParams>),
     /// Fade a world voice out and drop it.
     StopWorld(u64),
+    /// The Director's film takes the mix of these channels (record.rs),
+    /// or no longer.
+    Record(Option<Box<crate::record::RecordSink>>),
 }
 
 /// Upper bound on simultaneous world voices (extra requests are dropped).
@@ -840,6 +960,10 @@ pub(crate) struct Mixer {
     /// and output (master), so that muting the master silences its tail
     /// at once.
     reverb_gains: [GainSmoother; 3],
+    /// The film's own mix, while one records (record.rs).
+    record: Option<Box<crate::record::RecordSink>>,
+    /// That mix's dry part of a buffer, with the reverb.
+    rec_buf: Vec<f32>,
 }
 
 /// Buses whose world voices feed the reverb.
@@ -873,6 +997,8 @@ impl Mixer {
             send: Vec::with_capacity(4096),
             wet: Vec::with_capacity(4096),
             reverb_gains,
+            record: None,
+            rec_buf: Vec::with_capacity(4096),
         }
     }
 
@@ -923,7 +1049,13 @@ impl Mixer {
                         w.set_reverb_send(factor);
                     }
                 }
+                Ok(Command::WorldRate(id, rate)) => {
+                    if let Some(w) = self.world.iter_mut().find(|w| w.id == id) {
+                        w.set_rate(rate);
+                    }
+                }
                 Ok(Command::Reverb(params)) => self.reverb.set(params),
+                Ok(Command::Record(sink)) => self.record = sink,
                 Ok(Command::StopWorld(id)) => {
                     for w in self.world.iter_mut().filter(|w| w.id == id) {
                         w.stopping = true;
@@ -971,16 +1103,26 @@ impl Mixer {
         let targets: [f32; NUM_BUSES] = std::array::from_fn(|i| self.params.bus_target(BUS_CHANNELS[i]));
 
         if !reverb {
+            let mut record = self.record.as_deref_mut();
             for (f, frame) in out[..len].as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
                 let mut l = 0.0f32;
                 let mut r = 0.0f32;
-                for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets) {
+                // (the film's mix: the channels it takes, at the same gains)
+                let (mut rl, mut rr) = (0.0f32, 0.0f32);
+                for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets).enumerate() {
                     let g = smoother.next(target);
                     l += bus[2 * f] * g;
                     r += bus[2 * f + 1] * g;
+                    if record.as_ref().is_some_and(|sink| sink.takes(i)) {
+                        rl += bus[2 * f] * g;
+                        rr += bus[2 * f + 1] * g;
+                    }
                 }
                 frame[0] = l.clamp(-1.0, 1.0);
                 frame[1] = r.clamp(-1.0, 1.0);
+                if let Some(sink) = record.as_deref_mut() {
+                    sink.push(rl, rr);
+                }
             }
         } else {
             self.mix_with_reverb(&mut out[..len], &targets);
@@ -1000,13 +1142,23 @@ impl Mixer {
         let reverb_buses = REVERB_BUSES.map(|c| c.bus().unwrap_or(0));
         self.send.clear();
         self.send.resize(frames, 0.0);
+        // the film's mix, dry here, its reverb added below (record.rs)
+        let recording = self.record.is_some();
+        self.rec_buf.clear();
+        if recording {
+            self.rec_buf.resize(out.len(), 0.0);
+        }
         for (f, frame) in out.as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
             let mut l = 0.0f32;
             let mut r = 0.0f32;
-            for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(targets) {
+            for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(targets).enumerate() {
                 let g = smoother.next(target);
                 l += bus[2 * f] * g;
                 r += bus[2 * f + 1] * g;
+                if self.record.as_ref().is_some_and(|sink| sink.takes(i)) {
+                    self.rec_buf[2 * f] += bus[2 * f] * g;
+                    self.rec_buf[2 * f + 1] += bus[2 * f + 1] * g;
+                }
             }
             frame[0] = l;
             frame[1] = r;
@@ -1027,6 +1179,19 @@ impl Mixer {
             let g = master.next(reverb_targets[0]);
             frame[0] = (frame[0] + wet[0] * g).clamp(-1.0, 1.0);
             frame[1] = (frame[1] + wet[1] * g).clamp(-1.0, 1.0);
+        }
+        if let Some(sink) = self.record.as_deref_mut() {
+            let master = self.reverb_gains[0].value();
+            for (dry, wet) in self
+                .rec_buf
+                .as_chunks::<ENGINE_CHANNELS>()
+                .0
+                .iter()
+                .zip(self.wet.as_chunks::<ENGINE_CHANNELS>().0)
+            {
+                let g = if sink.wet { master } else { 0.0 };
+                sink.push(dry[0] + wet[0] * g, dry[1] + wet[1] * g);
+            }
         }
     }
 
@@ -1121,6 +1286,32 @@ mod tests {
         let mut buf = vec![0.0; 9_600];
         m.render(&mut buf);
         buf
+    }
+
+    /// A looping voice started part-way through shared samples (a rotated
+    /// clip, the rain's speakers) renders exactly as the rotated copy it
+    /// replaces did, wrapping round included.
+    #[test]
+    fn looping_voice_started_at_an_offset_matches_a_rotated_copy() {
+        let data: Arc<[f32]> = (0..4_800).map(|i| ((i * 37) % 101) as f32 / 101.0 - 0.5).collect();
+        let start = 1_234 * 2;
+        let copy: Arc<[f32]> = data[start..].iter().chain(&data[..start]).copied().collect();
+        let render = |voice: WorldVoice| {
+            let (mut m, _p, tx) = mixer();
+            tx.send(Command::PlayWorld(voice)).unwrap();
+            let mut buf = vec![0.0; 9_600];
+            m.render(&mut buf);
+            buf
+        };
+        let shared = render(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (1.0, 1.0)).starting_at(start));
+        assert_eq!(shared, render(WorldVoice::new(1, Channel::Sfx, copy, true, (1.0, 1.0))));
+        let clip = crate::SoundClip {
+            samples: data.clone(),
+            start: 0,
+        };
+        let rotated = clip.rotated(0.5).rotated(0.75);
+        assert!(Arc::ptr_eq(&rotated.samples, &data), "rotating shares the samples");
+        assert_eq!(rotated.start, (1_200 + 1_800) % 2_400 * 2);
     }
 
     #[test]
@@ -1255,6 +1446,39 @@ mod tests {
     }
 
     #[test]
+    fn decoded_clip_edges_stay_smooth_in_ui_world_and_looped_playback() {
+        let clip = crate::SoundClip::decode(&crate::decode::tests::wav_bytes(48_000, 1, &[16_384; 512])).unwrap();
+        for mode in 0..3 {
+            let (mut m, _params, tx) = mixer();
+            settle(&mut m);
+            let command = match mode {
+                0 => Command::PlayClip(ClipVoice::new(Channel::Ui, clip.samples.clone(), 1.0)),
+                _ => Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, clip.samples.clone(), mode == 2, (1.0, 1.0))),
+            };
+            tx.send(command).unwrap();
+            let mut out = Vec::new();
+            // Audio callback boundaries deliberately cut through the fades
+            // and through loop wraps; the envelope belongs to the clip.
+            for frames in [37, 191, 3, 1024, 500] {
+                let mut block = vec![0.0; frames * 2];
+                m.render(&mut block);
+                out.extend(block);
+            }
+            assert_eq!(out[0], 0.0, "start in mode {mode}");
+            assert_eq!(out[2 * 511], 0.0, "end in mode {mode}");
+            assert_eq!(out[2 * 512], 0.0, "wrap/silence in mode {mode}");
+            let step = out
+                .as_chunks::<2>()
+                .0
+                .windows(2)
+                .map(|w| (w[1][0] - w[0][0]).abs())
+                .fold(0.0f32, f32::max);
+            assert!(step < 0.01, "step {step} in mode {mode}");
+            assert_eq!(m.source_count(), usize::from(mode == 2));
+        }
+    }
+
+    #[test]
     fn mute_and_disable_silence_a_bus() {
         let (mut m, params, tx) = mixer();
         let data: Arc<[f32]> = vec![0.5f32; 96_000].into();
@@ -1324,6 +1548,53 @@ mod tests {
         // Fade-in reaches full level after SOURCE_FADE_FRAMES frames.
         assert!((out[1000] - 0.5).abs() < 1e-3, "{}", out[1000]);
         assert!(out[0] < 0.01);
+    }
+
+    #[test]
+    fn music_resumes_only_after_four_fifths_of_its_ring_refills() {
+        let ring_frames = 5 * ENGINE_SAMPLE_RATE as usize;
+        let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(ring_frames * ENGINE_CHANNELS);
+        let initial = vec![0.1; ring_frames * ENGINE_CHANNELS];
+        prod.push_entire_slice(&initial).unwrap();
+        let starved = Arc::new(AtomicBool::new(false));
+        let mut source = PcmSource::new_with_rebuffer(
+            Channel::Music,
+            cons,
+            ENGINE_SAMPLE_RATE as usize,
+            ring_frames * 4 / 5,
+            None,
+            None,
+            Some(starved.clone()),
+        );
+        let mut bus = vec![0.0; 480 * ENGINE_CHANNELS];
+        let mut tmp = Vec::new();
+
+        // A two-second source pause fits inside the deep ring.
+        for _ in 0..(2 * ENGINE_SAMPLE_RATE as usize / 480) {
+            assert!(source.mix_into(&mut bus, &mut tmp));
+        }
+        assert_eq!(source.underruns, 0);
+
+        // Drain what remains, then confirm the producer must refill to 80%
+        // before this source starts consuming again.
+        for _ in 0..(3 * ENGINE_SAMPLE_RATE as usize / 480) {
+            source.mix_into(&mut bus, &mut tmp);
+        }
+        source.mix_into(&mut bus, &mut tmp);
+        assert_eq!(source.underruns, 1);
+        assert!(starved.load(Ordering::Relaxed));
+        let below_threshold = vec![0.1; ring_frames * 7 / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&below_threshold).unwrap();
+        let queued = source.queued_samples();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(!source.playing);
+        assert_eq!(source.queued_samples(), queued);
+
+        let to_threshold = vec![0.1; ring_frames / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&to_threshold).unwrap();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(source.playing);
+        assert_eq!(source.underruns, 1);
     }
 
     #[test]
@@ -1503,6 +1774,60 @@ mod tests {
         assert!(voice.slot.is_none(), "a panned voice never takes a binaural state");
     }
 
+    #[test]
+    fn a_doppler_rate_reads_the_clip_faster_or_slower_within_an_octave() {
+        // a ramp: frame i holds i on both sides, so the output shows where
+        // the voice read
+        let ramp: Arc<[f32]> = (0..4_000).flat_map(|i| [i as f32, i as f32]).collect::<Vec<_>>().into();
+        let mut pool = BinauralPool::new();
+        let read = |rate: f32, frames: usize, pool: &mut BinauralPool| {
+            let mut v = WorldVoice::new(1, Channel::Sfx, ramp.clone(), true, (1.0, 1.0));
+            v.set_rate(rate);
+            let mut out = vec![0.0f32; frames * 2];
+            v.mix_into(&mut out, &mut pool.states, None);
+            (v, out)
+        };
+        // set before the voice played: taken at once
+        let (v, out) = read(2.0, 100, &mut pool);
+        assert!(
+            out.as_chunks::<2>()
+                .0
+                .iter()
+                .enumerate()
+                .all(|(f, s)| s[0] == 2.0 * f as f32 && s[1] == s[0])
+        );
+        assert_eq!((v.pos, v.frac), (400, 0.0));
+        let (_, out) = read(0.5, 100, &mut pool);
+        assert!(
+            out.as_chunks::<2>()
+                .0
+                .iter()
+                .enumerate()
+                .all(|(f, s)| (s[0] - 0.5 * f as f32).abs() < 1e-4)
+        );
+        // clamped to an octave, and a broken value plays unshifted
+        assert_eq!(read(10.0, 1, &mut pool).0.rate, MAX_RATE);
+        assert_eq!(read(0.01, 1, &mut pool).0.rate, MIN_RATE);
+        assert_eq!(read(f32::NAN, 1, &mut pool).0.rate, 1.0);
+        // a later change glides over the next buffer, then holds
+        let (mut v, _) = read(1.0, 10, &mut pool);
+        v.set_rate(1.5);
+        assert_eq!(v.rate, 1.0, "a playing voice glides");
+        let mut out = vec![0.0f32; 200];
+        v.mix_into(&mut out, &mut pool.states, None);
+        let steps: Vec<f32> = out.as_chunks::<2>().0.windows(2).map(|w| w[1][0] - w[0][0]).collect();
+        assert!(steps[0] < 1.05 && steps[98] > 1.45 && steps.windows(2).all(|w| w[1] >= w[0] - 1e-3));
+        assert_eq!(v.rate, 1.5);
+        // a looping voice wraps round past the end at any rate
+        let short: Arc<[f32]> = (0..5).flat_map(|i| [i as f32, i as f32]).collect::<Vec<_>>().into();
+        let mut v = WorldVoice::new(1, Channel::Sfx, short, true, (1.0, 1.0));
+        v.set_rate(2.0);
+        let mut out = vec![0.0f32; 12];
+        v.mix_into(&mut out, &mut pool.states, None);
+        let left: Vec<f32> = out.as_chunks::<2>().0.iter().map(|s| s[0]).collect();
+        assert_eq!(left, [0.0, 2.0, 4.0, 1.0, 3.0, 0.0]);
+    }
+
     /// Renders voice 1 by buffers of `frames`, calling `between` before
     /// each one, the left and right channels interleaved.
     fn run(m: &mut Mixer, tx: &Sender<Command>, buffers: usize, frames: usize, between: impl Fn(usize, &Sender<Command>)) -> Vec<f32> {
@@ -1679,7 +2004,7 @@ mod tests {
     fn binaural_render_cost() {
         const VOICES: u64 = 30;
         const FRAMES: usize = 480;
-        let measure = |binaural: bool| {
+        let measure = |binaural: bool, shifted: bool| {
             let (mut m, _p, tx) = mixer();
             for id in 0..VOICES {
                 let data = noise(id as u32, 24_000);
@@ -1702,6 +2027,10 @@ mod tests {
                     } else {
                         tx.send(Command::WorldGain(id, (0.2 + 0.1 * a.sin(), 0.2 - 0.1 * a.sin()))).unwrap();
                     }
+                    if shifted {
+                        // every voice Doppler-shifted, its rate changing
+                        tx.send(Command::WorldRate(id, 1.0 + 0.06 * a.cos())).unwrap();
+                    }
                 }
                 let t = std::time::Instant::now();
                 m.render(&mut buf);
@@ -1711,12 +2040,14 @@ mod tests {
             (times[0], times[times.len() / 2], times[times.len() * 99 / 100])
         };
         let period = FRAMES as f64 / ENGINE_SAMPLE_RATE as f64 * 1e6;
-        let panned = measure(false);
-        let binaural = measure(true);
+        let panned = measure(false, false);
+        let binaural = measure(true, false);
+        let shifted = measure(false, true);
+        let binaural_shifted = measure(true, true);
         eprintln!(
             "mixer render, {VOICES} world sounds, {FRAMES} frames ({period:.0} us): panned min {:.0} / median {:.0} / p99 {:.0} us, \
-             binaural min {:.0} / median {:.0} / p99 {:.0} us",
-            panned.0, panned.1, panned.2, binaural.0, binaural.1, binaural.2
+             binaural min {:.0} / median {:.0} / p99 {:.0} us; Doppler-shifted: panned median {:.0} us, binaural median {:.0} us",
+            panned.0, panned.1, panned.2, binaural.0, binaural.1, binaural.2, shifted.1, binaural_shifted.1
         );
         if !cfg!(debug_assertions) {
             // a small share of the buffer's time, even on a loaded PC

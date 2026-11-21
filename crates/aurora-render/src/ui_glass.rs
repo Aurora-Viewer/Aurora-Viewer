@@ -4,7 +4,8 @@
 //! The world's labels (`ui_world`) are drawn under the HUD attachments, and
 //! the windows over them: the labels sample a blur of the scene alone, made
 //! where they are, and the windows a blur of the scene with its labels and
-//! the HUD attachments.
+//! the HUD attachments. Preferences › Accessibility › Disable glass
+//! (`set_ui_blur`) skips the blur; the viewer also makes surfaces opaque.
 
 use std::sync::Arc;
 
@@ -13,6 +14,8 @@ struct Region {
     opacity: f32,
     /// Brightness kept of the blurred scene (1: as it is).
     shade: f32,
+    /// A 45° square inside the rectangle, `radius` unused.
+    diamond: bool,
 }
 
 /// Insert below a window's contents. The viewer resolves the final rectangle
@@ -36,12 +39,30 @@ pub fn glass_panel_faded(rect: egui::Rect, radius: f32, tint: egui::Color32, opa
 /// it keeps a small surface readable over a white wall or a bright sky
 /// without making it more opaque over the rest.
 pub fn glass_region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32) -> egui::Shape {
+    region(rect, radius, opacity, shade, false)
+}
+
+/// `glass_region` in the shape of a 45° square touching the middle of each
+/// side of `rect` (the contact-set markers).
+pub fn glass_diamond(rect: egui::Rect, opacity: f32, shade: f32) -> egui::Shape {
+    region(rect, 0.0, opacity, shade, true)
+}
+
+fn region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32, diamond: bool) -> egui::Shape {
+    blur_region(super::ui_blur::enabled(), rect, radius, opacity, shade, diamond)
+}
+
+fn blur_region(enabled: bool, rect: egui::Rect, radius: f32, opacity: f32, shade: f32, diamond: bool) -> egui::Shape {
+    if !enabled {
+        return egui::Shape::Noop;
+    }
     egui::Shape::Callback(egui::PaintCallback {
         rect,
         callback: Arc::new(Region {
             radius,
             opacity: opacity.clamp(0.0, 1.0),
             shade: shade.clamp(0.0, 1.0),
+            diamond,
         }),
     })
 }
@@ -147,6 +168,18 @@ impl Glass {
         self.blur.matches(size, scale)
     }
 
+    /// The labels' target is made (`make_under`).
+    pub fn has_under(&self) -> bool {
+        self.under.is_some()
+    }
+
+    /// The labels' target, made on its first use.
+    pub fn make_under(&mut self, device: &wgpu::Device, renderer: &mut egui_wgpu::Renderer) {
+        let (format, size) = (self.format, self.size);
+        self.under
+            .get_or_insert_with(|| target(device, renderer, "Label glass", format, size));
+    }
+
     pub fn free(self, renderer: &mut egui_wgpu::Renderer) {
         renderer.free_texture(&self.texture);
         if let Some((_, texture)) = &self.under {
@@ -213,10 +246,30 @@ impl Glass {
             {
                 let level = (region.shade * 255.0).round() as u8;
                 let color = egui::Color32::from_gray(level).gamma_multiply(region.opacity);
-                primitive.primitive = egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, texture, screen, color));
+                primitive.primitive = egui::epaint::Primitive::Mesh(if region.diamond {
+                    diamond_mesh(callback.rect, texture, screen, color)
+                } else {
+                    rounded_mesh(callback.rect, region.radius, texture, screen, color)
+                });
             }
         }
     }
+}
+
+fn diamond_mesh(rect: egui::Rect, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
+    let mut mesh = egui::Mesh::with_texture(texture);
+    // `colored_vertex` asserts an untextured mesh: the glass samples the
+    // backdrop texture, so the vertices carry their screen UVs directly.
+    for pos in [rect.center_top(), rect.right_center(), rect.center_bottom(), rect.left_center()] {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: egui::pos2(pos.x / screen.x, pos.y / screen.y),
+            color,
+        });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    mesh
 }
 
 fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
@@ -263,6 +316,23 @@ mod tests {
                 assert!((vertex.uv.y * screen.y - vertex.pos.y).abs() < 0.001);
             }
             assert!(!mesh.vertices.iter().any(|v| v.pos == rect.min));
+        }
+    }
+
+    #[test]
+    fn a_glass_diamond_stands_on_the_middle_of_each_side() {
+        let screen = egui::vec2(1920.0, 1080.0);
+        let rect = egui::Rect::from_center_size(egui::pos2(500.0, 300.0), egui::Vec2::splat(28.0));
+        let mesh = diamond_mesh(rect, egui::TextureId::User(7), screen, egui::Color32::WHITE);
+        assert!(mesh.is_valid());
+        let corners: Vec<_> = mesh.vertices.iter().map(|v| v.pos).collect();
+        assert_eq!(
+            corners,
+            [rect.center_top(), rect.right_center(), rect.center_bottom(), rect.left_center()]
+        );
+        for vertex in &mesh.vertices {
+            assert!((vertex.uv.x * screen.x - vertex.pos.x).abs() < 0.001);
+            assert!((vertex.uv.y * screen.y - vertex.pos.y).abs() < 0.001);
         }
     }
 
@@ -333,5 +403,12 @@ mod tests {
             }
         }
         assert!(tints > 0, "the tinted frame is still drawn");
+    }
+
+    #[test]
+    fn disable_glass_skips_the_blur_callback() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 20.0));
+        assert!(matches!(blur_region(false, rect, 8.0, 1.0, 1.0, false), egui::Shape::Noop));
+        assert!(matches!(blur_region(true, rect, 8.0, 1.0, 1.0, false), egui::Shape::Callback(_)));
     }
 }

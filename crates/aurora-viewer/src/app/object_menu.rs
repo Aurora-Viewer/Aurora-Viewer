@@ -38,6 +38,11 @@ pub(super) struct ObjectMenu {
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
     /// The original cursor ray, including across asynchronous GPU readback.
     pub ray: Option<(Vec3, Vec3)>,
+    /// The linkset whose surface the right click hit within 1.5 m of us:
+    /// under @fartouch the menu keeps its selection whatever the object's
+    /// own distance (the temporary selection of
+    /// LLToolSelect::handleObjectSelection, indra/newview/lltoolselect.cpp).
+    pub near: Option<ObjKey>,
 }
 
 enum Confirm {
@@ -155,6 +160,7 @@ impl App {
         m.particle_only = particle_only;
         m.particle_hits.clear();
         m.touch = None;
+        m.near = None;
         m.ray = ray;
         let Some((origin, dir)) = ray else {
             return;
@@ -185,6 +191,13 @@ impl App {
         let root = linkset_root(w, idx);
         let flags_of = |i: usize| w.objects.get(i).map_or(0, |o| o.update_flags);
         let root_id = w.objects.get(root).map(|r| r.full_id).unwrap_or_default();
+        // @fartouch: the object's own distance, or the clicked surface's
+        let within = |i: usize| {
+            w.rlva_within_fartouch(i)
+                || w.objects
+                    .get(linkset_root(w, i))
+                    .is_some_and(|o| self.object_menu.near == Some(o.key))
+        };
         if let Some(props) = self.build.props.get(&root_id).or_else(|| self.interactions.props.get(&root_id)) {
             f.touch_name = props.touch_name.clone();
             f.sit_name = props.sit_name.clone();
@@ -208,7 +221,22 @@ impl App {
             f.take_copy = each.iter().all(|e| e.take_copy);
             f.delete = each.iter().any(|e| e.delete);
         }
-        f.link = !edit_linked && crate::build::link_allowed(w, &roots);
+        // rlvCanDeleteOrReturn greys Take and Delete for the whole selection
+        // (enable_take, LLSelectMgr::canDoDelete); a copy is only refused of
+        // the seat the agent cannot leave (handle_take_copy).
+        if w.rlva.enabled() {
+            let removable = roots.iter().all(|&r| w.rlva_can_delete_or_return(r));
+            f.take &= removable;
+            f.delete &= removable;
+            f.take_copy &= roots.iter().all(|&r| w.rlva_can_take_copy(r));
+            f.unlink &= roots.iter().all(|&r| w.rlva_can_unlink(r));
+            // LLToolSelect::handleObjectSelection: beyond @fartouch nothing
+            // is selected, and these entries act on a selection
+            if !roots.iter().all(|&r| within(r)) {
+                (f.take, f.delete, f.take_copy, f.unlink) = (false, false, false, false);
+            }
+        }
+        f.link = !edit_linked && self.build.link_allowed(w, &roots);
         // EditableSelected: a prim we may modify among those selected
         let prims: Vec<usize> = if kept {
             self.build.highlighted(w).into_iter().map(|(i, _)| i).collect()
@@ -220,7 +248,12 @@ impl App {
         f.scripts = prims
             .iter()
             .filter(|&&i| w.objects.get(i).is_some_and(|o| !o.is_avatar()))
-            .any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0);
+            .any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0)
+            // is_editable_selected (llviewermenu.cpp): not on an attachment
+            // that cannot be taken off, nor on what RLVa keeps from edits
+            && roots
+                .iter()
+                .all(|&r| w.rlva_can_edit(r) && !w.rlva_locked_attachment(r) && within(r));
         let wearer = crate::ui::context::wearer(w, idx);
         // object_is_wearable / object_selected_and_point_valid
         let r = flags_of(root);
@@ -239,7 +272,11 @@ impl App {
             && r & flags::AFFECTS_NAVMESH == 0
             && !seated_on
             && !f.stand
-            && w.worn_attachment_points().len() < self.attachment_limit();
+            && w.worn_attachment_points().len() < self.attachment_limit()
+            // attaching takes the object from the world (@rez); the locks on
+            // the points grey their entries (`rlva_can_attach_object`)
+            && !w.rlva.has("rez")
+            && within(root);
         if wearer == Some(w.agent_id) {
             let item = f.attachment_item.map(|id| linked_item(w, id));
             f.favorite = item.and_then(|id| w.inventory.items.get(&id)).map(|it| it.favorite);
@@ -279,6 +316,7 @@ impl App {
                 group: self.world.groups.group(&parcel.group_id),
                 health: self.world.health,
                 frozen: self.world.frozen,
+                god_level: self.world.god_level,
             }),
             // nothing known yet: the simulator decides
             _ => true,
@@ -327,11 +365,26 @@ impl App {
         });
     }
 
+    /// The first message `menu_touch` would send for the prim `key`, for the
+    /// menu to ask RLVa about the very touch its entry makes.
+    pub(super) fn menu_touch_command(&self, key: ObjKey) -> NetCommand {
+        match self.object_menu.touch.filter(|(k, _)| *k == key) {
+            Some((key, surface)) => NetCommand::ObjectGrab {
+                handle: key.region,
+                local_id: key.local_id,
+                offset: Vec3::ZERO,
+                surface,
+            },
+            None => NetCommand::Touch { local_id: key.local_id },
+        }
+    }
+
     /// Object.Return: the roots of the selection, asked first.
     pub(super) fn ask_return(&mut self, id: Uuid) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
-        self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
-        self.ask_return_selection();
+        if self.build.select_for_action(&mut self.world, &self.settings.build, idx) {
+            self.ask_return_selection();
+        }
     }
 
     /// "Return" of the Area Search menu: every selected row together.
@@ -374,10 +427,12 @@ impl App {
 
     /// The selection an action of the closed menu made: it goes, unless the
     /// build tools hold it (as after Take, Unlink).
-    fn release_action_selection(&mut self) {
+    pub(super) fn release_action_selection(&mut self) {
         if !self.build.open {
             self.build.deselect_all(&self.world);
         }
+        // (the selection of `BuildTool::select_for_action` was the menu's)
+        self.build.menu_selection = false;
         self.flush_build();
     }
 
@@ -394,7 +449,9 @@ impl App {
     /// may modify (queue_actions), asked first, then the queue.
     pub(super) fn ask_scripts(&mut self, id: Uuid, kind: QueueKind) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
-        self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if !self.build.select_for_action(&mut self.world, &self.settings.build, idx) {
+            return;
+        }
         self.flush_build();
         let prims: Vec<(Uuid, u32, String)> = self
             .build
@@ -413,7 +470,17 @@ impl App {
                 (o.full_id, o.update_flags, name)
             })
             .collect();
+        // handle_selected_script_action (llviewermenu.cpp): nothing runs when
+        // the selection holds an attachment that cannot be taken off.
+        let locked = self
+            .build
+            .highlighted(&self.world)
+            .into_iter()
+            .any(|(i, _)| self.world.rlva_locked_attachment(i));
         self.release_action_selection();
+        if locked {
+            return;
+        }
         match script_queue::queue_objects(&prims) {
             Err(scripted) => {
                 self.world
@@ -556,8 +623,9 @@ impl App {
 
     /// Tools.Link on the selection the right click kept.
     pub(super) fn menu_link(&mut self, id: Uuid) {
-        if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-            self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if let Some(idx) = self.world.objects.index_of_uuid(&id)
+            && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+        {
             self.build.link(&mut self.world);
             self.flush_build();
         }
@@ -565,13 +633,11 @@ impl App {
 
     /// Object.TakeSeparate / TakeSeparateCopy: each root its own item.
     pub(super) fn take_separate(&mut self, id: Uuid, copy: bool) {
-        if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-            self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        if let Some(idx) = self.world.objects.index_of_uuid(&id)
+            && self.build.select_for_action(&mut self.world, &self.settings.build, idx)
+        {
             self.build.take_separate(&mut self.world, copy);
-            if !self.build.open {
-                self.build.deselect_all(&self.world);
-            }
-            self.flush_build();
+            self.release_action_selection();
         }
     }
 

@@ -124,22 +124,19 @@ fn inspection_waits_for_initial_provisioning_and_reports_allocated_memory_and_mi
     let endpoint = endpoint();
     assert!(s.sync(id(10), Some(1), Some(&endpoint)).is_none());
     let request = command_request(s.update(Some(&endpoint), now).0);
-    let message = s
-        .reply(
-            request,
-            Ok(Reply::ScriptInfo(ScriptInfo {
-                object: id(1),
-                name: "Synthetic object".into(),
-                running: 2,
-                total: 3,
-                memory: 196608,
-                cpu_seconds: 0.00125,
-                character_seconds: 0.0002,
-            })),
-            now,
-        )
-        .expect("local report");
-    assert!(message.contains("Synthetic object") && message.contains("2/3"));
+    let info = ScriptInfo {
+        object: id(1),
+        name: "Synthetic object".into(),
+        running: 2,
+        total: 3,
+        memory: 196608,
+        cpu_seconds: 0.00125,
+        character_seconds: 0.0002,
+    };
+    let message = s.reply(request, Ok(Reply::ScriptInfo(info.clone())), now).expect("local report");
+    // the counts ("2/3 running scripts") in the language's own wording
+    assert_eq!(message, script_report(&info));
+    assert!(message.contains("Synthetic object"));
     assert!(message.contains(&aurora_i18n::number(192.0, 2)));
     assert!(message.contains(&aurora_i18n::number(1.25, 3)));
     assert!(message.contains(&aurora_i18n::number(0.2, 3)));
@@ -222,7 +219,8 @@ fn object_inspection_replaces_a_basic_report_for_the_same_target_and_formats_all
         .expect("extended report");
     for expected in [
         "Synthetic extended object".to_owned(),
-        "2/3".to_owned(),
+        // the script counts ("2/3 running scripts") in the language's wording
+        script_report(&object_info(id(1)).scripts),
         aurora_i18n::number(192.0, 2),
         aurora_i18n::number(1.25, 3),
         aurora_i18n::number(4.0, 3),

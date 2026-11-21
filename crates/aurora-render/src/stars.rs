@@ -1,10 +1,15 @@
 //! Night sky: the stars the sky shader draws (`sky_stars` in env.wgsl).
 //!
-//! Two catalogues share one storage buffer (`StarSky` in env.wgsl):
+//! Two catalogues share one storage buffer (`StarSky` in env.wgsl), the
+//! Milky Way has a texture of its own (`milky_way_map`):
 //!
-//! - the real sky: the stars of `assets/stars/stars.bin` (HYG database,
-//!   CC BY-SA 4.0, magnitude 6.5 and brighter), in J2000 equatorial
-//!   coordinates, with their colour from the B-V index;
+//! - the real sky: the stars of `assets/stars/stars.bin` (Tycho-2, the
+//!   brightest completed from Hipparcos; magnitude 6.5 and brighter), in
+//!   J2000 equatorial coordinates, with their colour from the B-V index;
+//! - the Milky Way: `assets/stars/milky_way.bin`, the fainter Tycho-2 stars
+//!   on a grid of galactic longitude and latitude (their glow, colour and
+//!   count), one packed `u32` per texel of a `R32Uint` texture the shader
+//!   reads texel by texel (`milky_way_texels`);
 //! - the Legacy Viewer's stars, a port of LLVOWLSky::initStars
 //!   (indra/newview/llvowlsky.cpp, originally LGPL 2.1): 1,000 random stars
 //!   on the upper half of the dome, in the region's frame.
@@ -89,6 +94,78 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<CatalogueStar>, String> {
             }
         })
         .collect())
+}
+
+/// The Milky Way map, built into the viewer (`scripts/generate-star-catalog.py`).
+static MILKY_WAY: &[u8] = include_bytes!("../../../assets/stars/milky_way.bin");
+const MILKY_WAY_MAGIC: &[u8; 8] = b"AURMWAY2";
+/// Texels of the Milky Way map across (galactic longitude, -180° to 180°)
+/// and down (latitude, -`MILKY_WAY_REACH` to +). Must match `MW_WIDTH`,
+/// `MW_HEIGHT` and `MW_REACH` (env.wgsl).
+pub const MILKY_WAY_WIDTH: u32 = 2048;
+pub const MILKY_WAY_HEIGHT: u32 = 512;
+pub const MILKY_WAY_REACH: f32 = 45.0;
+const MILKY_WAY_TEXELS: usize = (MILKY_WAY_WIDTH * MILKY_WAY_HEIGHT) as usize;
+
+/// Decodes `milky_way.bin` (format in scripts/generate-star-catalog.py)
+/// into the texels the sky shader reads: bits 0..7 the glow (square root
+/// of the light), 8..15 the grain (stars of V 6.5 to 9.5 per texel, x 16),
+/// 16..23 the B-V colour index x 100, spread from its coarse grid.
+pub fn parse_milky_way(bytes: &[u8]) -> Result<Vec<u32>, String> {
+    use std::io::Read;
+    let header = bytes.get(..32).ok_or("Milky Way map: too short")?;
+    if &header[..8] != MILKY_WAY_MAGIC {
+        return Err("Milky Way map: bad magic".into());
+    }
+    let word = |i: usize| u32::from_le_bytes([header[i], header[i + 1], header[i + 2], header[i + 3]]);
+    let (width, height, reach) = (word(8), word(12), f32::from_bits(word(16)));
+    let (cw, ch, length) = (word(20) as usize, word(24) as usize, word(28) as usize);
+    if width != MILKY_WAY_WIDTH || height != MILKY_WAY_HEIGHT || reach != MILKY_WAY_REACH || cw == 0 || ch == 0 {
+        return Err(format!("Milky Way map: {width} x {height} within {reach}°, not the shader's"));
+    }
+    let packed = bytes.get(32..32 + length).ok_or("Milky Way map: truncated")?;
+    let mut raw = Vec::with_capacity(MILKY_WAY_TEXELS * 2 + cw * ch);
+    flate2::read::ZlibDecoder::new(packed)
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("Milky Way map: {e}"))?;
+    if raw.len() != MILKY_WAY_TEXELS * 2 + cw * ch {
+        return Err(format!("Milky Way map: {} bytes unpacked", raw.len()));
+    }
+    let (texels, colour) = raw.split_at(MILKY_WAY_TEXELS * 2);
+    let (w, h) = (MILKY_WAY_WIDTH as usize, MILKY_WAY_HEIGHT as usize);
+    // the colour grid's value at a texel: bilinear between the centres of
+    // its cells (longitude wraps)
+    let colour_at = |x: usize, y: usize| -> u32 {
+        let fx = (x as f32 + 0.5) * cw as f32 / w as f32 - 0.5;
+        let fy = ((y as f32 + 0.5) * ch as f32 / h as f32 - 0.5).clamp(0.0, (ch - 1) as f32);
+        let (x0, y0) = (fx.floor(), fy.floor());
+        let (tx, ty) = (fx - x0, fy - y0);
+        let xa = (x0 as i64).rem_euclid(cw as i64) as usize;
+        let xb = (xa + 1) % cw;
+        let ya = y0 as usize;
+        let yb = (ya + 1).min(ch - 1);
+        let c = |x: usize, y: usize| colour[y * cw + x] as f32;
+        let top = c(xa, ya) + (c(xb, ya) - c(xa, ya)) * tx;
+        let bottom = c(xa, yb) + (c(xb, yb) - c(xa, yb)) * tx;
+        (top + (bottom - top) * ty).round() as u32
+    };
+    Ok(texels
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+        .map(|(i, t)| u16::from_le_bytes(*t) as u32 | colour_at(i % w, i / w) << 16)
+        .collect())
+}
+
+/// The Milky Way map's texels (`milky_way_map` in env.wgsl: `R32Uint`,
+/// `MILKY_WAY_WIDTH` x `MILKY_WAY_HEIGHT`, row by row); a dark sky when the
+/// built-in map is damaged.
+pub fn milky_way_texels() -> Vec<u32> {
+    parse_milky_way(MILKY_WAY).unwrap_or_else(|e| {
+        log::error!("{e}: the night sky has no Milky Way");
+        vec![0; MILKY_WAY_TEXELS]
+    })
 }
 
 /// Unit vector of an equatorial position: x towards the March equinox,
@@ -337,6 +414,20 @@ mod tests {
         assert!(stars.iter().all(|s| s.magnitude <= 6.5));
         // Polaris sits within a degree of the pole
         assert!(stars.iter().any(|s| s.magnitude < 2.1 && s.dec.to_degrees() > 89.0));
+        // the stars too bright for Tycho-2 keep their colour (Hipparcos):
+        // Arcturus orange, once, and Capella yellow
+        let near = |ra: f32, dec: f32| {
+            let d = equatorial(ra.to_radians(), dec.to_radians());
+            stars
+                .iter()
+                .filter(move |s| s.magnitude < 3.0 && equatorial(s.ra, s.dec).dot(d) > 0.9999)
+                .collect::<Vec<_>>()
+        };
+        let arcturus = near(213.92, 19.18);
+        assert_eq!(arcturus.len(), 1, "{arcturus:?}");
+        assert!(arcturus[0].bv.is_some_and(|bv| bv > 1.1), "{arcturus:?}");
+        let capella = near(79.17, 46.0);
+        assert!(capella.iter().all(|s| s.bv.is_some_and(|bv| bv > 0.6)), "{capella:?}");
     }
 
     #[test]
@@ -402,6 +493,82 @@ mod tests {
         assert_eq!(legacy[CELLS as usize] as usize, stars);
         // the stars start on a 16-byte boundary, as WGSL lays out `StarSky`
         assert_eq!(words.len() * 4 % 16, 0);
+    }
+
+    /// The map's glow (0..1, linear) at a galactic longitude and latitude
+    /// (degrees), averaged over a few texels.
+    fn glow(map: &[u32], l: f32, b: f32) -> f32 {
+        let (w, h) = (MILKY_WAY_WIDTH as i32, MILKY_WAY_HEIGHT as i32);
+        let x = ((l + 180.0) / 360.0 * w as f32) as i32;
+        let y = ((b + MILKY_WAY_REACH) / (2.0 * MILKY_WAY_REACH) * h as f32) as i32;
+        let mut sum = 0.0;
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                let t = map[((y + dy).clamp(0, h - 1) * w + (x + dx).rem_euclid(w)) as usize];
+                sum += ((t & 255) as f32 / 255.0).powi(2);
+            }
+        }
+        sum / 25.0
+    }
+
+    #[test]
+    fn the_milky_way_is_bright_in_sagittarius_and_dark_in_the_rift() {
+        let map = parse_milky_way(MILKY_WAY).expect("built-in map");
+        assert_eq!(map.len(), MILKY_WAY_TEXELS);
+        // the star clouds of Sagittarius (within 8° of the centre, south of
+        // the plane, between its dust lanes) are the brightest of the sky:
+        // brighter than Crux's band (l 296°), far brighter than the faint
+        // band towards the anticentre (Auriga)
+        let sagittarius = (-8..=8)
+            .step_by(2)
+            .flat_map(|l| (-10..=2).step_by(2).map(move |b| (l, b)))
+            .map(|(l, b)| glow(&map, l as f32, b as f32))
+            .fold(0.0, f32::max);
+        assert!(sagittarius > glow(&map, -64.0, -1.0), "{sagittarius}");
+        assert!(sagittarius > 4.0 * glow(&map, 178.0, 0.0), "{sagittarius}");
+        // far from the plane: nothing
+        assert!(glow(&map, 0.0, -42.0) < 0.02);
+        // the Great Rift in Aquila (l 30°, b 3°) is far darker than the
+        // band just south of it (b -4°), and the Coalsack (l 301°, b -1°)
+        // than the band beside it in Crux (l 296°)
+        assert!(glow(&map, 30.0, 3.0) * 3.0 < glow(&map, 30.0, -4.0));
+        assert!(glow(&map, -59.0, -1.0) * 2.0 < glow(&map, -64.0, -1.0));
+        // the faint stars' colour: dust reddens the centre
+        let colour = |l: f32, b: f32| {
+            let x = ((l + 180.0) / 360.0 * MILKY_WAY_WIDTH as f32) as usize;
+            let y = ((b + MILKY_WAY_REACH) / (2.0 * MILKY_WAY_REACH) * MILKY_WAY_HEIGHT as f32) as usize;
+            (map[y * MILKY_WAY_WIDTH as usize + x] >> 16 & 255) as f32 / 100.0
+        };
+        assert!((0.2..1.6).contains(&colour(2.0, -6.0)));
+        // the grain follows the stars: more in the band than above it
+        let grain = |l: f32, b: f32| {
+            let x = ((l + 180.0) / 360.0 * MILKY_WAY_WIDTH as f32) as usize;
+            let y = ((b + MILKY_WAY_REACH) / (2.0 * MILKY_WAY_REACH) * MILKY_WAY_HEIGHT as f32) as usize;
+            map[y * MILKY_WAY_WIDTH as usize + x] >> 8 & 255
+        };
+        assert!(grain(-75.0, 0.0) > grain(-75.0, 30.0));
+    }
+
+    #[test]
+    fn a_damaged_milky_way_is_refused() {
+        assert!(parse_milky_way(b"AURMWAY2").is_err());
+        let mut wrong = MILKY_WAY.to_vec();
+        wrong[8] ^= 1; // another width than the shader's
+        assert!(parse_milky_way(&wrong).is_err());
+        let cut = &MILKY_WAY[..MILKY_WAY.len() - 100];
+        assert!(parse_milky_way(cut).is_err());
+    }
+
+    #[test]
+    fn the_shader_reads_the_map_at_its_size() {
+        let env = include_str!("shaders/env.wgsl");
+        assert!(env.contains(&format!("const MW_WIDTH: u32 = {MILKY_WAY_WIDTH}u;")));
+        assert!(env.contains(&format!("const MW_HEIGHT: u32 = {MILKY_WAY_HEIGHT}u;")));
+        assert!(env.contains("@binding(25) var milky_way_map: texture_2d<u32>;"));
+        assert_eq!(milky_way_texels().len(), MILKY_WAY_TEXELS);
+        let reach = env.split("const MW_REACH: f32 = ").nth(1).and_then(|r| r.split(';').next());
+        let reach: f32 = reach.and_then(|r| r.trim().parse().ok()).expect("MW_REACH");
+        assert!((reach - MILKY_WAY_REACH.to_radians()).abs() < 1e-6);
     }
 
     #[test]

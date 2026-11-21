@@ -22,9 +22,12 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let result = match crate::inventory::operations::preview(&http, &cap, "gesture_id", asset).await {
+            let result = match crate::inventory::operations::preview_retried(&http, &cap, "gesture_id", asset).await {
                 Ok(data) => tokio::task::spawn_blocking(move || {
-                    aurora_assets::gesture::Gesture::decode(&data).map_err(|_| aurora_i18n::tr!("gesture-invalid").to_owned())
+                    aurora_assets::gesture::Gesture::decode(&data).map_err(|error| {
+                        log::warn!("gesture asset {asset}: {error}");
+                        aurora_i18n::tr!("gesture-invalid").to_owned()
+                    })
                 })
                 .await
                 .unwrap_or_else(|_| Err(aurora_i18n::tr!("gesture-invalid").into())),

@@ -3,7 +3,8 @@
 //! Port of LLViewerObject::interpolateLinearMotion and applyAngularVelocity
 //! (indra/newview/llviewerobject.cpp) and of the damping of
 //! LLDrawable::updateXform (indra/newview/lldrawable.cpp), originally LGPL
-//! 2.1, in a form that does not depend on the frame rate. Our own avatar
+//! 2.1. Extrapolation integrates elapsed simulator time; drawable damping
+//! follows the reference's per-frame steps. Our own avatar
 //! has its own copy of the same rules in `agent.rs`.
 //!
 //! The simulator sends nothing while an object follows the path its last
@@ -15,10 +16,15 @@
 //! where it was and goes on when the circuit comes back.
 //!
 //! When a report puts an object elsewhere than where it was drawn, the gap
-//! is not shown at once: it fades with the Legacy Viewer's half-life of
-//! 0.06 s ([`Correction`]), for avatars and for objects at rest. An object
-//! the report sets moving jumps there, as in LLViewerObject::updateDrawable
-//! (a looping keyframed motion restarts at its first frame, #2328).
+//! fades with the Legacy Viewer's 0.06 s half-life. Volumes retain a drawable
+//! transform and interpolate position, normalized rotation and scale together
+//! each frame, with the reference's joint, camera-relative stopping test.
+//! A new correction requires zero reported velocity; an existing one survives
+//! subsequent velocity reports (LLViewerObject::updateDrawable's ON_MOVE_LIST).
+//! An already moving object without a correction snaps (#2328). HUD children
+//! follow these rules; their root shows reports at once (#3369). Avatars retain
+//! their separate residual correction. Receipt time anchors extrapolation,
+//! never the duration of the visible transition.
 //!
 //! The root an avatar sits on goes further ([`damp`]): its drawn pose
 //! follows its reported motion with that half-life every frame, moving or
@@ -68,7 +74,8 @@ pub fn clock_rate(time_dilation: f32, silent: f32) -> f32 {
     dilation * phase
 }
 
-/// What a report said of an object's motion.
+/// Base pose and reported velocities of an object's motion. The pose can
+/// include a client-side turn retained across earlier reports.
 #[derive(Debug, Clone, Copy)]
 pub struct Reported {
     pub position: Vec3,
@@ -128,11 +135,16 @@ pub struct Correction {
     /// anything else (a drag in the build tools) cancels the correction.
     position: Vec3,
     rotation: Quat,
+    /// Volumes keep their drawable transform across reports, as ON_MOVE_LIST
+    /// does. Only the frame scheduler advances it; avatars retain residual damping.
+    pub drawable: Option<(Vec3, Quat)>,
+    pub fresh: bool,
 }
 
 impl Correction {
     /// From where the object was `drawn` to where the report puts it now.
     /// None when there is nothing to fade, or too much.
+    #[cfg(test)]
     pub fn between(drawn: (Vec3, Quat), reported: (Vec3, Quat), now: Instant) -> Option<Correction> {
         Self::toward(drawn, reported, reported, now)
     }
@@ -158,12 +170,26 @@ impl Correction {
             at: now,
             position: reported.0,
             rotation: reported.1,
+            drawable: None,
+            fresh: false,
         })
+    }
+
+    pub fn drawable(drawn: (Vec3, Quat), reported: (Vec3, Quat), now: Instant, fresh: bool) -> Self {
+        Self {
+            offset: Vec3::ZERO,
+            turn: Quat::IDENTITY,
+            at: now,
+            position: reported.0,
+            rotation: reported.1,
+            drawable: Some(drawn),
+            fresh,
+        }
     }
 
     /// Whether it still shows at `now`.
     pub fn active(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.at).as_secs_f32() < CORRECTION_LIFE
+        self.drawable.is_some() || now.saturating_duration_since(self.at).as_secs_f32() < CORRECTION_LIFE
     }
 
     /// Whether the object still holds the report this correction leads to.
@@ -173,6 +199,9 @@ impl Correction {
 
     /// What is left of the gap at `now`, added to an extrapolated pose.
     pub fn apply(&self, pose: (Vec3, Quat), now: Instant) -> (Vec3, Quat) {
+        if let Some(drawn) = self.drawable {
+            return drawn;
+        }
         let age = now.saturating_duration_since(self.at).as_secs_f32();
         if age >= CORRECTION_LIFE {
             return pose;
@@ -185,7 +214,7 @@ impl Correction {
     }
 }
 
-/// Scale follows the same 0.06 s half-life and report timestamp as position.
+/// Scale follows the same 0.06 s half-life and visual start time as position.
 /// LLDrawable::updateXform interpolates both together: otherwise a scripted
 /// stretch moves its anchored end because the centre lags behind its size.
 #[derive(Debug, Clone, Copy)]
@@ -194,6 +223,7 @@ pub struct ScaleCorrection {
     target: Vec3,
     at: Instant,
     pub drawn: Vec3,
+    frame_driven: bool,
 }
 
 pub fn within_snap_distance(position_offset: Vec3, scale_offset: Vec3) -> bool {
@@ -216,16 +246,39 @@ impl ScaleCorrection {
                 target,
                 at: now,
                 drawn,
+                frame_driven: false,
             })
+    }
+
+    pub fn drawable(drawn: Vec3, target: Vec3, now: Instant) -> Self {
+        Self {
+            offset: drawn - target,
+            target,
+            at: now,
+            drawn,
+            frame_driven: true,
+        }
     }
 
     pub fn matches(&self, scale: Vec3) -> bool {
         self.target == scale
     }
 
+    /// A ridden root hands its pose to the seat's forced damping.
+    pub fn leave_drawable(&mut self, now: Instant) {
+        if self.frame_driven {
+            self.offset = self.drawn - self.target;
+            self.at = now;
+            self.frame_driven = false;
+        }
+    }
+
     pub fn sample(&self, scale: Vec3, now: Instant) -> Vec3 {
         if !self.matches(scale) {
             return scale;
+        }
+        if self.frame_driven {
+            return self.drawn;
         }
         let age = now.saturating_duration_since(self.at).as_secs_f32();
         if age >= CORRECTION_LIFE {
@@ -236,8 +289,70 @@ impl ScaleCorrection {
 
     pub fn advance(&mut self, scale: Vec3, now: Instant) -> bool {
         self.drawn = self.sample(scale, now);
-        self.matches(scale) && now.saturating_duration_since(self.at).as_secs_f32() < CORRECTION_LIFE
+        self.matches(scale) && (self.frame_driven || now.saturating_duration_since(self.at).as_secs_f32() < CORRECTION_LIFE)
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct DampingView {
+    pub distance_squared: f32,
+    pub visible: bool,
+}
+
+/// LLSmoothInterpolation::getInterpolant, shared by the frame's drawables.
+pub fn drawable_interpolant(dt: f32) -> f32 {
+    (1.0 - 2.0_f32.powf(-dt.max(0.0) / DAMPING_HALF_LIFE)).clamp(0.0, 1.0)
+}
+
+/// Port of LLDrawable::updateXform and LLQuaternion::nlerp/slerp
+/// (indra/newview/lldrawable.cpp, indra/llmath/llquaternion.cpp, LGPL 2.1).
+/// The stopping test is joint, after interpolation, and relative to camera
+/// distance. A moving target is followed every frame until this test settles.
+pub fn drawable_step(
+    drawn: (Vec3, Quat, Vec3),
+    target: (Vec3, Quat, Vec3),
+    k: f32,
+    view: DampingView,
+    spinning: bool,
+    child: bool,
+) -> ((Vec3, Quat, Vec3), bool) {
+    let mut result = target;
+    let mut gap = 0.0;
+    if view.visible {
+        let position = drawn.0.lerp(target.0, k);
+        let rotation = drawable_nlerp(drawn.1, target.1, k);
+        let scale = drawn.2.lerp(target.2, k);
+        gap = position.distance_squared(target.0) + (1.0 - rotation.dot(target.1)) * 10.0 + scale.distance_squared(target.2);
+        if (SETTLED * SETTLED * view.distance_squared..=SNAP_DISTANCE * SNAP_DISTANCE).contains(&gap) {
+            result = (position, rotation, scale);
+        } else if !spinning {
+            gap = 0.0;
+        }
+    }
+    // LLDrawable keeps animated children on the move list, including their
+    // target omega, until their local motion finishes.
+    if drawn.2.distance_squared(result.2) <= SETTLED * SETTLED && child && (spinning || gap > 0.0) {
+        gap = 1.0;
+    }
+    (result, gap != 0.0)
+}
+
+fn drawable_nlerp(a: Quat, b: Quat, k: f32) -> Quat {
+    let dot = a.dot(b);
+    if dot >= 0.0 {
+        return (a * (1.0 - k) + b * k).normalize();
+    }
+    // The Legacy Viewer flips a, not b, and returns in b's hemisphere.
+    // That sign matters to updateXform's subsequent 1 - dot error measure.
+    let cosine = -dot;
+    let (beta, alpha) = if 1.0 - cosine < 0.00001 {
+        (1.0 - k, k)
+    } else {
+        let theta = cosine.acos();
+        let sine = theta.sin();
+        ((theta - k * theta).sin() / sine, (k * theta).sin() / sine)
+    };
+    a * -beta + b * alpha
 }
 
 #[cfg(test)]

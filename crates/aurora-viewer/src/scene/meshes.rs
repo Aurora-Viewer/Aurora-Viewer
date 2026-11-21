@@ -226,6 +226,20 @@ pub struct MeshArrival {
     truncated: bool,
 }
 
+impl MeshArrival {
+    /// Not a mesh, for `why`: no bytes kept, the entry takes the failure
+    /// path of an invalid asset (`MeshStreamer::keep`).
+    fn invalid(why: &str) -> Self {
+        MeshArrival {
+            bytes: MeshBytes::default(),
+            header: None,
+            skin: None,
+            invalid: Some(why.to_owned()),
+            truncated: false,
+        }
+    }
+}
+
 /// Parse what `bytes` holds: the header when they start the asset and it is
 /// not known yet (`header`), the skin when wanted and held.
 fn arrival(bytes: MeshBytes, header: Option<MeshHeader>, want_skin: bool) -> MeshArrival {
@@ -436,6 +450,17 @@ impl MeshStreamer {
         })
     }
 
+    /// LLMeshRepository::getEstTrianglesMax / LLMeshCostData::init: the
+    /// largest LOD estimate, also before skin data arrives. Unknown is zero.
+    pub fn estimated_max_triangles(&self, id: &Uuid) -> f32 {
+        self.entries.get(id).and_then(|e| e.header.as_ref()).map_or(0.0, |h| {
+            h.lods
+                .iter()
+                .map(|lod| (lod.map_or(0, |(_, size)| size) as f32 - 384.0).max(16.0) / 16.0)
+                .fold(0.0, f32::max)
+        })
+    }
+
     pub fn meta(&self, id: &Uuid) -> Option<MeshMeta> {
         let e = self.entries.get(id).filter(|e| e.ready())?;
         let h = e.header.as_ref()?;
@@ -499,6 +524,7 @@ impl MeshStreamer {
                     physics_convex: None,
                     physics_mesh: None,
                     version: 1,
+                    creator: uuid::Uuid::nil(),
                 }),
                 stage: Stage::Known,
                 local: true,
@@ -528,6 +554,21 @@ impl MeshStreamer {
     /// put its wearer back in the cloud.
     pub fn failed(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|e| e.gone || e.failures > EXPECTED_FAILURES)
+    }
+
+    /// "Reload avatar" (`app/avatar_reload.rs`): a mesh given up or waiting
+    /// for its next retry is asked again at once, with its failures
+    /// forgotten, as if no download had failed. A mesh loaded or on its way
+    /// is left alone. Whether it was asked again.
+    pub fn retry_failed(&mut self, id: &Uuid) -> bool {
+        let Some(e) = self.entries.get_mut(id).filter(|e| !e.local && e.failures > 0) else {
+            return false;
+        };
+        e.failures = 0;
+        e.gone = false;
+        e.retry_at = None;
+        Self::attend(&mut self.todo, *id, e);
+        true
     }
 
     /// Diagnostic: the state of a mesh asset, without requesting it.
@@ -615,16 +656,20 @@ impl MeshStreamer {
                     Stage::New => {
                         e.stage = Stage::Reading;
                         let path = cache_path(&self.cache_dir, &id);
-                        jobs.spawn(move || {
-                            let bytes = path
-                                .and_then(|path| crate::cache::read_touch(path).ok())
-                                .and_then(MeshBytes::decode);
-                            crate::deep_profile::mesh_cache_read(bytes.is_some());
-                            let timer = crate::deep_profile::timer();
-                            let arrival = bytes.map(|bytes| Box::new(arrival(bytes, None, true)));
-                            crate::deep_profile::mesh_parsed(timer.filter(|_| arrival.is_some()));
-                            JobResult::MeshCache { id, arrival }
-                        });
+                        // (a failed read is a cache miss: the mesh is downloaded)
+                        jobs.spawn_or(
+                            move || {
+                                let bytes = path
+                                    .and_then(|path| crate::cache::read_touch(path).ok())
+                                    .and_then(MeshBytes::decode);
+                                crate::deep_profile::mesh_cache_read(bytes.is_some());
+                                let timer = crate::deep_profile::timer();
+                                let arrival = bytes.map(|bytes| Box::new(arrival(bytes, None, true)));
+                                crate::deep_profile::mesh_parsed(timer.filter(|_| arrival.is_some()));
+                                JobResult::MeshCache { id, arrival }
+                            },
+                            move || JobResult::MeshCache { id, arrival: None },
+                        );
                         break 'visit;
                     }
                     Stage::Failed if e.retries() => {
@@ -726,12 +771,17 @@ impl MeshStreamer {
             let bytes = e.bytes.clone();
             let rig = rig.clone();
             let pool = staging.cloned();
-            jobs.spawn(move || {
-                let timer = crate::deep_profile::timer();
-                let built = build_mesh_lod(id, lod, &bytes, &header, skin, &rig, pool.as_deref());
-                crate::deep_profile::mesh_built(timer);
-                built
-            });
+            jobs.spawn_or(
+                move || {
+                    let timer = crate::deep_profile::timer();
+                    let built = build_mesh_lod(id, lod, &bytes, &header, skin, &rig, pool.as_deref());
+                    crate::deep_profile::mesh_built(timer);
+                    built
+                },
+                move || JobResult::GeometryFailed {
+                    key: GeomKey::Mesh { id, lod },
+                },
+            );
         }
     }
 
@@ -758,12 +808,18 @@ impl MeshStreamer {
                 };
                 let header = e.header.clone();
                 let want_skin = e.skin.is_none() && !e.skin_bad;
-                jobs.spawn(move || {
-                    let timer = crate::deep_profile::timer();
-                    let arrival = Box::new(arrival(bytes, header, want_skin));
-                    crate::deep_profile::mesh_parsed(timer);
-                    JobResult::MeshPart { id, arrival }
-                });
+                jobs.spawn_or(
+                    move || {
+                        let timer = crate::deep_profile::timer();
+                        let arrival = Box::new(arrival(bytes, header, want_skin));
+                        crate::deep_profile::mesh_parsed(timer);
+                        JobResult::MeshPart { id, arrival }
+                    },
+                    move || JobResult::MeshPart {
+                        id,
+                        arrival: Box::new(MeshArrival::invalid("its parse stopped on a panic")),
+                    },
+                );
             }
             _ => {
                 let missing = r.status == 404;
@@ -954,7 +1010,7 @@ fn build_mesh_lod(
                 .as_ref()
                 .filter(|s| !s.joint_names.is_empty())
                 .map(|s| (0..s.joint_names.len()).map(|i| i.min(255) as u8).collect());
-            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), 1.0, pool)
+            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), (1.0, 0.0), pool)
         }
         Err(e) => {
             log::debug!("mesh {id} lod {lod}: {e}");
@@ -1204,12 +1260,16 @@ impl MaterialStreamer {
                     MatState::New => {
                         e.state = MatState::Cache;
                         let path = crate::cache::path(&self.cache_dir, "mat", &id, "mat");
-                        jobs.spawn(move || {
-                            let material = crate::cache::read_touch(path)
-                                .ok()
-                                .and_then(|d| aurora_assets::parse_material_asset(&d).ok());
-                            JobResult::Material { id, material }
-                        });
+                        // (a failed read is a cache miss: the material is downloaded)
+                        jobs.spawn_or(
+                            move || {
+                                let material = crate::cache::read_touch(path)
+                                    .ok()
+                                    .and_then(|d| aurora_assets::parse_material_asset(&d).ok());
+                                JobResult::Material { id, material }
+                            },
+                            move || JobResult::Material { id, material: None },
+                        );
                     }
                     // (without the capability yet: asked again at the next frame)
                     MatState::Retry => {
@@ -1254,13 +1314,17 @@ impl MaterialStreamer {
         match r.data {
             Ok(d) => {
                 let path = crate::cache::path(&self.cache_dir, "mat", &id, "mat");
-                jobs.spawn(move || {
-                    let material = aurora_assets::parse_material_asset(&d).ok();
-                    if material.is_some() {
-                        let _ = crate::cache::write(path, &d);
-                    }
-                    JobResult::Material { id, material }
-                });
+                // (a failed parse is a material that does not parse)
+                jobs.spawn_or(
+                    move || {
+                        let material = aurora_assets::parse_material_asset(&d).ok();
+                        if material.is_some() {
+                            let _ = crate::cache::write(path, &d);
+                        }
+                        JobResult::Material { id, material }
+                    },
+                    move || JobResult::Material { id, material: None },
+                );
                 e.state = MatState::Fetching;
             }
             Err(_) => {
@@ -1360,6 +1424,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Err(format!("HTTP {status}")),
+            cancelled: false,
         }
     }
 
@@ -1413,7 +1478,37 @@ mod tests {
             complete: false,
             offset: offset as u64,
             data: Ok(data.to_vec()),
+            cancelled: false,
         }
+    }
+
+    #[test]
+    fn linking_triangle_estimates_use_header_sizes_before_skin_arrives() {
+        let mut streamer = MeshStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(2706);
+        assert_eq!(streamer.estimated_max_triangles(&id), 0.0);
+        let header = MeshHeader {
+            header_size: 100,
+            lods: [None, Some((100, 400)), Some((500, 1984)), Some((2484, 1184))],
+            skin: Some((3668, 100)),
+            physics_convex: None,
+            physics_mesh: None,
+            version: 1,
+            creator: uuid::Uuid::nil(),
+        };
+        streamer.entries.insert(
+            id,
+            MeshEntry {
+                header: Some(header),
+                ..Default::default()
+            },
+        );
+        assert!(streamer.meta(&id).is_none(), "skin is not loaded");
+        assert_eq!(
+            streamer.estimated_max_triangles(&id),
+            100.0,
+            "largest LOD, minus 384 metadata bytes, at 16 bytes per triangle"
+        );
     }
 
     #[test]
@@ -1762,6 +1857,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(vec![1, 2, 3]),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1829,6 +1925,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(asset),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1888,6 +1985,33 @@ mod tests {
         assert_eq!(s.entries[&id].stage, Stage::Failed);
         assert!(s.todo.is_empty());
         assert!(s.by_key.is_empty());
+    }
+
+    #[test]
+    fn reload_asks_a_given_up_mesh_again_at_once() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig.clone();
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        for _ in 0..=EXPECTED_FAILURES {
+            let key = mesh_fetching(&mut s, id);
+            s.on_fetch(failed(key, 404), &jobs);
+        }
+        assert!(s.failed(&id));
+        assert!(!s.entries[&id].retries());
+        // no wait for its retry time (ten minutes for a missing asset)
+        assert!(s.retry_failed(&id));
+        assert!(!s.failed(&id));
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
+        assert!(!s.by_key.is_empty(), "asked again");
+        // a mesh on its way, unknown or held in memory is left alone
+        assert!(!s.retry_failed(&id));
+        assert!(!s.retry_failed(&Uuid::from_u128(2)));
+        let local = Uuid::from_u128(3);
+        s.insert_demo_static(local);
+        assert!(!s.retry_failed(&local));
     }
 
     fn denim_override() -> PbrOverride {
