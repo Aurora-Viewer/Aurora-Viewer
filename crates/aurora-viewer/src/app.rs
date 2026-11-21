@@ -10865,6 +10865,9 @@ impl App {
             }
         }
         self.world.poll_inventory_cache();
+        if self.world.tp_storage.poll_legacy_import() {
+            self.places_ui.history_reordered();
+        }
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
         let deliveries = self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         // the demo's seeded inboxes are not news unless its scenario asks

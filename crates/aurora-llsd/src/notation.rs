@@ -356,7 +356,7 @@ fn write_value(v: &Llsd, out: &mut String) {
         Llsd::Real(r) => out.push_str(&format!("r{r}")),
         Llsd::String(s) => write_string(s, out),
         Llsd::Uuid(u) => out.push_str(&format!("u{u}")),
-        Llsd::Date(d) => out.push_str(&format!("d\"{}\"", crate::xml_llsd::format_date(*d))),
+        Llsd::Date(d) => out.push_str(&format!("d\"{}\"", crate::xml_llsd::format_notation_date(*d))),
         Llsd::Uri(u) => {
             out.push('l');
             write_string(u, out);

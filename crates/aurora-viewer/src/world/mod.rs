@@ -3304,6 +3304,16 @@ impl World {
                 self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
+                if let Some(identity) = self.chat_log.identity() {
+                    self.tp_storage.start_legacy_import(
+                        crate::legacy_profile::Account {
+                            first: l.first_name.clone(),
+                            last: l.last_name.clone(),
+                            grid: identity.grid.clone(),
+                        },
+                        self.chat_log.legacy_apps(),
+                    );
+                }
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.hud_locks = hud_lock::HudLocks::load(account.join(hud_lock::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));

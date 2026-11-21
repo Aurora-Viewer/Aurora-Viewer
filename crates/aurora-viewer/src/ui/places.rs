@@ -332,6 +332,13 @@ pub struct PlacesUi {
 }
 
 impl PlacesUi {
+    pub fn history_reordered(&mut self) {
+        if matches!(self.selected, Some(Sel::History(_))) {
+            self.selected = None;
+        }
+        self.aurora.history_reordered();
+    }
+
     /// The session ended: a question left open ends with it.
     pub fn forget_question(&mut self) {
         self.confirm = None;

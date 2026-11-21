@@ -100,6 +100,23 @@ pub struct AuroraState {
 }
 
 impl AuroraState {
+    pub(super) fn history_reordered(&mut self) {
+        // History rows use indices, so a merge or removal can move a row
+        // to another visit (#798).
+        if matches!(self.selected, Some(Key::Visit(_))) {
+            self.selected = None;
+        }
+        if matches!(self.pending_click, Some((Key::Visit(_), _))) {
+            self.pending_click = None;
+        }
+        if matches!(self.note, Some((Key::Visit(_), _))) {
+            self.note = None;
+        }
+        if matches!(self.rename, Some((Key::Visit(_), _))) {
+            self.rename = None;
+        }
+    }
+
     /// `PlacesUi::open_tab` in Aurora's terms.
     pub fn open_tab(&mut self, tab: usize) {
         self.source = match tab {
@@ -1072,16 +1089,8 @@ impl PlacesUi {
             }
             if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("ui-places-remove-from-history")) {
                 actions.push(PlacesAction::RemoveHistory(i));
-                // the entries after it move up one index: nothing stays
-                // keyed by one (#798)
                 self.aurora.selected = None;
-                let by_index = |k: &Key| matches!(k, Key::Visit(_));
-                if self.aurora.note.as_ref().is_some_and(|(k, _)| by_index(k)) {
-                    self.aurora.note = None;
-                }
-                if self.aurora.rename.as_ref().is_some_and(|(k, _)| by_index(k)) {
-                    self.aurora.rename = None;
-                }
+                self.aurora.history_reordered();
             }
         }
     }

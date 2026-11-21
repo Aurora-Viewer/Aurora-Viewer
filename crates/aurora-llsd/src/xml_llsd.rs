@@ -6,10 +6,27 @@ use base64::Engine;
 use uuid::Uuid;
 
 pub(crate) fn format_date(secs: f64) -> String {
+    format_date_with_precision(secs, false)
+}
+
+pub(crate) fn format_notation_date(secs: f64) -> String {
+    format_date_with_precision(secs, true)
+}
+
+fn format_date_with_precision(secs: f64, preserve_fraction: bool) -> String {
     let whole = secs.floor();
     let nanos = ((secs - whole) * 1e9).round().clamp(0.0, 999_999_999.0) as u32;
     match chrono::DateTime::from_timestamp(whole as i64, nanos) {
-        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        Some(dt) => {
+            let milliseconds = dt.timestamp_subsec_millis();
+            let exact_to_millis = whole + f64::from(milliseconds * 1_000_000) * 1e-9 == secs;
+            let format = if preserve_fraction && !exact_to_millis {
+                "%Y-%m-%dT%H:%M:%S%.9fZ"
+            } else {
+                "%Y-%m-%dT%H:%M:%S%.3fZ"
+            };
+            dt.format(format).to_string()
+        }
         None => "1970-01-01T00:00:00Z".to_owned(),
     }
 }

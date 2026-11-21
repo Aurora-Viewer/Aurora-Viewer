@@ -9,8 +9,10 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
+use crossbeam_channel::{Receiver, TryRecvError};
 use glam::{DVec3, Vec3};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
@@ -250,6 +252,7 @@ impl TeleportHistory {
 
 /// File of the saved history in the account folder.
 pub const TELEPORT_HISTORY_FILE: &str = "teleport_history.txt";
+const MAX_LEGACY_HISTORY_BYTES: u64 = 16 * 1024 * 1024;
 /// Two places closer than this with the same title are one
 /// (MAX_GLOBAL_POS_OFFSET).
 const MAX_GLOBAL_POS_OFFSET: f64 = 5.0;
@@ -293,6 +296,14 @@ impl HistoryItem {
         m.insert("slurl", self.slurl.clone());
         m
     }
+
+    /// All four stored fields identify a visit. Treat signed zero alike,
+    /// as numeric equality does, while hashing the remaining values exactly.
+    fn key(&self) -> (&str, [u64; 4], &str) {
+        let numbers = [self.global.x, self.global.y, self.global.z, self.date];
+        let bits = numbers.map(|x| if x == 0.0 { 0 } else { x.to_bits() });
+        (&self.title, bits, &self.slurl)
+    }
 }
 
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
@@ -310,6 +321,7 @@ pub struct HistoryStorage {
     kept: Vec<Vec<u8>>,
     /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    legacy_history: Option<Receiver<Vec<HistoryItem>>>,
 }
 
 impl HistoryStorage {
@@ -343,7 +355,75 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
+            legacy_history: None,
         }
+    }
+
+    /// Discover and parse Legacy Viewer files off the frame. The result belongs
+    /// to this session's storage and is dropped with it on logout.
+    pub fn start_legacy_import(&mut self, account: crate::legacy_profile::Account, apps: Vec<PathBuf>) {
+        // The destination is keyed by account UUID, not grid. Aditi can
+        // share a UUID with Agni, and custom grid folder labels are ambiguous.
+        if account.grid != "agni" || self.path.is_none() {
+            return;
+        }
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        match std::thread::Builder::new().name("aurora-legacy-teleports".into()).spawn(move || {
+            let _ = sender.send(read_legacy_history(&account, &apps));
+        }) {
+            Ok(_) => self.legacy_history = Some(receiver),
+            Err(e) => log::warn!("teleport history: can't start the Legacy Viewer import ({e})"),
+        }
+    }
+
+    pub fn poll_legacy_import(&mut self) -> bool {
+        let Some(receiver) = &self.legacy_history else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(items) => {
+                self.legacy_history = None;
+                let added = self.merge_legacy(items);
+                if let Some(added) = added.filter(|&added| added > 0) {
+                    log::info!("teleport history: imported {added} visit(s) from Legacy Viewers");
+                }
+                return added.is_some();
+            }
+            Err(TryRecvError::Disconnected) => self.legacy_history = None,
+            Err(TryRecvError::Empty) => {}
+        }
+        false
+    }
+
+    fn merge_legacy(&mut self, incoming: Vec<HistoryItem>) -> Option<usize> {
+        if incoming.is_empty() || self.path.is_none() {
+            return None;
+        }
+        // Merge into the live history so a visit recorded while the worker
+        // was reading is included in the same queued snapshot.
+        let mut seen = HashSet::with_capacity(self.items.len() + incoming.len());
+        let duplicate_indices: Vec<_> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| (!seen.insert(item.key())).then_some(i))
+            .collect();
+        let additions: Vec<_> = incoming.iter().filter(|&item| seen.insert(item.key())).cloned().collect();
+        let added = additions.len();
+        if added == 0 && duplicate_indices.is_empty() {
+            return None;
+        }
+        let mut duplicates = duplicate_indices.into_iter().peekable();
+        let mut index = 0;
+        self.items.retain(|_| {
+            let keep = duplicates.next_if_eq(&index).is_none();
+            index += 1;
+            keep
+        });
+        self.items.extend(additions);
+        self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
+        self.save();
+        Some(added)
     }
 
     /// A history kept in memory only (the demo's).
@@ -407,6 +487,7 @@ impl HistoryStorage {
     /// onClearTeleportHistoryDialog: purgeItems + save. The lines kept
     /// unread go too: the user asked for an empty history.
     pub fn clear(&mut self) {
+        self.legacy_history = None;
         self.items.clear();
         self.kept.clear();
         self.save();
@@ -441,15 +522,58 @@ impl HistoryStorage {
     }
 }
 
+fn read_legacy_history(account: &crate::legacy_profile::Account, apps: &[PathBuf]) -> Vec<HistoryItem> {
+    crate::legacy_profile::account_folders(apps, account)
+        .iter()
+        .flat_map(|folder| {
+            let path = folder.join(TELEPORT_HISTORY_FILE);
+            let mut bytes = Vec::new();
+            match std::fs::File::open(path).and_then(|file| file.take(MAX_LEGACY_HISTORY_BYTES + 1).read_to_end(&mut bytes)) {
+                Ok(_) if bytes.len() as u64 <= MAX_LEGACY_HISTORY_BYTES => parse_legacy(&bytes),
+                Ok(_) => {
+                    log::warn!("teleport history: a Legacy Viewer file exceeded the import limit");
+                    Vec::new()
+                }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("teleport history: can't read a Legacy Viewer file ({e})");
+                    }
+                    Vec::new()
+                }
+            }
+        })
+        .collect()
+}
+
+fn parse_legacy(bytes: &[u8]) -> Vec<HistoryItem> {
+    notation_rows(bytes)
+        .filter_map(|line| {
+            let data = aurora_llsd::from_notation(line).ok()?;
+            let position = data["global_pos"].as_array();
+            if !matches!(position, [x, y, z] if [x, y, z].into_iter().all(|n| matches!(n, Llsd::Real(_) | Llsd::Integer(_))))
+                || !matches!(data["date"], Llsd::Date(_))
+                || !matches!(data["slurl"], Llsd::String(_) | Llsd::Uri(_) | Llsd::Undef)
+            {
+                return None;
+            }
+            let item = HistoryItem::from_llsd(&data);
+            (!item.title.trim().is_empty() && item.global.is_finite() && item.date.is_finite()).then_some(item)
+        })
+        .collect()
+}
+
+fn notation_rows(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bytes
+        .split(|&b| b == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+}
+
 /// The places of a file, and its lines that are not one (kept as they are).
 fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
     let mut items = Vec::new();
     let mut kept = Vec::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
+    for line in notation_rows(bytes) {
         match aurora_llsd::from_notation(line) {
             Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
             _ => kept.push(line.to_vec()),
@@ -953,6 +1077,90 @@ mod tests {
         assert_eq!(s.items[0].title, "Ahern");
         assert_eq!(s.items[1].global, DVec3::new(256_148.0, 256_195.0, 24.0));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_import_keeps_every_distinct_visit_across_restarts() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-import-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let source = b"{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"2024-03-01T10:00:00.123456Z\"}\n";
+        let base = parse_legacy(source).pop().unwrap();
+        let mut at_another_time = base.clone();
+        at_another_time.date += 0.000_002;
+        let mut at_another_position = base.clone();
+        at_another_position.global.z += 1.0;
+        let mut with_another_slurl = base.clone();
+        with_another_slurl.slurl = "hop://example.invalid/Plaza/1/2/3".into();
+        let mut with_another_title = base.clone();
+        with_another_title.title = "Plaza annex".into();
+
+        let mut history = HistoryStorage::load(path.clone());
+        history.items = vec![at_another_time.clone(), base.clone(), base.clone()];
+        history.kept = vec![b"an unreadable Aurora row".to_vec()];
+        let imported = vec![base.clone(), at_another_position, with_another_slurl, with_another_title, base];
+        assert_eq!(history.merge_legacy(imported.clone()), Some(3));
+        assert_eq!(history.items.len(), 5);
+        assert_eq!(history.items.last(), Some(&at_another_time));
+        history.flush();
+
+        let mut reloaded = HistoryStorage::load(path);
+        assert_eq!(reloaded.items, history.items);
+        assert_eq!(reloaded.kept, history.kept);
+        assert_eq!(reloaded.merge_legacy(imported), None);
+        assert_eq!(reloaded.items, history.items);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_import_reads_matching_profiles_only_and_seeds_an_empty_history() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-import-folders-{}", uuid::Uuid::new_v4()));
+        let apps = [dir.join("Firestorm_x64"), dir.join("SecondLife")];
+        let a = "{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"2024-03-01T10:00:00Z\"}";
+        let b = "{'title':'Sandbox','global_pos':[r1,r2,r3],'date':d\"2024-04-01T10:00:00Z\"}";
+        for (app, folder, rows) in [
+            (&apps[0], "jane_doe", format!("{a}\r\ninvalid row\r\n{a}\r\n")),
+            (&apps[1], "jane_doe", format!("{{}}\n{a}\n{b}\n")),
+            (&apps[0], "jane_doe.second_life_beta", b.replace("Sandbox", "Beta")),
+            (&apps[1], "jane_other", b.replace("Sandbox", "Other account")),
+        ] {
+            let profile = app.join(folder);
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(profile.join(TELEPORT_HISTORY_FILE), rows).unwrap();
+        }
+        let source_path = apps[0].join("jane_doe").join(TELEPORT_HISTORY_FILE);
+        let source_bytes = std::fs::read(&source_path).unwrap();
+        let path = dir.join("aurora").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        let account = crate::legacy_profile::Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        for grid in ["aditi", "custom_example", "demo"] {
+            let mut other = account.clone();
+            other.grid = grid.into();
+            history.start_legacy_import(other, apps.to_vec());
+            assert!(history.legacy_history.is_none());
+        }
+
+        history.start_legacy_import(account, apps.to_vec());
+        // Wait for the worker while retaining its result for the normal poll.
+        let visits = history
+            .legacy_history
+            .take()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        sender.send(visits).unwrap();
+        history.legacy_history = Some(receiver);
+        assert!(history.poll_legacy_import());
+        history.flush();
+        let reloaded = HistoryStorage::load(path);
+        let titles: Vec<_> = reloaded.items.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, ["Plaza", "Sandbox"]);
+        assert_eq!(std::fs::read(source_path).unwrap(), source_bytes);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// #2626: the lines this viewer can't read (not LLSD, not UTF-8) are
