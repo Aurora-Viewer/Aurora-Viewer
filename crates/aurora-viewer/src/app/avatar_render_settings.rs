@@ -36,7 +36,7 @@ impl App {
                     self.world.social.want_name(id);
                     self.world.social.name_of(&id)
                 } else {
-                    crate::world::rlva::privacy::anonymous(id).display_name.clone()
+                    self.world.rlva_anonymous(id).display_name.clone()
                 };
                 rows.push(Row { id, mode, name, can_name });
             }

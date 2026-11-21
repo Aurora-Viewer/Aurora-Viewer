@@ -133,6 +133,11 @@ fn mesh_import_parity_many_instances_and_transfer_settings_survive_fee_encoding(
     let query = aurora_llsd::from_xml(&upload.query).expect("query");
     assert_eq!(query["asset_resources"]["instance_list"].as_array().len(), 300);
     assert_eq!(query["asset_resources"]["mesh_list"].as_array().len(), 1);
+    let resources = aurora_llsd::from_xml(&upload.resources).expect("upload resources");
+    assert_eq!(
+        query["asset_resources"]["mesh_list"], resources["mesh_list"],
+        "the fee and upload use the same compressed bytes"
+    );
     assert!(upload.validate().is_ok());
     let prefs = Preferences::default();
     assert_eq!(prefs.mesh_model_limit, 768);
@@ -192,4 +197,94 @@ fn mesh_import_parity_dae_palettes_over_110_declared_joints_remain_uploadable() 
     assert!(inspector::Avatar::new(scene).valid());
     draft.options.skin = true;
     assert!(request(&draft).validate().is_ok());
+}
+
+#[test]
+fn mesh_base_hull_keeps_custom_collision_first_then_uses_the_smallest_nonempty_lod() {
+    let draft = draft();
+    let high = &draft.scene.models[0];
+    let named = |name: &str| Model {
+        name: name.into(),
+        ..high.clone()
+    };
+    let physics = named("physics");
+    let mut lods = [
+        Some(named("lowest")),
+        Some(named("low")),
+        Some(named("medium")),
+        Some(named("high")),
+    ];
+    assert_eq!(hull_source(Some(&physics), &lods, high).name, "physics");
+    assert_eq!(hull_source(None, &lods, high).name, "lowest");
+    lods[0] = None;
+    assert_eq!(hull_source(None, &lods, high).name, "low");
+    lods[1] = None;
+    assert_eq!(hull_source(None, &lods, high).name, "medium");
+    let mut empty = named("empty collision");
+    for face in &mut empty.faces {
+        face.indices.clear();
+    }
+    assert_eq!(
+        hull_source(Some(&empty), &lods, high).name,
+        "medium",
+        "a model with no triangle is passed over"
+    );
+    lods[2] = None;
+    assert_eq!(hull_source(None, &lods, high).name, high.name);
+}
+
+#[test]
+fn mesh_default_lods_use_legacy_generation_and_one_third_targets() {
+    // genMeshOptimizerLODs truncates base / 3^(3 - level).
+    assert_eq!(default_lod_targets(3000), [111, 333, 1000, 3000]);
+    // #3433's 1,400 triangles: 466, 155 and 51 below the High LOD.
+    assert_eq!(default_lod_targets(1400), [51, 155, 466, 1400]);
+    // 10 / 27 truncates to 0 there; the target stays at least 1.
+    assert_eq!(default_lod_targets(10), [1, 1, 3, 10]);
+    let mut scene = Scene::default();
+    scene.models.push(Model {
+        name: "Counted".into(),
+        submodel: 0,
+        skin: None,
+        center: glam::Vec3::ZERO,
+        size: glam::Vec3::ONE,
+        faces: vec![codec::Face {
+            vertices: Vec::new(),
+            indices: vec![0; 3000 * 3],
+            material: 0,
+        }],
+    });
+    let draft = Draft::from_shared(Arc::new(scene), HashMap::new());
+    let sources = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.source);
+    let targets = |draft: &Draft| draft.lods.each_ref().map(|lod| lod.triangles);
+    assert_eq!(targets(&draft), [111, 333, 1000, 3000]);
+    assert_eq!(
+        sources(&draft),
+        [LodSource::Legacy, LodSource::Legacy, LodSource::Legacy, LodSource::File]
+    );
+}
+
+#[test]
+fn mesh_adaptive_default_uses_lowest_but_preserves_explicit_collision() {
+    let mut draft = crate::imports::tests::mesh_fixture();
+    let mut lowest = draft.scene.as_ref().clone();
+    lowest.models[0].faces[0].vertices[0].position = [4.0, 4.0, 4.0];
+    draft.lods[0].source = LodSource::File;
+    draft.lods[0].file = Some(Arc::new(lowest));
+    let prepared = prepare(&draft).expect("prepare");
+    let hull = prepared.hulls[0].base.as_ref().expect("base hull");
+    assert!(hull.vertices.contains(&[4.0; 3]), "the Lowest file defines the default collision");
+    assert!(prepared.physics[0].is_none(), "no collision model was chosen");
+    draft.options.physics_source = 4;
+    let prepared = prepare(&draft).expect("explicit bounding box");
+    assert!(prepared.physics[0].is_some());
+    assert!(
+        prepared.hulls[0]
+            .base
+            .as_ref()
+            .expect("custom hull")
+            .vertices
+            .iter()
+            .all(|p| p.iter().all(|v| v.abs() <= 0.5))
+    );
 }

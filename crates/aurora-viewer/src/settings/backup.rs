@@ -29,6 +29,9 @@ const VERSION: u32 = 1;
 const THIS_PC: &[&str] = &[
     "username",
     "remember_username",
+    // the proxies of this PC's network (Preferences › Network › Proxy)
+    "proxy",
+    "last_login",
     "remember_password",
     "grid",
     "custom_login_uri",
@@ -41,6 +44,8 @@ const THIS_PC: &[&str] = &[
     "window_maximized",
     "cache_location",
     "chat_log_location",
+    // a file of this PC (Preferences › Language and updates)
+    "custom_language_file",
 ];
 /// The same inside `audio`: the devices of this PC.
 const THIS_PC_AUDIO: &[&str] = &["output_device", "input_device"];
@@ -49,6 +54,17 @@ const THIS_PC_AUDIO: &[&str] = &["output_device", "input_device"];
 const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
 /// The nested sections that hold settings of this PC, and those settings.
 const THIS_PC_NESTED: &[(&str, &[&str])] = &[("audio", THIS_PC_AUDIO), ("gifs", THIS_PC_GIFS)];
+
+/// Whether the path of a setting (`gifs.giphy_key`) names a setting of the
+/// login or of this PC.
+pub(super) fn is_this_pc(key: &str) -> bool {
+    match key.split_once('.') {
+        None => THIS_PC.contains(&key),
+        // a section of THIS_PC is this PC's with all its settings
+        Some((section, _)) if THIS_PC.contains(&section) => true,
+        Some((section, inner)) => THIS_PC_NESTED.iter().any(|(name, keys)| *name == section && keys.contains(&inner)),
+    }
+}
 
 /// An account's files that are preferences. Only these names are read from
 /// a backup: a name in the file is never taken as a path.
@@ -265,6 +281,7 @@ impl Settings {
     fn keep_this_pc(&mut self, current: &Settings) {
         self.username = current.username.clone();
         self.remember_username = current.remember_username;
+        self.last_login = current.last_login.clone();
         self.remember_password = current.remember_password;
         self.grid = current.grid.clone();
         self.custom_login_uri = current.custom_login_uri.clone();
@@ -277,6 +294,7 @@ impl Settings {
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
+        self.custom_language_file = current.custom_language_file.clone();
         self.audio.output_device = current.audio.output_device.clone();
         self.audio.input_device = current.audio.input_device.clone();
         self.gifs.giphy_key = current.gifs.giphy_key.clone();

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/shell-rules.sh\"; [ $? -eq 3 ] && exit 2; exit 0",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -102,7 +102,7 @@ impl App {
         if self.wearable_ui.open
             && let Some(draft) = &self.wearable_ui.draft
         {
-            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, draft);
+            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, draft, Some(ctx));
             for command in commands {
                 if self.demo {
                     if let NetCommand::PreviewInventoryItem(item) = command {
@@ -229,6 +229,10 @@ impl App {
             image.inv_type = 0;
             image.asset_id = texture;
             image.name = aurora_i18n::tr!("common-texture").into();
+            // Copy only, as most textures sold for worn layers: the editor
+            // takes it on transferable clothing too (init_texture_ctrl).
+            image.owner_mask = crate::world::inventory::actions::COPY;
+            image.next_owner_mask = crate::world::inventory::actions::COPY;
             self.world.inventory.add_items(vec![image]);
             if let Some(slot) = crate::wearable_editor::slots(kind).first()
                 && variant == "preview"

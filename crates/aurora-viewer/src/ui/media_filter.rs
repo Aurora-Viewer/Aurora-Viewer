@@ -27,77 +27,82 @@ pub enum Answer {
     TurnOff,
 }
 
-/// The question about `q`, one at a time. Closing it (Escape) denies this
-/// once, as the Legacy Viewer's alert leaves the media stopped.
-pub fn prompt(ctx: &egui::Context, p: &Palette, q: &Question, first_use: bool, st: &mut PromptUi) -> Option<Answer> {
+/// The banner's widest line before the text wraps.
+const MAX_WIDTH: f32 = 720.0;
+/// Its gap under what is above it.
+const GAP: f32 = 6.0;
+
+/// The question about `q`, one at a time, on a banner at the top of the
+/// screen, `top` logical px under the screen's top (the bars, or the media
+/// controls when they show). A difference from the Legacy Viewer, whose
+/// alert is a dialog: the banner takes neither the keyboard nor the mouse
+/// and covers neither the windows nor the middle of the view, so a pilot
+/// crossing regions keeps flying while it waits (nothing loads until it is
+/// answered), and a question nothing asks for any more (the region left
+/// behind) goes away by itself. Its close button denies this once, as the
+/// Legacy Viewer's alert closed leaves the media stopped.
+pub fn prompt(ctx: &egui::Context, p: &Palette, top: f32, q: &Question, first_use: bool, st: &mut PromptUi) -> Option<Answer> {
     if st.url != q.url {
         st.url = q.url.clone();
         st.remember = Remember::Once;
     }
     let mut answer = None;
-    let modal = widgets::Modal::new(egui::Id::unique("media_filter_question")).show(ctx, |ui| {
-        ui.set_width(400.0);
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-            if let Some(t) = super::icons::global("shield-lock-filled") {
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().image(t.id(), rect, uv, p.ink);
-            }
-            ui.label(
-                RichText::new(aurora_i18n::tr!("media-filter-title"))
-                    .size(15.0)
-                    .strong()
-                    .color(p.ink),
-            );
+    egui::Area::new(egui::Id::unique("media_filter_question"))
+        .fade_in(false)
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top + GAP))
+        .constrain(true)
+        .show(ctx, |ui| {
+            widgets::overlay(ui, p, egui::Margin::symmetric(12, 8), |ui| {
+                ui.set_max_width(MAX_WIDTH);
+                banner(ui, p, q, first_use, st, &mut answer);
+            });
         });
+    answer
+}
+
+fn banner(ui: &mut egui::Ui, p: &Palette, q: &Question, first_use: bool, st: &mut PromptUi, answer: &mut Option<Answer>) {
+    if first_use {
+        ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("media-filter-intro")).size(12.0).color(p.muted)).wrap());
         ui.add_space(6.0);
-        if first_use {
-            ui.label(RichText::new(aurora_i18n::tr!("media-filter-intro")).size(12.5).color(p.muted));
-            ui.add_space(8.0);
-        }
-        let from = match q.source {
-            Source::ParcelMedia => aurora_i18n::tr!("media-filter-parcel-media"),
-            Source::PrimMedia => aurora_i18n::tr!("media-filter-prim-media"),
-            Source::Music => aurora_i18n::tr!("media-filter-music"),
-        };
+    }
+    let from = match q.source {
+        Source::ParcelMedia => aurora_i18n::tr!("media-filter-parcel-media"),
+        Source::PrimMedia => aurora_i18n::tr!("media-filter-prim-media"),
+        Source::Music => aurora_i18n::tr!("media-filter-music"),
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        widgets::glyph(ui, "shield-lock-filled", p.ink, 16.0);
         ui.label(RichText::new(from).size(12.5).color(p.muted));
-        ui.add_space(2.0);
-        ui.label(RichText::new(&q.domain).size(15.0).strong().color(p.ink));
-        ui.add(
-            egui::Label::new(RichText::new(&q.url).size(12.0).monospace().color(p.muted))
-                .wrap()
-                .selectable(true),
-        );
+        // the whole address on hover: the domain is what the rules match
+        ui.add(egui::Label::new(RichText::new(&q.domain).size(13.5).strong().color(p.ink)).sense(egui::Sense::hover()))
+            .on_hover_text(RichText::new(&q.url).monospace());
         ui.add_space(10.0);
+        if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-allow")).clicked() {
+            *answer = Some(Answer::Allow(st.remember));
+        }
+        if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-deny")).clicked() {
+            *answer = Some(Answer::Deny(st.remember));
+        }
+        if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("media-filter-not-now"), true) {
+            *answer = Some(Answer::Deny(Remember::Once));
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
         let domain = aurora_i18n::tr!("media-filter-remember-domain", domain = q.domain.clone());
         for (value, label) in [
             (Remember::Once, aurora_i18n::tr!("media-filter-remember-once").to_string()),
             (Remember::Domain, domain),
             (Remember::Url, aurora_i18n::tr!("media-filter-remember-url").to_string()),
         ] {
-            widgets::radio_value(ui, p, &mut st.remember, value, RichText::new(label).size(12.5).color(p.ink));
+            widgets::radio_value(ui, p, &mut st.remember, value, RichText::new(label).size(12.0).color(p.ink));
         }
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-allow")).clicked() {
-                answer = Some(Answer::Allow(st.remember));
-            }
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-deny")).clicked() {
-                answer = Some(Answer::Deny(st.remember));
-            }
-            if first_use {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-turn-off")).clicked() {
-                        answer = Some(Answer::TurnOff);
-                    }
-                });
-            }
-        });
+        if first_use && widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-turn-off")).clicked() {
+            *answer = Some(Answer::TurnOff);
+        }
     });
-    if modal.should_close() && answer.is_none() {
-        answer = Some(Answer::Deny(Remember::Once));
-    }
-    answer
 }
 
 /// The account's list in Preferences › Sound and voice › Media: each site
