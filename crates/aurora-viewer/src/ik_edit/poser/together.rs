@@ -90,7 +90,15 @@ pub(super) enum Change {
 /// `after`: a rotation turned by the same amount in the follower's own
 /// frame, a move by the same offset in the avatar's frame, a scale by the
 /// same ratio. A follower's world lock goes, as the leader's does.
-pub(super) fn follow(rig: &Rig, before: &SubjectPose, after: &mut SubjectPose, lead: usize, followers: &[usize], change: Change) {
+pub(super) fn follow(
+    rig: &Rig,
+    before: &SubjectPose,
+    after: &mut SubjectPose,
+    lead: usize,
+    followers: &[usize],
+    change: Change,
+    only: bool,
+) {
     let followers: Vec<_> = followers.iter().copied().filter(|f| *f != lead && *f < rig.len()).collect();
     if followers.is_empty() {
         return;
@@ -119,7 +127,9 @@ pub(super) fn follow(rig: &Rig, before: &SubjectPose, after: &mut SubjectPose, l
                 return;
             }
             for &bone in &followers {
-                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset, false);
+                // `only` is the Position tab's "Move this joint only": every
+                // selected joint moves the same way (setSelectedJointsPosition).
+                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset, only);
             }
         }
     }
@@ -151,7 +161,7 @@ mod tests {
         let mut after = before.clone();
         let look = Quat::from_rotation_z(0.4);
         after.rotations[left] = before.rotations[left] * look;
-        follow(rig, &before, &mut after, left, &[right], Change::Rotate);
+        follow(rig, &before, &mut after, left, &[right], Change::Rotate, false);
         let world = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
         let (_, l, _) = world[left].to_scale_rotation_translation();
         let (_, r, _) = world[right].to_scale_rotation_translation();
@@ -172,7 +182,7 @@ mod tests {
         let mut after = before.clone();
         let turn = Quat::from_rotation_y(-0.5);
         after.rotations[lead] = before.rotations[lead] * turn;
-        follow(rig, &before, &mut after, lead, &[other], Change::Rotate);
+        follow(rig, &before, &mut after, lead, &[other], Change::Rotate, false);
         assert!(after.rotations[other].abs_diff_eq(before.rotations[other] * turn, 1e-5));
         assert!(!after.locks.contains_key(&other));
     }
@@ -185,7 +195,7 @@ mod tests {
         let before = rest(rig);
         let mut after = before.clone();
         after.scales[lead] = before.scales[lead] * 1.5;
-        follow(rig, &before, &mut after, lead, &[other], Change::Scale);
+        follow(rig, &before, &mut after, lead, &[other], Change::Scale, false);
         assert!(after.scales[other].abs_diff_eq(before.scales[other] * 1.5, 1e-5));
         assert_eq!(after.rotations[other], before.rotations[other]);
         assert_eq!(after.positions[other], before.positions[other]);
@@ -205,7 +215,7 @@ mod tests {
             let before = after.clone();
             let target = was[lead].w_axis.truncate() + offset * (step as f32 / 20.0);
             assert!(after.move_joint(rig, lead, target, false));
-            follow(rig, &before, &mut after, lead, &[other], Change::Move);
+            follow(rig, &before, &mut after, lead, &[other], Change::Move, false);
         }
         let mut alone = start.clone();
         for step in 1..=20 {
@@ -228,6 +238,31 @@ mod tests {
             "{moved} vs {led}"
         );
         assert!((moved.y + led.y).abs() < 0.005, "{moved} vs {led}");
+    }
+
+    /// Position tab, "Move this joint only", with a second shoulder selected:
+    /// the follower moves by the same offset and its collar does not bend
+    /// (`setSelectedJointsPosition`).
+    #[test]
+    fn move_this_joint_only_moves_a_follower_without_bending_its_collar() {
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let (lead, other) = (rig.names["mShoulderLeft"], rig.names["mShoulderRight"]);
+        let collar = rig.parent[other].unwrap();
+        let start = rest(rig);
+        let was = rig.world_with(&start.rotations, Vec3::ZERO, &start.positions, &start.scales);
+        let offset = Vec3::new(0.04, 0.06, -0.03);
+        let mut after = start.clone();
+        assert!(after.move_joint(rig, lead, was[lead].w_axis.truncate() + offset, true));
+        follow(rig, &start, &mut after, lead, &[other], Change::Move, true);
+        assert_eq!(after.rotations[collar], start.rotations[collar], "the follower's collar bent");
+        assert_eq!(after.rotations[other], start.rotations[other]);
+        assert_eq!(after.rotations[lead], start.rotations[lead]);
+        let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
+        let led = now[lead].w_axis.truncate() - was[lead].w_axis.truncate();
+        let moved = now[other].w_axis.truncate() - was[other].w_axis.truncate();
+        assert!(led.distance(offset) < 0.002, "leader {led} vs {offset}");
+        assert!(moved.distance(led) < 0.002, "follower {moved} vs leader {led}");
     }
 
     #[test]

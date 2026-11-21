@@ -516,6 +516,75 @@ fn poser_shoulder_chains_stop_before_the_spine_and_joint_only_moves_no_other_joi
     assert_eq!(pose.rotations, base.rotations);
 }
 
+/// Both shoulders selected, the switch on: Mirror must not replace the
+/// follower's own move with the reflection of the leader.
+#[test]
+fn poser_joint_only_does_not_mirror_over_a_selected_follower() {
+    let run = |symmetry: bool| {
+        let (world, mut editor) = fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let left = rig.names["mShoulderLeft"];
+        let right = rig.names["mShoulderRight"];
+        editor.symmetry = symmetry;
+        editor.poser.move_joint_only = true;
+        editor.select(left, rig, &frame);
+        editor.click_pose_bone(right, rig, &frame, true);
+        assert_eq!(editor.followers(), vec![right]);
+        let base = editor.poser.sessions[&world.agent_id].base.clone();
+        // A Y component: the mirror reflection flips Y, so it cannot match
+        // the follower's own offset.
+        editor.position = frame.model.inverse().transform_point3(frame.joints[left].w_axis.truncate()) + Vec3::new(0.05, 0.04, -0.02);
+        assert!(editor.commit_poser_manipulation(rig, &frame, false));
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        assert_eq!(pose.rotations[rig.parent[left].unwrap()], base.rotations[rig.parent[left].unwrap()]);
+        assert_eq!(
+            pose.rotations[rig.parent[right].unwrap()],
+            base.rotations[rig.parent[right].unwrap()]
+        );
+        (
+            pose.positions[left] - base.positions[left],
+            pose.positions[right] - base.positions[right],
+        )
+    };
+    let (off_left, off_right) = run(false);
+    let (on_left, on_right) = run(true);
+    let reflected = crate::ik_edit::rig_controls::reflect(on_left);
+    assert!(on_left.distance(off_left) < 1e-4, "leader {on_left} vs {off_left}");
+    assert!(
+        on_right.distance(off_right) < 1e-4,
+        "follower was replaced: {on_right} vs {off_right}"
+    );
+    assert!(
+        on_right.distance(reflected) > 1e-3,
+        "mirror wrote the reflection {reflected} over the follower {on_right}"
+    );
+}
+
+#[test]
+fn a_head_position_drag_bends_the_neck_and_the_neck_itself_moves_directly() {
+    let (world, editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let head = rig.names["mHead"];
+    let neck = rig.names["mNeck"];
+    let chest = rig.names["mChest"];
+    let mut pose = (*base).clone();
+    let before = pose.clone();
+    let placed = pose.matrices(rig, Mat4::IDENTITY);
+    assert!(pose.move_joint(rig, head, placed[head].w_axis.truncate() + Vec3::new(0.04, 0.02, 0.03), false));
+    assert_ne!(pose.rotations[neck], before.rotations[neck], "a head drag should bend the neck");
+    assert_eq!(
+        pose.rotations[chest], before.rotations[chest],
+        "a head drag should stop at the neck"
+    );
+    let mut pose = before.clone();
+    assert!(pose.move_joint(rig, neck, placed[neck].w_axis.truncate() + Vec3::new(0.03, -0.02, 0.02), false));
+    assert_ne!(pose.positions[neck], before.positions[neck], "the neck itself moves directly");
+    assert_eq!(pose.rotations[neck], before.rotations[neck]);
+    assert_eq!(pose.rotations[chest], before.rotations[chest]);
+}
+
 #[test]
 fn poser_joint_only_setting_defaults_off_and_persists() {
     let default = Config::default();

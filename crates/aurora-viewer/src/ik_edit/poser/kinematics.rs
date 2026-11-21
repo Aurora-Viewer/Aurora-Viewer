@@ -32,10 +32,12 @@ fn solve(
 fn spine(name: &str) -> bool {
     matches!(
         name,
-        "mPelvis" | "mTorso" | "mChest" | "mSpine1" | "mSpine2" | "mSpine3" | "mSpine4" | "mNeck"
+        "mPelvis" | "mTorso" | "mChest" | "mSpine1" | "mSpine2" | "mSpine3" | "mSpine4"
     )
 }
-/// Stop a poser chain before it can recruit the torso. Runtime IK keeps its
+/// Stop a poser chain before it can recruit the torso. The neck is not
+/// spine here: a head position drag bends the neck, as a shoulder bends its
+/// collar, and the neck itself still moves directly. Runtime IK keeps its
 /// independent `default_root` policy in scene::ik.
 fn poser_root(rig: &Rig, bone: usize) -> usize {
     let parent = rig.parent[bone].unwrap_or(bone);

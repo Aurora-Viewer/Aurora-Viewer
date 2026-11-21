@@ -178,7 +178,7 @@ impl Editor {
             start.rotations.clone_from(&before.rotations);
             start.positions.clone_from(&before.positions);
             let change = if rotate { together::Change::Rotate } else { together::Change::Move };
-            together::follow(rig, &start, &mut edited, bone, &followers, change);
+            together::follow(rig, &start, &mut edited, bone, &followers, change, !rotate && move_joint_only);
             for (joint, dragged) in dragged.iter_mut().enumerate() {
                 *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
             }
@@ -188,6 +188,8 @@ impl Editor {
                 && move_joint_only
                 && edited.positions[bone] != before.positions[bone]
                 && let Some(other) = self.mirrors.counterpart(bone)
+                && Some(other) != selected
+                && !dragged[other]
             {
                 edited.positions[other] = session.base.positions[other]
                     + crate::ik_edit::rig_controls::reflect(edited.positions[bone] - session.base.positions[bone]);
