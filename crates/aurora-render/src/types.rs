@@ -660,6 +660,9 @@ pub struct DrawLists {
     pub water_events: Vec<crate::WaterEvent>,
     pub water_contacts: Vec<crate::WaterEvent>,
     pub water_ground: crate::WaterGround,
+    /// The wind's sea this frame (water_sea.rs): the swell every water
+    /// sampler shares.
+    pub water_sea: crate::water_sea::Sea,
     /// Rain prototype: the terrain's heights around the camera.
     pub rain_ground: crate::RainGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
@@ -881,6 +884,7 @@ impl DrawLists {
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
+        self.water_sea = src.water_sea;
         self.rain_ground.clone_from(&src.rain_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);

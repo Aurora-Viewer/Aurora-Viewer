@@ -4,6 +4,7 @@
 use super::{Scene, anchors, anim, water_contacts};
 use crate::frame_par::Grain;
 use crate::world::World;
+use aurora_render::water_effects::SEA_EXTENT;
 use aurora_render::{WaterEffects, WaterEvent, WaterGround};
 use glam::{Mat4, Vec2, Vec3};
 use std::collections::HashMap;
@@ -32,6 +33,80 @@ pub struct Effects {
     impacts: Vec<crate::movement::water_jump::Impact>,
     bodies: water_contacts::Bodies,
     visible: HashMap<Uuid, u32>,
+    /// The wind's sea (aurora_render::water_sea): advanced once a frame,
+    /// shared with the renderer through the lists.
+    sea: aurora_render::water_sea::SeaDriver,
+    /// A sea grid baking on a worker.
+    sea_baking: Option<SeaBaking>,
+    /// The last sea grid baked: where, when it was last checked, what it
+    /// was made of, and the grid.
+    sea_grid: Option<SeaGrid>,
+    /// When the sea's state was last written to the log (every 10 s).
+    sea_logged_at: f32,
+    /// The static prims standing in the sea, as last gathered for its grid,
+    /// and where its waves crash on them and on steep shores
+    /// (water_crash.rs).
+    crash_boxes: Vec<super::water_shelter::ShelterBox>,
+    /// Each one's object (its index in the world), for its real surface.
+    crash_objects: Vec<usize>,
+    /// What the last grid baked was made of (`parts` above), to say what
+    /// changed when it is baked again.
+    sea_parts: [u64; 4],
+    crashes: super::water_crash::Crashes,
+}
+
+/// The sea grid baked last (water_shelter.rs) and the one before it,
+/// fading out over `SEA_FADE` after each bake.
+struct SeaGrid {
+    origin: Vec2,
+    /// When it was last checked for a change, and what it was made of.
+    checked_at: f32,
+    signature: u64,
+    grid: std::sync::Arc<[[f32; 6]]>,
+    /// The previous grid's refraction offset, swell reach and chop, on this grid's
+    /// cells, and when this one was baked.
+    prev: std::sync::Arc<[[f32; 3]]>,
+    baked_at: f32,
+}
+
+/// A sea grid baking on a worker thread (water_shelter::bake_grid).
+struct SeaBaking {
+    origin: Vec2,
+    signature: u64,
+    result: std::thread::JoinHandle<Vec<[f32; 6]>>,
+}
+
+/// How long a new sea grid takes to replace the previous one (s).
+const SEA_FADE: f32 = 6.0;
+
+impl SeaGrid {
+    /// How far the fade has gone at `time` (0 the previous grid, 1 this).
+    fn blend(&self, time: f32) -> f32 {
+        let t = ((time - self.baked_at) / SEA_FADE).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    /// What it shows at `time` (refraction offset, swell reach, chop), moved onto
+    /// a grid at `origin` (cells it no longer covers: `fresh`'s), for the
+    /// next grid to fade from.
+    fn shown(&self, time: f32, origin: Vec2, fresh: &[[f32; 6]]) -> Vec<[f32; 3]> {
+        use aurora_render::water_effects::SEA_GRID;
+        let blend = self.blend(time);
+        let cell = aurora_render::water_effects::SEA_EXTENT / SEA_GRID as f32;
+        let shift = ((origin - self.origin) / cell).round().as_ivec2();
+        (0..SEA_GRID * SEA_GRID)
+            .map(|i| {
+                let (x, y) = ((i % SEA_GRID) as i32 + shift.x, (i / SEA_GRID) as i32 + shift.y);
+                if x < 0 || y < 0 || x >= SEA_GRID as i32 || y >= SEA_GRID as i32 {
+                    return [fresh[i][3], fresh[i][4], fresh[i][5]];
+                }
+                let j = y as usize * SEA_GRID + x as usize;
+                let g = self.grid[j];
+                let old = self.prev.get(j).copied().unwrap_or([g[3], g[4], g[5]]);
+                std::array::from_fn(|k| old[k] + (g[k + 3] - old[k]) * blend)
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +139,51 @@ fn water_at(world: &World, p: Vec3) -> Option<f32> {
     })
 }
 
+/// The prims near the water ground (`origin`, `extent`) that may shelter
+/// it: what stands still (`Scene::moves_for_shelter`, as for the rain's
+/// shelter map: a boat rides the sea, it must not calm it), neither an
+/// attachment nor a HUD.
+fn shelter_boxes(scene: &Scene, world: &World, origin: Vec2, extent: f32) -> Vec<(usize, super::water_shelter::ShelterBox)> {
+    let now = Instant::now();
+    let (lo, hi) = (origin - Vec2::splat(8.0), origin + Vec2::splat(extent + 8.0));
+    // (through frame_par: a plain rayon loop held the frame for a pool
+    // worker on a busy region, #4121)
+    crate::frame_par::filter_map_indexed(&scene.gpu, SCAN_GRAIN, |i, g| {
+        if g.hud || g.is_avatar || g.owner_avatar.is_some() || g.faces.is_empty() {
+            return None;
+        }
+        let c = g.center.truncate();
+        if c.cmplt(lo).any() || c.cmpgt(hi).any() {
+            return None;
+        }
+        let o = world.objects.get(i)?;
+        // what moves for the rain's shelter moves for the sea's: physical,
+        // drawn moving, or stepped by a script a while ago (shelter_hold.rs)
+        if o.is_attachment() || o.extra.reflection_probe.is_some() || Scene::moves_for_shelter(world, &scene.gpu, i, now) {
+            return None;
+        }
+        // A prim shelters as its box: a mesh over 64 m (a sim surround,
+        // a ring round the whole region) or a prim over 128 m in two
+        // directions (a megaprim plate) is nothing like its box, which
+        // would calm all the water it spans.
+        let size = o.scale.abs();
+        let mut sides = size.to_array();
+        sides.sort_by(f32::total_cmp);
+        if ((o.volume.is_mesh() || o.volume.is_sculpt()) && sides[2] > 64.0) || sides[1] > 128.0 {
+            return None;
+        }
+        let (p, rotation, _) = Scene::object_transform(world, i, now, 0)?;
+        Some((
+            i,
+            super::water_shelter::ShelterBox {
+                center: p,
+                rotation,
+                half: o.scale.abs() * 0.5,
+            },
+        ))
+    })
+}
+
 /// The objects near the water are looked for again every 0.35 s, whether
 /// the last scan found some or none.
 fn scan_due(last: Option<f32>, time: f32) -> bool {
@@ -83,16 +203,48 @@ fn ground_grid(origin: Vec2, extent: f32, sample: impl Fn(Vec2) -> [f32; 2] + Sy
 }
 
 impl Effects {
+    /// Show `grid`, baked for `origin` from what `signature` sums up,
+    /// fading in from what the grid before it shows now.
+    fn install_sea_grid(&mut self, origin: Vec2, signature: u64, grid: Vec<[f32; 6]>, time: f32) {
+        let grid: std::sync::Arc<[[f32; 6]]> = grid.into();
+        log::info!(
+            "water sea grid: a new grid at ({:.0}, {:.0}), {}",
+            origin.x,
+            origin.y,
+            match &self.sea_grid {
+                None => "the first",
+                Some(old) if old.origin != origin => "the camera moved 64 m",
+                Some(_) => "baked again",
+            }
+        );
+        let prev: std::sync::Arc<[[f32; 3]]> = match &self.sea_grid {
+            Some(old) => old.shown(time, origin, &grid).into(),
+            None => grid.iter().map(|c| [c[3], c[4], c[5]]).collect::<Vec<_>>().into(),
+        };
+        self.sea_grid = Some(SeaGrid {
+            origin,
+            checked_at: time,
+            signature,
+            grid,
+            prev,
+            baked_at: time,
+        });
+    }
+
     fn retain_events(&mut self, time: f32, quality: u8, eye: Vec2) {
         self.events.retain(|event| {
             let lifetime = match event.params[1] {
                 3.0 => 0.3,       // The GPU field has already integrated the impulse.
                 4.0 | 8.0 => 2.0, // Swept surface segments spread and settle in world space.
                 5.0 | 6.0 => 1.6, // Sheet flight and its expanding foam rim.
+                9.0 => 4.0,       // A crash's spray falls back; its mist hangs on.
+                10.0 => 4.5,      // The foam it leaves spreads and fades.
                 0.0 | 7.0 => 0.8,
                 _ => 3.0,
             };
-            (0.0..lifetime).contains(&(time - event.position[3]))
+            // (a crash's spray may be due a moment from now: water_crash.rs
+            // staggers its bursts along the face)
+            (-1.0..lifetime).contains(&(time - event.position[3]))
         });
         let max = [64, 96, 160, 192][quality.min(3) as usize];
         if self.events.len() > max {
@@ -100,7 +252,7 @@ impl Effects {
             // even when many ordinary contacts fill the Low-quality history.
             self.events.sort_unstable_by(|a, b| {
                 let priority = |e: &WaterEvent| {
-                    if matches!(e.params[1], 5.0 | 6.0) {
+                    if matches!(e.params[1], 5.0 | 6.0 | 9.0 | 10.0) {
                         2
                     } else if (Vec2::new(e.position[0], e.position[1]) - eye).abs().max_element() <= 18.0 {
                         1
@@ -208,9 +360,12 @@ impl Effects {
         if self.region != world.main_region || settings.flags() == 0 {
             *self = Self {
                 region: world.main_region,
+                // the sea goes on across regions (advanced just before)
+                sea: std::mem::take(&mut self.sea),
                 ..Default::default()
             };
         }
+        let sea = self.sea.sea();
         if settings.flags() == 0 {
             return Default::default();
         }
@@ -228,11 +383,156 @@ impl Effects {
                 let w = water_at(world, p).unwrap_or(world.main_water_height());
                 [world.ground_height(p).unwrap_or(w - 100.0), w]
             });
+            // the sea grid (water_shelter.rs): 512 m around the camera,
+            // following it in 64 m steps, baked again with the ground; the
+            // shelter's lee is downwind of a sea with some wind
+            // (baked again when it moves, or every 2 s for what stands in
+            // the water: 20,000 heights and the shelter's prims)
+            let (sea_grid, sea_prev, sea_origin) = if settings.waves {
+                let step = 64.0;
+                let sea_origin = (eye.truncate() / step).floor() * step + Vec2::splat(step * 0.5 - SEA_EXTENT * 0.5);
+                let due = self
+                    .sea_grid
+                    .as_ref()
+                    .is_none_or(|g| g.origin != sea_origin || !(0.0..2.0).contains(&(time - g.checked_at)));
+                if due {
+                    // what the grid is made of: the shelter's prims, the lee's
+                    // direction (by 15°) and a coarse look at the ground. The
+                    // grid is baked again only when one of them changed, as a
+                    // new grid costs the frame that takes it.
+                    let started = Instant::now();
+                    let (objects, boxes): (Vec<usize>, Vec<_>) = shelter_boxes(scene, world, sea_origin, SEA_EXTENT).into_iter().unzip();
+                    self.crash_boxes.clone_from(&boxes);
+                    self.crash_objects = objects;
+                    // (the lee is where the incoming swell is blocked: its way, not
+                    // the wind's, which turns quicker)
+                    let toward = Vec2::new(sea.trains[0][0], sea.trains[0][1]) * if sea.wind[2] > 2.0 { 1.0 } else { 0.0 };
+                    let swell = super::water_shelter::Swell {
+                        toward: Vec2::new(sea.trains[0][0], sea.trains[0][1]),
+                        k: sea.trains[0][2],
+                    };
+                    let main = world.main_water_height();
+                    let ground_water = |xy: Vec2| {
+                        let p = xy.extend(0.0);
+                        let w = water_at(world, p).unwrap_or(main);
+                        [world.ground_height(p).unwrap_or(w - 100.0), w]
+                    };
+                    // its parts: the prims, the lee, the swell (its way by 7.5°,
+                    // its length by 25 %) and a coarse look at the ground
+                    let parts: [u64; 4] = {
+                        use std::hash::{Hash, Hasher};
+                        let hash = |f: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            f(&mut h);
+                            h.finish()
+                        };
+                        [
+                            hash(&|h| {
+                                for b in &boxes {
+                                    for v in b
+                                        .center
+                                        .to_array()
+                                        .into_iter()
+                                        .chain(b.rotation.to_array())
+                                        .chain(b.half.to_array())
+                                    {
+                                        v.to_bits().hash(h);
+                                    }
+                                }
+                            }),
+                            hash(&|h| ((toward.to_angle().to_degrees() / 15.0).round() as i32 * i32::from(toward != Vec2::ZERO)).hash(h)),
+                            hash(&|h| {
+                                ((swell.toward.to_angle().to_degrees() / 7.5).round() as i32).hash(h);
+                                ((swell.k.max(1e-4).ln() / 1.25f32.ln()).round() as i32).hash(h);
+                            }),
+                            hash(&|h| {
+                                for i in 0..64 {
+                                    let xy =
+                                        sea_origin + (Vec2::new((i % 8) as f32, (i / 8) as f32) + Vec2::splat(0.5)) * (SEA_EXTENT / 8.0);
+                                    ground_water(xy).map(f32::to_bits).hash(h);
+                                }
+                            }),
+                        ]
+                    };
+                    let signature = {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        parts.hash(&mut h);
+                        h.finish()
+                    };
+                    let same = self
+                        .sea_grid
+                        .as_ref()
+                        .is_some_and(|g| g.origin == sea_origin && g.signature == signature);
+                    let pending = self
+                        .sea_baking
+                        .as_ref()
+                        .is_some_and(|b| b.origin == sea_origin && b.signature == signature);
+                    if same {
+                        if let Some(g) = &mut self.sea_grid {
+                            g.checked_at = time;
+                        }
+                    } else if !pending {
+                        if self.sea_grid.as_ref().is_some_and(|g| g.origin == sea_origin) {
+                            let names = ["what stands in the water", "the lee", "the swell", "the ground"];
+                            let changed: Vec<&str> = (0..4).filter(|&i| parts[i] != self.sea_parts[i]).map(|i| names[i]).collect();
+                            log::info!("water sea grid: baking again, changed: {}", changed.join(", "));
+                        }
+                        self.sea_parts = parts;
+                        let heights = super::water_shelter::sample_ground(sea_origin, SEA_EXTENT, ground_water);
+                        if self.sea_grid.is_none() {
+                            // the first grid at once: the sea never starts out
+                            // flat and deep while it bakes
+                            let grid = super::water_shelter::bake_grid(sea_origin, SEA_EXTENT, &heights, &boxes, toward, swell);
+                            self.install_sea_grid(sea_origin, signature, grid, time);
+                        } else {
+                            // the next ones on a worker: the marching takes a
+                            // few milliseconds; the old grid shows meanwhile
+                            let result = std::thread::spawn(move || {
+                                super::water_shelter::bake_grid(sea_origin, SEA_EXTENT, &heights, &boxes, toward, swell)
+                            });
+                            self.sea_baking = Some(SeaBaking {
+                                origin: sea_origin,
+                                signature,
+                                result,
+                            });
+                        }
+                        log::debug!("water sea grid: sampled in {:.1} ms", started.elapsed().as_secs_f32() * 1000.0);
+                    }
+                }
+                // a grid baked on the worker, taken once ready (one baked for
+                // where the grid no longer is: dropped)
+                if self.sea_baking.as_ref().is_some_and(|b| b.result.is_finished())
+                    && let Some(baking) = self.sea_baking.take()
+                {
+                    match baking.result.join() {
+                        Ok(grid) if baking.origin == sea_origin => {
+                            self.install_sea_grid(baking.origin, baking.signature, grid, time);
+                        }
+                        Ok(_) => {}
+                        Err(_) => log::warn!("water sea grid: the bake failed"),
+                    }
+                }
+                // (an empty previous grid stays the same buffer: re-sent to
+                // the GPU only when it changes)
+                let (grid, prev) = self.sea_grid.as_ref().map_or_else(
+                    || (std::sync::Arc::from(Vec::new()), std::sync::Arc::from(Vec::new())),
+                    |g| (g.grid.clone(), g.prev.clone()),
+                );
+                (grid, prev, sea_origin)
+            } else {
+                (std::sync::Arc::from(Vec::new()), std::sync::Arc::from(Vec::new()), Vec2::ZERO)
+            };
             self.ground = WaterGround {
                 region: world.main_region.unwrap_or(0),
                 origin: origin.to_array(),
                 extent,
                 heights: heights.into(),
+                sea: sea_grid,
+                sea_prev,
+                sea_origin: sea_origin.to_array(),
+                sea_extent: SEA_EXTENT,
+                ocean: self.sea.maps(),
             };
         }
         if settings.flags() & (4 | 16 | 64 | 128) == 0 {
@@ -310,7 +610,8 @@ impl Effects {
                     }
                     let water = water_at(world, center).unwrap_or(water);
                     let ground = self.ground.sample(center.truncate()).map(|p| p[0]).unwrap_or(water - 20.0);
-                    let surface = aurora_render::water_effects::surface_level(center.truncate(), time, settings, water, ground);
+                    let at = self.ground.sea_point(center.truncate(), &sea, water - ground);
+                    let surface = aurora_render::water_effects::surface_level(center.truncate(), time, settings, &sea, water, &at);
                     samples.push(water_contacts::Sample {
                         id: o.full_id,
                         part,
@@ -413,8 +714,95 @@ impl Scene {
         }
     }
 
-    pub fn update_water_effects(&mut self, world: &World, eye: Vec3, time: f32, settings: WaterEffects) {
+    /// `wind`: the wind over the water (m/s, blowing toward), which raises
+    /// the sea (`App::sea_wind`); `tune`: how the Sea panel shapes it.
+    pub fn update_water_effects(
+        &mut self,
+        world: &World,
+        eye: Vec3,
+        time: f32,
+        settings: WaterEffects,
+        wind: glam::Vec2,
+        tune: aurora_render::water_sea::SeaTune,
+    ) {
         let mut effects = std::mem::take(&mut self.water_effects);
+        // the wind sea as a spectrum (aurora_render::water_fft) while the
+        // waves show and the Sea panel draws it so; its FFTs cost nothing
+        // otherwise
+        let waves = settings.enabled && settings.waves;
+        effects.sea.set_tune(aurora_render::water_sea::SeaTune {
+            spectrum: tune.spectrum.filter(|_| waves),
+            ..tune
+        });
+        self.lists.water_sea = effects.sea.advance(time, wind, eye.truncate());
+        // (the CPU's samplers read the maps of this frame, as the GPU)
+        effects.ground.ocean = effects.sea.maps();
+        // waves crashing on walls and rocks throw up spray (water_crash.rs)
+        if waves && settings.splashes {
+            let sea = &self.lists.water_sea;
+            let toward = glam::Vec2::new(sea.trains[0][0], sea.trains[0][1]);
+            // (where a prim's box meets the water, its real surface: a
+            // rock's box stands well off the rock)
+            let objects = &effects.crash_objects;
+            let surface = |k: usize, origin: Vec3, dir: Vec3| {
+                objects.get(k).map(|&i| {
+                    self.geometry_hit(world, i, (origin, dir), Instant::now())
+                        .filter(|h| h.t < 8.0 && h.normal.is_finite())
+                        .map(|h| (h.t, h.normal.normalize_or_zero()))
+                })
+            };
+            effects
+                .crashes
+                .scan(&effects.ground, &effects.crash_boxes, &surface, eye.truncate(), toward, time);
+            // (half the events kept at this quality, retain_events)
+            let budget = [64, 96, 160, 192][settings.quality.min(3) as usize] / 2;
+            effects.crashes.update(&effects.ground, sea, time, &mut effects.events, budget);
+        } else {
+            effects.crashes.clear();
+        }
+        // how far the sea grid's crossfade has gone (read alike by the
+        // shaders and the CPU's samplers)
+        self.lists.water_sea.shore[0] = effects.sea_grid.as_ref().map_or(1.0, |g| g.blend(time));
+        // the sea's state now and then, for grid reports (no sea panel there)
+        if settings.enabled && settings.waves && (effects.sea_logged_at == 0.0 || !(0.0..10.0).contains(&(time - effects.sea_logged_at))) {
+            effects.sea_logged_at = time;
+            let s = &self.lists.water_sea;
+            log::info!(
+                "water sea: wind {:.1} m/s (input {:.1}) toward ({:.2}, {:.2}), roughness {:.2}, swell {:.0} m long {:.2} m high toward ({:.2}, {:.2})",
+                s.wind[2],
+                wind.length(),
+                s.wind[0],
+                s.wind[1],
+                s.frame[3],
+                std::f32::consts::TAU / s.trains[0][2].max(1e-3),
+                2.0 * s.trains[0][3],
+                s.trains[0][0],
+                s.trains[0][1]
+            );
+        }
+        // and the sea where the camera is, the same moment: how deep, where
+        // the swell comes from and how much of it reaches here, the shelter
+        if effects.sea_logged_at == time && settings.enabled && settings.waves {
+            let s = &self.lists.water_sea;
+            let here = eye.truncate();
+            if let Some([g, w]) = effects.ground.sample(here) {
+                let at = effects.ground.sea_point(here, s, w - g);
+                let (shadow, chop) = at.swell.map_or((1.0, 1.0), |p| (p.shadow, p.chop));
+                let local = s.local(&at, shadow, chop);
+                // (compass degrees clockwise from north, the way it comes from)
+                let from = (-s.trains[0][0]).atan2(-s.trains[0][1]).to_degrees().rem_euclid(360.0);
+                log::info!(
+                    "water sea here: depth {:.1} m (sea grid {:.1} m), swell from {:.0} deg reaching {:.0} %, shelter {:.2}, swell {:.2} m high, chop share {:.2}",
+                    w - g,
+                    at.depth,
+                    from,
+                    shadow * 100.0,
+                    at.shelter,
+                    2.0 * local.main,
+                    local.chop
+                );
+            }
+        }
         let (events, contacts, ground) = effects.update(self, world, eye, time, settings);
         self.water_effects = effects;
         self.lists.water_events = events;
