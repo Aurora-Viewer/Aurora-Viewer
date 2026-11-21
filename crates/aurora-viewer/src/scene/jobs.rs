@@ -215,7 +215,7 @@ pub enum JobResult {
 /// (frame_par.rs) and the encoder threads would otherwise wait for a core
 /// behind them (frames of 2.4 ms stretched to 5–8 ms in AURORA_DEMO_STREAM).
 /// Idle cores still go to the jobs, so loading is not slower.
-fn below_normal_priority() {
+pub(crate) fn below_normal_priority() {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};

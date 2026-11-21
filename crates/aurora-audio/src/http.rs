@@ -7,12 +7,13 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use rustls_platform_verifier::BuilderVerifierExt;
 use url::{Host, Url};
+
+use crate::tls::{self, CertificateIssue, IssueSlot};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Socket read timeout; bounds how long a stop request can take to be seen.
@@ -53,6 +54,9 @@ pub(crate) struct HttpResponse {
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
+    /// The certificate failure of an `https` station played anyway
+    /// (`tls.rs`); `None` over plain HTTP and for a valid certificate.
+    pub certificate: Option<CertificateIssue>,
 }
 
 /// Parsed status line + headers.
@@ -218,27 +222,8 @@ impl<R: BufRead> Read for ChunkedReader<R> {
     }
 }
 
-fn tls_config() -> Result<Arc<rustls::ClientConfig>, HttpError> {
-    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            // Explicit provider: the workspace may enable several rustls
-            // crypto backends, which makes the implicit default ambiguous.
-            let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-            rustls::ClientConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()
-                // Some stations omit their intermediate certificate (#1628).
-                // The Windows/macOS verifier can build the missing chain;
-                // certificate trust and the server name are still checked.
-                .and_then(|b| b.with_platform_verifier())
-                .map(|b| Arc::new(b.with_no_client_auth()))
-                .map_err(|e| e.to_string())
-        })
-        .clone()
-        .map_err(HttpError::Tls)
-}
-
-fn connect(url: &Url) -> Result<Conn, HttpError> {
+/// The connection, and for `https` the slot its certificate check fills.
+fn connect(url: &Url) -> Result<(Conn, Option<IssueSlot>), HttpError> {
     let https = match url.scheme() {
         "http" | "icy" => false,
         "https" => true,
@@ -258,7 +243,7 @@ fn connect(url: &Url) -> Result<Conn, HttpError> {
     tcp.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     let _ = tcp.set_nodelay(true);
     if !https {
-        return Ok(Conn::Plain(tcp));
+        return Ok((Conn::Plain(tcp), None));
     }
     let host = url
         .host_str()
@@ -267,8 +252,9 @@ fn connect(url: &Url) -> Result<Conn, HttpError> {
         .trim_end_matches(']')
         .to_string();
     let name = rustls::pki_types::ServerName::try_from(host).map_err(|e| HttpError::Tls(e.to_string()))?;
-    let conn = rustls::ClientConnection::new(tls_config()?, name).map_err(|e| HttpError::Tls(e.to_string()))?;
-    Ok(Conn::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
+    let (config, issue) = tls::client_config().map_err(HttpError::Tls)?;
+    let conn = rustls::ClientConnection::new(config, name).map_err(|e| HttpError::Tls(e.to_string()))?;
+    Ok((Conn::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))), Some(issue)))
 }
 
 fn request_target(url: &Url) -> String {
@@ -330,6 +316,9 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
 /// through a redirect. Ordinary stream redirects retain their existing policy.
 pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
+    // A redirect given by a station whose certificate failed leads where
+    // that server chose: its issue follows the chain.
+    let mut certificate = None;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
@@ -342,7 +331,7 @@ pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option
         }) {
             return Err(HttpError::PlaylistOrigin);
         }
-        let mut conn = connect(&url)?;
+        let (mut conn, issue) = connect(&url)?;
         let req = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nIcy-MetaData: 1\r\nConnection: close\r\n\r\n",
             request_target(&url),
@@ -360,6 +349,8 @@ pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option
             },
         );
         let head = read_head(&mut reader)?;
+        // the handshake is over once a reply came back
+        certificate = issue.and_then(|slot| *slot.lock()).or(certificate);
         match head.status {
             200..=299 => {
                 let content_type = head
@@ -379,6 +370,7 @@ pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option
                     content_type,
                     metaint,
                     body,
+                    certificate,
                 });
             }
             301 | 302 | 303 | 307 | 308 => {
@@ -397,7 +389,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn https_rejects_an_untrusted_certificate() {
+    fn https_plays_a_self_signed_station_and_says_so() {
         let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let config = rustls::ServerConfig::builder_with_provider(provider)
@@ -412,25 +404,32 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("https://{}/stream", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
+            let (sock, _) = listener.accept().unwrap();
             sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             sock.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
-            let mut tls = rustls::ServerConnection::new(Arc::new(config)).unwrap();
-            let _ = tls.complete_io(&mut sock);
+            let mut tls = rustls::StreamOwned::new(rustls::ServerConnection::new(Arc::new(config)).unwrap(), sock);
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && tls.read(&mut byte).is_ok_and(|n| n == 1) {
+                head.push(byte[0]);
+            }
+            let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n\r\nAUDIO");
+            let _ = tls.flush();
+            // Windows resets a loopback connection closed right after the
+            // reply (#1422): wait for the client to hang up first.
+            let mut rest = [0u8; 64];
+            while tls.read(&mut rest).is_ok_and(|n| n > 0) {}
         });
         let stop = Arc::new(AtomicBool::new(false));
-        let error = open(&url, &stop).err().expect("a self-signed station must be rejected");
+        let response = open(&url, &stop).expect("a self-signed station plays");
+        assert_eq!(response.certificate, Some(CertificateIssue::Untrusted));
+        assert_eq!(response.content_type.as_deref(), Some("audio/mpeg"));
+        let mut body = [0u8; 5];
+        let mut reader = response.body;
+        reader.read_exact(&mut body).unwrap();
+        assert_eq!(&body, b"AUDIO");
+        drop(reader);
         server.join().unwrap();
-        let HttpError::Io(error) = error else {
-            panic!("expected a TLS handshake error: {error}");
-        };
-        assert!(
-            matches!(
-                error.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()),
-                Some(rustls::Error::InvalidCertificate(_))
-            ),
-            "{error:?}"
-        );
     }
 
     #[test]

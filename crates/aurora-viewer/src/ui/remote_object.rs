@@ -29,7 +29,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     let name = if o.name.is_empty() {
         aurora_i18n::tr!("status-unknown").to_owned()
     } else {
-        world.rlva_filter_text(&o.name).into_owned()
+        // as its link gives it: what `@shownames` hid of it was rewritten
+        // when the object spoke (`World::rlva_object_name`), and
+        // LLInspectRemoteObject (indra/newview/llinspectremoteobject.cpp)
+        // shows the `name` of the link with no RLVa test
+        o.name.clone()
     };
     let mut floater = Floater::new(
         "remote_object",

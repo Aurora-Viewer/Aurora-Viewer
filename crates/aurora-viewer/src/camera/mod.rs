@@ -17,6 +17,7 @@ pub(crate) mod follow;
 pub mod free;
 mod mouselook_zoom;
 pub mod presets;
+pub mod second;
 mod settings;
 pub mod track;
 pub mod vr;

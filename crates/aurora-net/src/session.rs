@@ -3367,7 +3367,7 @@ impl Session<'_> {
                 .post(&url)
                 .header("Content-Type", "application/llsd+xml")
                 .header("Accept", "application/llsd+xml")
-                .header("Accept-Language", aurora_i18n::language())
+                .header("Accept-Language", aurora_i18n::grid_language())
                 .body(aurora_llsd::to_xml(&body))
                 .send()
                 .await;

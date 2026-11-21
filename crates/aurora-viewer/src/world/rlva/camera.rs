@@ -144,6 +144,35 @@ impl Rlva {
             .any(|name| self.has(name))
     }
 
+    /// The second camera (Aurora's own, `camera/second.rs`) pauses while
+    /// RLVa holds the avatar's view in any way: the camera itself
+    /// (`camera_restricted`), its distances and zoom, what the view may show
+    /// (spheres, overlays, textures) and whether our avatar may be seen.
+    /// A second camera would see around each of them; the Legacy Viewer has
+    /// no such view to compare with, so this is the strictest rule.
+    pub fn second_camera_blocked(&self) -> bool {
+        self.camera_restricted()
+            || [
+                "setcam",
+                "setcam_avdist",
+                "setcam_textures",
+                "setcam_eyeoffsetscale",
+                "camavdist",
+                "camtextures",
+                "camdistmin",
+                "camdistmax",
+                "camzoommin",
+                "camzoommax",
+                "camunlock",
+                "setsphere",
+                "setoverlay",
+                "showself",
+                "showselfhead",
+            ]
+            .iter()
+            .any(|name| self.has(name))
+    }
+
     pub fn camera_value(&self, name: &str) -> Option<&str> {
         if !self.enabled() {
             return None;

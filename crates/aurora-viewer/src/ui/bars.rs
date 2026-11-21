@@ -1529,6 +1529,17 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {
             super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
         }
+        // Aurora's own: our avatar seen by a camera of its own
+        if menu::check(
+            ui,
+            p,
+            "device-cctv-filled",
+            aurora_i18n::tr!("second-camera-title"),
+            panels.second_camera,
+            true,
+        ) {
+            super::widgets::toggle_floater(ui.ctx(), super::second_camera::WINDOW, &mut panels.second_camera);
+        }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
         build_menu(
@@ -2745,6 +2756,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
         // Aurora's own: the Director's window and its timeline
         "director" => toggle(super::director::WINDOW, &mut panels.director),
+        // Aurora's own: the second camera's window
+        "second_camera" => toggle(super::second_camera::WINDOW, &mut panels.second_camera),
         // Floater.ToggleOrBringToFront settings_debug
         "settings_debug" => toggle(super::debug_settings::WINDOW, &mut panels.debug_settings),
         // Avatar.TogglePicks: our profile on its Picks tab
@@ -2858,6 +2871,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "phototools" => panels.phototools,
         "quickprefs" => panels.quick_prefs,
         "director" => panels.director,
+        "second_camera" => panels.second_camera,
         "settings_debug" => panels.debug_settings,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
@@ -4478,6 +4492,7 @@ mod tests {
             ("phototools", super::super::phototools::WINDOW, |p| p.phototools),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("director", super::super::director::WINDOW, |p| p.director),
+            ("second_camera", super::super::second_camera::WINDOW, |p| p.second_camera),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),

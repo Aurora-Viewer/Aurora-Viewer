@@ -706,6 +706,15 @@ impl Notifications {
         }
     }
 
+    /// The text of the notice `id` is shown as it was written, whatever
+    /// RLVa's `@shownames` and `@showloc` hide: who it is about was named
+    /// or not when it was made (`name_resident`), and the Legacy Viewer
+    /// runs no filter over the rest of it (an inventory offer:
+    /// inventory_offer_handler, indra/newview/llimprocessing.cpp).
+    pub fn keep_as_written(&mut self, id: u64) {
+        self.settled.insert(id);
+    }
+
     /// The listed notices that came since the last call: their text is
     /// settled now (`World::refresh_rlva_privacy` rewrites what RLVa hides
     /// at this moment) and never again.

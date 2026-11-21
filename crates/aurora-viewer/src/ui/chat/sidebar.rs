@@ -14,6 +14,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::appearance::ICONS;
 use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -764,7 +765,7 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
 
 /// The title of a section: small capitals in semi-bold.
 fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
-    RichText::new(title.to_uppercase())
+    RichText::new(title.ui_upper())
         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
         .color(p.muted_dim)
 }

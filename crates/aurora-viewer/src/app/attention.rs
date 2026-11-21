@@ -179,7 +179,8 @@ impl App {
             label if label == "…" => crate::slapp::unescape(url),
             label => label,
         };
-        let title = body_text(&crate::ui::chat::plain_text(&notice.title, name, app));
+        let anonym = |id: uuid::Uuid| world.rlva_anonym_label(id);
+        let title = body_text(&crate::ui::chat::plain_text(&notice.title, name, anonym, app));
         if title.is_empty() {
             return;
         }
@@ -187,7 +188,7 @@ impl App {
             log::info!("system notification dropped by the throttle");
             return;
         }
-        let body = body_text(&crate::ui::chat::plain_text(&notice.body, name, app));
+        let body = body_text(&crate::ui::chat::plain_text(&notice.body, name, anonym, app));
         log::info!("system notification shown ({})", kind_of(notice.open));
         let st = &mut self.attention;
         st.next_id += 1;

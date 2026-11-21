@@ -1223,6 +1223,7 @@ fn pieces(text: &str, mut label_of: impl FnMut(&Seg) -> String) -> Vec<(String, 
             Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
             Seg::Agent(id) => (label_of(&s), Some(Link::Agent(id))),
+            Seg::Anonym(_) => (label_of(&s), None),
             Seg::Mention(id) => (format!("@{}", label_of(&s)), Some(Link::Agent(id))),
             Seg::App(..) => {
                 let label = label_of(&s);
@@ -1358,6 +1359,7 @@ pub(crate) fn text_with_links(
         for s in segs {
             match s {
                 Seg::Text(t) => plain(ui, t),
+                Seg::Anonym(id) => plain(ui, &world.rlva_anonym_label(id)),
                 Seg::Url(u) => web_link(ui, p, u, u, size, false.into()),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -1643,6 +1645,7 @@ fn line_job(
             want_names.insert(*id);
             world.social.name_in(scope, id)
         }
+        Seg::Anonym(id) => world.rlva_anonym_label(*id),
         Seg::App(u, link) => app_links::label(world, wording, want_names, u, link),
         _ => String::new(),
     };
@@ -1853,6 +1856,11 @@ enum Seg<'a> {
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
     /// as the avatar's name, opens the profile (LLUrlEntryAgent).
     Agent(uuid::Uuid),
+    /// secondlife:///app/agent/<id>/rlvanonym, the link RLVa writes for a
+    /// hidden resident: their stand-in in plain text, never a link
+    /// (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
+    /// `World::rlva_anonym_label`).
+    Anonym(uuid::Uuid),
     /// A link written with its own text, `[https://example.org Text]` or
     /// `[secondlife:///app/... Text]` (LLUrlEntryHTTPLabel, LLUrlEntrySLLabel):
     /// shown as the text, it acts as the link inside (a web link, an agent
@@ -1872,10 +1880,12 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 /// app commands by `app` (their label, `app_links::label`), labelled links
 /// by their text, web links as written. `name` is told whether the link is
 /// a mention: RLVa rewrites a mention where it leaves a bare avatar link
-/// alone (`TextScope::mentions`).
+/// alone (`TextScope::mentions`). `anonym`: the label of an `rlvanonym`
+/// link (`World::rlva_anonym_label`).
 pub(crate) fn plain_text(
     text: &str,
     name: impl Fn(&uuid::Uuid, bool) -> Option<String>,
+    anonym: impl Fn(uuid::Uuid) -> String,
     app: impl Fn(&str, &crate::slapp::AppLink) -> String,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1889,6 +1899,7 @@ pub(crate) fn plain_text(
                 out.push_str(&name(&id, true).unwrap_or_else(|| id.to_string()));
             }
             Seg::Agent(id) => out.push_str(&name(&id, false).unwrap_or_else(|| id.to_string())),
+            Seg::Anonym(id) => out.push_str(&anonym(id)),
             Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
@@ -1926,6 +1937,7 @@ pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text:
             Seg::App(u, link) => out.push_str(&app_label(world, scope, u, &link)),
             Seg::Place(_, place) => out.push_str(&hide(&place.label)),
             Seg::Labelled(label, _) => out.push_str(&hide(&label)),
+            Seg::Anonym(id) => out.push_str(&world.rlva_anonym_label(id)),
             Seg::Mention(id) => {
                 app_links::want_agents([id]);
                 out.push('@');
@@ -2249,15 +2261,7 @@ fn link_seg(link: &str) -> Seg<'_> {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
-            // `rlvanonym`, the link RLVa writes for a hidden resident: their
-            // stand-in in plain text, never a link
-            // (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
-            // picked from the id, as RlvUtil::filterMentions does for a
-            // name it does not have)
-            (Some(id), "rlvanonym") => Seg::Labelled(
-                Cow::Owned(crate::world::rlva::privacy::anonymous(id).display_name.clone()),
-                Box::new(Seg::Text("")),
-            ),
+            (Some(id), "rlvanonym") => Seg::Anonym(id),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
             _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
@@ -2500,6 +2504,7 @@ pub(crate) fn chat_text_marked(
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
+                Seg::Anonym(id) => marked_run(ui, emoji, &world.rlva_anonym_label(id), size, color, emphasis, mark),
                 Seg::Url(u) => web_link(ui, p, u, u, size, emphasis),
                 Seg::Slurl(u) => {
                     select::label(ui, emphasis.rich_text(ui.ctx(), u, size, super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -2806,6 +2811,7 @@ fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, na
             Seg::Mention(id) => format!(" @{} ", world.social.name_in(wording.mentions, &id)),
             // a bare avatar link names its resident, as it is drawn
             Seg::Agent(id) => world.social.name_in(NameScope::Roster, &id),
+            Seg::Anonym(id) => world.rlva_anonym_label(id),
             Seg::App(u, link) => app_links::label(world, wording, &mut HashSet::new(), u, &link),
         })
         .collect()
@@ -3235,7 +3241,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -3438,7 +3444,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             });
         ui.add_space(2.0);
     }
-    let (text, italics) = line_body(line, &name);
+    // an emote of ours starts with "(You)" too, as the Legacy Viewer's plain
+    // text history writes it (FSChatHistory::appendMessage)
+    let (text, italics) = line_body(line, shown_name(line, &name));
     let visible = previews::text(env.previews.as_deref(), line, &text, ui.available_width() - 8.0);
     egui::Frame::new()
         .inner_margin(egui::Margin {
@@ -4470,6 +4478,15 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
         .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(("conversations", "minimized"))))
         .unwrap_or(false);
     (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
+}
+
+/// The nearby history hides the overlay independently of its container
+/// (#2546). Reuse the detached-window visibility check; a stale main-tab
+/// selection must not hide lines while that detached window is hidden.
+/// LLFloaterIMNearbyChatHandler::processChat likewise tests the history's
+/// visibility before showing nearby chat toasts.
+pub fn nearby_chat_shown(ctx: &egui::Context, st: &ChatUi, conversations_open: bool) -> bool {
+    st.nearby_window_shown(ctx) || (conversations_open && !st.nearby_apart() && local_chat_shown(ctx, st))
 }
 
 /// A demo's window of its own for `conversation`, at `pos` (whatever the
@@ -5662,6 +5679,46 @@ mod tests {
         ));
     }
 
+    /// A detached nearby window hides the overlay independently of the
+    /// container; hidden or minimized nearby windows never do (#2546).
+    #[test]
+    fn nearby_history_visibility_tracks_its_own_window() {
+        for main_open in [false, true] {
+            for main_minimized in [false, true] {
+                for contacts in [false, true] {
+                    for selected in [None, Some(uuid::Uuid::from_u128(42))] {
+                        for detached in [None, Some((false, false)), Some((true, false)), Some((false, true))] {
+                            let ctx = egui::Context::default();
+                            let mut st = ChatUi {
+                                contacts,
+                                selected,
+                                ..ChatUi::default()
+                            };
+                            if main_minimized {
+                                super::super::widgets::minimize_floater(&ctx, "conversations");
+                            }
+                            let expected = if let Some((hidden, minimized)) = detached {
+                                st.popped.pop_out(None, false, false, false);
+                                st.popped.set_hidden(None, hidden);
+                                if minimized {
+                                    super::super::widgets::minimize_floater(&ctx, &popout::floater_id(None));
+                                }
+                                !hidden && !minimized
+                            } else {
+                                main_open && !main_minimized && !contacts && selected.is_none()
+                            };
+                            assert_eq!(
+                                nearby_chat_shown(&ctx, &st, main_open),
+                                expected,
+                                "open={main_open}, minimized={main_minimized}, contacts={contacts}, selected={selected:?}, detached={detached:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_chat_line_isolates_its_sender_s_display_name() {
         use crate::ui::bidi::Base;
@@ -6087,15 +6144,16 @@ mod tests {
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
         let name = |id: &uuid::Uuid, _: bool| (*id == me).then(|| "Aurora Demo".to_owned());
         let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
+        let anonym = |_: uuid::Uuid| "A resident".to_owned();
         assert_eq!(
-            plain_text(&t, name, app),
+            plain_text(&t, name, anonym, app),
             format!("@Aurora Demo see {jane} at https://example.org"),
             "an unknown name keeps its id, a web link its address"
         );
-        assert_eq!(plain_text("[https://example.org the site] now", name, app), "the site now");
+        assert_eq!(plain_text("[https://example.org the site] now", name, anonym, app), "the site now");
         let g = uuid::Uuid::from_u128(7);
         assert_eq!(
-            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, app),
+            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, anonym, app),
             "join Demo Group!",
             "an app command shows its label (#947)"
         );
