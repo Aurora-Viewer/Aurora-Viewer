@@ -13734,7 +13734,6 @@ bridge-object-info-result =
     Bieżąca pozycja własnego awatara: { $observer }
 bridge-query-timeout = Most nie zwrócił żądanych informacji na czas. Spróbuj ponownie.
 bridge-query-interrupted = Żądanie informacji zostało przerwane przez zmianę regionu lub połączenia z mostem. Spróbuj ponownie.
-ao-bootstrap-interrupted = W folderze #Aurora istnieje już niedokończony import AO. Przed ponowną próbą należy go sprawdzić w szafie.
 ao-states = Stany
 ao-combine = Połącz…
 ao-combine-title = Łączenie animacji

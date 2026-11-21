@@ -13424,12 +13424,12 @@ bridge-object-info-result =
     あなたの現在位置：{ $observer }
 bridge-query-timeout = ブリッジが要求した情報を時間内に返しませんでした。再試行してください。
 bridge-query-interrupted = リージョンまたはブリッジの接続の変更により、情報のリクエストが中断されました。再試行してください。
-ao-bootstrap-interrupted = #{ $folder } に未完了の AO インポートがあります。再試行する前に AO ウィンドウの復旧通知を使用してください。
-ao-unfinished-import = #Aurora/{ $folder } に未完了の AO インポートがあります：{ $count } セット。
+ao-import-unfinished-retry = #Aurora/{ $folder }に未完了のＡＯのインポートがすでにあります。再試行する前に、ＡＯウィンドウの復旧通知を使用してください。
+ao-unfinished-import = #Aurora/{ $folder }に未完了のＡＯのインポートがあります（{ $count }セット）。
 ao-finish-import = インポートを完了
 ao-show-in-inventory = インベントリで表示
-ao-duplicate-native = 別の #Aurora/{ $folder } フォルダーに { $count } セットあります。現在の AO フォルダーに統合しますか？
-ao-native-already-exists = Aurora AO フォルダーはすでにあります。再度移行せず、AO ウィンドウで選択してください。
+ao-duplicate-native = 別の#Aurora/{ $folder }フォルダに{ $count }セットあります。現在のＡＯフォルダに統合しますか？
+ao-native-already-exists = Aurora ＡＯフォルダはすでにあります。再度移行せず、ＡＯウィンドウで選択してください。
 
 # Guided AO editor
 ao-states = 状態

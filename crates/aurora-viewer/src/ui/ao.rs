@@ -313,10 +313,14 @@ pub fn show(
                     };
                     ui.label(RichText::new(notice).color(p.warn));
                     ui.horizontal(|ui| {
-                        if ui.button(aurora_i18n::tr!("ao-finish-import")).clicked() {
-                            out.push(Action::FinishRecovery(recovery));
-                        }
-                        if ui.button(aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
+                        // Like the other AO buttons: an edit already running
+                        // would drop the click.
+                        ui.add_enabled_ui(!state.busy() && !catalog.loading, |ui| {
+                            if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-finish-import")).clicked() {
+                                out.push(Action::FinishRecovery(recovery));
+                            }
+                        });
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
                             out.push(Action::ShowRecovery(recovery.source));
                         }
                     });

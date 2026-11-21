@@ -13711,7 +13711,6 @@ bridge-object-info-result =
     Ваше поточне положення: { $observer }
 bridge-query-timeout = Міст не повернув запитану інформацію вчасно. Спробуйте ще раз.
 bridge-query-interrupted = Запит інформації перервано зміною регіону або з'єднання з мостом. Спробуйте ще раз.
-ao-bootstrap-interrupted = У #Aurora вже є незавершений імпорт AO. Перегляньте його в інвентарі, перш ніж повторити.
 ao-states = Стани
 ao-combine = Об'єднати…
 ao-combine-title = Об'єднання анімацій
