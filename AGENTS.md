@@ -295,6 +295,26 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   `cargo`'s). The dashed yellow outline tells the human to let the agent
   drive the window. See the [launch command on
   Windows](docs/TESTING.md#automated-test-windows-on-windows).
+- **The settings are shared: never change them for a test.** Every viewer
+  on the PC reads the same settings folder (`settings.json` and the files
+  beside it): the human's, and every agent's from every worktree (the
+  Claude app gives the viewers it launches a private copy of it,
+  `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Aurora`, that all of
+  them share). A setting changed there, in Preferences or in the file,
+  stays for the next viewers and spoils their tests: on 2026-11-20 a manual
+  2 GB texture memory left by one task ran under the grid readings of
+  another.
+  - A setting your test needs goes through an `AURORA_*` variable or a
+    command-line argument, for that launch only
+    (`AURORA_TEXTURE_BUDGET_MB`…). If none exists, add one in your task
+    (docs/TESTING.md), or ask your human.
+  - Before a measurement, check in the log the settings it depends on
+    (the `perf settings` line, `texture_target_mb`): a value you did not
+    ask for is reported to your human.
+  - A setting found changed is reported to your human, never put back by
+    you: it may be the test of another agent, or the human's choice.
+  - When the human tests in a viewer you launched, tell them that what
+    they change in Preferences stays for every viewer.
 - Automatic screenshots: `AURORA_CAPTURE=<file.png>`,
   `AURORA_CAPTURE_EXIT=1`, `AURORA_CAPTURE_FRAMES=620` (after the loading
   fade). Look at your screenshots: they are your visual check.

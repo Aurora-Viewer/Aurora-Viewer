@@ -58,6 +58,62 @@ fn updates(tool: &BuildTool) -> Vec<&TaskItem> {
 }
 
 #[test]
+fn stored_object_permission_changes_keep_the_rez_overrides() {
+    let mut item = TaskItem {
+        asset_type: 6,
+        flags: 0x20,
+        ..Default::default()
+    };
+    let options = BulkPerms {
+        share: true,
+        everyone_copy: true,
+        next_modify: true,
+        ..Default::default()
+    };
+    options.apply(&mut item);
+    assert_eq!(item.flags, 0x20 | 0x100 | 0x040000 | 0x080000);
+    item.flags = 0x20;
+    options.apply(&mut item);
+    assert_eq!(item.flags, 0x20, "unchanged masks require no new flags");
+    for (options, expected) in [
+        (
+            BulkPerms {
+                share: false,
+                ..options.clone()
+            },
+            0x040000,
+        ),
+        (
+            BulkPerms {
+                everyone_copy: false,
+                ..options.clone()
+            },
+            0x080000,
+        ),
+        (
+            BulkPerms {
+                next_modify: false,
+                ..options.clone()
+            },
+            0x100,
+        ),
+    ] {
+        let mut changed = item.clone();
+        options.apply(&mut changed);
+        assert_eq!(changed.flags, 0x20 | expected);
+    }
+    for asset_type in TYPES.into_iter().filter(|asset_type| *asset_type != 6) {
+        let mut item = TaskItem {
+            asset_type,
+            flags: 0x20,
+            ..Default::default()
+        };
+        options.apply(&mut item);
+        assert_eq!(item.flags, 0x20, "only objects carry rez overrides");
+    }
+}
+
+#[test]
 fn all_eleven_bulk_filters_fetch_and_update_only_their_type_with_valid_masks() {
     let (world, mut tool, object, mut items) = fixture();
     items.push(TaskItem {
@@ -350,7 +406,7 @@ fn click(ctx: &egui::Context, tool: &mut BuildTool, world: &World, label: &str) 
 }
 
 #[test]
-fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
+fn bulk_buttons_apply_once_and_close_without_restarting_or_resetting_choices() {
     let (world, mut tool, object, items) = fixture();
     let ctx = egui::Context::default();
     tool.ui.bulk_perms_open = true;
@@ -362,9 +418,10 @@ fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-all"));
     assert!(tool.ui.bulk.options.types.iter().all(|on| *on));
     tool.ui.bulk.options.share = true;
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-cancel"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-close"));
     assert!(!tool.ui.bulk_perms_open);
-    assert!(!tool.ui.bulk.options.share);
+    assert!(tool.ui.bulk.options.share);
+    assert!(tool.ui.bulk.job.is_none());
     assert!(updates(&tool).is_empty());
     tool.ui.bulk_perms_open = true;
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-apply"));
@@ -375,9 +432,71 @@ fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
         tool.advance_bulk_permissions(&world, Instant::now());
     }
     assert_eq!(updates(&tool).len(), 11);
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-ok"));
+    tool.out.clear();
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-close"));
     assert!(!tool.ui.bulk_perms_open);
-    assert!(tool.ui.bulk.job.is_some(), "OK closes the panel, not the pending request");
+    assert!(tool.ui.bulk.job.is_none(), "Close never repeats the completed operation");
+    assert!(tool.out.is_empty(), "Close sends no inventory request or update");
+}
+
+#[test]
+fn object_icon_selects_the_job_filter_and_running_choices_stay_visible() {
+    let (world, mut tool, _, _) = fixture();
+    let ctx = egui::Context::default();
+    let mut options = BulkPerms {
+        types: [false; 11],
+        ..Default::default()
+    };
+    let mut object_rect = egui::Rect::NOTHING;
+    let mut draw_types = |events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.horizontal(|ui| {
+                    for (i, t) in TYPES.into_iter().enumerate() {
+                        ui.push_id(t, |ui| {
+                            let response = type_filter(ui, &crate::theme::Theme::default().palette(), t, &mut options.types[i]);
+                            if t == 6 {
+                                object_rect = response.rect;
+                            }
+                        });
+                    }
+                });
+            },
+        );
+        output.textures_delta.clear();
+        object_rect.center()
+    };
+    let point = draw_types(vec![]);
+    draw_types(vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        draw_types(vec![egui::Event::PointerButton {
+            pos: point,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        }]);
+    }
+    assert!(options.includes_type(6), "clicking the cube selects Objects");
+    assert_eq!(options.types.iter().filter(|selected| **selected).count(), 1);
+    tool.ui.bulk.options = options;
+    tool.ui.bulk_perms_open = true;
+    for _ in 0..4 {
+        frame(&ctx, &mut tool, &world, vec![]);
+    }
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-apply"));
+    let submitted = tool.ui.bulk.job.as_ref().expect("started").options.clone();
+    assert!(submitted.includes_type(6) && submitted.next_modify && submitted.next_copy);
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-clear"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    assert_eq!(
+        tool.ui.bulk.options, submitted,
+        "displayed choices still describe the running operation"
+    );
 }
 
 /// The bulk permissions window keeps its size, its buttons inside it.
@@ -386,7 +505,7 @@ fn bulk_permissions_keep_their_size() {
     crate::ui::widgets::steady_tests::assert_window_steady(
         "bulk_perms",
         &[Vec2::new(360.0, 354.0)],
-        aurora_i18n::tr!("common-cancel"),
+        aurora_i18n::tr!("common-close"),
         || {
             let (world, mut tool, _, _) = fixture();
             tool.ui.bulk_perms_open = true;
@@ -394,4 +513,86 @@ fn bulk_permissions_keep_their_size() {
         },
         |(world, tool), ctx, p| show(ctx, p, tool, world),
     );
+}
+
+#[test]
+fn bulk_permissions_keep_actions_reachable_with_long_nested_details() {
+    for running in [false, true] {
+        let action = if running {
+            aurora_i18n::tr!("common-stop")
+        } else {
+            aurora_i18n::tr!("common-apply")
+        };
+        let details = aurora_i18n::tr!("content-perms-nested-scripts-warning").repeat(8);
+        let draw = |(options, pressed): &mut (BulkPerms, bool), ctx: &egui::Context, p: &Palette| {
+            Floater::new("bulk_perms", "Permissions", egui::pos2(40.0, 40.0), Vec2::new(360.0, 354.0))
+                .fixed()
+                .show(ctx, p, &mut true, |ui| {
+                    let response = controls(
+                        ui,
+                        p,
+                        options,
+                        &details,
+                        running,
+                        aurora_i18n::tr!("content-perms-adjust"),
+                        Some(&details),
+                        running.then_some(&mut *pressed),
+                    );
+                    if !running {
+                        *pressed = response.0;
+                    }
+                });
+        };
+        crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+            "bulk_perms",
+            &[Vec2::new(360.0, 354.0), Vec2::new(360.0, 700.0)],
+            &[(1.0, 1.0), (1.5, 1.0), (1.0, 2.0)],
+            || {
+                (
+                    BulkPerms {
+                        nested: true,
+                        ..Default::default()
+                    },
+                    false,
+                )
+            },
+            draw,
+            |frames, state, case, window, texts| {
+                if window.height() > 600.0 {
+                    let group = crate::ui::widgets::elide_tests::painted(texts, aurora_i18n::tr!("common-group-2"));
+                    let next = crate::ui::widgets::elide_tests::painted(texts, aurora_i18n::tr!("content-perms-next-owner"));
+                    assert!(
+                        next.rect.height() <= group.rect.height() + 0.5,
+                        "{case}: the next-owner heading stays on one line"
+                    );
+                    assert!(window.contains_rect(next.rect), "{case}: the last column stays inside the window");
+                }
+                for label in [
+                    action,
+                    aurora_i18n::tr!("common-close"),
+                    aurora_i18n::tr!("common-all"),
+                    aurora_i18n::tr!("common-clear"),
+                ] {
+                    let text = crate::ui::widgets::elide_tests::painted(texts, label);
+                    assert!(window.contains_rect(text.rect), "{case}: {label} stays inside the window");
+                }
+                let pos = crate::ui::widgets::elide_tests::painted(texts, action).rect.center();
+                for down in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: down,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        |ui| draw(state, ui.ctx(), &crate::theme::Theme::default().palette()),
+                    );
+                }
+                assert!(state.1, "{case}: {action} can be clicked below the scrolling details");
+            },
+        );
+    }
 }

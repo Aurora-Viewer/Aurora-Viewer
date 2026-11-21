@@ -1416,7 +1416,7 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
-                                    let targets = mesh::default_lod_targets(triangles);
+                                    let targets = mesh::default_lod_targets(triangles, mesh::minimum_lod_triangles(&scene));
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;

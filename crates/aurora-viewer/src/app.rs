@@ -134,6 +134,7 @@ mod own_motion;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
+mod phototools;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -910,6 +911,9 @@ pub struct App {
     /// Debug Settings (Advanced.ShowDebugSettings).
     debug_settings_ui: ui::debug_settings::DebugSettingsUi,
     debug_settings_demo_done: bool,
+    /// Phototools (the toolbar's `phototools`).
+    phototools_ui: ui::phototools::PhototoolsUi,
+    phototools_demo_done: bool,
     /// Quick preferences (the toolbar's `quickprefs`).
     quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
     quick_prefs_demo_done: bool,
@@ -2113,6 +2117,8 @@ impl App {
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
             debug_settings_demo_done: false,
+            phototools_ui: Default::default(),
+            phototools_demo_done: false,
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
             director: Default::default(),
@@ -2505,6 +2511,18 @@ impl App {
             self.world.maturity.hold(cmd, actor);
             return;
         }
+        // LLAgent::mTeleportRequest: what a refusal for the rating restarts
+        if matches!(
+            cmd,
+            NetCommand::TeleportTo { .. }
+                | NetCommand::TeleportLandmark(_)
+                | NetCommand::TeleportToRegion { .. }
+                | NetCommand::TeleportHome
+                | NetCommand::AcceptLure { .. }
+        ) {
+            let show_progress = self.world.tp_show_progress;
+            self.world.teleport_access.sent(&cmd, actor, self.tp_dest.clone(), show_progress);
+        }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
         if self.demo
             && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
@@ -2552,6 +2570,22 @@ impl App {
             log::info!("demo maturity: asked {maturity}, answer {result:?}");
             self.world.apply(NetEvent::MaturityPreference(result));
             return;
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: the adult neighbour refuses the
+        // preference (TeleportFailed with its AlertInfo)
+        if self.demo {
+            let away = match &cmd {
+                NetCommand::TeleportTo { handle, .. } => Some(*handle) != self.world.main_region,
+                NetCommand::AcceptLure { .. } => true,
+                _ => false,
+            };
+            if away && let Some(blocked) = crate::demo::teleport_access_refusal(self.world.agent_access().preferred) {
+                log::info!("demo teleport refused for its rating: {}", blocked.code);
+                self.world.apply(NetEvent::TeleportAccessBlocked(blocked));
+                // the prompt replaces the simulator's reason
+                self.world.apply(NetEvent::TeleportFailed { reason: String::new() });
+                return;
+            }
         }
         if self.demo && self.gesture_demo_command(&cmd) {
             return;
@@ -5090,6 +5124,7 @@ impl App {
                     .data_mut(|d| d.insert_temp(ui::environment::demo_open_id(&salt), String::new()));
             }
             Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
+            Step::ListsByName => self.settings.env_lists_by_name = true,
         }
     }
 
@@ -5536,6 +5571,7 @@ impl App {
             Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
+            Action::Phototools => ui::widgets::toggle_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools),
             Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {
                 self.env_shortcut(action)
             }
@@ -10223,6 +10259,13 @@ impl App {
         // for it
         if !self.settings.rlva_enabled {
             self.world.maturity.cancel_script_teleports();
+            self.world.teleport_access.cancel_script_teleports();
+        }
+        // a teleport refused for its rating, restarted (teleport_access.rs):
+        // its screen again while it waits for the preference
+        if let Some(restart) = self.world.teleport_access.take_restart() {
+            let dest = restart.dest.unwrap_or_default();
+            self.begin_teleport(dest, restart.show_progress);
         }
         for (actor, c) in self.world.maturity.take_commands() {
             if matches!(
@@ -10385,6 +10428,47 @@ impl App {
         }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: a teleport to the eastern neighbour
+        // (a lure accepted for `lure`), once settled
+        if self.demo
+            && self.frame_count == 700
+            && let Some((scene, _)) = crate::demo::teleport_access_scene()
+            && let Some(main) = self.world.main_region
+        {
+            if scene == "lure" {
+                self.send(NetCommand::AcceptLure {
+                    lure_id: uuid::Uuid::nil(),
+                    godlike: false,
+                });
+            } else {
+                let east = main + (256u64 << 32);
+                let teleport = NetCommand::TeleportTo {
+                    handle: east,
+                    position: Vec3::new(128.0, 128.0, 30.0),
+                    look_at: Vec3::X,
+                };
+                self.request_user_teleport(teleport, aurora_i18n::tr!("demo-teleport-access-neighbour").into(), true);
+            }
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS=…:accept: the prompt's first button
+        if self.demo
+            && self.frame_count == 760
+            && crate::demo::teleport_access_scene().is_some_and(|(_, accept)| accept)
+            && let Some(id) = self
+                .world
+                .notifications
+                .list
+                .iter()
+                .rev()
+                .find(|n| matches!(n.data, crate::world::notifications::Data::MaturityChange { .. }))
+                .map(|n| n.id)
+        {
+            log::info!("demo: the rating prompt accepted");
+            let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+            for c in commands {
+                self.send(c);
+            }
         }
         // AURORA_DEMO_HOME=<outcome>:set: World › Set Home to Here, once settled
         if self.demo
@@ -16337,11 +16421,9 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::ResumeClouds => self.snapshots.ui.light.clouds_paused = false,
             BarAction::AuroraWeather => self.env_ui.weather_open = true,
-            BarAction::NewEnvironment(kind) => match kind {
-                crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
-                kind => self.open_env_editor_snapshot(kind),
-            },
+            BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
@@ -17865,6 +17947,12 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        // a list's A–Z switch last frame, saved before it is published again
+        if let Some(by_name) = ui::environment::take_lists_by_name_change(&ctx) {
+            self.settings.env_lists_by_name = by_name;
+            self.settings.save();
+        }
+        ui::environment::set_lists_by_name(&ctx, self.settings.env_lists_by_name);
         ui::widgets::local_texture::sync(
             &ctx,
             self.world.local_assets.keys().copied().chain(
@@ -18439,6 +18527,7 @@ impl App {
                     fps: self.perf.fps,
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
+                    clouds_paused: self.photo_clouds_paused() && !self.panels.snapshot,
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance_ink: ui::balance_gains::ink(&self.palette, balance.flash),
                     balance: balance.balance,
@@ -20898,7 +20987,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment || self.panels.quick_prefs || self.panels.director {
+                if self.panels.environment || self.panels.quick_prefs || self.panels.phototools || self.panels.director {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -20927,11 +21016,20 @@ impl App {
                 // Quick preferences' environment block shares the window's
                 // lists and "Personal lighting"
                 let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
+                // and Phototools'
+                let phototools_actions = self.phototools_window(&ctx, &p, &mut lighting);
                 // so does the Director's
                 let director_actions = self.director_window(&ctx, &p, &mut lighting);
                 self.debug_settings_window(&ctx, &p);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(director_actions).chain(reset));
+                self.env_actions(
+                    env_actions
+                        .into_iter()
+                        .chain(quick_actions)
+                        .chain(phototools_actions)
+                        .chain(director_actions)
+                        .chain(reset),
+                );
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -22708,7 +22806,7 @@ impl ApplicationHandler for App {
                 }
             }
             // AURORA_DEMO_MATURITY: "General" asked once the login is known
-            if crate::demo::maturity_scene().is_some() {
+            if crate::demo::maturity_scene().is_some() || crate::demo::teleport_access_scene().is_some() {
                 self.world.set_maturity_preference(aurora_net::search::SIM_ACCESS_PG);
             }
             // AURORA_DEMO_LURE=card-answered / notification-answered: the

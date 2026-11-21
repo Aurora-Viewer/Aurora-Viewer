@@ -4279,6 +4279,12 @@ impl Session<'_> {
                     &format!("failed (TeleportFailed: {reason})"),
                     &self.sh.stats,
                 );
+                // handle_teleport_access_blocked: a refusal for the rating
+                let alert = &b["AlertInfo"][0];
+                let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
+                if let Some(blocked) = crate::teleport_access::from_alert_info(alert["Message"].as_str(), &extra) {
+                    emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+                }
                 emit(self.sh, NetEvent::TeleportFailed { reason });
             }
             "DisableSimulator" => {
@@ -5627,6 +5633,14 @@ impl Session<'_> {
                 &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
                 &self.sh.stats,
             );
+            // handle_teleport_access_blocked: a refusal for the rating
+            if let Some(blocked) = m
+                .alert_info
+                .first()
+                .and_then(|info| crate::teleport_access::from_alert_info(&field_str(&info.message), &info.extra_params))
+            {
+                emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+            }
             emit(
                 self.sh,
                 NetEvent::TeleportFailed {
