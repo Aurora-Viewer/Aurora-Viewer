@@ -278,12 +278,13 @@ pub(super) fn moderator(
         .then(|| (s.moderator_name.emphasis(), s.moderator_text.emphasis()))
 }
 
-/// "(You)" in place of our name over one of our live lines. An emote keeps
-/// the name, which is its text, and a history line the name it was written
-/// with: the Legacy Viewer links neither to our own profile.
+/// "(You)" in place of our name on one of our live lines, an emote included:
+/// the Legacy Viewer's default plain text history (PlainTextChatHistory on)
+/// writes our name as an `agentself` link, which FSUrlEntryAgentSelf labels
+/// "(You)", before the emote's text ("(You) waves"). A history line keeps
+/// the name it was written with, as there (plain `mFromName`).
 pub(super) fn you(s: &Settings, line: &ChatLine) -> Option<&'static str> {
-    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    (s.show_you && line.kind.is_own() && line.origin == Origin::Live && !emote).then(|| aurora_i18n::tr!("ui-chat-you-name"))
+    (s.show_you && line.kind.is_own() && line.origin == Origin::Live).then(|| aurora_i18n::tr!("ui-chat-you-name"))
 }
 
 /// A system line's text, in brackets with the option.
@@ -439,8 +440,12 @@ mod tests {
         s.show_you = true;
         assert!(you(&s, &mine).is_some());
         assert!(
-            you(&s, &line(ChatKind::OWN, Uuid::nil(), Origin::Live, "/me waves")).is_none(),
-            "an emote"
+            you(&s, &line(ChatKind::OWN, Uuid::nil(), Origin::Live, "/me waves")).is_some(),
+            "an emote: \"(You) waves\""
+        );
+        assert!(
+            you(&s, &line(ChatKind::OWN, Uuid::nil(), Origin::Log, "/me waved")).is_none(),
+            "a history emote"
         );
         assert!(you(&s, &line(ChatKind::OWN, Uuid::nil(), Origin::Log, "old")).is_none(), "history");
         assert!(you(&s, &line(ChatKind::Im, Uuid::from_u128(2), Origin::Live, "theirs")).is_none());

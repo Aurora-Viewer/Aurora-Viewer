@@ -3011,7 +3011,6 @@ fn resetting_the_animation_keeps_the_rest_pose_out_of_the_export() {
     editor.clip.playing = true;
     editor.clip.modified.insert(rig.names["mElbowLeft"]);
     editor.goals.push(Goal {
-        follow: None,
         weight: 1.0,
         bone: rig.names["mElbowLeft"],
         root: rig.names["mElbowLeft"],

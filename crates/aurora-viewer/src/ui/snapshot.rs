@@ -932,7 +932,7 @@ impl SnapshotUi {
             luts: &self.lut_names,
             pano: self.pano,
         };
-        self.looks.show(ui, p, s, opts, out);
+        self.looks.show(ui, p, super::looks_editor::Stack::photo(s), opts, out);
         if std::mem::take(&mut self.looks.reveal) {
             ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
         }
@@ -1307,11 +1307,11 @@ fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, curren
     });
 }
 
-/// The photo's quick light (Phototools' Quick Environments, the sky, water
-/// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
-/// the photo mode gives the user's own back, unless "Keep this
-/// light".
+/// The photo's quick light (the time of day, the sky, water and day cycle
+/// lists, Pause Clouds, Attached Lights, Exposure, and the sun of
+/// "Personal lighting"). Closing the photo mode gives the user's own back,
+/// unless "Keep this light", except Pause Clouds, a switch of the session
+/// that Phototools shares.
 fn light_rows(
     ui: &mut egui::Ui,
     p: &Palette,

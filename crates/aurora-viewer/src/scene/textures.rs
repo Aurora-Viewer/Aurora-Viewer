@@ -1703,6 +1703,11 @@ impl TextureStreamer {
     /// channel of flat alpha 250-254 or 255 is still classed opaque for the
     /// render passes, `has_alpha`.
     pub fn has_alpha_channel(&self, id: &Uuid) -> Option<bool> {
+        // Local previews bypass downloaded entries. Their resident GPU slot
+        // carries the same format information, including after a file reload.
+        if let Some(slot) = self.local_slots.get(id) {
+            return self.alpha_channel_by_slot.get(*slot as usize).copied();
+        }
         if !self.is_loaded(id) {
             return None;
         }
@@ -5220,6 +5225,23 @@ mod tests {
         assert_eq!(s.has_alpha(&id), Some(false));
         assert_eq!(s.default_alpha_mode(&id), alpha_mode::BLEND, "RGBA, opaque texels");
         assert_eq!(s.has_alpha_channel(&Uuid::from_u128(2)), None, "unknown");
+    }
+
+    #[test]
+    fn creator_local_alpha_format_follows_gpu_registration_and_reload() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(1);
+        s.alpha_channel_by_slot = vec![false; 2];
+        s.entries.insert(id, entry(None, 0.0));
+        assert_eq!(s.has_alpha_channel(&id), None);
+        s.register_local_image(id, 1, AlphaKind::Opaque, true);
+        assert_eq!(s.has_alpha_channel(&id), Some(true));
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::BLEND);
+        s.register_local_image(id, 1, AlphaKind::Opaque, false);
+        assert_eq!(s.has_alpha_channel(&id), Some(false));
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::NONE);
+        s.unregister_local(&id);
+        assert_eq!(s.has_alpha_channel(&id), None);
     }
 
     #[test]

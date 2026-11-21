@@ -159,11 +159,8 @@ pub(super) fn local_pose(rig: &Rig, frame: &Frame) -> Option<(ik::LocalPose, Vec
 }
 
 impl Editor {
-    pub(super) fn pose_constrained(&self, rig: &Rig, bone: usize) -> bool {
-        self.control == Control::Pole
-            || self.limb_enabled(bone)
-            || self.bindings.iter().any(|b| b.bone == bone)
-            || self.graph.definition.bindings.iter().any(|b| rig.names.get(&b.bone) == Some(&bone))
+    pub(super) fn pose_constrained(&self, bone: usize) -> bool {
+        self.control == Control::Pole || self.limb_enabled(bone)
     }
     pub(super) fn commit_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) {
         if self.poser.active {
@@ -171,12 +168,12 @@ impl Editor {
             return;
         }
         let Some(bone) = self.selected else { return };
-        if self.pose_constrained(rig, bone) || self.clip.waiting_source() {
+        if self.pose_constrained(bone) || self.clip.waiting_source() {
             self.commit();
             return;
         }
         let mirror = self.symmetry.then(|| self.mirrors.counterpart(bone)).flatten();
-        let pinned_mirror = mirror.filter(|other| self.pose_constrained(rig, *other));
+        let pinned_mirror = mirror.filter(|other| self.pose_constrained(*other));
         let Some((mut pose, scale)) = local_pose(rig, frame) else { return };
         if self.disabled.contains(&bone) {
             self.authoring.remove(bone);
@@ -237,7 +234,7 @@ impl Editor {
         let Some(bone) = self.selected.filter(|bone| self.authoring.owns(*bone)) else {
             return;
         };
-        if self.graph.selected.is_some() || self.drag.is_some() || self.gizmo.dragging() || self.weight != 1.0 {
+        if self.drag.is_some() || self.gizmo.dragging() || self.weight != 1.0 {
             return;
         }
         // In the animation editor the fields are read again only when the
@@ -286,8 +283,7 @@ impl Editor {
         self.authoring.rebase(&old.pose, &new.pose);
         let before = rig.world_with(&old.pose.rotations, Vec3::ZERO, &old.pose.positions, &rig.scale);
         let after = rig.world_with(&new.pose.rotations, Vec3::ZERO, &new.pose.positions, &rig.scale);
-        // a contact on an object follows that object, not the base
-        for goal in self.goals.iter_mut().filter(|g| g.follow.is_none()) {
+        for goal in self.goals.iter_mut() {
             let (Some(from), Some(to)) = (before.get(goal.bone), after.get(goal.bone)) else {
                 continue;
             };

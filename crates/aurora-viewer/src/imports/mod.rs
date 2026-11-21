@@ -5,8 +5,10 @@
 
 pub mod animation;
 pub mod animation_model;
+mod attachments;
 mod automatic;
 pub mod demo;
+mod file_picker;
 pub mod files;
 pub mod folders;
 mod live;
@@ -526,6 +528,7 @@ pub struct Imports {
     pub confirm_choice: Option<Choice>,
     pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    pending_picker: Option<file_picker::Pending>,
     pending_file_choice: Option<Choice>,
     /// The pending files come from the texture picker's Local tab.
     pub picker_files: bool,
@@ -587,6 +590,7 @@ impl Default for Imports {
             confirm_choice: None,
             scale_bulk_1k: false,
             pending_files: None,
+            pending_picker: None,
             pending_file_choice: None,
             picker_files: false,
             tx,
@@ -1163,6 +1167,7 @@ impl Imports {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
+                    self.pending_picker = None;
                     let loaded_choice = self.pending_file_choice.take();
                     let batch_folder = Self::batch_folder(world, self.load_preferences.batch_folder);
                     for entry in &mut entries {
@@ -1347,7 +1352,7 @@ impl Imports {
                         && let Some(watch) = &mut entry.watch
                     {
                         watch.pending = false;
-                        changed = stamp != watch.stamp;
+                        changed = stamp != watch.stamp || (entry.source.is_none() && stamp.iter().all(|(_, value)| value.is_some()));
                         watch.stamp = stamp;
                     }
                     if changed {
@@ -1411,7 +1416,7 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
-                                    let targets = mesh::default_lod_targets(triangles);
+                                    let targets = mesh::default_lod_targets(triangles, mesh::minimum_lod_triangles(&scene));
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;
@@ -1468,6 +1473,9 @@ impl Imports {
                         entry.player.playing = true;
                     }
                 }
+                // Closing a picker retires its request immediately. A decode
+                // already in progress may still finish; release it off-frame.
+                Worker::Loaded(_, entries) => jobs.discard(entries),
                 _ => {}
             }
         }
