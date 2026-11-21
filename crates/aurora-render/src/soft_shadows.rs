@@ -974,6 +974,14 @@ mod tests {
         // the terrain's wet glint takes the lift on a classic sky only (the
         // others have it from `sun_shadow`)
         assert!(include_str!("shaders/env.wgsl").contains("*select(sh, shadow_lift(sh), is_classic_sky()))*wet;"));
+        // the snow cover takes the lift too: its glints and sheen under
+        // every sky, its PBR shading (the classic one lifts its own)
+        let env = include_str!("shaders/env.wgsl");
+        assert!(env.contains("let lifted = shadow_lift(shade);"));
+        assert!(env.contains("* sunlit * lifted * 1.5;"));
+        assert!(env.contains("sheen = sunlit * lifted * pow("));
+        assert!(env.contains("sn, view, world, lifted, clip, false) + sheen + glint, world);"));
+        assert!(env.contains("ll_classic_diffuse(base, sn, world, shade, clip, a) + sheen + glint, a);"));
         // the noise is counted from the photo's corner
         assert!(include_str!("shaders/soft_shadows.wgsl").contains("id.xy + p.size.zw"));
     }

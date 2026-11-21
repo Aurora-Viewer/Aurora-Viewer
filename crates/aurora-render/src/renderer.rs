@@ -2643,6 +2643,14 @@ fn soft_path(s: &RenderSettings) -> bool {
     crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
 }
 
+/// Whether the soft shadows' pipelines and masks are kept: the option (or
+/// `AURORA_SOFT_SHADOWS`) asks for them and the sun casts shadows. Without
+/// sun shadows there is nothing to soften, and the masks take about 33 MB
+/// each at 4K.
+fn soft_wanted(s: &RenderSettings) -> bool {
+    soft_path(s) && s.shadow_resolution > 0
+}
+
 const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
 
 /// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
@@ -6387,7 +6395,7 @@ impl Backend {
         // the blended faces opaque enough are in the occlusion depth when it
         // holds them (`blend_in_ao_depth`)
         let soft = soft
-            .filter(|_| crate::soft_shadows::Override::from_env().needed(s.soft_shadows))
+            .filter(|_| soft_wanted(s))
             .map(|soft| soft.targets(device, &depth_ss, ao_depth_view, shadow, atlas, w, h));
         let solid_depth = (ao_depth.is_some() || contact.is_some()).then(|| {
             make_view(
@@ -7056,8 +7064,11 @@ impl Backend {
     /// `size` forces a size: the 1x1 set that frees a refused one.
     fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
-        // the soft shadows' pipelines, the first time they are wanted
-        if self.soft.is_none() && crate::soft_shadows::Override::from_env().needed(self.settings.soft_shadows) {
+        // the soft shadows' pipelines, made when they are wanted and freed
+        // with their masks when they no longer are
+        if !soft_wanted(&self.settings) {
+            self.soft = None;
+        } else if self.soft.is_none() {
             self.soft = Some(crate::soft_shadows::SoftShadows::new(&self.device));
         }
         self.depth_pick.scene_changed();
@@ -7378,8 +7389,9 @@ impl Backend {
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         // (the soft shadows' mask reads the atlas)
         targets_dirty |= shadows_dirty && self.targets.soft.is_some();
-        // (`AURORA_SOFT_SHADOWS=1|alt` asks for the mask whatever the setting)
-        targets_dirty |= self.targets.soft.is_none() && crate::soft_shadows::Override::from_env().needed(s.soft_shadows);
+        // (`AURORA_SOFT_SHADOWS=1|alt` asks for the mask whatever the setting;
+        // the sun's shadows turned on or off make or free it)
+        targets_dirty |= self.targets.soft.is_none() == soft_wanted(&s);
         if shadows_dirty {
             // one more map for the rain's shelter where it fits: free up to
             // three projectors (the fourth tile), a row at 4, 8 and 12
