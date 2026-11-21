@@ -13796,10 +13796,11 @@ What the inventory must show with these scenarios:
   the decoded level is decoded by the thread that has its job and by the
   threads of the background pool that have none at that moment, `n` at most
   in all (16 without the variable; `1`: one thread a texture, as before).
-  The pixels are the same whatever the number. Nothing changes while every
-  thread of the pool has a job (an arrival in a busy place): each texture
-  then has its one thread; what changes is the decode time of a large
-  texture that arrives alone (the `texture load:` line). Offline,
+  The pixels are the same whatever the number. Nothing changes while the
+  pool has as many jobs as threads, or more (an arrival in a busy place):
+  the decoder then asks for no help and each texture has its one thread;
+  what changes is the decode time of a large texture that arrives alone
+  (the `texture load:` line). Offline,
   `j2k_compare … --bench --threads T` also times each decode with T
   threads lent by an idle pool, next to its time on one, and compares the
   decodes made with them; with `--busy` the threads never come (a pool

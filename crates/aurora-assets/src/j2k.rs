@@ -24,7 +24,8 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use openjpeg_sys as opj;
@@ -777,28 +778,61 @@ fn pool_spawn(task: Box<dyn FnOnce() + Send + 'static>) {
     rayon::spawn(task);
 }
 
+thread_local! {
+    /// The jobs of the pool this thread belongs to, queued and running, as
+    /// the pool's owner counts them ([`pool_thread`]).
+    static POOL_JOBS: std::cell::RefCell<Option<Arc<AtomicUsize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// To call on each thread of a pool that decodes textures, when the thread
+/// starts: `jobs` is the pool's count of jobs, queued and running. A large
+/// texture decoded on this thread then shares its decode with the pool's
+/// other threads only while the pool has fewer jobs than threads
+/// ([`lent_count`]). Without it the decoder offers its work whatever the
+/// pool does.
+pub fn pool_thread(jobs: Arc<AtomicUsize>) {
+    POOL_JOBS.set(Some(jobs));
+}
+
+/// Threads a decode is shared between, the calling one included: `max` at
+/// most, and no more than the pool has idle (`threads` in the pool, `jobs`
+/// queued or running on it, this decode among them). With jobs waiting for
+/// a thread, one: a pool's thread that ends a job takes an offer of help
+/// before a job that waits (rayon looks at the other threads' queues first),
+/// so offers made then would put the pool's threads on the textures being
+/// decoded while the others wait, for the price of handing code-blocks
+/// from a thread to another.
+fn lent_count(max: usize, threads: usize, jobs: Option<usize>) -> usize {
+    let idle = jobs.map_or(threads, |jobs| threads.saturating_sub(jobs));
+    max.min(idle + 1).min(threads).max(1)
+}
+
 /// The threads lent to a decode: the idle ones of the pool the decode runs
 /// on (the viewer's background jobs, scene/jobs.rs), which `aurora-j2k`
-/// asks for a large texture only. A thread of that pool takes the offer at
-/// once when it has nothing to do, and never on a busy pool: a texture
-/// decoded alone gets the idle cores, textures decoded together a core
-/// each. The decoder waits for the threads that came on a condition
-/// variable, not on the pool, so it never takes another job of the pool
-/// onto its stack (the loop that did, #1689). Off a pool, the calling
-/// thread alone.
+/// asks for a large texture only. A thread of that pool with nothing to do
+/// takes the offer at once: a texture decoded alone gets the idle cores,
+/// textures decoded together a core each. The decoder waits for the
+/// threads that came on a condition variable, not on the pool, so it never
+/// takes another job of the pool onto its stack (the loop that did,
+/// #1689). Off a pool, the calling thread alone.
 fn lent_threads() -> aurora_j2k::Threads {
     static COUNT: OnceLock<usize> = OnceLock::new();
-    let count = *COUNT.get_or_init(|| {
+    let max = *COUNT.get_or_init(|| {
         std::env::var("AURORA_J2K_THREADS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(LENT_THREADS)
     });
-    if count < 2 || rayon::current_thread_index().is_none() {
+    if max < 2 || rayon::current_thread_index().is_none() {
+        return aurora_j2k::Threads::default();
+    }
+    let jobs = POOL_JOBS.with_borrow(|jobs| jobs.as_ref().map(|jobs| jobs.load(Ordering::Relaxed)));
+    let count = lent_count(max, rayon::current_num_threads(), jobs);
+    if count < 2 {
         return aurora_j2k::Threads::default();
     }
     aurora_j2k::Threads {
-        count: count.min(rayon::current_num_threads()),
+        count,
         spawn: Some(pool_spawn),
     }
 }
@@ -1097,6 +1131,23 @@ fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_decode_is_shared_with_idle_threads_only() {
+        // a pool that says nothing of its jobs: the most allowed
+        assert_eq!(lent_count(16, 30, None), 16);
+        assert_eq!(lent_count(16, 6, None), 6);
+        // this decode alone on the pool, then more jobs than idle threads
+        assert_eq!(lent_count(16, 30, Some(1)), 16);
+        assert_eq!(lent_count(16, 30, Some(20)), 11);
+        assert_eq!(lent_count(16, 30, Some(28)), 3);
+        // every thread has a job, or jobs wait: the calling thread alone
+        assert_eq!(lent_count(16, 30, Some(30)), 1);
+        assert_eq!(lent_count(16, 30, Some(5000)), 1);
+        // never more than the pool, never fewer than the calling thread
+        assert_eq!(lent_count(16, 1, Some(0)), 1);
+        assert_eq!(lent_count(0, 30, Some(1)), 1);
+    }
 
     struct VecWriter {
         buf: Vec<u8>,
