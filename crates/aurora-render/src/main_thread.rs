@@ -1947,6 +1947,8 @@ impl Renderer {
 
     /// Project a world position to screen pixels (None if behind camera).
     pub fn project(&self, f: &FrameParams, p: Vec3) -> Option<(f32, f32, f32)> {
+        // where it is drawn, on the curved planet if any (curvature.rs)
+        let p = crate::curvature::Curvature::new(f.camera_pos, f.curvature).bend(p);
         let c = f.proj * f.view * p.extend(1.0);
         if c.w <= 0.01 {
             return None;

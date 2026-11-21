@@ -4774,6 +4774,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
 | `AURORA_DEMO_CLOUDS_PITCH=<degrees>` | Camera pitch of `AURORA_DEMO_CLOUDS` (default 12; 2 shows the clouds at the horizon) |
+| `AURORA_DEMO_HORIZON=<eye height m>[:flat\|:<radius km>]` | Planet curvature on (the Earth's radius, or the one given; `flat` off) and a level view over the void sea from that height |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
@@ -5141,6 +5142,18 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_HORIZON=<eye height m>[:flat|:<radius km>]`**: turns on
+  Preferences › Graphics › Sky and environment › Planet curvature for this
+  launch (in memory) with the Earth's radius, or the radius given in km;
+  `flat` keeps it off for the before / after (`demo_horizon.rs`). The camera
+  stands over the sea at the demo region's southern edge, that many metres
+  above the water (1 to 3000), and looks level to the south over the void
+  water. What to look at: flat, the sea runs out to the middle of the
+  picture; curved, it ends at a sharp horizon just under the middle, with
+  the sky below it (from 10 m on the Earth only ~0.1°, 2 px at 1080p; from
+  300 m 0.56°; `300:1000` puts a 1,000 km planet's horizon ~25 km out, 1.4° under eye level; radii under 1,000 km are raised to it). The sea
+  has no seam or step where the region's cells meet the far slabs, and
+  nothing in the region moves. Capture from `AURORA_CAPTURE_FRAMES=800`.
 - **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on
   Preferences › Aurora › Clouds › Volumetric for this launch (in memory,
   `AURORA_CLOUDS=legacy` keeps the Legacy Viewer's flat layer under the
@@ -6445,7 +6458,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: no button with `up`; `new` with three messages come in and the button back to the latest messages (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
@@ -7900,7 +7913,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Windows notification (on Linux, one from the desktop's notification
   service) per arrival, a click brings the window back on the conversation,
   the nearby chat or the bell's list. The log says `taskbar flash` and
-  `system notification shown (<what a click opens>)`, never the text.
+  `system notification shown (<what a click opens>, <category>)`, never
+  the text; the category (`im.received`, `x-aurora.mention`…) and the
+  `x-aurora-thread` hint go with it on Linux, the toast's `Group` on
+  Windows (the conversation's id, `presence` for a friend online or
+  offline, else `nearby-chat`, `notifications` or `window`).
   `front` keeps the window in front: nothing flashes and nothing is shown.
   `capture` brings the window back at frame 1150 with the bell's list open:
   capture with `AURORA_FPS_LIMIT=60` at frame 1300. The first notification
@@ -8303,8 +8320,14 @@ failure. Grid validation and any paid upload are performed by the human.
   "Except from my friends" lets Orion's through and still ignores Tess's.
   The log says `ignoring conference (ad-hoc) chat from <name>` for each.
 
+- **`AURORA_DEMO_CONV_LINE_MENU=object`**: with
+  `AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy`, right-click the
+  name of the last object line at frame 702: Inspect and Ignore, after Copy
+  and Quote in the Aurora and Compact styles. Capture at frame 780.
 - **`AURORA_DEMO_CONV_LINE_MENU=1`**: with `AURORA_DEMO_CONV=aurora:group`
   or `aurora:compact:group`, right-click a visible message at frame 702.
+  `AURORA_DEMO_OBJECT_CHAT=aurora|compact` works too: the menu of the line
+  in the middle of the view, Inspect and Ignore on an object's.
   Combine with `AURORA_DEMO_SNOOZE=300` (without `auto`) and `AURORA_FPS_LIMIT=60`:
   captures at frames 780 and 1500 show the same highlighted target while
   new group messages arrive below the paused viewport. Inline place, avatar,
@@ -9708,7 +9731,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
+  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for

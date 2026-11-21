@@ -4,10 +4,10 @@
 //! `blocked.rs`: the tabs of Conversations › Contacts with all their
 //! rights and actions, `ui/contacts.rs` reused), each with the sheet of the
 //! person held or group clicked (`sheet.rs`); `rows.rs` holds what their rows
-//! share. The friends tab is also the Contacts tab of the Conversations
-//! workspace (`friends_pane`). In the Legacy look (Preferences › Aurora,
-//! `Settings::classic_people`) Near you is the radar table (`radar.rs`) and
-//! the other tabs keep their simple lists below.
+//! share. The friends and groups tabs are also the Contacts tab of the
+//! Conversations workspace, under two pills (`friends_pane`). In the Legacy
+//! look (Preferences › Aurora, `Settings::classic_people`) Near you is the
+//! radar table (`radar.rs`) and the other tabs keep their simple lists below.
 
 use super::Panels;
 use super::contacts::ContactsUi;
@@ -189,7 +189,7 @@ fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, sa
                 nearby::close_sheet(st);
             }
         } else if persistent_sheet {
-            sheet::empty(&mut child, c.p);
+            sheet::empty(&mut child, c.p, st.shown_tab == Some(TAB_GROUPS));
         }
     }
 }
@@ -318,6 +318,9 @@ pub struct PeopleUi {
     pub demo_hover: Option<Uuid>,
     /// The open sheet is a group's (the groups tab).
     sheet_group: bool,
+    /// Conversations › Contacts shows our groups (its Groups pill), not the
+    /// friends: the Legacy look's Contacts › Groups tab.
+    pub pane_groups: bool,
     /// The rows chosen with Ctrl / Shift in the friends, contact sets,
     /// recent and blocked tabs, and the row Shift selects from.
     pub sel: Vec<Uuid>,
@@ -399,11 +402,21 @@ impl PeopleUi {
 }
 
 /// Nearby avatars, nearest first: the loaded ones at their exact place, the
-/// others from the coarse locations (the radar's sightings).
+/// others from the coarse locations (the radar's sightings). None under
+/// RLVa's @shownearby (RlvActions::canShowNearbyAgents, rlvactions.cpp).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     if world.rlva.has("shownearby") {
         return Vec::new();
     }
+    around(world)
+}
+
+/// `nearby` without its @shownearby test, for the lists the Legacy Viewer
+/// does not test it in: the avatar picker's "Near me" tab
+/// (LLFloaterAvatarPicker, which greys it under @shownames alone) and the
+/// nearby chat's name prediction (FSNearbyChat::handleChatBarKeystroke,
+/// which tests @shownames alone).
+pub fn around(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     let me = world.agent.position;
     let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
         .into_iter()
@@ -549,10 +562,12 @@ pub fn people_window(
     actions
 }
 
-/// What Conversations › Contacts shows in Aurora's look: the friends tab of
-/// this window (its list, and the sheet of the friend held), with a
-/// state of its own so that each window keeps its filter, selection and
-/// sheet.
+/// What Conversations › Contacts shows in Aurora's look: the friends or the
+/// groups tab of this window (its list, and the sheet of the friend or
+/// group held), chosen by two pills as the Legacy look's Contacts chooses
+/// with its tabs (panel_fs_contacts_friends.xml, panel_fs_contacts_groups.xml),
+/// with a state of its own so that each window keeps its filter, selection
+/// and sheet.
 pub struct FriendsPane<'a, 'r> {
     pub st: &'a mut PeopleUi,
     pub data: &'a RadarData<'r>,
@@ -561,9 +576,9 @@ pub struct FriendsPane<'a, 'r> {
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
 }
 
-/// The friends tab drawn in `ui` (Conversations › Contacts). No window
-/// widens for a sheet there: it shows beside the list when the pane has
-/// room, alone otherwise.
+/// The friends or groups tab drawn in `ui` (Conversations › Contacts),
+/// under their pills. No window widens for a sheet there: it shows beside
+/// the list when the pane has room, alone otherwise.
 pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: FriendsPane, contacts: &mut ContactsUi) -> Vec<PeopleAction> {
     let FriendsPane {
         st,
@@ -571,7 +586,9 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
         settings,
         images,
     } = pane;
-    st.tab_shown(TAB_FRIENDS);
+    st.pane_groups = pane_tabs(ui, p, world, st.pane_groups);
+    let tab = if st.pane_groups { TAB_GROUPS } else { TAB_FRIENDS };
+    st.tab_shown(tab);
     st.sheet_grow = false;
     let wide = nearby::sheet_fits(ui.available_width());
     if st.inline_friends_wide && !wide {
@@ -589,7 +606,11 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
         embedded_contacts: true,
         contact_sheet_on_click: wide,
     };
-    friends::tab(ui, &mut c, data, st);
+    if tab == TAB_GROUPS {
+        groups::tab(ui, &mut c, data, st);
+    } else {
+        friends::tab(ui, &mut c, data, st);
+    }
     for ask in std::mem::take(&mut st.asks) {
         match ask {
             Ask::RemoveFromSet(set, ids) => contacts.ask_remove_from_set(&set, ids),
@@ -597,6 +618,28 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
         }
     }
     actions
+}
+
+/// The Friends and Groups pills over Conversations › Contacts, the open
+/// one's count in the accent as People's tabs show it. Returns whether
+/// Groups is open.
+fn pane_tabs(ui: &mut egui::Ui, p: &Palette, world: &World, groups: bool) -> bool {
+    let mut open = groups;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (is_groups, label, count) in [
+            (false, aurora_i18n::tr!("common-friends"), world.social.friends.len()),
+            (true, aurora_i18n::tr!("common-groups"), world.groups.groups.len()),
+        ] {
+            let selected = is_groups == groups;
+            let count = selected.then(|| aurora_i18n::integer(count as i64));
+            if widgets::pill_tab(ui, p, "", label, count, true, selected, true).clicked() {
+                open = is_groups;
+            }
+        }
+    });
+    ui.add_space(6.0);
+    open
 }
 
 /// The six tabs in pills, the open one's count in the accent; a window too

@@ -789,6 +789,11 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Planet curvature (aurora_render::curvature, Aurora's own; the
+    /// Legacy Viewer draws the regions flat): off by default.
+    pub planet_curvature: bool,
+    /// The planet's radius (km), the Earth's by default.
+    pub planet_radius_km: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1966,6 +1971,10 @@ pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
 
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
+/// Planet curvature's radius (km): the Earth's, and the slider's range.
+pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
+pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
+    aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2449,6 +2458,8 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            planet_curvature: false,
+            planet_radius_km: PLANET_RADIUS_KM,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -3236,6 +3247,12 @@ impl Settings {
         self.joystick.enabled = false;
     }
 
+    /// The radius of the planet the world is drawn on (m), None while the
+    /// curvature is off (FrameParams::curvature).
+    pub(crate) fn planet_radius(&self) -> Option<f32> {
+        self.planet_curvature.then_some(self.planet_radius_km * 1000.0)
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self.settings_version <= SETTINGS_VERSION {
             self.gamepad.migrate_gamepad_layout();
@@ -3661,6 +3678,12 @@ impl Settings {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
             BLOOM_STRENGTH
+        };
+        self.planet_radius_km = if self.planet_radius_km.is_finite() {
+            self.planet_radius_km
+                .clamp(*PLANET_RADIUS_KM_RANGE.start(), *PLANET_RADIUS_KM_RANGE.end())
+        } else {
+            PLANET_RADIUS_KM
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };
@@ -4361,6 +4384,24 @@ mod tests {
             }
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn planet_curvature_is_off_by_default_on_the_earth_and_kept_on_its_slider() {
+        let s = super::Settings::default();
+        assert!(!s.planet_curvature);
+        assert_eq!(s.planet_radius(), None);
+        assert_eq!(s.planet_radius_km, 6371.0);
+        for (asked, kept) in [(1.0, 1000.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
+            let s = super::Settings {
+                planet_curvature: true,
+                planet_radius_km: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.planet_radius_km, kept, "{asked} km");
+            assert_eq!(s.planet_radius(), Some(kept * 1000.0));
         }
     }
 
