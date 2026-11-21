@@ -145,9 +145,21 @@ fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id
         .collect()
 }
 
+/// What a window outside was when the renderer was replaced, for the one
+/// that takes its place.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Was {
+    /// Where it was on the screen, where the system says so (not Wayland).
+    pub at: Option<winit::dpi::PhysicalPosition<i32>>,
+    pub focused: bool,
+}
+
 pub(crate) struct Outside {
     /// Shared with egui's function for the passes of this thread.
     shared: Rc<RefCell<Shared>>,
+    /// The windows of the interface a replaced renderer left without a
+    /// surface (`renderer_replaced`), until each asks for its new window.
+    replaced: std::collections::HashMap<egui::ViewportId, Was>,
     /// Closed windows whose surface the render thread still has, by key.
     closing: Vec<(u64, Arc<Window>)>,
     /// Keys given so far: one names a window for the renderer.
@@ -318,6 +330,7 @@ impl Outside {
         egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| pass(&for_passes, ctx, viewport));
         Outside {
             shared,
+            replaced: Default::default(),
             closing: Vec::new(),
             keys: 0,
         }
@@ -327,15 +340,39 @@ impl Outside {
         self.shared.borrow().windows.contains_key(&id)
     }
 
+    /// The renderer was replaced (a GPU recovery, the VR runtime closed):
+    /// the new one has no surface, and none can be made on a window the
+    /// lost device's surface is left on, which is why the viewer's own
+    /// window is replaced too. The windows outside go; those of the
+    /// interface ask for new ones at their next pass, opened where these
+    /// were (`reconcile`), and a scenario opens its own again.
+    pub fn renderer_replaced(&mut self, ctx: &egui::Context) {
+        self.closing.clear();
+        let windows = std::mem::take(&mut self.shared.borrow_mut().windows);
+        for (id, native) in windows {
+            set_native(ctx, id.0, false);
+            if native.of_interface {
+                self.replaced.insert(
+                    id,
+                    Was {
+                        at: native.window.outer_position().ok(),
+                        focused: native.focused,
+                    },
+                );
+            }
+        }
+    }
+
     /// Before the interface's pass: opens the windows outside that the
     /// interface's windows asked for at the last pass, with the attributes
-    /// `attributes` gives each, and lets go of those none drew in.
+    /// `attributes` gives each (and what the window it replaces was, after
+    /// `renderer_replaced`), and lets go of those none drew in.
     pub fn reconcile(
         &mut self,
         event_loop: &ActiveEventLoop,
         renderer: &mut Renderer,
         ctx: &egui::Context,
-        attributes: impl Fn(&Ask) -> WindowAttributes,
+        attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
     ) {
         let (asks, seen) = ctx.data_mut(|d| {
             (
@@ -355,7 +392,8 @@ impl Outside {
             if self.is_open(id) {
                 continue;
             }
-            match self.open(event_loop, renderer, ctx, id, attributes(&ask), false) {
+            let was = self.replaced.remove(&id);
+            match self.open(event_loop, renderer, ctx, id, attributes(&ask, was), false) {
                 Ok(()) => {
                     if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
                         native.of_interface = true;

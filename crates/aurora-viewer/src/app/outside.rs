@@ -38,14 +38,17 @@ impl App {
         let icon = self.window_icon.clone();
         // (where the system tells a program where its window is: not Wayland)
         let origin = own.inner_position().ok().map(|at| (at, own.scale_factor()));
-        self.outside.reconcile(event_loop, renderer, &self.egui_ctx, |ask| {
+        self.outside.reconcile(event_loop, renderer, &self.egui_ctx, |ask, was| {
             let attributes = crate::cli::with_desktop_id(Window::default_attributes())
                 .with_title(ask.title.clone())
                 .with_inner_size(logical(ask.rect.size(), zoom))
                 .with_min_inner_size(logical(ask.min_size, zoom))
-                .with_window_icon(icon.clone());
-            match origin {
-                Some((at, scale)) => attributes.with_position(on_screen(at, scale, ask.rect.min, zoom)),
+                .with_window_icon(icon.clone())
+                // (the one a recovery replaces does not take the focus
+                // from the window that had it)
+                .with_active(was.is_none_or(|was| was.focused));
+            match opens_at(was.and_then(|was| was.at), origin, ask.rect.min, zoom) {
+                Some(at) => attributes.with_position(at),
                 None => attributes,
             }
         });
@@ -165,6 +168,19 @@ fn on_screen(origin: winit::dpi::PhysicalPosition<i32>, scale: f64, at: egui::Po
     winit::dpi::PhysicalPosition::new(origin.x + pixels(at.x), origin.y + pixels(at.y))
 }
 
+/// Where a window outside opens: where the window it replaces was (after a
+/// GPU recovery), else over its place in the viewer's window, whose own
+/// place and scale are `origin`. None where the system places the windows
+/// itself and tells no program where (Wayland).
+fn opens_at(
+    was: Option<winit::dpi::PhysicalPosition<i32>>,
+    origin: Option<(winit::dpi::PhysicalPosition<i32>, f64)>,
+    at: egui::Pos2,
+    zoom: f32,
+) -> Option<winit::dpi::PhysicalPosition<i32>> {
+    was.or_else(|| origin.map(|(origin, scale)| on_screen(origin, scale, at, zoom)))
+}
+
 /// An event a window outside hands on (`Asked::Viewer`). Its focus that
 /// goes lets go of what the keyboard and the pointer held, as the viewer's
 /// own does, unless the viewer's own window has the focus already: what
@@ -206,6 +222,22 @@ mod tests {
         );
         // 480 x 320 points: 600 x 400 as the system counts at that scale
         assert_eq!(logical(egui::vec2(480.0, 320.0), zoom), winit::dpi::LogicalSize::new(600.0, 400.0));
+    }
+
+    #[test]
+    fn the_window_that_replaces_one_after_a_recovery_opens_where_it_was() {
+        let origin = Some((winit::dpi::PhysicalPosition::new(300, 100), 2.0));
+        let inside = egui::pos2(40.0, 80.0);
+        // sent outside: over its place in the viewer's window
+        assert_eq!(
+            opens_at(None, origin, inside, 1.0),
+            Some(winit::dpi::PhysicalPosition::new(380, 260))
+        );
+        // after a recovery: where the user had moved it, on another screen
+        let was = winit::dpi::PhysicalPosition::new(-1500, 420);
+        assert_eq!(opens_at(Some(was), origin, inside, 1.0), Some(was));
+        // the system places the windows itself and says nothing of it
+        assert_eq!(opens_at(None, None, inside, 1.0), None);
     }
 
     #[test]

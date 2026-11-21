@@ -8054,6 +8054,10 @@ failure. Grid validation and any paid upload are performed by the human.
   where it was; closed by the system's cross and opened again, it opens
   outside, as large as it was (it must not come back shorter by the height
   of its title bar); quitting the viewer with it outside leaves no crash.
+  With `AURORA_DEMO_GPU_LOST=400`, the recovery replaces the window
+  outside as it replaces the viewer's: the log has a second
+  `window outside 2: …` line of the same size after
+  `GPU recovery: new window and renderer`, and the first window is gone.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

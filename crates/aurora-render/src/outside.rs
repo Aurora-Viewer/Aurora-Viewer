@@ -261,10 +261,17 @@ impl Surfaces {
     }
 
     /// After a device loss: the surfaces are left to the process, as the
-    /// viewer's own is (`Backend`'s drop, #1650).
+    /// viewer's own is (`Backend`'s drop, #1650). Their windows are let go
+    /// of: the viewer closes them and opens new ones for the renderer of
+    /// the recovery, as it replaces its own window.
     pub fn leak(&mut self) {
         for (_, entry) in std::mem::take(&mut self.entries) {
-            std::mem::forget(entry);
+            let Entry {
+                surface, pending, keep, ..
+            } = entry;
+            std::mem::forget(surface);
+            drop(pending);
+            drop(keep);
         }
     }
 }
