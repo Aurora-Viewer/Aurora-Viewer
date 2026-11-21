@@ -4771,6 +4771,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
+| `AURORA_DEMO_PBR_MIXED=1` | One cube with white PBR metal on every face but 4, which keeps a red legacy texture (#4467) |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -5040,6 +5041,16 @@ both open states and the selection count. Capture at frame 620.
   its alpha), the masked one is cut out by its cutoff and the blended one
   is not drawn, only their labels show. The opaque one missing is the bug of a worn mesh attachment that
   the Legacy Viewer draws.
+- **`AURORA_DEMO_PBR_MIXED=1`**: one cube at a fixed local id (99750), a
+  white metal PBR material on every face but 4, which keeps a red-tinted
+  legacy texture, so the two modes read apart. With
+  `AURORA_DEMO_BUILD=mixed-face,object:99750,4`, the prim is selected whole
+  and then its Blinn-Phong face 4: the Blinn-Phong tab opens and only that
+  face shows its legacy texture; the PBR faces keep rendering (#4467). The
+  Legacy Viewer hides every PBR face of the prim when its Blinn-Phong tab
+  opens; hiding the faces the tab edits only is Aurora's deliberate
+  difference. `AURORA_DEMO_BUILD=move,object:99750` selects the whole prim
+  again and shows all its PBR faces.
 - **`AURORA_DEMO_TEXANIM=1`**: two rows of panels in place of the
   alpha panels — smooth scrolling, grid of 4 × 4 frames, ping-pong,
   rotation, scale (alpha mask: prepass and shadows), a cube animated on
