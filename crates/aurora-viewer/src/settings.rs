@@ -1866,6 +1866,14 @@ pub struct Settings {
     pub ssr: bool,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
+    /// The traced sun's shadows' softness: 1 the real sun's, 0 sharp
+    /// (aurora-render `RtTuning`). Apart from `ray_tracing`, which the
+    /// graphics levels set.
+    pub rt_sun_softness: f32,
+    /// The traced lamps' shadows' softness: 1 as measured, 0 sharp.
+    pub rt_lamp_softness: f32,
+    /// How many of the nearest lamps cast traced shadows.
+    pub rt_shadow_lamps: u8,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2831,6 +2839,9 @@ impl Default for Settings {
             mirrors: 1,
             ssr: false,
             ray_tracing: RayTracingSettings::SHADOWS,
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -4035,6 +4046,12 @@ impl Settings {
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             ray_tracing: self.ray_tracing.render(),
+            rt_tuning: aurora_render::RtTuning {
+                sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
+                lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
+                lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+                projectors: self.projector_shadows,
+            },
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4150,6 +4167,12 @@ impl Default for MapSettings {
         }
     }
 }
+
+/// The most the traced shadows' softness goes to (Preferences' sliders).
+pub const RT_SOFTNESS_MAX: f32 = 4.0;
+/// The most lamps that cast traced shadows (aurora-render's
+/// `MAX_TRACED_LIGHTS`).
+pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
 
 /// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
 /// only on a graphics card with ray queries

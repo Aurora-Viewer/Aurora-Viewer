@@ -2113,6 +2113,8 @@ struct LightsU {
     columns: [[u32; 4]; crate::light_tiles::TILES / 2],
     rows: [[u32; 4]; crate::light_tiles::TILES / 2],
     slices: [[u32; 4]; crate::light_tiles::SLICES / 2],
+    /// x: the lamps' softness (rt_lights.wgsl `light_size`).
+    tuning: [f32; 4],
 }
 
 /// A light of the frame's list (must match `Light` in rt_lights.wgsl).
@@ -3445,6 +3447,7 @@ impl RtShadows {
         light: glam::Vec3,
         light_up: bool,
         contact: bool,
+        sun_softness: f32,
     ) {
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
         let u = ParamsU {
@@ -3456,9 +3459,10 @@ impl RtShadows {
                 .to_array(),
             screen: [w, h, 1.0 / w, 1.0 / h],
             mode: [0.0, if contact { 1.0 } else { 0.0 }, REACH, 0.0],
-            // soft where the lights' passes average and filter it
+            // soft where the lights' passes average and filter it, as
+            // Preferences set it (0: sharp, its ray to the sun's centre)
             soft: match (&self.lights, &t.lights) {
-                (Some(l), Some(_)) => [SUN_DISC_TAN, (l.frame % (1 << 20)) as f32, 0.0, 0.0],
+                (Some(l), Some(_)) => [SUN_DISC_TAN * sun_softness.max(0.0), (l.frame % (1 << 20)) as f32, 0.0, 0.0],
                 _ => [0.0; 4],
             },
         };
@@ -4661,13 +4665,23 @@ fn emitter_key(source_id: u32) -> f32 {
     if source_id < 1 << 24 { source_id as f32 } else { 0.0 }
 }
 
+/// How many of the frame's first lights cast traced shadows, as
+/// Preferences set it: common.wgsl `shared_light` leaves the others
+/// unshadowed (the frame's `light_mode.z`, renderer.rs).
+pub(crate) fn traced_count(tuning: crate::RtTuning) -> usize {
+    (tuning.lamps as usize).clamp(1, MAX_TRACED_LIGHTS)
+}
+
 /// The frame's lights as rt_lights.wgsl reads them, in the frame uniform's
-/// order; `places` is where each was last frame, then where it is.
-fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>) -> Vec<TracedLightU> {
+/// order, as many as cast traced shadows ([`traced_count`]); `places` is
+/// where each was last frame, then where it is. A projector whose shadows
+/// are off is listed (the lights keep their place) but never drawn
+/// (`source.y` 2, rt_lights.wgsl `light_target`).
+fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>, tuning: crate::RtTuning) -> Vec<TracedLightU> {
     let before = std::mem::take(places);
     lights
         .iter()
-        .take(MAX_TRACED_LIGHTS)
+        .take(traced_count(tuning))
         .map(|l| {
             let mut moved = 0.0;
             if l.source_id != 0 {
@@ -4679,7 +4693,11 @@ fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, 
                 color_falloff: l.color.extend(l.falloff).to_array(),
                 source: [
                     l.source_radius,
-                    if l.projector.is_some() { 1.0 } else { 0.0 },
+                    match (l.projector.is_some(), tuning.projectors) {
+                        (false, _) => 0.0,
+                        (true, true) => 1.0,
+                        (true, false) => 2.0,
+                    },
                     if moved.is_finite() { moved } else { 0.0 },
                     emitter_key(l.source_id),
                 ],
@@ -4765,6 +4783,7 @@ impl RtShadows {
         black: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
         round: Round,
+        tuning: crate::RtTuning,
     ) {
         let scene_group = self.scene_group(device, scene);
         // the frame's lights, for the hits the reflections and the indirect
@@ -4772,8 +4791,8 @@ impl RtShadows {
         let lamps = match (round.first(), self.lights.as_mut()) {
             (false, Some(l)) if l.points => self.lamps_still.clone(),
             (false, _) => Vec::new(),
-            (true, Some(l)) => traced_lights(point_lights, &mut l.places),
-            (true, None) => traced_lights(point_lights, &mut HashMap::new()),
+            (true, Some(l)) => traced_lights(point_lights, &mut l.places, tuning),
+            (true, None) => traced_lights(point_lights, &mut HashMap::new(), tuning),
         };
         if round.first() {
             if !lamps.is_empty() {
@@ -4822,7 +4841,7 @@ impl RtShadows {
             (true, true) => 2.0,
         };
         let tinted = l.points && lt.tinted;
-        let traced = &point_lights[..point_lights.len().min(if l.points { MAX_TRACED_LIGHTS } else { 0 })];
+        let traced = &point_lights[..point_lights.len().min(if l.points { traced_count(tuning) } else { 0 })];
         let changed = l
             .changes
             .update(traced, light.sky(), clip_from_world, camera, 1.0 / LIGHTS_HISTORY, valid);
@@ -4854,6 +4873,7 @@ impl RtShadows {
             columns: light.light_sets.columns,
             rows: light.light_sets.rows,
             slices: light.light_sets.slices,
+            tuning: [tuning.lamp_softness.max(0.0), 0.0, 0.0, 0.0],
         };
         put(device, queue, encoder, &l.buffer, bytemuck::bytes_of(&u), round);
         let timer = l.timer.as_ref().filter(|_| round.first());
@@ -6724,15 +6744,15 @@ mod tests {
         };
         let mut places = HashMap::new();
         // a light seen for the first time has not moved
-        let first = traced_lights(&[lamp(7, 1.0), lamp(0, 5.0)], &mut places);
+        let first = traced_lights(&[lamp(7, 1.0), lamp(0, 5.0)], &mut places, crate::RtTuning::default());
         assert_eq!([first[0].source[2], first[1].source[2]], [0.0, 0.0]);
         // the list's order changes with the camera: a light is known by
         // what it shines from, and one of no prim never moves
-        let next = traced_lights(&[lamp(0, 6.0), lamp(7, 1.25)], &mut places);
+        let next = traced_lights(&[lamp(0, 6.0), lamp(7, 1.25)], &mut places, crate::RtTuning::default());
         assert_eq!([next[0].source[2], next[1].source[2]], [0.0, 0.25]);
         // a light that left the list starts again when it comes back
-        traced_lights(&[lamp(0, 6.0)], &mut places);
-        let back = traced_lights(&[lamp(7, 4.0)], &mut places);
+        traced_lights(&[lamp(0, 6.0)], &mut places, crate::RtTuning::default());
+        let back = traced_lights(&[lamp(7, 4.0)], &mut places, crate::RtTuning::default());
         assert_eq!(back[0].source[2], 0.0);
         // and its object, whose faces its rays pass (none of no prim)
         assert_eq!([first[0].source[3], first[1].source[3]], [7.0, 0.0]);
@@ -6761,7 +6781,7 @@ mod tests {
             source_radius: 0.4,
             source_id: 3,
         };
-        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new());
+        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new(), crate::RtTuning::default());
         // the projector: flagged, its frustum's matrix and apex as the
         // shading's (common.wgsl `projector_at`)
         assert_eq!(listed[0].source[1], 1.0);
@@ -6778,6 +6798,28 @@ mod tests {
         // a point light: none of them
         assert_eq!(listed[1].source[1], 0.0);
         assert_eq!((listed[1].beam, listed[1].apex), ([[0.0; 4]; 4], [0.0; 4]));
+        // projector shadows off: listed in its place, never drawn
+        let off = crate::RtTuning {
+            projectors: false,
+            ..crate::RtTuning::default()
+        };
+        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new(), off);
+        assert_eq!([listed[0].source[1], listed[1].source[1]], [2.0, 0.0]);
+        // as many lights as cast traced shadows, one at least, 64 at most
+        let few = crate::RtTuning {
+            lamps: 1,
+            ..crate::RtTuning::default()
+        };
+        assert_eq!(traced_lights(&[light(None), light(None)], &mut HashMap::new(), few).len(), 1);
+        for (lamps, count) in [(0, 1), (8, 8), (64, MAX_TRACED_LIGHTS), (500, MAX_TRACED_LIGHTS)] {
+            assert_eq!(
+                traced_count(crate::RtTuning {
+                    lamps,
+                    ..crate::RtTuning::default()
+                }),
+                count
+            );
+        }
     }
 
     #[test]

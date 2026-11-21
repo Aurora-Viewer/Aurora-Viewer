@@ -201,11 +201,37 @@ fn ray_tracing(cx: &mut Cx) {
         );
         let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
         cx.subs(off, |cx| {
+            use crate::settings::{RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX};
+            // (Aurora's own: the Legacy Viewer's maps blur by a kernel,
+            // RenderShadowBlurSize, a debug setting)
+            cx.slider(
+                tr!("ui-options-rt-sun-softness"),
+                tr!("ui-options-rt-sun-softness-help"),
+                &field!(rt_sun_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
             cx.toggle(
                 tr!("ui-options-ray-traced-lights"),
                 tr!("ui-options-ray-traced-lights-help"),
                 &field!(ray_tracing.lights),
             );
+            cx.greyed(!cx.s.ray_tracing.lights);
+            cx.slider(
+                tr!("ui-options-rt-lamp-softness"),
+                tr!("ui-options-rt-lamp-softness-help"),
+                &field!(rt_lamp_softness),
+                0.0..=RT_SOFTNESS_MAX,
+                "×",
+            );
+            cx.slider(
+                tr!("ui-options-rt-shadow-lamps"),
+                tr!("ui-options-rt-shadow-lamps-help"),
+                &field!(rt_shadow_lamps),
+                1..=RT_SHADOW_LAMPS_MAX,
+                "",
+            );
+            cx.greyed(false);
             cx.experimental().toggle(
                 tr!("ui-options-ray-traced-indirect"),
                 tr!("ui-options-ray-traced-indirect-help"),

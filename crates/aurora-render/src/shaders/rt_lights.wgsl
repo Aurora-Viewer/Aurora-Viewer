@@ -111,6 +111,8 @@ struct Params {
     columns: array<vec4<u32>, 16>,
     rows: array<vec4<u32>, 16>,
     slices: array<vec4<u32>, 16>,
+    // x: the lamps' softness, Preferences' (`light_size`: 0 sharp).
+    tuning: vec4<f32>,
 };
 
 // Candidates a pixel draws among the lights reaching it.
@@ -220,6 +222,11 @@ fn light_aim(i: u32) -> vec3<f32> {
 // the apex).
 fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let lt = lights[i];
+    // a projector whose shadows are off (rt_shadows.rs `traced_lights`):
+    // never drawn, its beam the maps' (common.wgsl `projector_at`)
+    if (lt.source.y > 1.5) {
+        return 0.0;
+    }
     let to_l = lt.pos_radius.xyz - world;
     let dist = length(to_l);
     let radius = lt.pos_radius.w;
@@ -353,8 +360,9 @@ fn reset_light(r: u32, start: f32, total: f32, reaching: vec2<u32>, world: vec3<
     return to;
 }
 
+// (times Preferences' softness: 0 a point, whose shadows are sharp)
 fn light_size(i: u32) -> f32 {
-    return clamp(lights[i].source.x, LIGHT_SIZE_MIN, LIGHT_SIZE_MAX);
+    return clamp(lights[i].source.x, LIGHT_SIZE_MIN, LIGHT_SIZE_MAX) * params.tuning.x;
 }
 
 // The share of a frame in light `i`'s history: one of `HISTORY` for a
@@ -366,7 +374,7 @@ fn light_size(i: u32) -> f32 {
 // second: 9 levels of 255 off at worst with the 12 frames, 6 within a
 // diameter, 4 within a quarter; the shadow's grain the same.)
 fn light_fresh(i: u32) -> f32 {
-    return clamp(2.0 * lights[i].source.z / light_size(i), 1.0 / HISTORY, 1.0);
+    return clamp(2.0 * lights[i].source.z / max(light_size(i), LIGHT_SIZE_MIN), 1.0 / HISTORY, 1.0);
 }
 
 // What the glass on the ray from `origin` up to `far` leaves of a light's

@@ -9294,9 +9294,13 @@ impl Backend {
         if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
         }
-        // (common.wgsl LOCAL_TRACED)
+        // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
         if rt_lights_now {
-            main.light_sets.mode[2] |= 0x800000;
+            let tuning = self.settings.rt_tuning;
+            main.light_sets.mode[2] |= 0x800000 | (crate::rt_shadows::traced_count(tuning) as u32) << 24;
+            if tuning.projectors {
+                main.light_sets.mode[2] |= 0x8000_0000;
+            }
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {
@@ -9659,6 +9663,7 @@ impl Backend {
                 f.sun_dir,
                 f.sun_visible > 0.0,
                 self.contact_now,
+                self.settings.rt_tuning.sun_softness,
             );
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
@@ -10726,6 +10731,7 @@ impl Backend {
                     &self.dummies.black,
                     &scene,
                     round,
+                    self.settings.rt_tuning,
                 );
                 if rt_gi_now {
                     rt.encode_gi(

@@ -1226,6 +1226,36 @@ pub struct RayTracing {
     pub reflections: bool,
 }
 
+/// What Preferences › Graphics › Ray tracing sets of the traced shadows
+/// beside the effects ([`RayTracing`]): nothing a change of it makes anew.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RtTuning {
+    /// The sun's shadows' softness: the size of the disc its rays aim at,
+    /// 1 the real sun's (half a degree), 0 sharp.
+    pub sun_softness: f32,
+    /// The lamps' shadows' softness: their size, 1 as rt_lights.wgsl
+    /// measures it from the prim (`light_size`), 0 sharp.
+    pub lamp_softness: f32,
+    /// How many of the frame's first lights (the nearest and brightest,
+    /// `LightList`'s order) cast traced shadows; the others light
+    /// unshadowed, as the Legacy Viewer's point lights.
+    pub lamps: u32,
+    /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
+    /// Projectors" shadow detail, Aurora's projector shadows option).
+    pub projectors: bool,
+}
+
+impl Default for RtTuning {
+    fn default() -> Self {
+        RtTuning {
+            sun_softness: 1.0,
+            lamp_softness: 1.0,
+            lamps: 64,
+            projectors: true,
+        }
+    }
+}
+
 /// Whether the device can ray-trace: what Preferences › Graphics › Ray
 /// tracing shows of the graphics card.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1289,6 +1319,8 @@ pub struct RenderSettings {
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
     pub ray_tracing: RayTracing,
+    /// The traced shadows' softness and lamps.
+    pub rt_tuning: RtTuning,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1342,6 +1374,7 @@ impl Default for RenderSettings {
             mirror_scale: 0.25,
             ssr: false,
             ray_tracing: RayTracing::default(),
+            rt_tuning: RtTuning::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
