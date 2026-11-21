@@ -22,6 +22,8 @@ pub mod powers {
     pub const LAND_DEED: u64 = 1 << 12;
     pub const LAND_RELEASE: u64 = 1 << 13;
     pub const LAND_SET_SALE_INFO: u64 = 1 << 14;
+    /// Divide and join parcels (roles_constants.h GP_LAND_DIVIDE_JOIN).
+    pub const LAND_DIVIDE_JOIN: u64 = 1 << 15;
     pub const LAND_FIND_PLACES: u64 = 1 << 17;
     pub const LAND_CHANGE_IDENTITY: u64 = 1 << 18;
     pub const LAND_SET_LANDING_POINT: u64 = 1 << 19;
