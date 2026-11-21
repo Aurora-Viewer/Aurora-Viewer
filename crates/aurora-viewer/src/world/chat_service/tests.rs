@@ -433,6 +433,45 @@ fn login_lists_then_queues_every_conversation_in_list_order() {
     }
 }
 
+/// The grid listed a direct conversation with the account itself (#4499):
+/// it is left out, and every other conversation is still fetched.
+#[test]
+fn a_conversation_with_ourselves_in_the_list_is_left_out() {
+    let mut h = H::new();
+    let (a, b) = (h.resident(1, [1, 2, 3]), h.resident(2, [4, 5]));
+    h.start(true);
+    let list = h.next_request();
+    assert!(list.is_list(), "the list comes first");
+    let Llsd::Array(mut entries) = h.list_body() else {
+        panic!("the list is an array");
+    };
+    let mut own = Llsd::new_map();
+    own.insert("conversation_type", "direct");
+    own.insert("conversation_id", direct_conversation_id(AGENT, AGENT));
+    own.insert("other_participant_id", AGENT.to_string());
+    own.insert("last_msg_id", msg(9));
+    entries.insert(1, own);
+    h.answer(&list, 200, Some(Llsd::Array(entries)));
+    assert_eq!(h.m.rt.active_resident, Some(a), "the first resident's pass is pacing");
+    assert_eq!(h.m.rt.queue, [b], "the second queued, not ourselves");
+
+    while let Some(req) = h.next_request_within(Duration::from_secs(10)) {
+        assert_ne!(
+            req.conversation(),
+            direct_conversation_id(AGENT, AGENT),
+            "no history request for ourselves"
+        );
+        h.answer_ok(&req);
+    }
+    let published: HashSet<Uuid> = h.published().iter().map(|(id, ..)| *id).collect();
+    assert_eq!(published, HashSet::from([a, b]), "both residents' histories fetched");
+    for id in [a, b] {
+        let r = &h.m.rt.residents[&id];
+        assert_eq!(r.covered_token, r.advertised_token, "covered");
+    }
+    assert!(!h.m.rt.residents.contains_key(&AGENT), "the agent never becomes a resident");
+}
+
 #[test]
 fn requests_are_spaced_from_their_start() {
     let mut h = H::new();

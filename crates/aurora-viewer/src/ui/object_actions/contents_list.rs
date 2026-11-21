@@ -247,7 +247,7 @@ pub(super) fn show(
                                 && world
                                     .objects
                                     .index_of_uuid(&object)
-                                    .is_some_and(|idx| build.task_preview_allowed(world, idx, item));
+                                    .is_some_and(|idx| build.task_preview_offered(world, idx, item));
                             let document = || match item.asset_type {
                                 10 => Some(ContentsAction::Script(object, item.id)),
                                 7 => Some(ContentsAction::Notecard(object, item.id)),
@@ -260,8 +260,15 @@ pub(super) fn show(
                             menu::context_menu(&response, p, |ui| {
                                 let transfers: Result<Vec<_>, _> =
                                     taken.iter().map(|item| build.task_transfer_kind(world, object, item)).collect();
+                                // LLTaskInvFVBridge::buildContextMenu: greyed out, not
+                                // hidden, when RLVa keeps the item closed.
+                                let blocked = world
+                                    .objects
+                                    .index_of_uuid(&object)
+                                    .is_some_and(|idx| world.rlva_task_open_blocked(idx, item.asset_type));
+                                let tip = if blocked { aurora_i18n::tr!("rlva-blocked") } else { "" };
                                 if (matches!(item.asset_type, 7 | 10) || preview)
-                                    && menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"))
+                                    && menu::item_tip(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"), !blocked, tip)
                                 {
                                     actions.extend(document());
                                 }

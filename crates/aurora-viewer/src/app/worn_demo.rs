@@ -50,7 +50,12 @@ impl App {
         }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
-        if !(edit || inspect || mode == "menu") {
+        let detach_delete = matches!(mode.as_str(), "detach-delete" | "detach-delete-confirm");
+        if mode == "detach-delete-confirm" {
+            let (confirm, log) = (self.frame_count == 780, [760, 800, 900, 1200].contains(&self.frame_count));
+            self.demo_detach_delete_steps("worn detach-delete", crate::demo::worn::item_id(), confirm, log);
+        }
+        if !(edit || inspect || detach_delete || mode == "menu") {
             return;
         }
         if freeze {
@@ -82,6 +87,11 @@ impl App {
                 if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) {
                     self.on_ctx_action(CtxAction::Inspect(id));
                 }
+                self.context_menu = None;
+            }
+            // "Detach and Delete" from the bottom icon bar: its confirmation
+            740 if detach_delete => {
+                self.on_ctx_action(CtxAction::DetachDelete(key));
                 self.context_menu = None;
             }
             // the arrow along the attachment point's Z, 45 px from the pivot

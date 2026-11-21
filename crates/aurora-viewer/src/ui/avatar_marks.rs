@@ -37,8 +37,8 @@ fn label(name: MarkColor) -> &'static str {
     }
 }
 
-/// The mini-map marks the avatars it shows: not one a parcel hides. A name
-/// hidden by RLVa changes nothing (LLNetMap::handleRightMouseDown,
+/// The mini-map marks every avatar it shows, loaded or only known by its
+/// coarse location. A name hidden by RLVa changes nothing (LLNetMap::handleRightMouseDown,
 /// indra/newview/llnetmap.cpp: "MarkAvatar" is shown for any agent under
 /// the pointer and is not among the entries `@shownames` greys).
 fn can_edit(world: &World, ids: &[Uuid], source: AvatarList) -> bool {
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn mini_map_marks_stay_on_hidden_names_and_close_on_a_hidden_parcel() {
+    fn mini_map_marks_stay_on_hidden_names_and_parcels_and_close_when_the_dot_leaves() {
         use crate::ui::widgets::elide_tests::{Frames, painted};
         use std::time::Instant;
 
@@ -243,9 +243,11 @@ mod tests {
         let blue = LEGACY_COLORS[2].1;
         w.avatar_marks.set(&[luna], blue);
         let source = AvatarList::MiniMap;
+        // a dot only known by its coarse location is marked too
         assert!(can_edit(&w, &[luna], source));
-        assert!(!can_edit(&w, &[distant], source));
-        assert!(!can_edit(&w, &[luna, distant], source));
+        assert!(can_edit(&w, &[distant], source));
+        assert!(can_edit(&w, &[luna, distant], source));
+        assert!(!can_edit(&w, &[Uuid::from_u128(0x0bad)], source));
 
         let p = crate::theme::Theme::default().palette();
         let mut frames = Frames::new();
@@ -275,14 +277,22 @@ mod tests {
         assert_eq!(picker.as_ref().unwrap().rgb(), blue);
         w.rlva_console_input("@shownames=y");
 
-        // The west resident is still loaded and named when only our eastern
-        // parcel becomes visible. The open picker must not keep its colour.
+        // A parcel hidden from the world keeps its dots and their marks, as
+        // the Legacy Viewer's map does for a private parcel.
         let mut settings = crate::settings::Settings::default();
         crate::demo::parcel_visibility::install(&mut w, &mut settings, "always");
         w.agent.get_off(center);
         w.parcel = Some(crate::demo::parcel_visibility::parcel_at(center.x, center.y));
         let _ = w.update_parcel_visibility(&settings.parcel_visibility, Instant::now());
         assert!(w.objects.index_of_uuid(&luna).is_some());
+        assert!(can_edit(&w, &[luna], source));
+        frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
+        assert!(picker.is_some());
+
+        // The resident leaves the map: the open picker must not keep its colour.
+        let index = w.objects.index_of_uuid(&luna).expect("loaded above");
+        w.objects.remove_idx(index);
+        w.coarse.clear();
         assert!(!can_edit(&w, &[luna], source));
         frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
         assert!(picker.is_none());

@@ -181,6 +181,19 @@ impl World {
         })
     }
 
+    /// LLTaskInvFVBridge::buildContextMenu (llpanelobjectinventory.cpp):
+    /// "Open" on an item of `index`'s contents is greyed out for a notecard
+    /// under @viewnote, a script under @viewscript, either one inside an
+    /// attachment that cannot be taken off, and a texture under @viewtexture.
+    pub fn rlva_task_open_blocked(&self, index: usize, asset_type: i32) -> bool {
+        match asset_type {
+            7 => self.rlva.has("viewnote") || self.rlva_locked_attachment(index),
+            10 => self.rlva.has("viewscript") || self.rlva_locked_attachment(index),
+            0 => self.rlva.has("viewtexture"),
+            _ => false,
+        }
+    }
+
     /// The contents of `index`'s object are locked: nothing is added to,
     /// removed from or moved out of a locked attachment or the restraining
     /// seat, whose script holds the restriction

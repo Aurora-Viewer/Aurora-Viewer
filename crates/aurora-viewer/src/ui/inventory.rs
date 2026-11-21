@@ -208,6 +208,8 @@ pub enum InvAction {
     /// Preferences › Confirmations / Inventory: stop asking before a Trash
     /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
     StopConfirmingDelete,
+    /// A line in chat, for an inventory action asked from outside the window.
+    Notice(String),
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -391,6 +393,9 @@ pub enum EditDialog {
     /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
     Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
+    /// Delete of a selection holding worn clothing or attachments: take them
+    /// off first, then move the selection to the Trash.
+    DetachDelete(Vec<Uuid>),
     Empty(Uuid),
     Ungroup(Uuid),
     ReplaceLinks(Box<replace_links::ReplaceLinks>),
@@ -444,6 +449,20 @@ pub struct InventoryWindow {
     pub additional: bool,
     pub state: Box<InventoryUi>,
     pub open: bool,
+}
+
+/// Whether an inventory window stays in the list this frame: open, the main
+/// panel, or closed with a document, confirmation or pending Detach and
+/// Delete of its own still running.
+fn keeps_window(w: &InventoryWindow) -> bool {
+    w.id == listings::PANEL
+        || w.open
+        || w.state.preview.is_some()
+        || w.state.dialog.is_some()
+        || w.state.move_to.is_some()
+        || w.state.thumbnail.item.is_some()
+        || w.state.bulk_permissions.active()
+        || w.state.detach_delete.is_some()
 }
 
 /// The additional window's id: one at a time, its place and size kept
@@ -620,6 +639,10 @@ pub struct InventoryUi {
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,
+    /// A confirmed Detach and Delete waiting for the items to come off.
+    detach_delete: Option<delete::DetachDelete>,
+    /// The open Detach and Delete confirmation came from the worn object's menu.
+    detach_from_world: bool,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
@@ -871,6 +894,71 @@ impl InventoryUi {
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
+    }
+
+    /// Demo: press the Detach and Delete confirmation's button
+    /// (`AURORA_DEMO_WORN=detach-delete-confirm`, `AURORA_DEMO_GESTURES=delete`).
+    pub fn demo_confirm_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts) -> Vec<InvAction> {
+        let mut actions = Vec::new();
+        if let Some(EditDialog::DetachDelete(ids)) = self.dialog.take() {
+            delete::start_detach(inv, self, prefs, facts, &mut actions, ids);
+        }
+        actions
+    }
+
+    /// Demo: whether a Detach and Delete still waits for the take-off.
+    pub fn demo_detach_waiting(&self) -> bool {
+        self.detach_delete.is_some()
+    }
+
+    /// "Detach and Delete" from the worn object's menu: ask the same
+    /// confirmation as Inventory's own entry, without opening the window.
+    /// Nothing opens while another dialog or a delete is under way; the
+    /// error says why it cannot be done, for chat.
+    pub fn ask_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts, id: Uuid) -> Result<(), String> {
+        if self.dialog.is_some() || self.pending.is_some() || self.pending_delete.is_some() || self.detach_delete.is_some() {
+            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-busy").into());
+        }
+        if id.is_nil() || !delete::detach_allowed(inv, &[id], prefs, facts) {
+            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-refused").into());
+        }
+        self.detach_from_world = true;
+        self.dialog = Some(EditDialog::DetachDelete(vec![id]));
+        Ok(())
+    }
+
+    /// Every window's waiting Detach and Delete that asked any of `items` off.
+    fn detach_waits<'a>(&'a mut self, items: &'a [Uuid]) -> impl Iterator<Item = &'a mut delete::DetachDelete> + 'a {
+        let windows = self.windows.iter_mut().map(|w| &mut w.state.detach_delete);
+        std::iter::once(&mut self.detach_delete)
+            .chain(windows)
+            .flatten()
+            .filter(|pending| pending.takes_off(items))
+    }
+
+    /// The app detached `items` itself (an incomplete outfit or a temporary
+    /// attachment, `World::recover_attachment_removal`): no outfit update
+    /// runs, so the wait that asked them off must not read that as refused.
+    pub fn take_off_sent(&mut self, items: &[Uuid]) {
+        for pending in self.detach_waits(items) {
+            pending.take_off_sent();
+        }
+    }
+
+    /// The take-off of `items` was refused for `reason`, which the app wrote
+    /// in this window's message: the wait that asked them off keeps it, so a
+    /// secondary window says it too, and this window's message is cleared
+    /// when the wait is not its own.
+    pub fn detach_refused(&mut self, items: &[Uuid], reason: &str) {
+        let own = self.detach_delete.as_ref().is_some_and(|pending| pending.takes_off(items));
+        let mut claimed = false;
+        for pending in self.detach_waits(items) {
+            pending.refused(reason);
+            claimed = true;
+        }
+        if claimed && !own {
+            self.message.clear();
+        }
     }
 
     fn show_original_in(&mut self, inv: &Inventory, id: Uuid, tab: usize) {
@@ -2328,6 +2416,22 @@ fn additional_window_pos(ctx: &egui::Context, screen: egui::Rect) -> egui::Pos2 
     }
 }
 
+/// The title bar's width button of Aurora's window: "Widen the window" at
+/// the narrow width, "Compact view" back to the tree once wider (#4465),
+/// with the icons of the Places window's same two buttons.
+fn title_width_action<'a>(
+    floater: widgets::Floater<'a>,
+    layout: aurora::Layout,
+    widen: &'a mut bool,
+    narrow: &'a mut bool,
+) -> widgets::Floater<'a> {
+    if layout == aurora::Layout::Compact {
+        floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), widen)
+    } else {
+        floater.action("arrows-minimize", aurora_i18n::tr!("common-compact-view"), narrow)
+    }
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -2369,11 +2473,13 @@ pub fn show(
     let shown = *open
         || dual.is_some()
         || st.dialog.is_some()
+        || st.detach_delete.is_some()
         || st.move_to.is_some()
         || st.demo_menu.is_some()
         || st.windows.iter().any(|w| {
             w.id != listings::PANEL
                 || w.state.dialog.is_some()
+                || w.state.detach_delete.is_some()
                 || w.state.move_to.is_some()
                 || w.state.thumbnail.item.is_some()
                 || w.state.bulk_permissions.active()
@@ -2510,6 +2616,7 @@ pub fn show(
         fetch_whole_inventory(inv, dual);
     }
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
+    delete::finish_detach(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -2538,7 +2645,7 @@ pub fn show(
     let mut floater = super::widgets::Floater::new("inventory", aurora_i18n::tr!("common-inventory"), default_position, default_size)
         .compact_header()
         .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"));
-    let mut widen = false;
+    let (mut widen, mut narrow) = (false, false);
     if !classic {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
@@ -2549,9 +2656,7 @@ pub fn show(
             let (dot, text) = aurora::sync_state(p, inv, st);
             floater = floater.title_state(dot, text);
         }
-        if layout == aurora::Layout::Compact {
-            floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
-        }
+        floater = title_width_action(floater, layout, &mut widen, &mut narrow);
     }
     floater.show(ctx, p, open, |ui| {
         if let Some(dual) = dual.as_deref_mut() {
@@ -2610,6 +2715,9 @@ pub fn show(
     });
     if widen {
         aurora::widen(ctx, "inventory");
+    }
+    if narrow {
+        aurora::narrow(ctx, "inventory");
     }
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
@@ -2745,6 +2853,8 @@ pub fn show(
         }
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
+            // what it was deleting went with its folder
+            w.state.detach_delete = None;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
             continue;
         }
@@ -2812,7 +2922,7 @@ pub fn show(
             // Aurora's window, kept under its folder (the whole inventory
             // for the additional window).
             w.state.scope = w.root;
-            let mut widen = false;
+            let (mut widen, mut narrow) = (false, false);
             let layout = aurora::Layout::of_window(ctx, &window_id);
             let mut floater = floater;
             if w.additional {
@@ -2824,9 +2934,7 @@ pub fn show(
                     floater = floater.title_state(dot, text);
                 }
             }
-            if layout == aurora::Layout::Compact {
-                floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
-            }
+            let floater = title_width_action(floater, layout, &mut widen, &mut narrow);
             floater.show(ctx, p, &mut w.open, |ui| {
                 aurora::contents(
                     ui,
@@ -2842,6 +2950,9 @@ pub fn show(
             });
             if widen {
                 aurora::widen(ctx, &window_id);
+            }
+            if narrow {
+                aurora::narrow(ctx, &window_id);
             }
         }
         w.state
@@ -2860,6 +2971,7 @@ pub fn show(
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+        delete::finish_detach(&world.inventory, &mut w.state, prefs, &facts, &mut actions);
         if tab_visible {
             dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
             move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
@@ -2915,15 +3027,7 @@ pub fn show(
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
-    windows.retain(|w| {
-        w.id == listings::PANEL
-            || w.open
-            || w.state.preview.is_some()
-            || w.state.dialog.is_some()
-            || w.state.move_to.is_some()
-            || w.state.thumbnail.item.is_some()
-            || w.state.bulk_permissions.active()
-    });
+    windows.retain(keeps_window);
     windows.append(&mut spawned);
     st.windows = windows;
     for ask in asked {
