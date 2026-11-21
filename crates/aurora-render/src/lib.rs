@@ -47,6 +47,7 @@ mod motion_debug;
 mod motion_history;
 mod occlusion;
 pub mod oit_stochastic;
+mod outside;
 pub mod pacing;
 mod packet;
 pub mod panorama;
@@ -135,6 +136,7 @@ pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
+pub use outside::{OutsideEvent, OutsideFrame};
 pub use renderer::{CASCADES, RenderError};
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;

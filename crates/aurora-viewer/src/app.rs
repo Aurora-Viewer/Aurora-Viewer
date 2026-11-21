@@ -130,6 +130,7 @@ mod object_menu_demo;
 mod outfit_batch;
 mod outfit_hd;
 mod outfit_portrait;
+mod outside;
 mod own_motion;
 mod pay;
 mod photo_isolate;
@@ -583,6 +584,10 @@ pub struct App {
     /// The interface's shapes leave for the render thread, which
     /// tessellates them (aurora-render, ui_frame.rs).
     egui_hand_over: EguiHandOver,
+    /// The interface's windows outside the viewer's (outside.rs).
+    outside: crate::outside::Outside,
+    /// AURORA_DEMO_OUTSIDE: the test window outside, until it is closed.
+    outside_demo: Option<crate::outside::demo::Scenario>,
     /// egui's textures kept on the CPU, for the renderer of a GPU recovery
     /// (egui_shadow.rs), and whether the next frame hands them all over.
     egui_shadow: egui_shadow::EguiShadow,
@@ -1825,6 +1830,7 @@ impl App {
         let cache_root = cache.clone();
         let geometry_needs = crate::scene::geometry_need::GeometryNeeds::load(&cache);
         let egui_ctx = egui::Context::default();
+        let outside = crate::outside::Outside::new(&egui_ctx);
         // Restore window state before the theme and fonts: loading egui's
         // memory drops pending font definitions and the transient text scale.
         if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
@@ -1995,6 +2001,8 @@ impl App {
             demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
+            outside,
+            outside_demo: None,
             egui_shadow: Default::default(),
             egui_replay: false,
             last_frame: Instant::now(),
@@ -12966,6 +12974,7 @@ impl App {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         ui::fonts::preview::release_unused(&self.egui_ctx);
+        self.outside_frame_start(event_loop, &mut gfx.renderer);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
@@ -13575,7 +13584,10 @@ impl App {
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         self.evict_ui_images(&full.shapes);
-        let mut textures = std::mem::take(&mut full.textures_delta);
+        // (the passes of the windows outside ended before the viewer's own)
+        let mut textures = self.outside.take_textures();
+        textures.append(std::mem::take(&mut full.textures_delta));
+        let textures_changed = !textures.set.is_empty();
         if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);
         }
@@ -13587,6 +13599,13 @@ impl App {
         let egui_frame = self
             .egui_hand_over
             .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
+        self.outside.hand(
+            &ctx,
+            &mut self.egui_hand_over,
+            &mut gfx.renderer,
+            self.palette.panel,
+            textures_changed,
+        );
 
         // apply UI actions
         if actions.font_changed {
@@ -21196,6 +21215,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.outside_windows(&ctx, &p);
                 self.rlva_selftest_window(&ctx, &p);
                 self.about_window(&ctx, &p, renderer);
                 self.sysinfo_window(&ctx, &p, renderer);
@@ -21682,6 +21702,14 @@ impl ApplicationHandler for App {
             if self.update_demo.is_some() {
                 // The update preview stays offline on a synthetic login screen.
                 return;
+            }
+            // AURORA_DEMO_OUTSIDE=still|busy[,sync]: a test window outside
+            // the viewer's (outside/demo.rs)
+            if let Ok(v) = std::env::var("AURORA_DEMO_OUTSIDE") {
+                self.outside_demo = crate::outside::demo::parse(&v);
+                if self.outside_demo.is_none() {
+                    log::warn!("AURORA_DEMO_OUTSIDE={v}: still or busy, then \",sync\"");
+                }
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
             // selection, 2 under the cursor, 3 my avatar; tool: the one "Send a diagnostic"
@@ -24720,6 +24748,8 @@ impl ApplicationHandler for App {
         self.gfx = None;
         #[cfg(target_os = "linux")]
         crate::crash::renderer_dropped();
+        // (their surfaces went with the renderer)
+        self.outside.exit();
         // The voice threads end before the process does, the current
         // session's and those of the sessions left moments ago: still
         // running at the exit, an HTTPS logout found the TLS library's
@@ -24740,6 +24770,11 @@ impl ApplicationHandler for App {
         // the window of a lost device, on screen until its successor has
         // presented: its redraws and sizes are not the new renderer's
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
+            return;
+        }
+        // a window of the interface outside the viewer's: none of what
+        // follows is its own (the viewer's size, focus, keys and exit)
+        if self.outside_window_event(id, &event) {
             return;
         }
         self.typing_pointer.window_event(&event);

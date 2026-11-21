@@ -6407,6 +6407,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
+| `AURORA_DEMO_OUTSIDE=still\|busy[,sync]` | A test window of the interface outside the viewer's window, to see and measure its cost |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
@@ -8017,6 +8018,21 @@ failure. Grid validation and any paid upload are performed by the human.
   Combine with `AURORA_DEMO_VOICE=speaking|cycle` and `AURORA_PROFILE=1` for
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
+- **`AURORA_DEMO_OUTSIDE`**: at frame 300, opens a second window of the
+  system, drawn by the viewer's renderer on the render thread, with a test
+  picture (the palette's colours, a bar, a number). `still` (or `1`) shows
+  a picture that does not change: the window is drawn again only when its
+  picture or its size changes. `busy` moves the bar and counts the frames:
+  the window is drawn at every frame of the viewer, the worst case. `,sync`
+  synchronizes the window with its screen, which a window outside never is
+  when its surface offers another mode: it shows what that costs (the 3D
+  view falls to that screen's rate). With `AURORA_PROFILE=1`, the
+  `perf summary` lines gain `out_draws` (draws per frame of the viewer),
+  `out_ms` (the render thread's time on one draw) and `out_ms_max` (the
+  longest it spent on them after one frame), only when a window outside was
+  drawn. Compare `fps`, `frame`, `p95` and `rt_frame` with a run without
+  the variable, both with `AURORA_FPS_LIMIT=0`. Closing the window ends the
+  scenario; quitting the viewer with it open must leave no crash.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

@@ -120,6 +120,9 @@ pub(crate) struct FramePacket {
     pub params: FrameParams,
     pub lists: DrawLists,
     pub ui: Option<EguiFrame>,
+    /// The windows of the interface outside the viewer's (outside.rs):
+    /// opened, closed, and those to draw after this frame.
+    pub outside: crate::outside::Packet,
     pub surface: SurfaceState,
     pub settings: RenderSettings,
     /// Pixel whose depth to read back (hover; answered a few frames later).
@@ -181,6 +184,8 @@ pub(crate) struct FrameResult {
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     /// The small pictures made since the last result (`FramePacket::thumbnail`).
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// What became of the windows outside since the last result.
+    pub outside: Vec<crate::OutsideEvent>,
     /// The film frames read back since the last result, in their order.
     pub films: Vec<crate::film_readback::FilmFrame>,
     pub spent: Spent,

@@ -2202,6 +2202,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The surfaces of the interface's windows outside the viewer's
+    /// (outside.rs); the window's renderer alone has any.
+    outside: crate::outside::Surfaces,
 }
 
 impl Drop for Backend {
@@ -2215,6 +2218,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
+            self.outside.leak();
             return;
         }
         self.wait_pipeline_workers();
@@ -4682,6 +4686,7 @@ impl Backend {
             lost,
             gpu_frames,
             write_staging: Default::default(),
+            outside: Default::default(),
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -7998,6 +8003,8 @@ impl Backend {
             equirect: None,
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
+            // (`render` fills it once the windows outside are drawn)
+            outside: Vec::new(),
             films,
             spent,
         }
@@ -8263,6 +8270,7 @@ impl Backend {
             params: packet.params.clone(),
             lists: other_lists,
             ui: None,
+            outside: Default::default(),
             surface: packet.surface,
             settings: packet.settings,
             hover: None,
@@ -8360,9 +8368,26 @@ impl Backend {
             );
             self.cube = None;
         }
+        let outside = std::mem::take(&mut packet.outside);
+        let index = packet.index;
         let mut result = self.render_frame(packet);
         result.equirect = self.equirect_reads.poll();
+        self.draw_outside(outside, index, &mut result);
         result
+    }
+
+    /// The interface's windows outside the viewer's (outside.rs), once the
+    /// viewer's own frame is submitted and presented: the texture changes
+    /// of the interface are applied, and egui's buffers are free.
+    fn draw_outside(&mut self, packet: crate::outside::Packet, index: u64, result: &mut FrameResult) {
+        if self.lost.get() {
+            return;
+        }
+        self.outside.take(&self.device, &self.st_init.adapter, self.config.format, packet);
+        let drawn = self.outside.draw(&self.device, &self.queue, &self.lost, &mut self.egui, index);
+        result.stats.outside_windows = drawn.windows;
+        result.stats.outside_ms = drawn.ms;
+        result.outside = self.outside.take_events();
     }
 
     fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
@@ -8559,6 +8584,7 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                fresh.outside = std::mem::take(&mut self.outside);
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
@@ -8610,6 +8636,8 @@ impl Backend {
             params,
             lists: draw_lists,
             ui: mut egui_frame,
+            // (taken by `render` before the frame)
+            outside: _,
             surface,
             settings,
             hover,

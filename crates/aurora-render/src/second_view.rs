@@ -164,6 +164,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         params,
         lists,
         ui: None,
+        outside: Default::default(),
         surface: SurfaceState {
             width,
             height,
