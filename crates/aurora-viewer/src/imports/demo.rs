@@ -152,7 +152,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.open = true;
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
-        "texture" | "destination" => Choice::Texture,
+        "texture" | "texture-free" | "destination" => Choice::Texture,
         "material"
         | "material-cube"
         | "material-aurora"
@@ -431,7 +431,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                             }
                             entries.append(&mut loaded);
                         }
-                        Err(error) => entries.push(Entry::new(path, Err(error.to_string()), prefs.texture())),
+                        Err(error) => entries.push(Entry::new(path, Err(files::load_error(error)), prefs.texture())),
                     }
                 }
                 if choice == Choice::Local {
@@ -453,7 +453,7 @@ fn folder_fixtures(root: &Path, prefs: &Preferences) -> Result<Vec<Entry>, Strin
     if let Some(folder) = std::env::var_os("AURORA_DEMO_IMPORT_FILE").map(PathBuf::from)
         && folder.is_dir()
     {
-        return Ok(files::load_folder(&folder, prefs, prefs.texture(), 30, 0, 0));
+        return Ok(files::load_folder(&folder, prefs, prefs.texture(), 30));
     }
     fixtures(root)?;
     let pack = root.join("Creator Pack");
@@ -480,6 +480,6 @@ fn folder_fixtures(root: &Path, prefs: &Preferences) -> Result<Vec<Entry>, Strin
             std::fs::write(pack.join(format!("Coat/Coat_{suffix}.dae")), DAE).map_err(|error| error.to_string())?;
         }
     }
-    let entries = files::load_folder(&pack, prefs, prefs.texture(), 30, 0, 0);
+    let entries = files::load_folder(&pack, prefs, prefs.texture(), 30);
     Ok(entries)
 }

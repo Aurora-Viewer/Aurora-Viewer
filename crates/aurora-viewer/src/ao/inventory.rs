@@ -555,7 +555,36 @@ pub fn save_cycle(inv: &Inventory, state: State, config: &StateConfig) -> Result
 }
 
 pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Option<Uuid>) -> Result<Mutation, String> {
-    let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
+    add_many(inv, set, state, &[item], container)
+}
+
+/// A drop of several inventory entries (FloaterAO::handleDragAndDrop accepts
+/// animations with ACCEPT_YES_MULTI, indra/newview/ao.cpp). As
+/// LLToolDragAndDrop::dragOrDrop does, the whole batch is refused when one
+/// entry is not an animation (a folder, a notecard…). The Legacy Viewer adds
+/// them in its selection order; Aurora's selection keeps none, so they come
+/// in name order, as the inventory lists them. One request links them all,
+/// numbered after the entries already there, and creates a missing state
+/// folder once (AOEngine::addAnimation queues the drops for that).
+pub fn add_many(inv: &Inventory, set: &Set, state: State, items: &[Uuid], container: Option<Uuid>) -> Result<Mutation, String> {
+    let mut added = Vec::with_capacity(items.len());
+    for &item in items {
+        let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
+        // The same entry named twice is linked once.
+        if !added.iter().any(|b: &Animation| b.link == a.link) {
+            added.push(a);
+        }
+    }
+    if added.is_empty() {
+        return Err(aurora_i18n::tr!("ao-not-animation").into());
+    }
+    added.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.link.cmp(&b.link))
+    });
     let mut change = Mutation::default();
     let config = set.states.get(&state);
     let parent = config
@@ -582,13 +611,17 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     };
     change.operations.push(Operation::Links {
         parent,
-        links: vec![OutfitLink {
-            target: a.original,
-            name: a.name,
-            desc: count.to_string(),
-            folder: false,
-            inv_type: 19,
-        }],
+        links: added
+            .into_iter()
+            .enumerate()
+            .map(|(offset, a)| OutfitLink {
+                target: a.original,
+                name: a.name,
+                desc: (count + offset).to_string(),
+                folder: false,
+                inv_type: 19,
+            })
+            .collect(),
     });
     change.refresh.push(parent);
     Ok(finish(change))
