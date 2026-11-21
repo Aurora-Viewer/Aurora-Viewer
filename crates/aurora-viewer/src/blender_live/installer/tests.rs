@@ -194,6 +194,53 @@ fn blender_live_installer_discovery_is_bounded_deduplicated_and_accepts_spaces()
     assert!(paths.iter().any(|p| p.to_string_lossy().contains("Blender 5.2")));
 }
 
+#[test]
+fn blender_live_removal_runs_only_where_aurora_is_installed_and_keeps_backups() {
+    let temporary = Temporary::new().expect("directory");
+    let with_backups = temporary.0.join("profile-a");
+    std::fs::create_dir_all(with_backups.join("aurora-backups")).expect("backups");
+    let entry = |name: &str, plugin: Option<&str>, enabled: bool, error: Option<&str>, profile: PathBuf| Installation {
+        executable: PathBuf::from(name),
+        report: Report {
+            version: [5, 2, 1],
+            plugin_version: plugin.map(str::to_owned),
+            enabled,
+            profile,
+            error: error.map(str::to_owned),
+            ..Default::default()
+        },
+    };
+    let installations = vec![
+        entry("installed", Some(addon::version()), true, None, with_backups.clone()),
+        entry("disabled", Some("0.8.6"), false, None, PathBuf::new()),
+        entry("enabled-only", None, true, None, temporary.0.join("profile-c")),
+        entry("absent", None, false, None, temporary.0.join("profile-d")),
+        entry("unreadable", Some(addon::version()), true, Some("probe failed"), PathBuf::new()),
+        entry("failing", Some(addon::version()), true, None, PathBuf::new()),
+    ];
+    let mut ran = Vec::new();
+    let removals = remove_from(installations, |path| {
+        ran.push(path.to_owned());
+        if path == Path::new("failing") {
+            return Err("timed out".into());
+        }
+        Ok(Report {
+            removed: vec![PathBuf::from(path).join("aurora_live_mesh")],
+            ..Default::default()
+        })
+    });
+    assert_eq!(
+        ran,
+        ["installed", "disabled", "enabled-only", "failing"].map(PathBuf::from),
+        "never a Blender without Aurora's add-on, nor one whose profile could not be read"
+    );
+    assert_eq!(removals[0].removed, [PathBuf::from("installed/aurora_live_mesh")]);
+    assert_eq!(removals[0].backups.as_deref(), Some(with_backups.join("aurora-backups").as_path()));
+    assert!(removals[1..].iter().all(|r| r.backups.is_none()));
+    assert_eq!(removals[3].error.as_deref(), Some("timed out"));
+    assert!(removals[3].removed.is_empty());
+}
+
 /// Runs the actual compiled viewer packaging/process path in disposable profiles.
 /// Example: AURORA_TEST_BLENDER=<absolute blender.exe>; cargo test --workspace
 /// blender_live_installer_native -- --ignored --nocapture
@@ -213,7 +260,7 @@ fn blender_live_installer_native_probe_install_and_reinstall_preserve_previous_f
             .env("BLENDER_USER_SCRIPTS", profile.0.join("profile/scripts"))
             .env("BLENDER_USER_EXTENSIONS", profile.0.join("profile/extensions"))
             .env("BLENDER_USER_RESOURCES", profile.0.join("profile"));
-        bridge(command, install).expect("bridge report")
+        bridge(command, Operation::install(install)).expect("bridge report")
     };
     let initial = run(false);
     assert!(initial.error.is_none(), "{:?}", initial.error);
@@ -233,6 +280,14 @@ fn blender_live_installer_native_probe_install_and_reinstall_preserve_previous_f
     assert_eq!(installed.plugin_version.as_deref(), Some(addon::version()));
     assert!(installed.enabled);
     assert!(installed.target.join("__init__.py").is_file());
+    // the removal below deletes this folder: never one of the user's own profile
+    let inside = |path: &Path| {
+        path.canonicalize()
+            .ok()
+            .zip(profile.0.canonicalize().ok())
+            .is_some_and(|(path, root)| path.starts_with(root))
+    };
+    assert!(inside(&installed.target), "{:?} is outside the isolated profile", installed.target);
     let preferences = std::fs::read(config.join("userpref.blend")).expect("persisted enabled add-on");
     let fresh_probe = run(false);
     assert!(fresh_probe.enabled, "enabled after restarting Blender");
@@ -249,8 +304,21 @@ fn blender_live_installer_native_probe_install_and_reinstall_preserve_previous_f
         preferences
     );
     assert!(run(false).enabled);
+    let mut command = command(&executable);
+    command
+        .env("BLENDER_USER_CONFIG", &config)
+        .env("BLENDER_USER_SCRIPTS", profile.0.join("profile/scripts"))
+        .env("BLENDER_USER_EXTENSIONS", profile.0.join("profile/extensions"))
+        .env("BLENDER_USER_RESOURCES", profile.0.join("profile"));
+    let removed = bridge(command, Operation::Uninstall).expect("uninstall report");
+    assert!(removed.error.is_none(), "{:?}", removed.error);
+    assert_eq!(removed.removed, std::slice::from_ref(&installed.target));
+    assert!(!installed.target.exists(), "the package folder is deleted");
+    assert!(backup.join("userpref.blend").is_file(), "the install's backups stay");
+    let after = run(false);
+    assert!(after.plugin_version.is_none() && !after.enabled, "gone after restarting Blender");
     println!(
-        "Native Blender {:?}: install, persistent enable, reinstallation and backup passed",
+        "Native Blender {:?}: install, persistent enable, reinstallation, backup and removal passed",
         installed.version
     );
 }

@@ -23,8 +23,13 @@ pub const DIRS: [&str; 9] = [
     "inventory",
     "sound",
     "settings",
-    "clipboard-images",
+    CLIPBOARD_IMAGES,
 ];
+
+/// The pictures copied from the chat, as PNG files for a paste in the file
+/// explorer (`ui/chat/previews/clipboard.rs`): plain files, in the store
+/// like the rest so that its size limit and Clear Cache take them too.
+pub const CLIPBOARD_IMAGES: &str = "clipboard-images";
 
 /// Bytes written to the cache since the last walk.
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
@@ -54,12 +59,54 @@ fn publish(path: &Path, file: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read a cache file whole. A file sealed under another key or damaged is
-/// an error, like a missing one: a cache miss.
+/// Whether a file not in the store format reads as it is. Only in the
+/// unit tests, which write their files by hand, and in the demo: its
+/// sources are plain files (`AURORA_DEMO_STREAM`'s `j2k=` folder, what its
+/// local asset server serves, the maps its scenarios write), and it never
+/// meets a grid. Anywhere else such a file is a cache miss: the asset is
+/// fetched again.
+fn plain_files_read() -> bool {
+    cfg!(test) || demo()
+}
+
+fn demo() -> bool {
+    static DEMO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("AURORA_DEMO").is_some());
+    *DEMO
+}
+
+/// The stem of the store file of `id`, derived from the installation key
+/// ([`aurora_assets::sealed::Names`]): the folders list no asset id. The
+/// demo keeps the ids as names: its folder is shared by the demo runs of
+/// every build, and the scripts that measure it find its files by id.
+pub fn file_name(id: &uuid::Uuid) -> String {
+    if demo() { id.to_string() } else { keyed_name(id) }
+}
+
+/// [`file_name`] outside the demo, for a read of this installation's store
+/// from the demo.
+pub fn keyed_name(id: &uuid::Uuid) -> String {
+    static NAMES: std::sync::OnceLock<aurora_assets::sealed::Names> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| key().names()).name(id)
+}
+
+/// The store file of `id` in `folder` (one of [`DIRS`]) of the store `dir`.
+pub fn path(dir: &Path, folder: &str, id: &uuid::Uuid, ext: &str) -> PathBuf {
+    dir.join(folder).join(format!("{}.{ext}", file_name(id)))
+}
+
+fn open(file: Vec<u8>, plain: bool) -> std::io::Result<Vec<u8>> {
+    if plain { key().open_or_plain(file) } else { key().open(file) }
+}
+
+/// Read a cache file whole. A file sealed under another key, damaged, or
+/// not in the store format is an error, like a missing one: a cache miss.
 pub fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
-    let d = std::fs::read(path.as_ref())?;
+    let d = match std::fs::read(path.as_ref()) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && RENAMES.now(path.as_ref()) => std::fs::read(path.as_ref())?,
+        d => d?,
+    };
     crate::disk_io::read(origin_of(path.as_ref()), d.len());
-    key().open(d)
+    open(d, plain_files_read())
 }
 
 /// Read a cache file and mark it as used.
@@ -71,7 +118,16 @@ pub fn read_touch(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
 
 /// A cache file for reads at given places (only those chunks are decrypted).
 pub fn reader(path: impl AsRef<Path>) -> std::io::Result<aurora_assets::sealed::Reader<std::fs::File>> {
-    aurora_assets::sealed::Reader::new(std::fs::File::open(path)?, key())
+    let path = path.as_ref();
+    let file = match std::fs::File::open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && RENAMES.now(path) => std::fs::File::open(path)?,
+        file => file?,
+    };
+    if plain_files_read() {
+        aurora_assets::sealed::Reader::new_or_plain(file, key())
+    } else {
+        aurora_assets::sealed::Reader::new(file, key())
+    }
 }
 
 /// Delete the cache folders of the earlier format, which the versions
@@ -101,6 +157,94 @@ pub fn remove_unsealed(old_root: PathBuf) {
         log::info!(
             "cache: {} MB of the earlier format removed in {:.1} s",
             freed / (1024 * 1024),
+            started.elapsed().as_secs_f32()
+        );
+    });
+}
+
+/// The files of a store named by their asset id (the earlier names), waiting
+/// to take their name of [`file_name`]: keyed name -> earlier name.
+struct Renames(parking_lot::Mutex<Option<std::collections::HashMap<PathBuf, PathBuf>>>);
+
+static RENAMES: Renames = Renames(parking_lot::Mutex::new(None));
+
+/// The folders of [`DIRS`] in renaming order: what a login reads first
+/// (the inventory, the region objects), the textures last.
+const RENAME_ORDER: [&str; 8] = ["inventory", "objects", "settings", "anim", "sound", "mat", "mesh", "tex"];
+
+impl Renames {
+    /// The files of `root` named by an asset id, with their keyed name.
+    fn scan(&self, root: &Path) -> Vec<(PathBuf, PathBuf)> {
+        let mut found = Vec::new();
+        for folder in RENAME_ORDER {
+            let dir = root.join(folder);
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some((stem, ext)) = name.to_str().and_then(|n| n.split_once('.')) else {
+                    continue;
+                };
+                // (an id is 36 characters long; a write in progress ends in .tmp)
+                if stem.len() != 36 || ext.ends_with("tmp") {
+                    continue;
+                }
+                if let Ok(id) = uuid::Uuid::try_parse(stem) {
+                    found.push((dir.join(format!("{}.{ext}", keyed_name(&id))), entry.path()));
+                }
+            }
+        }
+        *self.0.lock() = (!found.is_empty()).then(|| found.iter().cloned().collect());
+        found
+    }
+
+    /// Give the file waiting to be called `keyed` that name now (a read
+    /// that comes before its turn). Whether there was one.
+    fn now(&self, keyed: &Path) -> bool {
+        let Some(earlier) = self.0.lock().as_mut().and_then(|m| m.remove(keyed)) else {
+            return false;
+        };
+        std::fs::rename(&earlier, keyed).is_ok()
+    }
+
+    /// Rename every file found by [`Renames::scan`] not renamed yet. A file
+    /// already written under its keyed name (fetched again meanwhile) is the
+    /// newer one: the earlier file goes. The number renamed.
+    fn run(&self, found: Vec<(PathBuf, PathBuf)>) -> usize {
+        let mut renamed = 0;
+        for (keyed, earlier) in found {
+            if self.0.lock().as_mut().and_then(|m| m.remove(&keyed)).is_none() {
+                continue;
+            }
+            if keyed.exists() {
+                let _ = std::fs::remove_file(&earlier);
+            } else if std::fs::rename(&earlier, &keyed).is_ok() {
+                renamed += 1;
+            }
+        }
+        *self.0.lock() = None;
+        renamed
+    }
+}
+
+/// Give the files of the store `root` named by their asset id (written
+/// before the names came from the installation key, or by an earlier
+/// version since) their keyed names, in the background: no file is fetched
+/// again. A rename takes about half a millisecond on Windows (25 s for
+/// 50,000 files); a file read before its turn is renamed on the spot. Not
+/// in the demo, which keeps the ids as names.
+pub fn rename_to_keyed_names(root: PathBuf) {
+    let _ = std::thread::Builder::new().name("aurora-cache-names".into()).spawn(move || {
+        let started = Instant::now();
+        let found = RENAMES.scan(&root);
+        if found.is_empty() {
+            return;
+        }
+        let total = found.len();
+        let renamed = RENAMES.run(found);
+        log::info!(
+            "cache: {renamed} of {total} files renamed in {:.1} s",
             started.elapsed().as_secs_f32()
         );
     });
@@ -344,6 +488,80 @@ mod tests {
         assert_eq!(origin_of(&root.join("settings").join("x.settings")), Origin::Other);
         // a file named like a folder is not one
         assert_eq!(origin_of(&root.join("tex")), Origin::Other);
+    }
+
+    #[test]
+    fn a_store_read_takes_only_the_store_format() {
+        let plain = [[0xff, 0x4f, 0xff, 0x51].as_slice(), b" a codestream written by hand"].concat();
+        assert!(open(plain.clone(), false).is_err(), "a plain file is a miss");
+        assert_eq!(open(plain.clone(), true).expect("demo source"), plain);
+        let sealed = key().seal(&plain).expect("seal");
+        assert_eq!(open(sealed.clone(), false).expect("sealed"), plain);
+        assert_eq!(open(sealed, true).expect("sealed"), plain);
+    }
+
+    #[test]
+    fn store_names_come_from_the_key() {
+        let id = uuid::Uuid::from_u128(0xabcd);
+        let name = file_name(&id);
+        assert_eq!(name, keyed_name(&id));
+        assert_eq!(name.len(), aurora_assets::sealed::NAME_LEN);
+        assert!(!name.contains(&id.to_string()));
+        assert_eq!(
+            path(Path::new("store"), "tex", &id, "j2c"),
+            Path::new("store").join("tex").join(format!("{name}.j2c"))
+        );
+    }
+
+    #[test]
+    fn files_named_by_id_take_their_keyed_name() {
+        let root = std::env::temp_dir().join(format!("aurora-cache-test-{}", uuid::Uuid::new_v4()));
+        let (a, b, c) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2), uuid::Uuid::from_u128(3));
+        let earlier = |folder: &str, id: &uuid::Uuid, ext: &str| root.join(folder).join(format!("{id}.{ext}"));
+        for folder in DIRS {
+            std::fs::create_dir_all(root.join(folder)).expect("folder");
+        }
+        for (folder, id, ext) in [("tex", a, "j2c"), ("tex", a, "bc7"), ("objects", b, "objc"), ("mesh", c, "mesh")] {
+            write(earlier(folder, &id, ext), ext.as_bytes()).expect("earlier file");
+        }
+        // fetched again before the rename: the newer file stays
+        write(path(&root, "mesh", &c, "mesh"), b"newer").expect("newer file");
+        let picture = root.join(CLIPBOARD_IMAGES).join("Aurora-image-0123456789abcdef.png");
+        write_plain(&picture, b"png").expect("picture");
+        let tmp = root.join("tex").join(format!("{a}.tmp"));
+        write_plain(&tmp, b"tmp").expect("tmp");
+
+        let renames = Renames(parking_lot::Mutex::new(None));
+        let found = renames.scan(&root);
+        assert_eq!(found.len(), 4, "the files named by an id, nothing else");
+        // a read before its turn
+        assert!(renames.now(&path(&root, "objects", &b, "objc")));
+        assert!(!renames.now(&path(&root, "objects", &b, "objc")), "once");
+        assert_eq!(renames.run(found), 2, "the two textures; the object cache was renamed on read");
+        for (folder, id, ext) in [("tex", a, "j2c"), ("tex", a, "bc7"), ("objects", b, "objc")] {
+            assert!(!earlier(folder, &id, ext).exists());
+            assert_eq!(read(path(&root, folder, &id, ext)).expect("renamed"), ext.as_bytes());
+        }
+        assert!(!earlier("mesh", &c, "mesh").exists());
+        assert_eq!(read(path(&root, "mesh", &c, "mesh")).expect("kept"), b"newer");
+        assert!(picture.exists() && tmp.exists(), "left as they are");
+        assert!(renames.scan(&root).is_empty(), "nothing left");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clear_takes_the_copied_pictures() {
+        let root = std::env::temp_dir().join(format!("aurora-cache-test-{}", uuid::Uuid::new_v4()));
+        let cache = DiskCache::new(root.clone(), 100);
+        let picture = root.join(CLIPBOARD_IMAGES).join("Aurora-image-0123456789abcdef.png");
+        write_plain(&picture, b"png").expect("picture");
+        cache.clear();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while (picture.exists() || cache.is_clearing()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!picture.exists(), "cleared with the cache");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

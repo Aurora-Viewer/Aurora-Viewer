@@ -236,6 +236,9 @@ pub struct Candidates {
     see_through: Vec<usize>,
     /// For `Scene::interaction_at_ray_among`.
     point: Vec<usize>,
+    /// Full-ray CPU candidates shared by the transparent/visible priority
+    /// comparison. Rigged objects still set `drawn`, but cannot answer it.
+    priority: Vec<usize>,
     /// For `Scene::point_behind_ignored`: filled when it is needed.
     all: Vec<usize>,
 }
@@ -488,6 +491,7 @@ impl PickIndex {
         out.ignore.clear();
         out.see_through.clear();
         out.point.clear();
+        out.priority.clear();
         for (i, (e, &c)) in self.entries.iter().zip(&self.classes).enumerate() {
             if !e.pickable() {
                 continue;
@@ -496,6 +500,9 @@ impl PickIndex {
             // `ray_may_hit`): wings or a long animated mesh can extend far
             // beyond it. Only the rigid bounds may rule out the GPU query.
             out.drawn |= e.skinned || (e.aside && e.concerns(probe));
+            if !e.skinned && e.candidate(probe) {
+                out.priority.push(i);
+            }
             if e.always && classes && c & class::KNOWN != 0 && e.radius > 0.0 {
                 if c & class::IGNORE != 0 {
                     out.ignore.push(i);
@@ -758,14 +765,17 @@ impl super::Scene {
         self.hover.needs_drawn
     }
 
-    /// The HUD object the hover cursor is over, including invisible Mask/Blend
-    /// buttons, which comes before any object of the world.
+    /// The HUD object the hover cursor is over, which comes before any object
+    /// of the world: the target a press would take (`hud_click_pick`), so
+    /// the hover cursor and the click never disagree. Invisible buttons
+    /// count; a plain alpha-zero media panel lets the object behind it take
+    /// the hover.
     pub fn hover_hud(&mut self, world: &crate::world::World, cursor: (f32, f32)) -> Option<usize> {
         if !profile_enabled() {
-            return self.hud_pick(world, cursor, false).map(|(idx, _, _)| idx);
+            return self.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
         }
         let started = Instant::now();
-        let picked = self.hud_pick(world, cursor, false).map(|(idx, _, _)| idx);
+        let picked = self.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
         let now = Instant::now();
         self.roll_hover_stats(now, true);
         self.hover.stats.hud_picks += 1;
@@ -849,7 +859,7 @@ impl super::Scene {
         let point = blend.map(|(t, _)| ray.0 + ray.1 * t).or(point);
         let t_point = profile.then(Instant::now);
         let object = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, Some(&candidates.point)));
-        let answer = (point, object);
+        let answer = self.hover_through_clear(world, ray, far, (point, object), Some(&candidates.priority));
         if let (Some(t_index), Some(t_point)) = (t_index, t_point) {
             let done = Instant::now();
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
@@ -870,7 +880,7 @@ impl super::Scene {
         }
         if check_enabled() {
             let expected = full(self);
-            if expected != object {
+            if expected != answer.1 {
                 self.hover.wrong += 1;
                 log::warn!(
                     "hover check: the search among {} / {} / {} candidates gives {answer:?}, the full search {expected:?}",
@@ -893,10 +903,32 @@ impl super::Scene {
     /// classes or triangle hierarchies.
     fn full_hover_pick(&self, world: &crate::world::World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> HoverHit {
         let point = self.action_point_among(world, ray, depth, far, None);
-        (
-            point,
-            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, None)),
-        )
+        let object = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, None));
+        self.hover_through_clear(world, ray, far, (point, object), None)
+    }
+
+    /// Apply the click's transparent/visible priority on each uncached
+    /// search. A delayed depth sample can still lie on an opaque passive
+    /// object behind a newly hovered clicker; that old object's material
+    /// cannot decide whether the comparison is needed.
+    fn hover_through_clear(
+        &self,
+        world: &crate::world::World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        answer: HoverHit,
+        candidates: Option<&[usize]>,
+    ) -> HoverHit {
+        let (point, Some(idx)) = answer else { return answer };
+        // These already win the transparent pick, so no second geometry
+        // search is needed, including on large opaque scripted meshes.
+        if self.gpu.get(idx).is_some_and(|g| g.owner_avatar.is_some()) || self.touch_wins_alpha(world, idx) {
+            return answer;
+        }
+        match self.visible_action_point(world, ray, point, far, candidates) {
+            Some(p) => (Some(p), self.left_interaction_among(world, p, ray, candidates).or(Some(idx))),
+            None => answer,
+        }
     }
 
     /// The class of an object for the hover search ([`class`]), from what
@@ -1144,6 +1176,9 @@ mod tests {
             index.set(0, entry);
             index.hover_candidates(&PROBE, true, &mut candidates);
             assert_eq!(candidates.drawn, needed, "{entry:?}");
+            if entry.skinned {
+                assert!(candidates.priority.is_empty(), "GPU eligibility must survive CPU filtering");
+            }
         }
     }
 
@@ -1161,9 +1196,11 @@ mod tests {
             base_slot: 0,
             tex_id: uuid::Uuid::nil(),
             aux_tex: [uuid::Uuid::nil(); 3],
+            bump_height_source: uuid::Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow: false,
@@ -1615,6 +1652,29 @@ mod tests {
     }
 
     #[test]
+    fn delayed_opaque_depth_keeps_hover_in_step_with_click_priority() {
+        let (mut world, mut scene, front, back) = crate::scene::picking::tests::indexed_scene_with_two_objects();
+        for idx in [front, back] {
+            let o = world.objects.get_mut(idx).expect("object");
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = if idx == front { crate::ui::context::flags::HANDLE_TOUCH } else { 0 };
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        // The depth still describes the opaque passive surface from the
+        // previous pointer position, with a scripted surface now in front.
+        let depth = Some(Vec3::new(6.5, 0.0, 50.0));
+        let expected = scene.full_hover_pick(&world, ray, depth, 100.0);
+        assert_eq!(expected.1, Some(front));
+        assert_eq!(scene.hover_pick(&world, Some(ray), depth, 100.0), expected);
+        let click_point = scene.action_point(&world, Some(ray), depth, false, 100.0);
+        assert_eq!(click_point, expected.0);
+        assert_eq!(
+            click_point.and_then(|p| scene.left_interaction_at_ray(&world, p, ray, true)),
+            expected.1
+        );
+    }
+
+    #[test]
     fn the_search_with_classes_gives_the_answer_of_the_full_search() {
         let (mut world, mut scene, front, back) = scene_with_a_rigged_mesh();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
@@ -1666,7 +1726,7 @@ mod tests {
     #[test]
     fn a_large_face_is_searched_through_its_hierarchy_once_built() {
         use crate::scene::{GeomEntry, GeomKey, GeomState, GpuGeom, picking::PickFace};
-        let (world, mut scene, front, _) = scene_with_a_rigged_mesh();
+        let (mut world, mut scene, front, _) = scene_with_a_rigged_mesh();
         // the near object: a mesh whose side facing the ray is a fine grid
         const N: u16 = 24;
         let mut positions = Vec::new();
@@ -1707,9 +1767,8 @@ mod tests {
         scene.gpu[front].geom = Some(key);
         let ray = (Vec3::new(0.0, 0.13, 50.21), Vec3::X);
         let depth = Some(Vec3::new(2.5, 0.13, 50.21));
-        let full = scene
-            .interaction_point(&world, Some(ray), depth, false, 100.0)
-            .and_then(|point| scene.interaction_at_ray(&world, point, ray, false));
+        // The reference must not queue the hierarchy before the cold search.
+        let full = scene.selection_pick(&world, Some(ray), depth, false, false, 100.0).1;
         assert_eq!(full, Some(front));
         // every triangle the first time, and the hierarchy is asked for
         scene.exact_tests.take();
@@ -1730,5 +1789,17 @@ mod tests {
         // beside the grid's side: nothing either way
         let beside = (Vec3::new(0.0, 0.7, 50.21), Vec3::X);
         assert_eq!(scene.hover_object(&world, Some(beside), None, 102.0), None);
+        // A passive opaque surface needs the transparent/visible comparison
+        // too. All its warm distance searches must share the hierarchy.
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::DISABLED;
+        assert!(!scene.touch_wins_alpha(&world, front));
+        scene.pick.changed(front);
+        let expected = scene.full_hover_pick(&world, ray, depth, 103.0);
+        scene.exact_tests.take();
+        assert_eq!(scene.hover_pick(&world, Some(ray), depth, 103.0), expected);
+        let [_, _, triangles, hierarchies] = scene.exact_tests.take();
+        assert_eq!(triangles, 0, "priority searches must not walk the full triangle list");
+        assert!(hierarchies >= 2, "primary and priority searches use the same built hierarchy");
     }
 }

@@ -293,7 +293,8 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
         let permitted = complete_selection
             && selected.iter().all(|item| {
                 !item.asset_id.is_nil()
-                    && item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+                    && rules::held(inv, item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                        == rules::COPY | rules::MODIFY | rules::TRANSFER
             });
         let formats = c.group(
             "save-textures",
@@ -387,7 +388,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             ),
             (
                 "card-request-teleport",
-                "map-pin-filled",
+                "car-filled",
                 aurora_i18n::tr!("inventory-card-request-teleport"),
                 crate::ui::context::CtxAction::RequestTeleport(who),
                 single && facts.online.contains(&who),
@@ -516,11 +517,20 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
         );
         replace(
             c,
+            "play-sound-world",
+            complete_selection && selected.iter().all(|item| item.asset_type == 1 && !item.asset_id.is_nil()),
+            super::Command::Batch(selected.iter().map(|item| InvAction::TriggerSound(item.asset_id)).collect()),
+        );
+        replace(
+            c,
             "rez-previous",
             complete_selection
-                && selected
-                    .iter()
-                    .all(|item| item.asset_type == 6 && !facts.worn.contains(&item.id) && rules::mutable(inv, item.id)),
+                && selected.iter().all(|item| {
+                    item.asset_type == 6
+                        && !facts.worn.contains(&item.id)
+                        && rules::mutable(inv, item.id)
+                        && rules::restorable(item, facts.opensim)
+                }),
             super::Command::Batch(selected.iter().map(|item| InvAction::Restore(item.id)).collect()),
         );
     }
@@ -559,7 +569,8 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             );
         }
         for (kind, key, label, local) in [
-            (1, "play-sound", aurora_i18n::tr!("common-play"), true),
+            (1, "play-sound", aurora_i18n::tr!("common-play-locally"), true),
+            (1, "play-sound-world", aurora_i18n::tr!("common-play-in-world"), false),
             (
                 20,
                 "play-world",
@@ -573,7 +584,11 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                     .iter()
                     .map(|item| {
                         if kind == 1 {
-                            InvAction::Sound(item.asset_id)
+                            if local {
+                                InvAction::Sound(item.asset_id)
+                            } else {
+                                InvAction::TriggerSound(item.asset_id)
+                            }
                         } else {
                             InvAction::Animation {
                                 asset: item.asset_id,
@@ -586,7 +601,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 c.add(
                     key,
                     TEXT,
-                    "player-play-filled",
+                    if local { "player-play-filled" } else { "world-filled" },
                     label,
                     selected.iter().all(|item| !item.asset_id.is_nil()),
                     super::Command::Batch(batch),
@@ -648,7 +663,13 @@ fn discover_originals(inv: &mut Inventory, root: Uuid) -> bool {
     complete
 }
 
-pub(in crate::ui::inventory) fn process_deferred(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts) {
+pub(in crate::ui::inventory) fn process_deferred(
+    inv: &mut Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     let Some(folder) = st.pending_cleanup else { return };
     if st.pending.is_some() || st.dialog.is_some() || st.cleanup_generation == Some(inv.generation) {
         return;
@@ -683,7 +704,7 @@ pub(in crate::ui::inventory) fn process_deferred(inv: &mut Inventory, st: &mut I
         st.message = aurora_i18n::tr!("inventory-no-broken-links").into();
     } else if super::super::delete::allowed(inv, &broken, prefs, facts) {
         st.message.clear();
-        st.dialog = Some(EditDialog::Delete(broken, false));
+        super::super::delete::confirm_or_run(inv, st, prefs, facts, actions, broken);
     }
 }
 
@@ -730,7 +751,7 @@ pub(super) fn execute(
             {
                 let ids = folder.items.iter().chain(&folder.children).copied().collect::<Vec<_>>();
                 if super::super::delete::allowed(inv, &ids, prefs, facts) {
-                    st.dialog = Some(EditDialog::Delete(ids, false));
+                    super::super::delete::confirm_or_run(inv, st, prefs, facts, actions, ids);
                 }
             }
         }
@@ -756,7 +777,7 @@ pub(super) fn execute(
                     operations: vec![Operation::Folder {
                         id,
                         parent,
-                        name: aurora_i18n::tr!("inventory-new-outfit").into(),
+                        name: crate::text_validation::default_name("inventory-new-outfit").into(),
                         type_default: 47,
                     }],
                     refresh: vec![parent, id],
@@ -968,16 +989,18 @@ mod tests {
             ..Default::default()
         };
         let prefs = InventoryPreferences::default();
-        process_deferred(&mut inv, &mut state, &prefs, &Facts::default());
+        let mut actions = Vec::new();
+        process_deferred(&mut inv, &mut state, &prefs, &Facts::default(), &mut actions);
         assert_eq!(state.pending_cleanup, Some(folder));
         assert!(state.dialog.is_none());
         assert!(inv.queue.iter().any(|(id, _)| *id == inv.lib_root));
         state.selection.insert(Uuid::from_u128(8001));
         inv.folders.get_mut(&inv.lib_root).expect("library").state = FetchState::Fetched;
         inv.generation += 1;
-        process_deferred(&mut inv, &mut state, &prefs, &Facts::default());
+        process_deferred(&mut inv, &mut state, &prefs, &Facts::default(), &mut actions);
         assert!(state.pending_cleanup.is_none());
         assert!(matches!(&state.dialog,Some(EditDialog::Delete(ids,false)) if ids.contains(&broken)));
+        assert!(actions.is_empty());
     }
 
     #[test]

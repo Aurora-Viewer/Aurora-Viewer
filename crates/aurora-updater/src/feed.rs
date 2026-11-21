@@ -13,6 +13,12 @@ pub const RELEASE_PAGE: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/r
 const DOWNLOADS: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/releases/download";
 pub const POLICY: &str = "aurora-update-policy.json";
 pub const MAX_ARCHIVE: u64 = 2 * 1024 * 1024 * 1024;
+/// How long an installation below a new minimum may still sign in, when
+/// the policy does not say (#3014): a show or a DJ set under way ends
+/// before the update is needed.
+pub const DEFAULT_GRACE: Duration = Duration::from_secs(12 * 3600);
+/// The longest grace a policy may give.
+const MAX_GRACE_HOURS: u64 = 72;
 
 /// Which releases a viewer follows. Beta also takes the stable versions: a
 /// stable release ranks above the betas of its own number (SemVer), so a
@@ -45,6 +51,13 @@ pub fn is_beta(v: &Version) -> bool {
 pub struct Source {
     url: String,
     loopback: bool,
+    /// The release list last read and its ETag, shared by the clones: the
+    /// next check asks GitHub whether it changed (`If-None-Match`). A "304
+    /// Not Modified" answer is a few bytes and does not count against the 60
+    /// requests an hour GitHub allows an address without an account, so a
+    /// viewer can check every few minutes, even with others behind the same
+    /// address (a household, a mobile network, a VPN).
+    list: std::sync::Arc<std::sync::Mutex<Option<(String, Vec<u8>)>>>,
 }
 
 impl Default for Source {
@@ -52,6 +65,7 @@ impl Default for Source {
         Self {
             url: RELEASES.into(),
             loopback: false,
+            list: Default::default(),
         }
     }
 }
@@ -68,6 +82,7 @@ impl Source {
         Ok(Self {
             url: url.into(),
             loopback: true,
+            list: Default::default(),
         })
     }
 
@@ -103,23 +118,26 @@ impl Source {
 
     pub fn client(&self) -> Result<Client> {
         let source = self.clone();
-        let builder = Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .https_only(!self.loopback)
-            .connect_timeout(Duration::from_secs(8))
-            .read_timeout(Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                if attempt.previous().len() >= 5 {
-                    attempt.error("too many redirects")
-                } else if source.validate_url(attempt.url().as_str()).is_ok() {
-                    attempt.follow()
-                } else {
-                    attempt.error("untrusted redirect")
-                }
-            }));
-        // An explicit local feed must not leave loopback through a system proxy.
-        let builder = if self.loopback { builder.no_proxy() } else { builder };
-        Ok(builder.build()?)
+        let loopback = self.loopback;
+        // An explicit local feed never leaves loopback: the rule never
+        // proxies it.
+        let client = aurora_proxy::http_client(|builder| {
+            builder
+                .user_agent(aurora_version::user_agent())
+                .https_only(!loopback)
+                .connect_timeout(Duration::from_secs(8))
+                .read_timeout(Duration::from_secs(20))
+                .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                    if attempt.previous().len() >= 5 {
+                        attempt.error("too many redirects")
+                    } else if source.validate_url(attempt.url().as_str()).is_ok() {
+                        attempt.follow()
+                    } else {
+                        attempt.error("untrusted redirect")
+                    }
+                }))
+        })?;
+        Ok(client)
     }
 
     pub async fn bytes(&self, client: &Client, url: &str, limit: usize) -> Result<Vec<u8>> {
@@ -138,9 +156,42 @@ impl Source {
         Ok(bytes)
     }
 
+    /// The release list: the one kept when GitHub says it has not changed
+    /// since (`list`), else the new one, kept with its ETag.
+    async fn releases(&self, client: &Client) -> Result<Vec<u8>> {
+        const LIMIT: usize = 4 * 1024 * 1024;
+        self.validate_url(&self.url)?;
+        let kept = self.list.lock().map_err(|_| anyhow::anyhow!("release list lock"))?.clone();
+        let mut request = client.get(&self.url).header("Accept", "application/vnd.github+json");
+        if let Some((etag, _)) = &kept {
+            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
+        let mut response = request.send().await?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED
+            && let Some((_, bytes)) = kept
+        {
+            return Ok(bytes);
+        }
+        response = response.error_for_status()?;
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            ensure!(bytes.len().saturating_add(chunk.len()) <= LIMIT, "update metadata too large");
+            bytes.extend_from_slice(&chunk);
+        }
+        if let Ok(mut list) = self.list.lock() {
+            *list = etag.map(|e| (e, bytes.clone()));
+        }
+        Ok(bytes)
+    }
+
     pub async fn check(&self, current: &str, channel: Channel) -> Result<Option<Release>> {
         let client = self.client()?;
-        let releases: Vec<GithubRelease> = serde_json::from_slice(&self.bytes(&client, &self.url, 4 * 1024 * 1024).await?)?;
+        let releases: Vec<GithubRelease> = serde_json::from_slice(&self.releases(&client).await?)?;
         let Some((v, r)) = releases
             .into_iter()
             .filter_map(|r| {
@@ -157,14 +208,18 @@ impl Source {
             return Ok(None);
         }
         self.validate_url(&r.html_url)?;
-        let expected = format!("Aurora-Viewer-{}-windows-x64.zip", r.tag_name);
-        let archive = r
-            .assets
-            .iter()
-            .find(|a| a.name == expected && a.size > 0 && a.size <= MAX_ARCHIVE)
+        let expected = package_name(&r.tag_name);
+        let archive = expected
+            .as_ref()
+            .and_then(|name| r.assets.iter().find(|a| &a.name == name && a.size > 0 && a.size <= MAX_ARCHIVE))
             .cloned();
-        let checksum = r.assets.iter().find(|a| a.name == format!("{expected}.sha256")).cloned();
+        let checksum = expected
+            .as_ref()
+            .and_then(|name| r.assets.iter().find(|a| a.name == format!("{name}.sha256")))
+            .cloned();
         let mut required = false;
+        let mut minimum = None;
+        let mut grace = DEFAULT_GRACE;
         let mut maintenance = super::Maintenance::default();
         if let Some(asset) = r.assets.iter().find(|a| a.name == POLICY) {
             let policy: Policy = serde_json::from_slice(&self.bytes(&client, &asset.browser_download_url, 16 * 1024).await?)?;
@@ -178,6 +233,11 @@ impl Source {
                     "invalid update floor"
                 );
                 required = version(current).is_some_and(|c| c.cmp_precedence(&min).is_lt());
+                minimum = Some(min.to_string());
+            }
+            if let Some(hours) = policy.grace_hours {
+                ensure!(hours <= MAX_GRACE_HOURS, "invalid grace period");
+                grace = Duration::from_secs(hours * 3600);
             }
         }
         for a in [&archive, &checksum].into_iter().flatten() {
@@ -191,6 +251,8 @@ impl Source {
             archive,
             checksum,
             required,
+            minimum,
+            grace,
             maintenance,
         }))
     }
@@ -198,6 +260,19 @@ impl Source {
 
 pub fn version(value: &str) -> Option<Version> {
     Version::parse(value.strip_prefix('v').unwrap_or(value)).ok()
+}
+
+/// The package this system installs, as the release names it (`package.ps1`):
+/// the Windows ZIP, or the Linux tar.gz. macOS installs its application by
+/// hand, so a release offers it no package to install.
+fn package_name(tag: &str) -> Option<String> {
+    if cfg!(windows) {
+        Some(format!("Aurora-Viewer-{tag}-windows-x64.zip"))
+    } else if cfg!(target_os = "linux") {
+        Some(format!("Aurora-Viewer-{tag}-linux-x64.tar.gz"))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -226,6 +301,11 @@ struct Policy {
     schema: u32,
     version: String,
     minimum_supported_version: Option<String>,
+    /// Hours an installation below the minimum may still sign in, counted
+    /// from the first time it sees this minimum; absent: `DEFAULT_GRACE`,
+    /// 0: blocked at once (a release that cannot wait).
+    #[serde(default)]
+    grace_hours: Option<u64>,
     cache_invalidation_before: Option<String>,
     settings_reset_before: Option<String>,
 }
@@ -248,7 +328,12 @@ pub struct Release {
     pub url: String,
     pub archive: Option<Asset>,
     pub checksum: Option<Asset>,
+    /// Below the minimum supported version: the update is needed to sign
+    /// in, once `grace` is over.
     pub required: bool,
+    /// That minimum, which the grace period is counted for.
+    pub minimum: Option<String>,
+    pub grace: Duration,
     pub maintenance: super::Maintenance,
 }
 
@@ -293,6 +378,19 @@ mod tests {
         assert!(crate::is_newer("v0.7.7", "0.7.7-beta.20261025.9"));
         assert!(crate::is_newer("v0.7.7-beta.20261026.1", "0.7.7-beta.20261025.9"));
         assert!(crate::is_newer("v0.7.7-beta.20261025.10", "0.7.7-beta.20261025.9"));
+    }
+
+    #[test]
+    fn the_package_of_this_system_is_the_one_the_release_publishes() {
+        let name = package_name("v0.9.0");
+        if cfg!(windows) {
+            assert_eq!(name.as_deref(), Some("Aurora-Viewer-v0.9.0-windows-x64.zip"));
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(name.as_deref(), Some("Aurora-Viewer-v0.9.0-linux-x64.tar.gz"));
+        } else {
+            // macOS: installed by hand, no package to install
+            assert_eq!(name, None);
+        }
     }
 
     #[test]

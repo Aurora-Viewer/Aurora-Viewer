@@ -24,8 +24,19 @@ overflow-checks = false
 [profile.dev.package."*"]
 opt-level = 3
 
-# CI (clippy, tests): compiled fast rather than running fast; keeps the
-# debug assertions and overflow checks as an extra net for the tests.
+# The one exception to the single profile: the viewer crate's own test
+# executable, the heaviest compile of the workspace, is built without
+# optimisation. It only runs the tests, and the CI builds them unoptimised
+# too. Its debug info stays the one of `dev` (line tables), so a failing test
+# keeps files and lines in its backtrace. Cargo builds nothing else
+# differently: the dependencies, the other crates and the viewer of
+# `cargo run` keep the profile above.
+[profile.test.package.aurora-viewer]
+opt-level = 0
+
+# CI (clippy, tests): the workspace's crates are compiled fast rather than
+# running fast; keeps the debug assertions and overflow checks as an extra
+# net for the tests.
 [profile.ci]
 inherits = "dev"
 opt-level = 0
@@ -34,8 +45,15 @@ debug-assertions = true
 overflow-checks = true
 incremental = false
 
+# The dependencies are optimised a little. They come from the Rust cache and
+# are rebuilt only when Cargo.lock or the Rust version changes, and the
+# viewer's interface tests spend most of their time in them: on the same
+# hosted runner those tests take 158 s instead of 566 s. 1 and not 3: the
+# tests run as fast, and a cache built from nothing costs less (TASKS.md,
+# task `ci-optimised-deps`, has the measures). Without this section `ci`
+# would inherit the 3 of `dev`.
 [profile.ci.package."*"]
-opt-level = 0
+opt-level = 1
 
 # "Debug viewer" of aurora-tools.cmd (target\debugging): a console window,
 # debug assertions and overflow checks, full debug info for Aurora's own
@@ -64,3 +82,25 @@ unsafe_op_in_unsafe_fn = "warn"
 # nested tuple types; splitting them would not make the code clearer.
 too_many_arguments = "allow"
 type_complexity = "allow"
+
+# wgpu 30.0.1 with one upstream fix only, until a wgpu release has it
+# (31, or a 30.0.x that carries it): gfx-rs/wgpu#10124, a Vulkan descriptor pool with
+# `poolSizeCount = 0` that the Intel driver of 6th to 9th generation
+# integrated GPUs (`igvk64`) reads past and crashes on at every start
+# (#1302). The organisation's fork `Aurora-Viewer/wgpu` holds the branch
+# `aurora/v30.0.1-empty-pool`: the v30.0.1 tag plus that commit (11 lines in
+# wgpu-hal), pinned by `rev`; never delete or rewrite that branch. The whole
+# family comes from it, so the crates keep sharing one `wgpu-types` and one
+# `naga`. Remove this section with the upgrade.
+[patch.crates-io]
+naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }

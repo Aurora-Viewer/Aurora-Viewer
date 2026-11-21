@@ -18,6 +18,8 @@ use uuid::Uuid;
 pub enum UiSound {
     Alert,
     BadKeystroke,
+    /// A message that mentions us (UISndChatMention, LLIMMgr::addMessage).
+    ChatMention,
     Click,
     ClickRelease,
     FriendOffline,
@@ -25,10 +27,18 @@ pub enum UiSound {
     FriendshipOffer,
     GroupInvitation,
     GroupNotice,
+    /// Our avatar hurt (UISndHealthReductionF / M, LLStatusBar::setHealth).
+    HealthReductionF,
+    HealthReductionM,
+    /// Something refused (UISndInvalidOp: an RLVa refusal, an attachment
+    /// that cannot be deleted or copied...).
+    InvalidOp,
     /// Someone calls (UISndIncomingVoiceCall, LLIncomingCallDialog::onOpen).
     IncomingVoiceCall,
     InventoryOffer,
     MicToggle,
+    /// Movelock turned on or off (UISndMovelockToggle, FSSelfToggleMoveLock).
+    MovelockToggle,
     MoneyChangeDown,
     MoneyChangeUp,
     NearbyChat,
@@ -43,6 +53,9 @@ pub enum UiSound {
     PieMenuHide,
     /// UISndPieMenuSliceHighlight0..7.
     PieMenuSlice(u8),
+    /// An experience asks for permissions (UISndQuestionExperience,
+    /// process_script_experience_details).
+    QuestionExperience,
     /// The radar's alerts (UISndRadarChatEnter… FIRE-6069, played by
     /// FSRadar::updateRadarList as each crossing is reported).
     RadarChatEnter,
@@ -101,6 +114,8 @@ const WINDOW_OPEN: Uuid = u(0xc80260ba_41fd_8a46_768a_6bf236360e3a);
 const WINDOW_CLOSE: Uuid = u(0x2c346eda_b60c_ab33_1119_b8941916a499);
 const PIE_SLICE_0: Uuid = u(0xd9f73cf8_17b4_6f7a_1565_7951226c305d);
 const NEARBY_CHAT: Uuid = u(0xa3f48b85_c29f_1f97_ebb6_644b7c053512);
+/// UISndInvalidOp and UISndMovelockToggle share UISndRestartOpenSim's asset.
+const INVALID_OP: Uuid = u(0x4174f859_0d3d_c517_c424_72923dc21f65);
 
 macro_rules! e {
     ($s:expr, $n:literal, $l:expr, $u:expr, $p:literal) => {
@@ -118,10 +133,12 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 51] = [
+pub const CATALOG: [Entry; 57] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
+    e!(S::HealthReductionF, "HealthReductionF", aurora_i18n::tr!("ui-sound-female-avatar-hurt"), u(0x219c5d93_6c09_31c5_fb3f_c5fe7495c115), true),
+    e!(S::HealthReductionM, "HealthReductionM", aurora_i18n::tr!("ui-sound-male-avatar-hurt"), u(0xe057c244_5768_1056_c37e_1537454eeb62), true),
     e!(S::WindowOpen, "WindowOpen", aurora_i18n::tr!("ui-sound-window-opened"), WINDOW_OPEN, true),
     e!(S::WindowClose, "WindowClose", aurora_i18n::tr!("ui-sound-window-closed"), WINDOW_CLOSE, true),
     e!(S::ScriptFloaterOpen, "ScriptFloaterOpen", aurora_i18n::tr!("ui-sound-script-dialog-opened"), WINDOW_OPEN, true),
@@ -146,6 +163,7 @@ pub const CATALOG: [Entry; 51] = [
     e!(S::NewIncomingImSession, "NewIncomingIMSession", aurora_i18n::tr!("ui-sound-private-message-received"), NEW_SESSION, true),
     e!(S::NewIncomingGroupImSession, "NewIncomingGroupIMSession", aurora_i18n::tr!("ui-sound-group-message-received"), NEW_SESSION, true),
     e!(S::NewIncomingConfImSession, "NewIncomingConfIMSession", aurora_i18n::tr!("ui-sound-conference-message-received"), NEW_SESSION, true),
+    e!(S::ChatMention, "ChatMention", aurora_i18n::tr!("ui-sound-chat-mention"), u(0x03e77cb5_592c_5b33_d271_2e46497c3fb3), false),
     e!(S::NearbyChat, "NearbyChat", aurora_i18n::tr!("ui-sound-nearby-chat-received"), NEARBY_CHAT, false),
     e!(S::Typing, "Typing", aurora_i18n::tr!("ui-sound-typing-avatars"), u(0x5e191c7b_8996_9ced_a177_b2ac32bfea06), true),
     e!(S::FriendOnline, "FriendOnline", aurora_i18n::tr!("ui-sound-friend-online"), ALERT, false),
@@ -156,6 +174,9 @@ pub const CATALOG: [Entry; 51] = [
     e!(S::GroupInvitation, "GroupInvitation", aurora_i18n::tr!("ui-sound-group-invitation"), START_IM, false),
     e!(S::GroupNotice, "GroupNotice", aurora_i18n::tr!("common-group-notice"), START_IM, false),
     e!(S::IncomingVoiceCall, "IncomingVoiceCall", aurora_i18n::tr!("ui-sound-incoming-voice-call"), WINDOW_OPEN, true),
+    e!(S::QuestionExperience, "QuestionExperience", aurora_i18n::tr!("ui-sound-experience-question"), START_IM, false),
+    e!(S::InvalidOp, "InvalidOp", aurora_i18n::tr!("ui-sound-invalid-operation"), INVALID_OP, true),
+    e!(S::MovelockToggle, "MovelockToggle", aurora_i18n::tr!("ui-sound-movelock-toggle"), INVALID_OP, true),
     e!(S::ObjectCreate, "ObjectCreate", aurora_i18n::tr!("ui-sound-object-creation"), u(0xf4a0660f_5446_dea2_80b7_6482a082803c), true),
     e!(S::ObjectDelete, "ObjectDelete", aurora_i18n::tr!("ui-sound-object-deletion"), u(0x0cb7b00a_4c10_6948_84de_a93c09af2ba9), false),
     e!(S::ObjectRezOut, "ObjectRezOut", aurora_i18n::tr!("ui-sound-object-taken"), Uuid::nil(), true),
@@ -241,6 +262,8 @@ pub struct ImMessage {
     pub kind: ImKind,
     pub session: Uuid,
     pub new_session: bool,
+    /// The message mentions the agent (LLUrlRegistry::containsAgentMention).
+    pub mention: bool,
 }
 
 /// Per-sound choices (only the ones changed from Firestorm's defaults are
@@ -257,6 +280,9 @@ pub struct UiSoundSettings {
     pub conf_mode: ImSoundMode,
     /// UISndMoneyChangeThreshold (L$).
     pub money_threshold: f32,
+    /// UISndHealthReductionThreshold (health points; a debug setting in the
+    /// Legacy Viewer, no row in its preferences either).
+    pub health_threshold: f32,
 }
 
 impl Default for UiSoundSettings {
@@ -268,6 +294,7 @@ impl Default for UiSoundSettings {
             group_mode: ImSoundMode::NewSession,
             conf_mode: ImSoundMode::NewSession,
             money_threshold: 50.0,
+            health_threshold: 10.0,
         }
     }
 }
@@ -342,8 +369,12 @@ impl UiSoundSettings {
     }
 
     /// The sound of a conversation message, if its mode plays it
-    /// (LLIMMgr::addMessage).
+    /// (LLIMMgr::addMessage). A message that mentions the agent plays
+    /// UISndChatMention instead, whatever the mode, when that sound is on.
     pub fn im_sound(&self, m: ImMessage, focused: bool) -> Option<UiSound> {
+        if m.mention && self.plays(S::ChatMention) {
+            return Some(S::ChatMention);
+        }
         let (mode, sound) = match m.kind {
             ImKind::Private => (self.im_mode, S::NewIncomingImSession),
             ImKind::Group => (self.group_mode, S::NewIncomingGroupImSession),
@@ -381,6 +412,12 @@ impl UiSoundSettings {
             return None;
         }
         Some(if new > old { S::MoneyChangeUp } else { S::MoneyChangeDown })
+    }
+
+    /// UISndHealthReductionF / M: health lost by more than the threshold
+    /// (LLStatusBar::setHealth), the voice following our avatar's sex.
+    pub fn health_sound(&self, old: f32, new: f32, male: bool) -> Option<UiSound> {
+        (old > new + self.health_threshold).then_some(if male { S::HealthReductionM } else { S::HealthReductionF })
     }
 }
 
@@ -466,6 +503,59 @@ mod tests {
     }
 
     #[test]
+    fn health_threshold_and_voice() {
+        let s = UiSoundSettings::default();
+        // LLStatusBar::setHealth: more than 10 points lost, none on a gain
+        assert_eq!(s.health_sound(100.0, 90.0, false), None);
+        assert_eq!(s.health_sound(100.0, 89.0, false), Some(S::HealthReductionF));
+        assert_eq!(s.health_sound(100.0, 50.0, true), Some(S::HealthReductionM));
+        assert_eq!(s.health_sound(20.0, 100.0, true), None);
+        assert!(s.resolve(S::HealthReductionF, false).is_some() && s.resolve(S::HealthReductionM, false).is_some());
+    }
+
+    #[test]
+    fn a_mention_replaces_the_conversation_sound_once_turned_on() {
+        let mut s = UiSoundSettings::default();
+        let m = ImMessage {
+            kind: ImKind::Group,
+            session: Uuid::nil(),
+            new_session: false,
+            mention: true,
+        };
+        // off by default, like PlayModeUISndChatMention: the mode decides
+        assert_eq!(s.im_sound(m, false), None);
+        assert_eq!(
+            s.im_sound(ImMessage { new_session: true, ..m }, false),
+            Some(S::NewIncomingGroupImSession)
+        );
+        s.set_plays(S::ChatMention, true);
+        // on: the mention's sound, even where the mode would stay silent
+        assert_eq!(s.im_sound(m, true), Some(S::ChatMention));
+        assert_eq!(s.im_sound(ImMessage { new_session: true, ..m }, false), Some(S::ChatMention));
+        s.im_mode = ImSoundMode::Mute;
+        assert_eq!(
+            s.im_sound(
+                ImMessage {
+                    kind: ImKind::Private,
+                    ..m
+                },
+                false
+            ),
+            Some(S::ChatMention)
+        );
+    }
+
+    #[test]
+    fn the_new_sounds_keep_the_legacy_defaults() {
+        let s = UiSoundSettings::default();
+        assert_eq!(s.resolve(S::InvalidOp, false), Some(INVALID_OP));
+        assert_eq!(s.resolve(S::MovelockToggle, false), Some(INVALID_OP));
+        assert_eq!(s.resolve(S::ChatMention, false), None);
+        assert_eq!(s.resolve(S::QuestionExperience, false), None);
+        assert_eq!(s.resolve(S::QuestionExperience, true), Some(START_IM));
+    }
+
+    #[test]
     fn im_modes() {
         use ImSoundMode as M;
         assert!(M::NewSession.plays(true, true));
@@ -491,6 +581,7 @@ mod tests {
             kind: ImKind::Private,
             session: Uuid::nil(),
             new_session: true,
+            mention: false,
         };
         assert_eq!(s.im_sound(m, false), None);
         s.set_im_plays(S::NewIncomingImSession, true);

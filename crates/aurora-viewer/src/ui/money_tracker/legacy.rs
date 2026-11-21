@@ -59,7 +59,7 @@ impl MoneyTrackerUi {
             order.sort_by(|&a, &b| {
                 let o = match column {
                     Column::Time => rows[a].serial.cmp(&rows[b].serial),
-                    Column::Name => names[a].to_lowercase().cmp(&names[b].to_lowercase()),
+                    Column::Name => crate::natural_order::cmp(&names[a], &names[b]),
                     Column::Amount => rows[a].signed().cmp(&rows[b].signed()),
                 };
                 if descending { o.reverse() } else { o }

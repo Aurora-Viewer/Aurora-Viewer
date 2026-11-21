@@ -25,7 +25,7 @@ fn rename_id(edit: &Rename) -> Id {
 
 pub(super) fn begin_rename(tool: &mut BuildTool, world: &World, object: Uuid, item: Uuid) {
     let Some(idx) = world.objects.index_of_uuid(&object) else { return };
-    if !tool.contents_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
+    if !tool.contents_items_editable(world, idx) || tool.ui.contents_selection.items.len() != 1 {
         return;
     }
     if tool.ui.contents_selection.object != Some(object) || !tool.ui.contents_selection.items.contains(&item) {
@@ -57,7 +57,7 @@ pub(super) fn finish_rename(tool: &mut BuildTool, world: &World) {
     let Some(idx) = world.objects.index_of_uuid(&edit.object) else {
         return;
     };
-    if !tool.contents_editable(world, idx) {
+    if !tool.contents_items_editable(world, idx) {
         return;
     }
     let Some(item) = tool.contents.objects.get(&edit.object).and_then(|inv| {
@@ -106,7 +106,7 @@ pub(super) fn rename_row(ui: &mut egui::Ui, tool: &mut BuildTool, world: &World,
     let id = rename_id(edit);
     // TextEdit consumes Escape/Enter while changing focus. Keep the user's
     // intent before adding it, so Escape cannot become a blur commit.
-    let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+    let cancel = super::common::escape_pressed(ui);
     let enter = ui.input(|i| i.key_pressed(Key::Enter));
     let r = crate::ui::widgets::restricted_text_field(ui, true, &mut edit.text, crate::ui::widgets::TextPolicy::PrintableNoPipe, |b, _| {
         egui::TextEdit::singleline(b).id(id).desired_width(160.0).char_limit(63)

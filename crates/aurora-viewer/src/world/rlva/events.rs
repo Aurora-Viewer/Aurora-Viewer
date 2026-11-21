@@ -4,25 +4,59 @@
 use super::{super::World, Rlva};
 use uuid::Uuid;
 
+/// rlvParseNotifyOption (rlvhandler.cpp): the channel, read by
+/// LLStringUtil::convertToS32 (blanks around it, text after the number),
+/// then an optional filter; a third token makes the option invalid.
 pub(super) fn notification_option(option: &str) -> Option<(i32, &str)> {
-    let (channel, filter) = option.split_once(';').unwrap_or((option, ""));
-    let channel = channel.parse::<i32>().ok()?;
-    (channel > 0 && channel != i32::MAX).then_some((channel, filter))
+    let mut tokens = option.split(';');
+    let channel = super::numeric::convert_to_s32(tokens.next()?)?;
+    let filter = tokens.next().unwrap_or_default();
+    (tokens.next().is_none() && super::valid_reply_channel(channel)).then_some((channel, filter))
 }
 
 impl Rlva {
-    /// The reference also notifies about rejected and duplicate commands.
-    /// Only the behaviour/option part is tested against the subscription.
+    /// An event (worn, attached, sat…): the whole text is tested against
+    /// each subscription (RlvBehaviourNotifyHandler::sendNotification).
     pub fn notify(&mut self, text: &str) {
-        let subject = text.split_once('=').map_or(text, |(name, _)| name).to_ascii_lowercase();
+        self.notify_command(text, "");
+    }
+
+    /// The reference also notifies about rejected and duplicate commands.
+    /// Only `subject`, the behaviour and its option, is tested against the
+    /// subscription; `suffix` (`=n`, `=y`) follows it untested.
+    pub(super) fn notify_command(&mut self, subject: &str, suffix: &str) {
+        let tested = subject.to_ascii_lowercase();
         let channels: Vec<_> = self
             .rules_for("notify", Uuid::nil())
             .filter_map(|(_, option)| notification_option(option))
-            .filter(|(_, filter)| subject.contains(&filter.to_ascii_lowercase()))
+            .filter(|(_, filter)| tested.contains(&filter.to_ascii_lowercase()))
             .map(|(channel, _)| channel)
             .collect();
         for channel in channels {
-            self.reply(channel, format!("/{text}"));
+            self.notice_reply(channel, format!("/{subject}{suffix}"));
+        }
+    }
+
+    /// RlvBehaviourNotifyHandler sends its line when RlvHandler processes
+    /// the command or the event, after the answers to the queries before
+    /// it: a line told while queries wait here waits behind them, as a
+    /// queued entry that only sends it (`NOTICE`). It belongs to no issuer,
+    /// so that a release before the queue drains does not take it back.
+    fn notice_reply(&mut self, channel: i32, text: String) {
+        let notice = || super::Command {
+            behaviour: super::NOTICE.to_owned(),
+            option: text.clone(),
+            strict: false,
+            param: super::Param::Reply(channel),
+            environment_locked: false,
+            received: super::Received::default(),
+        };
+        if !self.pending.is_empty() && self.pending.len() < super::MAX_QUEUED {
+            self.pending.push((Uuid::nil(), notice()));
+        } else if self.pending.is_empty() && !self.viewer.is_empty() && self.viewer.len() < super::MAX_QUEUED {
+            self.viewer.push((Uuid::nil(), notice()));
+        } else {
+            self.reply(channel, "notify", text);
         }
     }
 
@@ -32,26 +66,113 @@ impl Rlva {
 }
 
 impl World {
-    /// The return is delayed until the seat parent has gone, as onSitOrStand
-    /// does in the reference. A failed sit must never trigger a teleport.
-    pub fn rlva_update_stand(&mut self) {
-        if !self.rlva.has("standtp") {
-            self.rlva.stand_origin = None;
-            self.rlva.stand_return = None;
-            self.rlva.stand_seated = false;
-        } else if self.rlva.stand_origin.is_some() {
-            if self.agent.is_sitting() {
-                self.rlva.stand_seated = true;
-            } else if self.rlva.stand_seated {
-                self.rlva.stand_return = self.rlva.stand_origin.take();
-                self.rlva.stand_seated = false;
-            }
+    /// After an OwnerSay stored rules: whether their issuers are known
+    /// objects (`Rlva::resolve_sources`).
+    pub(crate) fn rlva_resolve_sources(&mut self) {
+        let objects = &self.objects;
+        self.rlva.resolve_sources(|id| objects.index_of_uuid(&id).is_some());
+    }
+
+    /// RlvHandler::onDetach (rlvhandler.cpp), which LLVOAvatarSelf::
+    /// detachObject (llvoavatarself.cpp) calls when one of our attachments is
+    /// killed: the restrictions of every object rooted on it are cleared at
+    /// once, and the listeners told. Run on a kill that is applied, before
+    /// the objects leave the store: a kill ignored during a teleport or sent
+    /// by a region we left (`World::kill_is_ignored`) keeps the attachment and
+    /// its rules, and one dropped to the ground is not killed and keeps them
+    /// too, as in the Legacy Viewer.
+    pub(crate) fn rlva_attachment_killed(&mut self, idx: usize) {
+        if !self.rlva.enabled() {
+            return;
+        }
+        let Some(root) = self.objects.get(idx).filter(|o| !o.is_avatar()) else {
+            return;
+        };
+        let ours = self
+            .objects
+            .parent_of(root)
+            .and_then(|p| self.objects.get(p))
+            .is_some_and(|p| p.is_avatar() && p.full_id == self.agent_id);
+        if !ours {
+            return;
+        }
+        let item = root.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(root.full_id);
+        // The wear a forced batch asked for had arrived, since it leaves: it
+        // is no longer on its way, and a new forced wear of the same object
+        // is a new request (LLAttachmentsMgr::onAttachmentArrived forgets
+        // the request at the arrival, llattachmentsmgr.cpp).
+        self.rlva.requested_wears.remove(&item);
+        let mut gone: std::collections::BTreeSet<Uuid> = self
+            .objects
+            .subtree(idx)
+            .into_iter()
+            .filter_map(|i| self.objects.get(i).map(|o| o.full_id))
+            .collect();
+        // A child prim can be killed before its root (the note in onDetach,
+        // which matches on the remembered m_idRoot): the watchdog remembers
+        // which attachment each issuer belonged to.
+        gone.extend(
+            self.rlva
+                .watchdog
+                .sources
+                .iter()
+                .filter(|(_, worn)| **worn == item)
+                .map(|(source, _)| *source),
+        );
+        // (onDetach walks the objects that hold restrictions: a prim that
+        // holds none keeps the commands it has queued)
+        gone.retain(|source| self.rlva.rules.contains_key(source));
+        for source in gone {
+            self.rlva.release(source);
         }
     }
 
     pub fn rlva_can_accept_teleport(&self, sender: Uuid, request: bool) -> bool {
         self.rlva.allows(if request { "tprequest" } else { "tplure" }, &sender.to_string())
             && (request || !self.agent.is_sitting() || !self.rlva.has("unsit"))
+    }
+
+    /// RlvUtil::filterScriptQuestions (rlvcommon.cpp): the notice a question
+    /// RLVa stripped of `requested` leaves for when it is answered yes
+    /// (script_question_cb, llviewermessage.cpp); the teleport one replaces
+    /// the attach one, as the payload keeps the last.
+    pub(crate) fn rlva_permission_notice(&self, requested: i32, granted: i32, object_name: &str) -> Option<String> {
+        const ATTACH: i32 = 1 << 5;
+        const TELEPORT: i32 = 1 << 12;
+        let stripped = requested & !granted;
+        let object = object_name.to_owned();
+        if stripped & TELEPORT != 0 {
+            Some(aurora_i18n::tr!("rlva-blocked-permission-teleport", object = object))
+        } else if stripped & ATTACH != 0 {
+            Some(aurora_i18n::tr!("rlva-blocked-permission-attach", object = object))
+        } else {
+            None
+        }
+    }
+
+    /// Keeps `notice` for the answer to the question of `task`'s `item`.
+    pub(crate) fn rlva_hold_permission_notice(&mut self, task: Uuid, item: Uuid, notice: Option<String>) {
+        let held = &mut self.rlva.permission_notices;
+        held.retain(|(t, i, _)| (*t, *i) != (task, item));
+        if let Some(text) = notice {
+            if held.len() >= 16 {
+                held.remove(0);
+            }
+            held.push((task, item, text));
+        }
+    }
+
+    /// The answer to the question of `task`'s `item`: a yes shows what RLVa
+    /// stripped from it (RlvUtil::notifyBlocked), any answer forgets it.
+    pub(crate) fn rlva_answer_permission_notice(&mut self, task: Uuid, item: Uuid, granted: bool) {
+        let held = &mut self.rlva.permission_notices;
+        let Some(at) = held.iter().position(|(t, i, _)| (*t, *i) == (task, item)) else {
+            return;
+        };
+        let (_, _, text) = held.remove(at);
+        if granted {
+            self.system_notice(text, super::super::notice_topics::Topic::Warning);
+        }
     }
 
     /// Returns granted bits and whether the remaining question is eligible
@@ -115,6 +236,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message,
         }));

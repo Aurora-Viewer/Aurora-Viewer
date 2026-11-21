@@ -9,7 +9,7 @@
 
 use super::App;
 use crate::camera::presets::{self, Anchor, AnchorKind, Include, Lens, Light};
-use crate::camera::{CameraShot, FreeCamera};
+use crate::camera::{CameraPreset, CameraShot, FreeCamera};
 use crate::world::notifications::{Data, Kind};
 use std::time::Instant;
 use uuid::Uuid;
@@ -55,6 +55,7 @@ impl App {
                 fov: self.settings.camera.fov,
                 dof: self.settings.snapshot.dof.clone(),
                 exposure: self.snapshots.ui.light.exposure,
+                tilt: self.camera.roll.to_degrees(),
             });
         }
         if include.looks {
@@ -101,6 +102,53 @@ impl App {
         Ok(())
     }
 
+    /// Rear, Front, Side or Shoulder view, as the user saved it or as its
+    /// template (LLFloaterCamera::switchToPreset): the Controls window, the
+    /// system island's menu.
+    pub(super) fn switch_camera_view(&mut self, view: CameraPreset) {
+        self.world.rlva.user_chose_camera_view();
+        self.settings.camera.apply_view(view, &self.settings.camera_views);
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        self.settings.save();
+    }
+
+    /// The camera where it is becomes `view`, kept for the next sessions
+    /// (LLFloaterSaveCameraPreset::onBtnSave over "Front View.xml", issue
+    /// #2755): the position and the focus point in the avatar's frame, as a
+    /// position saved by name.
+    pub(super) fn save_camera_view(&mut self, view: CameraPreset) {
+        if self.world.rlva.camera_preset_locked(Uuid::nil()) {
+            self.camera_preset_message(aurora_i18n::tr!("camera-preset-locked").to_owned());
+            return;
+        }
+        let (camera, focus) = self.camera.current_offsets(&self.world.agent);
+        let saved = self
+            .settings
+            .camera
+            .save_view(view, camera.to_array(), focus.to_array(), &mut self.settings.camera_views);
+        if !saved {
+            self.camera_preset_message(aurora_i18n::tr!("controls-view-not-saved", view = view.label()));
+            return;
+        }
+        log::info!("camera view saved: {view:?} at {camera:.2?}, focus {focus:.2?}");
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        self.settings.save();
+    }
+
+    /// `view` back to its template (LLPresetsManager::resetCameraPreset):
+    /// shown again at once when it is the view in use.
+    pub(super) fn restore_camera_view(&mut self, view: CameraPreset) {
+        if !self.settings.camera_views.restore(view) {
+            return;
+        }
+        log::info!("camera view restored: {view:?}");
+        if self.settings.camera.preset == view {
+            self.switch_camera_view(view);
+        } else {
+            self.settings.save();
+        }
+    }
+
     pub(super) fn delete_camera_preset(&mut self, i: usize) {
         if i < self.settings.camera_shots.len() {
             let gone = self.settings.camera_shots.remove(i);
@@ -119,8 +167,10 @@ impl App {
             return Ok(());
         };
         log::info!("camera preset applied: {}", shot.name);
+        self.world.rlva.user_chose_camera_view();
         // the lens first: the anchor's view is framed with its field of view
         if let Some(lens) = &shot.lens {
+            self.world.rlva.user_chose_fov();
             self.settings.camera.fov = lens.fov;
             self.settings.snapshot.dof = lens.dof.clone();
             // the photo's own, while the photo mode is open
@@ -140,6 +190,11 @@ impl App {
             Some(anchor) => self.apply_preset_anchor(&shot, anchor),
             None => Ok(()),
         };
+        // the tilt after the anchor: placing the camera on the avatar levels it
+        if let Some(lens) = &shot.lens {
+            let max = crate::snapshot::viewfinder::ROLL_MAX;
+            self.camera.roll = lens.tilt.clamp(-max, max).to_radians();
+        }
         self.snapshots.preview_wanted = true;
         self.settings.save();
         placed

@@ -46,12 +46,75 @@ pub enum LocalOrigin {
     /// A time of day preset (1..=5): its library sky, or the built-in sky
     /// with the preset's sun when that sky could not be fetched.
     Preset(u8),
-    /// Edited in "Personal lighting".
-    Personal,
+    /// Edited in "Personal lighting", with the rights of what it was
+    /// taken from.
+    Personal(SourceRights),
     /// What was shown when the other half was picked
     /// (LLEnvironment::setEnvironment(fixedEnvironment_t) fills the missing
-    /// half with the current sky or water, frozen).
-    Inherited,
+    /// half with the current sky or water, frozen), with its rights.
+    Inherited(SourceRights),
+}
+
+impl LocalOrigin {
+    /// The rights a sky or water of this origin has.
+    fn rights(self) -> SourceRights {
+        match self {
+            LocalOrigin::Item(asset) => SourceRights::Asset(asset),
+            // a library sky (or the built-in one with the preset's sun)
+            LocalOrigin::Preset(_) => SourceRights::Flags(0),
+            LocalOrigin::Personal(r) | LocalOrigin::Inherited(r) => r,
+        }
+    }
+}
+
+/// The rights of the settings a shown sky or water comes from, for the
+/// editors that start from what is shown (the snapshots). Kept with the
+/// local sky and water taken from what was shown, so a sky frozen or edited
+/// in "Personal lighting" keeps the rights of the one it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceRights {
+    /// The settings' own flags (FLAG_NOCOPY…, `env_edit`).
+    Flags(u32),
+    /// A settings asset applied from the inventory: the permissions of the
+    /// items holding it.
+    Asset(Uuid),
+    /// No settings to read them from (an experience's environment, a day
+    /// an editor applied to oneself).
+    Unknown,
+}
+
+impl SourceRights {
+    /// How the local environment file keeps them (`saved_local`).
+    fn to_llsd(self) -> Llsd {
+        let mut m = aurora_llsd::Map::new();
+        match self {
+            SourceRights::Flags(f) => {
+                m.insert("flags".into(), Llsd::from(f as i32));
+            }
+            SourceRights::Asset(id) => {
+                m.insert("asset".into(), Llsd::from(id));
+            }
+            SourceRights::Unknown => {
+                m.insert("unknown".into(), Llsd::from(true));
+            }
+        }
+        Llsd::Map(m)
+    }
+
+    /// A file without them (a sky the user kept from a library preset, an
+    /// own item or the shared environment): no restriction, as the
+    /// settings' own flags would read.
+    fn from_llsd(v: &Llsd) -> SourceRights {
+        if v.has("flags") {
+            SourceRights::Flags(v["flags"].as_u32())
+        } else if v.has("asset") && !v["asset"].as_uuid().is_nil() {
+            SourceRights::Asset(v["asset"].as_uuid())
+        } else if v["unknown"].as_bool() {
+            SourceRights::Unknown
+        } else {
+            SourceRights::Flags(0)
+        }
+    }
 }
 
 /// The local environment (DayInstance of ENV_LOCAL): an animated day cycle
@@ -114,8 +177,8 @@ impl LocalEnv {
         let half = |o: Option<LocalOrigin>| match o {
             Some(LocalOrigin::Item(id)) => ListShown::Item(id),
             Some(LocalOrigin::Preset(n)) => ListShown::Preset(n),
-            Some(LocalOrigin::Personal) => ListShown::Personal,
-            Some(LocalOrigin::Inherited) | None => other,
+            Some(LocalOrigin::Personal(_)) => ListShown::Personal,
+            Some(LocalOrigin::Inherited(_)) | None => other,
         };
         LocalView {
             sky: half(self.sky.map(|s| s.0)),
@@ -256,6 +319,9 @@ pub enum AnswerOutcome {
 #[derive(Debug, Clone, Copy)]
 struct Shown {
     source: Source,
+    /// The source of `target_sky` and `target_water` (beneath the photo's
+    /// layer).
+    target_source: Source,
     track: usize,
     sky: SkyFrame,
     water: WaterFrame,
@@ -328,17 +394,59 @@ pub struct EnvSelector {
 }
 
 impl EnvSelector {
-    pub fn has_fixed_sky(&self) -> bool {
-        self.edit.is_some() || self.local.as_ref().is_some_and(|l| l.sky.is_some())
-    }
-
-    pub fn day_sky_at(&self, pos: f32, altitude: f32) -> Option<SkyFrame> {
+    /// RlvEnvironment's `daytime` without `@setenv=n` (rlvenvironment.cpp):
+    /// the day of ENV_LOCAL, ENV_PUSH, ENV_PARCEL then ENV_REGION, blended
+    /// at `pos` on the ground-level sky track
+    /// (LLTrackBlenderLoopingManual(sky, day, 1): track 1 of the Legacy
+    /// Viewer is the first sky track, 0 here), whatever the altitude.
+    pub fn rlva_daytime_sky(&self, pos: f32) -> Option<SkyFrame> {
         self.local
             .as_ref()
             .and_then(|l| l.day.as_ref().map(|(_, d)| d))
+            .or_else(|| self.push.day())
             .or_else(|| self.parcel.as_ref().map(|s| &s.day))
             .or_else(|| self.region.as_ref().map(|s| &s.day))
-            .map(|day| day.sky_at(pos, day.track_for_altitude(&self.altitudes, altitude)))
+            .map(|day| day.sky_at(pos, 0))
+    }
+
+    /// RlvEnvironment::getTargetSky (rlvenvironment.cpp) without `@setenv=n`:
+    /// the fixed sky of the user's ENV_LOCAL when it has one, the sky shown
+    /// otherwise. Read from the local environment itself, not from the
+    /// frame shown, so that several forces in one message build on each
+    /// other.
+    pub fn rlva_target_sky(&self) -> SkyFrame {
+        self.local
+            .as_ref()
+            .and_then(|l| l.sky.as_ref().map(|(_, sky)| *sky))
+            .unwrap_or_else(|| self.current().0)
+    }
+
+    /// RlvEnvironment writes a force made without `@setenv=n` into ENV_LOCAL
+    /// (getTargetEnvironment, getTargetSky(true), rlvenvironment.cpp): the
+    /// user's own local environment, which keeps its day (the instance is
+    /// cloned) and, when it is new, freezes the water shown
+    /// (setEnvironment(fixedEnvironment_t)), with TRANSITION_INSTANT. It
+    /// stays once the object is gone, and the user's next choice replaces
+    /// it. Not refused by `rlva_locked`: a lock later in the same message
+    /// came after it.
+    pub fn rlva_local_sky(&mut self, sky: SkyFrame) {
+        let rights = self.current_rights_pair().0;
+        self.photo_yield(SettingsKind::Sky);
+        self.local_mut().sky = Some((LocalOrigin::Personal(rights), sky));
+        self.instant_next = true;
+        self.drop_preset();
+        self.note_local_choice();
+    }
+
+    /// `@setenv_asset`, `preset` and `daycycle` without `@setenv=n`:
+    /// LLEnvironment::setEnvironment(ENV_LOCAL, asset), by its type.
+    pub fn rlva_local_settings(&mut self, asset: Uuid, settings: &Settings) {
+        self.photo_yield(match settings {
+            Settings::Sky(_) => SettingsKind::Sky,
+            Settings::Water(_) => SettingsKind::Water,
+            Settings::Day(_) => SettingsKind::Day,
+        });
+        self.apply_settings(asset, settings, None, None);
     }
     /// An editor shows its sky or water (LLFloaterFixedEnvironment::
     /// updateEditEnvironment, TRANSITION_INSTANT); the other half stays what
@@ -387,22 +495,53 @@ impl EnvSelector {
     }
 
     /// "Apply only to myself" of an editor (setEnvironment(ENV_LOCAL, sky or
-    /// water)): a fixed half of the local environment, without an asset.
-    pub fn apply_local_sky(&mut self, sky: SkyFrame) {
+    /// water)): a fixed half of the local environment, without an asset,
+    /// with the rights of the editor's settings.
+    pub fn apply_local_sky(&mut self, sky: SkyFrame, rights: SourceRights) {
         if self.rlva_locked {
             return;
         }
         // an edited sky without an asset: "Personal lighting" edits it next
         self.photo_yield(SettingsKind::Sky);
-        self.apply_sky(LocalOrigin::Personal, sky);
+        self.apply_sky(LocalOrigin::Personal(rights), sky);
     }
 
-    pub fn apply_local_water(&mut self, water: WaterFrame) {
+    pub fn apply_local_water(&mut self, water: WaterFrame, rights: SourceRights) {
         if self.rlva_locked {
             return;
         }
         self.photo_yield(SettingsKind::Water);
-        self.apply_water(LocalOrigin::Inherited, water);
+        self.apply_water(LocalOrigin::Inherited(rights), water);
+    }
+
+    /// The rights of the sky or water `current` returns (what a snapshot
+    /// editor starts from). Asked on a user action only.
+    pub fn current_rights(&self, kind: SettingsKind) -> SourceRights {
+        let Some(shown) = self.shown else {
+            return SourceRights::Flags(0);
+        };
+        let slot = |slot: Option<&Slot>| match slot {
+            // the parcel's or region's day: its flags and its frames' (none
+            // without a flags key)
+            Some(Slot { settings: Some(map), .. }) => SourceRights::Flags(super::env_edit::source_flags(map)),
+            // the default day asset of the Legacy Viewer's library
+            Some(Slot { settings: None, .. }) => SourceRights::Flags(0),
+            None => SourceRights::Unknown,
+        };
+        match shown.target_source {
+            // an open editor's settings (the app knows them), an
+            // experience's environment
+            Source::Edit | Source::Push(_) | Source::Photo(_) => SourceRights::Unknown,
+            Source::Local(_) => self.local.as_ref().map_or(SourceRights::Unknown, |l| local_rights(l, kind)),
+            Source::Parcel(_) => slot(self.parcel.as_ref()),
+            Source::Region(_) => slot(self.region.as_ref()),
+            Source::BuiltIn | Source::Legacy => SourceRights::Flags(0),
+        }
+    }
+
+    /// `current_rights` of the sky and the water.
+    fn current_rights_pair(&self) -> (SourceRights, SourceRights) {
+        (self.current_rights(SettingsKind::Sky), self.current_rights(SettingsKind::Water))
     }
     fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, settings: Option<Arc<Llsd>>, length: f64, offset: f64) -> Slot {
         self.generation += 1;
@@ -636,6 +775,22 @@ impl EnvSelector {
         std::mem::take(&mut self.preset_dropped).then_some(self.local_preset)
     }
 
+    /// Each frame: the panels' time of day and the selector's follow each
+    /// other. While RLVa holds the environment the panels' choice is put
+    /// back to the preset shown, never kept for later: a choice made under
+    /// @setenv (a menu still open, a shortcut) is dropped, and nothing
+    /// changes when the restriction lifts, as in the Legacy Viewer, whose
+    /// greyed entries (menu_viewer.xml, RLV.EnableIfNot setenv) set nothing.
+    pub fn sync_time_of_day(&mut self, time_of_day: &mut u8) {
+        if let Some(p) = self.take_preset_change() {
+            *time_of_day = p;
+        }
+        if self.rlva_locked {
+            *time_of_day = self.local_preset;
+        }
+        self.set_time_of_day(*time_of_day);
+    }
+
     /// FSEnvironmentManualTransitionTime (s, 0 = instant).
     pub fn set_manual_transition(&mut self, seconds: f32) {
         self.manual_transition = if seconds.is_finite() { seconds.clamp(0.0, 60.0) } else { 0.0 };
@@ -649,6 +804,15 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.request_local_item(asset, kind);
+    }
+
+    /// An inventory item's "Apply only to myself": no RLVa check there
+    /// (LLSettingsBridge::performAction, indra/newview/llinventorybridge.cpp),
+    /// so under `@setenv` the item still becomes the local environment, shown
+    /// once the lock goes (setManualEnvironment(ENV_LOCAL); only
+    /// setSelectedEnvironment is refused, indra/newview/llenvironment.cpp).
+    pub fn request_local_item(&mut self, asset: Uuid, kind: SettingsKind) {
         self.photo_yield(kind);
         let mut preset_replaced = false;
         self.pending.retain(|p| {
@@ -676,7 +840,7 @@ impl EnvSelector {
         }
         self.pending.clear();
         if self.local.take().is_some() {
-            self.local_dirty = true;
+            self.note_local_choice();
         }
         self.drop_preset();
     }
@@ -742,7 +906,7 @@ impl EnvSelector {
                 log::info!("local environment: day cycle {asset}");
                 self.local = Some(l);
                 self.drop_preset();
-                self.local_dirty = true;
+                self.note_local_choice();
             }
             Settings::Sky(s) => self.apply_sky(origin, *s),
             Settings::Water(w) => self.apply_water(origin, *w),
@@ -765,11 +929,12 @@ impl EnvSelector {
         let (sky, water) = self
             .shown
             .map_or((SkyFrame::default(), WaterFrame::default()), |s| (s.target_sky, s.target_water));
+        let rights = self.current_rights_pair();
         let l = self.local.get_or_insert_with(|| LocalEnv::new(generation));
         l.generation = generation;
         if l.day.is_none() {
-            l.sky.get_or_insert((LocalOrigin::Inherited, sky));
-            l.water.get_or_insert((LocalOrigin::Inherited, water));
+            l.sky.get_or_insert((LocalOrigin::Inherited(rights.0), sky));
+            l.water.get_or_insert((LocalOrigin::Inherited(rights.1), water));
         }
         l
     }
@@ -785,13 +950,13 @@ impl EnvSelector {
             }
             _ => self.drop_preset(),
         }
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     fn apply_water(&mut self, origin: LocalOrigin, water: WaterFrame) {
         log::info!("local environment: water {origin:?}");
         self.local_mut().water = Some((origin, water));
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// "Personal lighting" opens (LLFloaterEnvironmentAdjust::
@@ -811,15 +976,16 @@ impl EnvSelector {
         let (sky, water) = self
             .shown
             .map_or((SkyFrame::default(), WaterFrame::default()), |s| (s.target_sky, s.target_water));
+        let rights = self.current_rights_pair();
         self.generation += 1;
         let mut l = self.local.take().unwrap_or_else(|| LocalEnv::new(self.generation));
         l.generation = self.generation;
-        l.sky = Some((LocalOrigin::Personal, sky));
-        l.water = Some((LocalOrigin::Inherited, water));
+        l.sky = Some((LocalOrigin::Personal(rights.0), sky));
+        l.water = Some((LocalOrigin::Inherited(rights.1), water));
         self.local = Some(l);
         self.instant_next = true;
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// The local sky "Personal lighting" edits (nothing without a local
@@ -845,9 +1011,9 @@ impl EnvSelector {
             return false;
         }
         *sky = s;
-        *origin = LocalOrigin::Personal;
+        *origin = LocalOrigin::Personal(origin.rights());
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
         true
     }
 
@@ -859,6 +1025,11 @@ impl EnvSelector {
     /// The local environment changed since the last call (to save it).
     pub fn take_local_dirty(&mut self) -> bool {
         std::mem::take(&mut self.local_dirty)
+    }
+
+    /// A choice changed the local environment: to save.
+    fn note_local_choice(&mut self) {
+        self.local_dirty = true;
     }
 
     /// The local environment to keep for the next session
@@ -960,6 +1131,7 @@ impl EnvSelector {
     fn kept_photo(&self) -> (Option<LocalEnv>, u8) {
         let r = self.photo.resolved();
         let (under_sky, under_water) = self.current();
+        let under = (self.current_rights_pair(), under_sky, under_water);
         let mut local = self.local.clone();
         let mut preset = self.local_preset;
         if let Some((id, day)) = r.day {
@@ -969,26 +1141,28 @@ impl EnvSelector {
             preset = 0;
         }
         if let Some((origin, sky)) = r.sky {
-            fixed_halves(&mut local, under_sky, under_water).sky = Some((origin, sky));
+            fixed_halves(&mut local, under).sky = Some((origin, sky));
             preset = match origin {
                 LocalOrigin::Preset(n) => n,
                 _ => 0,
             };
         }
         if let Some((id, water)) = r.water {
-            fixed_halves(&mut local, under_sky, under_water).water = Some((LocalOrigin::Item(id), water));
+            fixed_halves(&mut local, under).water = Some((LocalOrigin::Item(id), water));
         }
         if let Some(sun) = self.photo.choice.sun {
             let shown = self.shown.map_or_else(SkyFrame::default, |s| s.photo_sky);
-            let l = fixed_halves(&mut local, under_sky, under_water);
+            let l = fixed_halves(&mut local, under);
+            // (without a fixed sky, the sky shown is the local day's)
+            let day = l.day.as_ref().map_or(SourceRights::Unknown, |d| day_rights(d.0));
             match &mut l.sky {
                 Some((origin, sky)) => {
                     sky.sun_rotation = sun;
-                    *origin = LocalOrigin::Personal;
+                    *origin = LocalOrigin::Personal(origin.rights());
                 }
                 None => {
                     l.sky = Some((
-                        LocalOrigin::Personal,
+                        LocalOrigin::Personal(day),
                         SkyFrame {
                             sun_rotation: sun,
                             ..shown
@@ -1021,7 +1195,7 @@ impl EnvSelector {
             self.preset_dropped = true;
         }
         self.pending.clear();
-        self.local_dirty = true;
+        self.note_local_choice();
         // the same light, now the user's: no crossfade
         self.instant_next = true;
         self.photo.set(PhotoChoice::default());
@@ -1039,7 +1213,7 @@ impl EnvSelector {
         self.drop_photo();
         self.clear_local();
         self.restore_local(data);
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// Restore the last session's local environment (loadFromSettings): the
@@ -1069,10 +1243,12 @@ impl EnvSelector {
             } else if data.has(llsd_key)
                 && let Some(s) = Settings::from_llsd(&data[llsd_key])
             {
+                let rights_key = if kind == SettingsKind::Sky { "sky_rights" } else { "water_rights" };
+                let rights = SourceRights::from_llsd(&data[rights_key]);
                 let origin = if kind == SettingsKind::Sky && data["sky_personal"].as_bool() {
-                    LocalOrigin::Personal
+                    LocalOrigin::Personal(rights)
                 } else {
-                    LocalOrigin::Inherited
+                    LocalOrigin::Inherited(rights)
                 };
                 self.pending.push_back(Pending {
                     asset: Uuid::nil(),
@@ -1140,7 +1316,7 @@ impl EnvSelector {
         };
         // the photo's layer, under an open editor only (`eep_photo`); the
         // targets stay those beneath it, for what a local change inherits
-        let (target_sky, target_water) = (sky, water);
+        let (target_sky, target_water, target_source) = (sky, water, source);
         let (source, track, mut sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
             (source, track, sky, water)
         } else {
@@ -1220,6 +1396,7 @@ impl EnvSelector {
         };
         self.shown = Some(Shown {
             source,
+            target_source,
             track,
             sky,
             water,
@@ -1235,13 +1412,38 @@ impl EnvSelector {
 /// The local environment a fixed half goes into (`EnvSelector::local_mut`
 /// without its generation): created with the frozen sky and water shown
 /// when it has neither a day nor its own.
-fn fixed_halves(local: &mut Option<LocalEnv>, sky: SkyFrame, water: WaterFrame) -> &mut LocalEnv {
+fn fixed_halves(local: &mut Option<LocalEnv>, under: ((SourceRights, SourceRights), SkyFrame, WaterFrame)) -> &mut LocalEnv {
+    let ((sky_rights, water_rights), sky, water) = under;
     let l = local.get_or_insert_with(|| LocalEnv::new(0));
     if l.day.is_none() {
-        l.sky.get_or_insert((LocalOrigin::Inherited, sky));
-        l.water.get_or_insert((LocalOrigin::Inherited, water));
+        l.sky.get_or_insert((LocalOrigin::Inherited(sky_rights), sky));
+        l.water.get_or_insert((LocalOrigin::Inherited(water_rights), water));
     }
     l
+}
+
+/// The rights of a local day: its item's, Unknown for a day without an
+/// asset (an editor's "Apply only to myself").
+fn day_rights(asset: Uuid) -> SourceRights {
+    if asset.is_nil() {
+        SourceRights::Unknown
+    } else {
+        SourceRights::Asset(asset)
+    }
+}
+
+/// The rights of the local sky or water: the fixed half's, else the day's.
+fn local_rights(l: &LocalEnv, kind: SettingsKind) -> SourceRights {
+    let half = if kind == SettingsKind::Water {
+        l.water.map(|w| w.0)
+    } else {
+        l.sky.map(|s| s.0)
+    };
+    match (half, &l.day) {
+        (Some(origin), _) => origin.rights(),
+        (None, Some((asset, _))) => day_rights(*asset),
+        (None, None) => SourceRights::Flags(0),
+    }
 }
 
 /// The saved form of a local environment (`EnvSelector::saved_local`).
@@ -1256,9 +1458,10 @@ fn saved_of(l: &LocalEnv) -> Option<Llsd> {
         Some((LocalOrigin::Item(id), _)) => {
             m.insert("sky_id".into(), Llsd::from(id));
         }
-        Some((o @ (LocalOrigin::Personal | LocalOrigin::Inherited), s)) => {
+        Some((o @ (LocalOrigin::Personal(_) | LocalOrigin::Inherited(_)), s)) => {
             m.insert("sky_llsd".into(), s.settings_llsd());
-            m.insert("sky_personal".into(), Llsd::from(o == LocalOrigin::Personal));
+            m.insert("sky_personal".into(), Llsd::from(matches!(o, LocalOrigin::Personal(_))));
+            m.insert("sky_rights".into(), o.rights().to_llsd());
         }
         Some((LocalOrigin::Preset(_), _)) | None => {}
     }
@@ -1266,8 +1469,9 @@ fn saved_of(l: &LocalEnv) -> Option<Llsd> {
         Some((LocalOrigin::Item(id), _)) => {
             m.insert("water_id".into(), Llsd::from(id));
         }
-        Some((_, w)) => {
+        Some((o, w)) => {
             m.insert("water_llsd".into(), w.settings_llsd());
+            m.insert("water_rights".into(), o.rights().to_llsd());
         }
         None => {}
     }
@@ -1292,10 +1496,7 @@ impl super::World {
             now: self.env_clock.elapsed().as_secs_f64(),
             altitude: self.agent.position.z,
         };
-        if let Some(p) = self.eep.take_preset_change() {
-            *time_of_day = p;
-        }
-        self.eep.set_time_of_day(*time_of_day);
+        self.eep.sync_time_of_day(time_of_day);
         let (sky, water) = self.eep.frame(&input);
         self.rlva_environment_frames((sky, water))
     }
@@ -1381,6 +1582,29 @@ mod tests {
         sel.clear_experience(experience, 1.0);
         gamma(&mut sel, 4.0);
         assert!((gamma(&mut sel, 5.1) - 0.7).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
+    }
+
+    #[test]
+    fn experience_scene_switching_stays_above_refreshed_region_lighting() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        let scene = |value| {
+            llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! { "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => value } } },
+            }
+        };
+        sel.push_experience(experience, &scene(3.0));
+        assert_eq!(gamma(&mut sel, 1.0), 3.0);
+        sel.on_answer(REGION, -1, answer(-1, Some(1.2)), ctx(None));
+        assert_eq!(gamma(&mut sel, 2.0), 3.0, "a region refresh must not pin the viewer to its sky");
+        sel.push_experience(experience, &scene(2.0));
+        assert_eq!(gamma(&mut sel, 3.0), 2.0);
+        sel.clear_experience(experience, 0.0);
+        assert!((gamma(&mut sel, 4.0) - 1.2).abs() < 1e-6);
         assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
     }
 
@@ -1543,7 +1767,7 @@ mod tests {
         let (sky, water) = sel.frame(&input(1.5));
         assert!((sky.gamma - 3.0).abs() < 1e-6 && water.fog_density == 7.0);
         // applying it to myself changes what lies beneath, not what is shown
-        sel.apply_local_sky(edited);
+        sel.apply_local_sky(edited, SourceRights::Flags(0));
         assert!((gamma(&mut sel, 2.0) - 3.0).abs() < 1e-6);
         sel.clear_edit();
         assert!(!sel.editing());
@@ -2113,5 +2337,207 @@ mod tests {
         assert!((sky.gamma - 1.2).abs() < 1e-6);
         assert!(sky.sun_rotation.abs_diff_eq(sun, 1e-6));
         assert!((water.fog_density - 4.0).abs() < 1e-6, "the day's water");
+    }
+
+    /// A region day whose own flags are `day` and whose sky frame's `sky`.
+    fn flagged_answer(day: u32, sky: u32) -> EnvAnswer {
+        let mut frames = aurora_llsd::Map::new();
+        frames.insert("s".into(), llsd_map! { "type" => "sky", "gamma" => 0.7, "flags" => sky as i32 });
+        frames.insert("w".into(), llsd_map! { "type" => "water" });
+        let env = llsd_map! {
+            "parcel_id" => -1,
+            "day_length" => 14400,
+            "day_offset" => 0,
+            "day_cycle" => llsd_map! {
+                "flags" => day as i32,
+                "frames" => Llsd::Map(frames),
+                "tracks" => Llsd::Array(vec![
+                    Llsd::Array(vec![llsd_map!{"key_keyframe" => 0.0, "key_name" => "w"}]),
+                    Llsd::Array(vec![llsd_map!{"key_keyframe" => 0.0, "key_name" => "s"}]),
+                ]),
+            },
+        };
+        EnvAnswer::from_llsd(&env)
+    }
+
+    #[test]
+    fn the_shown_rights_are_those_of_the_source_settings() {
+        use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
+        // before any answer: the built-in sky
+        let mut sel = EnvSelector::default();
+        sel.frame(&input(0.0));
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        // a region day without flags: no restriction, as the Legacy Viewer reads it
+        let sel = region_selector();
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Flags(0));
+        // with flags: the day's with its frames'
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, flagged_answer(FLAG_NOTRANS, FLAG_NOCOPY), ctx(None));
+        sel.frame(&input(0.0));
+        let both = SourceRights::Flags(FLAG_NOTRANS | FLAG_NOCOPY);
+        assert_eq!(sel.current_rights(SettingsKind::Sky), both);
+        // a sky item on top: the item's; the water inherited keeps the day's
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Asset(SKY));
+        assert_eq!(sel.current_rights(SettingsKind::Water), both);
+        // an experience's environment: not known
+        sel.clear_local();
+        sel.push_experience(
+            Uuid::from_u128(9),
+            &llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! {
+                    "transition_time" => 0.0,
+                    "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => 3.0 } },
+                },
+            },
+        );
+        sel.frame(&input(2.0));
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Unknown);
+    }
+
+    #[test]
+    fn a_sky_taken_from_what_is_shown_keeps_its_rights() {
+        use crate::world::env_edit::FLAG_NOCOPY;
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, flagged_answer(0, FLAG_NOCOPY), ctx(None));
+        sel.frame(&input(0.0));
+        // "Personal lighting" freezes the region's sky, then edits it
+        sel.capture_personal();
+        assert!(sel.edit_personal(|s| {
+            s.gamma = 2.5;
+            true
+        }));
+        sel.frame(&input(1.0));
+        let kept = SourceRights::Flags(FLAG_NOCOPY);
+        assert_eq!(sel.current_rights(SettingsKind::Sky), kept);
+        // and across sessions
+        let saved = sel.saved_local().expect("personal sky");
+        let mut next = region_selector();
+        next.restore_local(&saved);
+        next.frame(&input(1.0));
+        assert_eq!(next.current_rights(SettingsKind::Sky), kept);
+        // a file saved without the rights: free, so a user keeps saving their own sky
+        let mut old = saved.clone();
+        if let Llsd::Map(m) = &mut old {
+            m.remove("sky_rights");
+        }
+        let mut next = region_selector();
+        next.restore_local(&old);
+        next.frame(&input(1.0));
+        assert_eq!(next.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        // each kind of rights reads back as written
+        for r in [SourceRights::Flags(FLAG_NOCOPY), SourceRights::Asset(SKY), SourceRights::Unknown] {
+            assert_eq!(SourceRights::from_llsd(&r.to_llsd()), r);
+        }
+        // an editor's settings applied to oneself keep the editor's rights
+        sel.set_edit_sky(SkyFrame::default());
+        sel.frame(&input(2.0));
+        assert_eq!(
+            sel.current_rights(SettingsKind::Sky),
+            SourceRights::Unknown,
+            "the editor knows them"
+        );
+        sel.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        sel.clear_edit();
+        sel.frame(&input(3.0));
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        // a local day from an editor has no item: not known
+        sel.apply_local_day(DayCycle::fixed(SkyFrame::default(), WaterFrame::default()));
+        sel.frame(&input(4.0));
+        assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
+    }
+
+    #[test]
+    fn a_time_of_day_chosen_while_rlva_holds_the_environment_is_dropped() {
+        let mut sel = region_selector();
+        // a preset chosen freely follows the panels
+        let mut panels = 2;
+        sel.sync_time_of_day(&mut panels);
+        library_sky_arrives(&mut sel, 2);
+        sel.frame(&input(1.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        // @setenv: another preset, then the shared environment, are refused
+        // and the panels go back to what is shown
+        sel.rlva_locked = true;
+        for chosen in [4, 0] {
+            panels = chosen;
+            sel.sync_time_of_day(&mut panels);
+            assert_eq!(panels, 2, "choice {chosen}");
+            assert!(sel.wanted_settings().is_empty());
+        }
+        // the restriction lifts: nothing was kept to apply now
+        sel.rlva_locked = false;
+        sel.sync_time_of_day(&mut panels);
+        sel.frame(&input(2.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        assert!(sel.wanted_settings().is_empty());
+        // and a choice made from then on applies again
+        panels = 4;
+        sel.sync_time_of_day(&mut panels);
+        assert_eq!(
+            sel.wanted_settings(),
+            vec![super::super::env::time_of_day_sky(4).expect("a preset")]
+        );
+    }
+
+    /// registerSetEnvFn("daytime") (rlvenvironment.cpp): the day of LOCAL,
+    /// then PUSH, PARCEL and REGION, always its track 1 (the ground sky
+    /// track, index 0 here); no day, no sky.
+    #[test]
+    fn rlva_daytime_takes_the_nearest_day_and_its_ground_sky_track() {
+        let mut sel = EnvSelector::default();
+        assert!(sel.rlva_daytime_sky(0.5).is_none(), "no day: nothing happens");
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        assert!((sel.rlva_daytime_sky(0.5).expect("the region day").gamma - 0.7).abs() < 1e-6);
+        let sky = |gamma| SkyFrame {
+            gamma,
+            ..Default::default()
+        };
+        let mut day = DayCycle::default();
+        day.sky_tracks[0] = vec![(0.0, sky(2.0))];
+        day.sky_tracks[1] = vec![(0.0, sky(3.0))];
+        sel.apply_local_day(day);
+        assert!(
+            (sel.rlva_daytime_sky(0.5).expect("the local day").gamma - 2.0).abs() < 1e-6,
+            "the local day first, its ground track whatever the altitude"
+        );
+    }
+
+    /// getTargetSky (rlvenvironment.cpp): forces build on ENV_LOCAL's sky,
+    /// not on the frame drawn before them.
+    #[test]
+    fn rlva_forces_build_on_the_local_sky_before_it_is_drawn() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        sel.rlva_local_sky(SkyFrame {
+            gamma: 2.0,
+            ..sel.rlva_target_sky()
+        });
+        assert!((sel.rlva_target_sky().gamma - 2.0).abs() < 1e-6);
+        assert!(sel.has_local());
+        // the user's next choice replaces it
+        sel.clear_local();
+        assert!(!sel.has_local());
+    }
+
+    /// "Apply only to myself" from the inventory under `@setenv`: kept as the
+    /// local environment (no RLVa check in LLSettingsBridge::performAction),
+    /// where the environment window's pick is refused.
+    #[test]
+    fn rlva_lock_keeps_an_inventory_environment_for_after_the_lock() {
+        let mut sel = region_selector();
+        sel.rlva_locked = true;
+        sel.request_local(SKY, SettingsKind::Sky);
+        assert!(!sel.local_loading(), "the window's pick is refused");
+        sel.request_local_item(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert!(sel.has_local());
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
     }
 }

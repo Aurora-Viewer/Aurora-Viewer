@@ -7,6 +7,7 @@ use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind, Floater};
 use crate::ui::{fonts, icons, menu};
 use crate::world::World;
+use aurora_i18n::UiUpper;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -103,7 +104,7 @@ impl MoneyTrackerUi {
         for (i, (label, value, color)) in tiles.into_iter().enumerate() {
             let tile = Rect::from_min_size(Pos2::new(row.left() + i as f32 * (w + gap), row.top()), Vec2::new(w, row.height()));
             ui.painter().rect_filled(tile, radius, p.field);
-            let label = label.to_uppercase();
+            let label = label.ui_upper();
             widgets::paint_elided(
                 ui,
                 &label,
@@ -297,7 +298,7 @@ impl MoneyTrackerUi {
                     if menu::item(ui, p, "user-filled", aurora_i18n::tr!("money-tracker-profile")) {
                         actions.push(TrackerAction::Profile(id));
                     }
-                    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay")) {
+                    if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay"), world.rlva_can_pay()) {
                         actions.push(TrackerAction::Pay { id, group: false });
                     }
                 }
@@ -305,7 +306,7 @@ impl MoneyTrackerUi {
                     if menu::item(ui, p, "users-group", aurora_i18n::tr!("money-tracker-group-profile")) {
                         actions.push(TrackerAction::GroupProfile(id));
                     }
-                    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay")) {
+                    if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay"), world.rlva_can_pay()) {
                         actions.push(TrackerAction::Pay { id, group: true });
                     }
                 }

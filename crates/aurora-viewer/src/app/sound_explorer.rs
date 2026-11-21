@@ -28,13 +28,17 @@ impl App {
                     Row {
                         entry: entry.clone(),
                         owner,
+                        asset_shown: false,
                     }
                 })
                 .collect();
         }
-        // Refresh privacy-sensitive names even while the log itself is paused.
+        // Refresh privacy-sensitive names and the asset id rule even while
+        // the log itself is paused.
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
         for row in &mut self.sound_explorer_ui.rows {
             row.owner = sound_owner_name(&self.world, row.entry.owner);
+            row.asset_shown = ids.shown(&row.entry.asset);
         }
         let before = self.settings.audio.explorer;
         let action = self.sound_explorer_ui.show(
@@ -244,8 +248,7 @@ fn sound_owner_name(world: &World, owner: Uuid) -> String {
     if owner.is_nil() {
         return aurora_i18n::tr!("sound-explorer-unknown").to_owned();
     }
-    if !world.rlva_can_name(owner) {
-        return crate::world::rlva::privacy::anonymous(owner).display_name.clone();
-    }
-    world.social.name_of(&owner)
+    // NACLFloaterExploreSounds::requestNameCallback tests the behaviour
+    // alone: our own sounds and an exception's are anonymous too
+    world.rlva_name_unless_hidden(owner)
 }

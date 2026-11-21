@@ -69,7 +69,8 @@ mod tests {
         assert_eq!(ms(3.04), format!("3{sep}0 ms"));
         assert_eq!(kbps(850.4), "850 kb/s");
         assert_eq!(kbps(1250.0), format!("1{sep}2 Mb/s"));
-        assert!(bytes(3.0 * GIB).starts_with(&format!("3{sep}00 ")));
-        assert!(bytes(512.0 * MIB).starts_with("512 "));
+        // the unit and its spacing come from the language's catalogue
+        assert_eq!(bytes(3.0 * GIB), tr!("memory-gb", value = format!("3{sep}00")));
+        assert_eq!(bytes(512.0 * MIB), tr!("memory-mb", value = "512"));
     }
 }

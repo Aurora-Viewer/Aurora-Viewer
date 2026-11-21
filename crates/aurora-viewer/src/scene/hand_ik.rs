@@ -1,108 +1,17 @@
-//! Two-segment hand contacts layered over the unmodified animation pose.
-//! Like LLJointSolverRP3::solve (indra/llcharacter/lljointsolverrp3.cpp),
-//! use segment lengths and a pole plane. Each compatible viewer solves
-//! received definitions locally; no modified poses are sent to the simulator.
+//! The analytic two-segment solver: a joint pair reaches a target with a
+//! shaped end-local contact point. Like LLJointSolverRP3::solve
+//! (indra/llcharacter/lljointsolverrp3.cpp), it uses segment lengths and a
+//! pole plane. The IK goals of the editors (`scene::ik::body`) and the
+//! native foot placement (`scene::anim::legacy_grounding`) solve through it;
+//! nothing is sent to the simulator.
 
-#[cfg(test)]
-use super::{Scene, anim::Rig};
-#[cfg(test)]
-use crate::world::{
-    World,
-    hand_ik::{self, Hand},
-};
 use glam::{Quat, Vec3};
-#[cfg(test)]
-use std::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Target {
     pub position: Vec3,
     pub rotation: Option<Quat>,
     pub contact: Vec3,
-}
-
-#[cfg(test)]
-pub type Targets = [Option<Target>; 2];
-
-#[cfg(test)]
-#[derive(Default)]
-pub struct Pose {
-    pub targets: Targets,
-    held: Targets,
-    weights: [f32; 2],
-    at: Option<Instant>,
-}
-
-#[cfg(test)]
-impl Pose {
-    /// The base rotations must never be overwritten: otherwise stopping an
-    /// IK constraint would leave its corrected pose in unanimated joints.
-    #[allow(clippy::too_many_arguments)] // Rig pose inputs plus the contact clock/edit freeze.
-    pub fn rotations(
-        &mut self,
-        rig: &Rig,
-        base_rot: &[Quat],
-        pelvis: Vec3,
-        local_pos: &[Vec3],
-        scale: &[Vec3],
-        now: Instant,
-        paused: bool,
-    ) -> Option<Vec<Quat>> {
-        let dt = self
-            .at
-            .map_or(1.0 / 60.0, |at| now.saturating_duration_since(at).as_secs_f32().min(0.1));
-        self.at = Some(now);
-        if !paused {
-            for i in 0..2 {
-                if let Some(target) = self.targets[i] {
-                    self.held[i] = Some(target);
-                    self.weights[i] = (self.weights[i] + dt / 0.2).min(1.0);
-                } else {
-                    self.weights[i] = (self.weights[i] - dt / 0.2).max(0.0);
-                    if self.weights[i] == 0.0 {
-                        self.held[i] = None;
-                    }
-                }
-            }
-        }
-        if self.held.iter().all(Option::is_none) {
-            return None;
-        }
-        let world = rig.world_with(base_rot, pelvis, local_pos, scale);
-        let mut rotations = base_rot.to_vec();
-        for hand in [Hand::Left, Hand::Right] {
-            let i = hand.index();
-            let Some(mut target) = self.held[i] else { continue };
-            let [a, b, c] = hand.joints().map(|name| rig.names.get(name).copied());
-            let (Some(a), Some(b), Some(c)) = (a, b, c) else { continue };
-            if rig.parent[b] != Some(a) || rig.parent[c] != Some(b) {
-                continue;
-            }
-            let transform = |j: usize| {
-                let (_, rotation, position) = world[j].to_scale_rotation_translation();
-                (rotation, position)
-            };
-            let [(ar, ap), (br, bp), (cr, cp)] = [a, b, c].map(transform);
-            // LLXformMatrix joint scales are not inherited. Scale the authored
-            // palm point by this avatar's actual wrist scale, like its skin.
-            target.contact *= scale.get(c).copied().unwrap_or(rig.scale[c]);
-            let parent_rot = rig.parent[a].map_or(Quat::IDENTITY, |p| transform(p).0);
-            // Avatar axes: +X forward, +Y left, +Z up. Elbows prefer an
-            // outward/downward plane, including near a straight-arm singularity.
-            let pole = Vec3::new(0.0, if hand == Hand::Left { 1.0 } else { -1.0 }, -0.5);
-            if let Some(solved) = solve([ap, bp, cp], [ar, br, cr], parent_rot, target, pole) {
-                for (joint, rotation) in [a, b, c].into_iter().zip(solved) {
-                    // Matrix decomposition through nonuniform shape scales
-                    // must not perturb an unconstrained local wrist rotation.
-                    if joint == c && target.rotation.is_none() {
-                        continue;
-                    }
-                    rotations[joint] = base_rot[joint].slerp(rotation, self.weights[i]).normalize();
-                }
-            }
-        }
-        Some(rotations)
-    }
 }
 
 /// Analytic contact with a shaped wrist-local point (zero for wrist pivot).

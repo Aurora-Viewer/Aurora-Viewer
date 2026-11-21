@@ -20,8 +20,11 @@ impl World {
         if !self.announce_incoming_im || from.is_nil() || from == self.agent_id || self.social.has_session(&from) {
             return;
         }
-        // VoiceCallsFriendsOnly: not for a resident who is not a friend
-        if self.friends_only_drops(&from, &im.from_name) || !self.rlva_allows_im("recvim", from) {
+        // VoiceCallsFriendsOnly: not for a resident who is not a friend.
+        // @recvim does not stop the announcement (typingNameCallback,
+        // llimview.cpp): it only withholds the automatic response
+        // (`autoresponse_due`).
+        if self.friends_only_drops(&from, &im.from_name) {
             return;
         }
         // the automatic response goes now, as typingNameCallback sends it:
@@ -32,11 +35,17 @@ impl World {
         if !im.from_name.is_empty() {
             self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
         }
-        let name = self.social.avatar_names.complete(&from).unwrap_or_else(|| im.from_name.clone());
+        let name = self
+            .social
+            .avatar_names
+            .complete_in(super::names::NameScope::Roster, &from)
+            .unwrap_or_else(|| im.from_name.clone());
         self.im_messages.push(ImMessage {
             kind: ImKind::Private,
             session: from,
             new_session: true,
+            // the announcement carries no text of theirs yet
+            mention: false,
         });
         self.social.session_mut(from);
         let line = ChatLine {
@@ -46,6 +55,9 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         log::info!("incoming IM announced (the sender started typing)");
         self.conversation_card(from, line);
@@ -142,6 +154,27 @@ mod tests {
             sent.iter()
                 .any(|c| matches!(c, aurora_net::NetCommand::SendImDialog { to, .. } if *to == FROM)),
             "the do not disturb reply is sent"
+        );
+    }
+
+    /// typingNameCallback (llimview.cpp): @recvim does not stop the
+    /// announcement; only the automatic response is withheld.
+    #[test]
+    fn rlva_recvim_announces_the_typing_resident_without_the_automatic_response() {
+        let mut world = world();
+        world.announce_incoming_im = true;
+        world.status.dnd = true;
+        world.rlva.configure(true);
+        world.rlva_console_input("@recvim=n");
+        world.apply(typing(&world, IM_TYPING_START));
+        assert!(world.social.has_session(&FROM));
+        assert_eq!(lines(&world).len(), 1, "the announcement alone");
+        assert!(
+            !world
+                .groups
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::SendImDialog { to, .. } if *to == FROM))
         );
     }
 }

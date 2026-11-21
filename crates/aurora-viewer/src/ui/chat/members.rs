@@ -3,7 +3,8 @@
 //! invited who have not joined yet, each with their picture and status,
 //! the speaker of who speaks in our call and the struck microphone of who a
 //! moderator muted. A click opens the profile, a right click the resident's
-//! menu. Firestorm's participant list of a session (LLParticipantList,
+//! menu, with a group chat's moderator options (`moderation`). The Legacy
+//! Viewer's participant list of a session (LLParticipantList,
 //! FSParticipantList), as a column.
 //!
 //! A conference also lists who is not in it: the residents it was started
@@ -15,6 +16,7 @@
 use super::{ChatUi, ConvAction, presence};
 use crate::theme::Palette;
 use crate::world::World;
+use aurora_i18n::UiUpper;
 use egui::RichText;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -68,7 +70,7 @@ pub(super) fn show(
         let in_call = call.and_then(|c| c.members.iter().find(|m| m.id == *id));
         Member {
             id: *id,
-            name: world.social.display_name_of(id),
+            name: world.social.display_name_in(crate::world::names::NameScope::Roster, id),
             status: if *id == world.agent_id {
                 presence::Status::Online
             } else {
@@ -109,7 +111,7 @@ pub(super) fn show(
         offline_ids(world, conversation, &pending).iter().map(member).collect()
     };
     for list in [&mut moderators, &mut participants, &mut invited, &mut offline] {
-        list.sort_by_key(|m| m.name.to_lowercase());
+        list.sort_by_key(|m| crate::natural_order::key(&m.name));
     }
     egui::ScrollArea::vertical()
         .id_salt(("members", conversation))
@@ -152,7 +154,7 @@ pub(super) fn show(
                 }
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new(format!("{} — {}", title.to_uppercase(), list.len()))
+                    RichText::new(format!("{} — {}", title.ui_upper(), list.len()))
                         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
                         .color(p.muted_dim),
                 );
@@ -168,6 +170,7 @@ pub(super) fn show(
                         m,
                         dim,
                         info.is_some_and(|i| i.moderators.contains(&m.id)),
+                        conversation,
                     );
                 }
             }
@@ -193,9 +196,13 @@ fn row(
     m: &Member,
     dim: bool,
     moderator: bool,
+    conversation: Uuid,
 ) {
     st.wanted_pics.insert(m.id);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::hover());
+    if m.id == crate::demo::DEMO_NOVA {
+        super::moderation::demo_mark(ui.ctx(), super::moderation::DemoMark::Row, rect);
+    }
     let resp = ui.interact(rect, member_id(m.id), egui::Sense::click());
     if resp.hovered() {
         ui.painter()
@@ -239,7 +246,7 @@ fn row(
         egui::FontId::proportional(12.5),
         color,
     );
-    super::name_menu(&resp, p, world, m.id);
+    super::member_menu(&resp, p, world, conversation, m.id);
     let tip = if moderator {
         aurora_i18n::tr!("ui-chat-moderator-click-profile")
     } else {

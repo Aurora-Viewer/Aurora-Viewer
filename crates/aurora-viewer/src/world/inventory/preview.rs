@@ -1,11 +1,15 @@
 //! LLPreviewNotecard, LLSettingsVOBase and LLMaterialEditor asset decoding.
 //! Firestorm indra/newview, originally LGPL 2.1. Presentation stays in French.
 
-pub fn can_edit(inv: &super::Inventory, item: uuid::Uuid) -> bool {
+/// A notecard or script of the inventory may be changed: copy and modify,
+/// or a god from GOD_MAINTENANCE (LLPreviewNotecard::canModify through
+/// LLAgent::allowOperation; `actions::with_god`). A god under it reads only.
+pub fn can_edit(inv: &super::Inventory, item: uuid::Uuid, god_level: u8) -> bool {
     !super::actions::library(inv, item)
         && inv.items.get(&item).is_some_and(|it| {
             matches!(it.asset_type, 7 | 10)
-                && it.owner_mask & (super::actions::COPY | super::actions::MODIFY) == super::actions::COPY | super::actions::MODIFY
+                && super::actions::held_for(inv, it, god_level) & (super::actions::COPY | super::actions::MODIFY)
+                    == super::actions::COPY | super::actions::MODIFY
         })
 }
 
@@ -85,15 +89,20 @@ mod tests {
         let mut inv = super::super::Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, uuid::Uuid::from_u128(2));
         let id = uuid::Uuid::from_u128(8103);
-        assert!(can_edit(&inv, id));
+        assert!(can_edit(&inv, id, 0));
         for mask in [super::super::actions::COPY, super::super::actions::MODIFY, 0] {
             inv.items.get_mut(&id).expect("note").owner_mask = mask;
-            assert!(!can_edit(&inv, id));
+            assert!(!can_edit(&inv, id, 0));
+            // a god under GOD_MAINTENANCE reads it only; from it, edits it
+            // (LLAgent::allowOperation), as for scripts and object notecards
+            assert!(!can_edit(&inv, id, 225));
+            assert!(can_edit(&inv, id, super::super::actions::GOD_MAINTENANCE));
         }
         let item = inv.items.get_mut(&id).expect("note");
         item.owner_mask = super::super::actions::COPY | super::super::actions::MODIFY;
         item.parent = inv.lib_root;
-        assert!(!can_edit(&inv, id));
+        assert!(!can_edit(&inv, id, 0));
+        assert!(!can_edit(&inv, id, 255), "the Library stays read only");
     }
     #[test]
     fn notecard_lengths_are_utf8_bytes_and_invalid_sizes_never_panic() {

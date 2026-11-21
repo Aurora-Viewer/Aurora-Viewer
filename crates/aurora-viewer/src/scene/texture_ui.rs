@@ -13,13 +13,14 @@ use std::{
 use uuid::Uuid;
 
 pub(super) type Pixels = (u32, u32, Vec<u8>);
-type Reply = (Uuid, PreviewRevision, Option<Pixels>);
+type Request = (PreviewRevision, u32);
+type Reply = (Uuid, Request, Option<Pixels>);
 
 pub(super) struct Images {
     tx: crossbeam_channel::Sender<Reply>,
     rx: crossbeam_channel::Receiver<Reply>,
-    pending: HashMap<Uuid, PreviewRevision>,
-    attempted: HashMap<Uuid, (PreviewRevision, Instant)>,
+    pending: HashMap<Uuid, Request>,
+    attempted: HashMap<Uuid, (Request, Instant)>,
 }
 
 impl Default for Images {
@@ -35,8 +36,8 @@ impl Default for Images {
 }
 
 impl Images {
-    pub fn request(&mut self, id: Uuid, source: PreviewSource, jobs: &Jobs) {
-        let revision = source.image_revision();
+    pub fn request(&mut self, id: Uuid, source: PreviewSource, side: u32, jobs: &Jobs) {
+        let revision = (if side > 256 { source.revision() } else { source.image_revision() }, side);
         let now = Instant::now();
         if self.pending.len() >= 8
             || self.pending.contains_key(&id)
@@ -57,10 +58,10 @@ impl Images {
         self.attempted.insert(id, (revision, now));
         let tx = self.tx.clone();
         jobs.execute(move || {
-            let pixels = source.image(id).and_then(|image| {
+            let pixels = source.image_at_size(id, side).and_then(|image| {
                 let rgba = image::RgbaImage::from_raw(image.size[0], image.size[1], image.rgba.to_vec())?;
-                let image = if rgba.width().max(rgba.height()) > 256 {
-                    image::DynamicImage::ImageRgba8(rgba).thumbnail(256, 256).into_rgba8()
+                let image = if rgba.width().max(rgba.height()) > side {
+                    image::DynamicImage::ImageRgba8(rgba).thumbnail(side, side).into_rgba8()
                 } else {
                     rgba
                 };
@@ -105,7 +106,7 @@ mod tests {
         let mut images = Images::default();
         let mut ready = HashMap::new();
         for n in 1..=1000 {
-            images.request(Uuid::from_u128(n), source(), &jobs);
+            images.request(Uuid::from_u128(n), source(), 256, &jobs);
             assert!(images.pending.len() <= 8);
         }
         assert_eq!(images.pending.len(), 8);
@@ -114,9 +115,44 @@ mod tests {
             ready.is_empty() && images.pending.is_empty(),
             "released image results are discarded"
         );
-        images.request(Uuid::from_u128(1001), source(), &jobs);
+        images.request(Uuid::from_u128(1001), source(), 256, &jobs);
         images.poll(&mut ready, &HashSet::from([Uuid::from_u128(1001)]));
         assert_eq!(ready.len(), 1, "new active image can load after obsolete jobs drain");
+    }
+
+    #[test]
+    fn a_cached_outfit_photo_reloads_in_hd_after_its_thumbnail_and_after_eviction() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (jobs, _results) = Jobs::new();
+        let id = Uuid::new_v4();
+        let dir = std::env::temp_dir().join(format!("aurora-outfit-hd-{id}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpeg = dir.join("portrait.j2c");
+        let bytes = aurora_assets::j2k::encode_texture_j2k(1024, 512, 3, &vec![128; 1024 * 512 * 3], true).unwrap();
+        crate::cache::write(&jpeg, &bytes).unwrap();
+        let source = || PreviewSource {
+            local: None,
+            bytes: Arc::default(),
+            jpeg: jpeg.clone(),
+            blocks: dir.join("portrait.bc7"),
+            decoded: Some(0),
+            size: Some((1024, 512)),
+            procedural: false,
+        };
+        let wanted = HashSet::from([id]);
+        let mut jobs_ui = Images::default();
+        let mut ready = HashMap::new();
+        for (side, width, height) in [(256, 256, 128), (1024, 1024, 512)] {
+            jobs_ui.request(id, source(), side, &jobs);
+            jobs_ui.poll(&mut ready, &wanted);
+            let pixels = ready.remove(&id).expect("disk image at requested resolution");
+            assert_eq!((pixels.0, pixels.1), (width, height));
+        }
+        let mut reopened = Images::default();
+        reopened.request(id, source(), 1024, &jobs);
+        reopened.poll(&mut ready, &wanted);
+        assert_eq!(ready[&id].0, 1024);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -140,7 +176,7 @@ mod tests {
             };
             let mut images = Images::default();
             let mut ready = HashMap::new();
-            images.request(aurora_prim::te::DEFAULT_TEXTURE, source, &jobs);
+            images.request(aurora_prim::te::DEFAULT_TEXTURE, source, 256, &jobs);
             images.poll(&mut ready, &HashSet::from([aurora_prim::te::DEFAULT_TEXTURE]));
             let (width, height, rgba) = ready.get(&aurora_prim::te::DEFAULT_TEXTURE).unwrap();
             assert_eq!((*width, *height, rgba.len()), (64, 64, 64 * 64 * 4));
