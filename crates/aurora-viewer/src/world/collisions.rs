@@ -123,10 +123,17 @@ impl Collisions {
     /// A resident already listed for this kind gets the new time and
     /// magnitude, and keeps the name the row had. The Legacy Viewer leaves
     /// that row where it was; it moves to the top here, so the list stays
-    /// newest first.
+    /// newest first. A new row names every row of its resident again, the
+    /// other kinds included: mean_name_callback
+    /// (indra/newview/llviewermessage.cpp), asked for each new row, writes
+    /// the name of every entry whose `mPerp` it is.
     fn record(&mut self, mut c: Collision) {
         if let Some(old) = self.list.iter().find(|o| (o.perp, o.kind) == (c.perp, c.kind)) {
             c.anonymous = old.anonymous;
+        } else {
+            for row in self.list.iter_mut().filter(|o| o.perp == c.perp) {
+                row.anonymous = c.anonymous;
+            }
         }
         self.list.retain(|o| (o.perp, o.kind) != (c.perp, c.kind));
         self.list.push_front(c);
@@ -275,5 +282,29 @@ mod tests {
         assert!(is_prelude(1 << 3));
         assert!(!is_prelude((1 << 3) | (1 << 1)));
         assert!(!is_prelude(0));
+    }
+    /// mean_name_callback (indra/newview/llviewermessage.cpp) runs for each
+    /// new row and renames every row of the resident: a push under
+    /// `@shownames` hides the name of their earlier bump, and a hit of a
+    /// new kind once it is lifted shows it again; a repeated kind keeps it.
+    #[test]
+    fn a_new_kind_of_collision_renames_every_row_of_its_resident() {
+        let mut w = world();
+        w.rlva.configure(true);
+        w.on_mean_collisions(vec![hit(1, 1, 10)]);
+        let anonymous = |w: &World| w.collisions.list().map(|c| (c.kind, c.anonymous)).collect::<Vec<_>>();
+        assert_eq!(anonymous(&w), [(Kind::Bump, false)]);
+        w.rlva_console_input("@shownames=n");
+        assert!(w.rlva.has("shownames"));
+        w.on_mean_collisions(vec![hit(1, 1, 11)]);
+        assert_eq!(anonymous(&w), [(Kind::Bump, false)], "the same kind keeps its name");
+        w.on_mean_collisions(vec![hit(1, 2, 12)]);
+        assert_eq!(anonymous(&w), [(Kind::Push, true), (Kind::Bump, true)]);
+        w.rlva_console_input("@shownames=y");
+        w.on_mean_collisions(vec![hit(1, 5, 13), hit(2, 1, 14)]);
+        assert_eq!(
+            w.collisions.list().map(|c| (c.perp, c.anonymous)).collect::<Vec<_>>(),
+            [(id(2), false), (id(1), false), (id(1), false), (id(1), false)]
+        );
     }
 }

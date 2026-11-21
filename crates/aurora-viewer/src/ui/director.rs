@@ -395,7 +395,9 @@ pub fn window(
                             luts: looks.luts,
                             pano: false,
                         };
-                        looks.ui.show(ui, p, looks.settings, opts, looks.out);
+                        looks
+                            .ui
+                            .show(ui, p, super::looks_editor::Stack::photo(looks.settings), opts, looks.out);
                     }
                     Tab::Library => {
                         widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), true, |ui| {
@@ -536,9 +538,13 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
         actions.push(Action::FreezeWorld(frozen));
     }
     let mut free = live.free;
-    if widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
-        .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
-        .changed()
+    if ui
+        .add_enabled_ui(!live.restricted, |ui| {
+            widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
+                .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
+                .changed()
+        })
+        .inner
     {
         actions.push(Action::Free(free));
     }

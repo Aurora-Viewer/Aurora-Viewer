@@ -305,8 +305,14 @@ impl App {
             self.particle_inject_failed(aurora_i18n::tr!("particle-editor-object-gone").to_owned());
             return;
         };
-        self.build.send(drop.command);
-        self.flush_build();
+        // (past RLVa's attachment locks, as LLViewerObject::saveScript asks
+        // nothing of it; with RLVa off an actor's command is not sent)
+        let actor = if self.settings.rlva_enabled {
+            crate::world::rlva::policy::PARTICLE_EDITOR
+        } else {
+            Uuid::nil()
+        };
+        self.send_from(NetCommand::Build(drop.command), actor);
         self.build.contents_changed(p.object);
         self.particle_editor.busy = false;
         let text = if p.texture_left_out {
