@@ -4795,6 +4795,54 @@ mod tests {
             "the Worn-only command leaked into Edit outfit"
         );
     }
+
+    #[test]
+    fn outfit_editor_rows_keep_the_cof_menu_without_favorites_or_edit_outfit() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let name = world.inventory.items[&Uuid::from_u128(714)].name.clone();
+        let mut st = AppearanceUi::default();
+        st.open(2, true);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let shapes = draw_output(
+            &ctx,
+            &mut world,
+            &mut st,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        )
+        .1;
+        let in_menu = |label: &str| {
+            shapes
+                .iter()
+                .any(|s| s.clip_rect.contains_rect(screen) && text_position(&s.shape, label).is_some())
+        };
+        // menu_cof_clothing.xml: Edit and Take off only
+        assert!(in_menu(aurora_i18n::tr!("common-edit")), "the editor row keeps Edit");
+        for label in [
+            aurora_i18n::tr!("common-add-to-favorites"),
+            aurora_i18n::tr!("common-remove-from-favorites"),
+            aurora_i18n::tr!("ui-context-edit-outfit"),
+        ] {
+            assert!(!in_menu(label), "{label} leaked into Edit outfit");
+        }
+    }
     #[test]
     fn review_2376_show_original_obeys_showinv_and_recovers_when_released() {
         let ctx = egui::Context::default();
