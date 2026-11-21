@@ -447,7 +447,17 @@ mod tests {
         let expected = skeleton.joints.iter().filter(|j| !j.is_collision_volume).count();
         assert!(expected > 130, "{expected}");
         assert_eq!(bones.len(), expected);
-        for name in ["mPelvis", "mTorso", "mChest", "mNeck", "mHead", "mCollarLeft", "mShoulderLeft", "mHipRight", "mFaceRoot"] {
+        for name in [
+            "mPelvis",
+            "mTorso",
+            "mChest",
+            "mNeck",
+            "mHead",
+            "mCollarLeft",
+            "mShoulderLeft",
+            "mHipRight",
+            "mFaceRoot",
+        ] {
             let joint = lib.rig.names[name];
             assert_eq!(lib.rig.canonical_names[joint], name);
             assert!(bones.iter().any(|b| b.0 == joint), "{name} is missing");
