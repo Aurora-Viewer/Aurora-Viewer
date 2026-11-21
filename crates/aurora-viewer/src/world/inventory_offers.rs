@@ -402,7 +402,7 @@ impl World {
             let name = if self.notifications.names_resident(id) {
                 super::teleport_invites::agent_link(im.from_agent_id)
             } else {
-                self.rlva_anonymous(im.from_agent_id).display_name.clone()
+                self.rlva_anonymous_from(im.from_agent_id, &im.from_name).display_name.clone()
             };
             aurora_i18n::tr!(
                 "received-auto-accepted-resident",
@@ -496,7 +496,7 @@ impl World {
         let (giver, logged) = if named {
             (from.to_string(), super::teleport_invites::agent_link(im.from_agent_id))
         } else {
-            let stand_in = self.rlva_anonymous(im.from_agent_id).display_name.clone();
+            let stand_in = self.rlva_anonymous_from(im.from_agent_id, &im.from_name).display_name.clone();
             (stand_in.clone(), stand_in)
         };
         let title = aurora_i18n::tr!("world-mod-gives-you", from = giver, what = item_label(&im.message));

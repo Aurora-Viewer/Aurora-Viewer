@@ -493,7 +493,7 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
     let top = ui.cursor().top();
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.label(RichText::new(&v.name).font(semibold(ui, 16.0)).color(p.ink));
-    place_row(ui, p, &world.rlva_filter_text(&v.place));
+    place_row(ui, p, &v.place);
     if !v.desc.trim().is_empty() {
         rich(ui, p, env.emoji, world, env.want_names, &v.desc);
     }
@@ -504,6 +504,10 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
 }
 
 /// "map-pin" and the place, in the muted color.
+/// A pick's or a classified's place, as it is written: the Legacy Viewer's
+/// LLPanelProfilePick::setPickLocation and LLPanelProfileClassified
+/// (indra/newview/llpanelprofilepicks.cpp, llpanelprofileclassifieds.cpp)
+/// show it with no RLVa filter (`@showloc` greys only New).
 fn place_row(ui: &mut egui::Ui, p: &Palette, place: &str) {
     if place.is_empty() {
         return;
@@ -599,7 +603,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             false,
         );
     });
-    place_row(ui, p, &world.rlva_filter_text(&v.place));
+    place_row(ui, p, &v.place);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
@@ -1084,7 +1088,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
                 ui.label(
-                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map)))
+                    RichText::new(place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map))
                         .size(11.5)
                         .color(p.muted),
                 );
@@ -1417,7 +1421,6 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         .location
         .clone()
         .unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos, &env.world.map));
-    let place = world.rlva_filter_text(&place);
     let mut here = false;
     let mut renew = e.auto_renew;
     row(
@@ -1425,16 +1428,18 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         &mut |ui| {
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-place"), |ui| {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(RichText::new(place.as_ref()).size(12.0).color(p.muted)).truncate());
+                    ui.add(egui::Label::new(RichText::new(place.as_str()).size(12.0).color(p.muted)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        here = widgets::action_button_if(
+                        // LLPanelProfileClassified::onSetLocationClick
+                        // (llpanelprofileclassifieds.cpp): no RLVa test, under
+                        // @showloc too (a pick's is greyed under it)
+                        here = widgets::action_button(
                             ui,
                             p,
                             "current-location-filled",
                             aurora_i18n::tr!("ui-profile-aurora-here"),
                             ActionKind::Flat,
                             Vec2::new(0.0, 24.0),
-                            !world.rlva.has("showloc"),
                         )
                         .clicked();
                     });

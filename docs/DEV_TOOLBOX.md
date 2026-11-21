@@ -191,8 +191,8 @@ What a run does:
   when the avatar has none) with six copies of a Library object and one
   link. It never renames, moves, trashes or deletes anything, its own items
   included: a later run finds them again by name, place and owner.
-- **Worn objects**: its controller on Hind Right Foot, a second object on
-  Hind Left Foot, the forced-wear cases on Tail Tip. What the avatar wears
+- **Worn objects**: its controller on Right Hind Foot, a second object on
+  Left Hind Foot, the forced-wear cases on Tail Tip. What the avatar wears
   on these three points may be taken off; a case that would replace
   someone else's object on Tail Tip is skipped instead. Two of the objects
   get a small relay script (`world/bridge/selftest_relay.lsl`): it listens

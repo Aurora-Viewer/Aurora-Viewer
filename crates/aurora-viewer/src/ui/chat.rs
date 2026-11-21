@@ -870,6 +870,12 @@ impl ChatUi {
         self.local_typing.update(now, std::mem::take(&mut self.local_field))
     }
 
+    /// `local_typing_update` while RLVa holds the typing start back
+    /// (`LocalTyping::update_held`).
+    pub fn local_typing_update_held(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update_held(now, std::mem::take(&mut self.local_field))
+    }
+
     /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
     /// it starts.
     pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {

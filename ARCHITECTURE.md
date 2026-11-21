@@ -1602,8 +1602,10 @@ Simulator-triggered group changes restore only the last permitted group;
 the internal restoration actor cannot activate an arbitrary group.
 `privacy.rs` provides display-only identity/location projections, keeping
 canonical cache records, transcript file identities and region coordinates
-intact. `privacy/matcher.rs` compiles Unicode word-boundary replacements into
-a shared trie, reused while the patterns stay unchanged. Name exceptions,
+intact. Its text filter replaces each place and name in turn, between word
+boundaries, as RlvUtil::filterLocation and filterNames do;
+`privacy/anonyms.rs` holds the Legacy Viewer's lists of stand-ins, English
+followed by the interface language's own. Name exceptions,
 limited avatar menus, location writes, application links and teleport offers
 are checked at both their native UI paths and the common action boundary.
 The current teleport-history label follows location privacy without losing
@@ -1658,7 +1660,14 @@ before the action guard. Current large regions retain their local coordinates;
 remote destinations use the native 256-metre tile. The no-angle look field
 uses local position plus X; explicit headings remain unit vectors.
 `rlva/naming.rs` handles balanced attachment-name blocks and legacy folder
-syntax. `collection.rs` is shared by forced wear and worn-inventory queries:
+syntax. `rlva/numeric.rs` reads every number and key of a command as the
+Legacy Viewer does (`std::stoi`, `std::stof`, LLStringUtil::convertTo*,
+`sscanf` vectors, LLUUID::set and parseUUID); the places that compute with a
+value keep their own guards against `inf` and `nan`. `rlva/dictionary.rs` is
+the Legacy behaviour dictionary in registration order, which @getcommand
+lists. `rlva/startup.rs` keeps the settings RLVa reads once when it starts
+(at the login) and retains the commands received before the login completes.
+`collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
 asynchronous fetching. Query counts use one ancestry walk per collected item.
@@ -1681,6 +1690,10 @@ check the group UUID; conference invitations censor the initiating sender.
 Existing multi-agent session traffic follows the separate native receive path.
 Teleport text obeys receive/location privacy; forced acceptance overrides
 status rejection while preserving lock checks and do-not-disturb replies.
+`rlva/legacy_strings.rs` holds the texts RLVa sends to the other party (busy
+replies, @stopim and @list answers, hidden teleport text) word for word from
+the Legacy Viewer's rlva_strings.xml, per interface language with English
+for a missing key, since the other side's scripts may compare them.
 `rlva/rename.rs` observes confirmed new attachment arrivals in legacy shared-wear
 mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
@@ -1780,6 +1793,8 @@ send: commands that name the test's own items or, in phase 2, the prims the
 run rezzed itself and still owns; what changes an object passes only as a
 probe that the boundary refuses. `rlva_selftest/cases.rs` holds the phase 1 cases
 (rules checked at the boundary, replies, wear round trips),
+`rlva_selftest/cases_chat.rs` the phase 1 chat and IM cases (volumes,
+redirection, emote cuts, typing, hidden teleport requests, strict @*from),
 `rlva_selftest/cases_world.rs` the in-world ones of phase 2 (rez, edit,
 touch, sit, fly on its own prims), chosen apart in the dialog. Whatever ends
 a run (failure, timeout, Stop, RLVa switched off, a teleport, a logout), the
