@@ -20719,6 +20719,8 @@ impl App {
                             self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
+                        // LLAvatarActions::inviteToGroup (indra/newview/llavataractions.cpp)
+                        ui::profile::ProfileAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
