@@ -114,15 +114,10 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     var glass = vec3<f32>(1.0);
     if (shadow < 0.5) {
         let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
+        // (the placed objects' glass: worn glass is not traced yet)
         rayQueryInitialize(&rq, scene_tlas, pane);
         while (rayQueryProceed(&rq)) {
             glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), false, dir);
-        }
-        if (params.mode.w > 0.5) {
-            rayQueryInitialize(&rq, posed_tlas, pane);
-            while (rayQueryProceed(&rq)) {
-                glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), true, dir);
-            }
         }
     }
     textureStore(out_glass, pixel, vec4<f32>(glass, 1.0));

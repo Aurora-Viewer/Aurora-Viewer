@@ -73,7 +73,7 @@ pub(crate) struct Override {
     cull: Cull,
     /// `AURORA_RT_EMITTER=sphere`: a lamp's rays stop at the sphere that
     /// holds its prim, as before its prim alone was passed
-    /// (rt_lights.wgsl `light_blocked`), for a comparison.
+    /// (rt_lights.wgsl `light_ray`), for a comparison.
     emitter_sphere: bool,
 }
 

@@ -175,7 +175,7 @@ fn lamp_light(i: u32, p: vec3<f32>, n: vec3<f32>, pbr: bool) -> vec3<f32> {
 // goes, up to the bounds of the light's own prim; w 0 from inside them. A
 // hit of the indirect light or of a reflection stops there, where the
 // view's own pixels trace on to the light past every face but its prim's
-// (rt_lights.wgsl `light_blocked`): a second ray for what the bounced
+// (rt_lights.wgsl `light_ray`): a second ray for what the bounced
 // light hardly shows.
 fn lamp_ray(i: u32, start: vec3<f32>) -> vec4<f32> {
     let lt = lights[i];
