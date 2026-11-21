@@ -152,7 +152,7 @@ impl KeyboardLayout {
     }
 
     /// A layout read from Windows: each key's virtual key in the layout
-    /// (`MAPVK_VSC_TO_VK_EX`), which gives its Firestorm name, and what
+    /// (`MAPVK_VSC_TO_VK_EX`), which gives its Legacy Viewer name, and what
     /// `MAPVK_VK_TO_CHAR` returns for it, the unshifted character in the low
     /// word (a dead key sets the high bit).
     #[cfg(any(windows, test))]
@@ -197,6 +197,13 @@ impl KeyboardLayout {
         layout.sorted()
     }
 
+    /// Sorted by `KeyCode` (winit's declaration order), which also decides
+    /// which key `key_for` and `mapped_movement` take when two keys share a
+    /// name or a label: the first in that order. It puts Backquote,
+    /// Backslash, the brackets, Comma, Equal and then IntlBackslash before
+    /// the letters, and Minus, Period, Quote, Semicolon and Slash after them
+    /// (the order of the read, letters first and IntlBackslash last, decided
+    /// before).
     fn sorted(mut self) -> Self {
         self.labels.sort_unstable();
         self.names.sort_unstable();
@@ -423,6 +430,90 @@ pub struct LayoutChange {
     pub guessed: bool,
 }
 
+/// A group the X11 watch heard: from XKB's `XkbStateNotify`, which the
+/// server sends only when the group changes, or read (`XkbGetState` at a
+/// focus, the active group of a new keymap).
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy)]
+pub(super) enum GroupHeard {
+    Event(u32),
+    Read(u32),
+}
+
+/// What the X11 watch reports before its first report on XWayland. XWayland
+/// takes the compositor's group once one of its windows has the focus, and
+/// the window manager's X focus (winit's `Focused(true)`) can come before the
+/// compositor's `wl_keyboard.modifiers` reach XWayland: a read at that focus
+/// still gives the stand-in. Reported, it would settle the stand-in
+/// (`Layouts::activate` with `before == after`) and the real group, coming
+/// next, would count as the user's own switch: the defaults would never
+/// move. So a read equal to the stand-in is held for at most `ticks` idle
+/// ticks of the watch thread, waiting for the group's event; then the group
+/// is read again and reported as it is, so a user who really is on the
+/// stand-in's layout settles too. An event, or a read that differs from the
+/// stand-in, is reported at once, and once anything was reported every group
+/// is. Without a stand-in (plain X11, which reports the active group at
+/// start) nothing is held.
+#[cfg(any(target_os = "linux", test))]
+pub(super) struct FocusSettle {
+    /// The group that only stood in at start, until the first report.
+    stand_in: Option<u32>,
+    /// Idle ticks left before the held read is read again.
+    wait: Option<u32>,
+    ticks: u32,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl FocusSettle {
+    pub(super) fn new(stand_in: Option<u32>, ticks: u32) -> Self {
+        Self {
+            stand_in,
+            wait: None,
+            ticks: ticks.max(1),
+        }
+    }
+
+    /// The group to report, if any.
+    pub(super) fn heard(&mut self, heard: GroupHeard) -> Option<u32> {
+        let Some(stand_in) = self.stand_in else {
+            let (GroupHeard::Event(group) | GroupHeard::Read(group)) = heard;
+            return Some(group);
+        };
+        match heard {
+            GroupHeard::Read(group) if group == stand_in => {
+                // a second focus during the wait does not make it longer
+                self.wait.get_or_insert(self.ticks);
+                None
+            }
+            GroupHeard::Event(group) | GroupHeard::Read(group) => {
+                self.settle();
+                Some(group)
+            }
+        }
+    }
+
+    /// An idle tick of the watch thread: true when the wait is over, and the
+    /// group is to be read again and reported whatever it is.
+    pub(super) fn tick(&mut self) -> bool {
+        match self.wait {
+            Some(left) if left > 1 => {
+                self.wait = Some(left - 1);
+                false
+            }
+            Some(_) => {
+                self.settle();
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn settle(&mut self) {
+        self.stand_in = None;
+        self.wait = None;
+    }
+}
+
 fn layouts() -> &'static Layouts {
     static LAYOUTS: OnceLock<Layouts> = OnceLock::new();
     LAYOUTS.get_or_init(|| {
@@ -499,8 +590,10 @@ impl Watch {
     }
 
     /// The window got the focus: where the system tells no change at focus
-    /// (XWayland keeps its group when it already matches), the next poll
-    /// reports the layout in use, which settles a stand-in.
+    /// (XWayland keeps its group when it already matches), the layout in use
+    /// is read and reported, which settles a stand-in (on XWayland a read
+    /// equal to the stand-in first waits for the compositor's group:
+    /// `FocusSettle`).
     pub fn focused(&mut self) {
         if let Some(inner) = self.inner.as_mut() {
             inner.focused();
@@ -725,6 +818,46 @@ mod tests {
         for (key, name, _) in NAMED_KEYS {
             assert_eq!(us.key_for(name), Some(key), "{name}");
         }
+    }
+
+    /// XWayland, `us,fr`: the X focus can come before the compositor's
+    /// group, so a read at focus that still gives the stand-in (group 0)
+    /// waits for the group's event, and a user really on US settles once
+    /// the wait is over.
+    #[test]
+    fn a_focus_read_equal_to_the_stand_in_waits_for_the_compositor() {
+        use GroupHeard::{Event, Read};
+        // the real group arrives during the wait: reported at once, as the
+        // first report, so it replaces the stand-in
+        let mut settle = FocusSettle::new(Some(0), 3);
+        assert_eq!(settle.heard(Read(0)), None, "a stale read is held");
+        assert!(!settle.tick());
+        assert_eq!(settle.heard(Event(1)), Some(1));
+        assert!(!settle.tick(), "nothing left to read again");
+        assert_eq!(settle.heard(Read(0)), Some(0), "settled: every group is reported");
+
+        // the user is on the stand-in's layout: no event comes, the group
+        // is read again after the wait and reported as it is
+        let mut settle = FocusSettle::new(Some(0), 3);
+        assert_eq!(settle.heard(Read(0)), None);
+        assert!(!settle.tick());
+        assert_eq!(settle.heard(Read(0)), None, "a second focus does not report");
+        assert!(!settle.tick(), "nor make the wait longer");
+        assert!(settle.tick(), "the wait is over: read again");
+        assert_eq!(settle.heard(Read(0)), Some(0));
+
+        // a read that differs from the stand-in, or an event, settles at once
+        let mut settle = FocusSettle::new(Some(0), 3);
+        assert_eq!(settle.heard(Read(1)), Some(1));
+        assert_eq!(settle.heard(Read(0)), Some(0));
+        let mut settle = FocusSettle::new(Some(0), 3);
+        assert_eq!(settle.heard(Event(0)), Some(0), "an event is the server's change");
+        assert!(!settle.tick(), "idle ticks with nothing held read nothing");
+
+        // plain X11 reported the active group at start: nothing is held
+        let mut settle = FocusSettle::new(None, 3);
+        assert_eq!(settle.heard(Read(0)), Some(0));
+        assert!(!settle.tick());
     }
 
     #[test]

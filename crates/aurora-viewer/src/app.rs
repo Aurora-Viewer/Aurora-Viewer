@@ -7342,13 +7342,12 @@ impl App {
         let Some(change) = self.gfx.as_mut().and_then(|g| g.layout_watch.as_mut()).and_then(|w| w.poll()) else {
             return;
         };
-        // any report ends the wait; only the one that replaces a stand-in
-        // (always the first) moves the defaults
-        if std::mem::take(&mut self.settings.defaults_follow_reported_layout) {
-            if change.guessed {
-                self.settings.keybinds.follow_layout_change(&change);
-            }
-            self.settings.save();
+        let settings = &mut self.settings;
+        if settings
+            .keybinds
+            .follow_reported_layout(&change, &mut settings.defaults_follow_reported_layout)
+        {
+            settings.save();
         }
     }
 

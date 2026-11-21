@@ -334,19 +334,49 @@ mod wayland {
         /// winit's loop already read are dispatched.
         pub(in super::super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
             self.queue.dispatch_pending(&mut self.heard).map_err(|e| e.to_string())?;
-            self.heard.poll_keymap()?;
-            if self.heard.parsing.is_some() {
-                return Ok(None);
-            }
-            let Some(group) = self.heard.group.filter(|_| self.heard.changed) else {
-                return Ok(None);
-            };
-            self.heard.changed = false;
-            Ok(super::layout_of_group(&self.heard.layouts, group))
+            self.heard.poll()
         }
     }
 
     impl Heard {
+        /// What the events dispatched so far report: the group's layout once
+        /// a keymap's layouts are known. A report with no layout to name (no
+        /// keymap compiled yet, or the only one failed) stays pending until
+        /// one compiles, so the first report, which settles the stand-in and
+        /// the settings waiting for it, is not lost.
+        fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
+            self.poll_keymap()?;
+            if self.parsing.is_some() {
+                return Ok(None);
+            }
+            let Some(group) = self.group.filter(|_| self.changed) else {
+                return Ok(None);
+            };
+            let layout = super::layout_of_group(&self.layouts, group);
+            if layout.is_some() {
+                self.changed = false;
+            }
+            Ok(layout)
+        }
+
+        /// One event of our keyboard.
+        fn keyboard_event(&mut self, event: wl_keyboard::Event) {
+            match event {
+                // sent on every modifier change: only a new group counts
+                wl_keyboard::Event::Modifiers { group, .. } if self.group != Some(group) => {
+                    self.group = Some(group);
+                    self.changed = true;
+                }
+                event @ wl_keyboard::Event::Keymap { .. } => {
+                    // sent when the keyboard is made, then on a new keymap
+                    if let Some(file) = keymap_file(event) {
+                        self.pending = Some(file);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         /// Reading the file and compiling XKB can both wait. Only immutable layout
         /// data comes back to the frame thread; the worker never borrows winit's display.
         fn poll_keymap(&mut self) -> Result<(), String> {
@@ -415,20 +445,7 @@ mod wayland {
 
     impl Dispatch<wl_keyboard::WlKeyboard, ()> for Heard {
         fn event(heard: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-            match event {
-                // sent on every modifier change: only a new group counts
-                wl_keyboard::Event::Modifiers { group, .. } if heard.group != Some(group) => {
-                    heard.group = Some(group);
-                    heard.changed = true;
-                }
-                event @ wl_keyboard::Event::Keymap { .. } => {
-                    // sent when the keyboard is made, then on a new keymap
-                    if let Some(file) = keymap_file(event) {
-                        heard.pending = Some(file);
-                    }
-                }
-                _ => {}
-            }
+            heard.keyboard_event(event);
         }
     }
 
@@ -489,6 +506,68 @@ mod wayland {
             assert!(heard.pending.is_none());
             assert!(heard.parsing.take().expect("new parse").recv().expect("worker reply").is_none());
         }
+
+        fn group(group: u32) -> wl_keyboard::Event {
+            wl_keyboard::Event::Modifiers {
+                serial: 1,
+                mods_depressed: 0,
+                mods_latched: 0,
+                mods_locked: 0,
+                group,
+            }
+        }
+
+        /// A parse in flight, its worker's reply sent by the test.
+        fn parsing(heard: &mut Heard) -> mpsc::Sender<Option<Vec<KeyboardLayout>>> {
+            let (send, receive) = mpsc::channel();
+            heard.parsing = Some(receive);
+            send
+        }
+
+        /// `us,fr` with French active: the compositor's group reaches the
+        /// keyboard, the first keymap fails to compile, and the report waits
+        /// for the next keymap instead of being lost; then the report goes
+        /// through `Layouts::activate` and moves a profile's defaults from
+        /// the stand-in to AZERTY once, ending the settings' wait.
+        #[test]
+        fn a_group_heard_before_a_working_keymap_is_reported_once_it_compiles() {
+            use crate::keybinds::{KeyBindings, layout::Layouts};
+            let mut heard = Heard::default();
+            let worker = parsing(&mut heard);
+            heard.keyboard_event(group(1));
+            assert_eq!(heard.poll(), Ok(None), "the keymap is still compiling");
+            worker.send(None).expect("the keymap fails to compile");
+            assert_eq!(heard.poll(), Ok(None), "no layout to name the group with");
+            assert!(heard.changed, "the report stays pending");
+            assert_eq!(heard.poll(), Ok(None));
+
+            heard.keyboard_event(group(1)); // the same group again: no new report
+            let worker = parsing(&mut heard);
+            worker
+                .send(Some(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()]))
+                .expect("the next keymap compiles");
+            let reported = heard.poll().expect("no error").expect("the pending group's layout");
+            assert_eq!(reported, KeyboardLayout::zqsd());
+            assert_eq!(heard.poll(), Ok(None), "reported once");
+
+            let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
+            let change = layouts.activate(reported, true).expect("the first report");
+            assert!(change.guessed, "it replaces the stand-in");
+            let (us, fr) = (KeyboardLayout::wasd(), KeyboardLayout::zqsd());
+            let mut keys = KeyBindings::for_layout(&us);
+            let mut pending = true;
+            assert!(keys.follow_reported_layout(&change, &mut pending), "the settings are saved");
+            assert!(!pending, "the wait is over");
+            assert_eq!(keys, KeyBindings::for_layout(&fr));
+            assert!(!keys.follow_reported_layout(&change, &mut pending), "once");
+
+            // a later switch back to US changes the labels only
+            heard.keyboard_event(group(0));
+            let switched = heard.poll().expect("no error").expect("the switch");
+            let change = layouts.activate(switched, false).expect("a new layout");
+            assert!(!change.guessed);
+            assert_eq!(*change.after, us);
+        }
     }
 }
 
@@ -503,6 +582,7 @@ mod x11 {
     use x11rb::xcb_ffi::{XCBConnection, load_libxcb};
     use xkbcommon_dl::x11::{self as xkb_x11, xkb_x11_setup_xkb_extension_flags::XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS};
 
+    use super::super::{FocusSettle, GroupHeard};
     use super::{Context, KeyboardLayout, Keymap, xkb};
 
     /// A connection to the X server with libxkbcommon's XKB set up on it,
@@ -575,7 +655,9 @@ mod x11 {
     /// connection is not ours to read), by a thread of its own: reading a
     /// new keymap or the group waits for the server, which the frame loop
     /// must not. The thread looks at the socket every `TICK` and at once
-    /// when told of a focus; the frame loop only takes what it sent.
+    /// when told of a focus; the frame loop only takes what it sent. On
+    /// XWayland a focus read equal to the stand-in waits up to
+    /// `SETTLE_TICKS` for the compositor's group (`FocusSettle`).
     pub(in super::super) struct Watch {
         layouts: mpsc::Receiver<Result<KeyboardLayout, String>>,
         focus: mpsc::Sender<()>,
@@ -583,6 +665,12 @@ mod x11 {
 
     /// How often the thread reads the events the server queued.
     const TICK: Duration = Duration::from_millis(100);
+
+    /// How many idle ticks (1 s) a focus read equal to XWayland's stand-in
+    /// waits for the compositor's group before it is read again and
+    /// reported. The two normally arrive within a few milliseconds of each
+    /// other; this bound is not measured.
+    const SETTLE_TICKS: u32 = 10;
 
     impl Watch {
         pub(in super::super) fn new() -> Option<Self> {
@@ -628,6 +716,8 @@ mod x11 {
         device: i32,
         /// The layouts of the keymap, read again when it changes.
         layouts: Vec<KeyboardLayout>,
+        /// Holds a stale XWayland read until the first report.
+        settle: FocusSettle,
     }
 
     impl Listener {
@@ -657,14 +747,19 @@ mod x11 {
                 .check()
                 .map_err(|e| e.to_string())?;
             let context = Context::new(xkb::xkbcommon_option().ok_or("no libxkbcommon")?).ok_or("no XKB context")?;
-            let (keymap, _) = read(&context, &connection, lib, device).ok_or("the keymap could not be read")?;
+            let (keymap, group) = read(&context, &connection, lib, device).ok_or("the keymap could not be read")?;
             let layouts = super::watched_layouts(&keymap, "X server");
+            // the group XWayland reports before the compositor's: the same
+            // stand-in `detect` read
+            let xwayland = matches!(connection.extension_information("XWAYLAND"), Ok(Some(_)));
+            let settle = FocusSettle::new(xwayland.then_some(group), SETTLE_TICKS);
             log::info!("keyboard layout: following XKB's group and keymap on the X server");
             Ok(Self {
                 connection,
                 lib,
                 device,
                 layouts,
+                settle,
             })
         }
 
@@ -674,7 +769,8 @@ mod x11 {
             loop {
                 let read_group = match focused.recv_timeout(TICK) {
                     Ok(()) => true,
-                    Err(mpsc::RecvTimeoutError::Timeout) => false,
+                    // a held XWayland read is read again once its wait is over
+                    Err(mpsc::RecvTimeoutError::Timeout) => self.settle.tick(),
                     Err(mpsc::RecvTimeoutError::Disconnected) => return "dropped".into(),
                 };
                 match self.step(read_group) {
@@ -691,31 +787,34 @@ mod x11 {
 
         /// The layout made active since the last step: a new group, or the
         /// active layout of a new keymap; with `read_group` (a focus), the
-        /// group in use if no event told it.
+        /// group in use if no event told it. Every group goes through
+        /// `settle`, which holds a stale XWayland read.
         fn step(&mut self, read_group: bool) -> Result<Option<KeyboardLayout>, String> {
-            let (mut group, mut new_keymap) = (None, false);
+            let (mut told, mut new_keymap) = (None, false);
             while let Some(event) = self.connection.poll_for_event().map_err(|e| e.to_string())? {
                 match event {
                     Event::XkbStateNotify(state) if i32::from(state.device_id) == self.device => {
-                        group = Some(u32::from(u8::from(state.group)));
+                        told = Some(u32::from(u8::from(state.group)));
                     }
                     Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => new_keymap = true,
                     _ => {}
                 }
             }
-            if read_group && group.is_none() {
+            let mut group = told.and_then(|group| self.settle.heard(GroupHeard::Event(group)));
+            if read_group && told.is_none() {
                 let state = self
                     .connection
                     .xkb_get_state(u16::try_from(self.device).map_err(|e| e.to_string())?);
                 let state = state.map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
-                group = Some(u32::from(u8::from(state.group)));
+                group = self.settle.heard(GroupHeard::Read(u32::from(u8::from(state.group))));
             }
             if new_keymap {
                 log::info!("keyboard layout: the X server's keymap changed");
                 let context = xkb::xkbcommon_option().and_then(Context::new).ok_or("libxkbcommon is gone")?;
                 let (keymap, active) = read(&context, &self.connection, self.lib, self.device).ok_or("the new keymap could not be read")?;
                 self.layouts = super::watched_layouts(&keymap, "X server");
-                group = Some(active);
+                // read, not told: on XWayland it can still be the stand-in
+                group = self.settle.heard(GroupHeard::Read(active));
             }
             Ok(group.and_then(|group| super::layout_of_group(&self.layouts, group)))
         }

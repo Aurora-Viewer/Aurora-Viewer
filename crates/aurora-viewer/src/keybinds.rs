@@ -2037,6 +2037,23 @@ impl KeyBindings {
         self.move_defaults(&Self::for_layout(&change.before), &Self::for_layout(&change.after));
     }
 
+    /// A layout the watch reported, while `pending` (the settings'
+    /// `defaults_follow_reported_layout`) waits for the first report: any
+    /// report ends the wait; only one that replaces a stand-in (always the
+    /// first) moves the defaults. True when the settings changed and are to
+    /// be saved.
+    pub fn follow_reported_layout(&mut self, change: &LayoutChange, pending: &mut bool) -> bool {
+        if !std::mem::take(pending) {
+            return false;
+        }
+        if change.guessed && change.before != change.after {
+            // the line docs/TESTING.md tells testers to look for
+            log::info!("keyboard layout: the default shortcuts move to the reported layout");
+            self.follow_layout_change(change);
+        }
+        true
+    }
+
     fn move_defaults(&mut self, before: &Self, after: &Self) {
         // the defaults still in place that move: (action, slot, old, new)
         let mut moves: Vec<(Action, usize, Binding, Binding)> = Vec::new();
@@ -3522,6 +3539,40 @@ mod tests {
         assert_eq!(kb.get(Action::Mouselook)[0], k(K::KeyL));
         assert_eq!(kb.get(Action::Minimap)[0], kmod(K::Semicolon, true, true));
         assert_eq!(kb.get(Action::Forward)[1], k(K::KeyW));
+    }
+
+    /// The settings wait for the first report: a report that confirms the
+    /// layout in use ends the wait without moving anything, one that
+    /// replaces a stand-in moves the defaults, and nothing moves once the
+    /// wait is over.
+    #[test]
+    fn the_first_reported_layout_ends_the_wait_of_the_settings() {
+        use std::sync::Arc;
+        let (us, fr) = (Arc::new(layout::KeyboardLayout::wasd()), Arc::new(layout::KeyboardLayout::zqsd()));
+        let change = |before: &Arc<_>, after: &Arc<_>, guessed| LayoutChange {
+            before: Arc::clone(before),
+            after: Arc::clone(after),
+            guessed,
+        };
+        let mut kb = KeyBindings::for_layout(&us);
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &us, true), &mut pending));
+        assert!(!pending);
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+        assert!(
+            !kb.follow_reported_layout(&change(&us, &fr, true), &mut pending),
+            "the wait is over"
+        );
+        assert_eq!(kb, KeyBindings::for_layout(&us), "a later report moves nothing");
+
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &fr, false), &mut pending));
+        assert!(!pending, "a start layout that was reported, not guessed");
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &fr, true), &mut pending));
+        assert_eq!(kb, KeyBindings::for_layout(&fr));
     }
 
     #[test]
