@@ -32,9 +32,6 @@ pub struct Effects {
     impacts: Vec<crate::movement::water_jump::Impact>,
     bodies: water_contacts::Bodies,
     visible: HashMap<Uuid, u32>,
-    /// Prim water volumes near our avatar (#2008, `app/water_volumes.rs`):
-    /// their bubbles and splashes, without the region water's ripples.
-    volumes: Vec<crate::movement::water_volume::Volume>,
 }
 
 #[derive(Clone, Copy)]
@@ -86,26 +83,6 @@ fn ground_grid(origin: Vec2, extent: f32, sample: impl Fn(Vec2) -> [f32; 2] + Sy
 }
 
 impl Effects {
-    /// The water at `p`: a prim volume's (its surface and bottom), else the
-    /// region's (its height, no bottom: the ground grid's).
-    fn water(&self, world: &World, p: Vec3) -> Option<(f32, Option<f32>)> {
-        let region = water_at(world, p);
-        // a volume under the region's water is the sea's (as for movement)
-        match crate::movement::water_volume::surface_at(&self.volumes, p).filter(|(top, _)| region.is_none_or(|r| *top > r)) {
-            Some((top, bottom)) => Some((top, Some(bottom))),
-            None => region.map(|w| (w, None)),
-        }
-    }
-
-    /// In a prim volume only what is drawn as particles (bubbles, splashes,
-    /// sheets): its surface is a prim's, not the region water's, whose wave
-    /// field the displacements (ripples, wakes, foam) would stir.
-    fn particles_only(mut settings: WaterEffects) -> WaterEffects {
-        settings.interactions = false;
-        settings.contact_foam = false;
-        settings
-    }
-
     fn retain_events(&mut self, time: f32, quality: u8, eye: Vec2) {
         self.events.retain(|event| {
             let lifetime = match event.params[1] {
@@ -231,8 +208,6 @@ impl Effects {
         if self.region != world.main_region || settings.flags() == 0 {
             *self = Self {
                 region: world.main_region,
-                // (set for this frame just before: `Scene::set_water_volumes`)
-                volumes: std::mem::take(&mut self.volumes),
                 ..Default::default()
             };
         }
@@ -307,7 +282,7 @@ impl Effects {
                 let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {
                     return samples;
                 };
-                let Some((water, _)) = self.water(world, p) else {
+                let Some(water) = water_at(world, p) else {
                     return samples;
                 };
                 let Some(slot) = scene.palette_slots.get(&o.full_id) else {
@@ -333,38 +308,25 @@ impl Effects {
                     if part != water_contacts::PARTS.len() - 1 && (center.truncate() - eye.truncate()).abs().max_element() > 18.0 {
                         continue;
                     }
-                    let (water, volume) = self.water(world, center).unwrap_or((water, None));
-                    // a prim volume: its own bottom, and a flat surface (the
-                    // waves are the region water's)
-                    let (ground, surface) = match volume {
-                        Some(bottom) => (bottom, water),
-                        None => {
-                            let ground = self.ground.sample(center.truncate()).map(|p| p[0]).unwrap_or(water - 20.0);
-                            (
-                                ground,
-                                aurora_render::water_effects::surface_level(center.truncate(), time, settings, water, ground),
-                            )
-                        }
-                    };
-                    samples.push((
-                        volume.is_some(),
-                        water_contacts::Sample {
-                            id: o.full_id,
-                            part,
-                            matrix,
-                            level: water,
-                            surface,
-                            ground,
-                            carrier_z: world.water_visual_dz(&o.full_id),
-                        },
-                    ));
+                    let water = water_at(world, center).unwrap_or(water);
+                    let ground = self.ground.sample(center.truncate()).map(|p| p[0]).unwrap_or(water - 20.0);
+                    let surface = aurora_render::water_effects::surface_level(center.truncate(), time, settings, water, ground);
+                    samples.push(water_contacts::Sample {
+                        id: o.full_id,
+                        part,
+                        matrix,
+                        level: water,
+                        surface,
+                        ground,
+                        carrier_z: world.water_visual_dz(&o.full_id),
+                    });
                 }
                 samples
             },
         );
-        for (in_volume, sample) in body_samples.into_iter().flatten() {
+        for sample in body_samples.into_iter().flatten() {
             let before = self.events.len();
-            let mut part_settings = if in_volume { Self::particles_only(settings) } else { settings };
+            let mut part_settings = settings;
             if (sample.matrix.w_axis.truncate().truncate() - eye.truncate()).abs().max_element() > 18.0 {
                 part_settings.interactions = false;
                 part_settings.splashes = false;
@@ -419,10 +381,7 @@ impl Effects {
             }
         }
         for impact in std::mem::take(&mut self.impacts) {
-            // not the region water's level: a volume's (the leading hand may
-            // be past its sides, where the avatar's centre is not)
-            let in_volume = water_at(world, impact.position).is_none_or(|w| (w - impact.position.z).abs() > 0.5);
-            self.emit_impact(impact, time, if in_volume { Self::particles_only(settings) } else { settings });
+            self.emit_impact(impact, time, settings);
         }
         self.history.retain(|_, contact| time - contact.time < 1.0);
         self.bodies.retain(time);
@@ -446,12 +405,6 @@ impl Scene {
                 contact.is_finite().then_some(contact)
             })
             .min_by(|a, b| a.z.total_cmp(&b.z))
-    }
-
-    /// The prim water volumes near our avatar this frame (#2008).
-    pub fn set_water_volumes(&mut self, volumes: &[crate::movement::water_volume::Volume]) {
-        self.water_effects.volumes.clear();
-        self.water_effects.volumes.extend_from_slice(volumes);
     }
 
     pub fn water_impact(&mut self, impact: crate::movement::water_jump::Impact) {

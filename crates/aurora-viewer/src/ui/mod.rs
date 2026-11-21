@@ -116,6 +116,7 @@ pub mod pay;
 pub mod people;
 pub mod perf;
 pub mod photo_reel;
+pub mod phototools;
 pub mod physics;
 pub mod place_card;
 pub mod place_details;
@@ -137,6 +138,7 @@ pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
+pub mod second_camera;
 pub mod shape;
 pub mod sheet;
 pub mod signup;
@@ -163,12 +165,14 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod weather_window;
 pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
 
 #[cfg(test)]
 mod uri_restore_tests;
+pub mod world_look;
 pub mod worldmap;
 
 /// Which floating panels are open.
@@ -191,6 +195,8 @@ pub struct Panels {
     /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
     /// app copies here for the toolbar's button).
     pub snapshot_pano: bool,
+    /// The World filters window (`ui/world_look.rs`).
+    pub world_look: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -251,10 +257,15 @@ pub struct Panels {
     pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
+    /// "Phototools" (toolbar `phototools`).
+    pub phototools: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// The Director (toolbar `director`): its window and its timeline.
     pub director: bool,
+    /// The second camera (View › Second camera, toolbar `second_camera`):
+    /// our avatar seen by a camera of its own (ui/second_camera.rs).
+    pub second_camera: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// The pose stand (toolbar `pose_stand`).
@@ -297,6 +308,7 @@ impl Panels {
             wearable_favorites: false,
             snapshot: false,
             snapshot_pano: false,
+            world_look: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
@@ -340,8 +352,10 @@ impl Panels {
             web_browser: false,
             avatar_welcome: false,
             destinations: false,
+            phototools: false,
             quick_prefs: false,
             director: false,
+            second_camera: false,
             voice_controls: false,
             pose_stand: false,
             omnifilter: false,
