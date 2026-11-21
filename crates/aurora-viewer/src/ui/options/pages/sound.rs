@@ -4,7 +4,7 @@
 //! voice and the microphone.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{SLIDER_W, binding_cell, device_combo, parse_uuid_text, uuid_text};
+use super::super::{SLIDER_W, binding_cell, device_combo, named_combo, parse_uuid_text, uuid_text};
 use crate::ui::widgets;
 use egui::Vec2;
 
@@ -67,6 +67,23 @@ fn volumes(cx: &mut Cx) {
                     &mut s.audio.output_device,
                     &st.output_devices,
                     SLIDER_W + 40.0,
+                    st.devices_listing,
+                )
+                .0
+            },
+        );
+        cx.row_with(
+            tr!("ui-options-voice-output"),
+            tr!("ui-options-voice-output-used-for-voice-chat"),
+            &field!(audio.voice_output_device),
+            |ui, s, st, _| {
+                named_combo(
+                    ui,
+                    "voice_audio_out",
+                    &mut s.audio.voice_output_device,
+                    &st.output_devices,
+                    SLIDER_W + 40.0,
+                    tr!("ui-options-same-as-audio-output"),
                     st.devices_listing,
                 )
                 .0

@@ -89,7 +89,7 @@ pub(super) fn finish_if_hidden_or_blurred(ctx: &egui::Context, tool: &mut BuildT
     }
     let visible = tool.open
         && (tool.tool == Tool::Edit || (tool.ui.legacy_window && tool.tool != Tool::Land))
-        && tool.tab == 4
+        && tool.section_visible(4)
         && tool
             .contents_target(world)
             .and_then(|idx| world.objects.get(idx))
