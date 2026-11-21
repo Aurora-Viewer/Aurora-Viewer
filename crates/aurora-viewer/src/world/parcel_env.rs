@@ -205,9 +205,10 @@ impl World {
             Err(()) => gave_up = true,
         }
         // RLVa holds the environment (@setenv): a save asked before the lock
-        // came is dropped, the rest decided once it lets go
-        if self.eep.rlva_locked && self.parcel_env.saving.take().is_some() {
-            return (Outcome::NotSaved, ask);
+        // came is dropped quietly, as the lock refuses the pick itself; the
+        // rest is decided once it lets go
+        if self.eep.rlva_locked {
+            self.parcel_env.saving = None;
         }
         let Some(here) = self.parcel_env.here.as_mut().filter(|_| !self.eep.rlva_locked) else {
             return (Outcome::Nothing, ask);
@@ -544,7 +545,8 @@ mod tests {
         world.save_parcel_environment();
         assert!(world.parcel_env.saving.is_some());
         world.eep.rlva_locked = true;
-        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::NotSaved);
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Nothing);
+        assert_eq!(world.parcel_env.saving, None, "dropped when the lock came");
         world.parcel_env.on_parcel_id(7, 3, Some(Uuid::from_u128(9)));
         world.eep.rlva_locked = false;
         assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Nothing);
