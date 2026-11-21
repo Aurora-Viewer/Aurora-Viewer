@@ -10885,7 +10885,6 @@ ui-options-plates-friend-tint-help = En lys tone av vennefargen (Navnefarger), s
 ui-options-plates-hover-expand = Utvid et skilt når musen holdes over
 ui-options-plates-hover-expand-help = Skiltet under musen blir fullstendig mens musen er over det.
 ui-options-plate-click = Klikk på et skilt
-ui-options-plate-click-help = Handlingen for et venstreklikk på skiltet til noen; markøren blir til en hånd.
 ui-options-plate-shift-click = Shift + venstreklikk på et skilt
 ui-options-plate-shift-click-help = Egen handling når Shift holdes inne på skiltet til noen. Alt og Ctrl + Shift beholder sin vanlige oppførsel.
 ui-options-plate-ctrl-click = Ctrl + venstreklikk på et skilt

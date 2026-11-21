@@ -10885,7 +10885,6 @@ ui-options-plates-friend-tint-help = Una leggera tinta del colore degli amici (C
 ui-options-plates-hover-expand = Espandi una targhetta al passaggio del mouse
 ui-options-plates-hover-expand-help = La targhetta sotto il mouse si espande e diventa completa finché il mouse resta sopra.
 ui-options-plate-click = Clic su una targhetta
-ui-options-plate-click-help = Azione di un clic sinistro sulla targhetta di qualcuno; il cursore diventa una mano.
 ui-options-plate-shift-click = Maiusc + clic sinistro su una targhetta
 ui-options-plate-shift-click-help = Azione indipendente con Maiusc premuto sulla targhetta di qualcuno. Alt e Ctrl + Maiusc mantengono il loro comportamento abituale.
 ui-options-plate-ctrl-click = Ctrl + clic sinistro su una targhetta

@@ -11107,7 +11107,6 @@ ui-options-plates-friend-tint-help = Lekkie zabarwienie kolorem znajomych (Kolor
 ui-options-plates-hover-expand = Rozwijaj plakietkę po najechaniu
 ui-options-plates-hover-expand-help = Plakietka pod myszą staje się pełna, gdy mysz jest nad nią.
 ui-options-plate-click = Kliknięcie plakietki
-ui-options-plate-click-help = Działanie kliknięcia lewym przyciskiem na czyjejś plakietce; kursor zmienia się w dłoń.
 ui-options-plate-shift-click = Shift + lewy klik na plakietce
 ui-options-plate-shift-click-help = Osobne działanie przy przytrzymanym Shift na czyjejś plakietce. Alt i Ctrl + Shift zachowują swoje zwykłe działanie.
 ui-options-plate-ctrl-click = Ctrl + lewy klik na plakietce

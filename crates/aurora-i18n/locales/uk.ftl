@@ -11101,7 +11101,6 @@ ui-options-plates-friend-tint-help = Легкий відтінок кольор�
 ui-options-plates-hover-expand = Розгортати табличку під час наведення
 ui-options-plates-hover-expand-help = Табличка під мишею стає повною, поки на ній миша.
 ui-options-plate-click = Клацання по табличці
-ui-options-plate-click-help = Дія лівого клацання на чиїйсь табличці; курсор перетворюється на руку.
 ui-options-plate-shift-click = Shift + ліве клацання по табличці
 ui-options-plate-shift-click-help = Окрема дія з утримуваною Shift на чиїйсь табличці. Alt і Ctrl + Shift зберігають свою звичну поведінку.
 ui-options-plate-ctrl-click = Ctrl + ліве клацання по табличці
