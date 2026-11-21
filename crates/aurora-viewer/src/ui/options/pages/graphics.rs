@@ -1198,6 +1198,11 @@ fn depth_of_field(cx: &mut Cx) {
                     (FocusMode::Locked, tr!("ui-options-dof-focus-locked"), true),
                 ],
             );
+            cx.toggle(
+                tr!("ui-options-dof-show-focus-point"),
+                tr!("ui-options-dof-show-focus-point-help"),
+                &field!(dof.show_focus_point),
+            );
             cx.row(
                 tr!("ui-options-dof-aperture"),
                 tr!("ui-options-dof-aperture-help"),

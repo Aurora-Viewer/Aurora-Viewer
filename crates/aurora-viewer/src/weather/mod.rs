@@ -184,6 +184,17 @@ impl Default for WeatherSettings {
     }
 }
 
+/// A teleport to another region (#3664): whether what the weather left on
+/// the ground (lying snow, wet ground and puddles, footprints, snow on the
+/// avatars) goes, as with the Weather window's clean-up button. It belongs
+/// to the place left, and kept, it lay on the new region for many minutes
+/// while it melted. Only rain or snow falling now keeps it: it falls the
+/// same everywhere, and cleaned up, the ground went bare or dry under it and
+/// filled again.
+pub fn clean_on_arrival(now: &WeatherSettings) -> bool {
+    now.fall() <= 0.0
+}
+
 impl WeatherSettings {
     /// The weather drawn: these settings with what their switches turn off
     /// taken out (`App::update_weather_now`, the window's summary). Off is
@@ -575,6 +586,20 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teleport_cleans_up_unless_rain_or_snow_is_falling() {
+        let weather = |precipitation, amount| WeatherSettings {
+            precipitation,
+            amount,
+            touched: true,
+            ..WeatherSettings::default()
+        };
+        assert!(!clean_on_arrival(&weather(Precipitation::Snow, 0.6)));
+        assert!(!clean_on_arrival(&weather(Precipitation::Rain, 0.6)));
+        assert!(clean_on_arrival(&weather(Precipitation::Snow, 0.0)), "snow at amount 0");
+        assert!(clean_on_arrival(&weather(Precipitation::Rain, 0.0)), "rain at amount 0");
+    }
 
     #[test]
     fn the_renderer_gets_both_distances_and_deep_snows_reach() {

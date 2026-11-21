@@ -316,6 +316,8 @@ pub(super) struct Cx<'a> {
     pub counts: Counts,
     /// Rows declared so far (the number on a cog).
     rows_seen: usize,
+    /// Rows drawn (a borrowed pass draws only the rows it picked).
+    pub drawn: usize,
     /// The rows of the group are greyed (`greyed`).
     greyed: bool,
     /// Another page's rows drawn here too (`borrow`): the settings they
@@ -343,18 +345,29 @@ impl<'a> Cx<'a> {
         // DragValue uses interact_size.x for its button AND text editor.
         // Reserve its slot before measuring the right-aligned controls:
         // changing digits, units or a named value must not move the rail.
+        // Measured once per frame and font: Phototools makes several `Cx`
+        // in a frame (one per collapsing section).
         let number_width = if mode.draws() {
             let font = ui.style().drag_value_text_style.resolve(ui.style());
-            [
-                i32::MIN.to_string(),
-                format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
-                aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
-                aurora_i18n::tr!("ui-options-unlimited").to_owned(),
-            ]
-            .into_iter()
-            .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
-            .fold(0.0, f32::max)
-                + 2.0 * ui.spacing().button_padding.x
+            let pass = ui.ctx().cumulative_pass_nr();
+            let pad = ui.spacing().button_padding.x;
+            match &st.number_width {
+                Some((at, f, width, padding)) if *at == pass && *f == font && *padding == pad => *width,
+                _ => {
+                    let width = [
+                        i32::MIN.to_string(),
+                        format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
+                        aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
+                        aurora_i18n::tr!("ui-options-unlimited").to_owned(),
+                    ]
+                    .into_iter()
+                    .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
+                    .fold(0.0, f32::max)
+                        + 2.0 * pad;
+                    st.number_width = Some((pass, font, width, pad));
+                    width
+                }
+            }
         } else {
             0.0
         };
@@ -379,6 +392,7 @@ impl<'a> Cx<'a> {
             block: None,
             counts: Counts::default(),
             rows_seen: 0,
+            drawn: 0,
             greyed: false,
             pick: None,
             collected: Vec::new(),
@@ -485,7 +499,9 @@ impl<'a> Cx<'a> {
     }
 
     /// A titled group of rows: a small-caps title and its line, then the
-    /// rows in two columns.
+    /// rows in two columns. An empty `title` is an untitled group: no title
+    /// bar and no space after it, for a window whose collapsing sections
+    /// name their rows (Phototools).
     pub fn group(&mut self, title: &str, body: impl FnOnce(&mut Self)) {
         if self.pick.is_some() {
             // a borrowed row joins the group it is shown in
@@ -499,14 +515,16 @@ impl<'a> Cx<'a> {
         self.end_block();
         self.end_line();
         let before = std::mem::replace(&mut self.group, title.to_owned());
-        if self.mode == Mode::Show {
+        // an untitled group (Phototools' collapsing sections name theirs)
+        // draws no title bar
+        if self.mode == Mode::Show && !title.is_empty() {
             self.group_title(title);
         }
         self.group_untitled = matches!(self.mode, Mode::Search | Mode::Modified);
         body(self);
         self.end_block();
         self.end_line();
-        if self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled) {
+        if !title.is_empty() && (self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled)) {
             self.ui.add_space(14.0);
         }
         self.group = before;
@@ -666,6 +684,7 @@ impl<'a> Cx<'a> {
             self.crumb();
             self.group_untitled = false;
         }
+        self.drawn += 1;
         let changed = self.draw_row(id, label, hint, t, modified, &next, body);
         self.changed |= changed;
         changed
@@ -1266,5 +1285,28 @@ mod tests {
         assert_eq!(&label[a..b], "Écume");
         assert_eq!(found_in("Bulles", &w), None);
         assert_eq!(found_in("Nombre", &words("ombre")), None);
+    }
+
+    /// An untitled group draws no title bar and leaves no space after it; a
+    /// titled one does.
+    #[test]
+    fn an_untitled_group_adds_neither_a_title_nor_space() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let height = |title: &str| {
+            let mut s = Settings::default();
+            let d = Settings::default();
+            let mut st = OptionsUi::default();
+            let mut r = OptionsResult::default();
+            let mut used = 0.0;
+            super::super::run_ui(&ctx, egui::RawInput::default(), |ui| {
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Show, "");
+                cx.group(title, |_| {});
+                used = cx.ui.min_rect().height();
+            });
+            used
+        };
+        assert_eq!(height(""), 0.0);
+        assert!(height("Title") >= 26.0 + 14.0);
     }
 }
