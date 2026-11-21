@@ -3351,6 +3351,9 @@ neither may be interrupted by saving an intermediate digit or drag position.
 The window stays open. Changes must update the original object's item even
 after changing the build selection, and survive closing and reopening its
 properties. Check the same behavior with `AURORA_DEMO_INVENTORY=properties`.
+`contents-properties-multi,object:118` opens three items' properties at once,
+as Properties on a multi-selection does: one window each, cascaded, none
+hiding another; Properties again on an item already shown adds no window.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents`, New script, Reset scripts and Refresh share a
 row. Rights, the inventory's shared CMT menu and the search field share the
