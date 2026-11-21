@@ -68,6 +68,7 @@ GPL-3.0-or-later as described above.
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
 | Region tracker, `newview/alfloaterregiontracker.cpp` — Copyright © 2014 Alchemy Viewer Project | `aurora-viewer/src/world/region_tracker.rs`, `ui/region_tracker.rs` | Originally LGPL 2.1 |
+| Alchemy's pose files, `newview/bdfloaterposer.cpp`, `bdanimator.cpp` (Alchemy Viewer) — Copyright © 2018 NiranV Dean | `aurora-viewer/src/ik_edit/poser/legacy_pose.rs` | Originally LGPL 2.1 |
 | Animation overrider, `newview/aoengine.cpp`, `aoengine.h`, `aoset.cpp`, `ao.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ao/`, `ui/ao/`, `movement.rs`, `movement/water_walk.rs`, `world/friend_join.rs` | Originally LGPL 2.1 |
 | Animation explorer, `newview/animationexplorer.cpp` — Copyright © 2013 Zi Ree | `aurora-viewer/src/app/animation_explorer.rs`, `ui/animation_explorer.rs`, `world/animation_log.rs` | Originally LGPL 2.1 |
 | Particle editor, `newview/particleeditor.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/app/particle_editor.rs`, `build/particle_editor.rs`, `build/ui/particles.rs`, `scene/particles.rs` | Originally LGPL 2.1 |
@@ -76,7 +77,7 @@ GPL-3.0-or-later as described above.
 | Texture tab, `newview/fspanelface.cpp` — Copyright © 2024 Zi Ree | `aurora-viewer/src/build/ui/texture.rs`, `build/ui/texture_drop.rs`, `build/contents_drop.rs` | Originally LGPL 2.1 |
 | Face selection cycling, `newview/llviewermenu.cpp`, `LLToolsSelectNextPartFace` (`FS:Zi` contributions) — Zi Ree | `aurora-viewer/src/build/ui/mod.rs` | Originally LGPL 2.1 |
 | Omnifilter and object message filter, `newview/omnifilterengine.cpp`, `omnifilterengine.h`, `omnifilter.cpp` — Copyright © 2025 Zi Ree | `aurora-viewer/src/omnifilter.rs`, `omnifilter/file.rs`, `ui/omnifilter.rs`, `world/omnifilter.rs`, `world/object_im_filter.rs` | Originally LGPL 2.1 |
-| Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
+| Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/phototools.rs`, `ui/options/phototools.rs`, `app/phototools.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
 | Radar, `newview/fsradar.cpp`, `fsradarentry.cpp`, `fspanelradar.cpp` — Copyright © 2013 Ansariel Hiller; `fsradarlistctrl.cpp` — Copyright © 2011 Arrehn Oberlander | `aurora-net/src/bridge/query.rs`; `aurora-viewer/src/world/radar.rs`, `ui/people/radar.rs`, `ui/people/nearby.rs`, `world/friend_join.rs`, `app.rs` | Originally LGPL 2.1 |
 | Money tracker, `newview/fsmoneytracker.cpp` — Copyright © 2011 Arrehn Oberlander, © 2015 Ansariel Hiller | `aurora-viewer/src/ui/money_tracker.rs` | Originally LGPL 2.1 |
 | Asset blacklist, `newview/fsassetblacklist.cpp`, `fsfloaterassetblacklist.cpp` — Copyright © 2012 Wolfspirit Magic, © 2016 Ansariel Hiller | `aurora-viewer/src/world/derender.rs`, `ui/blacklist.rs` | Originally LGPL 2.1 |
@@ -102,6 +103,7 @@ GPL-3.0-or-later as described above.
 | Interface sounds, `newview/fspanelpreferenceuisounds.cpp` — Copyright © 2026 Firestorm Viewer Project | `aurora-viewer/src/ui_sound.rs`, `ui/options/pages/sound.rs` | Originally LGPL 2.1 |
 | Avatar alignment (Compass, Face nearest avatar), `newview/fsfloateravataralign.cpp` — Copyright © 2026 Ayane Lyla | `aurora-viewer/src/avatar_align.rs`, `app/avatar_align.rs`, `ui/avatar_align.rs` | Originally LGPL 2.1 |
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
+| Search and replace, `newview/llfloatersearchreplace.cpp` — Copyright © 2010-2013 Kitty Barnett | `aurora-viewer/src/ui/scripts/dialogs.rs`, `ui/inventory/find.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |

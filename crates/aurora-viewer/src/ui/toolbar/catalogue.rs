@@ -107,7 +107,7 @@ pub const COMMANDS: &[Command] = commands![
     "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
-    "phototools", "camera-cog", "toolbar-command-phototools", false;
+    "phototools", "camera-cog", "toolbar-command-phototools", true;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;

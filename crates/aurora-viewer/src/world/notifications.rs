@@ -194,6 +194,14 @@ pub enum Data {
         /// first ("Change and Continue").
         change_rating: bool,
     },
+    /// A teleport refused for the destination's content rating
+    /// (handle_teleport_access_blocked, `teleport_access.rs`): Accept
+    /// changes the preference to `rating`, and restarts the teleport for
+    /// the prompts that say so.
+    MaturityChange {
+        rating: u8,
+        prompt: super::teleport_access::Prompt,
+    },
     /// A teleport request (IM_TELEPORT_REQUEST): Yes offers a teleport.
     TeleportRequest {
         from: Uuid,
