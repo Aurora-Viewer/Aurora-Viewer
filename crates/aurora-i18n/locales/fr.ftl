@@ -7615,6 +7615,7 @@ ui-options-privacy-policy-open = Lire
 ui-options-bars = Barres
 ui-options-at-startup = À l’ouverture
 ui-options-no-system-font = Aucune (police intégrée)
+ui-options-system-fonts-searching = Recherche…
 ui-options-system-font-help = Une police installée sur cet ordinateur, à la place des polices intégrées
 ui-options-preview = Aperçu
 ui-options-skin-folder = Dossier du skin
@@ -13551,7 +13552,18 @@ bridge-object-info-result =
     Votre position actuelle : { $observer }
 bridge-query-timeout = Le bridge n’a pas répondu à la demande d’informations à temps. Réessayez.
 bridge-query-interrupted = La demande d’informations a été interrompue par un changement de région ou de connexion du bridge. Réessayez.
-ao-bootstrap-interrupted = Un import AO inachevé existe déjà dans #Aurora. Vérifiez-le dans l’inventaire avant de réessayer.
+ao-import-unfinished-retry = Un import AO inachevé existe déjà dans #Aurora/{ $folder }. Utilisez l’avis de récupération dans la fenêtre AO avant de réessayer.
+ao-unfinished-import = { $count ->
+    [one] Import AO inachevé dans #Aurora/{ $folder } : { $count } ensemble.
+   *[other] Import AO inachevé dans #Aurora/{ $folder } : { $count } ensembles.
+    }
+ao-finish-import = Terminer l’import
+ao-show-in-inventory = Afficher dans l’inventaire
+ao-duplicate-native = { $count ->
+    [one] Un autre dossier #Aurora/{ $folder } contient { $count } ensemble. Le fusionner avec le dossier AO actif ?
+   *[other] Un autre dossier #Aurora/{ $folder } contient { $count } ensembles. Le fusionner avec le dossier AO actif ?
+    }
+ao-native-already-exists = Un dossier Aurora AO natif existe déjà. Sélectionnez-le dans la fenêtre AO au lieu de le migrer à nouveau.
 
 # Guided AO editor
 ao-states = États

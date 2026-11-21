@@ -3,6 +3,44 @@ use crate::keybinds::{Action, Input};
 use crate::ui::widgets::elide_tests::Frames;
 use winit::keyboard::KeyCode;
 
+/// A search that reaches the System fonts row must not wait for the list:
+/// the frame draws the row as waiting, and the list comes later on its own.
+#[test]
+fn a_search_reaching_the_system_fonts_row_does_not_wait_for_the_list() {
+    let mut frames = Frames::new();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&frames.ctx, 1.0);
+    let p = theme.palette();
+    let icons = Icons::load(&frames.ctx, None);
+    let mut settings = Settings::default();
+    let mut st = OptionsUi {
+        query: aurora_i18n::tr!("ui-options-system-fonts").to_owned(),
+        ..Default::default()
+    };
+    let waiting = aurora_i18n::tr!("ui-options-system-fonts-searching");
+    let mut frame = |st: &mut OptionsUi| {
+        let mut open = true;
+        let texts = frames.run(Vec::new(), |ui| {
+            show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
+        });
+        texts.iter().any(|t| t.source == waiting)
+    };
+
+    crate::ui::fonts::FONT_LIST_HELD.set(true);
+    let shown = frame(&mut st);
+    crate::ui::fonts::FONT_LIST_HELD.set(false);
+    assert!(st.system_fonts.is_none(), "the frame took the list itself");
+    assert!(shown, "the row does not say it is waiting");
+
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while st.system_fonts.is_none() {
+        assert!(std::time::Instant::now() < until, "the list never came");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        frame(&mut st);
+    }
+    assert!(!frame(&mut st), "the row still waits once the list is there");
+}
+
 #[test]
 fn opening_preferences_focuses_search_without_taking_it_back() {
     let mut frames = Frames::new();

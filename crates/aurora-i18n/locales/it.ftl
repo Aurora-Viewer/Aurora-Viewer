@@ -13411,7 +13411,6 @@ bridge-object-info-result =
     Posizione attuale dell'avatar: { $observer }
 bridge-query-timeout = Il bridge non ha restituito le informazioni richieste in tempo. Riprovare.
 bridge-query-interrupted = La richiesta di informazioni è stata interrotta da un cambio di regione o di connessione del bridge. Riprovare.
-ao-bootstrap-interrupted = In #Aurora esiste già un'importazione dell'AO non terminata. Controllarla nell'inventario prima di riprovare.
 ao-states = Stati
 ao-combine = Combina…
 ao-combine-title = Combina le animazioni

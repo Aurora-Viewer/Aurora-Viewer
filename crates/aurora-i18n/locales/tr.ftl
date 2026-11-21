@@ -13427,7 +13427,6 @@ bridge-object-info-result =
     Mevcut konumunuz: { $observer }
 bridge-query-timeout = Köprü istenen bilgiyi zamanında geri vermedi. Tekrar deneyin.
 bridge-query-interrupted = Bilgi isteği bir bölge veya köprü bağlantısı değişikliği nedeniyle kesildi. Tekrar deneyin.
-ao-bootstrap-interrupted = #Aurora içinde bitmemiş bir AO içeri aktarması zaten var. Yeniden denemeden önce onu envanterde inceleyin.
 ao-states = Durumlar
 ao-combine = Birleştir…
 ao-combine-title = Animasyonları birleştir

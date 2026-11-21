@@ -261,7 +261,19 @@ fn font(cx: &mut Cx) {
             tr!("ui-options-system-font-help"),
             &Nothing,
             |ui, s, st, r| {
-                let list = st.system_fonts.get_or_insert_with(fonts::system_fonts);
+                if st.system_fonts.is_none() {
+                    st.system_fonts = fonts::system_fonts_ready().map(<[_]>::to_vec);
+                }
+                // the row is reached by any search that finds it: the list
+                // comes from a thread, or that key would stall the window
+                let Some(list) = &st.system_fonts else {
+                    let salt = ui.scope_id().with("system-font");
+                    ui.add_enabled_ui(false, |ui| {
+                        system_font_combo(salt, tr!("ui-options-system-fonts-searching").to_owned()).show_ui(ui, |_| {});
+                    });
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    return false;
+                };
                 let shown = list
                     .iter()
                     .find(|f| s.font == format!("system:{}", f.path.display()))
