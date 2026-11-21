@@ -2495,8 +2495,18 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
+                // (what a "restricted" notice stood for: the log names the
+                // command, never its content)
+                log::info!(
+                    "rlva: {} refused at the send boundary (actor {actor})",
+                    crate::world::rlva::command_name(&cmd)
+                );
                 let blocked = aurora_i18n::tr!("rlva-blocked");
-                self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                // the watchdog's own commands say nothing to the user, but
+                // whoever waits for their answer still gets it
+                if crate::world::rlva::refusal_shown(actor) {
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                }
                 // answered at once, as the demo answers a change it applies
                 if let Some(reply) = crate::world::rlva::refused_reply(&cmd, blocked) {
                     self.on_app_event(reply);
