@@ -339,6 +339,7 @@ toolbar-clear = Tout retirer
 toolbar-confirm-restore = Rétablir vos boutons et vos barres par défaut ? Cette action est définitive.
 toolbar-confirm-clear = Replacer tous les boutons dans cette fenêtre et vider vos barres ? Cette action est définitive.
 toolbar-command-profile = Profil
+toolbar-command-ao-mini = Mini AO
 toolbar-command-landmark-here = Créer un repère
 toolbar-command-environments = Environnements
 toolbar-command-radar = Radar
@@ -5306,6 +5307,12 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] { $number } éléments non copiables quitteront votre inventaire.
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = Les éléments seront déplacés dans la corbeille.
+ui-inventory-dialogs-detach-and-delete = Détacher et supprimer
+ui-inventory-dialogs-detach-and-delete-body = Certains de ces éléments sont portés par votre avatar. Ils seront enlevés, puis déplacés dans la corbeille.
+ui-inventory-delete-detach-cannot = Les éléments portés ne peuvent plus être enlevés et supprimés.
+ui-inventory-delete-detach-refused = Cet élément ne peut pas être enlevé et supprimé.
+ui-inventory-delete-detach-busy = Une autre modification de l'inventaire est en cours. Réessayez quand elle sera terminée.
+ui-inventory-delete-detach-timeout = Les éléments portés n'ont pas été enlevés : ils n'ont pas été supprimés.
 ui-environment-sunrise = Lever
 ui-bars-sunrise = Lever du soleil
 build-ui-tools-link = Lien
@@ -14213,6 +14220,10 @@ ao-underwater-swimming = Nage sous l’eau
 ao-underwater-swimming-fallback = Utilise la liste de nage en surface tant qu’aucune animation n’est définie ici.
 
 ao-quick-manager = Paramètres
+ao-mini-title = Mini AO
+ao-now-playing = { $state } : { $name }
+ao-now-playing-none = { $state } : aucune animation sélectionnée
+ao-quick-pin = Ouvrir la fenêtre mini AO
 ao-quick-previous = Animation précédente ({ $state })
 ao-quick-next = Animation suivante ({ $state })
 ao-quick-cycle = Alterner automatiquement ({ $state }, toutes les { $seconds } s)

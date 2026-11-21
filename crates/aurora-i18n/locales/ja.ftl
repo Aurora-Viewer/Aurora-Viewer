@@ -339,6 +339,7 @@ toolbar-clear = すべてクリア
 toolbar-confirm-restore = デフォルトのボタンとツールバーを復元しますか？この操作は元に戻せません。
 toolbar-confirm-clear = すべてのボタンをこのウィンドウに戻し、ツールバーを空にしますか？この操作は元に戻せません。
 toolbar-command-profile = プロフィール
+toolbar-command-ao-mini = ミニＡＯ
 toolbar-command-landmark-here = ランドマークを作成
 toolbar-command-environments = 自然環境の設定
 toolbar-command-radar = レーダー
@@ -5248,6 +5249,12 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] コピー不可のアイテム{ $number }個がインベントリからなくなります。
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = アイテムをごみ箱に移動します。
+ui-inventory-dialogs-detach-and-delete = 取り外して削除
+ui-inventory-dialogs-detach-and-delete-body = 一部のアイテムはアバターが着用中です。取り外してからごみ箱に移動します。
+ui-inventory-delete-detach-cannot = 着用中のアイテムを取り外して削除できなくなりました。
+ui-inventory-delete-detach-refused = このアイテムは取り外して削除できません。
+ui-inventory-delete-detach-busy = 別のインベントリの変更を処理中です。完了してからもう一度お試しください。
+ui-inventory-delete-detach-timeout = 着用中のアイテムを取り外せなかったため、それらは削除されませんでした。
 ui-environment-sunrise = 日の出
 ui-bars-sunrise = 日の出
 build-ui-tools-link = リンク
@@ -14082,6 +14089,10 @@ ao-underwater-swimming = 水中を泳ぐ
 ao-underwater-swimming-fallback = ここにアニメーションが割り当てられるまで、水面を泳ぐリストを使います。
 
 ao-quick-manager = 設定
+ao-mini-title = ミニＡＯ
+ao-now-playing = { $state }：{ $name }
+ao-now-playing-none = { $state }：アニメーション未選択
+ao-quick-pin = ミニＡＯウィンドウを開く
 ao-quick-previous = 前のアニメーション（{ $state }）
 ao-quick-next = 次のアニメーション（{ $state }）
 ao-quick-cycle = 自動的に切り替え（{ $state }、{ $seconds }秒ごと）

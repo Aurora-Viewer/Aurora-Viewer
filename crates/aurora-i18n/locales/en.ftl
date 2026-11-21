@@ -339,6 +339,7 @@ toolbar-clear = Clear all
 toolbar-confirm-restore = Restore your default buttons and toolbars? This cannot be undone.
 toolbar-confirm-clear = Return every button to this window and leave your toolbars empty? This cannot be undone.
 toolbar-command-profile = Profile
+toolbar-command-ao-mini = Mini AO
 toolbar-command-landmark-here = Create landmark
 toolbar-command-environments = Environments
 toolbar-command-radar = Radar
@@ -5300,6 +5301,12 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] { $number } no-copy items will leave your inventory.
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = Items will be moved to trash.
+ui-inventory-dialogs-detach-and-delete = Detach and Delete
+ui-inventory-dialogs-detach-and-delete-body = Some of these items are worn on your avatar. They will be taken off, then moved to trash.
+ui-inventory-delete-detach-cannot = The worn items can no longer be taken off and deleted.
+ui-inventory-delete-detach-refused = This item cannot be taken off and deleted.
+ui-inventory-delete-detach-busy = Another inventory change is under way. Try again once it is done.
+ui-inventory-delete-detach-timeout = The worn items did not come off, so they were not deleted.
 ui-environment-sunrise = Sunrise
 ui-bars-sunrise = Sunrise
 build-ui-tools-link = Link
@@ -14208,6 +14215,10 @@ ao-underwater-swimming = Swimming underwater
 ao-underwater-swimming-fallback = Uses the surface swimming list until animations are assigned here.
 
 ao-quick-manager = Settings
+ao-mini-title = Mini AO
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: No animation selected
+ao-quick-pin = Open mini AO window
 ao-quick-previous = Previous animation ({ $state })
 ao-quick-next = Next animation ({ $state })
 ao-quick-cycle = Switch automatically ({ $state }, every { $seconds } s)
