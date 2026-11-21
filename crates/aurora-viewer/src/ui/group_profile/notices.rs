@@ -576,9 +576,12 @@ mod attachment_drag_tests {
             apply_attachment_release(draft, world, &response);
         };
 
-        let _ = ctx.run_ui(make_input(vec![]), |ui| draw(ui, &mut draft, &mut center));
+        // a fresh context's first frame uploads the font atlas: clear each
+        // frame's texture delta, or its drop asserts with debug assertions on
+        let mut output = ctx.run_ui(make_input(vec![]), |ui| draw(ui, &mut draft, &mut center));
+        output.textures_delta.clear();
         let pos = center;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             make_input(vec![
                 Event::PointerMoved(pos),
                 Event::PointerButton {
@@ -590,8 +593,9 @@ mod attachment_drag_tests {
             ]),
             |ui| draw(ui, &mut draft, &mut center),
         );
+        output.textures_delta.clear();
         egui::DragAndDrop::set_payload(&ctx, payload);
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             make_input(vec![
                 Event::PointerMoved(pos),
                 Event::PointerButton {
@@ -603,6 +607,7 @@ mod attachment_drag_tests {
             ]),
             |ui| draw(ui, &mut draft, &mut center),
         );
+        output.textures_delta.clear();
         assert!(
             egui::DragAndDrop::payload::<PlaceDrag>(&ctx).is_none(),
             "the favorite drag is consumed by the notice drop"
