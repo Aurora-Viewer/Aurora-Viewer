@@ -18148,7 +18148,9 @@ impl App {
             ui.disable();
             ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::unique("viewer_exit")).layer()));
         }
+        // the update card is interface too (Ctrl+Alt+F1)
         a.update_quit = !self.exit_prompt.open
+            && !self.interface.ui_off
             && ui::update::show_real(
                 &ctx,
                 &p,
@@ -18364,6 +18366,39 @@ impl App {
                 // only pointed at on the live view and its film.
                 self.snapshots.ui.looks.hover = None;
                 self.snapshots.world_ui.looks.hover = None;
+                // the voice levels are the world's, not the interface's: the
+                // lips of the avatars follow them (lip sync is the avatars'
+                // update in the Legacy Viewer, whatever render_ui says) and
+                // the avatar menus' voice row too, also while the UI, the
+                // Director's playback or the full-frame photo view hide the
+                // rest
+                let voice_levels = if self.demo {
+                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                    let mut levels = crate::demo::voice_levels(
+                        ctx.input(|i| i.time),
+                        self.world.agent_id,
+                        self.settings.audio.voice_enabled,
+                        self.talking(),
+                        self.voice.mic_level,
+                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
+                } else {
+                    self.voice.levels(self.world.agent_id)
+                };
+                // who gets the voice row of the avatar menus
+                let me = self.world.agent_id;
+                self.world.calls.voice_peers.clear();
+                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
+                let audio = &self.settings.audio;
+                self.scene.live_morphs.set_levels(
+                    &voice_levels,
+                    audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
+                    Instant::now(),
+                );
                 // Advanced › Rendering features › UI off (Ctrl+Alt+F1): the
                 // world alone, as the Legacy Viewer's render_ui skipping
                 // render_ui_3d, LLHUDObject::renderAll and render_ui_2d
@@ -18377,6 +18412,17 @@ impl App {
                         self.build.release_menu_selection(&self.world);
                         self.flush_build();
                     }
+                    // no name tag is drawn, so none takes a click nor sets
+                    // the cursor (as the held photo's and the film's frames)
+                    self.name_tags.clear();
+                    self.name_tag_visibility.clear();
+                    self.plate_hover = None;
+                    self.plates.hovered = None;
+                    // the keyboard stays the world's every frame
+                    // (LLViewerWindow::updateKeyboardFocus while the feature is
+                    // off): a chat focus asked meanwhile (Enter) is dropped
+                    self.chat_ui.let_keyboard_go();
+                    ctx.memory_mut(|m| m.stop_text_input());
                     // the exit's question still shows: closing the window
                     // must not wait behind an interface nobody sees
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
@@ -18446,33 +18492,6 @@ impl App {
                 let bare = held || filming;
                 // what belongs to the world first: the HUD attachments, the bars and
                 // every window cover the name tags, the floating texts and the beacon
-                let voice_levels = if self.demo {
-                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    let mut levels = crate::demo::voice_levels(
-                        ctx.input(|i| i.time),
-                        self.world.agent_id,
-                        self.settings.audio.voice_enabled,
-                        self.talking(),
-                        self.voice.mic_level,
-                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    );
-                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
-                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
-                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
-                    levels
-                } else {
-                    self.voice.levels(self.world.agent_id)
-                };
-                // who gets the voice row of the avatar menus
-                let me = self.world.agent_id;
-                self.world.calls.voice_peers.clear();
-                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
-                let audio = &self.settings.audio;
-                self.scene.live_morphs.set_levels(
-                    &voice_levels,
-                    audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
-                    Instant::now(),
-                );
                 // the look-at crosshairs under the name tags (none over a held
                 // photo, nor the walk mark)
                 if !bare {
