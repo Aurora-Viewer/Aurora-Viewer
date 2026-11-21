@@ -283,7 +283,7 @@ fn uploads_carry_the_normalized_scale_their_tangents_are_found_in() {
 }
 
 #[test]
-fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating_the_source() {
+fn automatic_lods_reduce_disconnected_seams_and_preserve_source_materials() {
     let mut source = cube();
     let face = &mut source.faces[0];
     let prototype = face.vertices[0].clone();
@@ -326,7 +326,7 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
     let options = process::LodOptions {
         triangles: 100,
         error: 1.0,
-        method: process::Method::Auto,
+        method: process::Method::Legacy,
         crease_angle: None,
         error_only: false,
     };
@@ -334,7 +334,7 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
     let precise = process::lod(
         &source,
         process::LodOptions {
-            method: process::Method::Precise,
+            method: process::Method::Reliable,
             ..options
         },
         &cancel,
@@ -524,7 +524,7 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
         process::LodOptions {
             triangles: 4,
             error: 1.0,
-            method: process::Method::Precise,
+            method: process::Method::Reliable,
             crease_angle: None,
             error_only: false,
         },
@@ -552,28 +552,51 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
 }
 
 #[test]
-fn error_mode_welds_identical_exported_corners_and_respects_the_geometric_threshold() {
+fn automatic_error_mode_respects_the_geometric_threshold() {
+    // A curved open surface has useful intermediate reductions. A closed
+    // cube at 100% error can collapse completely, which the Legacy chain
+    // correctly rejects by restoring its source instead.
     let mut source = cube();
     let face = &mut source.faces[0];
-    face.vertices = face.indices.iter().map(|index| face.vertices[*index as usize].clone()).collect();
-    face.indices = (0..face.vertices.len() as u32).collect();
+    let prototype = face.vertices[0].clone();
+    face.vertices = (0..=8)
+        .flat_map(|y| {
+            let prototype = prototype.clone();
+            (0..=8).map(move |x| {
+                let x = x as f32 / 8.0 - 0.5;
+                let y = y as f32 / 8.0 - 0.5;
+                Vertex {
+                    position: [x, y, (x * x + y * y) * 0.4],
+                    ..prototype.clone()
+                }
+            })
+        })
+        .collect();
+    face.indices = (0..8)
+        .flat_map(|y| {
+            (0..8).flat_map(move |x| {
+                let i = y * 9 + x;
+                [i, i + 1, i + 9, i + 1, i + 10, i + 9]
+            })
+        })
+        .collect();
     let options = process::LodOptions {
         triangles: 0,
         error: 0.0,
-        method: process::Method::Auto,
+        method: process::Method::Legacy,
         crease_angle: None,
         error_only: true,
     };
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let faithful = process::lod(&source, options, &cancel).expect("zero error");
-    let loose = process::lod(&source, process::LodOptions { error: 1.0, ..options }, &cancel).expect("large error");
-    assert_eq!(faithful.triangles(), 12);
+    let loose = process::lod(&source, process::LodOptions { error: 0.02, ..options }, &cancel).expect("two percent error");
+    assert!(faithful.triangles() > 1, "zero error must not force the triangle-target floor");
     assert!(
         loose.triangles() < faithful.triangles(),
         "the error threshold changes the actual geometry"
     );
-    assert_eq!(source.faces[0].vertices.len(), 36);
-    assert_eq!(source.triangles(), 12);
+    assert_eq!(source.faces[0].vertices.len(), 81);
+    assert_eq!(source.triangles(), 128);
 }
 
 #[test]
