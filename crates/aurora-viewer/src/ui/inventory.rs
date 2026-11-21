@@ -2260,6 +2260,8 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
+    // a drag above the search row no longer scrolls the list up
+    drag::navigation::search_top(ui.ctx(), st.ui_id, ui.cursor().top());
     controls::search(ui, p, inv, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
@@ -2277,7 +2279,14 @@ fn inventory_contents(
         }
     }
     let mut visible_tab = tab_ids.iter().position(|id| *id == st.tab).unwrap_or(0);
-    super::widgets::tabs(ui, p, &mut visible_tab, &labels);
+    let (_, rects) = super::widgets::tabs_at(ui, p, &mut visible_tab, &labels);
+    // inventory held over a tab opens it (panel_main_inventory.xml's
+    // open_tabs_on_drag_and_drop, LLTabContainer::handleDragAndDrop)
+    for (index, rect) in rects.iter().enumerate() {
+        if drag::navigation::tab_held_over(ui, *rect, egui::Id::unique(("legacy-inventory-drag-open", st.ui_id, index))) {
+            visible_tab = index;
+        }
+    }
     set_tab(st, prefs, tab_ids[visible_tab]);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     ui.add_space(6.0);

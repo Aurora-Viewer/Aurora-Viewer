@@ -2338,6 +2338,11 @@ pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels
     tabs_row(ui, p, selected, labels, false, true).0
 }
 
+/// The compact tab strip, with the rect of each tab.
+pub fn compact_tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
+    tabs_row(ui, p, selected, labels, false, true)
+}
+
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
     tabs_row(ui, p, selected, labels, true, false).0
