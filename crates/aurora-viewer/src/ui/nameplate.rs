@@ -23,6 +23,7 @@ mod linden;
 pub(crate) mod mark;
 mod mesh;
 mod paint;
+pub(crate) use paint::{plain_border, readable_on, set_background};
 pub(crate) mod playground;
 #[cfg(test)]
 mod tests;
@@ -303,6 +304,41 @@ pub struct Content {
     /// A member of the Aurora team or a Linden Lab employee
     /// (`world::staff`): the plate has its light and its tag (`mark.rs`).
     pub mark: Option<crate::world::staff::Mark>,
+    /// The distance to us, when the options show it.
+    pub distance: Option<Distance>,
+}
+
+/// The distance from us to the avatar (FSTagShowDistance,
+/// FSTagShowDistanceColors), never on our own plate: after the name, in the
+/// color of its band (`ui::colors::range_color`), and the name in that
+/// color too when the names are colored by distance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Distance {
+    /// Meters, rounded to the centimeter shown: a plate is laid out again
+    /// only when its figure changes.
+    pub meters: f32,
+    /// The figure after the name.
+    pub shown: bool,
+    /// The name in the band's color, unless something else colors it (a
+    /// contact set, the names colored by relation).
+    pub color_name: bool,
+}
+
+impl Distance {
+    /// What the options give for an avatar `meters` away; None when they
+    /// show nothing or for ourselves.
+    pub fn of(meters: f32, own: bool, shown: bool, color_name: bool) -> Option<Distance> {
+        (!own && (shown || color_name) && meters.is_finite()).then(|| Distance {
+            meters: (meters * 100.0).round() / 100.0,
+            shown,
+            color_name,
+        })
+    }
+
+    /// "12.34 m", the Legacy Viewer's "%.02f m".
+    pub fn text(&self) -> String {
+        aurora_i18n::tr!("ui-hud-distance-m", value0 = format!("{:.2}", self.meters))
+    }
 }
 
 /// A live editor preview shares the live geometry, contrast and badge code.
@@ -328,6 +364,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         render_never: false,
         blocked: false,
         mark: None,
+        distance: None,
     };
     let tag = Tag {
         id: Uuid::nil(),
@@ -914,7 +951,7 @@ impl Plates {
         icons: &super::icons::Icons,
         tags: &[Tag<'_>],
         now: f64,
-        mut placed: impl FnMut(Uuid, Rect, glam::Vec3),
+        mut placed: impl FnMut(Uuid, Rect, glam::Vec3, Option<Rect>),
     ) {
         let mut env = paint::Env::new(painter, p, icons, now);
         env.friend = self.friend_tint.then(|| crate::ui::colors::c(crate::ui::colors::get().tag_friend));
@@ -1043,8 +1080,8 @@ impl Plates {
                 still: self.still,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
-            let (rect, surface) = paint::plate(&env, tag, &state, &mut entry.cache);
-            placed(tag.id, rect, tag.at);
+            let (rect, surface, slot) = paint::plate(&env, tag, &state, &mut entry.cache);
+            placed(tag.id, rect, tag.at, slot);
             if self.click_combo && entry.combo.busy(now) {
                 combo::paint(&env, surface, &entry.combo, self.tally.get(tag.id), tag.fade, self.still);
             }

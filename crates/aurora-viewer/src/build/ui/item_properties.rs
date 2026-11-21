@@ -31,8 +31,10 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
     world
         .objects
         .index_of_uuid(&object)
-        .is_some_and(|idx| tool.contents_editable(world, idx))
-        && ((!item.group_owned && item.owner_id == world.agent_id)
+        .is_some_and(|idx| tool.contents_modifiable(world, idx))
+        // allowOperation(PERM_MODIFY, …, GOD_LIKE): a god edits any item
+        && (world.god_level > 0
+            || (!item.group_owned && item.owner_id == world.agent_id)
             || (item.group_owned && !item.group_id.is_nil() && world.groups.is_member(&item.group_id)))
         && !matches!(item.asset_type, 2 | 24 | 25)
 }
@@ -49,13 +51,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     };
     let Some(inv_item) = item.to_inv_item() else { return };
     let can_edit = editable(tool, world, state.object, &item);
+    // The owner and the creator as the inventory's properties name them:
+    // LLSidepanelItemInfo::refreshFromItem is the same panel for an item of
+    // an object's contents (indra/newview/llsidepaneliteminfo.cpp).
     let names = [item.owner_id, item.creator_id]
         .into_iter()
         .map(|id| {
             world.social.want_name(id);
-            (id, world.social.name_of(&id))
+            (id, world.social.name_in(crate::world::names::NameScope::Roster, &id))
         })
         .collect::<HashMap<_, _>>();
+    let mut hidden = crate::ui::inventory::HiddenNames::new();
+    crate::ui::inventory::hide_residents(world, &inv_item, &mut hidden);
     let mut open = true;
     properties::window(ctx, "task_item_props").show(ctx, p, &mut open, |ui| {
         let response = properties::panel(
@@ -72,12 +79,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 // TaskInventory has no thumbnail field or agent-thumbnail capability.
                 can_thumbnail: false,
                 names: &names,
+                hidden: &hidden,
                 images,
                 wanted_images: &mut tool.ui.wanted_images,
             },
         );
+        // only a name the panel shows is a link: the profile opens as from
+        // the inventory's properties (LLSidepanelItemInfo::onClickCreator)
         if let Some(id) = response.profile {
-            tool.ui.requests.push(super::Request::Profile(id));
+            crate::ui::profile::request_open_in(ctx, crate::world::names::NameScope::Roster, id);
         }
         if let Some(edit) = response.edit {
             tool.save_item_properties(

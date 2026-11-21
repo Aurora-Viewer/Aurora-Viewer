@@ -17,7 +17,6 @@ pub(super) struct State {
     pub new_editor: bool,
     pending: BTreeMap<Uuid, Load>,
     saves: BTreeMap<Uuid, Save>,
-    failed: BTreeSet<(Uuid, Uuid)>,
     cof: BTreeSet<Uuid>,
     generation: Option<u64>,
     scan_generation: Option<u64>,
@@ -35,6 +34,9 @@ struct Load {
     active: Option<bool>,
     requested: bool,
     inform: bool,
+    /// The resident asked for it (open, play, their own activation), unlike
+    /// the window's background loads, the login restore and outfit changes.
+    user: bool,
 }
 struct Save {
     item: Uuid,
@@ -58,6 +60,7 @@ impl State {
         }
         load.open |= open;
         load.play |= play;
+        load.user |= open || play;
         if active.is_some() {
             load.active = active;
             load.inform = inform;
@@ -75,6 +78,21 @@ impl State {
             load.play = false;
         }
         self.manager.active.remove(&item)
+    }
+
+    /// LLGestureMgr::onLoadComplete: a gesture that cannot be read is logged
+    /// and left out alone ("Unable to load gesture"); its row says why. The
+    /// window's message names it only for a load the resident started.
+    fn load_failed(&mut self, item: Uuid, asset: Uuid, name: &str, user: bool, error: String) {
+        log::warn!("gesture {item} \"{name}\" (asset {asset}) not loaded: {error}");
+        if user {
+            self.ui.message = aurora_i18n::tr!("gesture-load-failed-named", name = name, reason = error.as_str());
+        }
+        if let Some(editor) = self.ui.editors.get_mut(&item) {
+            editor.message.clone_from(&error);
+        }
+        self.ui.failed.insert((item, asset), error);
+        self.manager.active.remove(&item);
     }
 
     fn take_load(&mut self, item: Uuid, asset: Uuid) -> Option<Load> {
@@ -147,7 +165,7 @@ impl App {
             }
             return;
         }
-        self.gesture_state.failed.remove(&(id, asset));
+        self.gesture_state.ui.failed.remove(&(id, asset));
         self.gesture_state.queue_load(id, asset, open, play, active, inform);
         self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
         if asset.is_nil() {
@@ -186,12 +204,8 @@ impl App {
                 }
             }
             Err(error) => {
-                self.gesture_state.failed.insert((item, asset));
-                self.gesture_state.ui.message.clone_from(&error);
-                if let Some(editor) = self.gesture_state.ui.editors.get_mut(&item) {
-                    editor.message = error;
-                }
-                self.gesture_state.manager.active.remove(&item);
+                let name = self.world.inventory.items.get(&item).map_or("", |it| it.name.as_str());
+                self.gesture_state.load_failed(item, asset, name, load.user, error);
                 self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
             }
         }
@@ -261,9 +275,9 @@ impl App {
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
-                    self.scene.anims.get(asset);
+                    self.scene.anims.preload_gesture(asset, &self.net.fetcher);
                 }
-                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.want(*asset),
+                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.preload_gesture(*asset, &self.net.fetcher),
                 _ => {}
             }
         }
@@ -367,6 +381,9 @@ impl App {
                     }
                     if on {
                         self.gesture_request(id, false, false, Some(true), true);
+                        if let Some(load) = self.gesture_state.pending.get_mut(&id) {
+                            load.user = true;
+                        }
                     } else {
                         self.gesture_active(id, false, true);
                     }
@@ -389,8 +406,25 @@ impl App {
                 self.panels.inventory = true;
             }
             Action::Delete(ids) => {
-                self.inventory_ui.dialog = Some(crate::ui::inventory::EditDialog::Delete(ids, false));
-                self.panels.inventory = true;
+                // LLFloaterGesture::onDeleteSelected moves the gestures to the
+                // Trash without a question (indra/newview/llfloatergesture.cpp).
+                // Aurora asks as for any inventory Delete, until "Do not
+                // show again" is ticked (#3507).
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let mut actions = Vec::new();
+                if crate::ui::inventory::delete_from_window(
+                    &self.world.inventory,
+                    &mut self.inventory_ui,
+                    &self.settings.inventory,
+                    worn,
+                    &mut actions,
+                    ids,
+                ) {
+                    self.panels.inventory = true;
+                }
+                for action in actions {
+                    self.apply_inventory_action(action);
+                }
             }
             Action::ShowInventory(id) => {
                 self.inventory_ui.show_original(&self.world.inventory, id);
@@ -424,7 +458,8 @@ impl App {
             Action::Refresh => {
                 self.gesture_state.scan_generation = None;
                 self.gesture_state.manager.changed();
-                self.gesture_state.failed.clear();
+                self.gesture_state.ui.failed.clear();
+                self.gesture_state.ui.message.clear();
                 self.gesture_state
                     .manager
                     .entries
@@ -549,6 +584,10 @@ impl App {
                 chat_type: ChatType::Normal,
             });
         }
+        if self.demo && matches!(self.frame_count, 650 | 1010) && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            log::info!("demo gesture one-shot: play at frame {}", self.frame_count);
+            self.gesture_play(Uuid::from_u128(DEMO_ONCE), None);
+        }
         self.tick_gestures();
     }
 
@@ -584,7 +623,7 @@ impl App {
                     self.world.inventory.items.get(id).is_some_and(|it| {
                         !self.gesture_state.manager.entries.contains_key(id)
                             && !self.gesture_state.pending.contains_key(id)
-                            && !self.gesture_state.failed.contains(&(*id, it.asset_id))
+                            && !self.gesture_state.ui.failed.contains_key(&(*id, it.asset_id))
                     })
                 })
                 .take(capacity)
@@ -689,6 +728,7 @@ impl App {
                 request,
                 item,
                 asset_type: 21,
+                lua: false,
                 data,
             });
         }
@@ -719,6 +759,7 @@ impl App {
                     request,
                     item,
                     asset_type: 21,
+                    lua: false,
                     data,
                 });
             }
@@ -749,23 +790,16 @@ impl App {
                         editor.open = false;
                     }
                 }
-                let similar = if self.gesture_state.manager.active.contains(&item) {
-                    self.gesture_state.manager.similar(item, &save.definition)
-                } else {
-                    Vec::new()
-                };
-                for id in similar {
-                    self.gesture_active(id, false, true);
-                }
-                let effects = self.gesture_state.manager.stop(item);
-                self.gesture_effects(effects);
-                self.gesture_state.manager.entries.insert(
+                // LLPreviewGesture::onSaveComplete → replaceGesture: no other
+                // gesture is deactivated, whatever its shortcut (#4167)
+                let effects = self.gesture_state.manager.replace(
                     item,
                     Entry {
                         asset,
                         definition: save.definition,
                     },
                 );
+                self.gesture_effects(effects);
                 if self.gesture_state.manager.active.contains(&item) {
                     self.send(NetCommand::SetGestureActive { item, asset, active: true });
                 }
@@ -789,6 +823,14 @@ impl App {
                 self.gesture_loaded(*item, *asset, definition);
                 true
             }
+            NetCommand::AgentAnimation { anim, start: false } if *anim == DEMO_ONCE_ANIM => {
+                // Offline simulator echo of requestStopMotion, retaining every
+                // unrelated signal. The real grid supplies AvatarAnimation.
+                if let Some(motions) = self.world.animations.get_mut(&self.world.agent_id) {
+                    motions.retain(|motion| motion.id != *anim);
+                }
+                true
+            }
             NetCommand::SetGestureActive { .. } | NetCommand::GestureSound { .. } => true,
             _ => false,
         }
@@ -796,6 +838,14 @@ impl App {
 
     pub(super) fn gesture_demo_input(&mut self, raw: &mut egui::RawInput) {
         let mode = std::env::var("AURORA_DEMO_GESTURES").unwrap_or_default();
+        if mode == "chat-keys" {
+            raw.focused = true;
+            if self.frame_count == 540 {
+                self.chat_ui.input = aurora_i18n::tr!("gesture-demo-replacement").into();
+                self.chat_ui.focus_request = true;
+            }
+            return;
+        }
         if matches!(mode.as_str(), "communicate" | "communicate-open") {
             raw.focused = true;
             let mouse = match self.frame_count {
@@ -891,6 +941,12 @@ impl App {
         }
         self.gesture_request(item, false, false, Some(true), false);
         let replay = std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay");
+        if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            let mut animation = crate::demo::loop_animation();
+            animation.looping = false;
+            let bound = crate::scene::anim::BoundAnim::bind(animation, &self.scene.avatar_lib.rig);
+            self.scene.anims.insert(DEMO_ONCE_ANIM, std::sync::Arc::new(bound));
+        }
         let (sound, clip) = crate::demo::chime();
         self.scene.sounds.insert(sound, clip);
         if let Some(mut sound_item) = self.world.inventory.items.get(&Uuid::from_u128(8105)).cloned() {
@@ -898,6 +954,27 @@ impl App {
             self.world.inventory.add_items(vec![sound_item]);
         }
         if let Some(template) = self.world.inventory.items.get(&item).cloned() {
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "chat-keys") {
+                for mask in [0, 1, 4, 5] {
+                    let shortcut = crate::gestures::keys::shortcut(0xa6, mask);
+                    let name = format!("{} ({shortcut})", template.name);
+                    self.seed_demo_gesture(
+                        &template,
+                        951200 + u128::from(mask),
+                        &name,
+                        Gesture {
+                            key: 0xa6,
+                            mask,
+                            steps: vec![Step::Chat {
+                                text: format!("{shortcut}: {}", aurora_i18n::tr!("gesture-demo-chat")),
+                                flags: 0,
+                            }],
+                            ..Default::default()
+                        },
+                        true,
+                    );
+                }
+            }
             for (id, name, trigger, key, steps, active) in [
                 (
                     951001,
@@ -951,6 +1028,34 @@ impl App {
                 };
                 self.seed_demo_gesture(&template, id, name, definition, active);
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+                self.seed_demo_gesture(
+                    &template,
+                    DEMO_ONCE,
+                    aurora_i18n::tr!("gesture-demo-animation-name"),
+                    Gesture {
+                        trigger: "/once".into(),
+                        key: 0xa6,
+                        steps: vec![
+                            Step::Animation {
+                                name: aurora_i18n::tr!("gesture-demo-animation-name").into(),
+                                asset: DEMO_ONCE_ANIM,
+                                flags: 0,
+                            },
+                            Step::Wait {
+                                seconds: 0.0,
+                                flags: aurora_assets::gesture::WAIT_ANIMATIONS,
+                            },
+                            Step::Chat {
+                                text: aurora_i18n::tr!("gesture-demo-finished").into(),
+                                flags: 0,
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    true,
+                );
+            }
             if replay {
                 for (id, name, definition) in demo_replay_gestures(sound) {
                     self.seed_demo_gesture(&template, id, name, definition, true);
@@ -987,7 +1092,8 @@ impl App {
             }
         }
         // the list of the chat bar is shown alone
-        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list");
+        self.panels.gestures =
+            !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list" || v == "chat-keys");
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }
@@ -1068,6 +1174,8 @@ fn demo_channel_replace_gesture() -> Gesture {
     }
 }
 
+const DEMO_ONCE: u128 = 951009;
+const DEMO_ONCE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_2931);
 const DEMO_CLAP_KEY: u8 = 0xa7;
 const DEMO_CTRL_B: u128 = 951005;
 
@@ -1188,6 +1296,29 @@ mod tests {
         assert!(state.unavailable(&inv).is_empty());
         inv.items.remove(&item);
         assert_eq!(state.unavailable(&inv), [item]);
+    }
+    /// #2500: opening the window loads every listed gesture; one that cannot
+    /// be read is marked on its row only, and the window's message names a
+    /// gesture only for a load the resident started.
+    #[test]
+    fn a_background_load_failure_leaves_the_window_message_empty() {
+        let mut state = State::default();
+        let (item, asset) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let error = aurora_i18n::tr!("gesture-invalid").to_owned();
+        let fail = |state: &mut State, open, play, active, inform| {
+            state.queue_load(item, asset, open, play, active, inform);
+            let load = state.take_load(item, asset).expect("pending load");
+            state.load_failed(item, asset, "Wave", load.user, error.clone());
+        };
+        // the window's scan, then an outfit change activating it
+        fail(&mut state, false, false, None, false);
+        fail(&mut state, false, false, Some(true), true);
+        assert_eq!(state.ui.message, "");
+        assert_eq!(state.ui.failed.get(&(item, asset)), Some(&error));
+        assert!(!state.manager.active.contains(&item));
+        fail(&mut state, false, true, Some(true), true);
+        let message = &state.ui.message;
+        assert!(message.contains("Wave") && message.contains(&error), "{message}");
     }
     #[test]
     fn activation_can_be_cancelled_before_loading_and_stale_results_do_not_replace_new_requests() {

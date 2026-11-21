@@ -145,10 +145,15 @@ pub fn acquired_date(secs: i64) -> String {
         return aurora_i18n::tr!("status-unknown").to_owned();
     }
     let (y, m, d, w, h, mi, s) = super::land::slt_parts(secs);
-    format!(
-        "{} {d:02} {} {y} {h:02}:{mi:02}:{s:02}",
-        super::land::weekdays()[w],
-        super::land::months()[m - 1]
+    // acquired_date (panel_landmark_info.xml): the claim date's order in
+    // every language, the day on two digits
+    aurora_i18n::tr!(
+        "land-claim-date",
+        weekday = super::land::weekdays()[w],
+        day = format!("{d:02}"),
+        month = super::land::months()[m - 1],
+        year = y.to_string(),
+        time = format!("{h:02}:{mi:02}:{s:02}")
     )
 }
 
@@ -258,7 +263,9 @@ impl PlaceDetailsUi {
         self.raise.insert(serial);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx) -> Vec<PlaceAction> {
+    /// `aurora`: Aurora's Places look (`!Settings::classic_places`), which
+    /// gives the bottom bar Aurora's buttons.
+    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, aurora: bool) -> Vec<PlaceAction> {
         let mut actions = Vec::new();
         let screen = ctx.content_rect();
         let (p, world) = (c.p, c.world);
@@ -282,7 +289,7 @@ impl PlaceDetailsUi {
                         .layout(egui::Layout::bottom_up(egui::Align::Min)),
                 );
                 let ui = &mut child;
-                window_buttons(ui, p, world, place, &mut actions);
+                window_buttons(ui, p, world, place, aurora, &mut actions);
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     egui::ScrollArea::vertical()
@@ -302,41 +309,44 @@ impl PlaceDetailsUi {
 /// Bottom bar of floater_fs_placedetails.xml (updateVerbs: "Teleport" and
 /// "Map" enabled with a position; "Edit" for a landmark) and the
 /// overflow menu.
-fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, actions: &mut Vec<PlaceAction>) {
+fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, aurora: bool, actions: &mut Vec<PlaceAction>) {
     let global = place.global;
+    let look = |legacy_width| ButtonLook::of(aurora, legacy_width);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        if button(
+        ui.spacing_mut().item_spacing.x = ButtonLook::gap(aurora);
+        if teleport_button(
             ui,
             p,
+            look(108.0),
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
             global.is_some() && teleport_allowed(place, world),
-            108.0,
         ) && let Some(a) = teleport_action(place, world)
         {
             actions.push(a);
         }
-        if button(
+        if map_button(
             ui,
             p,
+            look(85.0),
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("ui-place-details-show-the-corresponding-location-on-the-map"),
             global.is_some(),
-            85.0,
         ) && let Some(g) = global
         {
             actions.push(PlaceAction::ShowOnMap(g));
         }
         if matches!(place.source, Source::Landmark { .. }) {
             ui.add_enabled_ui(false, |ui| {
-                button(
+                profile_button(
                     ui,
                     p,
+                    look(70.0),
+                    "",
+                    widgets::ActionKind::Flat,
                     aurora_i18n::tr!("common-edit"),
                     aurora_i18n::tr!("ui-place-details-edit-this-landmark"),
                     true,
-                    70.0,
                 )
             })
             .response
@@ -352,14 +362,72 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
     });
 }
 
-/// A flat button of the Places bottom bars.
-pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> bool {
+/// A flat button of the Places bottom bars; its response keeps the label's
+/// width on one line (`Response::intrinsic_size`), for a bar sizing its window.
+pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> egui::Response {
     let b = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
         .fill(p.raised)
         .corner_radius(ui.visuals().widgets.inactive.corner_radius);
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
-        .clicked()
+}
+
+/// The look of a place profile's bottom buttons, which follows the Places
+/// style (`Settings::classic_places`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ButtonLook {
+    /// Aurora's Places window: action buttons 26 px tall, as wide as their
+    /// label, Teleport in the highlight colour.
+    Aurora,
+    /// The Legacy style: the plain `button` of this width, like the lists'.
+    Legacy(f32),
+}
+
+impl ButtonLook {
+    pub fn of(aurora: bool, legacy_width: f32) -> Self {
+        if aurora { Self::Aurora } else { Self::Legacy(legacy_width) }
+    }
+
+    /// The space between the buttons of the bar.
+    pub fn gap(aurora: bool) -> f32 {
+        if aurora { 6.0 } else { 3.0 }
+    }
+}
+
+/// A button of a place profile's bottom bar, in its look (the icon and kind
+/// are Aurora's only).
+#[allow(clippy::too_many_arguments)]
+fn profile_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    look: ButtonLook,
+    icon: &str,
+    kind: widgets::ActionKind,
+    label: &str,
+    tip: &str,
+    enabled: bool,
+) -> bool {
+    match look {
+        ButtonLook::Legacy(width) => button(ui, p, label, tip, enabled, width).clicked(),
+        ButtonLook::Aurora => {
+            let size = egui::vec2(widgets::action_button_fit(ui, icon, label), 26.0);
+            widgets::action_button_if(ui, p, icon, label, kind, size, enabled)
+                .on_hover_text(tip)
+                .clicked()
+        }
+    }
+}
+
+/// The Teleport button of a place profile. In Aurora's look it takes the
+/// highlight colour and the icon of Aurora's Places window (deliberate
+/// difference: the Legacy Viewer's is plain, and so is the Legacy style's).
+pub fn teleport_button(ui: &mut egui::Ui, p: &Palette, look: ButtonLook, label: &str, tip: &str, enabled: bool) -> bool {
+    profile_button(ui, p, look, "location-filled", widgets::ActionKind::Primary, label, tip, enabled)
+}
+
+/// The Map button beside `teleport_button`.
+pub fn map_button(ui: &mut egui::Ui, p: &Palette, look: ButtonLook, label: &str, tip: &str, enabled: bool) -> bool {
+    profile_button(ui, p, look, "map", widgets::ActionKind::Flat, label, tip, enabled)
 }
 
 /// The panel of a place: landmark info for a landmark, place profile else.
@@ -709,6 +777,66 @@ mod tests {
     use super::*;
     use glam::Vec3;
 
+    /// The standalone window's bar in each Places style: the Legacy style
+    /// keeps its plain Teleport and Map (108 and 85 wide, 3 apart), Aurora's
+    /// look sizes its 26 px action buttons to their labels.
+    #[test]
+    fn window_buttons_follow_the_places_style() {
+        use crate::world::landmarks::Landmarks;
+        use crate::world::place_details::PlaceDetails;
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut details = PlaceDetails::default();
+        let landmark = Source::Landmark {
+            item: Uuid::from_u128(1),
+            asset: Uuid::from_u128(2),
+        };
+        details.open_panel(landmark, &WorldMap::default(), &mut Landmarks::default(), std::time::Instant::now());
+        let mut place = details.panel.expect("the landmark's profile");
+        // resolved: Teleport and Map can be clicked
+        place.global = Some(DVec3::new(256_128.0, 256_128.0, 22.0));
+        // Teleport and Map, where the frame laid them out
+        let bar = |aurora: bool| {
+            let mut layer = egui::LayerId::background();
+            let mut fits = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                layer = ui.layer_id();
+                fits = [
+                    (aurora_i18n::tr!("common-teleport-3"), "location-filled"),
+                    (aurora_i18n::tr!("common-map"), "map"),
+                ]
+                .map(|(label, icon)| widgets::action_button_fit(ui, icon, label))
+                .to_vec();
+                window_buttons(ui, &p, &world, &place, aurora, &mut Vec::new());
+            });
+            output.textures_delta.clear();
+            let rects: Vec<egui::Rect> = ctx.viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .get_layer(layer)
+                    .filter(|w| w.sense.senses_click())
+                    .take(2)
+                    .map(|w| w.rect)
+                    .collect()
+            });
+            (rects, fits)
+        };
+
+        let (legacy, _) = bar(false);
+        let widths: Vec<f32> = legacy.iter().map(|r| r.width()).collect();
+        assert_eq!(widths, [108.0, 85.0]);
+        assert_eq!(legacy[1].min.x - legacy[0].max.x, 3.0);
+
+        let (aurora, fits) = bar(true);
+        let sizes: Vec<Vec2> = aurora.iter().map(|r| r.size()).collect();
+        let fitted: Vec<Vec2> = fits.iter().map(|&w| Vec2::new(w, 26.0)).collect();
+        assert_eq!(sizes, fitted);
+        assert_eq!(aurora[1].min.x - aurora[0].max.x, 6.0);
+    }
+
     #[test]
     fn maturity_from_flags() {
         assert_eq!(maturity(0), aurora_i18n::tr!("common-general"));
@@ -750,10 +878,11 @@ mod tests {
         let t = days_from_civil(2024, 4, 2) * 86_400 + 14 * 3600 + 42 * 60 + 28;
         assert_eq!(
             acquired_date(t),
-            if aurora_i18n::language() == "fr" {
-                "mar. 02 avr. 2024 07:42:28"
-            } else {
-                "Tue 02 Apr 2024 07:42:28"
+            match aurora_i18n::language() {
+                "fr" => "mar. 02 avr. 2024 07:42:28",
+                // the order of the Legacy Viewer's xui/ja acquired_date
+                "ja" => "2024年4月02日（火）07:42:28",
+                _ => "Tue 02 Apr 2024 07:42:28",
             }
         );
         assert_eq!(acquired_date(0), aurora_i18n::tr!("status-unknown"));

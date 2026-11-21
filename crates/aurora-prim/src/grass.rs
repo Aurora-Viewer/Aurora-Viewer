@@ -150,6 +150,7 @@ pub fn generate_grass(s: &GrassSpecies, scale: Vec3, ground: &[f32; GRASS_BLADES
     VolumeMesh {
         faces: vec![f],
         surface_area: 1.0,
+        grid_area: 0.0,
     }
 }
 

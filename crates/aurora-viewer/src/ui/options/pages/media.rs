@@ -37,6 +37,26 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-the-first-click-goes-directly-to-the-page-when"),
             &field!(media.first_click_interact),
         );
+        // MediaFirstClickInteract's kinds (panel_preferences_sound.xml,
+        // media_first_click_*)
+        let off = !cx.s.media.first_click_interact;
+        cx.subs(off, |cx| {
+            cx.toggle(tr!("ui-options-first-click-hud"), "", &field!(media.first_click.hud));
+            cx.toggle(tr!("ui-options-first-click-own"), "", &field!(media.first_click.own));
+            cx.toggle(tr!("ui-options-first-click-friend"), "", &field!(media.first_click.friend));
+            cx.toggle(tr!("ui-options-first-click-group"), "", &field!(media.first_click.group));
+            cx.toggle(
+                tr!("ui-options-first-click-land"),
+                tr!("ui-options-first-click-land-help"),
+                &field!(media.first_click.land),
+            );
+            cx.toggle(tr!("ui-options-first-click-any"), "", &field!(media.first_click.any));
+            cx.toggle(
+                tr!("ui-options-first-click-all-faces"),
+                tr!("ui-options-first-click-all-faces-help"),
+                &field!(media.first_click.all_faces),
+            );
+        });
         cx.toggle(
             tr!("ui-options-hud-media"),
             tr!("ui-options-auto-play-hud-media-mediaautoplayhuds"),

@@ -17,6 +17,31 @@ use glam::Vec3;
 use std::time::Instant;
 use uuid::Uuid;
 
+/// How the face of vertices `a` lies on the face of vertices `b` of the same
+/// prim, placed by `model`: how many vertices of `a` are vertices of `b` too
+/// (the same triangles given to two faces share them all), and, for a sample
+/// of those that are not, the median distance (m) to the nearest vertex of
+/// `b`: about the gap between two shells cut alike.
+fn layer_gap(a: &[[f32; 3]], b: &[[f32; 3]], model: glam::Mat4) -> (usize, f32) {
+    let bits = |p: &[f32; 3]| p.map(f32::to_bits);
+    let of_b: std::collections::HashSet<[u32; 3]> = b.iter().map(bits).collect();
+    let apart: Vec<&[f32; 3]> = a.iter().filter(|p| !of_b.contains(&bits(p))).collect();
+    let shared = a.len() - apart.len();
+    let placed: Vec<Vec3> = b.iter().map(|p| model.transform_point3(Vec3::from_array(*p))).collect();
+    let step = apart.len().div_ceil(32).max(1);
+    let mut gaps: Vec<f32> = apart
+        .iter()
+        .step_by(step)
+        .map(|p| {
+            let p = model.transform_point3(Vec3::from_array(**p));
+            placed.iter().map(|q| q.distance_squared(p)).fold(f32::INFINITY, f32::min).sqrt()
+        })
+        .filter(|d| d.is_finite())
+        .collect();
+    gaps.sort_by(f32::total_cmp);
+    (shared, gaps.get(gaps.len() / 2).copied().unwrap_or(0.0))
+}
+
 /// Avatars nearer than this (m) get every face of what they wear written,
 /// when nothing is selected.
 pub const DETAIL_RADIUS: f32 = 3.0;
@@ -342,6 +367,11 @@ impl Scene {
             world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
+        // issue #2747: an avatar in its system body, as if nothing it wears
+        // came; the list tells which of the simulator's never arrived
+        if let Some(worn) = world.worn_vs_listed(aidx) {
+            log::info!("  {}", worn.line());
+        }
         for (te, name, _) in avatar::BAKES {
             if let Some(t) = world.bake_texture(aidx, te) {
                 // our own bakes are ours; those of the others follow the rule
@@ -395,6 +425,7 @@ impl Scene {
         // (prim, face, description): faces of a prim alike are written once
         let mut gltf_faces: Vec<(Uuid, usize, String)> = Vec::new();
         let mut prim_lines: Vec<(Uuid, String)> = Vec::new();
+        let mut layer_lines: Vec<String> = Vec::new();
         let mut far = 0.0f32;
         for &i in &prims {
             let Some(o) = world.objects.get(i) else {
@@ -460,6 +491,7 @@ impl Scene {
             if !g.faces.is_empty() {
                 far = far.max(g.center.distance(apos));
             }
+            layer_lines.extend(self.blended_layers(renderer, o, g));
             if head_set || detail.is_some() {
                 prim_lines.push((o.full_id, self.prim_faces_body(world, renderer, o, g, ids)));
             }
@@ -471,6 +503,9 @@ impl Scene {
             prims.len(),
             root.position
         );
+        for line in &layer_lines {
+            log::info!("{line}");
+        }
         // the head linkset is detailed outside the budget, as before
         Self::log_prim_lines(&merge_alike(prim_lines), detail.filter(|_| !head_set));
         // legacy materials of our own attachments (normal / specular maps)
@@ -672,7 +707,7 @@ impl Scene {
             return format!("{head}: all {count} faces left out for texture-entry alpha 0");
         }
         if g.hud {
-            head.push_str(&self.hud_geometry(world, renderer, o, g));
+            head.push_str(&self.hud_geometry(world, renderer, o, g, ids));
         }
         let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
@@ -691,10 +726,66 @@ impl Scene {
         format!("{head}: {}:{}", counts.join(", "), grouped_faces(&faces))
     }
 
+    /// The blended faces of a prim that is not rigged, when it has several:
+    /// their size, and how each pair lies on one another (`layer_gap`). Layers
+    /// at the same place have no order of their own: the sorted order draws
+    /// them face by face, as the Legacy Viewer, and a report on worn layers
+    /// (eyes, jewels) reads from this line whether they are such layers.
+    fn blended_layers(&self, renderer: &Renderer, o: &Object, g: &ObjGpu) -> Option<String> {
+        use std::fmt::Write as _;
+
+        if g.rigged || g.hud {
+            return None;
+        }
+        let geom = self.ready_geom(g)?;
+        let alpha = &self.textures.alpha_by_slot;
+        let blended: Vec<(usize, &super::picking::PickFace, glam::Mat4)> = g
+            .faces
+            .iter()
+            .filter_map(|f| {
+                let a = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
+                if classify(f, a) != Pass::Blend {
+                    return None;
+                }
+                let fi = f.te_index as usize;
+                let face = geom.pick_faces.get(fi)?.as_ref()?;
+                let model = glam::Mat4::from_cols_array_2d(&renderer.records.get(f.record)?.model);
+                Some((fi, face, model))
+            })
+            .collect();
+        if blended.len() < 2 {
+            return None;
+        }
+        let mut text = format!("  blended faces of prim {} (not rigged):", o.full_id);
+        for (fi, face, model) in &blended {
+            let size = glam::Mat3::from_mat4(*model) * (face.bounds.half * 2.0);
+            let _ = write!(
+                text,
+                " #{fi} {} vertices {:.1}x{:.1}x{:.1} mm;",
+                face.positions.len(),
+                size.x.abs() * 1000.0,
+                size.y.abs() * 1000.0,
+                size.z.abs() * 1000.0
+            );
+        }
+        for (i, (fa, a, model)) in blended.iter().enumerate() {
+            for (fb, b, _) in &blended[i + 1..] {
+                let (shared, gap) = layer_gap(&a.positions, &b.positions, *model);
+                let _ = write!(
+                    text,
+                    " #{fa}/#{fb}: {shared} of {} vertices at the same place, the others {:.3} mm from the nearest;",
+                    a.positions.len(),
+                    gap * 1000.0
+                );
+            }
+        }
+        Some(text)
+    }
+
     /// Read the actual HUD draw matrices without changing its placement.
     /// Four vertices per face identify the edges of small panel meshes;
     /// bounding this sample also keeps the live inspector inexpensive.
-    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu, ids: &AssetIds) -> String {
         use std::fmt::Write as _;
 
         let mut text = format!(
@@ -704,8 +795,11 @@ impl Scene {
             o.scale.to_array(),
             o.visual_scale_at(Instant::now()).to_array()
         );
+        // The mesh or sculpt map is the HUD maker's asset: its id follows the
+        // same rule as every other id of these lines (AssetIds), so a copy to
+        // the clipboard never hands out someone's mesh id.
         if let Some(sculpt) = o.visual_volume().sculpt {
-            let _ = write!(text, ", asset {}", sculpt.texture);
+            let _ = write!(text, ", asset {}", ids.id(sculpt.texture));
         }
         if let Some(idx) = world.objects.index_of_uuid(&o.full_id)
             && crate::build::root_of(world, idx) == idx
@@ -1129,6 +1223,30 @@ mod tests {
             selected.summary(me),
             "describe: 2 selected linksets, 0 avatars within 3 m detailed face by face"
         );
+    }
+
+    #[test]
+    fn layers_given_the_same_triangles_share_every_vertex() {
+        let face = [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.25]];
+        let model = glam::Mat4::from_scale(Vec3::splat(0.04));
+        assert_eq!(layer_gap(&face, &face, model), (4, 0.0));
+        assert_eq!(layer_gap(&[], &face, model), (0, 0.0));
+    }
+
+    #[test]
+    fn shells_apart_give_their_gap_as_placed() {
+        // the same quad 0.25 above itself, on an object 4 cm across: 1 cm
+        let quad = [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0]];
+        let over = quad.map(|[x, y, z]| [x, y, z + 0.25]);
+        let (shared, gap) = layer_gap(&over, &quad, glam::Mat4::from_scale(Vec3::splat(0.04)));
+        assert_eq!(shared, 0);
+        assert!((gap - 0.01).abs() < 1.0e-6, "{gap}");
+        // one vertex of four moved: the three others are counted as shared
+        let mut moved = quad;
+        moved[3][2] = 0.5;
+        let (shared, gap) = layer_gap(&moved, &quad, glam::Mat4::from_scale(Vec3::splat(0.04)));
+        assert_eq!(shared, 3);
+        assert!((gap - 0.02).abs() < 1.0e-6, "{gap}");
     }
 
     #[test]

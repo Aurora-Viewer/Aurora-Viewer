@@ -71,9 +71,76 @@ pub(super) fn visible_tag(tags: &[(Uuid, Vec3)], depth: Option<Vec3>, ray: Optio
 }
 
 /// Whether a plate click acts, and so shows the hand: an action chosen, on
-/// someone else's plate.
-pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid) -> bool {
-    action != PlateClick::Nothing && plate.is_some_and(|id| id != me)
+/// someone else's plate, or Profile / Menu on our own. `named`: the name
+/// `@shownames` leaves on someone else's plate is the real one
+/// (`World::rlva_can_name`); under the restriction only the menu opens, whose
+/// entries are greyed like the Legacy Viewer's (menu_avatar_other.xml:
+/// `RLV.CanShowName`), never a profile, an IM or a teleport offer that would
+/// name the resident. Our own name is never hidden from us.
+pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid, named: impl Fn(Uuid) -> bool) -> bool {
+    action != PlateClick::Nothing
+        && plate.is_some_and(|id| {
+            if id == me {
+                matches!(action, PlateClick::Profile | PlateClick::Menu)
+            } else {
+                action == PlateClick::Menu || named(id)
+            }
+        })
+}
+
+/// Whether a left press on a plate runs its action at once and takes the
+/// press: only on someone else's plate. A press on our own plate stays a
+/// press on our avatar, as without an action and as in the Legacy Viewer
+/// (LLPipeline::lineSegmentIntersectInWorld picks our avatar under our
+/// tag): held, it steers our avatar, and with the other button it walks.
+/// Its action waits for the release (`OwnPlateClick`).
+pub(super) fn plate_takes_press(action: PlateClick, plate: Option<Uuid>, me: Uuid, named: impl Fn(Uuid) -> bool) -> bool {
+    plate.is_some_and(|id| id != me) && plate_click_acts(action, plate, me, named)
+}
+
+/// Points the pointer may move during a click on our own plate before the
+/// press is a drag, as for a right click (`RightGesture::motion`).
+const OWN_PLATE_CLICK_SLOP: f32 = 10.0;
+
+/// A left press on our own plate with an action that acts there (Profile
+/// or Menu). The press goes on to our avatar; the action runs on a release
+/// that did not drag (steer the avatar or orbit the camera) and during
+/// which the other button did not join in (a walk).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct OwnPlateClick {
+    action: PlateClick,
+    offset: (f32, f32),
+    dragged: bool,
+    walked: bool,
+}
+
+impl OwnPlateClick {
+    /// `other_button`: the right button is already down, the press walks.
+    pub(super) fn new(action: PlateClick, other_button: bool) -> Self {
+        Self {
+            action,
+            offset: (0.0, 0.0),
+            dragged: false,
+            walked: other_button,
+        }
+    }
+
+    /// Mouse motion while the button is held, in pixels.
+    pub(super) fn motion(&mut self, dx: f32, dy: f32, pixels_per_point: f32) {
+        self.offset.0 += dx / pixels_per_point;
+        self.offset.1 += dy / pixels_per_point;
+        self.dragged |= self.offset.0 * self.offset.0 + self.offset.1 * self.offset.1 >= OWN_PLATE_CLICK_SLOP * OWN_PLATE_CLICK_SLOP;
+    }
+
+    /// The other button went down while this one is held.
+    pub(super) fn other_button(&mut self) {
+        self.walked = true;
+    }
+
+    /// The action to run on the release: none after a drag or a walk.
+    pub(super) fn release(self) -> Option<PlateClick> {
+        (!self.dragged && !self.walked).then_some(self.action)
+    }
 }
 
 /// Alt retains LLToolCamera's gestures; Ctrl+Shift retains the grab tool
@@ -162,7 +229,7 @@ impl App {
         {
             log::info!("demo plate click: {id} ({:?})", self.plate_click_action());
             if let Some(idx) = self.world.objects.index_of_uuid(&id) {
-                self.run_plate_click(idx);
+                self.run_plate_click(idx, self.plate_click_action());
             }
         }
         if self.demo
@@ -205,41 +272,65 @@ impl App {
 
     /// The hand of a clickable object over a plate that acts.
     pub(super) fn plate_cursor(&self) -> bool {
-        !self.classic_name_tags() && plate_click_acts(self.plate_click_action(), self.plate_hover, self.world.agent_id)
+        !self.classic_name_tags()
+            && plate_click_acts(self.plate_click_action(), self.plate_hover, self.world.agent_id, |id| {
+                self.world.rlva_can_name(id)
+            })
     }
 
-    /// A left press on the world: on another avatar's plate with an action
-    /// chosen for these modifiers, the action runs and takes the click.
+    /// A left press on the world: on someone else's plate with an action
+    /// chosen for these modifiers, the action runs and takes the press. On
+    /// our own plate the press goes on to our avatar (`plate_takes_press`).
     /// Alt and combined Ctrl+Shift retain their camera/grab meaning.
     pub(super) fn plate_press(&mut self, tag: Option<(Uuid, Vec3)>) -> bool {
         if self.classic_name_tags() {
             return false;
         }
         let action = self.plate_click_action();
-        if action == PlateClick::Nothing {
-            return false;
-        }
         let Some((id, _)) = tag else {
             return false;
         };
+        if !plate_takes_press(action, Some(id), self.world.agent_id, |id| self.world.rlva_can_name(id)) {
+            return false;
+        }
         let Some(idx) = self.world.objects.index_of_uuid(&id) else {
             return false;
         };
-        if !plate_click_acts(action, Some(id), self.world.agent_id) {
-            return false;
-        }
-        self.run_plate_click(idx);
+        self.run_plate_click(idx, action);
         true
     }
 
-    fn run_plate_click(&mut self, idx: usize) {
+    /// A left press on our own plate became a press on our avatar: with
+    /// Profile or Menu chosen for these modifiers, the action waits for the
+    /// release (`own_plate_release`).
+    pub(super) fn own_plate_press(&mut self, tag: Option<(Uuid, Vec3)>) {
+        let action = self.plate_click_action();
+        let me = self.world.agent_id;
+        self.own_plate_click = (!self.classic_name_tags()
+            && tag.is_some_and(|(id, _)| id == me)
+            && plate_click_acts(action, tag.map(|(id, _)| id), me, |_| true))
+        .then(|| OwnPlateClick::new(action, self.right_drag));
+    }
+
+    /// The left button is released: the action of a click on our own plate
+    /// that neither dragged nor walked.
+    pub(super) fn own_plate_release(&mut self) {
+        let Some(action) = self.own_plate_click.take().and_then(OwnPlateClick::release) else {
+            return;
+        };
+        if let Some(idx) = self.world.objects.index_of_uuid(&self.world.agent_id) {
+            self.run_plate_click(idx, action);
+        }
+    }
+
+    fn run_plate_click(&mut self, idx: usize, action: PlateClick) {
         let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) else {
             return;
         };
         if self.demo {
-            log::info!("demo plate action: {:?} on {id}", self.plate_click_action());
+            log::info!("demo plate action: {action:?} on {id}");
         }
-        match self.plate_click_action() {
+        match action {
             PlateClick::Nothing => {}
             PlateClick::Menu => self.open_avatar_menu(idx),
             action => {
@@ -314,6 +405,7 @@ mod tests {
             rect,
             at: Vec3::X * 10.0,
             normal: Vec3::X,
+            marker_slot: None,
         }
     }
 
@@ -328,15 +420,75 @@ mod tests {
     }
 
     #[test]
-    fn a_click_acts_only_with_an_action_and_on_someone_else() {
+    fn own_plate_allows_profile_and_menu_but_not_im_or_teleport() {
         let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        assert!(!plate_click_acts(PlateClick::Nothing, Some(other), me));
+        let named = |_: Uuid| true;
+        assert!(!plate_click_acts(PlateClick::Nothing, Some(other), me, named));
         for action in PlateClick::ALL.into_iter().filter(|a| *a != PlateClick::Nothing) {
-            assert!(plate_click_acts(action, Some(other), me), "{action:?}");
-            // our own plate and no plate: the click is the world's
-            assert!(!plate_click_acts(action, Some(me), me));
-            assert!(!plate_click_acts(action, None, me));
+            assert!(plate_click_acts(action, Some(other), me, named), "{action:?}");
+            let acts_on_self = matches!(action, PlateClick::Profile | PlateClick::Menu);
+            assert_eq!(plate_click_acts(action, Some(me), me, named), acts_on_self, "{action:?}");
+            // @shownames hides others' names, not ours
+            assert_eq!(plate_click_acts(action, Some(me), me, |_: Uuid| false), acts_on_self, "{action:?}");
+            assert!(!plate_click_acts(action, None, me, named));
         }
+    }
+
+    /// A press held on our own plate stays a press on our avatar (hold to
+    /// turn it, both buttons to walk): it is never taken by the plate, and
+    /// Profile or Menu runs only on a release without a drag or a walk.
+    #[test]
+    fn a_press_held_on_our_own_plate_steers_and_only_a_click_runs_the_action() {
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let named = |_: Uuid| true;
+        for action in [PlateClick::Profile, PlateClick::Menu] {
+            // the press goes on to our avatar; someone else's plate takes it
+            assert!(!plate_takes_press(action, Some(me), me, named), "{action:?}");
+            assert!(plate_takes_press(action, Some(other), me, named), "{action:?}");
+            // a plain click (a little jitter): the action on the release
+            let mut click = OwnPlateClick::new(action, false);
+            click.motion(3.0, -4.0, 1.0);
+            assert_eq!(click.release(), Some(action));
+            // held and dragged to turn the avatar: no action
+            let mut held = OwnPlateClick::new(action, false);
+            for _ in 0..4 {
+                held.motion(3.0, 0.0, 1.0);
+            }
+            assert_eq!(held.release(), None);
+            // the drag counts in points: 8 pixels at 2x are a jitter
+            let mut hidpi = OwnPlateClick::new(action, false);
+            hidpi.motion(8.0, 8.0, 2.0);
+            assert_eq!(hidpi.release(), Some(action));
+            // a drag that comes back is still a drag
+            let mut back = OwnPlateClick::new(action, false);
+            back.motion(12.0, 0.0, 1.0);
+            back.motion(-12.0, 0.0, 1.0);
+            assert_eq!(back.release(), None);
+            // the right button joins in: a walk, no action
+            let mut walk = OwnPlateClick::new(action, false);
+            walk.other_button();
+            assert_eq!(walk.release(), None);
+            // the right button was already down: a walk too
+            assert_eq!(OwnPlateClick::new(action, true).release(), None);
+        }
+        // IM and Offer Teleport do nothing on our own plate
+        for action in [PlateClick::InstantMessage, PlateClick::OfferTeleport, PlateClick::Nothing] {
+            assert!(!plate_takes_press(action, Some(me), me, named), "{action:?}");
+        }
+    }
+
+    /// `@shownames` hides the resident: a click that would open their
+    /// profile, an IM or a teleport offer does nothing; the menu still opens
+    /// (its entries are greyed).
+    #[test]
+    fn a_hidden_name_leaves_only_the_menu_to_the_click() {
+        let (me, hidden, shown) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let named = |id: Uuid| id == shown;
+        for action in [PlateClick::Profile, PlateClick::InstantMessage, PlateClick::OfferTeleport] {
+            assert!(!plate_click_acts(action, Some(hidden), me, named), "{action:?}");
+            assert!(plate_click_acts(action, Some(shown), me, named), "{action:?}");
+        }
+        assert!(plate_click_acts(PlateClick::Menu, Some(hidden), me, named));
     }
 
     #[test]

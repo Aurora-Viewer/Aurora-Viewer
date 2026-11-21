@@ -22,6 +22,9 @@ const TOOL: f32 = 30.0;
 /// conversation's bubble with a plus, apart from the friendship offer's
 /// `user-plus`.
 pub(super) const ADD_PEOPLE_ICON: &str = "message-circle-plus";
+/// Requesting a teleport, wherever it is offered: a car comes to fetch you,
+/// apart from the paper plane of the offer beside it.
+pub(super) const REQUEST_TELEPORT_ICON: &str = "car-filled";
 
 /// What the head says of the conversation shown.
 struct Identity {
@@ -50,7 +53,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
     let title = match kind {
         sidebar::Kind::Private => {
             let names = &world.social.avatar_names;
-            let cached = names.get(&id);
+            let cached = names.get_in(crate::world::names::NameScope::Roster, &id);
             if let Some(user) = cached.and_then(|n| n.chat_username(&names.options)) {
                 parts.push(user);
             }
@@ -127,8 +130,8 @@ pub(super) fn show(
             if status != presence::Status::Unknown {
                 presence::paint_dot(ui.painter(), p, pic, status, p.panel);
             }
-            let r = ui.interact(pic, ui.scope_id().with("head_pic"), egui::Sense::click());
-            super::name_menu(&r, p, world, a);
+            let r = ui.interact(pic, sidebar::control_id("head-pic"), egui::Sense::click());
+            super::name_menu(&r, p, world, a, crate::world::names::NameScope::Roster);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(status.label())
                 .clicked()
@@ -142,6 +145,15 @@ pub(super) fn show(
                 st.wanted_images.insert(i);
             }
             sidebar::paint_group_picture(ui, p, pic, insignia.and_then(|i| images.get(&i)), PIC - 16.0);
+            if let Some(g) = st.selected {
+                let r = ui.interact(pic, sidebar::control_id("head-pic"), egui::Sense::click());
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("ui-group-profile-view"))
+                    .clicked()
+                {
+                    crate::ui::group_profile::request_open(ui.ctx(), g);
+                }
+            }
         }
         (None, Some(_)) => {
             ui.painter().rect_filled(pic, radius, p.raised);
@@ -225,8 +237,8 @@ pub(super) fn show(
                 st.members_open = !st.members_open;
             }
         }
-        // a resident: their profile, and a teleport offer to join us (the
-        // teleport button of FSFloaterIM's toolbar)
+        // a resident: their profile, and a teleport offered or requested (one
+        // menu button in FSFloaterIM's toolbar, two buttons here)
         (Some(other), _) => {
             if tool(ui, p, slot(), "user-filled", aurora_i18n::tr!("common-profile"), Tone::Plain).clicked() {
                 actions.push(ConvAction::Profile(other));
@@ -240,6 +252,30 @@ pub(super) fn show(
             }
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
+            }
+            // the other direction, greyed for an offline friend as
+            // FSFloaterIM::changed greys teleport_btn; a head too narrow
+            // for it leaves it to the row of the "…" menu
+            let friend = world.social.is_friend(&other);
+            let slots = 7 + usize::from(!friend) + usize::from(can_add_people(world, &other));
+            if request_fits(width, slots) {
+                let request = if world.social.can_request_teleport(&other) {
+                    Tone::Plain
+                } else {
+                    Tone::Off
+                };
+                if tool(
+                    ui,
+                    p,
+                    slot(),
+                    REQUEST_TELEPORT_ICON,
+                    aurora_i18n::tr!("common-request-teleport"),
+                    request,
+                )
+                .clicked()
+                {
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RequestTeleport(other));
+                }
             }
         }
     }
@@ -321,17 +357,35 @@ pub(super) fn show(
         );
     }
     let names = egui::Rect::from_x_y_ranges(text_left..=text_right, rect.y_range());
-    let r = ui.interact(names, ui.scope_id().with("head_names"), egui::Sense::click());
+    let r = ui.interact(names, sidebar::control_id("head-names"), egui::Sense::click());
     if let Some(a) = who.avatar {
-        super::name_menu(&r, p, world, a);
+        super::name_menu(&r, p, world, a, crate::world::names::NameScope::Roster);
         let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
         let r = if cut { r.on_hover_text(&who.title) } else { r };
         if r.clicked() {
             actions.push(ConvAction::Profile(a));
         }
+    } else if who.kind == Some(sidebar::Kind::Group)
+        && let Some(g) = st.selected
+    {
+        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let tip = if cut {
+            format!("{}\n{}", who.title, aurora_i18n::tr!("ui-group-profile-view"))
+        } else {
+            aurora_i18n::tr!("ui-group-profile-view").to_owned()
+        };
+        if r.on_hover_text(tip).clicked() {
+            crate::ui::group_profile::request_open(ui.ctx(), g);
+        }
     } else if cut {
         r.on_hover_text(&who.title);
     }
+}
+
+/// Whether a head of `width` keeps its picture clear of `slots` buttons, the
+/// request's among them.
+pub(super) fn request_fits(width: f32, slots: usize) -> bool {
+    8.0 + slots as f32 * (TOOL + 2.0) + 12.0 + PIC <= width
 }
 
 /// People can be added to a conversation with a resident or a

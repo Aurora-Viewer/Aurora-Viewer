@@ -26,6 +26,9 @@ impl World {
         if recipients.iter().all(|recipient| self.rlva_can_start_im(*recipient)) {
             true
         } else {
+            // LLAvatarActions::startIM / startCall / startConference and
+            // LLGroupActions::startIM / startCall: UISndInvalidOp
+            self.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             self.system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             false
         }
@@ -80,6 +83,7 @@ impl World {
             session
                 .participants
                 .iter()
+                .chain(&session.unconfirmed_invitees)
                 .filter(|participant| **participant != self.agent_id)
                 .all(|participant| self.rlva_allows_im("sendim", *participant))
         })
@@ -141,7 +145,7 @@ impl World {
 
     pub(crate) fn rlva_teleport_dnd(&mut self, sender: Uuid) {
         if self.status.dnd {
-            let text = self.status.cfg.dnd_text.clone();
+            let text = self.dnd_response_to(&sender);
             self.auto_im(sender, Uuid::nil(), &text);
         }
     }
@@ -168,6 +172,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.into(),
         }));
@@ -263,6 +268,62 @@ mod tests {
     }
 
     #[test]
+    fn rlva_rechecks_pending_conference_text_for_invitees_and_actual_participants() {
+        let other = Uuid::from_u128(77);
+        let unexpected = Uuid::from_u128(78);
+        for when in ["before typing", "at ack", "on new participant", "at dispatch"] {
+            let mut w = world();
+            w.start_text_conference(vec![PERSON, other]);
+            let temp = w.social.focus_im.unwrap();
+            if when == "before typing" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            }
+            w.send_session_im(temp, "private draft");
+            assert!(
+                !w.groups
+                    .out
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }))
+            );
+            if when == "before typing" {
+                restrict(&mut w, &format!("@sendimto:{other}=y"));
+            } else if when == "at ack" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            } else if when == "on new participant" {
+                restrict(&mut w, &format!("@sendimto:{unexpected}=n"));
+            }
+            w.apply(NetEvent::SessionStarted {
+                temp_session: temp,
+                session: SESSION,
+                success: true,
+                error: String::new(),
+                agents: vec![aurora_net::SessionAgent {
+                    agent: unexpected,
+                    present: Some(true),
+                    moderator: None,
+                    text_muted: None,
+                    entered: false,
+                }],
+            });
+            if when == "at dispatch" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            }
+            let mut delivered = w
+                .groups
+                .take_commands()
+                .into_iter()
+                .filter(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }));
+            let mut command = delivered.next().unwrap();
+            w.rlva_prepare_outgoing_im(&mut command);
+            assert!(
+                matches!(command, NetCommand::SendImDialog { to, id, message, .. } if to == SESSION && id == SESSION && message == aurora_i18n::tr!("rlva-im-blocked-send")),
+                "{when}"
+            );
+            assert!(delivered.next().is_none());
+        }
+    }
+
+    #[test]
     fn rlva_conference_messages_check_the_sender_on_receive_and_every_participant_on_send() {
         let mut world = world();
         restrict(&mut world, "@recvim=n,sendim=n");
@@ -354,6 +415,28 @@ mod tests {
     }
 
     #[test]
+    fn reply_by_text_checks_startim_before_reopening_a_closed_session() {
+        let mut world = world();
+        world.calls.voice_enabled = true;
+        let invite = aurora_net::VoiceInvite {
+            session: SESSION,
+            session_name: String::new(),
+            from: PERSON,
+            from_name: "Resident".into(),
+            p2p: true,
+            voice: Default::default(),
+        };
+        world.apply(NetEvent::VoiceInvite(invite));
+        assert!(world.social.has_session(&PERSON), "the incoming invitation was shown");
+        world.leave_session(PERSON);
+        restrict(&mut world, "@startim=n");
+        world.answer_call_invite(SESSION, crate::world::calls::InviteAnswer::Text);
+        assert!(!world.social.has_session(&PERSON));
+        assert!(world.social.focus_im.is_none());
+        assert!(world.calls.invites.is_empty(), "the response still dismisses the invitation");
+    }
+
+    #[test]
     fn rlva_startim_checks_all_conference_members_and_group_ids_before_changing_an_existing_call() {
         let mut world = world();
         let other = Uuid::from_u128(123);
@@ -369,7 +452,7 @@ mod tests {
         });
         restrict(&mut world, "@startim=n");
         world.start_text_conference(vec![PERSON]);
-        world.start_group_chat(group);
+        world.start_group_chat(group, false);
         world.start_call(PERSON);
         assert!(world.social.ims.is_empty() && world.groups.sessions.is_empty() && world.groups.out.is_empty());
         assert!(world.calls.active.is_none());
@@ -390,7 +473,7 @@ mod tests {
         assert!(world.rlva_can_start_im(PERSON), "a real open session overrides startimto too");
         world.start_text_conference(vec![PERSON, other]);
         assert_eq!(world.calls.conferences.len(), 1);
-        world.start_group_chat(group);
+        world.start_group_chat(group, false);
         restrict(&mut world, &format!("@startim:{group}=y,startimto:{group}=n"));
         world.groups.out.clear();
         world.start_call(group);

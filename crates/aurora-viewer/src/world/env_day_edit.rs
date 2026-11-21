@@ -413,7 +413,9 @@ impl DayDoc {
     }
 }
 
-/// Frames carry no name of their own in a day.
+/// Frames carry no name of their own in a day (LLSettingsDay::getSettings
+/// clones its frames without SETTING_NAME): Aurora writes nothing there of
+/// its own either.
 fn without_name(mut v: Llsd) -> Llsd {
     if let Llsd::Map(m) = &mut v {
         m.remove("name");
@@ -460,6 +462,24 @@ mod tests {
             ]),
         };
         DayDoc::from_llsd(v).expect("a day")
+    }
+
+    /// A sky put in a day loses its name, whatever the name holds (an old
+    /// Aurora Weather code included), and the saved day carries none.
+    #[test]
+    fn a_frame_keeps_no_name_in_a_day() {
+        let mut d = day();
+        let frame = |d: &DayDoc, i: usize| d.frame_doc(TRACK_GROUND + 1, i).expect("frame");
+        for name in ["Plain", "Stormy ~K7Q2M9XAP"] {
+            let sky = SettingsDoc::snapshot_sky(&SkyFrame::default(), name);
+            let i = d.put_frame(TRACK_GROUND + 1, 0.75, &sky).expect("put");
+            assert_eq!(frame(&d, i).name(), "", "{name}");
+        }
+        let saved = d.to_llsd();
+        assert!(
+            saved["frames"].as_map().expect("frames").values().all(|f| !f.has("name")),
+            "{saved:?}"
+        );
     }
 
     #[test]
