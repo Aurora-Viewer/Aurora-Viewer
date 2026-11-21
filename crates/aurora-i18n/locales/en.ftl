@@ -5945,6 +5945,7 @@ ui-chat-participants = Participants ({ $n })
 ui-chat-search-or-start = Search or start…
 ui-chat-contacts-sub = Friends and contact sets
 ui-chat-contacts-friends-sub = Friends · { $online } online
+ui-chat-contacts-groups-sub = Groups · { $count }
 ui-chat-in-earshot = { $n } in earshot
 ui-chat-head-in-earshot = { $n ->
     [one] { $n } person in earshot
@@ -10666,7 +10667,9 @@ people-view-sort-options = View/sort options
 people-filter-by-name = Filter by name…
 people-edit-contact-hold = Hold the left mouse button to edit contact settings.
 people-show-contact-sheet = Show contact details
+people-show-group-sheet = Show group details
 people-contact-details-empty = No contact to display
+people-group-details-empty = No group to display
 people-view-rich = Rich rows
 people-view-compact = Compact (one line each, for a crowd)
 people-alerts-options = Alerts and options
