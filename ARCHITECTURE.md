@@ -4448,7 +4448,11 @@ the libgcc unwinder's frames through the signal frame, then each frame as
 the unwinder and the loader's list under an alarm (another thread that
 crashes meanwhile waits for the file); it then hands the signal
 to the standard library's overflow handler or the default action, so the
-process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
+process ends as before. A fault at an address where nothing is mapped is
+written without the unwinder, which would fault there in turn; and a fatal
+signal that a library gave its own handler (NVIDIA's shader compiler takes
+SIGABRT at its first compile) is taken back, every second by the watchdog
+and once the renderer is dropped at exit. Panics and failed allocations get the same stacks. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
