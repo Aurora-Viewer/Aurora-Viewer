@@ -326,7 +326,10 @@ impl App {
     /// redo): the history's next step, through the inventory's rules, or
     /// why not in the pane that asked.
     fn inventory_history(&mut self, undo: bool, named: bool, editor: Uuid) {
+        // a change on its way (a paste's copies still arriving): said, not
+        // silently ignored
         if self.inventory_ui.pending.is_some() || self.world.inventory.undo.busy() {
+            self.inventory_pane(editor).message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
             return;
         }
         let worn: HashSet<Uuid> = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();

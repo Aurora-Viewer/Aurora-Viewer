@@ -32,11 +32,16 @@ use uuid::Uuid;
 pub const LIMIT: usize = 50;
 
 /// One entry moved by a step.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Moved {
     pub id: Uuid,
     pub from: Uuid,
     pub to: Uuid,
+    /// `from` and `to` were the Trash or one of its folders when the step
+    /// was recorded: only then may an undo or a redo send the entry to the
+    /// Trash (a folder deleted since is not a reason to delete what it held).
+    pub from_trash: bool,
+    pub to_trash: bool,
 }
 
 /// What a step made.
@@ -120,6 +125,7 @@ impl Step {
                     if rules::parent(inv, m.id) != Some(at) {
                         continue;
                     }
+                    let back_in_trash = if undo { m.from_trash } else { m.to_trash };
                     let trash_root = rules::system(inv, 14);
                     let back = if rules::destination(inv, back) {
                         back
@@ -130,13 +136,15 @@ impl Step {
                             Some(folder) => folder,
                             None => continue,
                         }
-                    } else if let Some(root) = trash_root.filter(|root| back == *root || rules::under(inv, back, *root)) {
+                    } else if let Some(root) = trash_root.filter(|_| back_in_trash) {
                         // it came out of the Trash (a Restore, a drag out of
                         // it), or a delete is done again: back to the Trash's
                         // top, through the rules of a delete (`removable`,
-                        // worn items)
+                        // worn items). Decided when the step was recorded: a
+                        // folder deleted since sends nothing to the Trash.
                         root
                     } else {
+                        // its folder is gone, or in the Trash since
                         continue;
                     };
                     let one = rules::move_selection(inv, &[m.id], back, rules_of.protected, rules_of.worn).map_err(Refusal::Refused)?;
@@ -298,15 +306,21 @@ pub fn draft(inv: &Inventory, change: &Mutation) -> Option<Draft> {
     }
     if change.move_only() {
         let trash = rules::system(inv, 14);
+        let in_trash = |folder: Uuid| trash.is_some_and(|trash| folder == trash || rules::under(inv, folder, trash));
         let moves = change
             .operations
             .iter()
             .map(|op| match op {
-                Operation::Patch { id, body, .. } => Some(Moved {
-                    id: *id,
-                    from: rules::parent(inv, *id)?,
-                    to: body["parent_id"].as_uuid(),
-                }),
+                Operation::Patch { id, body, .. } => {
+                    let (from, to) = (rules::parent(inv, *id)?, body["parent_id"].as_uuid());
+                    Some(Moved {
+                        id: *id,
+                        from,
+                        to,
+                        from_trash: in_trash(from),
+                        to_trash: in_trash(to),
+                    })
+                }
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?;

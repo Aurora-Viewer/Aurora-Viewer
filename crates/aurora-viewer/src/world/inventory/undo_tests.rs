@@ -470,3 +470,32 @@ fn restores_place_for_a_snapshot_is_the_photo_album() {
         "a texture stays in Textures"
     );
 }
+
+#[test]
+fn a_move_whose_folder_was_deleted_since_sends_nothing_to_the_trash() {
+    // undo: the folder it came from was deleted since
+    let (mut inv, ids) = fixture();
+    let mut history = History::default();
+    let change = move_selection(&inv, &[ids.hat], ids.objects, &none(), &none()).expect("move");
+    user(&mut history, &mut inv, &ids, change);
+    let shirt_out = move_selection(&inv, &[ids.shirt], ids.objects, &none(), &none()).expect("move");
+    demo_mutate(&mut inv, ids.agent, shirt_out).expect("moved");
+    let gone = move_selection(&inv, &[ids.clothes], ids.trash, &none(), &none()).expect("delete");
+    demo_mutate(&mut inv, ids.agent, gone).expect("deleted");
+    assert!(step(&mut history, &mut inv, &ids, true, &none()).is_err(), "nothing to take back");
+    assert_eq!(parent(&inv, ids.hat), Some(ids.objects), "not deleted");
+
+    // redo: the folder it went to was deleted since
+    let (mut inv, ids) = fixture();
+    let mut history = History::default();
+    let change = move_selection(&inv, &[ids.hat], ids.objects, &none(), &none()).expect("move");
+    user(&mut history, &mut inv, &ids, change);
+    step(&mut history, &mut inv, &ids, true, &none()).expect("undo");
+    assert_eq!(parent(&inv, ids.hat), Some(ids.clothes));
+    let sword_out = move_selection(&inv, &[ids.sword], ids.clothes, &none(), &none()).expect("move");
+    demo_mutate(&mut inv, ids.agent, sword_out).expect("moved");
+    let gone = move_selection(&inv, &[ids.objects], ids.trash, &none(), &none()).expect("delete");
+    demo_mutate(&mut inv, ids.agent, gone).expect("deleted");
+    assert!(step(&mut history, &mut inv, &ids, false, &none()).is_err(), "nothing to do again");
+    assert_eq!(parent(&inv, ids.hat), Some(ids.clothes), "not deleted");
+}

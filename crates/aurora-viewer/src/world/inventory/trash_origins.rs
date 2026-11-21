@@ -162,6 +162,7 @@ impl TrashOrigins {
                     id: *id,
                     from: rules::parent(inv, *id)?,
                     to: body["parent_id"].as_uuid(),
+                    ..Moved::default()
                 }),
                 _ => None,
             })
@@ -228,6 +229,7 @@ mod tests {
             id: ids.shirt,
             from: ids.clothes,
             to: ids.trash,
+            ..Moved::default()
         }];
         assert!(origins.moved(&inv, &into));
         assert_eq!(origins.origin(&inv, ids.shirt), Some(ids.clothes));
@@ -238,6 +240,7 @@ mod tests {
                 id: ids.shirt,
                 from: ids.trash,
                 to: ids.trash_sub,
+                ..Moved::default()
             }]
         ));
         assert_eq!(origins.origin(&inv, ids.shirt), Some(ids.clothes));
@@ -248,6 +251,7 @@ mod tests {
                 id: ids.shirt,
                 from: ids.trash,
                 to: ids.objects,
+                ..Moved::default()
             }]
         ));
         assert_eq!(origins.origin(&inv, ids.shirt), None);
@@ -258,6 +262,7 @@ mod tests {
                 id: ids.hat,
                 from: ids.clothes,
                 to: ids.objects,
+                ..Moved::default()
             }]
         ));
     }

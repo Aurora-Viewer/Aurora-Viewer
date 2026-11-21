@@ -154,7 +154,8 @@ pub(super) fn commands(
             shortcuts::Command::Purge => purge(inv, st, prefs, facts, actions),
             // the history is the session's, not this list's: the app takes
             // its next step (`world::inventory::undo`)
-            shortcuts::Command::Undo | shortcuts::Command::Redo if st.pending.is_none() => {
+            // while a change is on its way the app says to wait
+            shortcuts::Command::Undo | shortcuts::Command::Redo => {
                 actions.push(InvAction::History {
                     undo: command == shortcuts::Command::Undo,
                     named: false,
