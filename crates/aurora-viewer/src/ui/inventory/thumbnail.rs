@@ -442,7 +442,8 @@ impl PreviewCache {
 /// first, then its textures, in the folder's order. Only a folder already
 /// loaded (a folder is never loaded for its preview; the pictures chosen
 /// load as any tile's), its own items (never a subfolder's), and nothing
-/// while RLVa forbids previews (@viewtexture), as for the tiles' pictures.
+/// while RLVa forbids previews (@viewtexture: stricter than the tiles' own
+/// pictures, which it leaves, since a folder preview also shows textures).
 pub(super) fn folder_preview(inv: &Inventory, id: Uuid, max: usize) -> Vec<Uuid> {
     let Some(folder) = inv.folders.get(&id) else {
         return Vec::new();
@@ -487,10 +488,12 @@ pub(super) fn preview_count(side: f32) -> usize {
     }
 }
 
-/// The picture of an entry's tile: none while RLVa forbids previews, as for
-/// its tooltip.
+/// The picture of an entry's tile. RLVa's @viewtexture leaves it
+/// (LLInventoryGallery and LLThumbnailCtrl, indra/newview, ask nothing of
+/// RLVa): it takes the tooltip's picture alone (LLInspectTexture,
+/// llinspecttexture.cpp).
 pub(super) fn tile_picture(inv: &Inventory, id: Uuid) -> Option<Uuid> {
-    inv.can_preview(0).then(|| shown(inv, id)).flatten()
+    shown(inv, id)
 }
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
     match inv.items.get(&item) {
@@ -1098,5 +1101,19 @@ mod tests {
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"))));
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"))));
+    }
+
+    /// LLInventoryGallery and LLThumbnailCtrl (indra/newview) ask nothing of
+    /// RLVa: @viewtexture leaves the tiles' pictures, and takes the
+    /// tooltip's (LLInspectTexture, llinspecttexture.cpp; `hover.rs`).
+    #[test]
+    fn rlva_viewtexture_leaves_the_tiles_pictures() {
+        let mut inv = super::super::tests::view_inventory(false);
+        crate::world::inventory::demo::seed_gallery(&mut inv);
+        let item = Uuid::from_u128(8100);
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
+        inv.rlva_preview_mask = 1;
+        assert!(!inv.can_preview(0));
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
     }
 }

@@ -477,6 +477,11 @@ pub struct DebugView {
     pub check_probe_sets: bool,
     pub probes: bool,
     pub skeletons: bool,
+    /// The avatars' hitboxes with the Legacy Viewer's Avatar Hitboxes parity
+    /// (Developer › Render Metadata › Avatar Hitboxes): the avatar's own
+    /// oriented box, half its scale in either direction. Visual parity only:
+    /// picking still tests the fixed click box (see `scene::picking`).
+    pub avatar_hitboxes: bool,
     /// Detail level of the objects around the pointer, with the distance
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
@@ -517,7 +522,14 @@ impl DebugView {
 
     /// An overlay drawn over the 3D view is on.
     pub fn any_overlay(&self) -> bool {
-        self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons || self.lod_info
+        self.bounds
+            || self.culling
+            || self.lights
+            || self.glow_objects
+            || self.probes
+            || self.skeletons
+            || self.avatar_hitboxes
+            || self.lod_info
     }
 }
 
@@ -789,6 +801,11 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Planet curvature (aurora_render::curvature, Aurora's own; the
+    /// Legacy Viewer draws the regions flat): off by default.
+    pub planet_curvature: bool,
+    /// The planet's radius (km), the Earth's by default.
+    pub planet_radius_km: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -948,6 +965,9 @@ pub struct Settings {
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
+    /// The order of the Appearance outfits (FSOutfitListSortOrder and
+    /// OutfitGallerySortOrder, saved like them).
+    pub appearance_outfit_sort: crate::world::outfit_folders::Sort,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -1010,6 +1030,11 @@ pub struct Settings {
     /// viewer's notices (#475, off by default; Preferences > Chat). Not in
     /// the Legacy Viewer.
     pub compact_automated_chat: bool,
+    /// An emote ("/me waves") joins its sender's group under one header in
+    /// the Aurora style, instead of standing alone (off by default;
+    /// Preferences > Chat). An Aurora option; the Legacy Viewer always groups
+    /// emotes.
+    pub group_emotes: bool,
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
@@ -1688,6 +1713,18 @@ pub struct Settings {
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental (aurora-render `soft_shadows.rs`): the
+    /// penumbra widens with the distance of the caster, like the sun's in
+    /// real life. Beyond the Legacy Viewer, off by default and in every
+    /// graphics level; only with the shadows.
+    pub soft_shadows: bool,
+    /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = no size, up to 2. Without soft
+    /// shadows it has no effect.
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
+    /// less lets the light through. Works with or without soft shadows.
+    pub shadow_intensity: f32,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
@@ -1944,6 +1981,13 @@ pub struct Settings {
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
+/// The default shadow softness, 0.25 (a light about 0.6 degrees across, close
+/// to the real sun (0.53 degrees, a softness of 0.23); 1 is 2.3 degrees), and the range of the slider.
+pub(crate) const SHADOW_SOFTNESS: f32 = 0.25;
+pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
+/// The shadows as the Legacy Viewer draws them.
+pub(crate) const SHADOW_INTENSITY: f32 = 1.0;
+
 pub(crate) const DEFAULT_GROUND_FEET_HEIGHT: f32 = 0.4;
 pub(crate) const DEFAULT_GROUND_FEET_AVATARS: u32 = 5;
 pub(crate) const MAX_GROUND_FEET_AVATARS: u32 = 100;
@@ -1966,6 +2010,10 @@ pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
 
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
+/// Planet curvature's radius (km): the Earth's, and the slider's range.
+pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
+pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
+    aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2449,6 +2497,8 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            planet_curvature: false,
+            planet_radius_km: PLANET_RADIUS_KM,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -2516,6 +2566,7 @@ impl Default for Settings {
             wearable_favorites_sort: Default::default(),
             wearable_favorites_order: Default::default(),
             appearance_tab: 0,
+            appearance_outfit_sort: Default::default(),
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
@@ -2548,6 +2599,7 @@ impl Default for Settings {
             script_errors_to_channel: false,
             script_errors_channel: 1,
             compact_automated_chat: false,
+            group_emotes: false,
             compact_im_system_lines: false,
             blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
@@ -2775,6 +2827,9 @@ impl Default for Settings {
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
             contact_shadows: false,
+            soft_shadows: false,
+            shadow_softness: SHADOW_SOFTNESS,
+            shadow_intensity: SHADOW_INTENSITY,
             antialiasing: 6,
             blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
@@ -3236,6 +3291,12 @@ impl Settings {
         self.joystick.enabled = false;
     }
 
+    /// The radius of the planet the world is drawn on (m), None while the
+    /// curvature is off (FrameParams::curvature).
+    pub(crate) fn planet_radius(&self) -> Option<f32> {
+        self.planet_curvature.then_some(self.planet_radius_km * 1000.0)
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self.settings_version <= SETTINGS_VERSION {
             self.gamepad.migrate_gamepad_layout();
@@ -3653,6 +3714,16 @@ impl Settings {
         } else {
             SCREEN_INDIRECT_INTENSITY
         };
+        self.shadow_softness = if self.shadow_softness.is_finite() {
+            self.shadow_softness.clamp(0.0, SHADOW_SOFTNESS_MAX)
+        } else {
+            SHADOW_SOFTNESS
+        };
+        self.shadow_intensity = if self.shadow_intensity.is_finite() {
+            self.shadow_intensity.clamp(0.0, 1.0)
+        } else {
+            SHADOW_INTENSITY
+        };
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
         } else {
@@ -3662,6 +3733,12 @@ impl Settings {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
             BLOOM_STRENGTH
+        };
+        self.planet_radius_km = if self.planet_radius_km.is_finite() {
+            self.planet_radius_km
+                .clamp(*PLANET_RADIUS_KM_RANGE.start(), *PLANET_RADIUS_KM_RANGE.end())
+        } else {
+            PLANET_RADIUS_KM
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };
@@ -3843,6 +3920,21 @@ impl Settings {
         });
     }
 
+    /// `save`, with the view angle `fov` (radians) written as the user's
+    /// own: the viewfinder puts its focal length in `camera.fov` while it
+    /// is on and gives the user's back when it closes, so a save made in
+    /// the meantime must not keep the focal length.
+    pub fn save_with_fov(&self, fov: Option<f32>) {
+        match fov {
+            Some(fov) if (fov - self.camera.fov).abs() > 1e-6 => {
+                let mut copy = self.clone();
+                copy.camera.fov = fov;
+                copy.save();
+            }
+            _ => self.save(),
+        }
+    }
+
     /// What is written to the file: the user's own graphics values while
     /// the photo quality raises them, no user name unless remembered.
     pub(crate) fn to_saved(&self) -> Settings {
@@ -4017,6 +4109,7 @@ impl Settings {
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
+            soft_shadows: self.soft_shadows,
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
@@ -4347,6 +4440,24 @@ mod tests {
             }
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn planet_curvature_is_off_by_default_on_the_earth_and_kept_on_its_slider() {
+        let s = super::Settings::default();
+        assert!(!s.planet_curvature);
+        assert_eq!(s.planet_radius(), None);
+        assert_eq!(s.planet_radius_km, 6371.0);
+        for (asked, kept) in [(1.0, 1000.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
+            let s = super::Settings {
+                planet_curvature: true,
+                planet_radius_km: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.planet_radius_km, kept, "{asked} km");
+            assert_eq!(s.planet_radius(), Some(kept * 1000.0));
         }
     }
 

@@ -23,6 +23,10 @@ pub(super) enum DayFetch {
 impl App {
     /// loadInventoryItem for a day cycle item (edit_context "inventory").
     pub(super) fn day_editor_load(&mut self, item: Uuid) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         let Some(it) = self.world.inventory.items.get(&item).cloned() else {
             return;
         };

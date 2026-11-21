@@ -1107,10 +1107,14 @@ fn item_attachments(
                 && !rules::in_type(inv, *id, 14)
                 && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
         });
+    // The entries clicked (links or items), one per original when the
+    // selection is complete: a link is worn by its own folder's locks.
+    let entries = if selected.len() == ids.len() { ids } else { selected };
     // RLVa: what a lock forbids is greyed (ERlvWearMask in LLObjectBridge
-    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp).
+    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp, which
+    // ask for the entry itself: canAttach(item), canWear(item)).
     let rlva = |point: u8, replace: bool| {
-        selected.iter().all(|id| {
+        entries.iter().all(|id| {
             let wear = facts.rlva.wear(inv, *id, point);
             if replace { wear.replace } else { wear.add }
         })
@@ -1135,7 +1139,7 @@ fn item_attachments(
             aurora_i18n::tr!("common-add"),
             wear && rlva(0, false) && selected.iter().all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13)),
             InvAction::Appearance(Wear::WearItems {
-                items: selected.to_vec(),
+                items: entries.to_vec(),
                 replace: false,
                 point: 0,
             }),
@@ -1164,7 +1168,7 @@ fn item_attachments(
                         &label,
                         wear && objects && rlva(*point, false),
                         Command::Invoke(InvAction::Appearance(Wear::WearItems {
-                            items: selected.to_vec(),
+                            items: entries.to_vec(),
                             replace: false,
                             point: *point,
                         })),

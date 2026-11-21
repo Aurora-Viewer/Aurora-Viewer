@@ -15,26 +15,27 @@ pub(super) const DECODE_PIXELS: f32 = 2048.0;
 struct Input {
     ids: [Uuid; 4],
     materials: Option<bool>,
+    /// `@setcam_textures` (`camera_override`).
+    camera_texture: Option<Uuid>,
     transforms: [TerrainTransform; 4],
     paintmap: Option<Uuid>,
     size: [u32; 2],
 }
 
-/// What `@setcam_textures` does to the ground: the four detail textures are
-/// all replaced by the override, as LLDrawPoolTerrain::renderFullShaderTextures
-/// binds `LLViewerFetchedTexture::sDefaultDiffuseImagep` for each of them
-/// while `LLPipeline::sRenderTextures` is off
+/// What `@setcam_textures` does to the ground: the four detail textures of
+/// a textured ground are all replaced by the override, as
+/// LLDrawPoolTerrain::renderFullShaderTextures binds
+/// `LLViewerFetchedTexture::sDefaultDiffuseImagep` for each of them while
+/// `LLPipeline::sRenderTextures` is off
 /// (LLViewerObjectList::setAllObjectDefaultTextures, llviewerobjectlist.cpp,
 /// called by the RLVa handler of `RLV_MODIFIER_SETCAM_TEXTURE`,
-/// rlvhandler.cpp). The override is drawn as a plain four-texture surface:
-/// a region painted with PBR materials is switched to it too. The Legacy
-/// Viewer leaves that case (`renderFullShaderPBR`) on its real materials,
-/// which would keep the ground readable under a rule meant to hide every
-/// texture, so this is stricter. `None` leaves the region's own surface.
-fn camera_override(ids: [Uuid; 4], materials: Option<bool>, texture: Option<Uuid>) -> ([Uuid; 4], Option<bool>) {
+/// rlvhandler.cpp). A ground painted with PBR materials keeps them, as
+/// renderFullShaderPBR has no such switch. `None` leaves the region's own
+/// textures.
+fn camera_override(ids: [Uuid; 4], pbr: bool, texture: Option<Uuid>) -> [Uuid; 4] {
     match texture {
-        Some(id) => ([id; 4], Some(false)),
-        None => (ids, materials),
+        Some(id) if !pbr => [id; 4],
+        _ => ids,
     }
 }
 
@@ -135,7 +136,7 @@ impl SurfaceGpu {
             }
             self.slots = layers;
         } else {
-            self.slots = input.ids.map(|id| {
+            self.slots = camera_override(input.ids, false, input.camera_texture).map(|id| {
                 if !id.is_nil() {
                     wanted.push(id);
                 }
@@ -300,14 +301,10 @@ impl Scene {
                     .poll_paint(&region.heightmap, comp, renderer.staging_pool(), renderer.max_texture_dimension());
             }
             let local = region.terrain_surface.effective();
-            let (ids, materials) = camera_override(
-                local.map_or(info.terrain_detail, |s| s.ids),
-                local.map(|s| s.materials),
-                camera_texture,
-            );
             let input = Input {
-                ids,
-                materials,
+                ids: local.map_or(info.terrain_detail, |s| s.ids),
+                materials: local.map(|s| s.materials),
+                camera_texture,
                 transforms: local.map_or(region.terrain_surface.transforms, |s| s.transforms),
                 paintmap: region.terrain_surface.paintmap.as_ref().map(|p| p.id),
                 size: [region.heightmap.size_x, region.heightmap.size_y],
@@ -384,17 +381,15 @@ mod tests {
     fn a_camera_texture_replaces_every_ground_texture_and_leaves_the_region_alone_without_one() {
         let region = [Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)];
         let grey = aurora_prim::te::IMG_DEFAULT;
-        // no @setcam_textures: the region's own textures and material choice
-        assert_eq!(camera_override(region, None, None), (region, None));
-        assert_eq!(camera_override(region, Some(true), None), (region, Some(true)));
+        // no @setcam_textures: the region's own textures
+        assert_eq!(camera_override(region, false, None), region);
+        assert_eq!(camera_override(region, true, None), region);
         // the empty form is the flat grey, an explicit id is used as given
-        assert_eq!(camera_override(region, None, Some(grey)), ([grey; 4], Some(false)));
+        assert_eq!(camera_override(region, false, Some(grey)), [grey; 4]);
         let given = Uuid::from_u128(9);
-        assert_eq!(camera_override(region, Some(false), Some(given)), ([given; 4], Some(false)));
-        // a PBR-material ground is drawn as the plain override too
-        assert_eq!(camera_override(region, Some(true), Some(grey)), ([grey; 4], Some(false)));
-        // undone: the region's textures come back
-        assert_eq!(camera_override(region, Some(true), None), (region, Some(true)));
+        assert_eq!(camera_override(region, false, Some(given)), [given; 4]);
+        // a PBR-material ground keeps its materials (renderFullShaderPBR)
+        assert_eq!(camera_override(region, true, Some(grey)), region);
     }
 
     #[test]
