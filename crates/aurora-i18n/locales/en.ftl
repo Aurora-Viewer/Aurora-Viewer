@@ -15438,6 +15438,9 @@ admin-kick-message = An administrator has logged you off.
 admin-freeze-message = You have been frozen. You cannot move or chat. An administrator will contact you via instant message (IM).
 admin-unfreeze-message = You are no longer frozen.
 
+resource-preview-tabs-title = Inventory previews
+resource-preview-close-tab = Close this tab
+
 ui-weather-aurora = Aurora Weather
 ui-bars-aurora-weather = Aurora Weather…
 ui-weather-precipitation = Falling

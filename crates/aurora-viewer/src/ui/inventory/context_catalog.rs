@@ -1189,6 +1189,7 @@ pub(super) fn execute(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    let main = st.is_main();
     let mut submit = |plan: Result<Mutation, String>| match plan {
         Ok(m) => actions.push(InvAction::Edit(m)),
         Err(reason) => {
@@ -1227,34 +1228,44 @@ pub(super) fn execute(
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
+            let start = actions.len();
             for id in ids {
                 super::context::open(inv, id, st, actions);
             }
-        }
-        Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
+            // LLInventoryAction::doToSelected hosts compatible bulk previews
+            // together. Keep non-preview actions on their existing path.
+            let mut previews = Vec::new();
+            let mut owner = None;
+            let other: Vec<_> = actions
+                .drain(start..)
+                .filter_map(|action| {
+                    if let InvAction::Preview(id, origin) = &action {
+                        previews.push(*id);
+                        owner = owner.or(*origin);
+                        None
+                    } else {
+                        Some(action)
+                    }
+                })
+                .collect();
+            actions.extend(other);
+            if previews.len() > 1 {
+                actions.push(InvAction::PreviewMany(previews, owner));
+            } else {
+                actions.extend(previews.into_iter().map(|id| InvAction::Preview(id, owner)));
             }
         }
+        Command::Batch(batch) => actions.extend(batch),
+        // a folder window's own list holds none of the Properties windows
+        // (they move to the main inventory's each frame): it would open a
+        // second editor of an item already shown
+        Command::PropertiesMany(ids) if !main => st.properties_asked.push(super::document::PropertiesAsk::Many(ids)),
+        Command::Properties(id) if !main => st.properties_asked.push(super::document::PropertiesAsk::One(id)),
+        Command::PropertiesMany(ids) => st.open_properties_many(&ids),
         Command::Properties(id) => {
+            if st.focus_properties(ui.ctx(), id) {
+                return;
+            }
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
         }
@@ -1331,6 +1342,91 @@ mod tests {
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
     }
+    #[test]
+    fn bulk_open_groups_resources_but_keeps_other_item_actions() {
+        let mut inv = inventory();
+        let ids = [9101, 9102, 9103].map(Uuid::from_u128);
+        inv.add_items(
+            ids.into_iter()
+                .zip([57, 0, 3])
+                .map(|(id, kind)| aurora_net::inventory::InvItem {
+                    id,
+                    asset_type: kind,
+                    asset_id: Uuid::from_u128(9200 + kind as u128),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            execute(
+                Command::OpenMany(ids.to_vec()),
+                ui,
+                &inv,
+                &mut st,
+                &mut prefs,
+                &facts(),
+                &mut actions,
+            );
+        });
+        // the first frame of a fresh context uploads the font atlas, which
+        // TexturesDelta's drop asserts was taken (debug assertions on)
+        output.textures_delta.clear();
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::TeleportLandmark(id) if *id == Uuid::from_u128(9203)))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::PreviewMany(items, _) if items == &ids[..2]))
+        );
+    }
+
+    #[test]
+    fn bulk_open_groups_document_and_script_previews() {
+        let mut inv = inventory();
+        let ids = [9301, 9302, 9303, 9304].map(Uuid::from_u128);
+        inv.add_items(
+            ids.into_iter()
+                .zip([1, 7, 10, 20])
+                .map(|(id, kind)| aurora_net::inventory::InvItem {
+                    id,
+                    asset_type: kind,
+                    asset_id: Uuid::from_u128(9400 + kind as u128),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            execute(
+                Command::OpenMany(ids.to_vec()),
+                ui,
+                &inv,
+                &mut st,
+                &mut prefs,
+                &facts(),
+                &mut actions,
+            );
+        });
+        // the first frame of a fresh context uploads the font atlas, which
+        // TexturesDelta's drop asserts was taken (debug assertions on)
+        output.textures_delta.clear();
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::PreviewMany(items, _) if items == &ids))
+        );
+    }
+
     #[test]
     fn sound_menu_separates_local_and_world_playback_for_items_links_and_bulk_selection() {
         let mut inv = inventory();

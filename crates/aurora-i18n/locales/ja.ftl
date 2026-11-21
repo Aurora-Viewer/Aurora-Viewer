@@ -15302,6 +15302,9 @@ admin-kick-message = 管理者によってログオフされました。
 admin-freeze-message = フリーズされました。移動もチャットもできません。管理者がインスタントメッセージ（IM）で連絡します。
 admin-unfreeze-message = フリーズが解除されました。
 
+resource-preview-tabs-title = インベントリのプレビュー
+resource-preview-close-tab = このタブを閉じる
+
 ui-weather-aurora = Aurora の天気
 ui-bars-aurora-weather = Aurora の天気…
 ui-weather-precipitation = 降るもの

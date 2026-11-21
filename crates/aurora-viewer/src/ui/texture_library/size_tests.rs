@@ -11,7 +11,7 @@ struct Fixture {
     prefs: Preferences,
     screen: Vec2,
     time: f64,
-    labels: HashMap<String, egui::Rect>,
+    labels: Vec<(String, egui::Rect)>,
 }
 impl Fixture {
     fn new(avatars: Arc<crate::scene::avatar::AvatarLibrary>, prefs: Preferences) -> Self {
@@ -47,7 +47,7 @@ impl Fixture {
             prefs,
             screen: Vec2::new(1600.0, 1200.0),
             time: 0.0,
-            labels: HashMap::new(),
+            labels: Vec::new(),
         }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
@@ -71,14 +71,47 @@ impl Fixture {
                 );
             },
         );
-        output.textures_delta.clear();
-        self.labels.clear();
-        for shape in output.shapes {
-            if let egui::Shape::Text(text) = shape.shape {
-                self.labels
-                    .insert(text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()));
+        fn collect(shape: &egui::Shape, labels: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(text) if !text.galley.elided => {
+                    labels.push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2())))
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, labels);
+                    }
+                }
+                _ => {}
             }
         }
+        self.labels.clear();
+        for shape in &output.shapes {
+            collect(&shape.shape, &mut self.labels);
+        }
+        output.textures_delta.clear();
+    }
+    /// Where the last drawn text with this label is.
+    fn label(&self, label: &str) -> egui::Rect {
+        self.labels
+            .iter()
+            .rev()
+            .find(|(name, _)| name == label)
+            .unwrap_or_else(|| panic!("missing {label}: {:?}", self.labels))
+            .1
+    }
+    fn click_label(&mut self, label: &str) {
+        self.settle();
+        let pos = self
+            .labels
+            .iter()
+            .rev()
+            .find(|(name, _)| name == label)
+            .unwrap_or_else(|| panic!("missing {label}: {:?}", self.labels))
+            .1
+            .center();
+        self.button(pos, true);
+        self.button(pos, false);
+        self.settle();
     }
     fn settle(&mut self) {
         for _ in 0..8 {
@@ -275,10 +308,10 @@ fn material_footer_message_stays_below_wrapped_buttons_at_narrow_widths() {
         for width in [260.0, 300.0, 620.0] {
             widgets::place_floater(&f.ctx, &preview_window_id(item), egui::pos2(20.0, 60.0), egui::vec2(width, 600.0));
             f.settle();
-            let status = f.labels[aurora_i18n::tr!("resource-preview-local-maps")];
+            let status = f.label(aurora_i18n::tr!("resource-preview-local-maps"));
             let buttons_bottom = ["common-save", "common-save-as", "common-cancel"]
                 .into_iter()
-                .map(|key| f.labels[aurora_i18n::text(key)].bottom())
+                .map(|key| f.label(aurora_i18n::text(key)).bottom())
                 .fold(f32::NEG_INFINITY, f32::max);
             assert!(
                 status.top() >= buttons_bottom,
@@ -471,4 +504,130 @@ fn a_texture_preview_keeps_its_size_with_its_messages() {
             resources.show(ctx, p, world, scene, &images, prefs, &mut false);
         },
     );
+}
+
+#[test]
+fn bulk_resource_tabs_keep_drafts_cameras_and_save_replies_separate() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let ids = [113, 114].map(Uuid::from_u128);
+    f.resources.open_group(&f.ctx, &f.world, vec![ids[0], ids[1], ids[0]]);
+    f.settle();
+    assert_eq!(f.resources.windows.len(), 2);
+    assert_eq!(f.resources.preview_groups.len(), 1);
+    assert_eq!(f.resources.preview_groups[0].items, ids);
+    assert_eq!(f.resources.preview_groups[0].selected, 0);
+    let editor = f
+        .resources
+        .windows
+        .iter_mut()
+        .find(|w| w.id == ids[0])
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap();
+    Arc::make_mut(&mut editor.draft).double_sided = true;
+    f.settle();
+    let camera = f.resources.windows.iter().find(|w| w.id == ids[0]).unwrap().view;
+    f.click_label("Preview 114");
+    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    assert!(
+        !f.resources
+            .windows
+            .iter()
+            .find(|w| w.id == ids[1])
+            .unwrap()
+            .editor
+            .as_ref()
+            .unwrap()
+            .draft
+            .double_sided
+    );
+    let request = Uuid::from_u128(880);
+    assert!(f.resources.begin_material_save(ids[0], request));
+    let result = f.world.inventory.items[&ids[0]].clone();
+    assert!(f.resources.material_saved(request, &Ok(result)).unwrap().double_sided);
+    assert!(!f.resources.material_draft_dirty(ids[0]));
+    f.click_label("Preview 113");
+    let first = f.resources.windows.iter().find(|w| w.id == ids[0]).unwrap();
+    assert!(first.editor.as_ref().unwrap().draft.double_sided);
+    assert!(first.view == camera);
+    // Existing item opens focus its host instead of creating another editor.
+    f.resources.open_preview(&f.ctx, &f.world, ids[1]);
+    f.settle();
+    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    assert_eq!(f.resources.windows.len(), 2);
+    // Save as changes identity without ejecting an inactive tab from its host.
+    assert!(f.resources.begin_material_save(ids[0], request));
+    let copied = Uuid::from_u128(881);
+    let mut item = f.world.inventory.items[&ids[0]].clone();
+    item.id = copied;
+    f.world.inventory.add_items(vec![item]);
+    f.resources.material_copy_ready(request, copied);
+    assert_eq!(f.resources.preview_groups[0].items, [copied, ids[1]]);
+    f.resources.material_saved(request, &Ok(f.world.inventory.items[&copied].clone()));
+    f.settle();
+    assert_eq!(f.resources.windows.len(), 2);
+    // A failed save in a hidden tab keeps the draft and reveals its error.
+    f.resources.open_preview(&f.ctx, &f.world, copied);
+    f.settle();
+    let editor = f
+        .resources
+        .windows
+        .iter_mut()
+        .find(|w| w.id == ids[1])
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap();
+    Arc::make_mut(&mut editor.draft).roughness_factor = 0.23;
+    assert!(f.resources.begin_material_save(ids[1], request));
+    f.resources.material_saved(request, &Err("Save failed".to_owned()));
+    f.settle();
+    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    let editor = f
+        .resources
+        .windows
+        .iter()
+        .find(|w| w.id == ids[1])
+        .unwrap()
+        .editor
+        .as_ref()
+        .unwrap();
+    assert!(editor.dirty());
+    assert_eq!(editor.message, "Save failed");
+}
+
+#[test]
+fn closing_a_resource_tab_host_checks_each_dirty_material_and_cancel_keeps_the_rest() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let ids = [113, 114].map(Uuid::from_u128);
+    f.resources.open_group(&f.ctx, &f.world, ids.to_vec());
+    f.settle();
+    Arc::make_mut(&mut f.resources.windows[0].editor.as_mut().unwrap().draft).double_sided = true;
+    f.click_label("Preview 114");
+    Arc::make_mut(&mut f.resources.windows[1].editor.as_mut().unwrap().draft).roughness_factor = 0.23;
+    f.settle();
+    let host = preview_window_id(f.resources.preview_groups[0].id);
+    let rect = f.ctx.memory(|m| m.area_rect(egui::Id::unique(&host))).unwrap();
+    let close = egui::pos2(rect.right() - 18.0, rect.top() + 19.0);
+    f.button(close, true);
+    f.button(close, false);
+    f.settle();
+    assert!(f.resources.windows[1].editor.as_ref().unwrap().confirm_close);
+    f.click_label(aurora_i18n::tr!("common-cancel"));
+    assert_eq!(f.resources.windows.len(), 2);
+    assert!(!f.resources.windows[1].editor.as_ref().unwrap().confirm_close);
+    f.button(close, true);
+    f.button(close, false);
+    f.settle();
+    f.click_label(aurora_i18n::tr!("ui-inventory-dialogs-discard-changes"));
+    assert_eq!(f.resources.windows.len(), 1);
+    assert!(f.resources.windows[0].editor.as_ref().unwrap().confirm_close);
+    f.click_label(aurora_i18n::tr!("common-cancel"));
+    assert_eq!(f.resources.windows.len(), 1);
+    assert!(f.resources.windows[0].editor.as_ref().unwrap().dirty());
 }

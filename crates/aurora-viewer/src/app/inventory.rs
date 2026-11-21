@@ -500,6 +500,34 @@ impl App {
             }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
+            InvAction::PreviewMany(ids, owner) => {
+                let (resources, documents): (Vec<_>, Vec<_>) = ids
+                    .into_iter()
+                    .partition(|id| crate::ui::texture_library::catalogue::resource(&self.world.inventory, *id).is_some());
+                // Difference with the Legacy Viewer (LLInventoryAction::doToSelected,
+                // indra/newview/llinventoryfunctions.cpp): one LLMultiPreview takes
+                // every preview there, and none opens when an item refuses
+                // isMultiPreviewAllowed (environment settings). Here each family
+                // has its own host (`ui::preview_tabs`), and an environment setting
+                // keeps its editor while the rest is grouped.
+                self.texture_library.open_group(&self.egui_ctx, &self.world, resources);
+                for id in &documents {
+                    self.apply_inventory_action_from(editor, InvAction::Preview(*id, owner));
+                }
+                let previews: Vec<_> = documents
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        self.world
+                            .inventory
+                            .items
+                            .get(id)
+                            .is_some_and(|item| matches!(item.asset_type, 1 | 7 | 20))
+                    })
+                    .collect();
+                self.inventory_ui.group_documents(&previews, Some(&self.dual_inventory_ui));
+                self.script_editors.group_inventory(&documents);
+            }
             InvAction::Preview(id, owner) => {
                 let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
                 if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
@@ -541,6 +569,13 @@ impl App {
                         return;
                     }
                     let ctx = self.egui_ctx.clone();
+                    // the right pane's documents join the main inventory's
+                    // windows each frame: one open there comes forward
+                    // instead of opening a second copy
+                    let shown = |pane: &crate::ui::inventory::InventoryUi| {
+                        pane.preview == Some(id) || pane.windows.iter().any(|w| w.state.preview == Some(id))
+                    };
+                    let editor = if shown(&self.inventory_ui) { Uuid::nil() } else { editor };
                     if !self.inventory_pane(editor).open_document(&ctx, id, it.asset_type, owner) {
                         return;
                     }

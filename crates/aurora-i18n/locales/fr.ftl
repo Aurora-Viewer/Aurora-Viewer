@@ -15447,6 +15447,9 @@ admin-kick-message = Un administrateur vous a déconnecté.
 admin-freeze-message = Vous avez été gelé. Vous ne pouvez plus bouger ni parler. Un administrateur vous contactera par message instantané (IM).
 admin-unfreeze-message = Vous n’êtes plus gelé.
 
+resource-preview-tabs-title = Aperçus de l’inventaire
+resource-preview-close-tab = Fermer cet onglet
+
 ui-weather-aurora = Météo Aurora
 ui-bars-aurora-weather = Météo Aurora…
 ui-weather-precipitation = Précipitations
