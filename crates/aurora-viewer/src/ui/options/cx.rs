@@ -10,7 +10,7 @@
 //! pages at once), counted for the sidebar's chips (`Count`), put back to
 //! their default (`Reset`), or listed for the tests (`Collect`).
 
-use super::{OptionsResult, OptionsUi, Page};
+use super::{OptionsResult, OptionsUi, Page, RowFlash, with_setting_labels};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use aurora_i18n::UiUpper;
@@ -116,11 +116,11 @@ impl<M: Fn(&Settings, &Settings) -> bool, R: Fn(&mut Settings, &Settings)> Track
 
 /// `field!(lookat.private)`: the [`F`] of a setting.
 macro_rules! field {
-    ($($f:ident).+) => {
+    ($first:ident $(.$rest:ident)*) => {
         $crate::ui::options::cx::F {
-            path: stringify!($($f).+),
-            get: |s: &$crate::settings::Settings| &s.$($f).+,
-            get_mut: |s: &mut $crate::settings::Settings| &mut s.$($f).+,
+            path: concat!(stringify!($first) $(, ".", stringify!($rest))*),
+            get: |s: &$crate::settings::Settings| &s.$first $(.$rest)*,
+            get_mut: |s: &mut $crate::settings::Settings| &mut s.$first $(.$rest)*,
         }
     };
 }
@@ -318,9 +318,13 @@ pub(super) struct Cx<'a> {
     rows_seen: usize,
     /// The rows of the group are greyed (`greyed`).
     greyed: bool,
+    /// A conditional branch retained for search and counting, but hidden on its page.
+    hidden_on_page: bool,
     /// Another page's rows drawn here too (`borrow`): the settings they
     /// edit; the page's other rows, groups and notes are skipped.
     pick: Option<Vec<&'static str>>,
+    // Reuse the row's path buffer across this page pass.
+    row_paths: Vec<&'static str>,
     pub collected: Vec<(Page, &'static str)>,
     /// `Mode::Collect`: each setting a row edits, with its label and hint.
     pub described: Vec<(&'static str, String, String)>,
@@ -380,7 +384,9 @@ impl<'a> Cx<'a> {
             counts: Counts::default(),
             rows_seen: 0,
             greyed: false,
+            hidden_on_page: false,
             pick: None,
+            row_paths: Vec::new(),
             collected: Vec::new(),
             described: Vec::new(),
             changed: false,
@@ -447,8 +453,11 @@ impl<'a> Cx<'a> {
     pub fn conditional(&mut self, visible: bool, body: impl FnOnce(&mut Self)) {
         if self.mode != Mode::Show || visible {
             let before = self.greyed;
+            let hidden = self.hidden_on_page;
             self.greyed |= !visible;
+            self.hidden_on_page |= !visible;
             body(self);
+            self.hidden_on_page = hidden;
             self.greyed = before;
         }
     }
@@ -630,12 +639,14 @@ impl<'a> Cx<'a> {
                 return false;
             }
             Mode::Count => {
-                if self.st.pending_setting.as_deref().is_some_and(|wanted| {
-                    let mut paths = Vec::new();
-                    t.paths(&mut paths);
-                    paths.contains(&wanted)
-                }) {
-                    self.st.go_to = Some((self.page, self.tab, Some(id)));
+                if !self.hidden_on_page
+                    && self.st.pending_setting.as_deref().is_some_and(|wanted| {
+                        self.row_paths.clear();
+                        t.paths(&mut self.row_paths);
+                        self.row_paths.contains(&wanted) && with_setting_labels(|labels| labels.get(wanted).is_some_and(Option::is_some))
+                    })
+                {
+                    self.st.go_to = Some((self.page, self.tab, Some(RowFlash::Link(id))));
                     self.st.open_parent = self.parent.as_ref().map(|p| p.id);
                     self.st.pending_setting = None;
                 }
@@ -667,7 +678,7 @@ impl<'a> Cx<'a> {
                 .is_some_and(|(page, tab, l)| page == self.page && tab == self.tab && l == label)
         {
             self.st.reveal = None;
-            self.st.flash = Some((id, self.ui.input(|i| i.time)));
+            self.st.flash = Some((RowFlash::GoTo(id), self.ui.input(|i| i.time)));
             self.st.flash_scroll = true;
         }
         if self.group_untitled {
@@ -1095,12 +1106,20 @@ impl<'a> Cx<'a> {
         if !section_body {
             self.ui.painter().galley(label_pos, galley.clone(), ink);
         }
-        // A right-click on the setting's name copies a read-only link to this
-        // row. `Track::paths` is stable across languages; the label is not.
-        // For a row editing several fields, any of them leads to this row.
-        let mut setting_paths = Vec::new();
-        t.paths(&mut setting_paths);
-        if let Some(url) = setting_paths.into_iter().find_map(crate::slapp::preference_link) {
+        // A section body has no separate label: its control owns this space.
+        let link_path = if section_body || self.hidden_on_page {
+            None
+        } else {
+            self.row_paths.clear();
+            t.paths(&mut self.row_paths);
+            with_setting_labels(|labels| {
+                self.row_paths
+                    .iter()
+                    .copied()
+                    .find(|path| labels.get(*path).is_some_and(Option::is_some))
+            })
+        };
+        if let Some(path) = link_path {
             let label_response = self.ui.interact(label_rect, id.with("label"), Sense::click());
             let label_response = if hint.is_empty() {
                 label_response
@@ -1108,8 +1127,10 @@ impl<'a> Cx<'a> {
                 label_response.on_hover_text(hint)
             };
             crate::ui::menu::context_menu(&label_response, &p, |ui| {
-                if crate::ui::menu::item(ui, &p, "link-filled", aurora_i18n::tr!("ui-options-copy-setting-link")) {
-                    ui.ctx().copy_text(url.clone());
+                if crate::ui::menu::item(ui, &p, "link-filled", aurora_i18n::tr!("ui-options-copy-setting-link"))
+                    && let Some(url) = crate::slapp::preference_link(path)
+                {
+                    ui.ctx().copy_text(url);
                 }
             });
         } else if !hint.is_empty() {
@@ -1135,7 +1156,7 @@ impl<'a> Cx<'a> {
             let ink = if resp.hovered() { p.ink } else { p.muted };
             crate::ui::widgets::paint_glyph(self.ui.painter(), "arrow-right", go.center(), 13.0, ink);
             if resp.clicked() {
-                self.st.go_to = Some((self.page, self.tab, Some(id)));
+                self.st.go_to = Some((self.page, self.tab, Some(RowFlash::GoTo(id))));
                 self.st.open_parent = self.parent.as_ref().map(|p| p.id);
             }
         }
@@ -1208,15 +1229,12 @@ impl<'a> Cx<'a> {
 
         // the row's face: hovered, or lit a moment after "Go to"
         let hovered = self.ui.rect_contains_pointer(row) && self.ui.is_enabled();
-        let flash = self.st.flash.filter(|(f, _)| *f == id).map(|(_, at)| at);
+        let flash = self.st.flash.filter(|(target, _)| target.id() == id);
         let now = ctx.input(|i| i.time);
         let radius = self.ui.visuals().widgets.inactive.corner_radius;
-        if let Some(at) = flash {
+        if let Some((target, at)) = flash {
             let age = (now - at) as f32;
-            // Three shorter flashes, with a brief pause between them.
-            const PULSE_SECONDS: f32 = 0.65;
-            const GAP_SECONDS: f32 = 0.15;
-            if age < 3.0 * PULSE_SECONDS + 2.0 * GAP_SECONDS {
+            if let Some(strength) = target.strength(age) {
                 // asked again for a quarter of a second: a window opened by
                 // "Preferences…" lays out its first frames without keeping
                 // a scroll, which left a row far down the page out of sight
@@ -1224,8 +1242,6 @@ impl<'a> Cx<'a> {
                     self.ui.scroll_to_rect(row, Some(egui::Align::Center));
                     self.st.flash_scroll = age < 0.25;
                 }
-                let pulse_age = age % (PULSE_SECONDS + GAP_SECONDS);
-                let strength = (1.0 - pulse_age / PULSE_SECONDS).clamp(0.0, 1.0) * 0.42;
                 self.ui
                     .painter()
                     .set(background, Shape::rect_filled(row, radius, p.violet.gamma_multiply(strength)));

@@ -146,7 +146,7 @@ fn resolved(world: &World, want_names: &mut HashSet<Uuid>, link: &AppLink) -> Op
         // Human-requested fallback: an unsupported URI has no destination
         // name to resolve. Keep the actual address in the copy-link menu.
         AppLink::AreaSearch(_) => aurora_i18n::tr!("toolbar-command-area-search").to_owned(),
-        AppLink::Preferences(path) => format!("{} › {path}", aurora_i18n::tr!("common-preferences")),
+        AppLink::Preferences(path) => crate::ui::options::setting_link_label(path),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => return None,
     })
@@ -202,7 +202,7 @@ pub(super) fn tooltip(link: &AppLink) -> &'static str {
         AppLink::WorldMap { .. } => aurora_i18n::tr!("ui-chat-applink-map-tip"),
         AppLink::Chat { .. } => aurora_i18n::tr!("ui-chat-applink-chat-tip"),
         AppLink::Search { .. } | AppLink::AreaSearch(_) => aurora_i18n::tr!("ui-chat-applink-search-tip"),
-        AppLink::Preferences(_) => aurora_i18n::tr!("common-preferences"),
+        AppLink::Preferences(_) => aurora_i18n::tr!("ui-chat-applink-preferences-tip"),
         AppLink::Blocked(_) => aurora_i18n::tr!("ui-chat-applink-blocked-tip"),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-tip"),
     }
