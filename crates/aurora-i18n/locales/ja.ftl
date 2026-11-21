@@ -3436,7 +3436,6 @@ ui-sound-object-creation = オブジェクトの作成
 session-inventory-upload-creation-denied-invalid-type-size-or-upload-count = 作成できませんでした：タイプ、サイズ、またはアップロード数が無効です。
 ui-contacts-create = 作成
 build-ui-tools-create-ctrl-4 = 作成（Ctrl＋4）
-ui-bars-create-prims-ctrl-4 = プリムを作成（Ctrl＋4）
 ui-places-create-folder = フォルダを作成
 ui-inventory-context-create-folder-from-selection = 選択したアイテムからフォルダを作成
 common-create-favorite = お気に入りを作成
@@ -5516,14 +5515,12 @@ ui-place-details-edit-this-landmark = このランドマークを編集
 ui-appearance-edit-this-outfit = このアウトフィットを編集
 ui-appearance-show-current-outfit = リストに現在のアウトフィットを表示
 ui-appearance-current-outfit-not-in-my-outfits = 現在のアウトフィットは「自分のアウトフィット」に保存されていません
-ui-bars-edit-objects-ctrl-3 = オブジェクトを編集（Ctrl＋3）
 build-ui-tools-edit-parcel = 区画を編集
 ui-context-edit-shape = シェイプを編集
 ui-context-export-shape-xml = シェイプをＸＭＬでエクスポート
 ui-context-edit-outfit = アウトフィットを編集
 ui-context-edit-pbr-material = ＰＢＲマテリアルを編集
 ui-context-edit-land = 土地を編集
-ui-bars-edit-land-ctrl-5 = 土地を編集（Ctrl＋5）
 ui-land-options-edit-land = 土地を編集：
 build-ui-tools-edit-selected-land = 選択した土地を編集
 ui-profile-edit-text = テキストを編集
@@ -15416,6 +15413,10 @@ local-texture-preview-hint = ローカルテクスチャ — このコンピュ�
 # Menu commands can be added to or removed from a toolbar.
 toolbar-add-from-menu = ツールバーに追加
 toolbar-remove-from-menu = ツールバーから削除
+# Build › Edit objects, Create prims and Edit land as toolbar buttons (the menu shows their Ctrl+3/4/5 keys apart)
+toolbar-command-build-edit = オブジェクトを編集
+toolbar-command-build-create = プリムを作成
+toolbar-command-build-land = 土地を編集
 
 # ３６０度スナップショットのウィンドウ（LLFloater360Capture, floater_360capture.xml）
 capture-360-quality-preview = プレビュー（高速）

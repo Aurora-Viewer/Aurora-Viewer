@@ -863,7 +863,13 @@ pub fn command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
 }
 
 pub fn command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
-    command_row(ui, p, id, true, End::Keys(keys), "")
+    command_keys_if(ui, p, id, true, keys)
+}
+
+/// A catalogue command with its shortcut in the keys column, greyed out
+/// when `enabled` is false: the button keeps the short label.
+pub fn command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, keys: &str) -> bool {
+    command_row(ui, p, id, enabled, End::Keys(keys), "")
 }
 
 pub fn command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {

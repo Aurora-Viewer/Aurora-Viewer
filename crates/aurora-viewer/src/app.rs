@@ -18704,6 +18704,12 @@ impl App {
                     bottom_top: self.interface.last_room.map_or(screen_rect.bottom() - 56.0, |(_, bottom)| bottom),
                     menu_open: egui::Popup::is_any_open(&ctx),
                 });
+                // what the toolbar buttons of menu commands show, given before
+                // any bar is drawn: the bottom and side bars also show
+                // without the top bar (hidden interface, mouselook chat)
+                self.toolbar_ui.edit_particles = status.edit_particles;
+                self.toolbar_ui.fly_override_active = status.fly_override;
+                self.toolbar_ui.quickjump_active = status.quickjump;
                 if chrome.top {
                     let (bar, audio_action) = ui::bars::top_bars(
                         ui,
@@ -19034,7 +19040,7 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
-                ui::toolbar::show_command_context(ui.ctx(), &p);
+                ui::toolbar::show_command_context(ui.ctx(), &p, bar_layout, toolbar_settings);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
                 if self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();

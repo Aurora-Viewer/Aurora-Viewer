@@ -219,7 +219,7 @@ fn menu_toolbar_right_click_import_adds_and_removes_without_running_it() {
                         });
                     });
                 });
-                crate::ui::toolbar::show_command_context(&ctx, &p);
+                crate::ui::toolbar::show_command_context(&ctx, &p, &layout, &settings);
             },
         );
         output.textures_delta.clear();

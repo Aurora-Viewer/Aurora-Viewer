@@ -22,14 +22,8 @@ use crate::theme::Palette;
 use egui::{Rect, Response};
 use serde::{Deserialize, Serialize};
 
-/// A menu's view of the saved bars. Commands carry their stable identifier,
-/// never a translated label, through the same edit path as toolbar dragging.
-#[derive(Clone, Default)]
-struct MenuToolbarState {
-    locked: bool,
-    commands: std::collections::HashSet<String>,
-}
-
+/// A menu's Add / Remove: commands carry their stable identifier, never a
+/// translated label, through the same edit path as toolbar dragging.
 #[derive(Clone)]
 struct MenuEdit {
     command: &'static str,
@@ -58,22 +52,22 @@ pub fn command_context(response: &Response, command: &'static str) {
 
 /// The context menu belongs to the toolbar, so closing its originating
 /// dropdown or searching that dropdown cannot dismiss or filter its rows.
-pub fn show_command_context(ctx: &egui::Context, p: &Palette) {
+/// It reads the saved bars only while it is shown.
+pub fn show_command_context(ctx: &egui::Context, p: &Palette, layout: &Layout, settings: &ToolbarSettings) {
     let id = egui::Id::unique("menu_toolbar_context");
     let Some(context) = ctx.data(|d| d.get_temp::<MenuContext>(id)) else {
         return;
     };
-    let state = ctx.data(|d| d.get_temp::<MenuToolbarState>(egui::Id::unique("menu_toolbar_state")));
-    let Some(state) = state else { return };
+    let remove = settings.location(context.command, layout).is_some();
+    let locked = settings.locked;
     let mut open = true;
     menu::popup_at(ctx, id, context.pos, &mut open, p, |ui| {
-        let remove = state.commands.contains(context.command);
         let label = if remove {
             aurora_i18n::tr!("toolbar-remove-from-menu")
         } else {
             aurora_i18n::tr!("toolbar-add-from-menu")
         };
-        if menu::item_if(ui, p, if remove { "trash-filled" } else { "plus" }, label, !state.locked) {
+        if menu::item_if(ui, p, if remove { "trash-filled" } else { "plus" }, label, !locked) {
             ui.ctx().data_mut(|d| {
                 d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
                     .push(MenuEdit {
@@ -370,6 +364,14 @@ pub struct ToolbarUi {
     /// The photo reel holds no photo (given by the app): its button is
     /// dimmed. And its quick view is open: the button is lit.
     pub photo_roll_empty: bool,
+    /// An object we own is selected (given by the app before any bar is
+    /// drawn): the Edit particles button runs (LLEnableEditParticleSource),
+    /// otherwise it is dimmed.
+    pub edit_particles: bool,
+    /// Fly override (FSAlwaysFly) and Quickjump are on (given by the app
+    /// before any bar is drawn): their buttons are lit.
+    pub fly_override_active: bool,
+    pub quickjump_active: bool,
     /// The grid has an Avatar Welcome Pack (given by the app): without one,
     /// its button is dimmed (GridFeatureCheck avatar_picker).
     pub avatar_welcome: bool,
@@ -504,7 +506,7 @@ impl ToolbarUi {
                 self.voice_options = true;
             }
             if button.is_some_and(|b| matches!(b.command.as_str(), "movelock" | "move_lock"))
-                && menu::item(ui, p, "lock-filled", aurora_i18n::tr!("movelock-options"))
+                && menu::item(ui, p, "lock-cog", aurora_i18n::tr!("movelock-options"))
             {
                 self.movelock_options = true;
             }
@@ -609,8 +611,8 @@ impl ToolbarUi {
         }
     }
 
-    /// Apply menu edits alongside drag/context edits, then refresh what the
-    /// menus show. The current lock and membership win over a stale popup.
+    /// Apply menu edits alongside drag/context edits. The current lock and
+    /// membership win over a stale popup.
     pub fn commit_with_menus(&mut self, ctx: &egui::Context, layout: &Layout, settings: &mut ToolbarSettings) -> bool {
         let mut changed = self.commit(layout, settings);
         let edits = ctx
@@ -642,19 +644,6 @@ impl ToolbarUi {
             });
             changed |= self.commit(layout, settings);
         }
-        ctx.data_mut(|d| {
-            d.insert_temp(
-                egui::Id::unique("menu_toolbar_state"),
-                MenuToolbarState {
-                    locked: settings.locked,
-                    commands: Bar::ALL
-                        .into_iter()
-                        .flat_map(|bar| settings.bar(bar, layout))
-                        .map(|b| b.command.clone())
-                        .collect(),
-                },
-            )
-        });
         changed
     }
 

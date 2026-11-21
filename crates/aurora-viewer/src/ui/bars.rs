@@ -927,6 +927,16 @@ fn customize_avatar_enabled(seated: bool, sit_locked: bool) -> bool {
     !(seated && sit_locked)
 }
 
+/// Me › Stand up and its toolbar button are enabled only while seated and
+/// allowed to stand (`sit_locked` reads @unsit for a seated avatar):
+/// enable_standup_self (indra/newview/llviewermenu.cpp), Self.EnableStandUp
+/// in menu_viewer.xml, asks isSitting and RlvActions::canStand. The Legacy
+/// Viewer also hides the menu entry while standing; Aurora greys it, so that
+/// it can still be added to a toolbar.
+fn stand_up_enabled(seated: bool, sit_locked: bool) -> bool {
+    seated && !sit_locked
+}
+
 /// Viewer menus: the submenus of the wolf menu button of the navigation bar
 /// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
@@ -995,7 +1005,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             *action = BarAction::SitGround;
         }
-        if menu::command_tip(ui, p, "stand_up", !st.seated || !sit_locked, "") {
+        if menu::command_tip(ui, p, "stand_up", stand_up_enabled(st.seated, sit_locked), "") {
             *action = BarAction::StandUp;
         }
         let fly = if st.flying {
@@ -1813,8 +1823,15 @@ fn build_menu(
     if menu::item_if(ui, p, "box", aurora_i18n::tr!("ui-bars-build-ctrl-b"), !locked) {
         *action = BarAction::Build(0);
     }
-    for (mode, id) in [(1, "build_edit"), (2, "build_create"), (3, "build_land")] {
-        if menu::command_tip(ui, p, id, !locked, "") {
+    // the shortcuts in the keys column, so that the toolbar buttons keep
+    // the short labels (menu_viewer.xml: Ctrl+3, Ctrl+4, Ctrl+5)
+    for (mode, id, key) in [
+        (1, "build_edit", "Digit3"),
+        (2, "build_create", "Digit4"),
+        (3, "build_land", "Digit5"),
+    ] {
+        let keys = crate::keybinds::chord_label(key, true, false, false);
+        if menu::command_keys_if(ui, p, id, !locked, &keys) {
             *action = BarAction::Build(mode);
         }
     }
@@ -2392,12 +2409,6 @@ pub fn top_bars(
     notif: &mut super::notifications::NotifUi,
     bell: BellState,
 ) -> (BarAction, super::audio::AudioAction) {
-    ui.ctx().data_mut(|d| {
-        d.insert_temp(
-            egui::Id::unique("toolbar_menu_availability"),
-            (st.edit_particles, st.fly_override, st.quickjump),
-        )
-    });
     if !st.classic_bars {
         return islands::top(ui, p, icons, panels, st, audio, audio_ui, media, notif, bell);
     }
@@ -3597,6 +3608,14 @@ pub(crate) fn toolbar_row(
     action: &mut BarAction,
 ) -> Vec<egui::Rect> {
     let mut rects = Vec::with_capacity(buttons.len());
+    // the app's RLVa and flight locks, read once for the row
+    let (sit_locked, build_locked, fly_locked) = ui.ctx().data(|d| {
+        (
+            d.get_temp::<bool>(rlva_sit_locked_id()).unwrap_or(false),
+            d.get_temp::<bool>(rlva_build_locked_id()).unwrap_or(false),
+            d.get_temp::<bool>(fly_locked_id()).unwrap_or(false),
+        )
+    });
     for b in buttons {
         if b.command == "speak" {
             let open_voice = std::mem::take(&mut toolbar.voice_options);
@@ -3608,14 +3627,10 @@ pub(crate) fn toolbar_row(
             }
             continue;
         }
-        let (edit_particles, fly_override, quickjump) = ui
-            .ctx()
-            .data(|d| d.get_temp::<(bool, bool, bool)>(egui::Id::unique("toolbar_menu_availability")))
-            .unwrap_or_default();
         let active = if b.command == "fly_override" {
-            fly_override
+            toolbar.fly_override_active
         } else if b.command == "quickjump" {
-            quickjump
+            toolbar.quickjump_active
         } else if b.command == "ao" {
             row.ao_active || toolbar.ao_quick.open
         } else if matches!(b.command.as_str(), "movelock" | "move_lock") {
@@ -3658,14 +3673,18 @@ pub(crate) fn toolbar_row(
         // the Photo roll's button, dimmed while the session has no photo
         // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck),
         // and the pose stand's, dimmed while we sit (Agent.IsActionAllowed
-        // fs_when_not_sitting), its own ground lock included
+        // fs_when_not_sitting), its own ground lock included; Edit
+        // particles' without an object of ours selected
+        // (LLEnableEditParticleSource), and Stand up's while standing
+        // (enable_standup_self)
         let no_pack = b.command == "avatar" && !toolbar.avatar_welcome;
         let no_guide = b.command == "destinations" && !toolbar.destinations;
         let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty)
             && !no_pack
             && !no_guide
             && !(b.command == "pose_stand" && row.seated)
-            && !(b.command == "edit_particles" && !edit_particles);
+            && !(b.command == "edit_particles" && !toolbar.edit_particles)
+            && !(b.command == "stand_up" && !row.seated);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3700,15 +3719,11 @@ pub(crate) fn toolbar_row(
         } else if no_guide {
             format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("destinations-unavailable"))
         } else if !usable {
-            format!(
-                "{}\n{}",
-                super::toolbar::label(b),
-                if b.command == "edit_particles" {
-                    aurora_i18n::tr!("particle-editor-menu-tip")
-                } else {
-                    aurora_i18n::tr!("photo-reel-none")
-                }
-            )
+            match b.command.as_str() {
+                "edit_particles" => format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("particle-editor-menu-tip")),
+                "photo_roll" => format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none")),
+                _ => super::toolbar::label(b).to_owned(),
+            }
         } else {
             super::toolbar::label(b).to_owned()
         };
@@ -3720,11 +3735,9 @@ pub(crate) fn toolbar_row(
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::unique("bars_favorites_grid_open");
         let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
-        let rlva_locked = (b.command == "sit" || b.command == "stand_up" && row.seated)
-            && ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false)
-            || matches!(b.command.as_str(), "build" | "build_edit" | "build_create" | "build_land")
-                && ui.ctx().data(|d| d.get_temp::<bool>(rlva_build_locked_id())).unwrap_or(false)
-            || b.command == "fly" && ui.ctx().data(|d| d.get_temp::<bool>(fly_locked_id())).unwrap_or(false);
+        let rlva_locked = (b.command == "sit" || b.command == "stand_up" && row.seated) && sit_locked
+            || matches!(b.command.as_str(), "build" | "build_edit" | "build_create" | "build_land") && build_locked
+            || b.command == "fly" && fly_locked;
         let response = tool_button(
             ui,
             p,
@@ -4102,6 +4115,24 @@ mod tests {
         for (seated, sit_locked, enabled) in [(false, false, true), (false, true, true), (true, false, true), (true, true, false)] {
             assert_eq!(
                 customize_avatar_enabled(seated, sit_locked),
+                enabled,
+                "seated {seated}, locked {sit_locked}"
+            );
+        }
+    }
+
+    /// enable_standup_self (indra/newview/llviewermenu.cpp): Me › Stand up
+    /// is greyed while standing, and while seated with RLVa's @unsit.
+    #[test]
+    fn me_stand_up_is_enabled_only_while_seated_and_free_to_stand() {
+        for (seated, sit_locked, enabled) in [
+            (false, false, false),
+            (false, true, false),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            assert_eq!(
+                stand_up_enabled(seated, sit_locked),
                 enabled,
                 "seated {seated}, locked {sit_locked}"
             );

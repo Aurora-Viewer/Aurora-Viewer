@@ -453,7 +453,7 @@ pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
         let mut buttons = settings.buttons(layout).to_vec();
         buttons.retain(|button| button.command != "import");
         if mode == "menu-remove" {
-            let command = catalogue::find("import").unwrap();
+            let command = catalogue::find("import").expect("the catalogue holds the Import command");
             buttons.push(ToolButton {
                 command: command.id.into(),
                 icon: command.icon.into(),

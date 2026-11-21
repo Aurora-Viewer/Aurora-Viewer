@@ -296,6 +296,8 @@ struct Bench {
     action: bars::BarAction,
     /// The dock of the islands instead of Firestorm's bar.
     islands: bool,
+    /// Our avatar sits, for the bars' Row.
+    seated: bool,
 }
 
 impl Default for Bench {
@@ -313,6 +315,7 @@ impl Default for Bench {
             saves: 0,
             action: bars::BarAction::None,
             islands: false,
+            seated: false,
         }
     }
 }
@@ -349,7 +352,7 @@ impl Bench {
                     0,
                     None,
                     false,
-                    false,
+                    self.seated,
                     false,
                     &mut 0.0,
                     &mut bars::MicButton::default(),
@@ -365,7 +368,7 @@ impl Bench {
                     latest_unread: None,
                     flash: 0.0,
                     flying: false,
-                    seated: false,
+                    seated: self.seated,
                     mouselook: false,
                     ao_active: false,
                     locked: self.settings.locked,
@@ -1120,31 +1123,107 @@ fn menu_toolbar_added_import_button_runs_import_in_both_bar_layouts() {
     }
 }
 
-#[test]
-fn menu_toolbar_particle_button_follows_selection_availability() {
-    let mut bench = Bench::default();
+/// Queues a menu's Add of each command and applies it: their buttons go to
+/// the end of the bottom toolbar.
+fn add_from_menu(bench: &mut Bench, commands: &[&'static str]) {
     bench.ctx.data_mut(|d| {
         d.insert_temp(
             egui::Id::unique("menu_toolbar_edits"),
-            vec![MenuEdit {
-                command: "edit_particles",
-                remove: false,
-            }],
+            commands
+                .iter()
+                .map(|&command| MenuEdit { command, remove: false })
+                .collect::<Vec<_>>(),
         )
     });
-    bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings);
-    bench.frame(vec![]);
-    let pos = bench.pos("edit_particles");
+    assert!(bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings));
+}
+
+/// Clicks the toolbar button of `command` and gives the bottom bar's action.
+fn click(bench: &mut Bench, command: &str) -> bars::BarAction {
+    let pos = bench.pos(command);
     bench.pointer(pos, true, false);
     bench.pointer(pos, false, false);
-    assert!(matches!(bench.action, bars::BarAction::None));
-    bench
-        .ctx
-        .data_mut(|d| d.insert_temp(egui::Id::unique("toolbar_menu_availability"), (true, false, false)));
+    std::mem::replace(&mut bench.action, bars::BarAction::None)
+}
+
+/// The button of `command` has the violet face of a lit button (hovered
+/// or not) in `output`.
+fn lit(bench: &Bench, output: &egui::FullOutput, command: &str) -> bool {
+    fn face(shape: &egui::Shape, rect: Rect, faces: &[egui::Color32]) -> bool {
+        match shape {
+            egui::Shape::Rect(r) => r.rect == rect && faces.contains(&r.fill),
+            egui::Shape::Vec(v) => v.iter().any(|s| face(s, rect, faces)),
+            _ => false,
+        }
+    }
+    let p = crate::theme::Theme::default().palette();
+    let faces = [p.violet.gamma_multiply(0.40), p.violet.gamma_multiply(0.55)];
+    let rect = bench.ctx.read_response(bars::tool_button_id(command)).expect("real button").rect;
+    output.shapes.iter().any(|s| face(&s.shape, rect, &faces))
+}
+
+/// The bench draws the bottom and side toolbars and never the top bar, as
+/// with the interface hidden or chatting in mouselook: the buttons still
+/// follow the selection, Fly override and Quickjump given by the app.
+#[test]
+fn menu_toolbar_buttons_follow_the_app_state_without_the_top_bar() {
+    let mut bench = Bench::default();
+    add_from_menu(&mut bench, &["edit_particles", "fly_override", "quickjump"]);
     bench.frame(vec![]);
-    bench.pointer(pos, true, false);
-    bench.pointer(pos, false, false);
-    assert!(matches!(bench.action, bars::BarAction::EditParticles));
+    assert!(matches!(click(&mut bench, "edit_particles"), bars::BarAction::None));
+    let output = bench.frame(vec![]);
+    assert!(!lit(&bench, &output, "fly_override") && !lit(&bench, &output, "quickjump"));
+    bench.state.edit_particles = true;
+    bench.state.fly_override_active = true;
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "edit_particles"), bars::BarAction::EditParticles));
+    let output = bench.frame(vec![]);
+    assert!(lit(&bench, &output, "fly_override"), "Fly override lights while on");
+    assert!(!lit(&bench, &output, "quickjump"));
+    bench.state.fly_override_active = false;
+    bench.state.quickjump_active = true;
+    let output = bench.frame(vec![]);
+    assert!(!lit(&bench, &output, "fly_override"), "a toggled Fly override goes dark");
+    assert!(lit(&bench, &output, "quickjump"), "Quickjump lights while on");
+}
+
+/// enable_standup_self (indra/newview/llviewermenu.cpp): the Stand up
+/// button does nothing while standing, and stands while seated.
+#[test]
+fn menu_toolbar_stand_up_button_is_greyed_while_standing() {
+    let mut bench = Bench::default();
+    add_from_menu(&mut bench, &["stand_up"]);
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "stand_up"), bars::BarAction::None));
+    bench.seated = true;
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "stand_up"), bars::BarAction::StandUp));
+}
+
+/// The Build modes' buttons carry short labels like every other button; the
+/// menu shows their Ctrl+3/4/5 in its keys column.
+#[test]
+fn menu_toolbar_build_buttons_have_short_labels() {
+    for (id, label) in [
+        ("build_edit", aurora_i18n::tr!("toolbar-command-build-edit")),
+        ("build_create", aurora_i18n::tr!("toolbar-command-build-create")),
+        ("build_land", aurora_i18n::tr!("toolbar-command-build-land")),
+    ] {
+        let command = catalogue::find(id).expect("menu command");
+        assert_eq!(command.label(), label);
+        assert!(!label.contains("Ctrl") && !label.contains('('), "{id}: {label}");
+    }
+}
+
+/// One function, one icon: the menu commands' icons are not another
+/// command's of the catalogue.
+#[test]
+fn menu_toolbar_commands_have_icons_of_their_own() {
+    for id in ["movement_enhancer", "movelock_options"] {
+        let icon = catalogue::find(id).expect("menu command").icon;
+        let others: Vec<_> = COMMANDS.iter().filter(|c| c.id != id && c.icon == icon).map(|c| c.id).collect();
+        assert!(others.is_empty(), "{id}'s {icon} is also {others:?}'s");
+    }
 }
 
 #[test]
