@@ -4336,7 +4336,12 @@ That ignored test creates and removes its own isolated profile.
   page, with the timeline window beside it. `clip-frame` shows 45,
   `clip-priority` shows per-bone priority/track switches on Tracks,
   `clip-settings` shows native timing on Clip, and `clip-crop`
-  trims to 15–45. `clip-import` stages native bytes in the ordinary inspector
+  trims to 15–45. `clip-channels` adds a location-only head key at 45 (its
+  Location row also shows the rest location the track starts from, at 0) and
+  a rotation-only pelvis key at 75, expands both bones into their Rotation
+  and Location rows and sets the keying choice (beside Key) to Location: a
+  joint then moves alone, out of its IK chain, and the IK choice is greyed
+  out. `clip-import` stages native bytes in the ordinary inspector
   without uploading. `clip-release` closes at 720 (capture 800 for restoration).
   On Bone, the skeleton picker shows Body, Hands and Face: hover a joint to
   enlarge it and see its name, click it to select the bone (teal); bones keyed

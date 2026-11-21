@@ -15,6 +15,92 @@ const MAX_HAND_POSE: u32 = 13;
 const ANIM_EXPORT_SAMPLE_RATE: u32 = 60;
 pub const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 
+/// What a key records, as Blender's keying sets: `Auto` is the editor's
+/// rule (a rotation, and a location for the pelvis and the joints moved),
+/// the others key the channels they name on every joint keyed. Second Life
+/// animations have no scale channel (`.anim` stores rotations and
+/// positions only, LLKeyframeMotion::deserialize,
+/// indra/llcharacter/llkeyframemotion.cpp), so there is no scale choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Keying {
+    #[default]
+    Auto,
+    LocationRotation,
+    Rotation,
+    Location,
+}
+
+impl Keying {
+    pub const ALL: [Keying; 4] = [Keying::Auto, Keying::LocationRotation, Keying::Rotation, Keying::Location];
+    pub(super) fn rotation(self) -> bool {
+        self != Keying::Location
+    }
+    /// Whether every key records a location: the editor's Move then
+    /// translates the joint itself instead of solving its IK chain, as
+    /// Blender's grab moves a disconnected bone, so that the location key
+    /// holds the move (an IK move only turns the chain: its joints keep
+    /// their positions under their parents).
+    pub(super) fn frees_joints(self) -> bool {
+        matches!(self, Keying::LocationRotation | Keying::Location)
+    }
+}
+
+/// Which keys of a bone a timeline row shows and its picks act on: the
+/// bone's own row both, its expanded rows one channel each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Channel {
+    Both,
+    Rotation,
+    Location,
+}
+
+impl Channel {
+    pub(super) fn rotation(self) -> bool {
+        self != Channel::Location
+    }
+    pub(super) fn location(self) -> bool {
+        self != Channel::Rotation
+    }
+}
+
+/// Mark `track` as the user's once a key of the named channels is set,
+/// moved or pasted on it. A draft's hidden rest track then drops its rest
+/// keys of the other channel: they would be exported with it and hold that
+/// channel at rest where only one channel was meant.
+fn author(track: &mut Track, rotation: bool, location: bool) {
+    if !track.authored {
+        if !rotation {
+            track.motion.rot_keys.clear();
+        }
+        if !location {
+            track.motion.pos_keys.clear();
+        }
+    }
+    track.authored = true;
+}
+
+/// A picked key on the timeline: its bone, its row's channel, its frame.
+pub type KeyPick = (usize, Channel, u32);
+
+/// The picks of one bone, its picked frames per channel, each once.
+fn picked_frames(keys: &std::collections::BTreeSet<KeyPick>, bone: usize, max_frame: u32) -> (Vec<u32>, Vec<u32>) {
+    let (mut rotation, mut location) = (Vec::new(), Vec::new());
+    for &(_, channel, frame) in keys.range((bone, Channel::Both, 0)..=(bone, Channel::Location, u32::MAX)) {
+        let frame = frame.min(max_frame);
+        if channel.rotation() {
+            rotation.push(frame);
+        }
+        if channel.location() {
+            location.push(frame);
+        }
+    }
+    for frames in [&mut rotation, &mut location] {
+        frames.sort_unstable();
+        frames.dedup();
+    }
+    (rotation, location)
+}
+
 #[derive(Clone)]
 pub struct Track {
     pub bone: usize,
@@ -166,6 +252,8 @@ pub struct Keyframe {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CopiedKey {
     pub bone: usize,
+    /// The row it was copied from, which its paste is picked on.
+    pub channel: Channel,
     pub offset: u32,
     pub rotation: Option<Quat>,
     pub position: Option<Vec3>,
@@ -667,6 +755,25 @@ impl Document {
         self.timing();
     }
     pub fn record(&mut self, rig: &Rig, frame: &Frame, at: u32, bones: &[usize], translations: &[usize]) -> Result<(), &'static str> {
+        self.record_keying(rig, frame, at, bones, translations, Keying::Auto, &[])
+    }
+    /// `record` with the channels `keying` names. Location keying keys the
+    /// location of the `explicit` joints (the ones the Key button keys and
+    /// the ones edited) even unmoved, and of the others only where Auto would: a Key pose would
+    /// otherwise pin every joint of the user's shape for whoever plays the
+    /// animation. A key of one channel on a draft's hidden rest track drops
+    /// that track's rest keys of the other channel (`author`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_keying(
+        &mut self,
+        rig: &Rig,
+        frame: &Frame,
+        at: u32,
+        bones: &[usize],
+        translations: &[usize],
+        keying: Keying,
+        explicit: &[usize],
+    ) -> Result<(), &'static str> {
         if at > self.max_frame() {
             return Err("anim-edit-invalid");
         }
@@ -697,9 +804,18 @@ impl Document {
                 p
             };
             let previous = self.tracks.iter().find(|t| t.bone == bone);
-            let position = bone == rig.pelvis
+            let auto = bone == rig.pelvis
                 || previous.is_some_and(|t| !t.motion.pos_keys.is_empty())
                 || (translations.contains(&bone) && previous.is_none_or(|t| t.base_position.distance_squared(local) > 0.0001 * 0.0001));
+            let position = match keying {
+                Keying::Auto => auto,
+                Keying::LocationRotation | Keying::Location => auto || explicit.contains(&bone),
+                Keying::Rotation => false,
+            };
+            // nothing of this joint to key (Location, unmoved, not picked)
+            if !position && !keying.rotation() {
+                continue;
+            }
             if !q.is_finite() || !local.is_finite() || (position && local.abs().max_element() > 5.0) {
                 return Err("anim-edit-pelvis-bound");
             }
@@ -729,8 +845,10 @@ impl Document {
             let Some(track) = self.tracks.iter_mut().find(|t| t.bone == bone) else {
                 continue;
             };
-            track.authored = true;
-            upsert_key(&mut track.motion.rot_keys, at, self.fps, RotKey { time, rotation: q });
+            author(track, keying.rotation(), position);
+            if keying.rotation() {
+                upsert_key(&mut track.motion.rot_keys, at, self.fps, RotKey { time, rotation: q });
+            }
             if position {
                 if track.motion.pos_keys.is_empty() && at > 0 {
                     track.motion.pos_keys.push(PosKey {
@@ -785,7 +903,7 @@ impl Document {
             self.range(self.start.min(at), self.end.max(at));
         }
     }
-    pub fn move_track_keyframe(&mut self, bone: usize, from: u32, to: u32) {
+    pub fn move_track_keyframe(&mut self, bone: usize, channel: Channel, from: u32, to: u32) {
         let source = from.min(self.max_frame());
         let destination = to.min(self.max_frame());
         if source == destination {
@@ -793,10 +911,17 @@ impl Document {
         }
         let fps = self.fps;
         if let Some(track) = self.tracks.iter_mut().find(|track| track.bone == bone) {
-            let has_source = has_key_on(&track.motion.rot_keys, source, fps) || has_key_on(&track.motion.pos_keys, source, fps);
-            move_key(&mut track.motion.rot_keys, source, destination, fps);
-            move_key(&mut track.motion.pos_keys, source, destination, fps);
-            track.authored |= has_source;
+            let rotation = channel.rotation() && has_key_on(&track.motion.rot_keys, source, fps);
+            let location = channel.location() && has_key_on(&track.motion.pos_keys, source, fps);
+            if rotation || location {
+                author(track, rotation, location);
+            }
+            if channel.rotation() {
+                move_key(&mut track.motion.rot_keys, source, destination, fps);
+            }
+            if channel.location() {
+                move_key(&mut track.motion.pos_keys, source, destination, fps);
+            }
         }
         if to < self.start || to > self.end {
             self.range(self.start.min(to), self.end.max(to));
@@ -811,20 +936,24 @@ impl Document {
             remove_keys(&mut track.motion.pos_keys, at, fps);
         }
     }
-    pub fn remove_track_keyframe(&mut self, bone: usize, at: u32) {
+    pub fn remove_track_keyframe(&mut self, bone: usize, channel: Channel, at: u32) {
         let fps = self.fps;
         if let Some(track) = self.tracks.iter_mut().find(|track| track.bone == bone) {
-            remove_keys(&mut track.motion.rot_keys, at, fps);
-            remove_keys(&mut track.motion.pos_keys, at, fps);
+            if channel.rotation() {
+                remove_keys(&mut track.motion.rot_keys, at, fps);
+            }
+            if channel.location() {
+                remove_keys(&mut track.motion.pos_keys, at, fps);
+            }
         }
     }
-    /// Shift every listed key (bone, frame) by `delta` frames, together:
+    /// Shift every listed key (bone, channel, frame) by `delta` frames, together:
     /// the shift stops at frame 0 and at the length limit, so that the keys
     /// keep their spacing. A key of another frame that one of them lands on
     /// is replaced, as a single key drag does. Returns the shift applied.
-    pub fn move_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>, delta: i64) -> i64 {
+    pub fn move_keys(&mut self, keys: &std::collections::BTreeSet<KeyPick>, delta: i64) -> i64 {
         let max_frame = self.max_frame();
-        let Some(delta) = clamp_shift(keys.iter().map(|(_, frame)| *frame), delta, max_frame) else {
+        let Some(delta) = clamp_shift(keys.iter().map(|(_, _, frame)| *frame), delta, max_frame) else {
             return 0;
         };
         if delta == 0 {
@@ -833,17 +962,18 @@ impl Document {
         let fps = self.fps;
         let (mut first, mut last) = (u32::MAX, 0);
         for track in &mut self.tracks {
-            let frames: Vec<u32> = keys
-                .range((track.bone, 0)..=(track.bone, u32::MAX))
-                .map(|(_, frame)| (*frame).min(max_frame))
-                .collect();
-            if frames.is_empty() {
+            let (rotation, location) = picked_frames(keys, track.bone, max_frame);
+            if rotation.is_empty() && location.is_empty() {
                 continue;
             }
-            let moved =
-                shift_keys(&mut track.motion.rot_keys, &frames, delta, fps) | shift_keys(&mut track.motion.pos_keys, &frames, delta, fps);
-            track.authored |= moved;
-            for frame in frames {
+            let rotation_moves = rotation.iter().any(|frame| has_key_on(&track.motion.rot_keys, *frame, fps));
+            let location_moves = location.iter().any(|frame| has_key_on(&track.motion.pos_keys, *frame, fps));
+            if rotation_moves || location_moves {
+                author(track, rotation_moves, location_moves);
+            }
+            shift_keys(&mut track.motion.rot_keys, &rotation, delta, fps);
+            shift_keys(&mut track.motion.pos_keys, &location, delta, fps);
+            for frame in rotation.into_iter().chain(location) {
                 let to = (i64::from(frame) + delta) as u32;
                 (first, last) = (first.min(to), last.max(to));
             }
@@ -856,28 +986,29 @@ impl Document {
     }
     /// The listed keys as they are stored, each at its offset from the first
     /// of them: the keys themselves, not a sample of the curve between them.
-    pub fn copy_keys(&self, keys: &std::collections::BTreeSet<(usize, u32)>) -> Vec<CopiedKey> {
-        let Some(first) = keys.iter().map(|(_, frame)| *frame).min() else {
+    pub fn copy_keys(&self, keys: &std::collections::BTreeSet<KeyPick>) -> Vec<CopiedKey> {
+        let Some(first) = keys.iter().map(|(_, _, frame)| *frame).min() else {
             return Vec::new();
         };
         let fps = self.fps;
         keys.iter()
-            .filter_map(|&(bone, frame)| {
+            .filter_map(|&(bone, channel, frame)| {
                 let track = self.tracks.iter().find(|track| track.bone == bone)?;
                 let rotation = track
                     .motion
                     .rot_keys
                     .iter()
-                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .rfind(|key| channel.rotation() && key_on_frame(key.time, frame, fps))
                     .map(|key| key.rotation);
                 let position = track
                     .motion
                     .pos_keys
                     .iter()
-                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .rfind(|key| channel.location() && key_on_frame(key.time, frame, fps))
                     .map(|key| key.position);
                 (rotation.is_some() || position.is_some()).then_some(CopiedKey {
                     bone,
+                    channel,
                     offset: frame - first,
                     rotation,
                     position,
@@ -887,8 +1018,9 @@ impl Document {
     }
     /// Paste copied keys from frame `at` on, keeping their spacing; a key
     /// already on one of those frames is replaced. Keys past the length
-    /// limit are left out. Returns the (bone, frame) of the pasted keys.
-    pub fn paste_keys(&mut self, at: u32, keys: &[CopiedKey]) -> std::collections::BTreeSet<(usize, u32)> {
+    /// limit are left out. Returns the picks of the pasted keys, on the row
+    /// each was copied from.
+    pub fn paste_keys(&mut self, at: u32, keys: &[CopiedKey]) -> std::collections::BTreeSet<KeyPick> {
         let max_frame = self.max_frame();
         let fps = self.fps;
         let mut pasted = std::collections::BTreeSet::new();
@@ -900,18 +1032,18 @@ impl Document {
                 continue;
             };
             let time = frame_time(frame, fps);
+            author(track, key.rotation.is_some(), key.position.is_some());
             if let Some(rotation) = key.rotation {
                 upsert_key(&mut track.motion.rot_keys, frame, fps, RotKey { time, rotation });
             }
             if let Some(position) = key.position {
                 upsert_key(&mut track.motion.pos_keys, frame, fps, PosKey { time, position });
             }
-            track.authored = true;
-            pasted.insert((key.bone, frame));
+            pasted.insert((key.bone, key.channel, frame));
         }
         if let (Some(first), Some(last)) = (
-            pasted.iter().map(|(_, frame)| *frame).min(),
-            pasted.iter().map(|(_, frame)| *frame).max(),
+            pasted.iter().map(|(_, _, frame)| *frame).min(),
+            pasted.iter().map(|(_, _, frame)| *frame).max(),
         ) && (first < self.start || last > self.end)
         {
             self.range(self.start.min(first), self.end.max(last));
@@ -920,12 +1052,16 @@ impl Document {
     }
     /// Delete the listed keys of the tracks the user authored. The hidden
     /// rest keys of a fresh draft stay, as with `remove_keyframe`.
-    pub fn remove_selected_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>) {
+    pub fn remove_selected_keys(&mut self, keys: &std::collections::BTreeSet<KeyPick>) {
         let fps = self.fps;
+        let max_frame = self.max_frame();
         for track in self.tracks.iter_mut().filter(|track| track.authored) {
-            for (_, frame) in keys.range((track.bone, 0)..=(track.bone, u32::MAX)) {
-                remove_keys(&mut track.motion.rot_keys, *frame, fps);
-                remove_keys(&mut track.motion.pos_keys, *frame, fps);
+            let (rotation, location) = picked_frames(keys, track.bone, max_frame);
+            for frame in rotation {
+                remove_keys(&mut track.motion.rot_keys, frame, fps);
+            }
+            for frame in location {
+                remove_keys(&mut track.motion.pos_keys, frame, fps);
             }
         }
     }
