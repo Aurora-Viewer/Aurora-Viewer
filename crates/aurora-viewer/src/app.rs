@@ -24588,6 +24588,14 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
+        // The voice threads end before the process does, the current
+        // session's and those of the sessions left moments ago: still
+        // running at the exit, an HTTPS logout found the TLS library's
+        // random generator freed by the exit and aborted the viewer on
+        // Linux. 3 s, the budget of LLWebRTCVoiceClient::drainConnections.
+        if !self.voice.close_for_exit().wait(Duration::from_secs(3)) {
+            log::warn!("a voice session was still closing at exit");
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
