@@ -101,6 +101,10 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            AppLink::Preferences(path) => {
+                self.options_ui.open_setting(path);
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            }
             AppLink::Experience(id) => self.world.experiences.open_profile(id),
             AppLink::Classified(id) => self.show_search_one(Tab::Classifieds, Key::Id(id)),
             AppLink::Event(id) => self.show_search_one(Tab::Events, Key::Event(id)),

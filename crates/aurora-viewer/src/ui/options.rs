@@ -450,6 +450,8 @@ pub struct OptionsUi {
     count_stale: bool,
     /// "Go to" (search, crumbs, links): the page, its tab, the row to light.
     go_to: Option<(Page, usize, Option<egui::Id>)>,
+    /// A received preferences link, resolved against the real rows in the count pass.
+    pending_setting: Option<String>,
     /// The cog to open with a row taken from the search.
     open_parent: Option<egui::Id>,
     /// The row lit after "Go to" (since when), and the scroll to it pending.
@@ -631,6 +633,15 @@ impl OptionsUi {
         self.query.clear();
         self.modified_view = false;
         self.cancel_capture();
+    }
+
+    /// Follow a shareable link without changing any of the resident's settings.
+    /// The count pass locates the row, tab and folded parent by a stable path.
+    pub fn open_setting(&mut self, path: String) {
+        self.pending_setting = Some(path);
+        self.count_stale = true;
+        self.reveal = None;
+        self.go_to = None;
     }
 
     /// Opens the Chat page on the YouTube player's settings (a player's
@@ -1278,6 +1289,12 @@ fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mu
     }
     let counts = std::mem::take(&mut cx.counts);
     st.counts = counts;
+    // If the saved setting was renamed or removed, the existing Preferences
+    // search makes it clear that there is no matching destination.
+    if let Some(path) = st.pending_setting.take() {
+        st.query = path;
+        st.modified_view = false;
+    }
 }
 
 /// How long the counts may wait for a change nothing announced (the app's
@@ -1312,6 +1329,7 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
     input
         || st.count_stale
         || st.reveal.is_some()
+        || st.pending_setting.is_some()
         || st.demo_open_cogs
         || st
             .counted

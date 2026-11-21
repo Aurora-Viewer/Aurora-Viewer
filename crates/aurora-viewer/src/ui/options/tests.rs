@@ -4,6 +4,34 @@ use crate::ui::widgets::elide_tests::Frames;
 use winit::keyboard::KeyCode;
 
 #[test]
+fn a_shared_preference_link_finds_the_row_without_changing_its_value() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let original = settings.chat_timestamps_nearby;
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+
+    st.open_setting("chat_timestamps_nearby".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Chat, 0, Some(_)))));
+    assert!(st.pending_setting.is_none());
+    assert_eq!(settings.chat_timestamps_nearby, original);
+    assert!(!result.changed);
+
+    // A setting inside a collapsed cog also opens its parent.
+    st.open_setting("name_tag_show_seconds".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Avatars, 0, Some(_)))));
+    assert!(st.open_parent.is_some());
+}
+
+#[test]
 fn opening_preferences_focuses_search_without_taking_it_back() {
     let mut frames = Frames::new();
     let ctx = frames.ctx.clone();

@@ -630,6 +630,15 @@ impl<'a> Cx<'a> {
                 return false;
             }
             Mode::Count => {
+                if self.st.pending_setting.as_deref().is_some_and(|wanted| {
+                    let mut paths = Vec::new();
+                    t.paths(&mut paths);
+                    paths.contains(&wanted)
+                }) {
+                    self.st.go_to = Some((self.page, self.tab, Some(id)));
+                    self.st.open_parent = self.parent.as_ref().map(|p| p.id);
+                    self.st.pending_setting = None;
+                }
                 if modified {
                     Counts::add(&mut self.counts.modified, self.page);
                 }
@@ -1086,7 +1095,24 @@ impl<'a> Cx<'a> {
         if !section_body {
             self.ui.painter().galley(label_pos, galley.clone(), ink);
         }
-        if !hint.is_empty() {
+        // A right-click on the setting's name copies a read-only link to this
+        // row. `Track::paths` is stable across languages; the label is not.
+        // For a row editing several fields, any of them leads to this row.
+        let mut setting_paths = Vec::new();
+        t.paths(&mut setting_paths);
+        if let Some(url) = setting_paths.into_iter().find_map(crate::slapp::preference_link) {
+            let label_response = self.ui.interact(label_rect, id.with("label"), Sense::click());
+            let label_response = if hint.is_empty() {
+                label_response
+            } else {
+                label_response.on_hover_text(hint)
+            };
+            crate::ui::menu::context_menu(&label_response, &p, |ui| {
+                if crate::ui::menu::item(ui, &p, "link-filled", aurora_i18n::tr!("ui-options-copy-setting-link")) {
+                    ui.ctx().copy_text(url.clone());
+                }
+            });
+        } else if !hint.is_empty() {
             self.ui.interact(label_rect, id.with("label"), Sense::hover()).on_hover_text(hint);
         }
         let mut after = label_rect.right() + 6.0;
@@ -1187,7 +1213,10 @@ impl<'a> Cx<'a> {
         let radius = self.ui.visuals().widgets.inactive.corner_radius;
         if let Some(at) = flash {
             let age = (now - at) as f32;
-            if age < 1.8 {
+            // Three shorter flashes, with a brief pause between them.
+            const PULSE_SECONDS: f32 = 0.65;
+            const GAP_SECONDS: f32 = 0.15;
+            if age < 3.0 * PULSE_SECONDS + 2.0 * GAP_SECONDS {
                 // asked again for a quarter of a second: a window opened by
                 // "Preferences…" lays out its first frames without keeping
                 // a scroll, which left a row far down the page out of sight
@@ -1195,7 +1224,8 @@ impl<'a> Cx<'a> {
                     self.ui.scroll_to_rect(row, Some(egui::Align::Center));
                     self.st.flash_scroll = age < 0.25;
                 }
-                let strength = (1.0 - age / 1.8).clamp(0.0, 1.0) * 0.42;
+                let pulse_age = age % (PULSE_SECONDS + GAP_SECONDS);
+                let strength = (1.0 - pulse_age / PULSE_SECONDS).clamp(0.0, 1.0) * 0.42;
                 self.ui
                     .painter()
                     .set(background, Shape::rect_filled(row, radius, p.violet.gamma_multiply(strength)));
