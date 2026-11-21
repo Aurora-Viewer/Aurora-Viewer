@@ -3933,7 +3933,7 @@ Collada on an object of their own (prim, sculpt and mesh), on a bought one
 (nothing exportable) and on a megaprim, and checks that a texture they did not
 upload, or have no item of, is never written.
 
-**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|detach-delete|detach-delete-confirm|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|freeze-other|inspect|detach-delete|detach-delete-confirm|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -4021,6 +4021,17 @@ access to a grid.
   the same pose (LLSelectMgr::pauseAssociatedAvatars). The log writes
   `demo worn freeze: frame … paused=… head=…` at frames 690, 720, 900,
   1099, 1130 and 1200: the head stays put between 720 and 1099.
+- `freeze-other`: the same backpack on the chest of the resident nearest
+  to us, who dances from frame 600; at 700 the menu of that backpack opens
+  (the target a right click on it gives, set directly so it does not depend
+  on where the camera finds the resident) and it closes at 1000. That
+  resident stands still while the menu is open, on our screen only; our
+  avatar is not paused. Add `AURORA_DEMO_CROWD=6`: the demo's own residents
+  can be grey silhouettes, which show no attachment. The log writes
+  `demo worn freeze-other: frame … paused=… ours_paused=… head=…` at frames
+  690, 720, 900, 999, 1030 and 1100: the head stays put between 720 and 999.
+  To try the right click by hand, launch with the same variables and
+  right-click the purple box on the dancing resident.
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
 around frames 720 (menu), 770 (edit, inspect), 850 (move), 680, 800,

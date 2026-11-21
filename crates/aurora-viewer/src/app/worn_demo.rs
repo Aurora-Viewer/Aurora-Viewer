@@ -48,6 +48,10 @@ impl App {
             }
             return;
         }
+        if mode == "freeze-other" {
+            self.demo_worn_freeze_other_steps();
+            return;
+        }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
         let detach_delete = matches!(mode.as_str(), "detach-delete" | "detach-delete-confirm");
@@ -327,6 +331,92 @@ impl App {
                 self.scene.paused_skeletons.contains(&agent),
                 self.build.selection.len(),
                 self.scene.head_world(&self.world, &agent, Instant::now())
+            );
+        }
+    }
+
+    /// AURORA_DEMO_WORN=freeze-other: the resident nearest to us (drawn in
+    /// full: a silhouette shows no attachment, so add AURORA_DEMO_CROWD)
+    /// dances with the backpack on (600), the menu of that backpack opens
+    /// (700) and closes at 1000: that resident stands still in between, on
+    /// our screen only (anim_pause::menu_paused_skeletons).
+    fn demo_worn_freeze_other_steps(&mut self) {
+        let agent = self.world.agent_id;
+        let me = self
+            .world
+            .objects
+            .index_of_uuid(&agent)
+            .and_then(|i| self.world.objects.get(i))
+            .map_or(Vec3::ZERO, |o| o.position);
+        let backpack = self
+            .world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::OTHER_ROOT)
+            .map(|(i, o)| (i, o.full_id));
+        // once dressed, the resident wearing it, whoever walks nearer since
+        let worn_by = backpack
+            .and_then(|(i, _)| ui::context::wearer(&self.world, i))
+            .and_then(|id| self.world.objects.index_of_uuid(&id));
+        let wearer = match worn_by {
+            Some(i) => self.world.objects.get(i).map(|o| (o.key.local_id, o.full_id)),
+            None => self
+                .world
+                .objects
+                .iter()
+                .filter(|(i, o)| o.is_avatar() && o.full_id != agent && !self.scene.too_complex.contains(i))
+                .min_by(|(_, a), (_, b)| a.position.distance(me).total_cmp(&b.position.distance(me)))
+                .map(|(_, o)| (o.key.local_id, o.full_id)),
+        };
+        let Some((local_id, wearer)) = wearer else {
+            return;
+        };
+        let backpack = backpack.map(|(_, id)| id);
+        match self.frame_count {
+            600 => {
+                self.world.apply(crate::demo::worn::worn_by(local_id, wearer));
+                let rig = self.scene.avatar_lib.rig.clone();
+                self.scene.anims.insert(
+                    crate::demo::CROWD_DANCE_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::crowd_dance_animation(), &rig)),
+                );
+                self.world.apply(NetEvent::AvatarAnimations {
+                    sources: Vec::new(),
+                    avatar: wearer,
+                    anims: vec![(crate::demo::CROWD_DANCE_ANIM, 1)],
+                });
+            }
+            // the menu a right click on their backpack opens (world_menu):
+            // a scripted click would depend on where the camera finds them
+            700 => {
+                if let Some(attachment) = backpack {
+                    self.context_menu = Some(ui::context::ContextMenu {
+                        pos: egui::pos2(400.0, 300.0),
+                        point: Vec3::ZERO,
+                        target: ui::context::Target::Avatar {
+                            id: wearer,
+                            own: false,
+                            attachment: Some(attachment),
+                        },
+                        pie_path: Vec::new(),
+                        pie_input_frame: None,
+                    });
+                }
+            }
+            1000 => {
+                self.context_menu = None;
+                self.build.release_menu_selection(&self.world);
+            }
+            _ => {}
+        }
+        if matches!(self.frame_count, 690 | 720 | 900 | 999 | 1030 | 1100) {
+            let target = self.context_menu.as_ref().map(|m| format!("{:?}", m.target));
+            log::info!(
+                "demo worn freeze-other: frame {} paused={} ours_paused={} menu={target:?} head={:.3?}",
+                self.frame_count,
+                self.scene.paused_skeletons.contains(&wearer),
+                self.scene.paused_skeletons.contains(&agent),
+                self.scene.head_world(&self.world, &wearer, Instant::now())
             );
         }
     }

@@ -11719,6 +11719,16 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            // and so does whoever wears the attachment a right-click menu is open on
+            let menu_attachment = match self.context_menu.as_ref().map(|m| &m.target) {
+                Some(ui::context::Target::Avatar { attachment, .. }) => *attachment,
+                _ => None,
+            };
+            self.scene.paused_skeletons.extend(crate::build::anim_pause::menu_paused_skeletons(
+                &self.world,
+                &self.settings.build,
+                menu_attachment,
+            ));
             // the avatar whose part the poser shows, drawn from its meshes
             // (the joints go with the frame's parameters), or whose part
             // under the cursor it asks (part_pick.rs): its faces listed
