@@ -99,7 +99,7 @@ impl Lists {
             teleports: self.history.len(),
             derender: self.derender.as_ref().map_or(0, FileEntries::len),
             media: self.media.len(),
-            contact_sets: self.contact_sets.as_ref().map_or(0, ImportData::entries),
+            contact_sets: self.contact_sets.as_ref().map_or(0, ImportData::count),
         }
     }
 
@@ -334,7 +334,8 @@ mod tests {
                 teleports: 1,
                 derender: 1,
                 media: 1,
-                contact_sets: 1
+                // the set and its member, as the result counts them
+                contact_sets: 2
             }
         );
         lists.keep(Parts {
@@ -374,6 +375,38 @@ mod tests {
         );
         assert!(report.unreadable.is_empty());
         assert_eq!(world.merge_legacy_lists(read(&dir)), Report::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_window_counts_contact_sets_as_their_first_import_does() {
+        let dir = folder("set-count");
+        let id = |n: u128| uuid::Uuid::from_u128(n);
+        let colour = "<key>color</key><array><real>0.5</real><real>0.5</real><real>0.5</real></array>";
+        std::fs::write(
+            dir.join(CONTACT_SETS_FILE),
+            format!(
+                "<llsd><map>\
+                 <key>Work</key><map>{colour}<key>friends</key><map><key>{}</key><string></string><key>{}</key><string></string></map></map>\
+                 <key>Empty</key><map>{colour}<key>friends</key><map></map></map>\
+                 <key>extraAvs</key><map><key>{}</key><string></string></map>\
+                 <key>Pseudonyms</key><map><key>{}</key><string>Nick</string></map>\
+                 </map></llsd>",
+                id(0x41),
+                id(0x42),
+                id(0x43),
+                id(0x44)
+            ),
+        )
+        .expect("contact sets");
+        let lists = read(&dir);
+        let shown = lists.counts().contact_sets;
+        // two sets, two members, one resident outside the friends, one nickname
+        assert_eq!(shown, 6);
+        let (mut world, _) = demo_world();
+        world.contact_sets = Default::default();
+        assert_eq!(world.merge_legacy_lists(lists).contact_sets, shown);
+        assert_eq!(world.merge_legacy_lists(read(&dir)).contact_sets, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
