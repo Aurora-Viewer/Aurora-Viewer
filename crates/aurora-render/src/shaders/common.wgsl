@@ -1548,10 +1548,12 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 
 // What arrives of the point lights' red, green and blue at a pixel of the
 // main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
-// mask). 1 elsewhere: other views, blended faces, without the traced
-// lights.
+// mask), by the fragment's share of that mask (`contact_share`: a step
+// would draw a line where a glass's opacity crosses the limit). 1
+// elsewhere: other views, more transparent blended faces, without the
+// traced lights.
 fn local_share(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & LOCAL_TRACED) == 0u || !contact_surface || in_reflection_pass()) {
+    if ((frame.light_mode.z & LOCAL_TRACED) == 0u || contact_share <= 0.0 || in_reflection_pass()) {
         return vec3<f32>(1.0);
     }
     let p = vec2<i32>(frag);
@@ -1559,7 +1561,7 @@ fn local_share(frag: vec2<f32>) -> vec3<f32> {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return vec3<f32>(1.0);
     }
-    return textureLoad(contact_tex, p, 0).gba;
+    return mix(vec3<f32>(1.0), textureLoad(contact_tex, p, 0).gba, contact_share);
 }
 
 // Point light `i` of the frame with its colour times `share` (local_share).
@@ -1573,8 +1575,9 @@ fn shared_light(i: i32, share: vec3<f32>) -> Light {
 // and the contact shadows where they are on.
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
     // the ray-traced mask (rt_shadows.rs), the contact shadows in it, where
-    // the surface is the prepass's; the shadow map elsewhere
-    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_surface && !in_reflection_pass()) {
+    // the surface is the mask's whole (`contact_share`); the shadow map
+    // elsewhere, with the mask by the fragment's share of it
+    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_share >= 1.0 && !in_reflection_pass()) {
         return contact_shadow(frag);
     }
     let s = shadow_factor(world_pos, n, vertex_depth);
