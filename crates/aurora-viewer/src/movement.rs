@@ -39,10 +39,12 @@ pub fn horizontal_heading(camera_forward: Vec3, body_forward: Vec3) -> Vec3 {
 
 /// The aids let go of the avatar during a teleport or a region load, under
 /// the photo's free camera and under autopilot. Not when the window loses
-/// the focus: LLViewerWindow::handleFocusLost only releases the held keys,
-/// so Stand on water or a float keeps holding the avatar behind another
-/// window while a held walk still stops (#2449).
-pub fn aids_suspended(teleporting: bool, loading: bool, free_camera: bool, autopilot: bool) -> bool {
+/// the focus (`focused` is taken so that the caller passes it and a test
+/// can hold the rule): LLViewerWindow::handleFocusLost only releases the
+/// held keys, so Stand on water or a float keeps holding the avatar behind
+/// another window while a held walk still stops (#2449).
+pub fn aids_suspended(teleporting: bool, loading: bool, free_camera: bool, autopilot: bool, focused: bool) -> bool {
+    let _ = focused;
     teleporting || loading || free_camera || autopilot
 }
 

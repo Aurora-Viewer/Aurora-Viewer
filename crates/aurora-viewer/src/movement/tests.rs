@@ -141,13 +141,23 @@ fn water_walk_descent_keeps_support_and_uses_ground_crouch_states() {
 
 #[test]
 fn only_a_teleport_a_load_the_free_camera_or_autopilot_suspends_the_aids() {
-    // A window without the focus has none of these: its aids keep running.
-    assert!(!aids_suspended(false, false, false, false));
-    for reason in 0..4 {
-        let mut pauses = [false; 4];
-        pauses[reason] = true;
-        let [teleporting, loading, free_camera, autopilot] = pauses;
-        assert!(aids_suspended(teleporting, loading, free_camera, autopilot), "reason {reason}");
+    // A window without the focus has none of these: its aids keep running
+    // (LLViewerWindow::handleFocusLost releases the held keys only).
+    assert!(!aids_suspended(false, false, false, false, true));
+    assert!(
+        !aids_suspended(false, false, false, false, false),
+        "losing the focus does not suspend the aids"
+    );
+    for focused in [true, false] {
+        for reason in 0..4 {
+            let mut pauses = [false; 4];
+            pauses[reason] = true;
+            let [teleporting, loading, free_camera, autopilot] = pauses;
+            assert!(
+                aids_suspended(teleporting, loading, free_camera, autopilot, focused),
+                "reason {reason}"
+            );
+        }
     }
 }
 
@@ -162,7 +172,8 @@ fn water_walk_keeps_its_support_behind_another_window_while_a_held_walk_stops() 
     let mut f = frame();
     f.position.z = 20.85;
     f.on_ground = false;
-    f.suspended = aids_suspended(false, false, false, false);
+    // the window behind another one: not focused
+    f.suspended = aids_suspended(false, false, false, false, false);
     let walking = MoveInput {
         forward: true,
         ..Default::default()
