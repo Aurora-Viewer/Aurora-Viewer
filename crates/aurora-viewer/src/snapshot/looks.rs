@@ -516,10 +516,12 @@ pub struct WorldLook {
 /// The world look's stack for this frame. The photo window and the
 /// Director (`photo_looks_shown`) draw their own stack, the one of the
 /// photos and films they take, so the world's is not drawn under it. Off,
-/// only a look pointed at in its window is tried (`tried`), so that the
-/// list can be browsed before the look is switched on. `replace`: the card
-/// the look pointed at swaps (`LooksUi::replace_target`), else it is tried
-/// at the end.
+/// nothing is drawn unless a look is pointed at in its window: the stack is
+/// then tried with it (`tried`), as when it is on, so that the list can be
+/// browsed before the look is switched on (the human's choice, 2026-11-21:
+/// the same preview on or off). `replace`: the card the look pointed at
+/// swaps (`LooksUi::replace_target`), else it is tried at the end; a full
+/// stack with Replace off tries nothing new.
 pub fn world_stack(look: &WorldLook, pointed: Option<Option<&str>>, replace: Option<usize>, photo_looks_shown: bool) -> Vec<Layer> {
     if photo_looks_shown || (!look.on && pointed.is_none()) {
         return Vec::new();
@@ -697,6 +699,21 @@ mod tests {
         world.on = false;
         assert!(world_stack(&world, None, Some(0), false).is_empty());
         assert_eq!(ids(world_stack(&world, Some(Some("Sepia")), Some(0), false)), ["Sepia"]);
+        // Replace off (the default): the switched-off stack with the look
+        // at its end, as when it is on
+        assert_eq!(
+            ids(world_stack(&world, Some(Some("Sepia")), None, false)),
+            ["pack:czar-fenris/Noir", "Sepia"]
+        );
+        let full = WorldLook {
+            looks: (0..MAX_LAYERS).map(|_| Layer::new("Negative")).collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            world_stack(&full, Some(Some("Sepia")), None, false),
+            full.looks,
+            "a full stack with Replace off tries nothing new"
+        );
         // a setting saved before the world look keeps working: empty and off
         let read: WorldLook = serde_json::from_str("{}").expect("reads");
         assert_eq!(read, WorldLook::default());
