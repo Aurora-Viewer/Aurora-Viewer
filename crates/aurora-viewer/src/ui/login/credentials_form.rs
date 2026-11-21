@@ -30,7 +30,8 @@ pub fn content(
     progress: Option<(&str, f32)>,
 ) -> bool {
     let grids_open = crate::ui::grids::is_open(ui.ctx());
-    let enter = !grids_open && !egui::Popup::is_any_open(ui.ctx()) && widgets::enter_pressed(ui);
+    // the keys typed in the sign-up page reach egui too: its Enter is not ours
+    let enter = !grids_open && !form.signup_open && !egui::Popup::is_any_open(ui.ctx()) && widgets::enter_pressed(ui);
     let can = ui
         .add_enabled_ui(!form.busy && !grids_open, |ui| {
             ui.label(
@@ -114,7 +115,8 @@ pub fn content(
                     p,
                     &mut settings.remember_password,
                     aurora_i18n::tr!("ui-login-remember-password"),
-                );
+                )
+                .on_hover_text(super::remember_password_hint());
                 Some(response)
             } else {
                 None
@@ -221,6 +223,11 @@ pub fn content(
     )
     .clicked()
         || (can && enter && !egui::Popup::is_any_open(ui.ctx()));
+    // a new account: "Create an account" under the login button
+    if new_account && !grids_open {
+        ui.add_space(4.0);
+        super::create_account_button(ui, p, settings, form, Vec2::new(ui.available_width(), 28.0));
+    }
     if pressed {
         settings.remember_username = true;
         form.show_password = false;

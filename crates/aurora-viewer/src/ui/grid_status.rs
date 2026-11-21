@@ -246,17 +246,20 @@ mod tests {
 
     #[test]
     fn the_date_is_in_slt() {
-        // the date's order follows the interface language: only the parts
+        // the date's order and separators follow the interface language
+        let date = |year: &str, month: &str, day: &str, hour: &str, minute: &str| {
+            aurora_i18n::tr!(
+                "grid-status-date",
+                year = year,
+                month = month,
+                day = day,
+                hour = hour,
+                minute = minute
+            )
+        };
         // 2026-10-26 17:45 UTC is 10:45 PDT, a week before the switch
-        let summer = date_text(1_793_036_700);
-        assert!(
-            summer.contains("2026") && summer.contains("10") && summer.contains("26"),
-            "{summer}"
-        );
-        assert!(summer.ends_with(" 10:45 SLT"), "{summer}");
+        assert_eq!(date_text(1_793_036_700), date("2026", "10", "26", "10", "45"));
         // 2026-12-01 18:00 UTC is 10:00 PST
-        let winter = date_text(1_796_148_000);
-        assert!(winter.contains("12") && winter.contains("01"), "{winter}");
-        assert!(winter.ends_with(" 10:00 SLT"), "{winter}");
+        assert_eq!(date_text(1_796_148_000), date("2026", "12", "01", "10", "00"));
     }
 }

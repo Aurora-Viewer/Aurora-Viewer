@@ -66,6 +66,7 @@ impl App {
         }
         self.imports.poll_local_registry();
         self.sync_local_picker_bindings();
+        self.imports.sync_attachment_targets(&self.world);
         let expired = self.imports.expire_local_appearances(&mut self.world.objects);
         self.build
             .forget_expired_local_picker_appearances(&expired, &self.imports.local_appearance_targets);
@@ -152,12 +153,7 @@ impl App {
                     self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 );
             }
-            let prices = Prices {
-                texture: Some(10),
-                large_texture: Some(40),
-                sound: Some(10),
-                animation: Some(10),
-            };
+            let prices = self.imports.demo_prices();
             if self.imports.total(&prices).is_some() {
                 self.imports.demo_upload_started = true;
                 self.imports
@@ -213,7 +209,12 @@ impl App {
             && let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
             && let Some(object) = self.world.objects.get(index)
         {
-            let mesh = entry.local_mesh_ids.first().copied();
+            let mesh = self
+                .imports
+                .local_targets
+                .get(&object.full_id)
+                .and_then(|target| target.mesh(entry))
+                .map(|mesh| mesh.0);
             let matches_mesh = |key| matches!(key, Some(crate::scene::GeomKey::Mesh { id, .. }) if Some(id) == mesh);
             let gpu = self.scene.gpu.get(index);
             let texture = gpu.is_some_and(|gpu| gpu.faces.iter().any(|face| face.tex_id == entry.id));
@@ -432,12 +433,7 @@ impl App {
                         self.imports.choice
                     };
                     let prices = if self.demo {
-                        Prices {
-                            texture: Some(10),
-                            large_texture: Some(40),
-                            sound: Some(10),
-                            animation: Some(10),
-                        }
+                        self.imports.demo_prices()
                     } else {
                         self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
                     };
@@ -706,7 +702,10 @@ impl App {
                     self.imports.open_map_picker(id, slot);
                 }
                 Action::MapDrop(id, slot, target) => {
-                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |_| true) {
+                    let god = self.world.god_level > 0;
+                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |item| {
+                        crate::ui::texture_library::map_source(&self.world.inventory, item, god)
+                    }) {
                         self.imports.drop_map(id, slot, resource.asset);
                     }
                 }
@@ -796,6 +795,9 @@ impl App {
         }
         self.imports.save_local_registry(false);
         self.show_local_appearance_status(ctx, palette);
+        if self.avatar_studio.active && self.avatar_studio.animation_editor && !self.imports.any_window_open() {
+            self.ik_editor.resume_after_upload(&self.world);
+        }
     }
 
     fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {
@@ -962,13 +964,13 @@ impl App {
             let Some(entry) = self.imports.entries.iter().find(|e| e.id == target.entry) else {
                 continue;
             };
-            let Some(asset) = entry.local_mesh_ids.get(target.model).copied() else {
+            let Some((asset, fit)) = target.mesh(entry) else {
                 if !entry.local_mesh_ids.is_empty() {
                     invalid.push(*id);
                 }
                 continue;
             };
-            let scale = if target.use_scale {
+            let scale = if target.use_scale && !target.scene {
                 if let Some(Source::Mesh(draft)) = &entry.source {
                     draft
                         .scene
@@ -993,6 +995,7 @@ impl App {
                     .and_then(|v| v.sculpt)
                     .is_some_and(|s| s.texture == asset)
                     && object.render.local_scale == scale
+                    && object.render.local_fit == fit
             }) {
                 continue;
             }
@@ -1004,6 +1007,7 @@ impl App {
             });
             object.render.local_volume = Some(Box::new(volume));
             object.render.local_scale = scale;
+            object.render.local_fit = fit;
             object.shape_dirty = true;
             object.render.needs_records = true;
             // counted again from the local mesh (face stepping, texturing)
@@ -1019,6 +1023,7 @@ impl App {
             {
                 object.render.local_volume = None;
                 object.render.local_scale = None;
+                object.render.local_fit = None;
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }
@@ -1105,13 +1110,25 @@ impl App {
                 }
                 entry.local_published = true;
                 entry.local_generation = prepared.generation;
+                self.egui_ctx.request_repaint();
             } else {
                 entry.local_failed_generation = Some(prepared.generation);
                 self.imports.message = aurora_i18n::tr!("import-local-staging-busy").into();
             }
             entry.local_pending = false;
         }
+        self.world.local_asset_order = self
+            .imports
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.local)
+            .map(|(order, entry)| (entry.id, order))
+            .collect();
         self.imports.local_uploads = pending;
+        if !self.imports.local_uploads.is_empty() {
+            self.egui_ctx.request_repaint_after(Duration::from_millis(33));
+        }
         let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
         for (asset, slot) in previous_slots {
             if !referenced.contains(&asset) {

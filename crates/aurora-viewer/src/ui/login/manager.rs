@@ -426,36 +426,54 @@ fn show_impl(ctx: &Context, p: &Palette, icons: &Icons, settings: &mut Settings,
 }
 
 fn reorder(ctx: &Context, settings: &mut Settings, form: &mut LoginForm, moved: super::manager_drag::Move, offline: bool) {
-    let accounts = if offline {
-        let mut accounts = form.accounts.clone();
-        crate::login_accounts::move_in(&mut accounts, &moved.from, &moved.target, moved.after);
-        Ok(accounts)
+    // shown moved at once; the catalogue on the disk follows on a save
+    // thread, and a refusal comes back through `disk_answer`
+    if offline {
+        crate::login_accounts::move_in(&mut form.accounts, &moved.from, &moved.target, moved.after);
     } else {
-        crate::login_accounts::move_relative(&moved.from, &moved.target, moved.after)
+        crate::login_accounts::move_relative(&mut form.accounts, &moved.from, &moved.target, moved.after);
+    }
+    show_order(ctx, settings, form);
+    form.manager.order_error = false;
+}
+
+/// The cards after the order of `form.accounts` changed.
+fn show_order(ctx: &Context, settings: &mut Settings, form: &mut LoginForm) {
+    let key = (settings.login_uri(), settings.username.trim().to_lowercase());
+    let selected = form.accounts.iter().position(|account| account.key() == key);
+    if let Some(index) = selected {
+        form.accounts[index].apply(settings);
+    }
+    let layout = super::layout::Layout::new(ctx.content_rect(), form.accounts.len());
+    form.motion.stop();
+    form.page = if layout.paginated {
+        form.accounts
+            .iter()
+            .position(|account| account.key() == key)
+            .map_or(0, |index| (index + form.accounts.len() - layout.per_page / 2) % form.accounts.len())
+    } else {
+        0
     };
-    match accounts {
-        Ok(accounts) => {
-            form.accounts = accounts;
-            let key = (settings.login_uri(), settings.username.trim().to_lowercase());
-            let selected = form.accounts.iter().position(|account| account.key() == key);
-            if let Some(index) = selected {
-                form.accounts[index].apply(settings);
+    form.selection_shown_for = selected.map(|_| key);
+    ctx.request_repaint();
+}
+
+/// The disk's answer to the last change of the account list, once a frame
+/// on the login screen: the catalogue as it is now on the disk (another
+/// viewer's changes included), or, when it was refused, the catalogue the
+/// disk kept, as before the change was made off the frame. A refused move
+/// says so under the list.
+pub(crate) fn disk_answer(ctx: &Context, settings: &mut Settings, form: &mut LoginForm) {
+    match crate::login_accounts::answer() {
+        Some(crate::login_accounts::Answer::Saved(accounts)) => form.accounts = accounts,
+        Some(crate::login_accounts::Answer::Failed { reorder }) => {
+            form.accounts = crate::login_accounts::load();
+            if reorder {
+                form.manager.order_error = true;
+                show_order(ctx, settings, form);
             }
-            let layout = super::layout::Layout::new(ctx.content_rect(), form.accounts.len());
-            form.motion.stop();
-            form.page = if layout.paginated {
-                form.accounts
-                    .iter()
-                    .position(|account| account.key() == key)
-                    .map_or(0, |index| (index + form.accounts.len() - layout.per_page / 2) % form.accounts.len())
-            } else {
-                0
-            };
-            form.selection_shown_for = selected.map(|_| key);
-            form.manager.order_error = false;
-            ctx.request_repaint();
         }
-        Err(_) => form.manager.order_error = true,
+        None => {}
     }
 }
 
@@ -478,7 +496,7 @@ fn apply(settings: &mut Settings, form: &mut LoginForm, pending: Confirmation, o
             if offline {
                 form.accounts.remove(index);
             } else {
-                form.accounts = crate::login_accounts::remove(&account);
+                crate::login_accounts::remove(&mut form.accounts, &account);
             }
             // LLFloaterForgetUser: its stored favourites go with it
             form.favorites.forget(&account.key());
@@ -510,7 +528,7 @@ fn apply(settings: &mut Settings, form: &mut LoginForm, pending: Confirmation, o
                     form.accounts[index].remember_password = false;
                 }
             } else {
-                form.accounts = crate::login_accounts::forget_preference(&account, pending.action == Action::Mfa);
+                crate::login_accounts::forget_preference(&mut form.accounts, &account, pending.action == Action::Mfa);
             }
             if current {
                 if pending.action == Action::Mfa {

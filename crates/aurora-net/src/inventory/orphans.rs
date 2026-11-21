@@ -246,7 +246,7 @@ mod tests {
             let parsed = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 fetch(
-                    &reqwest::Client::new(),
+                    &crate::test_http_client(),
                     use_ais.then_some(url.as_str()),
                     (!use_ais).then_some(url.as_str()),
                     id(2),

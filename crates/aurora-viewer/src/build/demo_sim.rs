@@ -18,7 +18,7 @@ const PERM_ALL: u32 = 0x7fff_ffff;
 pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
-    running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    running: HashMap<(Uuid, Uuid), (bool, aurora_net::scripts::CompileTarget)>,
     pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
     /// The reports of transform edits held for a round trip
@@ -30,8 +30,30 @@ pub struct DemoSim {
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
+    /// The object each object rezzed from an object's contents came from,
+    /// sent back in its ObjectProperties (FromTaskID).
+    rezzed_from_task: HashMap<Uuid, Uuid>,
     /// Groups supplied by creation requests, including an explicitly empty group.
     rezzed_groups: HashMap<Uuid, Uuid>,
+    /// What an object item holds (`AURORA_DEMO_DEEP_PERMS`), by item id: a
+    /// rez from contents gets it, a save back keeps the copy's contents.
+    stored: HashMap<Uuid, Vec<TaskItem>>,
+    /// What the child prims of a stored object item hold, in link order.
+    stored_links: HashMap<Uuid, Vec<Vec<TaskItem>>>,
+    /// The item each object rezzed from a stored item came from.
+    stored_copies: HashMap<Uuid, Uuid>,
+    /// The child prims of such a copy.
+    copy_children: HashMap<Uuid, Vec<Uuid>>,
+    /// The parts rezzed together from a coalesced item, by part.
+    copy_parts: HashMap<Uuid, Vec<Uuid>>,
+    /// What each part of a stored coalesced item holds (several objects
+    /// saved as one), in order.
+    stored_group: HashMap<Uuid, Vec<Vec<TaskItem>>>,
+    /// `AURORA_DEMO_DEEP_PERMS=run-replace` / `run-refuse`, or set by a test.
+    pub(crate) deep_in_place: bool,
+    pub(crate) deep_refuse: bool,
+    /// A coalesced item saved back as a single object (its first part).
+    pub(crate) deep_split: bool,
 }
 
 /// An object's position, rotation and scale.
@@ -91,22 +113,42 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
     }
 }
 
+/// The demo region makes new contents items like a Second Life region
+/// (CreateTaskInventoryItem); `AURORA_DEMO_CONTENTS_CAP=0` withdraws the
+/// capability, for the RezScript fallback and a disabled "New notecard".
+pub fn caps() -> Vec<(String, String)> {
+    if std::env::var("AURORA_DEMO_CONTENTS_CAP").is_ok_and(|v| v.trim() == "0") {
+        return Vec::new();
+    }
+    vec![(
+        super::contents::CREATE_TASK_ITEM_CAP.to_owned(),
+        "demo://create-task-item".to_owned(),
+    )]
+}
+
 fn script_copy_demo() -> bool {
     std::env::var("AURORA_DEMO_REPLACE_PRIM").is_ok_and(|mode| mode == "script")
 }
 
 impl DemoSim {
-    pub fn save_script(&mut self, target: aurora_net::scripts::ScriptTarget, asset: Uuid, running: bool, mono: bool) {
+    pub fn save_script(
+        &mut self,
+        target: aurora_net::scripts::ScriptTarget,
+        asset: Uuid,
+        running: bool,
+        compile: aurora_net::scripts::CompileTarget,
+    ) {
         if let Some(entry) = self.contents.get_mut(&target.object)
             && let Some(item) = entry.1.iter_mut().find(|i| i.item_id == target.item)
         {
             item.asset_id = asset;
             entry.0 = entry.0.wrapping_add(1);
         }
-        self.running.insert((target.object, target.item), (running, mono));
+        self.running.insert((target.object, target.item), (running, compile));
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let from_task_id = self.rezzed_from_task.get(&id).copied().unwrap_or_default();
         let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
             let name = world
@@ -134,10 +176,12 @@ impl DemoSim {
                 .map(|o| o.owner_id)
                 .filter(|owner| !owner.is_nil())
                 .unwrap_or(crate::demo::DEMO_AGENT);
+            // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
+            let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
             ObjectProps {
                 object_id: id,
                 full: true,
-                creator_id: DEMO_CREATOR,
+                creator_id,
                 owner_id,
                 group_id: group.unwrap_or_else(|| {
                     if owner_id == crate::demo::DEMO_AGENT {
@@ -158,6 +202,7 @@ impl DemoSim {
                 category: 0,
                 inventory_serial: 1,
                 folder_id,
+                from_task_id,
                 name,
                 description: String::new(),
                 touch_name: touch_name.into(),
@@ -173,6 +218,13 @@ impl DemoSim {
     }
 
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
+        if id == super::deep_perms::demo::id(super::deep_perms::demo::CHEST) && !self.contents.contains_key(&id) {
+            let (items, stored, links, groups) = super::deep_perms::demo::contents(id);
+            self.stored.extend(stored);
+            self.stored_links.extend(links);
+            self.stored_group.extend(groups);
+            self.contents.insert(id, (1, items));
+        }
         if id == super::replace::demo::id(super::replace::demo::SOURCE) {
             return self.contents.entry(id).or_insert((1, Vec::new()));
         }
@@ -194,6 +246,8 @@ impl DemoSim {
                 demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
                 demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
                 demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
+                // an object to drag out onto the land (rez from contents)
+                demo_item(id, 4, aurora_i18n::tr!("build-demo-sim-chair"), 6, 6),
             ];
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-plain,")) {
                 items.retain(|i| i.asset_type != 10);
@@ -309,6 +363,48 @@ impl DemoSim {
                     });
                 }
                 events
+            }
+            // Save back to object contents: a copy of the object, as an
+            // object item of the destination's contents, which the
+            // simulator lists again; the object stays in the world.
+            BuildCmd::DeRez {
+                handle,
+                local_ids,
+                destination,
+                destination_id,
+                ..
+            } if *destination == aurora_net::build::derez::SAVE_INTO_TASK_INVENTORY => {
+                let ids = Self::uuids(world, *handle, local_ids);
+                let Some(id) = ids.first().copied() else {
+                    return Vec::new();
+                };
+                if let Some(events) = self.save_stored(world, &ids, *destination_id) {
+                    return events;
+                }
+                let name = self.props_of(world, id).name.clone();
+                let entry = self.contents_of(*destination_id);
+                entry.0 = entry.0.wrapping_add(1);
+                entry.1.push(TaskItem {
+                    item_id: Uuid::new_v4(),
+                    parent_id: *destination_id,
+                    creator_id: DEMO_CREATOR,
+                    owner_id: crate::demo::DEMO_AGENT,
+                    last_owner_id: DEMO_CREATOR,
+                    base_mask: PERM_ALL,
+                    owner_mask: PERM_ALL,
+                    next_owner_mask: perm::MOVE | perm::TRANSFER,
+                    asset_type: 6,
+                    inv_type: 6,
+                    name,
+                    creation_date: 1_700_000_000,
+                    ..Default::default()
+                });
+                let (serial, items) = entry.clone();
+                vec![NetEvent::TaskInventory {
+                    object: *destination_id,
+                    serial: Some(serial),
+                    result: Ok(items),
+                }]
             }
             // worn: it leaves the world (the demo has no inventory item to
             // wear it from)
@@ -509,9 +605,18 @@ impl DemoSim {
                 }
                 events
             }
+            BuildCmd::RezInventory(rez)
+                if !rez.from_task.is_nil() && (self.stored.contains_key(&rez.item.id) || self.stored_group.contains_key(&rez.item.id)) =>
+            {
+                self.rez_stored(world, rez)
+            }
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
-                self.rezzed_from.insert(object.full_id, rez.item.parent);
+                if rez.from_task.is_nil() {
+                    self.rezzed_from.insert(object.full_id, rez.item.parent);
+                } else {
+                    self.rezzed_from_task.insert(object.full_id, rez.from_task);
+                }
                 self.rezzed_groups.insert(object.full_id, rez.group);
                 vec![NetEvent::ObjectUpdates {
                     handle: rez.handle,
@@ -641,10 +746,47 @@ impl DemoSim {
                 entry.0 = entry.0.wrapping_add(1);
                 let serial = entry.0;
                 if let BuildCmd::RezScript { enabled, .. } = c {
-                    self.running.insert((id, script_id), (*enabled, true));
+                    self.running
+                        .insert((id, script_id), (*enabled, aurora_net::scripts::CompileTarget::Mono));
                 }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
+            }
+            // CreateTaskInventoryItem: the region writes the new item, a
+            // running Mono or Luau script or an empty notecard
+            BuildCmd::CreateTaskItem { item, tag, .. } => {
+                let id = item.parent_id;
+                if world.objects.index_of_uuid(&id).is_none() {
+                    return vec![NetEvent::CapReply {
+                        tag: *tag,
+                        result: Ok(llsd_map! { "success" => false, "message" => "Object not found" }),
+                    }];
+                }
+                let mut it = (**item).clone();
+                it.item_id = Uuid::new_v4();
+                it.asset_id = Uuid::new_v4();
+                let item_id = it.item_id;
+                let lua = aurora_net::scripts::is_slua_item(it.flags);
+                let script = it.asset_type == super::contents::AT_LSL_TEXT;
+                let entry = self.contents_of(id);
+                entry.1.push(it);
+                entry.0 = entry.0.wrapping_add(1);
+                let serial = entry.0;
+                if script {
+                    let vm = if lua {
+                        aurora_net::scripts::CompileTarget::Luau
+                    } else {
+                        aurora_net::scripts::CompileTarget::Mono
+                    };
+                    self.running.insert((id, item_id), (true, vm));
+                }
+                self.props_of(world, id).inventory_serial = serial;
+                let mut events = self.reply_props(world, &[id]);
+                events.push(NetEvent::CapReply {
+                    tag: *tag,
+                    result: Ok(llsd_map! { "success" => true, "item_id" => item_id }),
+                });
+                events
             }
             BuildCmd::RemoveTaskInventory { handle, local_id, item_id } => {
                 let ids = Self::uuids(world, *handle, &[*local_id]);
@@ -665,23 +807,30 @@ impl DemoSim {
                 if script_copy_demo() {
                     self.pending_running.insert((*object_id, *item_id), *running);
                 } else {
-                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                    self.running
+                        .entry((*object_id, *item_id))
+                        .or_insert((true, aurora_net::scripts::CompileTarget::Mono))
+                        .0 = *running;
                 }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
                 let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
-                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                let (running, compile) = self
+                    .running
+                    .get(&(*object_id, *item_id))
+                    .copied()
+                    .unwrap_or((initial, aurora_net::scripts::CompileTarget::Mono));
                 // First reply observes the previous state; the next query
                 // confirms the asynchronous script-engine operation.
                 if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
-                    self.running.insert((*object_id, *item_id), (next, mono));
+                    self.running.insert((*object_id, *item_id), (next, compile));
                 }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,
                     running,
-                    mono: Some(mono),
+                    compile: Some(compile),
                 }]
             }
             // the hover tips' parcel under the pointer
@@ -757,6 +906,223 @@ impl DemoSim {
             }],
             _ => Vec::new(),
         }
+    }
+
+    /// RezObject of a stored object item (`AURORA_DEMO_DEEP_PERMS`): a copy
+    /// holding what the item holds, under new item ids, with the item's
+    /// name and masks, and its child prims with theirs; `run-refuse`
+    /// answers with an alert instead.
+    fn rez_stored(&mut self, world: &World, rez: &aurora_net::inventory::rez::RezInventory) -> Vec<NetEvent> {
+        if self.deep_refuse || super::deep_perms::demo::refuse() {
+            return vec![NetEvent::Alert {
+                message: format!(
+                    "Can't rez object '{}' at {{ {:.1}, {:.1}, {:.1} }} because the owner of this land does not allow it.",
+                    rez.item.name, rez.ray_end.x, rez.ray_end.y, rez.ray_end.z
+                ),
+            }];
+        }
+        if let Some(parts) = self.stored_group.get(&rez.item.id).cloned() {
+            return self.rez_group(world, rez, parts);
+        }
+        let object = crate::demo::inventory_rez(rez);
+        let id = object.full_id;
+        self.rezzed_from_task.insert(id, rez.from_task);
+        self.rezzed_groups.insert(id, rez.group);
+        self.stored_copies.insert(id, rez.item.id);
+        let held = self.stored.get(&rez.item.id).cloned().unwrap_or_default();
+        let items = self.adopt(held, id);
+        self.contents.insert(id, (1, items));
+        let mut objects = vec![object.clone()];
+        let mut children = Vec::new();
+        for (n, held) in self
+            .stored_links
+            .get(&rez.item.id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+        {
+            let child_id = Uuid::new_v4();
+            let mut child = object.clone();
+            child.full_id = child_id;
+            child.local_id = child_id.as_u128() as u32;
+            child.parent_id = object.local_id;
+            // (a child's position is its parent's frame)
+            child.position = glam::Vec3::new(0.6 * (n as f32 + 1.0), 0.0, 0.0);
+            child.scale = glam::Vec3::splat(0.5);
+            let items = self.adopt(held, child_id);
+            self.contents.insert(child_id, (1, items));
+            children.push(child_id);
+            objects.push(child);
+        }
+        self.copy_children.insert(id, children);
+        let item = &rez.item;
+        let p = self.props_of(world, id);
+        p.name.clone_from(&item.name);
+        p.base_mask = item.base_mask;
+        p.owner_mask = item.owner_mask;
+        p.group_mask = item.group_mask;
+        p.everyone_mask = item.everyone_mask;
+        p.next_owner_mask = item.next_owner_mask;
+        vec![NetEvent::ObjectUpdates {
+            handle: rez.handle,
+            objects,
+        }]
+    }
+
+    /// A coalesced item rezzed: one root per part, side by side, each with
+    /// its own contents and the item's masks.
+    fn rez_group(&mut self, world: &World, rez: &aurora_net::inventory::rez::RezInventory, parts: Vec<Vec<TaskItem>>) -> Vec<NetEvent> {
+        let mut objects = Vec::new();
+        let mut ids = Vec::new();
+        for (n, held) in parts.into_iter().enumerate() {
+            let mut object = crate::demo::inventory_rez(rez);
+            object.position.x += 1.5 * n as f32;
+            let id = object.full_id;
+            self.rezzed_from_task.insert(id, rez.from_task);
+            self.rezzed_groups.insert(id, rez.group);
+            self.stored_copies.insert(id, rez.item.id);
+            let items = self.adopt(held, id);
+            self.contents.insert(id, (1, items));
+            let item = &rez.item;
+            let p = self.props_of(world, id);
+            p.name.clone_from(&item.name);
+            p.base_mask = item.base_mask;
+            p.owner_mask = item.owner_mask;
+            p.group_mask = item.group_mask;
+            p.everyone_mask = item.everyone_mask;
+            p.next_owner_mask = item.next_owner_mask;
+            ids.push(id);
+            objects.push(object);
+        }
+        for id in &ids {
+            self.copy_parts.insert(*id, ids.clone());
+        }
+        vec![NetEvent::ObjectUpdates {
+            handle: rez.handle,
+            objects,
+        }]
+    }
+
+    /// Items of a stored listing in a rezzed prim: new ids, what their
+    /// object items hold following them.
+    fn adopt(&mut self, held: Vec<TaskItem>, prim: Uuid) -> Vec<TaskItem> {
+        let mut items = Vec::new();
+        for mut it in held {
+            let old = it.item_id;
+            it.item_id = Uuid::new_v4();
+            it.parent_id = prim;
+            if let Some(inner) = self.stored.get(&old).cloned() {
+                self.stored.insert(it.item_id, inner);
+            }
+            if let Some(links) = self.stored_links.get(&old).cloned() {
+                self.stored_links.insert(it.item_id, links);
+            }
+            if let Some(parts) = self.stored_group.get(&old).cloned() {
+                self.stored_group.insert(it.item_id, parts);
+            }
+            items.push(it);
+        }
+        items
+    }
+
+    /// Save back of a copy rezzed from a stored item: a new object item
+    /// holding the copy's contents, its child prims' and its masks, next
+    /// to the original (as the demo always did), or in its place with
+    /// `run-replace`.
+    fn save_stored(&mut self, world: &World, ids: &[Uuid], destination: Uuid) -> Option<Vec<NetEvent>> {
+        let copy = *ids.first()?;
+        let original = *self.stored_copies.get(&copy)?;
+        // several objects saved together: one coalesced item (only the
+        // first with `deep_split`, as a simulator that kept one)
+        let group: Option<Vec<Vec<TaskItem>>> = (ids.len() > 1 && !self.deep_split).then(|| {
+            ids.iter()
+                .map(|id| self.contents.get(id).map(|c| c.1.clone()).unwrap_or_default())
+                .collect()
+        });
+        let held = self.contents.get(&copy).map(|c| c.1.clone()).unwrap_or_default();
+        let links: Vec<Vec<TaskItem>> = self
+            .copy_children
+            .get(&copy)
+            .map(|children| {
+                children
+                    .iter()
+                    .map(|c| self.contents.get(c).map(|c| c.1.clone()).unwrap_or_default())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let p = self.props_of(world, copy).clone();
+        let in_place = self.deep_in_place || super::deep_perms::demo::replace_in_place();
+        let entry = self.contents_of(destination);
+        entry.0 = entry.0.wrapping_add(1);
+        let existing = entry.1.iter().position(|i| i.item_id == original);
+        let mut item = existing.and_then(|i| entry.1.get(i).cloned()).unwrap_or_else(|| TaskItem {
+            parent_id: destination,
+            creator_id: DEMO_CREATOR,
+            owner_id: crate::demo::DEMO_AGENT,
+            last_owner_id: DEMO_CREATOR,
+            asset_type: 6,
+            inv_type: 6,
+            creation_date: 1_700_000_000,
+            ..Default::default()
+        });
+        if group.is_some() {
+            // a coalesced item keeps its name (the parts each have theirs)
+            if existing.is_none() {
+                item.name.clone_from(&p.name);
+            }
+            item.flags |= crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        } else {
+            item.name.clone_from(&p.name);
+            item.flags &= !crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        }
+        item.asset_id = Uuid::new_v4();
+        item.base_mask = p.base_mask;
+        item.owner_mask = p.owner_mask;
+        item.group_mask = p.group_mask;
+        item.everyone_mask = p.everyone_mask;
+        item.next_owner_mask = p.next_owner_mask;
+        match existing {
+            Some(i) if in_place => entry.1[i] = item.clone(),
+            _ => {
+                item.item_id = Uuid::new_v4();
+                entry.1.push(item.clone());
+            }
+        }
+        let (serial, items) = entry.clone();
+        if let Some(parts) = group {
+            self.stored.remove(&item.item_id);
+            self.stored_group.insert(item.item_id, parts);
+        } else {
+            self.stored_group.remove(&item.item_id);
+            self.stored.insert(item.item_id, held);
+        }
+        if !links.is_empty() {
+            self.stored_links.insert(item.item_id, links);
+        }
+        Some(vec![NetEvent::TaskInventory {
+            object: destination,
+            serial: Some(serial),
+            result: Ok(items),
+        }])
+    }
+
+    /// What a stored object item holds (tests).
+    #[cfg(test)]
+    pub(crate) fn stored(&self, item: Uuid) -> Option<&Vec<TaskItem>> {
+        self.stored.get(&item)
+    }
+
+    /// What each part of a stored coalesced item holds (tests).
+    #[cfg(test)]
+    pub(crate) fn stored_group(&self, item: Uuid) -> Option<&Vec<Vec<TaskItem>>> {
+        self.stored_group.get(&item)
+    }
+
+    /// What the child prims of a stored object item hold (tests).
+    #[cfg(test)]
+    pub(crate) fn stored_links(&self, item: Uuid) -> Option<&Vec<Vec<TaskItem>>> {
+        self.stored_links.get(&item)
     }
 
     /// Capability answers: costs from the prim counts, default physics.
