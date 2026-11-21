@@ -1357,7 +1357,7 @@ mod tests {
         let mut st = InventoryUi::default();
         let mut prefs = InventoryPreferences::default();
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
             execute(
                 Command::OpenMany(ids.to_vec()),
                 ui,
@@ -1368,6 +1368,9 @@ mod tests {
                 &mut actions,
             );
         });
+        // the first frame of a fresh context uploads the font atlas, which
+        // TexturesDelta's drop asserts was taken (debug assertions on)
+        output.textures_delta.clear();
         assert!(
             actions
                 .iter()
@@ -1399,7 +1402,7 @@ mod tests {
         let mut st = InventoryUi::default();
         let mut prefs = InventoryPreferences::default();
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
             execute(
                 Command::OpenMany(ids.to_vec()),
                 ui,
@@ -1410,6 +1413,9 @@ mod tests {
                 &mut actions,
             );
         });
+        // the first frame of a fresh context uploads the font atlas, which
+        // TexturesDelta's drop asserts was taken (debug assertions on)
+        output.textures_delta.clear();
         assert!(
             actions
                 .iter()

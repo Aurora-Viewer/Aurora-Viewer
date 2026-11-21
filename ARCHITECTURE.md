@@ -11,7 +11,9 @@ and close requests while each editor retains its state and acknowledgement
 routing. Script hosts retain the original source-text ID and register the
 active editor on the host layer, so tab changes preserve cursors and route
 Find correctly. Inactive scripts still poll preprocessing and external-file
-workers; errors stop host closure and reveal the affected editor.
+workers; errors stop host closure and reveal the affected editor. A group's
+window takes the lowest slot free for its kind, so its place and size are
+remembered; its tabs are locked while it closes or a save question waits.
 
 `imports/mesh.rs` exposes Automatic through the retained `LodSource::Legacy` /
 `process::Method::Legacy` chain, and Reliable. Retired serialized generation

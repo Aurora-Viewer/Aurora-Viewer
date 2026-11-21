@@ -332,7 +332,7 @@ impl InventoryUi {
                 members.push(window.id);
             }
         }
-        self.tab_hosts.group(members);
+        self.tab_hosts.group("inventory_properties", members);
     }
 
     /// A folder or additional window's Properties request, on the main
@@ -366,12 +366,21 @@ impl InventoryUi {
         true
     }
 
-    pub fn group_documents(&mut self, items: &[Uuid]) {
+    /// Groups the open documents of `items`. Those just opened from the dual
+    /// layout's right pane are still in `dual`'s list: they join this one's
+    /// before the next frame draws them, where the group finds them.
+    pub fn group_documents(&mut self, items: &[Uuid], dual: Option<&Self>) {
         let windows = items
             .iter()
-            .filter_map(|id| self.windows.iter().find(|w| w.state.preview == Some(*id)).map(|w| w.id))
+            .filter_map(|id| {
+                self.windows
+                    .iter()
+                    .chain(dual.into_iter().flat_map(|dual| dual.windows.iter()))
+                    .find(|w| w.state.preview == Some(*id))
+                    .map(|w| w.id)
+            })
             .collect();
-        self.tab_hosts.group(windows);
+        self.tab_hosts.group("inventory_documents", windows);
     }
 
     pub fn document(item: Uuid) -> Self {

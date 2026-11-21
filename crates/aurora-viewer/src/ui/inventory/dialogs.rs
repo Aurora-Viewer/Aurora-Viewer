@@ -342,6 +342,14 @@ pub(super) fn show(
             floater = floater.fixed();
         }
         floater.show(ctx, p, &mut open, body);
+        // a click in its tab group (whose tabs are locked meanwhile) raises
+        // the group's window: the question stays above it, never hidden
+        if document_confirmation
+            && let Some(host) = &st.tab_host
+            && crate::ui::widgets::floater_above(ctx, &host.window_id(), &window_id)
+        {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&window_id)));
+        }
     }
     if !open
         && matches!(dialog, EditDialog::Discard(_))
@@ -693,7 +701,11 @@ pub(super) fn preview(
     );
     Floater::new(
         &window_id,
-        format!("{}{}", it.name, if st.preview_dirty { " *" } else { "" }),
+        if st.tab_host.is_some() {
+            crate::ui::preview_tabs::group_title()
+        } else {
+            format!("{}{}", it.name, if st.preview_dirty { " *" } else { "" })
+        },
         ctx.content_rect().center() - size * 0.5,
         size,
     )
@@ -1073,9 +1085,14 @@ fn animation(
         .tab_host
         .as_ref()
         .map_or_else(|| format!("inventory_preview_{}_{}", st.ui_id, it.id), |host| host.window_id());
+    let title = if st.tab_host.is_some() {
+        crate::ui::preview_tabs::group_title()
+    } else {
+        aurora_i18n::tr!("ui-inventory-dialogs-animation", value0 = it.name.to_string()).to_string()
+    };
     let floater = Floater::new(
         &window_id,
-        aurora_i18n::tr!("ui-inventory-dialogs-animation", value0 = it.name.to_string()),
+        title,
         ctx.content_rect().center() - egui::vec2(215.0, 85.0),
         Vec2::new(430.0, 170.0),
     )

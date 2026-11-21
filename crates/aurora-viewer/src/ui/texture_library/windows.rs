@@ -46,6 +46,13 @@ pub(crate) fn window_id(item: Uuid) -> String {
     format!("resource_preview_{item}")
 }
 
+/// A tab group's id, which names its window: the lowest slot free, so the
+/// window keeps its place and size from one group to the next (and egui one
+/// memory entry per slot). The high bits keep it apart from item ids.
+fn group_slot_id(slot: u128) -> Uuid {
+    Uuid::from_u128(0x7461_625f_686f_7374_0000_0000_0000_0000 | slot)
+}
+
 impl LibraryUi {
     /// LLTextureBridge::save_as / LLInventoryAction::saveMultipleTextures.
     /// Every image still passes the ordinary full-resolution export path.
@@ -395,8 +402,14 @@ impl LibraryUi {
                 .unwrap_or(0);
         }
         self.preview_groups.retain(|group| !group.items.is_empty());
+        let id = (0..)
+            .map(group_slot_id)
+            .find(|id| !self.preview_groups.iter().any(|group| group.id == *id))
+            .expect("a free slot");
+        // an earlier group of this slot may have been minimized
+        widgets::open_floater(ctx, &window_id(id), &mut false);
         self.preview_groups.push(PreviewGroup {
-            id: Uuid::new_v4(),
+            id,
             items,
             selected: 0,
             closing: false,
@@ -522,7 +535,7 @@ impl LibraryUi {
             Vec2::new(460.0, 520.0)
         });
         let title = if group.is_some() {
-            aurora_i18n::tr!("resource-preview-tabs-title").to_owned()
+            crate::ui::preview_tabs::group_title()
         } else {
             item.name.clone()
         };
@@ -545,15 +558,21 @@ impl LibraryUi {
                                     if dirty { format!("{name} *") } else { name.to_owned() }
                                 })
                                 .collect();
+                            // a close under way or the save question of the
+                            // selected material keeps the tabs where they are,
+                            // or another tab would hide the question
+                            let locked = group.closing || window.editor.as_ref().is_some_and(|editor| editor.confirm_close);
                             ui.horizontal(|ui| {
                                 for (index, name) in labels.iter().enumerate() {
-                                    let enabled = world
-                                        .inventory
-                                        .items
-                                        .get(&group.items[index])
-                                        .is_some_and(|item| world.inventory.can_preview(item.asset_type));
-                                    let response = widgets::pill_tab(ui, p, "", name, None, false, group.selected == index, enabled);
-                                    if response.clicked() {
+                                    let selected = group.selected == index;
+                                    let enabled = (selected || !locked)
+                                        && world
+                                            .inventory
+                                            .items
+                                            .get(&group.items[index])
+                                            .is_some_and(|item| world.inventory.can_preview(item.asset_type));
+                                    let response = widgets::pill_tab(ui, p, "", name, None, false, selected, enabled);
+                                    if response.clicked() && !locked {
                                         group.selected = index;
                                         response.scroll_to_me(None);
                                     } else if group.selected == index && (self.focus_preview == Some(item.id) || group.closing) {

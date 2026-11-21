@@ -6,6 +6,10 @@ struct Fixture {
     ctx: egui::Context,
     world: World,
     state: InventoryUi,
+    /// The dual layout's right pane, when shown (with the inventory window
+    /// open: the pane is skipped while it is closed).
+    dual: Option<InventoryUi>,
+    open: bool,
     prefs: InventoryPreferences,
     labels: Vec<(String, egui::Rect)>,
 }
@@ -34,6 +38,8 @@ impl Fixture {
             ctx: Default::default(),
             world,
             state: Default::default(),
+            dual: None,
+            open: false,
             prefs: Default::default(),
             labels: Vec::new(),
         }
@@ -55,9 +61,9 @@ impl Fixture {
                     &Icons::default(),
                     &mut self.world,
                     &mut self.state,
-                    None,
+                    self.dual.as_mut(),
                     &mut self.prefs,
-                    &mut false,
+                    &mut self.open,
                     false,
                     &HashMap::new(),
                     &HashMap::new(),
@@ -207,7 +213,7 @@ fn preview_tabs_notecards_keep_background_saves_and_cancelled_closure_independen
             .state
             .load_document(7, true, &Ok(b"Original".to_vec()));
     }
-    f.state.group_documents(&ids);
+    f.state.group_documents(&ids, None);
     f.settle();
     for (index, window) in f.state.windows.iter_mut().enumerate() {
         window.state.preview_text = Some(Ok(format!("Draft {index}")));
@@ -254,7 +260,7 @@ fn preview_tabs_media_can_switch_and_close_without_replacing_their_item_states()
         for id in ids {
             f.state.open_document(&f.ctx, id, kind, None);
         }
-        f.state.group_documents(&ids);
+        f.state.group_documents(&ids, None);
         f.settle();
         f.tab("Item 1");
         assert_eq!(f.state.windows.len(), 2);
@@ -276,4 +282,119 @@ fn preview_tabs_media_can_switch_and_close_without_replacing_their_item_states()
         f.close_host();
         assert!(f.state.windows.is_empty(), "media kind {kind}");
     }
+}
+
+#[test]
+fn properties_asked_in_the_right_pane_of_the_dual_inventory_open_their_windows() {
+    let mut f = Fixture::new(6);
+    f.dual = Some(InventoryUi::dual_pane());
+    f.open = true;
+    let ids = [9101, 9102].map(Uuid::from_u128);
+    // the right pane's context menu, as for a folder window
+    let ask = |f: &mut Fixture, command: context_catalog::Command| {
+        let dual = f.dual.as_mut().unwrap();
+        let mut command = Some(command);
+        let mut output = f.ctx.run_ui(Default::default(), |ui| {
+            context_catalog::execute(
+                command.take().expect("one pass"),
+                ui,
+                &f.world.inventory,
+                dual,
+                &mut f.prefs,
+                &Facts::default(),
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        f.settle();
+    };
+    ask(&mut f, context_catalog::Command::Properties(ids[0]));
+    assert!(f.dual.as_ref().unwrap().properties_asked.is_empty(), "the main inventory answers");
+    assert_eq!(f.state.windows.len(), 1);
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Properties(id)) if id == ids[0]));
+    let first = f.state.windows[0].id;
+    ask(&mut f, context_catalog::Command::PropertiesMany(ids.to_vec()));
+    assert_eq!(f.state.windows.len(), 2);
+    assert_eq!(f.state.windows[0].id, first, "the window already shown is kept");
+    assert!(f.state.windows.iter().all(|w| w.state.tab_host.is_some()), "one tab group");
+    ask(&mut f, context_catalog::Command::Properties(ids[1]));
+    assert_eq!(f.state.windows.len(), 2);
+    assert!(f.state.windows[1].state.tab_host.as_ref().unwrap().active());
+}
+
+#[test]
+fn documents_opened_from_the_right_pane_share_one_tab_group() {
+    let mut f = Fixture::new(7);
+    let mut dual = InventoryUi::dual_pane();
+    let ids = [9101, 9102].map(Uuid::from_u128);
+    // one notecard already open from the main pane, the other opened by a
+    // bulk Open in the right pane (`App`, `InvAction::PreviewMany`)
+    let loaded = |state: &mut InventoryUi| {
+        let window = state.windows.last_mut().unwrap();
+        window.state.load_document(7, true, &Ok(b"Original".to_vec()));
+    };
+    f.state.open_document(&f.ctx, ids[0], 7, None);
+    loaded(&mut f.state);
+    f.settle();
+    assert_eq!(f.state.windows.len(), 1);
+    dual.open_document(&f.ctx, ids[1], 7, None);
+    loaded(&mut dual);
+    f.state.group_documents(&ids, Some(&dual));
+    f.dual = Some(dual);
+    f.open = true;
+    f.settle();
+    assert_eq!(f.state.windows.len(), 2);
+    let hosts: Vec<_> = f
+        .state
+        .windows
+        .iter()
+        .map(|w| w.state.tab_host.as_ref().map(|host| host.id))
+        .collect();
+    assert!(hosts[0].is_some() && hosts[0] == hosts[1], "{hosts:?}");
+}
+
+#[test]
+fn a_save_question_stays_while_a_group_closes_and_another_tab_is_clicked() {
+    let mut f = Fixture::new(7);
+    let ids = [9101, 9102].map(Uuid::from_u128);
+    for id in ids {
+        f.state.open_document(&f.ctx, id, 7, None);
+        f.state
+            .windows
+            .last_mut()
+            .unwrap()
+            .state
+            .load_document(7, true, &Ok(b"Original".to_vec()));
+    }
+    f.state.group_documents(&ids, None);
+    f.settle();
+    for (index, window) in f.state.windows.iter_mut().enumerate() {
+        window.state.preview_text = Some(Ok(format!("Draft {index}")));
+        window.state.document_changed();
+    }
+    f.settle();
+    f.close_host();
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Discard(id)) if id == ids[0]));
+    let question = aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes").to_string();
+    // a click on the other tab while the question waits changes nothing
+    f.tab("Item 1 *");
+    assert!(f.state.windows[0].state.tab_host.as_ref().unwrap().active());
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Discard(id)) if id == ids[0]));
+    assert!(f.state.windows[1].state.dialog.is_none());
+    assert!(f.labels.iter().any(|(text, _)| *text == question), "the question is still drawn");
+    let dialog = format!("inventory_dialog_{}", f.state.windows[0].id);
+    let host = f.state.windows[0].state.tab_host.as_ref().unwrap().window_id();
+    assert!(super::super::widgets::floater_above(&f.ctx, &dialog, &host), "above its group");
+    // cancelled, the tabs work again
+    f.label(aurora_i18n::tr!("common-cancel"));
+    assert!(f.state.windows[0].state.dialog.is_none(), "cancelled");
+    f.tab("Item 1 *");
+    assert!(f.state.windows[1].state.tab_host.as_ref().unwrap().active());
+    // the close goes on to the second notecard once the first is answered
+    f.close_host();
+    f.label(aurora_i18n::tr!("ui-inventory-dialogs-discard-changes"));
+    assert_eq!(f.state.windows.len(), 1);
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Discard(id)) if id == ids[0]));
+    f.label(aurora_i18n::tr!("ui-inventory-dialogs-discard-changes"));
+    assert!(f.state.windows.is_empty());
 }

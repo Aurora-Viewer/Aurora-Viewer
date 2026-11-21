@@ -2692,6 +2692,11 @@ pub fn show(
         st.consume_clipboard |= dual.consume_clipboard;
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
+        // the right pane's Properties requests and tab groups belong to the
+        // main inventory, which holds every Properties and document window
+        // (`execute` hands them over for every pane but the main one)
+        st.properties_asked.append(&mut dual.properties_asked);
+        st.tab_hosts.append(&mut dual.tab_hosts);
         dual.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         remember_recent_filters(dual, prefs);
         context_notecards::show(ctx, p, &mut world.inventory, dual, prefs, &mut dual_actions);
@@ -2717,8 +2722,12 @@ pub fn show(
             name: item.name.clone(),
             dirty: window.state.preview_dirty,
             enabled: window.state.preview.is_none() || world.inventory.can_preview(item.asset_type),
+            asking: matches!(window.state.dialog, Some(EditDialog::Discard(_) | EditDialog::SaveEmbedded(_))),
         })
     }));
+    for host in st.tab_hosts.opened() {
+        super::widgets::open_floater(ctx, &host, &mut false);
+    }
     // Keep selection fixed through this frame: a click in an earlier editor
     // must not draw a second body for the same host later in this loop.
     let mut tab_views: std::collections::HashMap<_, _> = windows
@@ -2726,7 +2735,8 @@ pub fn show(
         .filter_map(|window| st.tab_hosts.view(window.id).map(|view| (window.id, view)))
         .collect();
     let mut spawned = Vec::new();
-    let mut asked = Vec::new();
+    // the right pane's requests, handed over above
+    let mut asked = std::mem::take(&mut st.properties_asked);
     for w in &mut windows {
         if !w.open {
             w.state.pending_delete = None;

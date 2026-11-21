@@ -561,7 +561,7 @@ impl Editors {
             .collect();
         // one script alone (with notecards or textures beside it) makes no
         // group: its editor keeps coming to the front like a single open
-        if !self.tab_hosts.group(keys.clone()) {
+        if !self.tab_hosts.group("script_editors", keys.clone()) {
             return;
         }
         for editor in &mut self.documents {
@@ -809,7 +809,11 @@ impl Editors {
                 name: e.name.clone(),
                 dirty: e.dirty(),
                 enabled: true,
+                asking: e.close_prompt,
             }));
+        for host in self.tab_hosts.opened() {
+            super::widgets::open_floater(ctx, &host, &mut false);
+        }
         for editor in &self.documents {
             if editor.raise || editor.close_prompt {
                 self.tab_hosts.focus(editor.target.item);
@@ -915,7 +919,11 @@ impl Editors {
                 focus::activate(ctx, source);
             }
             let mut open = true;
-            let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
+            let title = if host.is_some() {
+                super::preview_tabs::group_title()
+            } else {
+                format!("{}{}", e.name, if e.dirty() { " *" } else { "" })
+            };
             focus::claim(
                 ctx,
                 egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&window_id)),
