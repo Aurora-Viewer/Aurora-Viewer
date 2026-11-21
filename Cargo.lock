@@ -590,6 +590,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-j2k"
+version = "0.1.0"
+dependencies = [
+ "openjpeg-sys",
+ "rayon",
+]
+
+[[package]]
 name = "aurora-llsd"
 version = "0.1.0"
 dependencies = [
