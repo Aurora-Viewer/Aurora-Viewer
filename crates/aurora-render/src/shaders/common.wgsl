@@ -268,6 +268,9 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
+// What the glass leaves of the traced sun's red, green and blue
+// (rt_shadows.wgsl `out_glass`; white without ray tracing): `sun_glass`.
+@group(0) @binding(29) var sun_glass_tex: texture_2d<f32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -1563,12 +1566,24 @@ fn shared_light(i: i32, share: vec3<f32>) -> Light {
     return lt;
 }
 
+// The colour the glass gives the sunlight at this pixel, which `sun_shadow`
+// reads with the traced shadow and the shading multiplies the sun by
+// (`shade_pbr`, the classic sky's `ll_classic_sun_ambient`,
+// `ll_classic_pbr`, a legacy face's highlights): 1 where the sun is not
+// traced or meets no glass.
+var<private> sun_glass: vec3<f32> = vec3<f32>(1.0);
+
 // The sun's shadow of an opaque surface of the main view: the shadow map,
 // and the contact shadows where they are on.
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
     // the ray-traced mask (rt_shadows.rs), the contact shadows in it, where
     // the surface is the prepass's; the shadow map elsewhere
     if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_surface && !in_reflection_pass()) {
+        let p = vec2<i32>(frag);
+        let size = vec2<i32>(textureDimensions(sun_glass_tex));
+        if (all(p >= vec2<i32>(0)) && all(p < size)) {
+            sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
+        }
         return contact_shadow(frag);
     }
     let s = shadow_factor(world_pos, n, vertex_depth);
@@ -1839,7 +1854,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
     if (legacy) {
-        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        col += diffuse_color * frame.sun_color.rgb * sun_glass * (nl * shadow / 3.0);
     } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
@@ -1847,7 +1862,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, a) * v_smith(nv, nl, a) * f;
         let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
+        col += (kd + spec) * frame.sun_color.rgb * sun_glass * nl * shadow;
     }
     // local lights
     var lights = light_walk(world_pos, frag);
@@ -2525,7 +2540,7 @@ fn ll_local_scale() -> f32 {
 fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let nl_sun = max(dot(n, frame.sun_dir.xyz), 0.0);
     if (ll_classic_mode()) {
-        let sunlit = a.sunlit * 1.35;
+        let sunlit = a.sunlit * 1.35 * sun_glass;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2535,7 +2550,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) * sun_glass + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2597,7 +2612,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
         let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(min(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+        final_sun = clamp(sun_contrib * (diff + spec) * shadow * sun_glass, vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)

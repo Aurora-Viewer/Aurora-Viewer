@@ -1644,7 +1644,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             // its highlights in the sunlight (sunlit_linear) and its
             // environment at the probes' radiance
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / 3.0, 1.0)
+                               frame.sun_color.rgb * sun_glass / 3.0, 1.0)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
         col += caustic_light;

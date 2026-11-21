@@ -60,7 +60,7 @@ fn hemisphere(lit: HitLight, n: vec3<f32>) -> vec3<f32> {
 // the scene's faces, then the posed ones when `posed` (the alpha-masked
 // faces tested at each candidate, rt_common.wgsl `stops`).
 fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool {
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, 0xFFu, 0.0, reach, origin, dir);
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, SOLID, 0.0, reach, origin, dir);
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
@@ -101,7 +101,7 @@ fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, near: f32, reach: f32, posed: b
         // (the curved pixel's own mesh is sorted by `shadows`, so its ray
         // meets the faces from both sides)
         let flags = RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE | select(SHADOW_CULL, RAY_FLAG_NONE, curved);
-        let ray = RayDesc(flags, 0xFFu, near, reach, origin, dir);
+        let ray = RayDesc(flags, SOLID, near, reach, origin, dir);
         rayQueryInitialize(&rq, scene_tlas, ray);
         while (rayQueryProceed(&rq)) {
             if (shadows_but(rayQueryGetCandidateIntersection(&rq), false, dir, curved, own)) {
@@ -123,7 +123,7 @@ fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, near: f32, reach: f32, posed: b
         }
         return -1.0;
     }
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, 0xFFu, near, reach, origin, dir);
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, SOLID, near, reach, origin, dir);
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
         if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {

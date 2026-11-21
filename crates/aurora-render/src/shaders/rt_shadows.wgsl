@@ -14,6 +14,11 @@
 // the frame group): `.r` is 0 lit, 1 in shadow, the darker of the traced
 // shadow and the contact shadow, so `sun_shadow` (common.wgsl) needs
 // nothing more than that mask.
+//
+// Glass: a ray that nothing stops goes on through the blended faces (the
+// `GLASS` instances, rt_common.wgsl `glass_passes`), and what they leave of
+// the sun's red, green and blue is `out_glass` (the frame's binding 29,
+// common.wgsl `sun_glass`): 1 where it meets none.
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -42,6 +47,7 @@ struct Params {
 @group(0) @binding(4) var out_tex: texture_storage_2d<rgba8unorm, write>;
 // The avatars and what they wear, posed (rt_pose.wgsl).
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
+@group(0) @binding(6) var out_glass: texture_storage_2d<rgba8unorm, write>;
 
 @compute @workgroup_size(8, 8)
 fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -57,6 +63,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     // reversed depth: 0 is the sky
     if (depth <= 0.0 || params.light.w < 0.5) {
         textureStore(out_tex, pixel, vec4<f32>(contact, 0.0, 0.0, 0.0));
+        textureStore(out_glass, pixel, vec4<f32>(1.0));
         return;
     }
     let world = unproject(pixel, depth);
@@ -79,7 +86,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     // `SHADOW_CULL`), but on a curved pixel, whose own mesh `shadows` sorts
     let flags = select(SHADOW_CULL, RAY_FLAG_NONE, curved) | RAY_FLAG_TERMINATE_ON_FIRST_HIT
         | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
-    let ray = RayDesc(flags, 0xFFu, 0.0, params.mode.z, origin, dir);
+    let ray = RayDesc(flags, SOLID, 0.0, params.mode.z, origin, dir);
     var shadow = 0.0;
     // (one query for both levels: a pass pays for each query it holds)
     var rq: ray_query;
@@ -102,5 +109,22 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
             shadow = 1.0;
         }
     }
+    // through the glass, where nothing stopped it: every pane is a
+    // candidate, none is committed
+    var glass = vec3<f32>(1.0);
+    if (shadow < 0.5) {
+        let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, pane);
+        while (rayQueryProceed(&rq)) {
+            glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), false, dir);
+        }
+        if (params.mode.w > 0.5) {
+            rayQueryInitialize(&rq, posed_tlas, pane);
+            while (rayQueryProceed(&rq)) {
+                glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), true, dir);
+            }
+        }
+    }
+    textureStore(out_glass, pixel, vec4<f32>(glass, 1.0));
     textureStore(out_tex, pixel, vec4<f32>(select(max(shadow, contact), contact, soft), shadow, 0.0, 0.0));
 }

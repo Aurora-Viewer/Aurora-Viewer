@@ -65,6 +65,11 @@ struct CullFace {
 @group(1) @binding(8) var<storage, read> merged_records: array<u32>;
 // The bit of the scene's custom index that says a merged cell.
 const MERGED: u32 = 0x800000u;
+// The instances' cull masks (rt_shadows.rs `SOLID`, `GLASS`): the opaque
+// and alpha-masked faces, which stop a ray, and the blended ones, which
+// only the shadow rays meet, to colour what passes (`glass_tint`).
+const SOLID: u32 = 1u;
+const GLASS: u32 = 2u;
 
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
@@ -339,6 +344,23 @@ fn shadows_but(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, ow
         return false;
     }
     return !masked_out(h.record, s.uv);
+}
+
+// What a pane of glass (a blended face, the `GLASS` instances) that a
+// shadow ray meets lets through of the light: its colour as far as its
+// alpha covers it, times what its alpha leaves, mix(1, rgb, a) * (1 - a),
+// panes in a row multiplying. The rule PR #3821 (circuskid) gives the
+// point lights' shadow maps, here for the rays. 1 for a candidate that is
+// no triangle.
+fn glass_passes(c: RayIntersection, posed: bool, dir: vec3<f32>) -> vec3<f32> {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return vec3<f32>(1.0);
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
+    let b = base_color(h.record, s.uv, 0.0);
+    let a = clamp(b.a, 0.0, 1.0);
+    return mix(vec3<f32>(1.0), clamp(b.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), a) * (1.0 - a);
 }
 
 // A hash of `v` (PCG), for the passes' random numbers.

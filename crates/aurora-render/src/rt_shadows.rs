@@ -164,8 +164,10 @@ pub(crate) fn traced(device: &wgpu::Device, external: bool, asked: crate::RayTra
 }
 
 /// A face to trace: its record, its geometry in the arena, where it stands,
-/// whether it is opaque (an alpha-masked face is tested at each hit), and
-/// its instance's flags ([`facing`]).
+/// whether it is opaque (an alpha-masked face is tested at each hit),
+/// whether it is glass (a blended face, which colours the shadow rays
+/// instead of stopping them: [`GLASS`]), and its instance's flags
+/// ([`facing`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub record: u32,
@@ -173,6 +175,7 @@ pub struct Instance {
     pub first_index: u32,
     pub index_count: u32,
     pub opaque: bool,
+    pub glass: bool,
     pub model: [[f32; 4]; 4],
     pub flags: wgpu::TlasInstanceFlags,
 }
@@ -1222,14 +1225,28 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     (glam::Mat4::from_cols_array_2d(a) * glam::Mat4::from_cols_array_2d(b)).to_cols_array_2d()
 }
 
+/// The instances' cull masks (rt_common.wgsl `SOLID`, `GLASS`): what stops
+/// a ray, and the blended faces, which only colour the shadow rays.
+const SOLID: u32 = 1;
+const GLASS: u32 = 2;
+
+/// Whether a face of the records is glass: a blended one
+/// ([`Instance::glass`]).
+fn is_glass(record: &DrawRecord) -> bool {
+    record.flags[0] & flags::ALPHA_BLEND != 0
+}
+
 /// A face of the records as a placed instance.
 fn instance_of(id: usize, face: &CullFace, record: &DrawRecord) -> Instance {
+    let glass = is_glass(record);
     Instance {
         record: id as u32,
         base_vertex: face.base_vertex,
         first_index: face.first_index,
         index_count: face.index_count - face.index_count % 3,
-        opaque: record.flags[0] & flags::ALPHA_MASK == 0,
+        // (glass: every hit is a candidate the shadow rays weigh)
+        opaque: record.flags[0] & flags::ALPHA_MASK == 0 && !glass,
+        glass,
         model: record.model,
         flags: facing(sides_of(face, record)),
     }
@@ -1242,12 +1259,20 @@ fn instance_of(id: usize, face: &CullFace, record: &DrawRecord) -> Instance {
 fn sides_of(face: &CullFace, record: &DrawRecord) -> u8 {
     let double = matches!(face.bits & pass::BITS, pass::OPAQUE_2S | pass::MASK_2S) || record.flags[0] & flags::DOUBLE_SIDED != 0;
     let mirrored = glam::Mat4::from_cols_array_2d(&record.model).determinant() < 0.0;
-    (if double { SIDE_DOUBLE } else { 0 }) | if mirrored { SIDE_MIRRORED } else { 0 }
+    (if double { SIDE_DOUBLE } else { 0 }) | (if mirrored { SIDE_MIRRORED } else { 0 }) | if is_glass(record) { SIDE_GLASS } else { 0 }
 }
 
 /// A face drawn on both sides, and a face its model mirrors.
 const SIDE_DOUBLE: u8 = 1;
 const SIDE_MIRRORED: u8 = 2;
+/// Not a side, kept with them for the still set: the face is glass
+/// ([`Instance::glass`]), and keeps an instance of its own for its mask.
+const SIDE_GLASS: u8 = 4;
+
+/// An instance's cull mask ([`SOLID`], [`GLASS`]).
+fn mask_of(i: &Instance) -> u8 {
+    (if i.glass { GLASS } else { SOLID }) as u8
+}
 
 /// The instance flags that make a ray see a face's sides as the rasterizer
 /// does, for the shadow rays' culling ([`Cull`]): a face drawn on both sides
@@ -1325,10 +1350,10 @@ impl World<'_> {
 }
 
 impl PoseTracker {
-    /// Looks at face `id`: whether it is one to trace (the opaque and
-    /// alpha-masked faces of the terrain and of the objects that are no
-    /// HUD and not hidden; blended ones are not traced yet), a skeleton's
-    /// or a placed one, and where.
+    /// Looks at face `id`: whether it is one to trace (the opaque,
+    /// alpha-masked and blended faces of the terrain and of the objects
+    /// that are no HUD and not hidden; the blended faces of a skeleton are
+    /// not traced yet), a skeleton's or a placed one, and where.
     fn look(&mut self, id: usize, w: &World) {
         if self.placed.seen(id, w.frame) {
             return;
@@ -1355,10 +1380,14 @@ impl PoseTracker {
         let traced = match object {
             None => face.object == NO_OBJECT && rf & flags::TERRAIN != 0,
             Some(object) => {
+                let solid = matches!(face.bits & pass::BITS, pass::OPAQUE | pass::OPAQUE_2S | pass::MASK | pass::MASK_2S)
+                    && rf & flags::ALPHA_BLEND == 0;
+                // (glass: a blended face of a placed object; a worn or
+                // rigged one, posed, is not traced yet)
+                let glass = face.bits & pass::BITS == pass::BLEND && rf & flags::ALPHA_BLEND != 0 && !is_posed(object, rf);
                 object.flags & object_flags::ACTIVE != 0
                     && object.flags & (object_flags::HUD | object_flags::HIDDEN) == 0
-                    && matches!(face.bits & pass::BITS, pass::OPAQUE | pass::OPAQUE_2S | pass::MASK | pass::MASK_2S)
-                    && rf & flags::ALPHA_BLEND == 0
+                    && (solid || glass)
             }
         };
         let (place, shape) = (place_of(&record.model), shape_of(face));
@@ -1516,8 +1545,9 @@ pub(crate) fn gather(
                 continue;
             };
             // (a mirrored face is rare: it keeps its own instance, whose
-            // flag keeps its front, [`Cell::double`])
-            if face.index_count / 3 > MERGED_TRIANGLES || sides & SIDE_MIRRORED != 0 {
+            // flag keeps its front, [`Cell::double`]; glass too, for its
+            // instance's mask)
+            if face.index_count / 3 > MERGED_TRIANGLES || sides & (SIDE_MIRRORED | SIDE_GLASS) != 0 {
                 if let Some(record) = records.get(id as u32) {
                     large.push(instance_of(id, face, record));
                 }
@@ -1994,6 +2024,7 @@ struct Mover<'a> {
     transform: [f32; 12],
     record: u32,
     flags: wgpu::TlasInstanceFlags,
+    mask: u8,
 }
 
 /// The mask the shading reads in place of the contact shadows', and the
@@ -2005,6 +2036,10 @@ pub(crate) struct Targets {
     /// made one after the other, at one size).
     serial: u64,
     pub result: wgpu::TextureView,
+    /// What the glass leaves of the traced sun's red, green and blue, 1
+    /// where it meets none (rt_shadows.wgsl `out_glass`): the frame's
+    /// binding 29 (common.wgsl `sun_glass`).
+    pub glass: wgpu::TextureView,
     pub reflect: Option<ReflectTargets>,
     pub gi: Option<GiTargets>,
     pub lights: Option<LightTargets>,
@@ -2663,6 +2698,16 @@ impl RtShadows {
                     ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: RESULT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3025,11 +3070,11 @@ impl Poser {
                         // Viewer's maps cull an avatar's backs too, which a
                         // closed body does not show)
                         .map(|l| {
-                            wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, 0xFF)
+                            wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, SOLID as u8)
                                 .with_flags(wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE)
                         }),
                     Some(m) => movers.get(m).map(|mover| {
-                        wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, 0xFF)
+                        wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, mover.mask)
                             .with_flags(mover.flags)
                     }),
                 };
@@ -3158,22 +3203,26 @@ impl Targets {
             return None;
         }
         let size = (width.max(1), height.max(1));
-        let result = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("rt shadows"),
-                size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: RESULT_FORMAT,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mask = |label: &'static str| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: RESULT_FORMAT,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        let result = mask("rt shadows");
+        let glass = mask("rt sun glass");
         let reflect = options.reflections.then(|| {
             let half = (size.0.div_ceil(2), size.1.div_ceil(2));
             let view = |label: &'static str, (width, height): (u32, u32), format: wgpu::TextureFormat| {
@@ -3285,6 +3334,7 @@ impl Targets {
             size,
             serial: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             result,
+            glass,
             reflect,
             gi,
             lights,
@@ -3732,7 +3782,7 @@ impl RtShadows {
                         None => continue,
                     },
                 };
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, 0xFF).with_flags(i.flags));
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, mask_of(i)).with_flags(i.flags));
                 placed += 1;
             }
             // the cells' levels after them: this frame's, or the one an
@@ -3760,7 +3810,7 @@ impl RtShadows {
                 }
                 self.merged_faces += (self.merged_list.len() - from).saturating_sub(2) / 2;
                 let sides = if cell.double { SIDE_DOUBLE } else { 0 };
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, 0xFF).with_flags(facing(sides)));
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, SOLID as u8).with_flags(facing(sides)));
                 placed += 1;
             }
             for slot in &mut slots[placed..] {
@@ -3865,6 +3915,7 @@ impl RtShadows {
                     transform: row_major(&i.model),
                     record: i.record,
                     flags: i.flags,
+                    mask: mask_of(i),
                 })
             })
             .collect();
@@ -3962,6 +4013,10 @@ impl RtShadows {
                     binding: 5,
                     // without posed faces the scene's stands in, unread
                     resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&t.glass),
                 },
             ],
         });
@@ -6465,6 +6520,36 @@ mod tests {
         // the shadow rays cull the faces met from their front: the ray goes
         // from the surface to the light (Vulkan's gl_RayFlagsCullFrontFacingTrianglesEXT)
         assert_eq!(Cull::default().ray_flags(), 0x20);
+    }
+
+    #[test]
+    fn rt_shadows_a_blended_face_is_glass_in_an_instance_of_its_own() {
+        let face = CullFace {
+            bits: pass::BLEND,
+            ..CullFace::NONE
+        };
+        let mut blended = DrawRecord::default();
+        blended.flags[0] |= flags::ALPHA_BLEND;
+        // glass: never opaque (each pane is a candidate), its own mask, and
+        // a side bit that keeps it out of the merged cells but no flag
+        let glass = instance_of(3, &face, &blended);
+        assert!(glass.glass && !glass.opaque);
+        assert_eq!(mask_of(&glass), GLASS as u8);
+        assert_eq!(sides_of(&face, &blended), SIDE_GLASS);
+        assert_eq!(glass.flags, wgpu::TlasInstanceFlags::empty());
+        // an opaque face and an alpha-masked one stop the rays
+        let solid = CullFace {
+            bits: pass::OPAQUE,
+            ..CullFace::NONE
+        };
+        let opaque = instance_of(1, &solid, &DrawRecord::default());
+        assert!(!opaque.glass && opaque.opaque);
+        assert_eq!(mask_of(&opaque), SOLID as u8);
+        let mut masked = DrawRecord::default();
+        masked.flags[0] |= flags::ALPHA_MASK;
+        let masked = instance_of(2, &solid, &masked);
+        assert!(!masked.glass && !masked.opaque);
+        assert_eq!(mask_of(&masked), SOLID as u8);
     }
 
     #[test]

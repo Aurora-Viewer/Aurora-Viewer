@@ -511,7 +511,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         var primitive = 0u;
         var bary = vec2<f32>(0.0);
         var rq: ray_query;
-        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, 0.0, params.mode.x, origin, dir));
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, 0.0, params.mode.x, origin, dir));
         while (rayQueryProceed(&rq)) {
             if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
                 rayQueryConfirmIntersection(&rq);
@@ -528,7 +528,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         if (posed) {
             let reach = select(params.mode.x, t, t >= 0.0);
             var rp: ray_query;
-            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, 0.0, reach, origin, dir));
+            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, SOLID, 0.0, reach, origin, dir));
             while (rayQueryProceed(&rp)) {
                 if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
                     rayQueryConfirmIntersection(&rp);

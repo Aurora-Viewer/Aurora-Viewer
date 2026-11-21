@@ -4073,6 +4073,9 @@ impl Backend {
             },
             // the contact shadows' mask (contact_shadows.rs)
             float_tex(13),
+            // what the glass leaves of the traced sun's red, green and blue
+            // (rt_shadows.wgsl, common.wgsl `sun_glass`)
+            float_tex(29),
             // GTAO's screen-space indirect light (gtao.rs)
             float_tex(14),
             // the night sky's stars (stars.rs)
@@ -6417,6 +6420,7 @@ impl Backend {
                   scene: &wgpu::TextureView,
                   depth: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
+                  glass: &wgpu::TextureView,
                   il: &wgpu::TextureView,
                   sample_water: bool,
                   sample_mask: bool| {
@@ -6512,6 +6516,10 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 29,
+                        resource: wgpu::BindingResource::TextureView(glass),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 14,
                         resource: wgpu::BindingResource::TextureView(il),
                     },
@@ -6572,6 +6580,8 @@ impl Backend {
                 .map(|r| &r.result)
                 .or(t.contact.as_ref().map(|c| &c.result))
                 .unwrap_or(&dummies.black);
+        // the colour the glass gives the traced sun (rt_shadows.wgsl)
+        let glass = t.rt.as_ref().map(|r| &r.glass).unwrap_or(&dummies.white);
         // the traced indirect light in GTAO's place (rt_gi.wgsl)
         let il =
             t.rt.as_ref()
@@ -6589,6 +6599,7 @@ impl Backend {
                 &dummies.black,
                 &dummies.depth,
                 &dummies.black,
+                &dummies.white,
                 &dummies.black,
                 false,
                 false,
@@ -6602,6 +6613,7 @@ impl Backend {
                 &dummies.black,
                 &dummies.depth,
                 contact,
+                glass,
                 il,
                 false,
                 true,
@@ -6615,6 +6627,7 @@ impl Backend {
                 &t.scene_copy,
                 &t.depth_ss,
                 contact,
+                glass,
                 il,
                 true,
                 true,
@@ -6629,6 +6642,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6642,6 +6656,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6655,6 +6670,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6668,6 +6684,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6681,6 +6698,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6694,6 +6712,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6707,6 +6726,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6720,6 +6740,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
@@ -6733,6 +6754,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
                     false,
                     false,
