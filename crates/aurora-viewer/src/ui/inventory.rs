@@ -2319,6 +2319,22 @@ fn additional_window_pos(ctx: &egui::Context, screen: egui::Rect) -> egui::Pos2 
     }
 }
 
+/// The title bar's width button of Aurora's window: "Widen the window" at
+/// the narrow width, "Compact view" back to the tree once wider (#4465),
+/// with the icons of the Places window's same two buttons.
+fn title_width_action<'a>(
+    floater: widgets::Floater<'a>,
+    layout: aurora::Layout,
+    widen: &'a mut bool,
+    narrow: &'a mut bool,
+) -> widgets::Floater<'a> {
+    if layout == aurora::Layout::Compact {
+        floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), widen)
+    } else {
+        floater.action("arrows-minimize", aurora_i18n::tr!("common-compact-view"), narrow)
+    }
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -2529,7 +2545,7 @@ pub fn show(
     let mut floater = super::widgets::Floater::new("inventory", aurora_i18n::tr!("common-inventory"), default_position, default_size)
         .compact_header()
         .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"));
-    let mut widen = false;
+    let (mut widen, mut narrow) = (false, false);
     if !classic {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
@@ -2540,9 +2556,7 @@ pub fn show(
             let (dot, text) = aurora::sync_state(p, inv, st);
             floater = floater.title_state(dot, text);
         }
-        if layout == aurora::Layout::Compact {
-            floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
-        }
+        floater = title_width_action(floater, layout, &mut widen, &mut narrow);
     }
     floater.show(ctx, p, open, |ui| {
         if let Some(dual) = dual.as_deref_mut() {
@@ -2601,6 +2615,9 @@ pub fn show(
     });
     if widen {
         aurora::widen(ctx, "inventory");
+    }
+    if narrow {
+        aurora::narrow(ctx, "inventory");
     }
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
@@ -2766,7 +2783,7 @@ pub fn show(
             // Aurora's window, kept under its folder (the whole inventory
             // for the additional window).
             w.state.scope = w.root;
-            let mut widen = false;
+            let (mut widen, mut narrow) = (false, false);
             let layout = aurora::Layout::of_window(ctx, &window_id);
             let mut floater = floater;
             if w.additional {
@@ -2778,9 +2795,7 @@ pub fn show(
                     floater = floater.title_state(dot, text);
                 }
             }
-            if layout == aurora::Layout::Compact {
-                floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
-            }
+            let floater = title_width_action(floater, layout, &mut widen, &mut narrow);
             floater.show(ctx, p, &mut w.open, |ui| {
                 aurora::contents(
                     ui,
@@ -2796,6 +2811,9 @@ pub fn show(
             });
             if widen {
                 aurora::widen(ctx, &window_id);
+            }
+            if narrow {
+                aurora::narrow(ctx, &window_id);
             }
         }
         w.state
