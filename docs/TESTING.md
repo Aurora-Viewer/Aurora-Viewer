@@ -6498,7 +6498,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|custom\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
-| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit, sorted by date, favorites or images |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -11331,20 +11331,24 @@ descriptions, chat, notice bodies and local filenames continue to accept Unicode
 The same rules apply in both interface styles. The agent uses demo mode only;
 the human verifies actual saved inventory names on the grid.
 
-**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
-`AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
-"Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`**
+— with `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names
+like "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
-one in four. `closed` leaves the window closed; `scroll` turns the wheel
-over the list or gallery of the default window from frame 700, down then up
-every 300 frames; `locate` presses the locate button of the current outfit
-banner at start: the gallery or list scrolls to the worn outfit, selects
-it and flashes it for 1.6 s (the flash is gone by frame 620, the selection
-stays). With `AURORA_PROFILE=1`, read `ui` of `perf summary`
-(and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
-the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
-2.5 ms closed before the wardrobe's links were walked only on inventory
-changes and only the rows in sight laid out.
+one in four, and dates a day apart that do not follow the names. `newest`
+and `oldest` start on that date order, `favorites` (one outfit in five is
+then a favorite) and `images` turn on the matching Sort outfits toggle,
+saved in the demo profile like any choice of the menu, so a later run
+without a mode starts on it. `closed` leaves the window closed; `scroll`
+turns the wheel over the list or gallery of the default window from frame
+700, down then up every 300 frames; `locate` presses the locate button of
+the current outfit banner at start: the gallery or list scrolls to the worn
+outfit, selects it and flashes it for 1.6 s (the flash is gone by frame
+620, the selection stays). With `AURORA_PROFILE=1`, read `ui` of `perf
+summary` (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8
+ms with the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms
+open and 2.5 ms closed before the wardrobe's links were walked only on
+inventory changes and only the rows in sight laid out.
 
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the

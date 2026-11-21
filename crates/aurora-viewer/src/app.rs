@@ -20069,6 +20069,7 @@ impl App {
                 let mut open = self.panels.appearance;
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
+                self.appearance_ui.sort = self.settings.appearance_outfit_sort;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -20085,6 +20086,10 @@ impl App {
                 }
                 if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
                     self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
+                    self.settings.save();
+                }
+                if self.settings.appearance_outfit_sort != self.appearance_ui.sort {
+                    self.settings.appearance_outfit_sort = self.appearance_ui.sort;
                     self.settings.save();
                 }
                 self.panels.appearance = open;
@@ -23336,6 +23341,9 @@ impl ApplicationHandler for App {
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
+                }
+                if let Some(sort) = crate::world::appearance::demo_outfit_sort() {
+                    self.settings.appearance_outfit_sort = sort;
                 }
                 for cmd in crate::world::appearance::sync_commands(
                     &self.world.inventory,
