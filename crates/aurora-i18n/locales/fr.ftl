@@ -5953,6 +5953,7 @@ ui-chat-participants = Participants ({ $n })
 ui-chat-search-or-start = Rechercher ou démarrer…
 ui-chat-contacts-sub = Amis et groupes de contacts
 ui-chat-contacts-friends-sub = Amis · { $online } en ligne
+ui-chat-contacts-groups-sub = Groupes · { $count }
 ui-chat-in-earshot = { $n } à portée
 ui-chat-head-in-earshot = { $n ->
     [one] { $n } personne à portée de voix
@@ -7616,6 +7617,7 @@ ui-options-privacy-policy-open = Lire
 ui-options-bars = Barres
 ui-options-at-startup = À l’ouverture
 ui-options-no-system-font = Aucune (police intégrée)
+ui-options-system-fonts-searching = Recherche…
 ui-options-system-font-help = Une police installée sur cet ordinateur, à la place des polices intégrées
 ui-options-preview = Aperçu
 ui-options-skin-folder = Dossier du skin
@@ -10664,7 +10666,9 @@ people-view-sort-options = Options d'affichage et de tri
 people-filter-by-name = Filtrer par nom…
 people-edit-contact-hold = Maintenez le clic gauche pour modifier les paramètres du contact.
 people-show-contact-sheet = Afficher la fiche du contact
+people-show-group-sheet = Afficher la fiche du groupe
 people-contact-details-empty = Aucun contact à afficher
+people-group-details-empty = Aucun groupe à afficher
 people-view-rich = Lignes riches
 people-view-compact = Compact (une ligne chacun, pour une foule)
 people-alerts-options = Alertes et options
@@ -13550,7 +13554,18 @@ bridge-object-info-result =
     Votre position actuelle : { $observer }
 bridge-query-timeout = Le bridge n’a pas répondu à la demande d’informations à temps. Réessayez.
 bridge-query-interrupted = La demande d’informations a été interrompue par un changement de région ou de connexion du bridge. Réessayez.
-ao-bootstrap-interrupted = Un import AO inachevé existe déjà dans #Aurora. Vérifiez-le dans l’inventaire avant de réessayer.
+ao-import-unfinished-retry = Un import AO inachevé existe déjà dans #Aurora/{ $folder }. Utilisez l’avis de récupération dans la fenêtre AO avant de réessayer.
+ao-unfinished-import = { $count ->
+    [one] Import AO inachevé dans #Aurora/{ $folder } : { $count } ensemble.
+   *[other] Import AO inachevé dans #Aurora/{ $folder } : { $count } ensembles.
+    }
+ao-finish-import = Terminer l’import
+ao-show-in-inventory = Afficher dans l’inventaire
+ao-duplicate-native = { $count ->
+    [one] Un autre dossier #Aurora/{ $folder } contient { $count } ensemble. Le fusionner avec le dossier AO actif ?
+   *[other] Un autre dossier #Aurora/{ $folder } contient { $count } ensembles. Le fusionner avec le dossier AO actif ?
+    }
+ao-native-already-exists = Un dossier Aurora AO natif existe déjà. Sélectionnez-le dans la fenêtre AO au lieu de le migrer à nouveau.
 
 # Guided AO editor
 ao-states = États
@@ -15973,3 +15988,17 @@ phototools-render-options = Options de rendu
 
 ui-bars-clouds-paused = Nuages figés
 ui-bars-clouds-paused-tip = Les nuages sont figés pour cette session. Cliquez pour les relâcher.
+phototools-tab-dof-glow = Flou et lueur
+phototools-lights-shadows = Paramètres des lumières et des ombres
+phototools-ambient-occlusion = Paramètres de l'occlusion ambiante
+phototools-dof = Paramètres de la profondeur de champ
+phototools-tone-mapping = Paramètres du mappage tonal HDR
+phototools-glow = Paramètres de la lueur
+phototools-photo-banner = Fenêtre photo ouverte : les réglages que la fenêtre photo possède aussi changent la photo. La profondeur de champ est conservée pour vos prochaines photos ; la lumière, l'exposition, les ombres, l'occlusion ambiante et les lumières portées durent jusqu'à la fermeture de la fenêtre photo.
+phototools-photo-boost = La qualité photo est relevée : les lignes graphiques montrent les valeurs relevées, et un changement que vous y faites est conservé comme le vôtre.
+phototools-photo-focus-help = Clic : le dernier point cliqué dans le monde. Pointeur : le point sous le pointeur. Manuel : une distance que vous réglez.
+phototools-photo-distance-help = La distance de mise au point de l'objectif en mise au point manuelle.
+phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa fenêtre est ouverte, par-dessus les réglages ci-dessous.
+phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
+ui-options-dof-show-focus-point = Afficher le point de mise au point
+ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.

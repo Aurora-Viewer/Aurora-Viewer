@@ -932,6 +932,7 @@ impl World {
                 return;
             }
         }
+        let mut opener = None;
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
             // an invitation opens the chat even when snoozed, as in the
@@ -945,19 +946,30 @@ impl World {
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
             // FSOpenIMContainerOnOfflineMessage (`Social::offline_ims`)
             self.social.offline_ims |= inv.offline;
-            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
+            let now = SystemTime::now();
+            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, now);
             self.session_push(session, l, true);
             // sessionAdded with has_offline_msg
             if inv.offline && new {
                 self.log_conversation(session, true);
             }
+            // where the server's history stops: the invitation's timestamp,
+            // else the server's own copy of this message
+            // (LLIMSession::addMessagesFromServerHistory never uses the
+            // local clock)
+            opener = Some(if inv.timestamp != 0 {
+                super::transcripts::Opener::At(inv.timestamp)
+            } else {
+                super::transcripts::Opener::Message(inv.from, inv.message.trim().to_owned())
+            });
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {
             method: SessionMethod::AcceptInvitation,
             session,
         });
-        // recent messages of a session we did not have yet (FetchGroupChatHistory)
+        // recent messages of a session we did not have yet (FetchGroupChatHistory),
+        // merged up to the message that opened it
         if let Some(s) = self.groups.sessions.get_mut(&session)
             && !s.history_fetched
         {
@@ -966,6 +978,9 @@ impl World {
                 method: SessionMethod::FetchHistory,
                 session,
             });
+            if let Some(opener) = opener {
+                self.session_lines(session).log.opened_by(opener);
+            }
         }
     }
 

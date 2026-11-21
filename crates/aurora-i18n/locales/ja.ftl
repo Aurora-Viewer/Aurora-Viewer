@@ -5889,6 +5889,7 @@ ui-chat-participants = 参加者（{ $n }）
 ui-chat-search-or-start = 検索または開始…
 ui-chat-contacts-sub = フレンドとコンタクトセット
 ui-chat-contacts-friends-sub = オンラインのフレンド{ $online }
+ui-chat-contacts-groups-sub = グループ{ $count }
 ui-chat-in-earshot = 聞こえる範囲に{ $n }人
 ui-chat-head-in-earshot = { $n ->
     [one] 聞こえる範囲に{ $n }人
@@ -7537,6 +7538,7 @@ ui-options-privacy-policy-open = 読む
 ui-options-bars = バー
 ui-options-at-startup = 起動時
 ui-options-no-system-font = なし（同梱フォント）
+ui-options-system-fonts-searching = 検索中…
 ui-options-system-font-help = 同梱フォントの代わりに、このコンピュータにインストールされたフォントを使用
 ui-options-preview = プレビュー
 ui-options-skin-folder = スキンのフォルダ
@@ -10575,7 +10577,9 @@ people-view-sort-options = 表示／並べ替えのオプション
 people-filter-by-name = 名前で絞り込む…
 people-edit-contact-hold = マウスの左ボタンを長押しするとコンタクトの設定を編集します。
 people-show-contact-sheet = コンタクトの詳細を表示
+people-show-group-sheet = グループの詳細を表示
 people-contact-details-empty = 表示するコンタクトはありません
+people-group-details-empty = 表示するグループはありません
 people-view-rich = リッチな行
 people-view-compact = コンパクト（１人につき１行、大人数向け）
 people-alerts-options = 警告とオプション
@@ -13440,7 +13444,12 @@ bridge-object-info-result =
     あなたの現在位置：{ $observer }
 bridge-query-timeout = ブリッジが要求した情報を時間内に返しませんでした。再試行してください。
 bridge-query-interrupted = リージョンまたはブリッジの接続の変更により、情報のリクエストが中断されました。再試行してください。
-ao-bootstrap-interrupted = #Aurora に未完了のＡＯのインポートがすでにあります。再試行する前にインベントリで確認してください。
+ao-import-unfinished-retry = #Aurora/{ $folder }に未完了のＡＯのインポートがすでにあります。再試行する前に、ＡＯウィンドウの復旧通知を使用してください。
+ao-unfinished-import = #Aurora/{ $folder }に未完了のＡＯのインポートがあります（{ $count }セット）。
+ao-finish-import = インポートを完了
+ao-show-in-inventory = インベントリで表示
+ao-duplicate-native = 別の#Aurora/{ $folder }フォルダに{ $count }セットあります。現在のＡＯフォルダに統合しますか？
+ao-native-already-exists = Aurora ＡＯフォルダはすでにあります。再度移行せず、ＡＯウィンドウで選択してください。
 
 # Guided AO editor
 ao-states = 状態
@@ -15834,3 +15843,17 @@ phototools-render-options = 描画オプション
 
 ui-bars-clouds-paused = 雲を停止中
 ui-bars-clouds-paused-tip = このセッションでは雲を止めています。クリックで再開します。
+phototools-tab-dof-glow = 被写界深度とグロー
+phototools-lights-shadows = ライトと影の設定
+phototools-ambient-occlusion = アンビエントオクルージョンの設定
+phototools-dof = 被写界深度の設定
+phototools-tone-mapping = HDRトーンマッピングの設定
+phototools-glow = グローの設定
+phototools-photo-banner = フォトウィンドウを開いています。フォトウィンドウにもある行は写真に反映されます。被写界深度は次の写真にも保持され、ライト、露出、影、アンビエントオクルージョン、装着ライトはフォトウィンドウを閉じるまで有効です。
+phototools-photo-boost = フォト品質が引き上げられています。グラフィックの行には引き上げた値が表示され、そこでの変更はあなた自身の設定として保持されます。
+phototools-photo-focus-help = クリック: ワールドで最後にクリックした点。ポインター: ポインターの下の点。手動: 指定した距離。
+phototools-photo-distance-help = 手動フォーカス時にレンズがピントを合わせる距離です。
+phototools-director-lens = ディレクターのウィンドウが開いている間は、下の設定よりもディレクターのレンズが表示されます。
+phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
+ui-options-dof-show-focus-point = フォーカス点を表示
+ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。
