@@ -8,8 +8,8 @@
 //! can never move the paging cursor or reach the archive.
 //!
 //! - `wire`: message ids (TimeUUID keys), canonical UUIDs, the conversation
-//!   id, the text and timestamp checks, both response validators and the
-//!   history request body.
+//!   id, the text and timestamp checks, both response validators with the
+//!   reason of a refusal (for the log) and the history request body.
 
 pub mod wire;
 
@@ -93,6 +93,20 @@ impl HistoryRow {
 pub struct ListEntry {
     pub resident_id: Uuid,
     pub last_msg_id: String,
+}
+
+/// An accepted conversation list: the direct conversations that have a
+/// resident history, and how many entries of each type the answer had
+/// (for the log; validateConversationList keeps only the first).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConversationList {
+    /// Direct conversations with a resident, in list order; the null
+    /// participant (system traffic) is counted in `direct` but left out.
+    pub entries: Vec<ListEntry>,
+    pub total: usize,
+    pub direct: usize,
+    pub group: usize,
+    pub adhoc: usize,
 }
 
 /// A validated history page (LLChatServiceHistoryCore::Page): the rows
