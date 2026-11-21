@@ -494,6 +494,40 @@ impl App {
                 self.scene.sounds.want(asset);
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
+            // the preview pane's notecard text, asked once and kept a while
+            // (`ui::inventory::PaneText`), read under the window's rule
+            InvAction::PaneText(id) => {
+                use crate::ui::inventory::PaneText;
+                let Some(key) = crate::ui::inventory::pane_key(&self.world.inventory, id, self.world.god_level) else {
+                    return;
+                };
+                if self.inventory_ui.pane_texts.contains_key(&key) {
+                    return;
+                }
+                let (original, asset, readable) = key;
+                let item = self.world.inventory.items.get(&original).cloned();
+                let texts = std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts);
+                // the texts read go, the ones on their way stay for their
+                // answer (`inventory_preview` keeps only an awaited one)
+                if texts.len() >= 32 {
+                    texts.retain(|_, text| *text == PaneText::Loading);
+                }
+                match item {
+                    Some(_) if readable && asset.is_nil() => {
+                        texts.insert(key, PaneText::Text(String::new()));
+                    }
+                    Some(it) if readable => {
+                        texts.insert(key, PaneText::Loading);
+                        self.send(NetCommand::PreviewInventoryItem(it));
+                    }
+                    _ => {
+                        texts.insert(
+                            key,
+                            PaneText::Unavailable(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
+                        );
+                    }
+                }
+            }
             InvAction::TriggerSound(asset) => {
                 self.record_library_asset(asset, 1);
                 self.send_sound_trigger(asset);
@@ -849,7 +883,23 @@ impl App {
 
     pub(super) fn inventory_preview(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
         if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
+            // saved or gone since: the pane's wait for this text ends
+            let key = (item, asset, true);
+            if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
+                std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).remove(&key);
+            }
             return;
+        }
+        let key = (item, asset, true);
+        if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
+            use crate::ui::inventory::PaneText;
+            let text = match &result {
+                Ok(data) => {
+                    crate::world::inventory::preview::text(7, data).map_or_else(PaneText::Unavailable, |(text, _)| PaneText::Text(text))
+                }
+                Err(reason) => PaneText::Unavailable(reason.clone()),
+            };
+            std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).insert(key, text);
         }
         if self.env_editor.loading == Some(item) {
             self.env_editor_asset(item, result);

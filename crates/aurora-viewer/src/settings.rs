@@ -3600,6 +3600,7 @@ impl Settings {
                 by_date: true,
                 folders_by_name: false,
                 system_first: true,
+                ..Default::default()
             };
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
@@ -5302,6 +5303,7 @@ mod tests {
             by_date: true,
             folders_by_name: false,
             system_first: true,
+            ..Default::default()
         };
         for version in [39, 40] {
             for by_date in [false, true] {
@@ -5311,6 +5313,7 @@ mod tests {
                             by_date,
                             folders_by_name,
                             system_first,
+                            ..Default::default()
                         };
                         let mut saved = Settings {
                             settings_version: version,
