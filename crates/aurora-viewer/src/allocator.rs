@@ -42,6 +42,26 @@ pub fn name() -> &'static str {
     if use_system() { "system" } else { "mimalloc" }
 }
 
+/// Gives back to the system the memory mimalloc holds free (gaming mode,
+/// app/gaming_mode.rs): `mi_collect(true)` returns the calling thread's
+/// free pages and those of the heaps of threads that ended; the other
+/// threads' heaps return theirs as they free. Nothing with the system's
+/// allocator, which keeps no such pages.
+pub fn collect() {
+    if use_system() {
+        return;
+    }
+    // mimalloc's C library, compiled in by libmimalloc-sys (Cargo.toml);
+    // the crate exposes it only behind a feature that adds nothing else
+    unsafe extern "C" {
+        fn mi_collect(force: bool);
+    }
+    // SAFETY: mimalloc is the process's allocator (`use_system` is false
+    // and never changes); mi_collect takes no pointer and may be called
+    // from any thread at any time.
+    unsafe { mi_collect(true) }
+}
+
 #[inline]
 fn use_system() -> bool {
     match CHOICE.load(Ordering::Relaxed) {

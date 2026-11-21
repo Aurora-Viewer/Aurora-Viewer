@@ -37,23 +37,73 @@ enum Output {
     Listed(Vec<Entry>),
     Loaded(Uuid, Loaded),
     Overwrite(Document, Arc<SubjectPose>, bool, bool),
-    Saved,
+    Saved(PathBuf),
+    /// Saved outside the library by Save as…
+    SavedTo(PathBuf),
     Prepared(clip::Prepared),
+    /// A folder of Legacy Viewer poses converted into the library.
+    ImportedFolder(legacy_pose::Imported),
     Failed(String),
     Cancelled,
 }
 pub(super) enum Job {
     List,
     Load(Option<PathBuf>, LoadMode, Uuid),
-    Save(Document, Arc<SubjectPose>, bool, bool, bool),
+    Save(Save),
     Import(Arc<SubjectPose>, Vec<usize>, String, i32),
+    /// Convert a folder of Legacy Viewer or Alchemy poses into the library:
+    /// the one given, or the one chosen in the folder dialog.
+    ImportLegacyFolder(Option<PathBuf>),
+}
+/// Whether a library entry named `name` shows under the search `filter`
+/// (case-insensitive, anywhere in the name).
+pub(super) fn filter_matches(name: &str, filter: &str) -> bool {
+    name.to_lowercase().contains(&filter.to_lowercase())
+}
+/// A save request. `pick` asks for the file in the system dialog (Save as…)
+/// instead of the library; the dialog asks about an existing file itself, so
+/// `confirm` only applies to the library.
+pub(super) struct Save {
+    pub document: Document,
+    pub pose: Arc<SubjectPose>,
+    pub bvh: bool,
+    pub unlock: bool,
+    pub confirm: bool,
+    pub pick: bool,
+}
+/// The pose file a Save as… writes: the chosen name, with
+/// `.aurora-pose.json` added when it does not already end in `.json`, so
+/// that the library and Open a file find it.
+fn pose_file(path: PathBuf) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if name.ends_with(".json") {
+        path
+    } else {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".aurora-pose.json");
+        path.with_file_name(name)
+    }
+}
+/// The `.bvh` written next to a pose file: its name without
+/// `.aurora-pose.json` (or `.json`).
+fn bvh_file(pose: &Path) -> PathBuf {
+    let name = pose.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let lower = name.to_lowercase();
+    let stem = [".aurora-pose.json", ".json"]
+        .iter()
+        .find(|ext| lower.ends_with(*ext))
+        .map_or(name.as_str(), |ext| &name[..name.len() - ext.len()]);
+    pose.with_file_name(format!("{stem}.bvh"))
 }
 pub(super) struct Service {
     pub entries: Vec<Entry>,
     pub busy: bool,
     pub message: Option<String>,
     pub selected: Option<usize>,
+    pub saved_path: Option<PathBuf>,
     pub filter: String,
+    /// The saved pose was just selected: the library list scrolls to it once.
+    pub scroll_to_selected: bool,
     pub job: Option<Job>,
     pub ready: bool,
     pub prepared: Vec<clip::Prepared>,
@@ -69,7 +119,9 @@ impl Default for Service {
             busy: false,
             message: None,
             selected: None,
+            saved_path: None,
             filter: String::new(),
+            scroll_to_selected: false,
             job: None,
             ready: false,
             prepared: Vec::new(),
@@ -79,7 +131,18 @@ impl Default for Service {
         }
     }
 }
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+/// Write `bytes` to `path` in `dir` through a temporary file, so that a
+/// failure leaves no half-written pose in the library.
+pub(super) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temp = dir.join(format!("{}.tmp", Uuid::new_v4()));
+    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+pub(super) fn read(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .map_err(|e| e.to_string())?
@@ -117,7 +180,8 @@ fn list(root: &Path, rig: &Rig) -> Result<Vec<Entry>, String> {
     if !root.exists() {
         return Ok(out);
     }
-    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(512) {
+    // the library of a long-time Legacy Viewer user can hold thousands of poses
+    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(4096) {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_file()
             && path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".aurora-pose.json"))
@@ -156,17 +220,47 @@ impl Service {
             self.busy = false;
             match output {
                 Output::Listed(entries) => {
-                    let selected = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.path.clone());
+                    let saved_path = self.saved_path.take();
+                    let kept = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.path.clone());
+                    let from_save = kept.is_none() && saved_path.is_some();
+                    let selected = kept.or(saved_path);
                     self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
+                    // the pose just saved: shown even under a search that
+                    // would hide it, and scrolled to once
+                    if from_save && let Some(entry) = self.selected.and_then(|i| entries.get(i)) {
+                        if !filter_matches(&entry.name, &self.filter) {
+                            self.filter.clear();
+                        }
+                        self.scroll_to_selected = true;
+                    }
                     self.entries = entries;
                     self.ready = true;
                 }
                 Output::Loaded(subject, value) => loaded.push((subject, value)),
                 Output::Overwrite(document, pose, bvh, unlock) => self.overwrite = Some((document, pose, bvh, unlock)),
                 Output::Prepared(value) => self.prepared.push(value),
-                Output::Saved => {
+                Output::Saved(path) => {
                     self.ready = false;
-                    self.message = Some(aurora_i18n::tr!("poser-saved").to_string());
+                    self.selected = None;
+                    self.message = Some(aurora_i18n::tr!("poser-saved-to", path = path.display().to_string()).to_string());
+                    self.saved_path = Some(path);
+                }
+                Output::SavedTo(path) => {
+                    self.ready = false;
+                    let path = path.display().to_string();
+                    self.message = Some(aurora_i18n::tr!("poser-saved-to", path = path.as_str()).to_string());
+                }
+                Output::ImportedFolder(imported) => {
+                    self.ready = false;
+                    self.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-imported",
+                            added = imported.added,
+                            kept = imported.kept,
+                            unreadable = imported.unreadable
+                        )
+                        .to_string(),
+                    );
                 }
                 Output::Failed(message) => {
                     self.message = Some(message);
@@ -194,8 +288,12 @@ impl Service {
                         let path = match path {
                             Some(p) => p,
                             None => {
-                                let Some(p) = rfd::FileDialog::new()
-                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "anim", "bvh"])
+                                let mut dialog = rfd::FileDialog::new();
+                                if root.is_dir() {
+                                    dialog = dialog.set_directory(&root);
+                                }
+                                let Some(p) = dialog
+                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "xml", "anim", "bvh"])
                                     .pick_file()
                                 else {
                                     return Ok(Output::Cancelled);
@@ -223,6 +321,9 @@ impl Service {
                                     mode,
                                 ),
                             )
+                        } else if legacy_pose::is_pose_file(&path) {
+                            let document = legacy_pose::document(&bytes, legacy_pose::pose_name(&path), &rig)?;
+                            Output::Loaded(subject, Loaded::Pose(document, mode))
                         } else {
                             let document: Document = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
                             if !document.valid(&rig) {
@@ -231,31 +332,69 @@ impl Service {
                             Output::Loaded(subject, Loaded::Pose(document, mode))
                         }
                     }
-                    Job::Save(document, pose, bvh, unlock, confirm) => {
+                    Job::Save(Save {
+                        document,
+                        pose,
+                        bvh,
+                        unlock,
+                        confirm,
+                        pick,
+                    }) => {
                         if !document.valid(&rig) {
                             return Err(aurora_i18n::tr!("anim-edit-invalid").to_string());
                         }
                         let name = clip::files::basename(&document.name);
-                        let path = root.join(format!("{name}.aurora-pose.json"));
-                        if confirm && (path.exists() || bvh && root.join(format!("{name}.bvh")).exists()) {
+                        let path = if pick {
+                            // Best effort: the dialog opens in the library when it exists.
+                            let _ = std::fs::create_dir_all(&root);
+                            let Some(path) = rfd::FileDialog::new()
+                                .set_directory(&root)
+                                .set_file_name(format!("{name}.aurora-pose.json"))
+                                .add_filter(aurora_i18n::tr!("poser-pose-filter"), &["json"])
+                                .save_file()
+                            else {
+                                return Ok(Output::Cancelled);
+                            };
+                            pose_file(path)
+                        } else {
+                            root.join(format!("{name}.aurora-pose.json"))
+                        };
+                        let bvh_path = bvh_file(&path);
+                        if confirm && !pick && (path.exists() || bvh && bvh_path.exists()) {
                             return Ok(Output::Overwrite(document, pose, bvh, unlock));
                         }
                         let bytes = serde_json::to_vec_pretty(&document).map_err(|e| e.to_string())?;
                         let bvh = if bvh { Some(bvh::encode(&rig, &pose, unlock)?) } else { None };
-                        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-                        let temp = root.join(format!("{}.tmp", Uuid::new_v4()));
-                        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-                        if let Err(e) = std::fs::rename(&temp, &path) {
-                            let _ = std::fs::remove_file(&temp);
-                            return Err(e.to_string());
-                        }
+                        let dir = path.parent().unwrap_or(&root);
+                        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                        write_atomic(dir, &path, &bytes)?;
                         if let Some(bvh) = bvh {
-                            std::fs::write(root.join(format!("{name}.bvh")), bvh).map_err(|e| e.to_string())?;
+                            std::fs::write(&bvh_path, bvh).map_err(|e| e.to_string())?;
                         }
-                        Output::Saved
+                        if pick && dir != root {
+                            Output::SavedTo(path)
+                        } else {
+                            Output::Saved(path)
+                        }
                     }
                     Job::Import(pose, translations, name, priority) => {
                         Output::Prepared(native(&rig, &pose, &translations, name, priority)?)
+                    }
+                    Job::ImportLegacyFolder(folder) => {
+                        let folder = match folder {
+                            Some(folder) => folder,
+                            None => {
+                                let mut dialog = rfd::FileDialog::new().set_title(aurora_i18n::tr!("poser-import-legacy-title"));
+                                if let Some(dir) = legacy_pose::default_folder() {
+                                    dialog = dialog.set_directory(dir);
+                                }
+                                let Some(folder) = dialog.pick_folder() else {
+                                    return Ok(Output::Cancelled);
+                                };
+                                folder
+                            }
+                        };
+                        Output::ImportedFolder(legacy_pose::import_folder(&folder, &root, &rig)?)
                     }
                 })
             };
@@ -263,5 +402,28 @@ impl Service {
             ctx.request_repaint();
         });
         loaded
+    }
+}
+#[cfg(test)]
+mod save_as_tests {
+    use super::{bvh_file, pose_file};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn pose_file_adds_the_pose_extension_unless_json() {
+        assert_eq!(pose_file(PathBuf::from("/d/Wave")), Path::new("/d/Wave.aurora-pose.json"));
+        assert_eq!(pose_file(PathBuf::from("/d/Wave.v2")), Path::new("/d/Wave.v2.aurora-pose.json"));
+        assert_eq!(
+            pose_file(PathBuf::from("/d/Wave.aurora-pose.json")),
+            Path::new("/d/Wave.aurora-pose.json")
+        );
+        assert_eq!(pose_file(PathBuf::from("/d/Wave.JSON")), Path::new("/d/Wave.JSON"));
+    }
+
+    #[test]
+    fn bvh_sits_next_to_the_pose_without_its_extension() {
+        assert_eq!(bvh_file(Path::new("/d/Wave.aurora-pose.json")), Path::new("/d/Wave.bvh"));
+        assert_eq!(bvh_file(Path::new("/d/Wave.Aurora-Pose.JSON")), Path::new("/d/Wave.bvh"));
+        assert_eq!(bvh_file(Path::new("/d/Wave.json")), Path::new("/d/Wave.bvh"));
     }
 }

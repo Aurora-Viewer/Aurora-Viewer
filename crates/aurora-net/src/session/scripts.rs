@@ -290,8 +290,9 @@ mod tests {
         let neighbour_addr = neighbour.local_addr().expect("object address");
         let (events, received) = crossbeam_channel::unbounded();
         let sh = Shared {
-            http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -300,6 +301,7 @@ mod tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
@@ -329,10 +331,11 @@ mod tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -342,17 +345,20 @@ mod tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,
@@ -366,6 +372,7 @@ mod tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),

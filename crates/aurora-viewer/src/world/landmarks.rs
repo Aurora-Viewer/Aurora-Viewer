@@ -13,6 +13,19 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// LLViewerInventoryItem::getType/getAssetUUID/getName (indra/newview/
+/// llviewerinventory.cpp, LGPL 2.1): a landmark link reads its original.
+/// Keep the caller's link id for membership, sorting and inventory mutations;
+/// this resolves content only and grants no additional asset permissions.
+pub fn inventory_item(inv: &Inventory, id: Uuid) -> Option<&aurora_net::inventory::InvItem> {
+    let item = inv.items.get(&id)?;
+    if !matches!(item.asset_type, 3 | 24) {
+        return None;
+    }
+    let original = super::inventory::actions::original(inv, id)?;
+    inv.items.get(&original).filter(|item| item.asset_type == 3)
+}
+
 /// LLItemBridge::performAction / doShowOnMap (indra/newview/llinventorybridge.cpp).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -622,6 +635,7 @@ mod tests {
             favorite: false,
             favorite_known: false,
             thumbnail: Uuid::nil(),
+            thumbnail_known: false,
         };
         let landmark = |id: u128, parent: u128| InvItem {
             id: Uuid::from_u128(id),

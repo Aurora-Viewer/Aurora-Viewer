@@ -14,9 +14,9 @@
 //! * media on a prim is filtered too (the Legacy Viewer filters the parcel
 //!   media and music only), and the check comes before anything reaches the
 //!   site, the request that discovers the media type included; media on
-//!   worn items (attachments, HUDs) we made ourselves is not asked about by
-//!   default (the list's refusals still apply), closer to the Legacy Viewer,
-//!   which asks about no prim media at all;
+//!   our worn items (attachments, HUDs), whoever made them, is not asked
+//!   about by default (the list's refusals still apply), closer to the
+//!   Legacy Viewer, which asks about no prim media at all;
 //! * a domain rule matches that domain and its subdomains at a dot
 //!   (`example.com` no longer matches `badexample.com`), and the most
 //!   precise rule wins (the URL, then the longest domain) instead of the
@@ -133,6 +133,9 @@ pub struct MediaFilter {
     /// Lines for the local chat (FSCommon::report_to_nearby_chat), drained
     /// by the app.
     pub messages: Vec<String>,
+    /// Radio intent survives refusals. Suppress the same refusal on successive
+    /// frames, as LLViewerParcelMedia::filterAudioUrl does with mAudioLastURL.
+    denied_music: Option<String>,
 }
 
 /// Schemes whose URLs name no site: asked about under the scheme's name,
@@ -347,14 +350,24 @@ impl MediaFilter {
     /// to load: the list, then this session's answers, else the question.
     /// A refusal is told in the local chat.
     pub fn check(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, true)
+        let url = url.trim();
+        let notify = source != Source::Music || self.denied_music.as_deref() != Some(url);
+        let verdict = self.decide(url, source, true, notify);
+        if source == Source::Music {
+            match verdict {
+                Verdict::Deny if notify => self.denied_music = Some(url.to_owned()),
+                Verdict::Deny => {}
+                _ => self.denied_music = None,
+            }
+        }
+        verdict
     }
 
     /// The same for a media the resident trusts without being asked (on
     /// worn items they made): a site the list or this session refused stays
     /// refused, any other loads, and no question is queued.
     pub fn check_trusted(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, false)
+        self.decide(url, source, false, true)
     }
 
     /// A URL whose scheme never loads (`REFUSED`): told in the local chat,
@@ -372,20 +385,22 @@ impl MediaFilter {
         true
     }
 
-    fn decide(&mut self, url: &str, source: Source, ask: bool) -> Verdict {
+    fn decide(&mut self, url: &str, source: Source, ask: bool, notify: bool) -> Verdict {
         let url = url.trim();
         let host = match target(url) {
             Target::Site(host) => host,
             Target::Blank => return Verdict::Allow,
             Target::Refused(_) => {
-                self.refuse_scheme(url, source);
+                if notify {
+                    self.refuse_scheme(url, source);
+                }
                 return Verdict::Deny;
             }
         };
         match rule_for(&self.rules, url, &host).or_else(|| self.session.get(url).copied()) {
             Some(Action::Allow) => Verdict::Allow,
             Some(Action::Deny) => {
-                if !self.just_denied.remove(url) {
+                if !self.just_denied.remove(url) && notify {
                     log::info!("media filter: {host} blocked");
                     self.messages.push(match source {
                         Source::Music => aurora_i18n::tr!("media-filter-music-blocked", domain = host),
@@ -495,6 +510,46 @@ impl MediaFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parcel_music_refusals_are_quiet_but_rule_changes_and_consent_are_rechecked() {
+        let mut filter = MediaFilter::default();
+        let station = "https://radio.example/live";
+        assert_eq!(filter.check(station, Source::Music), Verdict::Ask);
+        assert_eq!(filter.questions.len(), 1);
+        filter.answer(station, false, Remember::Once);
+        let messages = filter.messages.len();
+        for _ in 0..8 {
+            assert_eq!(filter.check(station, Source::Music), Verdict::Deny);
+        }
+        assert_eq!(filter.messages.len(), messages);
+        filter.apply(Edit::Set("radio.example".into(), Action::Allow));
+        assert_eq!(filter.check(station, Source::Music), Verdict::Allow);
+        filter.apply(Edit::Set("radio.example".into(), Action::Deny));
+        for _ in 0..8 {
+            assert_eq!(filter.check(station, Source::Music), Verdict::Deny);
+        }
+        assert_eq!(filter.messages.len(), messages + 1, "a newly blocked station is still reported");
+        filter.apply(Edit::Remove("radio.example".into()));
+        assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Ask);
+        assert_eq!(filter.questions.len(), 1);
+        filter.answer("https://new.example/live", true, Remember::Once);
+        assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Allow);
+    }
+
+    #[test]
+    fn parcel_music_refused_by_the_list_is_told_once_per_url() {
+        // LLViewerParcelMedia::filterAudioUrl reports MediaFilterAudioContentBlocked
+        // for each blocked station, not on every frame's recheck.
+        let mut f = MediaFilter::default();
+        f.apply(Edit::Set("blocked.example".into(), Action::Deny));
+        for _ in 0..10 {
+            assert_eq!(f.check("https://blocked.example/a", Source::Music), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.check("https://blocked.example/b", Source::Music), Verdict::Deny);
+        assert_eq!(f.messages.len(), 2, "a new denied music URL is told again");
+    }
 
     #[test]
     fn domain_is_the_host_alone() {

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><contributor><authoring_tool>Aurora alpha-sort test fixture</authoring_tool></contributor>
+    <created>2026-11-09T00:00:00Z</created><modified>2026-11-09T00:00:00Z</modified>
+    <unit name="meter" meter="1"/><up_axis>Z_UP</up_axis></asset>
+  <library_images><image id="image-0"><init_from>0-front-red.png</init_from></image><image id="image-1"><init_from>1-middle-green.png</init_from></image><image id="image-2"><init_from>2-back-blue.png</init_from></image></library_images>
+  <library_effects><effect id="effect-0"><profile_COMMON>
+      <newparam sid="surface-0"><surface type="2D"><init_from>image-0</init_from></surface></newparam>
+      <newparam sid="sampler-0"><sampler2D><source>surface-0</source></sampler2D></newparam>
+      <technique sid="common"><lambert><diffuse><texture texture="sampler-0" texcoord="UVMap"/></diffuse></lambert></technique>
+    </profile_COMMON></effect><effect id="effect-1"><profile_COMMON>
+      <newparam sid="surface-1"><surface type="2D"><init_from>image-1</init_from></surface></newparam>
+      <newparam sid="sampler-1"><sampler2D><source>surface-1</source></sampler2D></newparam>
+      <technique sid="common"><lambert><diffuse><texture texture="sampler-1" texcoord="UVMap"/></diffuse></lambert></technique>
+    </profile_COMMON></effect><effect id="effect-2"><profile_COMMON>
+      <newparam sid="surface-2"><surface type="2D"><init_from>image-2</init_from></surface></newparam>
+      <newparam sid="sampler-2"><sampler2D><source>surface-2</source></sampler2D></newparam>
+      <technique sid="common"><lambert><diffuse><texture texture="sampler-2" texcoord="UVMap"/></diffuse></lambert></technique>
+    </profile_COMMON></effect></library_effects>
+  <library_materials><material id="material-0" name="0-front-red"><instance_effect url="#effect-0"/></material><material id="material-1" name="1-middle-green"><instance_effect url="#effect-1"/></material><material id="material-2" name="2-back-blue"><instance_effect url="#effect-2"/></material></library_materials>
+  <library_geometries><geometry id="alpha-sort" name="Alpha Sort - one unrigged mesh, three faces"><mesh>
+    <source id="positions"><float_array id="positions-array" count="36">-1 -0.3 -1 1 -0.3 -1 1 -0.3 1 -1 -0.3 1 -1 0 -1 1 0 -1 1 0 1 -1 0 1 -1 0.3 -1 1 0.3 -1 1 0.3 1 -1 0.3 1</float_array>
+      <technique_common><accessor source="#positions-array" count="12" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+    <source id="normals"><float_array id="normals-array" count="6">0 -1 0 0 1 0</float_array>
+      <technique_common><accessor source="#normals-array" count="2" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+    <source id="uv"><float_array id="uv-array" count="8">0 0 1 0 1 1 0 1</float_array>
+      <technique_common><accessor source="#uv-array" count="4" stride="2"><param name="S" type="float"/><param name="T" type="float"/></accessor></technique_common></source>
+    <vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices><triangles count="4" material="material-0">
+          <input semantic="VERTEX" source="#vertices" offset="0"/>
+          <input semantic="NORMAL" source="#normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#uv" offset="2" set="0"/><p>0 0 0 1 0 1 2 0 2 0 0 0 2 0 2 3 0 3 0 1 0 2 1 2 1 1 1 0 1 0 3 1 3 2 1 2</p></triangles><triangles count="4" material="material-1">
+          <input semantic="VERTEX" source="#vertices" offset="0"/>
+          <input semantic="NORMAL" source="#normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#uv" offset="2" set="0"/><p>4 0 0 5 0 1 6 0 2 4 0 0 6 0 2 7 0 3 4 1 0 6 1 2 5 1 1 4 1 0 7 1 3 6 1 2</p></triangles><triangles count="4" material="material-2">
+          <input semantic="VERTEX" source="#vertices" offset="0"/>
+          <input semantic="NORMAL" source="#normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#uv" offset="2" set="0"/><p>8 0 0 9 0 1 10 0 2 8 0 0 10 0 2 11 0 3 8 1 0 10 1 2 9 1 1 8 1 0 11 1 3 10 1 2</p></triangles>
+  </mesh></geometry></library_geometries>
+  <library_visual_scenes><visual_scene id="Scene"><node id="AlphaSort"><instance_geometry url="#alpha-sort"><bind_material><technique_common>
+    <instance_material symbol="material-0" target="#material-0"><bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/></instance_material><instance_material symbol="material-1" target="#material-1"><bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/></instance_material><instance_material symbol="material-2" target="#material-2"><bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/></instance_material>
+  </technique_common></bind_material></instance_geometry></node></visual_scene></library_visual_scenes>
+  <scene><instance_visual_scene url="#Scene"/></scene>
+</COLLADA>

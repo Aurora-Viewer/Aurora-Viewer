@@ -56,10 +56,39 @@ pub fn events() -> NetEvent {
     }
 }
 
+/// `guides`: a light whose radius box stands out from its small prim.
+pub fn guide_events() -> NetEvent {
+    let pos = Vec3::new(134.0, 124.0, floor_at(134.0, 124.0) + 2.0);
+    let light = prim(
+        68300,
+        pos,
+        Quat::from_rotation_z(0.6),
+        Vec3::new(0.6, 0.3, 0.3),
+        Default::default(),
+        te([1.0, 0.9, 0.6, 1.0], 0, true, 0.0),
+        aurora_prim::ExtraParams {
+            light: Some(aurora_prim::LightParams {
+                color: [1.0, 0.9, 0.6, 1.0],
+                radius: 3.0,
+                cutoff: 0.0,
+                falloff: 0.5,
+            }),
+            ..Default::default()
+        },
+        "",
+    );
+    NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![light],
+    }
+}
+
 pub fn view(mode: &str) -> (Vec3, Vec3) {
     let ground = floor_at(140.0, 127.0);
     if mode == "parcels" {
         (Vec3::new(160.0, 100.0, ground + 45.0), Vec3::new(128.0, 128.0, ground))
+    } else if mode == "guides" {
+        (Vec3::new(104.0, 96.0, ground + 30.0), Vec3::new(140.0, 132.0, ground))
     } else {
         (Vec3::new(122.0, 119.0, ground + 10.0), Vec3::new(140.0, 127.0, ground + 1.0))
     }

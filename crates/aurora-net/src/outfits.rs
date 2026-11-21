@@ -29,21 +29,66 @@ pub struct OutfitMutation {
     pub cof: Option<(Uuid, Vec<OutfitLink>)>,
 }
 
+/// The links of AISAPI::CreateInventory, as link_inventory_array builds them
+/// (indra/newview/llviewerinventory.cpp): with the original's inventory type.
 pub fn links_body(links: &[OutfitLink]) -> Llsd {
     Llsd::Array(
         links
             .iter()
             .map(|l| {
-                llsd_map! {
-                    "linked_id" => l.target,
-                    "name" => l.name.clone(),
-                    "desc" => l.desc.clone(),
-                    "type" => if l.folder { 25 } else { 24 },
-                    "inv_type" => l.inv_type,
+                let mut link = slam_link(l);
+                if let Llsd::Map(fields) = &mut link {
+                    fields.insert("inv_type".into(), Llsd::from(l.inv_type));
                 }
+                link
             })
             .collect(),
     )
+}
+
+/// The contents of AISAPI::SlamFolder, as LLAppearanceMgr::updateCOF and
+/// linkAll build them (indra/newview/llappearancemgr.cpp): name, desc,
+/// linked_id and type, no inventory type.
+pub fn slam_body(links: &[OutfitLink]) -> Llsd {
+    Llsd::Array(links.iter().map(slam_link).collect())
+}
+
+fn slam_link(l: &OutfitLink) -> Llsd {
+    llsd_map! {
+        "linked_id" => l.target,
+        "name" => link_name(&l.name),
+        "desc" => link_desc(&l.desc),
+        "type" => if l.folder { 25 } else { 24 },
+    }
+}
+
+/// A link's name as the Legacy Viewer holds it: LLInventoryItem::fromLLSD
+/// (indra/llinventory/llinventory.cpp) turns every byte outside printable
+/// ASCII (replaceNonstandardASCII, which reads the bytes as signed) and every
+/// `|` into a space, so the names it sends back in links are plain ASCII.
+/// Kept within DB_INV_ITEM_NAME_STR_LEN (lldbstrings.h), as
+/// correctInventoryName does.
+pub fn link_name(name: &str) -> String {
+    ascii_field(name, true, 63)
+}
+
+/// A link's description, the same way (fromLLSD keeps a `|` in a
+/// description), within DB_INV_ITEM_DESC_STR_LEN.
+pub fn link_desc(desc: &str) -> String {
+    ascii_field(desc, false, 127)
+}
+
+fn ascii_field(text: &str, no_pipe: bool, max: usize) -> String {
+    text.bytes()
+        .map(|b| {
+            if ((b as i8) < 32 && b != b'\n') || (no_pipe && b == b'|') {
+                ' '
+            } else {
+                char::from(b)
+            }
+        })
+        .take(max)
+        .collect()
 }
 
 /// Errors expose only operation/status, never a capability URL or response body.
@@ -77,10 +122,10 @@ pub async fn mutate(
         }
     }
     let url = format!("{cap}/category/{}/links?tid={}", change.folder, Uuid::new_v4());
-    request(http, &url, &links_body(&change.links), true).await?;
+    request(http, &url, &slam_body(&change.links), true).await?;
     if let Some((cof, links)) = &change.cof {
         let url = format!("{cap}/category/{cof}/links?tid={}", Uuid::new_v4());
-        request(http, &url, &links_body(links), true).await?;
+        request(http, &url, &slam_body(links), true).await?;
         refresh.push(*cof);
     }
     let body = crate::inventory::fetch_request_body(&refresh, owner);
@@ -202,9 +247,22 @@ fn is_link(asset_type: i32) -> bool {
     matches!(asset_type, 24 | 25)
 }
 
+/// A refusal goes to the log with the reply's error fields, as the inventory
+/// operations do (`operations::ais`): the user sees only the status, and a
+/// refused outfit change was otherwise not in the log at all.
 async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, String> {
     let req = if put { http.put(url) } else { http.post(url) };
-    send(req, body).await
+    send_detailed(req, body).await.map_err(|refusal| {
+        log::warn!(
+            "outfit {} ({} entries) failed: HTTP {}, error_code={:?}, error_description={:?}",
+            if put { "folder slam" } else { "folder creation" },
+            body.as_array().len(),
+            refusal.status.map_or_else(|| "no reply".into(), |s| s.to_string()),
+            refusal.code,
+            refusal.description,
+        );
+        refusal.message
+    })
 }
 
 /// AISAPI::UpdateItem and favorite_send (llinventoryfunctions.cpp).
@@ -234,31 +292,213 @@ pub async fn set_favorite(
 }
 
 pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
+    send_detailed(req, body).await.map_err(|refusal| refusal.message)
+}
+
+/// A failed AIS request. AISAPI::InvokeAISCommandCoro logs the refused
+/// reply; here only its `error_code` / `error_description` are kept, for the
+/// log alone: the message shown to the user never carries the server's text.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Refusal {
+    pub message: String,
+    pub status: Option<u16>,
+    pub code: String,
+    pub description: String,
+}
+
+impl Refusal {
+    fn new(message: String) -> Self {
+        Self {
+            message,
+            ..Default::default()
+        }
+    }
+}
+
+/// A reply field fit for the log: no URL path or query (a capability), no
+/// control character, bounded.
+fn logged(value: &Llsd) -> String {
+    let text = crate::fetch::redact_urls(&value.to_string_value());
+    let mut safe = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("://") {
+            // Absolute URLs already have their paths removed above.
+            safe.push_str("://");
+            rest = after;
+        } else if rest.starts_with('/') {
+            // A server can echo a capability as a path or a scheme-relative
+            // URL. Hide any such path, not just those under /CAPS/.
+            let end = rest
+                .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+                .unwrap_or(rest.len());
+            safe.push('…');
+            rest = &rest[end..];
+        } else {
+            let c = rest.chars().next().expect("nonempty remainder");
+            safe.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    safe.chars().map(|c| if c.is_control() { ' ' } else { c }).take(256).collect()
+}
+
+/// Error text is optional. Cap the decoded body before buffering or XML
+/// parsing, including replies whose size is unknown (chunked or compressed).
+async fn refusal_reply(mut response: reqwest::Response) -> Option<Llsd> {
+    const LIMIT: usize = 64 * 1024;
+    if response.content_length().is_some_and(|len| len > LIMIT as u64) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > LIMIT - bytes.len() {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    aurora_llsd::from_xml(&bytes).ok()
+}
+
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): every AIS command
+/// waits up to three minutes for its reply. A write the server is still
+/// carrying out when the viewer gives up is done anyway, and the viewer then
+/// reads a folder the server is busy with.
+const AIS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(aurora_llsd::to_xml(body))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(AIS_TIMEOUT)
         .send()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").to_owned())?;
-    if !response.status().is_success() {
-        return Err(aurora_i18n::tr!(
-            "outfits-the-server-rejected-the-operation-http",
-            value0 = format!("{}", response.status().as_u16())
-        ));
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let reply = refusal_reply(response).await.unwrap_or_default();
+        return Err(Refusal {
+            message: aurora_i18n::tr!(
+                "outfits-the-server-rejected-the-operation-http",
+                value0 = format!("{}", status.as_u16())
+            ),
+            status: Some(status.as_u16()),
+            code: logged(&reply["error_code"]),
+            description: logged(&reply["error_description"]),
+        });
     }
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-interrupted-inventory-response").to_owned())?;
-    aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("outfits-unreadable-inventory-response").into())
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-interrupted-inventory-response").into()))?;
+    aurora_llsd::from_xml(&bytes).map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-unreadable-inventory-response").into()))
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn refusal_fields_redact_relative_capabilities() {
+        for value in [
+            "Rejected /CAPS/private-token/item/x?secret=1",
+            "Rejected //sim.example/CAPS/private-token/item/x?secret=1",
+            "Rejected '/caps/private-token/item/x?secret=1' again",
+            "Rejected /inventory/private-token?secret=1",
+            "Rejected (/CAPS/private-token/item/x?secret=1)",
+        ] {
+            let safe = logged(&Llsd::String(value.into()));
+            assert!(safe.starts_with("Rejected "), "{safe}");
+            assert!(!safe.contains("private-token") && !safe.contains("secret=1"), "{safe}");
+        }
+        assert_eq!(
+            logged(&Llsd::String("Invalid field desc\ntry again".into())),
+            "Invalid field desc try again"
+        );
+        assert_eq!(logged(&Llsd::String("é".repeat(300))).chars().count(), 256);
+    }
+
+    // Exercise the real HTTP reader with a length, EOF framing and chunked
+    // framing. Oversized replies must discard even valid diagnostic fields.
+    async fn refusal_from_body(body: Vec<u8>, framing: &str) -> Refusal {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let address = listener.local_addr().expect("local address");
+        let header = match framing {
+            "length" => format!("Content-Length: {}\r\n", body.len()),
+            "chunked" => "Transfer-Encoding: chunked\r\n".into(),
+            _ => String::new(),
+        };
+        let chunked = framing == "chunked";
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let read = socket.read(&mut buffer).await.expect("read request");
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(format!("HTTP/1.1 400 Bad Request\r\n{header}Connection: close\r\n\r\n").as_bytes())
+                .await
+                .expect("header");
+            for part in body.chunks(4096) {
+                if chunked && socket.write_all(format!("{:x}\r\n", part.len()).as_bytes()).await.is_err() {
+                    return;
+                }
+                if socket.write_all(part).await.is_err() {
+                    return; // The bounded reader can close before the body ends.
+                }
+                if chunked && socket.write_all(b"\r\n").await.is_err() {
+                    return;
+                }
+            }
+            if chunked {
+                let _ = socket.write_all(b"0\r\n\r\n").await;
+            }
+            crate::test_http::finish(socket);
+        });
+        let refusal = send_detailed(
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("client")
+                .get(format!("http://{address}")),
+            &Llsd::new_map(),
+        )
+        .await
+        .expect_err("HTTP 400");
+        task.await.expect("server");
+        refusal
+    }
+
+    #[tokio::test]
+    async fn refusal_body_is_bounded_with_and_without_a_content_length() {
+        for framing in ["length", "eof", "chunked"] {
+            for size in [64 * 1024, 64 * 1024 + 1, 2 * 1024 * 1024] {
+                let mut body = aurora_llsd::to_xml(&llsd_map! {
+                    "error_code" => 400, "error_description" => "Invalid field desc",
+                });
+                // Trailing XML whitespace leaves a valid document, including
+                // valid fields before the limit: no partial parse is allowed.
+                body.resize(size, b' ');
+                let refusal = refusal_from_body(body, framing).await;
+                assert_eq!(refusal.status, Some(400));
+                assert!(refusal.message.contains("400") && !refusal.message.contains("Invalid"));
+                if size == 64 * 1024 {
+                    assert_eq!(refusal.code, "400", "{framing}");
+                    assert_eq!(refusal.description, "Invalid field desc", "{framing}");
+                } else {
+                    assert!(refusal.code.is_empty() && refusal.description.is_empty(), "{framing}: {refusal:?}");
+                }
+            }
+        }
+    }
 
     fn folder_reply(folder: Uuid, children: &[Uuid], links: &[Uuid]) -> Llsd {
         let categories = children
@@ -324,7 +564,7 @@ pub(crate) mod tests {
         .await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -372,7 +612,7 @@ pub(crate) mod tests {
         };
         let announced = order.clone();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             Some(&format!("{url}/create")),
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -407,7 +647,7 @@ pub(crate) mod tests {
         let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -528,15 +768,27 @@ pub(crate) mod tests {
                 ],
             )),
         };
-        let result = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::from_u128(5), change)
-            .await
-            .expect("saved outfit");
+        let result = mutate(
+            &crate::test_http_client(),
+            &url,
+            &format!("{url}/fetch"),
+            Uuid::from_u128(5),
+            change,
+        )
+        .await
+        .expect("saved outfit");
         assert_eq!(result[0].folder_id, parent, "parent must be applied before its new child");
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with(&format!("POST /category/{parent}?tid=")));
         assert!(requests[1].0.starts_with(&format!("PUT /category/{assigned}/links?tid=")));
         assert!(matches!(requests[1].1, Llsd::Array(_)), "AIS SlamFolder accepts a plain array");
         assert_eq!(requests[2].1.at(1)["linked_id"].as_uuid(), assigned);
+        assert!(
+            requests[1..3]
+                .iter()
+                .all(|(_, body)| body.as_array().iter().all(|l| l["inv_type"] == Llsd::Undef)),
+            "SlamFolder carries no inventory type (LLAppearanceMgr::updateCOF)"
+        );
         assert!(requests[3].0.starts_with("POST /fetch "));
     }
 
@@ -549,7 +801,7 @@ pub(crate) mod tests {
             links: Vec::new(),
             cof: None,
         };
-        let error = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
+        let error = mutate(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
             .await
             .expect_err("refused");
         assert!(error.contains("403"));
@@ -581,6 +833,54 @@ pub(crate) mod tests {
         assert_eq!(body.at(0)["desc"].as_str(), "@1201");
         assert_eq!(body.at(0)["type"].as_i32(), 24);
         assert_eq!(body.at(1)["type"].as_i32(), 25);
+        assert_eq!(
+            body.at(0)["inv_type"].as_i32(),
+            18,
+            "link_inventory_array sends the original's type"
+        );
+        let slam = slam_body(&links);
+        assert_eq!(slam.at(0)["linked_id"].as_uuid(), links[0].target);
+        assert_eq!(slam.at(0)["desc"].as_str(), "@1201");
+        assert_eq!(slam.at(1)["type"].as_i32(), 25);
+        for link in slam.as_array() {
+            let keys: Vec<_> = link.as_map().into_iter().flat_map(|m| m.keys().map(String::as_str)).collect();
+            assert_eq!(keys, ["desc", "linked_id", "name", "type"], "updateCOF's four fields only");
+        }
+    }
+
+    /// #4225: wearing rewrites the whole Current Outfit, so one link the
+    /// server refuses stops every wear. The Legacy Viewer's links carry the
+    /// names its inventory holds, plain ASCII (LLInventoryItem::fromLLSD).
+    #[test]
+    fn link_names_and_descriptions_are_plain_ascii_like_the_legacy_viewer() {
+        // é is two bytes, ✨ three: each byte becomes a space, as
+        // replaceNonstandardASCII reads them signed
+        assert_eq!(link_name("Café ✨ | Top"), format!("Caf{}Top", " ".repeat(9)));
+        assert_eq!(link_name("Tab\there\nline"), "Tab here\nline");
+        assert_eq!(link_name(&"a".repeat(80)).len(), 63);
+        assert_eq!(link_name(&"é".repeat(40)), " ".repeat(63));
+        assert_eq!(link_name(""), "");
+        assert_eq!(link_desc("@1201"), "@1201");
+        assert_eq!(
+            link_desc("RLV|locked ♥"),
+            format!("RLV|locked{}", " ".repeat(4)),
+            "fromLLSD keeps a pipe in a description"
+        );
+        assert_eq!(link_desc(&"d".repeat(200)).len(), 127);
+        let link = OutfitLink {
+            target: Uuid::from_u128(7),
+            name: "Robe « été »".into(),
+            desc: "♥".into(),
+            folder: false,
+            inv_type: 18,
+        };
+        for body in [links_body(std::slice::from_ref(&link)), slam_body(std::slice::from_ref(&link))] {
+            let name = body.at(0)["name"].to_string_value();
+            let desc = body.at(0)["desc"].to_string_value();
+            assert!(name.is_ascii() && desc.is_ascii(), "{name:?} {desc:?}");
+            assert_eq!(name.len(), link.name.len(), "one space per byte, as the Legacy Viewer");
+            assert_eq!(body.at(0)["linked_id"].as_uuid(), link.target);
+        }
     }
 
     #[tokio::test]
@@ -600,7 +900,7 @@ pub(crate) mod tests {
                 ),
             ])
             .await;
-            let it = set_favorite(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
+            let it = set_favorite(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
                 .await
                 .expect("favorite");
             assert_eq!(it.favorite, favorite);

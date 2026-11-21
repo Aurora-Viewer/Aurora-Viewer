@@ -1,7 +1,7 @@
 //! Friends, name cache and instant-message sessions.
 
 use super::ChatLine;
-use super::names::AvatarNames;
+use super::names::{AvatarNames, NameScope};
 use super::transcripts::{LineClock, SessionLog};
 use aurora_llsd::Llsd;
 use std::collections::{HashMap, VecDeque};
@@ -63,6 +63,18 @@ pub struct Social {
     pub ims: Vec<ImSession>,
     /// IM session to focus in the conversations window.
     pub focus_im: Option<Uuid>,
+    /// A message kept while we were offline arrived, for
+    /// FSOpenIMContainerOnOfflineMessage (LLIMMgr::addMessage): the app
+    /// takes it and opens the Conversations window with the option.
+    pub offline_ims: bool,
+    /// The session of `focus_im` takes the keyboard too, not only the view:
+    /// a conversation the user opened or started, as the Legacy Viewer's
+    /// FSFloaterIM::show → setFocus(true) → focusFirstItem. A call leaves it
+    /// false, so the keyboard stays where it was.
+    pub focus_im_to_type: bool,
+    /// Server-assigned IDs of conferences we started. The UI keeps the same
+    /// window and draft when its temporary ID is replaced.
+    pub conference_rekeys: Vec<(Uuid, Uuid)>,
     /// Residents whose last word was an automatic response
     /// (IM_DO_NOT_DISTURB_AUTO_RESPONSE), until their next ordinary IM: a
     /// hint of do not disturb for their status dot (`ui/presence.rs`).
@@ -109,10 +121,23 @@ impl Social {
         self.avatar_names.want(&id);
     }
 
-    /// Complete name ("Jane Doe (janedoe)"), else the legacy name.
+    /// A teleport can be requested from anyone but a friend known to be
+    /// offline (LLAvatarActions::canRequestTeleport,
+    /// indra/newview/llavataractions.cpp).
+    pub fn can_request_teleport(&self, id: &Uuid) -> bool {
+        self.friends.iter().find(|f| f.id == *id).is_none_or(|f| f.online)
+    }
+
+    /// Complete name ("Jane Doe (janedoe)"), else the legacy name, of
+    /// someone met in the world (`NameScope::World`).
     pub fn name_of(&self, id: &Uuid) -> String {
+        self.name_in(NameScope::World, id)
+    }
+
+    /// `name_of` for a name shown in `scope`.
+    pub fn name_in(&self, scope: NameScope, id: &Uuid) -> String {
         self.avatar_names
-            .complete(id)
+            .complete_in(scope, id)
             .or_else(|| self.names.get(id).cloned())
             .unwrap_or_else(|| "…".into())
     }
@@ -120,9 +145,14 @@ impl Social {
     /// The display name alone (LLAvatarName::getDisplayName), for the rows
     /// that show the username elsewhere or not at all.
     pub fn display_name_of(&self, id: &Uuid) -> String {
+        self.display_name_in(NameScope::World, id)
+    }
+
+    /// `display_name_of` for a name shown in `scope`.
+    pub fn display_name_in(&self, scope: NameScope, id: &Uuid) -> String {
         let names = &self.avatar_names;
         names
-            .get(id)
+            .get_in(scope, id)
             .map(|n| n.display(&names.options))
             .or_else(|| self.names.get(id).cloned())
             .unwrap_or_else(|| "…".into())
@@ -148,16 +178,9 @@ impl Social {
             let known = self.avatar_names.get(&id).is_some() || self.names.contains_key(&id);
             if known || since.elapsed().as_secs() >= 10 {
                 self.online_notices.remove(i);
-                let n = self.name_of(&id);
-                out.push((
-                    id,
-                    if online {
-                        aurora_i18n::tr!("world-social-is-online", n = n.to_string())
-                    } else {
-                        aurora_i18n::tr!("world-social-is-offline", n = n.to_string())
-                    },
-                    online,
-                ));
+                // the notice names the friend whatever `@shownames`
+                // (LLFloaterIMNearbyChatHandler leaves ONLINE_STATUS alone)
+                out.push((id, online_text(&self.name_in(NameScope::Roster, &id), online), online));
             } else {
                 i += 1;
             }
@@ -239,5 +262,61 @@ impl Social {
             .filter(|s| s.unread > 0)
             .max_by_key(|s| s.lines.back().map(|l| l.time))
             .map(|s| s.other)
+    }
+}
+
+/// A friend's online / offline notice, "`name` is online." (FriendOnlineOffline,
+/// on_avatar_name_cache_notify in llcallingcard.cpp).
+fn online_text(name: &str, online: bool) -> String {
+    if online {
+        aurora_i18n::tr!("world-social-is-online", n = name.to_string())
+    } else {
+        aurora_i18n::tr!("world-social-is-offline", n = name.to_string())
+    }
+}
+
+/// The same notice as a line of nearby chat (OnlineOfflinetoNearbyChat): the
+/// name is a link to the resident, as on the radar's lines. The Legacy Viewer
+/// writes it as a CHAT_TYPE_RADAR line from the friend
+/// (on_avatar_name_cache_notify), whose name the chat history makes clickable
+/// (FIRE-1439, FSChatHistoryHeader in fschathistory.cpp). The link ends after
+/// its verb, so the text that follows it stays text in every language.
+pub fn online_chat_line(id: Uuid, online: bool) -> String {
+    online_text(&format!("secondlife:///app/agent/{id}/about"), online)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_nearby_chat_line_of_a_friend_online_links_their_name() {
+        let id = Uuid::from_u128(0x2a);
+        let link = format!("secondlife:///app/agent/{id}/about");
+        for online in [true, false] {
+            let line = online_chat_line(id, online);
+            assert!(line.starts_with(&link), "{line}");
+            // the same words as the toast's, the name aside
+            assert_eq!(line.replacen(&link, "Jane Doe", 1), online_text("Jane Doe", online));
+        }
+    }
+
+    /// Only a friend known to be offline refuses: a resident who is no
+    /// friend has no known state, as in LLAvatarActions::canRequestTeleport.
+    #[test]
+    fn a_teleport_can_be_requested_from_all_but_an_offline_friend() {
+        let friend = |n, online| Friend {
+            id: Uuid::from_u128(n),
+            online,
+            rights_given: 0,
+            rights_has: 0,
+        };
+        let social = Social {
+            friends: vec![friend(1, true), friend(2, false)],
+            ..Social::default()
+        };
+        assert!(social.can_request_teleport(&Uuid::from_u128(1)));
+        assert!(!social.can_request_teleport(&Uuid::from_u128(2)));
+        assert!(social.can_request_teleport(&Uuid::from_u128(3)));
     }
 }
