@@ -226,6 +226,75 @@ fn locked_folders_grey_delete_and_cut() {
     assert!(removable(&l.world, mesh) && removable(&l.world, rlv), "cleared");
 }
 
+/// The inventory's Delete moves to the Trash by the remove rule
+/// (LLFolderBridge::removeItem: isItemRemovable, then removeCategory), a drop
+/// on the Trash by the move rule (dragCategoryIntoFolder: canMoveFolder).
+/// Under the unshared twins a folder of #RLV is deleted but not dropped on
+/// the Trash; under @sharedwear and @sharedunwear neither.
+#[test]
+fn delete_follows_the_remove_rule_and_a_drop_the_move_rule() {
+    let mut l = linked();
+    let (spare, collar, issuer) = (l.spare, l.collar, l.issuer);
+    let root = l.world.inventory.root;
+    let trash = folder(&mut l.world, 0xF0F1, root, "Trash", 14);
+    let outside = folder(&mut l.world, 0xF0F0, root, "Boxes", -1);
+    let nil = Uuid::nil();
+    let binned = |id: Uuid, folder: bool| Mutation {
+        operations: vec![Operation::Patch {
+            id,
+            folder,
+            body: llsd_map! { "parent_id" => trash },
+        }],
+        ..Default::default()
+    };
+    for lock in ["@unsharedwear", "@unsharedunwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(
+            l.world.rlva_inventory_delete_allowed(&binned(spare, true), nil),
+            "{lock}: Delete of a #RLV folder"
+        );
+        assert!(
+            !l.world.rlva_inventory_mutation_allowed(&binned(spare, true), nil),
+            "{lock}: dropped on the Trash"
+        );
+        assert!(
+            l.world.rlva_inventory_delete_allowed(&binned(collar, false), nil),
+            "{lock}: Delete of a #RLV item"
+        );
+        assert!(
+            l.world.rlva_inventory_delete_allowed(&binned(outside, true), nil),
+            "{lock}: outside #RLV"
+        );
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+    for lock in ["@sharedwear", "@sharedunwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(
+            !l.world.rlva_inventory_delete_allowed(&binned(spare, true), nil),
+            "{lock}: Delete of a #RLV folder"
+        );
+        assert!(
+            !l.world.rlva_inventory_delete_allowed(&binned(collar, false), nil),
+            "{lock}: Delete of a #RLV item"
+        );
+        assert!(
+            l.world.rlva_inventory_delete_allowed(&binned(outside, true), nil),
+            "{lock}: outside #RLV"
+        );
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+    // the Delete's request only: the same move otherwise is a drop
+    let request = Uuid::from_u128(0xE0E1);
+    say(&mut l.world, issuer, "@unsharedwear=n");
+    let mut command = aurora_net::NetCommand::EditInventory {
+        request,
+        change: binned(spare, true),
+    };
+    assert_eq!(l.world.rlva_send_boundary(&mut command.clone(), nil), super::Boundary::Refused);
+    l.world.rlva.deletes.insert(request);
+    assert_eq!(l.world.rlva_send_boundary(&mut command, nil), super::Boundary::Send);
+}
+
 /// A refused inventory change is answered as a failed one, with its own
 /// request: the inventory, which takes one change at a time, lets it go
 /// instead of ignoring every later change until the next login.

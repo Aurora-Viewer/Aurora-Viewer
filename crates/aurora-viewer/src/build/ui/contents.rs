@@ -348,7 +348,7 @@ fn item_row(
         );
         let script = item.asset_type == AT_LSL_TEXT;
         let preview =
-            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_allowed(world, idx, &it));
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_offered(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();

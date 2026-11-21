@@ -343,6 +343,7 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        let delete = selection.is_some();
         if let Some(selection) = selection {
             self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
@@ -356,7 +357,12 @@ impl App {
             }
         });
         pane.message.clear();
+        // RLVa judges a Delete's moves to the Trash as removals
+        if delete {
+            self.world.rlva.deletes.insert(request);
+        }
         self.send(NetCommand::EditInventory { request, change });
+        self.world.rlva.deletes.remove(&request);
     }
 
     /// An inventory change, after the listings' questions; `drag` when it

@@ -247,7 +247,7 @@ pub(super) fn show(
                                 && world
                                     .objects
                                     .index_of_uuid(&object)
-                                    .is_some_and(|idx| build.task_preview_allowed(world, idx, item));
+                                    .is_some_and(|idx| build.task_preview_offered(world, idx, item));
                             let document = || match item.asset_type {
                                 10 => Some(ContentsAction::Script(object, item.id)),
                                 7 => Some(ContentsAction::Notecard(object, item.id)),

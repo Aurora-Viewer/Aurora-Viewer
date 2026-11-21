@@ -593,6 +593,9 @@ pub struct Rlva {
     pub preferences: preferences::Preferences,
     pub rename: rename::RenameOnWear,
     pub offers: offers::Offers,
+    /// The inventory's Delete being sent: its moves to the Trash are
+    /// removals, judged by the remove rule (`rlva_inventory_delete_allowed`).
+    pub deletes: std::collections::HashSet<Uuid>,
     pub controllers: controllers::Controllers,
     pub relative: relative::RelativeWear,
     pub version: version::Version,
