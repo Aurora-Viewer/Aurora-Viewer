@@ -886,6 +886,11 @@ impl App {
 
     pub(super) fn inventory_preview(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
         if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
+            // saved or gone since: the pane's wait for this text ends
+            let key = (item, asset, true);
+            if self.inventory_ui.pane_texts.get(&key) == Some(&crate::ui::inventory::PaneText::Loading) {
+                std::sync::Arc::make_mut(&mut self.inventory_ui.pane_texts).remove(&key);
+            }
             return;
         }
         let key = (item, asset, true);

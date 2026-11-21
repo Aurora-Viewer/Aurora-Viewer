@@ -913,7 +913,7 @@ fn small_tile(
         // a folder without a picture borrows one of its items' (a card's
         // picture is smaller than a medium tile's)
         if card && folder.is_some() && thumbnail::tile_picture(inv, id).is_none() {
-            let previews = thumbnail::folder_preview(inv, id, 1);
+            let previews = st.folder_previews.get(inv, id, 1);
             if images_ready(&previews, images) {
                 ui.painter().rect_filled(picture, radius, p.field);
             }

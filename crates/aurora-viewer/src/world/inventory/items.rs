@@ -8,9 +8,12 @@
 //! cannot miss one. A record lent out by `get_mut` is checked again before
 //! the next lookup, since its parent or type may have changed.
 //!
-//! The type also keeps a journal of the records written (`changed_since`),
-//! so that a reader of every record (the explorer's creator names) follows
-//! the changes instead of reading all of them again at each one.
+//! The type also keeps a journal of the ids written (`changed_since`) for
+//! the explorer's creator column, which follows them instead of reading
+//! every record again at each change. It covers the writes through this
+//! type's methods and a retain's change of place, type, creator or owner;
+//! a bulk write (`iter_mut`, `values_mut`, `drain`, `clear`) makes readers
+//! read everything again.
 
 use aurora_net::inventory::InvItem;
 use std::collections::{HashMap, HashSet, VecDeque};

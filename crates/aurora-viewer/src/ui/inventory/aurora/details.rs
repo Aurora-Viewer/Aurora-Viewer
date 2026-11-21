@@ -560,10 +560,12 @@ pub(super) fn pane(
 /// text: arrowing down a folder of notecards fetches only where it stops.
 const PANE_TEXT_SETTLE: f64 = 0.25;
 
-/// Whether the notecard `id` has been the one previewed for
-/// `PANE_TEXT_SETTLE`; until then a repaint is asked for that moment.
-fn settled(ctx: &egui::Context, id: Uuid) -> bool {
-    let key = egui::Id::unique("aurora_preview_settle");
+/// Whether the notecard `id` has been the one this pane previews for
+/// `PANE_TEXT_SETTLE` (each pane its own: a folder window, the other side
+/// of the dual panel); until then a repaint is asked for that moment.
+fn settled(ui: &egui::Ui, id: Uuid) -> bool {
+    let ctx = ui.ctx();
+    let key = ui.scope_id().with("aurora_preview_settle");
     let now = ctx.input(|i| i.time);
     let since = ctx.data_mut(|d| {
         let entry = d.get_temp_mut_or_insert_with(key, || (id, now));
@@ -638,7 +640,7 @@ fn preview(
         7 => {
             let key = crate::ui::inventory::pane_key(inv, original.id, facts.god_level);
             let text = key.and_then(|key| facts.pane_texts.get(&key));
-            if text.is_none() && settled(ui.ctx(), original.id) {
+            if text.is_none() && settled(ui, original.id) {
                 actions.push(InvAction::PaneText(original.id));
             }
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
