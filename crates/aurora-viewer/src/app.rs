@@ -7220,9 +7220,25 @@ impl App {
 
     fn pump_network_events(&mut self, t_ev: Instant) {
         while let Ok((sent, ev)) = self.net.events.try_recv() {
+            let known_candidates: Vec<_> = match &ev {
+                NetEvent::InventoryContents(contents) | NetEvent::InventoryTreeFetched { result: Ok(contents), .. } => {
+                    contents.iter().flat_map(|folder| folder.items.iter().map(|item| item.id)).collect()
+                }
+                _ => Vec::new(),
+            };
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
+            let known: Vec<_> = known_candidates
+                .into_iter()
+                .filter(|id| self.world.inventory.items.contains_key(id))
+                .collect();
+            if !known.is_empty() {
+                self.net.send(NetCommand::InventoryItemsKnown {
+                    items: known,
+                    owner: self.world.agent_id,
+                });
+            }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)

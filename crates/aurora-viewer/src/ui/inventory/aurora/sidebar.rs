@@ -395,7 +395,7 @@ pub(super) fn show(
         for id in super::super::rows::folders(&st.view, inv, base, false, prefs.show_library) {
             st.side.set_open(id, open);
             if open {
-                inv.request(id);
+                inv.retry(id);
             }
         }
         collapsed = !open;
@@ -479,7 +479,7 @@ pub(super) fn show(
                         .get(&row.id)
                         .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
                 {
-                    inv.request(row.id);
+                    inv.retry(row.id);
                 }
             }
         }

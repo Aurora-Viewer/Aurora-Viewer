@@ -53,12 +53,14 @@ pub struct Inventory {
     pub(crate) outgoing: outgoing::Outgoing,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
+    /// Background reads cooling down. Automatic UI requests cannot bypass
+    /// their retry owner; that owner releases them when the retry is due.
+    pub(crate) retrying_folders: HashSet<Uuid>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
     pub held: Option<Vec<Uuid>>,
     /// Bumped whenever folders or items change (cached views rebuild).
     pub generation: u64,
-    /// Link originals the server answered do not exist, or still unreadable
-    /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
+    /// Link originals the server answered do not exist: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
     /// Folders the server refuses even at depth 0: over its per-folder reply
@@ -85,9 +87,8 @@ pub struct Inventory {
     pub(crate) lost_folder_retry_generation: u64,
 }
 
-/// Reads of one item before it counts as a broken link's original. A failed
-/// read proves nothing; the Legacy Viewer treats a link still unresolved once
-/// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
+/// Failed read results before the automatic producer's retry budget ends.
+/// Exhaustion does not establish that the original was deleted.
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
 
 /// The pause before a folder shown open whose read failed is asked for
@@ -244,8 +245,11 @@ impl Inventory {
         self.held.is_some()
     }
 
-    /// Queue a folder fetch if not fetched yet.
+    /// Automatic demand: failures are owned by recovery, not by frame-by-frame UI callers.
     pub fn request(&mut self, id: Uuid) {
+        if self.retrying_folders.contains(&id) || self.too_big.contains(&id) {
+            return;
+        }
         if let Some(held) = &mut self.held {
             if !held.contains(&id) {
                 held.push(id);
@@ -253,10 +257,32 @@ impl Inventory {
             return;
         }
         if let Some(f) = self.folders.get_mut(&id)
-            && matches!(f.state, FetchState::Unknown | FetchState::Failed)
+            && f.state == FetchState::Unknown
         {
             f.state = FetchState::Fetching;
             self.queue.push((id, f.library));
+        }
+    }
+
+    /// An explicit recovery request (e.g. new region capabilities). It may
+    /// re-arm a failed folder, but cannot steal an existing retry owner.
+    pub fn retry(&mut self, id: Uuid) {
+        if self.retrying_folders.contains(&id) || self.too_big.contains(&id) {
+            return;
+        }
+        if let Some(folder) = self.folders.get_mut(&id)
+            && folder.state == FetchState::Failed
+        {
+            folder.state = FetchState::Unknown;
+        }
+        self.request(id);
+    }
+
+    /// A shown folder keeps main's paced retry without bypassing background
+    /// ownership. Other automatic producers still only request unknown folders.
+    pub fn request_shown(&mut self, id: Uuid, now: std::time::Instant) {
+        if self.shown_needs_fetch(id, now) {
+            self.retry(id);
         }
     }
 
@@ -266,6 +292,9 @@ impl Inventory {
     /// (a large link creation still running) or refuses at once was asked
     /// again and again, and stayed "loading" for good.
     pub fn shown_needs_fetch(&self, id: Uuid, now: std::time::Instant) -> bool {
+        if self.retrying_folders.contains(&id) || self.too_big.contains(&id) {
+            return false;
+        }
         match self.folders.get(&id).map(|f| f.state) {
             Some(FetchState::Unknown) => true,
             Some(FetchState::Failed) => self.failed_at.get(&id).is_none_or(|at| now.duration_since(*at) >= SHOWN_RETRY),
@@ -337,6 +366,7 @@ impl Inventory {
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
+            self.retrying_folders.remove(&c.folder_id);
             // A folder that fits again (the resident split it, or a later read
             // succeeded) is no longer over the limit.
             self.too_big.remove(&c.folder_id);
@@ -405,6 +435,9 @@ impl Inventory {
     fn add_items_inner(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
         for mut it in items {
+            self.item_failures.remove(&it.id);
+            self.item_retries.remove(&it.id);
+            self.missing_items.remove(&it.id);
             self.preserve_favorite(&mut it);
             calling_card_target(&mut it);
             if !it.parent.is_nil() && self.repaired_parents.get(&it.id).is_some_and(|parent| *parent != it.parent) {
@@ -547,6 +580,9 @@ impl Inventory {
     pub fn items_missing(&mut self, ids: Vec<Uuid>) {
         self.generation += 1;
         for id in ids {
+            if self.items.contains_key(&id) {
+                continue;
+            }
             self.item_failures.remove(&id);
             self.item_retries.remove(&id);
             self.missing_items.insert(id);
@@ -557,12 +593,17 @@ impl Inventory {
     pub fn items_failed(&mut self, ids: &[Uuid]) {
         self.generation += 1;
         for id in ids {
+            if self.items.contains_key(id) {
+                continue;
+            }
             let attempts = self.item_failures.entry(*id).or_insert(0);
-            *attempts += 1;
+            let previous = *attempts;
+            *attempts = attempts.saturating_add(1).min(ITEM_FETCH_ATTEMPTS);
             if *attempts >= ITEM_FETCH_ATTEMPTS {
-                log::warn!("inventory item {id} still unreadable after {attempts} attempts: treated as a broken link");
+                if previous < ITEM_FETCH_ATTEMPTS {
+                    log::warn!("inventory item {id} remains unavailable after {attempts} failed reads; existence is unconfirmed");
+                }
                 self.item_retries.remove(id);
-                self.missing_items.insert(*id);
             } else {
                 self.item_retries.insert(*id);
             }
@@ -581,7 +622,9 @@ impl Inventory {
     fn failed_at_time(&mut self, folders: &[Uuid], now: std::time::Instant) {
         self.generation += 1;
         for id in folders {
-            if let Some(f) = self.folders.get_mut(id) {
+            if let Some(f) = self.folders.get_mut(id)
+                && f.state != FetchState::Fetched
+            {
                 f.state = FetchState::Failed;
                 self.failed_at.insert(*id, now);
             }
@@ -599,7 +642,7 @@ impl Inventory {
             .map(|(id, _)| *id)
             .collect();
         for id in failed {
-            self.request(id);
+            self.retry(id);
         }
     }
 
@@ -892,6 +935,35 @@ pub fn read_cache_in_background(path: std::path::PathBuf) -> crossbeam_channel::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_transient_item_failures_are_not_confirmation_of_a_broken_link() {
+        let mut inv = Inventory::default();
+        let item = Uuid::from_u128(2);
+        for _ in 0..300 {
+            inv.items_failed(&[item]);
+        }
+        assert!(!inv.broken(&item));
+        assert!(!inv.missing_items.contains(&item));
+        assert!(
+            inv.take_item_retries().is_empty(),
+            "retry budget is finite without declaring deletion"
+        );
+    }
+
+    #[test]
+    fn recovery_a_late_item_failure_does_not_override_a_successful_read() {
+        let mut inv = Inventory::default();
+        let id = Uuid::from_u128(2);
+        inv.add_items(vec![InvItem {
+            id,
+            name: "Recovered".into(),
+            ..Default::default()
+        }]);
+        inv.items_failed(&[id]);
+        assert!(!inv.item_failures.contains_key(&id));
+        assert!(inv.take_item_retries().is_empty());
+    }
 
     #[test]
     fn inventory_total_counts_folders_library_trash_and_links() {

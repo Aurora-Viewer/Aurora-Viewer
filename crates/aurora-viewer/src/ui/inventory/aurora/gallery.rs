@@ -288,9 +288,7 @@ pub(super) fn combination(
 fn prepare(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, root: Uuid) {
     st.view.prepare(inv, prefs.sort_for(st.tab));
     st.plain.prepare(&st.view, inv, root, false, prefs.show_library);
-    if inv.shown_needs_fetch(root, std::time::Instant::now()) {
-        inv.request(root);
-    }
+    inv.request_shown(root, std::time::Instant::now());
 }
 
 /// The tiles in their scroll area, `height` high: every row of the tree

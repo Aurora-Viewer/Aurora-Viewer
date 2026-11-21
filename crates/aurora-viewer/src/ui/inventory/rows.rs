@@ -369,9 +369,7 @@ pub(super) fn scroll(
     let navigated = keyboard::navigate(ui, inv, st, false);
     let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
-        if inv.shown_needs_fetch(*id, now) {
-            inv.request(*id);
-        }
+        inv.request_shown(*id, now);
     }
     let height_of_row = row_height(ui, p, st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;

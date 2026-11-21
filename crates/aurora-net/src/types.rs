@@ -2314,6 +2314,11 @@ pub enum NetCommand {
         owner: Uuid,
         library: bool,
     },
+    /// Internal acknowledgement after model validation of inventory records.
+    InventoryItemsKnown {
+        items: Vec<Uuid>,
+        owner: Uuid,
+    },
     /// Fetch items by id (FetchInventory2).
     FetchItems {
         items: Vec<Uuid>,

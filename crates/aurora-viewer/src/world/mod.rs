@@ -4938,7 +4938,7 @@ impl World {
                     // on the new region's capabilities (`retry_failed`)
                     for id in folders {
                         if self.inventory_retried.insert(id) {
-                            self.inventory.request(id);
+                            self.inventory.retry(id);
                         }
                     }
                 }

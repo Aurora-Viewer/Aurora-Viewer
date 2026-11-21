@@ -704,6 +704,9 @@ impl AppearanceUi {
     ) -> Vec<aurora_net::NetCommand> {
         self.requested_items.clear();
         self.prepared = None;
+        for id in model::prepare_folders(inv) {
+            inv.retry(id);
+        }
         self.prepare(inv, agent, worn)
     }
 }

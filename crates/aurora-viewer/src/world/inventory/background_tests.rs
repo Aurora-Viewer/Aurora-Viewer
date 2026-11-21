@@ -1,6 +1,86 @@
 use super::*;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 
+fn cooling_read(inv: &mut Inventory, children: Vec<Uuid>, now: Instant) -> BackgroundFetch {
+    let mut fetch = BackgroundFetch::default();
+    let mut out = Vec::new();
+    fetch.send(inv, AGENT, Kind::Recursive, id(10), children, MAX_FOLDER_DEPTH, &mut out, 0);
+    fetch.on_reply_at(inv, 0, &[], Err(FetchError::new(FetchFailure::Transient, Some(503))), now);
+    fetch
+}
+
+#[test]
+fn recovery_automatic_folder_reads_cannot_bypass_background_cooldown() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let mut fetch = cooling_read(&mut inv, Vec::new(), now);
+    for _ in 0..60 {
+        inv.request(id(10));
+    }
+    assert!(inv.queue.is_empty(), "Appearance must not bypass the 15-second backoff");
+    assert!(fetch.pump_at(&mut inv, AGENT, now).is_empty());
+    assert_eq!(fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]).len(), 1);
+}
+
+#[test]
+fn recovery_a_recovered_folder_is_not_reissued_by_a_delayed_retry() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let mut fetch = cooling_read(&mut inv, Vec::new(), now);
+    inv.folders.get_mut(&id(10)).unwrap().state = FetchState::Fetched;
+    assert!(fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]).is_empty());
+    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched);
+    assert!(fetch.is_idle());
+}
+
+#[test]
+fn recovery_a_subset_retry_only_reads_children_that_still_need_it() {
+    let mut inv = skeleton(&[(10, 1, -1), (11, 10, -1), (12, 10, -1)]);
+    let now = Instant::now();
+    let mut fetch = cooling_read(&mut inv, vec![id(11), id(12)], now);
+    inv.folders.get_mut(&id(11)).unwrap().state = FetchState::Fetched;
+    let reads = fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]);
+    assert!(matches!(&reads[..], [NetCommand::FetchInventoryTree { children, .. }] if children == &[id(12)]));
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Fetched);
+}
+
+#[test]
+fn recovery_a_due_retry_waits_for_an_external_read_instead_of_duplicating_it() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let mut fetch = cooling_read(&mut inv, Vec::new(), now);
+    inv.folders.get_mut(&id(10)).unwrap().state = FetchState::Fetching;
+    assert!(fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]).is_empty());
+    assert!(!fetch.is_idle());
+    inv.folders.get_mut(&id(10)).unwrap().state = FetchState::Fetched;
+    assert!(fetch.pump_at(&mut inv, AGENT, now + BACKGROUND_BACKOFF[0]).is_empty());
+    assert!(fetch.is_idle());
+}
+
+#[test]
+fn recovery_automatic_readers_do_not_restart_failed_or_over_limit_folders() {
+    let mut inv = skeleton(&[(10, 1, -1), (11, 1, -1)]);
+    inv.folders.get_mut(&id(10)).unwrap().state = FetchState::Failed;
+    inv.too_big.insert(id(11));
+    for _ in 0..60 {
+        inv.request(id(10));
+        inv.request(id(11));
+    }
+    assert!(inv.queue.is_empty());
+}
+
+#[test]
+fn recovery_region_retry_rearms_only_failed_folders_without_an_existing_owner() {
+    let mut inv = skeleton(&[(10, 1, -1), (11, 1, -1), (12, 1, -1)]);
+    for id in [id(10), id(11), id(12)] {
+        inv.folders.get_mut(&id).unwrap().state = FetchState::Failed;
+    }
+    inv.retrying_folders.insert(id(11));
+    inv.too_big.insert(id(12));
+    inv.retry_failed();
+    assert_eq!(inv.queue, [(id(10), false)]);
+}
+
 const AGENT: Uuid = Uuid::from_u128(2);
 
 fn id(n: u128) -> Uuid {
@@ -540,6 +620,29 @@ fn a_large_inventory_recovers_from_a_transient_failed_read() {
     assert_eq!(inv.item_count(), (tree.len() + 2) * 100, "every folder's items survived");
     let batches = reads.iter().filter(|r| r.parent == id(1) && !r.children.is_empty()).count();
     assert!(batches >= 3, "the failed batch is asked again, then the rest: {batches}");
+}
+
+#[test]
+fn recovery_a_240k_inventory_keeps_all_items_after_multiple_failed_batches() {
+    let tree: Vec<(u128, u128, i32)> = (0..2400).map(|n| (1000 + n, 1, -1)).collect();
+    let mut inv = skeleton(&tree);
+    let attempts = std::sync::atomic::AtomicU32::new(0);
+    let failure = |read: &Read| {
+        let batch = read.depth > 0 && !read.children.is_empty();
+        (batch && attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 10).then_some(FetchFailure::Transient)
+    };
+    run(
+        &mut inv,
+        &Server {
+            tree: &tree,
+            cap: MAX_FOLDER_DEPTH,
+            items: 100,
+            failure: &failure,
+        },
+    );
+    assert!(unfetched(&inv).is_empty());
+    assert_eq!(inv.item_count(), 240_200);
+    assert!(inv.retrying_folders.is_empty());
 }
 
 #[test]

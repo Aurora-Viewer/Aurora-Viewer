@@ -17,6 +17,7 @@ mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_reads;
 mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
@@ -385,6 +386,7 @@ struct Session<'a> {
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
+    inventory_reads: Option<inventory_reads::Reader>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -592,6 +594,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
+        inventory_reads: None,
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -2489,6 +2492,11 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
+            NetCommand::InventoryItemsKnown { items, owner } => {
+                if let Some(reader) = &self.inventory_reads {
+                    reader.known(owner, &items);
+                }
+            }
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false, None),
             NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true, None),
             NetCommand::FetchInventoryOrphans { request } => {
@@ -3905,7 +3913,7 @@ impl Session<'_> {
     }
 
     fn fetch_items(
-        &self,
+        &mut self,
         items: Vec<uuid::Uuid>,
         owner: uuid::Uuid,
         attachment: bool,
@@ -3913,6 +3921,18 @@ impl Session<'_> {
     ) {
         use crate::inventory::ais::ItemReads;
         let ais = (owner == self.agent_id()).then(|| self.main_cap("InventoryAPIv3")).flatten();
+        // Offer verification must read the server afresh and return through
+        // its private channel (#3957). It cannot share or be canceled by
+        // ordinary inventory work that the model already considers known.
+        if offer_reply.is_none()
+            && let Some(cap) = ais.as_deref()
+        {
+            let reader = self
+                .inventory_reads
+                .get_or_insert_with(|| inventory_reads::Reader::new(self.sh.caps_http.clone(), self.sh.events.clone()));
+            reader.enqueue(owner, items, cap.to_owned(), attachment);
+            return;
+        }
         let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
@@ -7116,6 +7136,7 @@ mod event_queue_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7471,6 +7492,7 @@ mod script_dialog_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),

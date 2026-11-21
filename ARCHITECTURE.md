@@ -46,6 +46,22 @@ scales tighten the bound, and 16-bit upload quantization has its own allowance.
 `imports::mesh` uses Lowest first for automatic collision;
 explicit collision sources and convex decomposition retain their existing path.
 
+`Inventory::retrying_folders` owns background cooldowns. The walker checks each
+target before retrying it. Open views retry after ten seconds through
+`Inventory::request_shown`, honoring cooldown ownership and folder limits.
+Explicit retries use `Inventory::retry`.
+
+`session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
+owner and item within a session and admits up to 16 at once. After applying
+folder data, `pump_network_events` acknowledges known originals to cancel
+redundant ordinary reads. Attachment metadata repair has its own delivery event.
+`CheckInventoryOffer` uses a separate fresh server read and private reply.
+
+Outfit restoration keeps still-linked originals pending past the initial
+metadata grace period. Accepted late metadata resumes attachment restoration.
+Explicit detaches, confirmed absence and authoritative outfit changes cancel
+pending intent. Temporary read failures leave existence unconfirmed.
+
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.

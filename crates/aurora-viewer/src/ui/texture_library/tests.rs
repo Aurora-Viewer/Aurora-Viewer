@@ -291,7 +291,7 @@ fn texture_library_failed_fetch_refreshes_the_catalogue_and_waits_for_explicit_r
     assert_eq!(catalogue.failed, vec![library]);
     catalogue.prepare(&mut inv);
     assert_eq!(inv.queue.len(), 1, "failed folders must not flood retries");
-    inv.request(library);
+    inv.retry(library);
     assert_eq!(inv.queue.len(), 2, "the retry can enqueue a failed folder");
 }
 
