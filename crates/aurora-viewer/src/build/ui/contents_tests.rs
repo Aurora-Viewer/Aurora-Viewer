@@ -601,13 +601,16 @@ fn bulk_permissions_keep_actions_reachable_with_long_nested_details() {
 fn property_window_titles(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World) -> Vec<egui::Rect> {
     let mut titles = Vec::new();
     for _ in 0..4 {
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
                 ..Default::default()
             },
             |_| super::super::item_properties::show(ctx, &crate::theme::Theme::default().palette(), tool, world, &HashMap::new()),
         );
+        // the first frame uploads the font atlas: an uncleared delta trips
+        // epaint's debug assertion under the merge queue's `ci` profile
+        output.textures_delta.clear();
         fn text(shape: &egui::Shape, titles: &mut Vec<egui::Rect>) {
             match shape {
                 egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("ui-inventory-dialogs-object-properties") => {
