@@ -1028,11 +1028,7 @@ mod tests {
 
     #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
-        let mut draft = crate::imports::tests::mesh_fixture();
-        // Select different LODs explicitly; Legacy keeps this box whole.
-        for lod in &mut draft.lods[..3] {
-            lod.source = super::super::mesh::LodSource::Auto;
-        }
+        let mut draft = crate::imports::tests::reducible_mesh_fixture();
         draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
         let avatars = crate::scene::avatar::AvatarLibrary::load();
         let mut counts = Vec::new();

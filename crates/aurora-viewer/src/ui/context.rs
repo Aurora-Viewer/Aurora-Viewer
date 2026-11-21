@@ -214,6 +214,9 @@ pub struct Facts {
     /// (object_selected_and_point_valid, indra/newview/llviewermenu.cpp).
     pub wear_default_blocked: bool,
     pub wear_blocked_points: Vec<u8>,
+    /// RLVa's @showinv: "Show in inventory" of our attachment is greyed
+    /// (enable_object_show_original, indra/newview/llviewermenu.cpp).
+    pub show_original_blocked: bool,
     /// RLVa is on for the session: Derender is greyed on our own
     /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
     pub rlva_enabled: bool,

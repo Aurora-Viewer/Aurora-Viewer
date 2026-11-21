@@ -571,6 +571,7 @@ impl App {
 
     pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
+            self.rlva_view_blocked(10);
             return;
         }
         // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
@@ -581,6 +582,7 @@ impl App {
             .index_of_uuid(&target.object)
             .is_some_and(|i| self.world.rlva_locked_attachment(i))
         {
+            self.rlva_view_blocked(10);
             return;
         }
         if task_script_refused(&self.build, &self.world, target.object) {
@@ -738,6 +740,14 @@ impl App {
                 options,
                 source,
             } => {
+                // LLLiveLSLEditor::saveIfNeeded: a locked attachment's script
+                // is not saved, and the editor keeps its text
+                if !self.world.rlva_can_save_script(target.object) {
+                    let blocked = aurora_i18n::tr!("rlva-blocked");
+                    self.script_editors.saved(request, target, &Err(blocked.into()));
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                    return;
+                }
                 let Some(info) = self.script_info(target).filter(|i| i.can_edit) else {
                     self.script_editors
                         .saved(request, target, &Err(aurora_i18n::tr!("script-no-permission").into()));

@@ -138,14 +138,9 @@ pub fn object_name(tool: &BuildTool, world: &World, id: Uuid) -> String {
         .get(&id)
         .map(|p| p.name.clone())
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            world
-                .objects
-                .index_of_uuid(&id)
-                .and_then(|i| world.objects.get(i))
-                .map(|o| o.text.lines().next().unwrap_or("").to_owned())
-                .filter(|s| !s.is_empty())
-        })
+        // the floating text as it is shown: none under @showhovertext*, the
+        // names and places hidden (LLHUDText::setString, llhudtext.cpp)
+        .or_else(|| crate::ui::hud::hover_text_title(world, id))
         .unwrap_or_else(|| aurora_i18n::tr!("replace-unnamed").into())
 }
 
@@ -325,6 +320,7 @@ impl BuildTool {
 
     pub fn replacement_task_inventory_error(&mut self, object: Uuid, reason: String) {
         self.bulk_inventory_error(object);
+        self.deep_inventory_error(object);
         if let Some(inv) = self.contents.objects.get_mut(&object) {
             inv.loading = false;
         }

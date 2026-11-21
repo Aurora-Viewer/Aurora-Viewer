@@ -137,7 +137,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 let choices: Vec<(PlateClick, &str)> = PlateClick::ALL.iter().map(|a| (*a, plate_click_label(*a))).collect();
                 cx.combo(
                     tr!("ui-options-plate-click"),
-                    tr!("ui-options-plate-click-help"),
+                    tr!("ui-options-plate-click-own-help"),
                     &field!(plate_click),
                     &choices,
                 );
