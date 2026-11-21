@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub(crate) mod cx;
+pub mod legacy_lists;
 mod pages;
 /// The rows of the Phototools window, borrowed from the pages.
 mod phototools;
@@ -570,6 +571,12 @@ pub struct OptionsUi {
     reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
+    /// The import of a Legacy Viewer's lists (set by the app).
+    pub legacy_lists: legacy_lists::State,
+    /// What the last one did.
+    pub legacy_lists_status: String,
+    /// An account is logged in: its lists can be imported (set by the app).
+    pub legacy_lists_ready: bool,
     /// Files done and files to do of the import under way (set by the app).
     pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
@@ -763,6 +770,10 @@ pub struct OptionsResult {
     pub find_legacy_logs: bool,
     /// Import from these folders.
     pub import_legacy_logs: Option<Vec<std::path::PathBuf>>,
+    /// The lists' import window opened: read the Legacy Viewers' folders.
+    pub find_legacy_lists: bool,
+    /// Import these lists from the folder found at this index.
+    pub import_legacy_lists: Option<(usize, crate::world::legacy_lists::Parts)>,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
@@ -1450,6 +1461,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
+    legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);

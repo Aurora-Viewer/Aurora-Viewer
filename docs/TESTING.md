@@ -6421,6 +6421,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
+| `AURORA_DEMO_LEGACY_LISTS=1\|run\|again\|none\|unreadable\|other-grid` | The import of a Legacy Viewer's lists in Preferences |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -9776,6 +9777,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
+- **`AURORA_DEMO_LEGACY_LISTS=1|run|again|none|unreadable|other-grid`**: a
+  Legacy Viewer's folder is made up in
+  `config\demo\accounts\<demo account uuid>\legacy-lists\` and Preferences ›
+  Language and updates opens on it. `1` waits in the import window, `run`
+  imports (an object of the plaza leaves the world, the row says what was
+  added), `again` imports twice (the row says there is nothing new), `none`
+  shows a folder missing, `unreadable` a media list that cannot be read and
+  `other-grid` the warning of a grid whose folders cannot be told apart. The
+  four lists are in memory during the run; no transcript is written or
+  removed.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
