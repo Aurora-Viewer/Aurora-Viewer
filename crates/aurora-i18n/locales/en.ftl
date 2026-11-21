@@ -7993,6 +7993,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = Magenta where
 ui-options-sort-of-the-reflection-probes = Sort of the reflection probes
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = Magenta where a probe covers a pixel without being among those sorted for it: there must be none
 ui-context-show-in-inventory = Show in inventory
+ui-context-show-in-inventory-none = No object in your inventory has exactly this object's name.
 ui-place-details-show-the-corresponding-location-on-the-map = Show the corresponding location on the map
 common-view-conversation-history = View conversation history
 common-view-profile = View profile

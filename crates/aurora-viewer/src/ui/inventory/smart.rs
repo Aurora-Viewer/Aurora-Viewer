@@ -218,18 +218,16 @@ impl SmartQuery {
         self.root.uses(field)
     }
 
-    /// Search inventory for likely counterparts of a rezzed object.
-    /// Match by name without restricting the creator.
-    pub fn for_world_object(name: &str) -> Option<Self> {
-        let stem = name_stem(name);
-        if stem.is_empty() {
-            return None;
-        }
-
+    /// Exactly these items, by their inventory ids: "Show in inventory" of
+    /// a rezzed object when several items share its name.
+    pub fn items(ids: &[Uuid]) -> Self {
         let mut query = Self::default();
-        query.root.nodes.push(Node::Rule(Rule::text(Field::Name, Op::Contains, &stem)));
-
-        Some(query)
+        query.root.any = true;
+        query.root.nodes = ids
+            .iter()
+            .map(|id| Node::Rule(Rule::text(Field::Uuid, Op::Pattern, &id.to_string())))
+            .collect();
+        query
     }
 
     /// The advanced search a quick search stands for, so switching keeps
@@ -676,24 +674,14 @@ mod tests {
     }
 
     #[test]
-    fn world_object_search_matches_name_only() {
-        let query = SmartQuery::for_world_object("Velvet Jacket v2.1").expect("valid object name");
-        let matcher = Matcher::new(&query, &HashMap::new(), 0, 0);
-
-        // A matching name is accepted regardless of creator.
-        let mut item = subject("velvet jacket v3.0");
-        item.creator = Uuid::from_u128(99);
-        assert!(matcher.matches(&item));
-
-        // Unrelated names must still be excluded.
-        item.name = "velvet shoes";
-        assert!(!matcher.matches(&item));
-
-        let name_only = SmartQuery::for_world_object("Chair").expect("valid object name");
-        let matcher = Matcher::new(&name_only, &HashMap::new(), 0, 0);
-        assert!(matcher.matches(&subject("chair (copy)")));
-
-        // An empty name must not search the entire inventory.
-        assert!(SmartQuery::for_world_object("  ").is_none());
+    fn items_query_matches_exactly_its_ids() {
+        let (a, b) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let m = Matcher::new(&SmartQuery::items(&[a, b]), &HashMap::new(), 0, 0);
+        let mut s = subject("chair");
+        assert!(m.matches(&s));
+        s.id = b;
+        assert!(m.matches(&s));
+        s.id = Uuid::from_u128(0x70);
+        assert!(!m.matches(&s), "an id is matched whole, never as a part");
     }
 }

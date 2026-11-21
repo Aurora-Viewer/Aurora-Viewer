@@ -101,8 +101,12 @@ pub struct ObjectFacts {
     /// Local meshes use the ordinary object menu and build selection, with
     /// only actions that can be carried out without a simulator identity.
     pub local_preview: bool,
-    /// Whether this resident owns the rezzed linkset.
+    /// The agent owns the rezzed linkset itself (`owns_rezzed`): "Show in
+    /// inventory" is on its menu.
     pub owned: bool,
+    /// RLVa `@showinv`: "Show in inventory" is greyed out
+    /// (enable_object_show_original, llviewermenu.cpp).
+    pub inventory_hidden: bool,
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
     pub hud_move_locked: bool,
@@ -957,6 +961,14 @@ pub fn can_pay_resident(world: &World) -> bool {
 /// FSFloaterContacts::refreshUI): the map itself does not open.
 pub fn can_show_on_map(world: &World) -> bool {
     !world.rlva.has("showworldmap")
+}
+
+/// "Show in inventory" of a rezzed object is for a linkset the agent owns
+/// itself. A group-deeded one is owned by the group (its OwnerID), and its
+/// items are not in the agent's inventory, even when the group's object
+/// powers give it the OBJECT_YOU_OWNER flag: that flag is left out here.
+pub fn owns_rezzed(owner_id: Uuid, agent_id: Uuid) -> bool {
+    !agent_id.is_nil() && owner_id == agent_id
 }
 
 fn avatar_menu_reporting(
