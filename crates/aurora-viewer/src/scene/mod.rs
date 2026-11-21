@@ -93,7 +93,10 @@ use terrain_surface::SurfaceGpu;
 pub mod textures;
 pub mod water;
 mod water_contacts;
+pub mod water_crash;
 mod water_effects;
+pub mod water_ride;
+pub mod water_shelter;
 pub mod wind_sound;
 
 use crate::fast_hash::{FastMap, FastSet};
@@ -2893,6 +2896,14 @@ impl Scene {
         } else {
             Vec3::Z * dz
         };
+        // a floating root rides the wind's sea, its linkset and who sits on
+        // it with it (water_ride.rs)
+        if o.parent_id == 0
+            && !o.is_avatar()
+            && let Some((heave, tilt)) = world.water_ride.pose(&o.full_id)
+        {
+            return Some((p + Vec3::Z * heave, tilt * r, hud));
+        }
         Some((p + offset, r, hud))
     }
 

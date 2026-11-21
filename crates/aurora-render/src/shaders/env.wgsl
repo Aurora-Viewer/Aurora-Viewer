@@ -941,10 +941,30 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         albedo = srgb_to_linear(p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3) * 1.6;
     }
     var wet=0.0;
+    // the backwash's draining sheet over the sand (0..1)
+    var sheet=0.0;
     if(water_fx_on(1024u)) {
         let level=water_fx_bed(in.world_pos.xy).y;
-        wet=(1.0-smoothstep(0.05,0.45,in.world_pos.z-level))*smoothstep(-2.0,-0.1,in.world_pos.z-level);
-        albedo*=1.0-wet*0.32;
+        let e=in.world_pos.z-level;
+        wet=(1.0-smoothstep(0.05,0.45,e))*smoothstep(-2.0,-0.1,e);
+        // with the wind's waves the sand is wet as far up as the swash
+        // runs: soaked under its front, damp below its highest, drying in
+        // its backwash, so each wave leaves its line on the beach
+        if(water_fx_on(1u) && e>0.0 && e<1.1) {
+            let at=water_fx_sea_at(in.world_pos.xy);
+            let reach=water_swash_reach(water_fx.sea,at);
+            if(reach>0.03) {
+                let theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+                wet=max(wet,water_swash_wet(theta,reach,e)*water_swash_beach(at));
+                let back=water_sand_backwash(in.world_pos.xy,at,theta,reach,e);
+                sheet=back.x;
+                // water standing on the sand: darker, tinted like the
+                // shallows, under the foam it carries
+                albedo=mix(albedo,albedo*vec3<f32>(0.55,0.57,0.58),sheet);
+                albedo=mix(albedo,vec3<f32>(0.66,0.68,0.7),back.y);
+            }
+        }
+        albedo*=1.0-wet*0.32*(1.0-sheet);
     }
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -956,7 +976,13 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let nv=max(dot(n,v),0.001);let nl=max(dot(n,l),0.0);
         let fresnel=0.02037+0.97963*pow(1.0-nv,5.0);
         let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
-        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*sun_glass*min(glint,2.0)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
+        // (the backwash's sheet is a mirror of water over the sand: its
+        // surface is level, whatever the grains under it)
+        let mirror=normalize(mix(n,vec3<f32>(0.0,0.0,1.0),sheet*0.7));
+        let sheet_fresnel=0.02037+0.97963*pow(1.0-max(dot(mirror,v),0.001),5.0);
+        // (a few centimetres of water: some sky, not a mirror's, which
+        // tinted whole banks blue)
+        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25*(1.0-sheet)+sky_color(reflect(-v,mirror))*sheet_fresnel*0.4*sheet+frame.sun_color.rgb*sun_glass*min(glint,2.0)*(1.0+sheet)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
     }
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
@@ -1162,8 +1188,9 @@ fn water_vertex(in: VsIn) -> WaterOut {
     // Huge void tiles cannot resolve waves. Fade their geometry to avoid aliasing.
     let tile = max(length(rec.model[0].xyz),length(rec.model[1].xyz));
     let geometry = 1.0-smoothstep(70.0,140.0,tile);
-    let near = 1.0-smoothstep(80.0,160.0,distance(wp.xyz,frame.camera_pos.xyz));
-    wp = vec4<f32>(wp.xyz+wave*geometry*near,1.0);
+    // (the swell itself flattens 130-155 m out, in water_fx_wave, as the
+    // CPU's samplers see it)
+    wp = vec4<f32>(wp.xyz+wave*geometry,1.0);
     var out: WaterOut;
     out.clip = world_clip(wp.xyz);
     out.world_pos = wp.xyz;
@@ -1437,16 +1464,37 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // at it: read once, for the wake, the normal and the foam below.
     var bed=vec2<f32>(0.0);
     if((water_fx.counts.z&31u)!=0u){bed=water_fx_bed(in.world_pos.xy);}
-    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0);
-    if((water_fx.counts.z&9u)!=0u){swell=water_swell(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w);}
+    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0,0.0,0.0,0.0,0.0);
+    // the swash read here, for its foam
+    var swash_at:WaterSeaAt;
+    var swash_theta=0.0;
+    // the sea left here by what stands in the water (piers, walls, decks)
+    var shelter=1.0;
+    if((water_fx.counts.z&11u)!=0u){
+        // where the sea is read: the wave depth (smoothed: no wall of
+        // water at a step of the bed or a region's edge), the shelter and
+        // the refracted swell
+        let at=water_fx_sea_at(in.world_pos.xy);
+        shelter=at.shelter;
+        swash_at=at;
+        swash_theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+        swell=water_sea(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(in.world_pos.xy,footprint),footprint);
+    }
     let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
     let furrow=1.0-smoothstep(0.003,0.035,-wake.z)*0.7;
     if(water_fx_on(1u)) {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
-        // the rain's slope keeps its own strength: scaled with the waves
-        // (x 0.18), a downpour hardly showed on enhanced water
-        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
+        // The wind's ripples: a shimmer in a calm, stronger as it blows, in
+        // gust patches (cat's paws) drifting with it across a lake.
+        let u=water_fx.sea.wind.z;
+        let gusts=smoothstep(0.35,0.75,water_fx_noise((in.world_pos.xy-water_fx.sea.wind.xy*frame.camera_pos.w*(0.5+0.08*u))*0.035));
+        let ripple=mix(0.35,1.6,smoothstep(0.5,9.0,u))*mix(1.0,mix(0.6,1.5,gusts),smoothstep(0.5,3.0,u));
+        // and the wakes of those in it stand out more the calmer it is
+        let stir=mix(1.6,1.0,smoothstep(0.1,0.6,water_fx.sea.frame.w));
+        // (the rain's slope keeps its own strength: scaled with the waves
+        // (x 0.18), a downpour hardly showed on enhanced water)
+        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail*ripple)*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy*stir,swell.gradient,bed.x));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x)); }
     // waterF.glsl: the reflection follows the waves scaled by the EEP normal
     // scale (wave_ibl), the sun glint the unscaled waves flattened with
@@ -1490,7 +1538,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // Shore depth always comes from terrain, never an avatar or submerged
         // mesh in the opaque depth. Contact refinement is masked below.
         foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
-        if(water_fx_on(2u) && depth<2.0) {
+        let rough=water_fx.sea.frame.w;
+        // Without the wind's waves, timed bands of foam lap the shore. With
+        // them, the waves' own breakers and swash whiten it (below): the
+        // timed bands, unrelated to the sea, drew thin lines on a calm lake.
+        if(water_fx_on(2u) && !water_fx_on(1u) && depth<2.0) {
             // Travel along the depth gradient: the front approaches every coast orientation.
             let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
             let breaker=pow(max(sin(phase),0.0),4.0);
@@ -1512,11 +1564,56 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
                 foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*contact;
             }
         }
-        // crests: the wind patches are worked out only where the swell
-        // folds enough to whiten (the first smoothstep is 0 under 0.08)
-        if(water_fx_on(8u) && swell.compression>0.08) {
-            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
-            foam+=smoothstep(0.08,0.2,swell.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
+        // breakers: the shore train as it breaks on a beach, and the wind's
+        // waves where flat shallows are too shallow for them (a sandbar).
+        // By the beach's surf similarity: on a gentle beach the waves spill,
+        // foam rolling down their whole front; on a steeper one they plunge,
+        // white along the crest; on rocks and walls they crash, churning
+        // white where they hit. The swash's thin leading edge is white too.
+        if(water_fx_on(2u) && water_fx_on(1u) && swell.breaking>0.01) {
+            let plunge=smoothstep(0.4,1.2,swell.surf);
+            let crash=smoothstep(2.5,4.0,swell.surf);
+            let spilling=smoothstep(-0.35,0.45,swell.crest)*0.85;
+            let plunging=smoothstep(0.35,0.95,swell.crest);
+            foam=max(foam,swell.breaking*mix(spilling,plunging,plunge)*(0.55+0.4*rough));
+            // the water over the bed now, the swash's sheet included
+            let wet=in.world_pos.z-bed.x;
+            foam=max(foam,crash*swell.breaking*exp(-max(wet,0.0)*2.5)*(0.6+0.4*rough));
+        }
+        // the swash: its lace of foam over the water running up and back
+        // (the backwash's sheet on the sand draws the same lace). (A thin
+        // white line at its edge followed the coarse bathymetry, not the
+        // real waterline, and drew a line along every beach: left out.)
+        if(water_fx_on(2u) && swell.swash>0.01) {
+            let reach=water_swash_reach(water_fx.sea,swash_at);
+            foam=max(foam,swell.swash*water_swash_foam(p,swash_at,swash_theta,reach)*(0.7+0.25*rough)*water_fx.sea.look.x);
+        }
+        // Whitecaps: where the crests fold over (the displacement's Jacobian
+        // under 1: `compression` above 0). A breeze whitens a crest here and
+        // there, a gale most of them (whitecap coverage grows about as
+        // U^3.4): the fold it takes falls with the roughness. Each cap is a
+        // dense core on the fold in a thinner veil the pattern tears, so it
+        // fades into the water instead of reading as a cut-out flake. The
+        // patches are drawn out along the wind and drift with it. (Long wind
+        // streaks between the crests read as painted stripes: left out.)
+        // (from a fresh breeze on: a Beaufort 4 sea already shows scattered
+        // white horses)
+        let cap_start=mix(0.25,0.04,sqrt(rough));
+        if(water_fx_on(8u) && swell.compression>cap_start-0.12) {
+            let toward=water_fx.sea.wind.xy;
+            let along=vec2<f32>(dot(p,toward),dot(p,vec2<f32>(-toward.y,toward.x)));
+            let drift=vec2<f32>(frame.camera_pos.w*(0.3+0.04*water_fx.sea.wind.z),0.0);
+            // warped, so the patches never line up in straight dashes along
+            // the wind
+            let q=along-drift;
+            let warp=vec2<f32>(water_fx_noise(q*0.045),water_fx_noise(q*0.045+vec2<f32>(3.1,8.7)))-0.5;
+            let w=q+warp*vec2<f32>(10.0,6.0);
+            let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
+            let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
+            let core=smoothstep(cap_start,cap_start+0.35,swell.compression);
+            let veil=smoothstep(cap_start-0.12,cap_start+0.1,swell.compression);
+            // (the Sea panel's foam: more or less of it)
+            foam+=(core*(0.5+0.35*rough)+veil*0.28)*gusty*water_fx.sea.look.x;
         }
         // Fine breaking filaments already have a narrow, resolved footprint.
         // Applying the coarse accumulation threshold twice erased slow swimmers.
@@ -1530,7 +1627,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         } else {
             foam=0.0;
         }
-        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+        // (over the swash's sheet the water stands above the still level)
+        // (the swash is a sheet of a few centimetres: its foam stays on it
+        // until it is gone, instead of fading with the thin water)
+        let thick=max(depth,in.world_pos.z-bed.x);
+        foam=clamp(foam,0.0,1.0)*mix(smoothstep(0.0,0.06,thick),smoothstep(-0.002,0.012,thick),clamp(swell.swash,0.0,1.0));
     }
 
     // fresnel (calculateFresnelFactors)
@@ -1687,7 +1788,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             let peak=max(lit.r,max(lit.g,lit.b));
             foam_light=lit/max(1.0,peak/1.15);
         }
-        color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
+        // foam is aerated water: lit like the sky and the sun, but keeping
+        // some of the water's own colour, and never quite opaque
+        let tinted=mix(max(foam_light,vec3<f32>(0.0)),color*1.15+foam_light*0.35,0.3);
+        color=mix(color,tinted,foam*0.78);
     }
     color = rain_dull(color, rain.w);
     // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
@@ -1777,16 +1881,25 @@ struct WaterParticleOut {
     @location(3) @interpolate(flat) kind: u32,
     @location(4) @interpolate(flat) level: f32,
     @location(5) normal: vec3<f32>,
+    // a crash burst's own seed (0..1), so no two look alike
+    @location(6) @interpolate(flat) seed: f32,
 };
 fn particle_water_level(p:vec2<f32>,level:f32)->f32 {
     if(!water_fx_on(1u)){return level;}
-    return level+water_swell(p,water_fx.clock.x,water_fx.counts.w).offset.z*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+    let bed=water_fx_bed(p);
+    // the swell is the region water's: a prim water volume's level (#2008),
+    // away from it, stays flat
+    let region=1.0-smoothstep(0.25,0.5,abs(level-bed.y));
+    return level+water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,water_fx_sea_at(p),water_fx_ocean(p,0.0),0.0).offset.z*region*smoothstep(0.08,2.4,level-bed.x);
 }
 @vertex
 fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index) instance: u32) -> WaterParticleOut {
     let counts=array<u32,4>(4u,6u,8u,12u); let count=counts[min(water_fx.counts.w,3u)]; let event=water_events[instance/count]; let index=instance%count;
     let age=water_fx.clock.x-event.position.w; let bubble=event.params.y==1.0;
     let entry=event.params.y==5.0;let fan=event.params.y==7.0;
+    // a wave crashing on a wall or a rock, and the white water it leaves
+    // (scene/water_crash.rs, water_crash_particle)
+    let crash=event.params.y==9.0 || event.params.y==10.0;
     let footfall=fan && event.params.w>0.5;
     let h=water_fx_hash(vec2<f32>(f32(index)+event.motion.x*8.0,event.position.w*19.0+event.motion.y*8.0));
     let angle=h.x*6.283185; let direction=vec2<f32>(cos(angle),sin(angle));
@@ -1872,6 +1985,9 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         crown.normal=normalize(vec3<f32>(direction,-top));
         return crown;
     }
+    if(crash) {
+        return water_crash_particle(event,index,corner,f32(vertex/6u),age);
+    }
     if(fan && index<2u) {
         let forward=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
         let side=vec2<f32>(-forward.y,forward.x)*select(-1.0,1.0,index==0u);
@@ -1906,7 +2022,231 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     out.life=life;out.kind=select(select(0u,3u,entry),1u,bubble);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
     return out;
 }
+// A wave crashing on a wall or a rock (scene/water_crash.rs). Kind 9, the
+// burst, per event: three sheets of water fanned out from where the crest
+// hit (index 0 to 2: curved strips from the water to their rim, rising,
+// spreading and tearing apart, water_crash_sheet_color) and fine droplets
+// torn off their rims (3 and up: sharp specks streaked by their speed).
+// Kind 10, the white water it leaves: a lace of foam spreading on the sea
+// at the foot of the face (index 0, laid on the waves) and the water
+// streaming back down the face (1, `motion.z` the face's height above the
+// water). Each burst draws its own shapes (`params.w` its seed).
+fn water_crash_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, segment: f32, age: f32) -> WaterParticleOut {
+    // (a sheet is a strip of the instance's three quads; anything else is
+    // one quad, the other two collapsed)
+    let sheet=event.params.y==9.0 && index<3u;
+    let corner=quad*select(select(0.0,1.0,segment<0.5),1.0,sheet);
+    let power=max(event.motion.w,0.1);
+    let away=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
+    let along=vec2<f32>(-away.y,away.x);
+    let h=water_fx_hash(vec2<f32>(f32(index)*3.7+event.params.w*61.0,event.position.w*11.3));
+    let g=water_fx_hash(vec2<f32>(f32(index)*7.1+event.params.w*17.0,event.position.w*5.9+1.3));
+    let level=event.params.z;
+    // the sea's surface there now: the spray rises from the waves, not from
+    // the still level, and is cut a little under them (cut at the still
+    // level, the waves moving through its foot made it flicker)
+    let water=particle_water_level(event.position.xy,level);
+    var o:WaterParticleOut;
+    o.seed=fract(event.params.w*13.0+f32(index)*0.37);
+    o.level=water-0.15;
+    o.normal=vec3<f32>(0.0,0.0,1.0);
+    o.uv=corner;
+    var pos=vec3<f32>(event.position.xy,level);
+    var size=0.0;var life=0.0;
+    // a camera-facing sprite, or (droplets) one streaked along their flight
+    var velocity=vec3<f32>(0.0);var streak=0.0;
+    if(event.params.y==10.0) {
+        if(index==0u) {
+            // the foam spreading at the foot, laid on the waves
+            let radius=event.params.x*(0.6+age*0.35)+0.3;
+            let centre=event.position.xy+away*(radius*0.6);
+            let at=centre+(along*corner.x+away*corner.y)*radius;
+            pos=vec3<f32>(at,particle_water_level(at,level)+0.03);
+            life=smoothstep(0.1,0.4,age)*(1.0-smoothstep(1.8,4.2,age));
+            o.kind=9u;o.level=-1e9;
+        } else if(index==1u) {
+            // the water streaming back down the face, once the burst falls
+            // (lying along a face that slopes back: `motion.xy` is longer
+            // by how much it does)
+            let height=clamp(event.motion.z,0.2,6.0);
+            let slope_back=clamp(length(event.motion.xy)-1.0,0.0,1.0);
+            let up=corner.y*0.5+0.5;
+            let at=event.position.xy+away*0.06+along*corner.x*event.params.x-away*up*height*slope_back;
+            pos=vec3<f32>(at,mix(water-0.05,level+height,up));
+            life=smoothstep(0.5,0.8,age)*(1.0-smoothstep(1.6,3.2,age));
+            o.kind=10u;
+        }
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+        return o;
+    }
+    let foot=event.position.xy+along*(h.x*2.0-1.0)*event.params.x*0.5;
+    // the room above (a deck, a floor on stilts): nothing goes through it
+    let roof=level+select(50.0,event.motion.z,event.motion.z>0.0)-0.05;
+    // the jet: how fast the water is thrown up the face, and when it tops out
+    let jet=(4.5+2.6*min(power,2.5))*(0.75+0.5*g.x);
+    let apex=jet/9.81;
+    if(index<3u) {
+        // Sheets of water thrown up the face: three fanned out from where
+        // the crest hit (one straight up, two leaning along the face), each
+        // a curved strip from the water to its rim that rises, spreads and
+        // bends out to sea as it goes, then tears apart and falls (drawn as
+        // water going white, water_crash_sheet_color).
+        let k=f32(index);
+        let fan=select(select(0.75,-0.75,index==1u),0.0,index==0u)+(h.x-0.5)*0.5;
+        let t=age-k*0.04-h.y*0.06;let tt=max(t,0.0);
+        let v0=jet*(0.85+0.3*g.y)*(1.0-0.15*k);
+        let height=max(v0*tt-4.905*tt*tt,0.0);
+        let u=(segment+quad.x*0.5+0.5)/3.0;
+        let across=u*2.0-1.0;
+        let s=quad.y*0.5+0.5;
+        let lean=(0.35+0.3*min(power,2.5))*tt*(0.8+0.5*h.y);
+        let curve=s*s;
+        let half=event.params.x*(0.35+0.9*s*(0.4+tt));
+        // (up a sloping face the water runs up the slope as it rises:
+        // `motion.xy` is longer by how much the face slopes back)
+        let slope_back=clamp(length(event.motion.xy)-1.0,0.0,1.0);
+        // (a shallow shell round the impact, its middle further out: a flat
+        // strip seen edge on was a line)
+        let shell=(1.0-across*across)*(0.25+0.35*s)*min(height,3.0)*0.35;
+        let flat=foot+along*(across*half+fan*(0.3+lean*curve*1.4))+away*(0.12+lean*curve+shell)-away*height*s*slope_back*0.8;
+        // (under a deck the sheet slaps its underside and flattens there)
+        pos=vec3<f32>(flat,min(water+height*s*(1.0-0.3*slope_back)+0.05,roof));
+        let top=v0/9.81;
+        life=smoothstep(0.0,0.04,t)*(1.0-smoothstep(0.9*top,1.6*top,tt))*smoothstep(0.0,0.2,height);
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        o.uv=vec2<f32>(across,s*2.0-1.0);
+        o.normal=normalize(vec3<f32>(away*(0.6+curve)+along*(fan*0.4+across*0.7),0.25-0.6*curve));
+        o.kind=11u;
+        // (its own seed, and how far it has torn: from its rim down, as it
+        // slows and falls; smoothly, or its holes would jump)
+        o.seed=floor(fract(event.params.w*13.0+k*0.37)*1000.0)+clamp(tt/max(top,0.05),0.0,1.9)*0.5;
+        o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+        return o;
+    }
+    {
+        // droplets torn off the sheets' rims as they rise, flying on alone
+        // and falling back
+        let release=h.y*apex*0.8;
+        let t=age-release;let tt=max(t,0.0);
+        let rim=jet*release-4.905*release*release;
+        let theta=(h.x*2.0-1.0)*1.3;
+        let out=away*cos(theta)*0.7+along*sin(theta);
+        let speed=(1.0+1.2*min(power,2.5))*(0.5+g.y);
+        let up=(jet-9.81*release)*(0.8+0.4*g.x);
+        pos=vec3<f32>(foot+away*(0.3+0.4*release)+out*speed*tt,water+0.05+rim+up*tt-4.905*tt*tt);
+        velocity=vec3<f32>(out*speed,up-9.81*tt);
+        size=0.008+g.x*0.014;
+        streak=min(length(velocity)*0.03,0.3);
+        life=smoothstep(0.0,0.03,t)*(1.0-smoothstep(1.0,1.6,t))*smoothstep(water-0.1,water+0.1,pos.z)*step(pos.z,roof);
+        o.kind=5u;
+    }
+    if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+    let projected=vec2<f32>(dot(velocity,frame.cam_right.xyz),dot(velocity,frame.cam_up.xyz));
+    let dir=select(vec2<f32>(0.0,1.0),normalize(projected),length(projected)>1e-4);
+    let side=vec2<f32>(dir.y,-dir.x);
+    let offset=side*corner.x*size+dir*corner.y*(size+streak);
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+    return o;
+}
+// The colour of a crash's particles (water_crash_particle): its sheets
+// (water_crash_sheet_color), droplets, and the white water it leaves, lit
+// by the sun and greyed by the sky's light under.
+fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.life<=0.001){discard;}
+    if(in.kind==11u){return water_crash_sheet_color(in);}
+    let sun=normalize(frame.sun_dir.xyz);
+    let day=clamp(frame.sun_dir.z*2.5,0.15,1.0);
+    var alpha=0.0;var lit=0.6;var up=0.5;
+    let r=length(in.uv);
+    if(in.kind==9u) {
+        // the foam spreading at the foot: a lace, thinning out to its rim
+        let p=in.world.xy;
+        let warp=vec2<f32>(water_fx_noise(p*0.4+in.seed*9.0),water_fx_noise(p*0.4+vec2<f32>(4.1,in.seed*5.0)))-0.5;
+        let q=p+warp*2.5;
+        let ridge=1.0-abs(water_fx_noise(q*1.1)*0.65+water_fx_noise(q*2.7+vec2<f32>(3.0,8.0))*0.35-0.5)*2.0;
+        alpha=smoothstep(0.62,0.82,ridge)*(1.0-smoothstep(0.3,1.0,r))*0.7;
+        lit=0.75;up=1.0;
+    } else if(in.kind==10u) {
+        // white water streaming down the face in ropes
+        let top=in.uv.y*0.5+0.5;
+        let bend=water_fx_noise(vec2<f32>(top*3.0+in.seed*7.0,in.uv.x*2.0))-0.5;
+        let n=water_fx_noise(vec2<f32>((in.uv.x+bend*0.15)*11.0+in.seed*19.0,top*(1.2+in.seed)+frame.camera_pos.w*2.2))*0.7+water_fx_noise(vec2<f32>(in.uv.x*23.0,top*4.0+frame.camera_pos.w*3.1))*0.3;
+        alpha=smoothstep(0.58,0.82,n)*(1.0-smoothstep(0.5,1.0,abs(in.uv.x)))*(1.0-smoothstep(0.6,1.0,top))*smoothstep(0.0,0.15,top)*0.45;
+        lit=0.55;up=0.4;
+    } else {
+        // a fine droplet
+        alpha=(1.0-smoothstep(0.4,1.0,r))*0.85;
+        lit=0.8;up=0.8;
+    }
+    alpha*=in.life;
+    if(alpha<0.004){discard;}
+    // lit as the foam on the water is (water_pixel's foam_light), in the
+    // sun's shadow: brighter, it stood out as if fullbright
+    let shade=sun_shadow(in.world,vec3<f32>(0.0,0.0,1.0),distance(in.world,frame.camera_pos.xyz),in.clip.xy);
+    let color=(frame.sky_horizon.rgb*(0.25+0.15*up)+frame.sun_color.rgb*(0.04+lit/PI)*shade*day)*0.8;
+    return vec4<f32>(apply_fog(color,in.world)*alpha,alpha);
+}
+// A sheet of a crash (water_crash_particle): water first, see-through and
+// mirroring the sky, going white as it is torn and aerated toward its rim
+// and as it falls apart; ragged holes open from the rim down as it goes.
+// `seed`: its own (whole part, 0..999) and how far it has torn (twice the
+// fraction, 0..1.9).
+fn water_crash_sheet_color(in: WaterParticleOut) -> vec4<f32> {
+    let top=in.uv.y*0.5+0.5;
+    let torn=fract(in.seed)*2.0;
+    let own=floor(in.seed)/1000.0;
+    // The pattern is the sheet's own (across it, up it), not the world's:
+    // it rises with the water and stretches as the sheet grows, drawn out
+    // upward the way flung water is. (In world space the sheet rose through
+    // a still pattern, as if a light swept up a patterned wall.) Warped, in
+    // turned layers: thresholded plain value noise tore into square blocks.
+    let q=vec2<f32>(in.uv.x*2.2,top*3.0)+vec2<f32>(own*41.0,-own*7.0);
+    let warp=vec2<f32>(water_fx_noise(q*1.3),water_fx_noise(q*1.3+vec2<f32>(5.1,2.7)))-0.5;
+    let w=q+warp*1.6;
+    let ragged=water_fx_noise(w*2.3)*0.6+water_fx_noise(vec2<f32>(w.x*0.7-w.y*0.7,w.x*0.7+w.y*0.7)*4.1+vec2<f32>(3.3,1.9))*0.4;
+    let fine=water_fx_noise(vec2<f32>(w.x*0.5+w.y*0.87,w.y*0.5-w.x*0.87)*8.3+vec2<f32>(own*13.0,0.0));
+    let streaks=water_fx_noise(vec2<f32>((in.uv.x+own)*5.0+warp.x*2.0,top*2.4+own*5.0));
+    // the sheet tears from its rim down, and more as it falls
+    let tear=0.12+top*0.38+max(torn-0.6,0.0)*0.55;
+    let holes=smoothstep(tear,tear+0.22,ragged*0.6+fine*0.28+streaks*0.12);
+    let sides=1.0-smoothstep(0.65,1.0,abs(in.uv.x));
+    let foot=smoothstep(0.0,0.06,top);
+    let white=clamp(0.15+top*0.65+torn*0.35+(fine-0.5)*0.3,0.0,1.0);
+    let rim=smoothstep(0.82,0.97,top)*(0.6+fine*0.4);
+    let view=normalize(frame.camera_pos.xyz-in.world);
+    let normal=normalize(in.normal+vec3<f32>((ragged-0.5)*0.25,(fine-0.5)*0.25,(streaks-0.5)*0.15));
+    let facing=abs(dot(normal,view));
+    let fresnel=0.02037+0.97963*pow(1.0-facing,5.0);
+    let sun=normalize(frame.sun_dir.xyz);
+    let day=clamp(frame.sun_dir.z*2.5,0.15,1.0);
+    let lit=abs(dot(normal,sun));
+    let uv=clamp(screen_uv(in.clip.xy)+vec2<f32>(dot(normal,frame.cam_right.xyz),-dot(normal,frame.cam_up.xyz))*0.02,vec2<f32>(0.001),vec2<f32>(0.999));
+    let behind=textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb;
+    let reflected=sky_color(reflect(-view,normal));
+    let water=mix(behind*vec3<f32>(0.82,0.92,0.94),reflected,fresnel*0.75);
+    // (lit as the foam on the water, in the sun's shadow)
+    let shade=sun_shadow(in.world,normal,distance(in.world,frame.camera_pos.xyz),in.clip.xy);
+    let foam=(frame.sky_horizon.rgb*0.32+frame.sun_color.rgb*(0.04+lit/PI)*shade*day)*0.8;
+    let color=mix(water,foam,max(white,rim));
+    // (fading out as it turns edge on: never a line across the view)
+    let edge_on=smoothstep(0.06,0.32,abs(dot(normalize(in.normal),view)));
+    var alpha=(0.3+0.6*max(white,rim)+fresnel*0.25)*holes*sides*foot*in.life*edge_on;
+    alpha=min(alpha,0.95);
+    if(alpha<0.004){discard;}
+    let depth=scene_depth_at(screen_uv(in.clip.xy));
+    var a=alpha;
+    if(depth>0.0) {
+        let solid=world_from_depth(screen_uv(in.clip.xy),depth);
+        a*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.12,0.0,1.0);
+    }
+    return vec4<f32>(apply_fog(color,in.world)*a,a);
+}
 fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.kind>=7u) {
+        return water_crash_color(in);
+    }
     if(in.kind==2u || in.kind==4u) {
         let top=in.uv.y*0.5+0.5;
         let ragged=water_fx_noise(in.world.xy*7.0+vec2<f32>(in.level,top*3.0));
@@ -1917,7 +2257,6 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
         let normal=normalize(in.normal+vec3<f32>((ragged-0.5)*0.12,(fine-0.5)*0.12,0.0));
         let fresnel=0.02037+0.97963*pow(1.0-abs(dot(normal,view)),5.0);
         var alpha=(0.22+fresnel*0.28+edge*0.32)*holes*in.life;
-        if(in.life<=0.001 || alpha<0.005){discard;}
         let uv=clamp(screen_uv(in.clip.xy)+vec2<f32>(dot(normal,frame.cam_right.xyz),-dot(normal,frame.cam_up.xyz))*0.006*in.life,vec2<f32>(0.001),vec2<f32>(0.999));
         let transmitted=textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb;
         let reflection=reflect(-view,normal);
@@ -1948,7 +2287,20 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
 @fragment
 fn fs_water_particle(in: WaterParticleOut) -> @location(0) vec4<f32> {
     if(!camera_underwater() && in.world.z<in.level){discard;}
-    return water_particle_color(in);
+    return water_particle_color(in)*water_particle_unhidden(in);
+}
+// How much of a particle seen from above the water the sea in front of it
+// leaves visible: the water writes no depth, so without this a crest or its
+// foam between the camera and the spray behind it did not hide it. The
+// nearest water surface of the pixel (water_interface, the displaced waves)
+// against the particle's own distance, faded over a few decimetres.
+fn water_particle_unhidden(in: WaterParticleOut) -> f32 {
+    if(camera_underwater()){return 1.0;}
+    let first=textureLoad(water_interface,vec2<i32>(in.clip.xy),0);
+    if(first<=0.0){return 1.0;}
+    let water=1.0/first-1.0;
+    let mine=1.0/water_interface_depth(in.clip.w)-1.0;
+    return clamp((water-mine)/0.8+1.0,0.0,1.0);
 }
 @fragment
 fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
@@ -4262,4 +4614,24 @@ fn fs_snow_mesh(in: SnowMeshOut) -> @location(0) vec4<f32> {
     // ground's own snow shows instead
     if (c.a < 0.5) { discard; }
     return vec4<f32>(c.rgb / c.a, 1.0);
+}
+
+// The backwash on the sand (water_backwash): how much of a draining sheet
+// of water lies here (x, 0..1) and the swash's foam on it (y, 0..1), the
+// same lace as on the water, dragged seaward with it, so the wave is seen
+// pulling back out to sea instead of sinking into the sand. `at` the sea read here, `theta` the
+// swell's phase, `reach` how high the swash runs, `e` the sand's height
+// above the still water (m).
+fn water_sand_backwash(p:vec2<f32>,at:WaterSeaAt,theta:f32,reach:f32,e:f32)->vec2<f32> {
+    let beach=water_swash_beach(at);
+    let rise=water_swash_rise(theta).x;
+    let back=water_backwash(theta,rise*reach,reach,e);
+    let sheet=smoothstep(0.002,0.02,back.x)*beach;
+    if(sheet<0.01 || !water_fx_on(2u)){return vec2<f32>(sheet,0.0);}
+    // the swash's lace, as the water over it drew it (water_swash_foam):
+    // where the water has sunk under the sand, its foam goes on sliding
+    // back on the draining sheet, and fades with it
+    let lace=water_swash_foam(p,at,theta,reach);
+    let foam=sheet*lace*(0.7+0.25*water_fx.sea.frame.w)*water_fx.sea.look.x;
+    return vec2<f32>(sheet,clamp(foam,0.0,1.0));
 }

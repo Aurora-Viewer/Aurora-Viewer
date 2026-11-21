@@ -51,6 +51,9 @@ pub struct RenderState {
     /// simulator state changes). The Blinn-Phong tab hides only the faces it
     /// edits, so the PBR faces of the same prim keep rendering (#4467).
     pub blinn_phong_faces: u64,
+    /// A floating root drawn riding the wind's sea (scene/water_ride.rs):
+    /// placed every frame while it does, as what moves by itself.
+    pub rides_water: bool,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.

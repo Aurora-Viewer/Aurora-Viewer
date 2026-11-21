@@ -483,7 +483,21 @@ fn height(x: f32, y: f32) -> f32 {
     } else {
         0.0
     };
-    21.5 + shore + hill + dune + relief + altitude()
+    21.5 + shore + hill + dune + relief + sea_island(x, y) + altitude()
+}
+
+/// The water demo's sea modes (`AURORA_DEMO_WATER=…sea…`): a small island
+/// in the lagoon, its top 2 m above the water on a sloping shelf, for the
+/// swell refracting round it and its shadow.
+fn sea_island(x: f32, y: f32) -> f32 {
+    static SEA: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*SEA.get_or_init(|| water::mode().is_some_and(|m| m.contains("sea"))) {
+        return 0.0;
+    }
+    let r2 = (x - 26.0).powi(2) + (y - 152.0).powi(2);
+    // and an inland lake, about 90 m across, in a hollow of the dunes
+    let lake2 = (x - 150.0).powi(2) / 1.6 + (y - 80.0).powi(2);
+    7.5 * (-r2 / 220.0).exp() - 14.0 * (-lake2 / 1400.0).exp()
 }
 
 /// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`: the panes (from

@@ -615,6 +615,8 @@ pub struct World {
     pub animesh_fixups: HashMap<Uuid, crate::scene::draw_limits::Fixup>,
     /// Local water-wave heave of our drawn avatar, independent of physics/hover.
     pub water_float: crate::movement::water_float::Follower,
+    /// Floating objects drawn riding the wind's sea (scene/water_ride.rs).
+    pub water_ride: crate::movement::water_ride::Rides,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
     /// The seated avatars turned on purpose, drawn so until the simulator
@@ -1042,12 +1044,16 @@ impl World {
         }
     }
 
+    /// How far the water lifts the drawn avatar `id`: our own surface float
+    /// while swimming, and for anyone the deck of a riding boat it stands
+    /// on (scene/water_ride.rs).
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
-        if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
+        let float = if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
             self.water_float.offset()
         } else {
             0.0
-        }
+        };
+        float + self.water_ride.standing(id)
     }
     /// LLFloaterRegionInfo::refreshFromRegion on `handle`: the panels ask
     /// (estate, access, covenant, experiences, environment), then, when the
@@ -1121,6 +1127,7 @@ impl World {
             avatar_shape_dz: HashMap::new(),
             animesh_fixups: HashMap::new(),
             water_float: Default::default(),
+            water_ride: Default::default(),
             bodies: HashMap::new(),
             seat_snaps: HashMap::new(),
             look_at: lookat::LookAts::default(),

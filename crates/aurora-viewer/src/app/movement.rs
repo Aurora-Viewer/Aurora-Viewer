@@ -496,8 +496,19 @@ impl App {
                 .map(|g| g[0])
                 .or(frame.ground)
                 .unwrap_or(level - 20.0);
-            aurora_render::water_effects::surface_level(position.truncate(), time, self.settings.water_effects.render(), level, ground)
-                - level
+            let at = self
+                .scene
+                .lists
+                .water_ground
+                .sea_point(position.truncate(), &self.scene.lists.water_sea, level - ground);
+            aurora_render::water_effects::surface_level(
+                position.truncate(),
+                time,
+                self.settings.water_effects.render(),
+                &self.scene.lists.water_sea,
+                level,
+                &at,
+            ) - level
         });
         self.world.water_float.update(
             self.world.main_region.unwrap_or(0),

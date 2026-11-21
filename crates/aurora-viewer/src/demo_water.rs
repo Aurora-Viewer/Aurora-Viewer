@@ -18,6 +18,125 @@ pub fn mode() -> Option<&'static str> {
     MODE.get_or_init(|| std::env::var("AURORA_DEMO_WATER").ok()).as_deref()
 }
 
+/// The `sea` modes' `AURORA_DEMO_SEA_PRESET=<calm|breeze|swell|storm|stylized>`:
+/// the Sea panel's preset, set there.
+fn sea_preset() -> Option<crate::weather::sea::SeaShape> {
+    mode().filter(|m| m.contains("sea"))?;
+    crate::weather::sea::preset(std::env::var("AURORA_DEMO_SEA_PRESET").ok()?.trim())
+}
+
+/// Once: `AURORA_DEMO_SEA_PRESET` sets the sea (set here, that preset),
+/// and `sea-panel` opens the Aurora Weather window on its Sea section.
+/// Whether to open it now.
+pub fn sea_panel_setup(settings: &mut Settings) -> bool {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if mode().is_none() || DONE.swap(true, Ordering::Relaxed) {
+        return false;
+    }
+    if let Some(shape) = sea_preset() {
+        settings.sea.source = crate::weather::sea::SeaSource::Mine;
+        settings.sea.shape = shape;
+    }
+    mode().is_some_and(|m| m.contains("sea-panel"))
+}
+
+/// The wind over the demo's water (m/s, blowing toward). The `sea` modes
+/// take it from their panel (`sea_panel`) or sweep it (`sea-sweep`); the
+/// other fixtures keep the light breeze they were made under.
+pub fn sea_wind() -> Option<glam::Vec2> {
+    let mode = mode()?;
+    if !mode.contains("sea") {
+        return Some(glam::Vec2::new(0.88, 0.475) * 5.0);
+    }
+    let (speed, from) = if mode.contains("sea-sweep") {
+        (sweep_speed(sea_clock().elapsed().as_secs_f32()), sea_controls().1)
+    } else if mode.contains("sea-turn") {
+        // the wind going round, 3° a second (the region's wind on the grid
+        // often turns like this): the sea must follow without a jump
+        let (speed, from) = sea_controls();
+        (speed, from + 3.0 * sea_clock().elapsed().as_secs_f32())
+    } else {
+        sea_controls()
+    };
+    // compass degrees clockwise from north (+y), the way it comes from
+    let from = from.to_radians();
+    Some(-glam::Vec2::new(from.sin(), from.cos()) * speed)
+}
+
+/// `sea-sweep`: calm, a breeze, a gale and back over two minutes, holding
+/// each for a while so a recording shows the sea build and settle.
+pub fn sweep_speed(t: f32) -> f32 {
+    const KEYS: [(f32, f32); 7] = [
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (30.0, 6.0),
+        (45.0, 6.0),
+        (70.0, 20.0),
+        (95.0, 20.0),
+        (120.0, 0.0),
+    ];
+    let t = t.rem_euclid(KEYS[KEYS.len() - 1].0);
+    KEYS.windows(2)
+        .find(|w| t <= w[1].0)
+        .map_or(0.0, |w| w[0].1 + (w[1].1 - w[0].1) * (t - w[0].0) / (w[1].0 - w[0].0))
+}
+
+fn sea_clock() -> &'static std::time::Instant {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now)
+}
+
+/// The panel's wind: speed (m/s) and where it comes from (degrees), at
+/// first `AURORA_DEMO_SEA_WIND=<speed>[,<from>]` (6 m/s from the west: onto
+/// the demo's beach).
+fn sea_controls() -> (f32, f32) {
+    *sea_state().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn sea_state() -> &'static std::sync::Mutex<(f32, f32)> {
+    static STATE: OnceLock<std::sync::Mutex<(f32, f32)>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        let spec = std::env::var("AURORA_DEMO_SEA_WIND").unwrap_or_default();
+        let mut parts = spec.split(',').map(|p| p.trim().parse::<f32>().ok());
+        let speed = parts.next().flatten().unwrap_or(6.0).clamp(0.0, 30.0);
+        let from = parts.next().flatten().unwrap_or(270.0).rem_euclid(360.0);
+        std::sync::Mutex::new((speed, from))
+    })
+}
+
+/// The `sea` modes' panel: the wind's speed and direction, and the sea it
+/// makes (demo text, not translated, like the other demo tools).
+pub fn sea_panel(ctx: &egui::Context, sea: &aurora_render::water_sea::Sea) {
+    if !mode().is_some_and(|m| m.contains("sea")) {
+        return;
+    }
+    let sweep = mode().is_some_and(|m| m.contains("sea-sweep"));
+    egui::Window::new("Sea wind (demo)")
+        .id(egui::Id::unique("demo_sea_wind"))
+        .default_pos(egui::pos2(16.0, 80.0))
+        .resizable(false)
+        .show(ctx, |ui| {
+            let mut state = sea_state().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            ui.add_enabled(!sweep, egui::Slider::new(&mut state.0, 0.0..=25.0).text("wind (m/s)"));
+            ui.add(egui::Slider::new(&mut state.1, 0.0..=359.0).text("from (°)"));
+            let [_, _, speed, _] = sea.wind;
+            ui.label(format!(
+                "sea: {speed:.1} m/s (Beaufort {}), roughness {:.2}, swell {:.0} m long, {:.2} m high",
+                beaufort(speed),
+                sea.frame[3],
+                std::f32::consts::TAU / sea.trains[0][2].max(1e-3),
+                2.0 * sea.trains[0][3]
+            ));
+        });
+}
+
+fn beaufort(speed: f32) -> u32 {
+    [0.5, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7]
+        .iter()
+        .take_while(|limit| speed >= **limit)
+        .count() as u32
+}
+
 /// Fixed wave and actor phase for same-camera optical comparisons.
 pub fn inspection_time(time: f32) -> f32 {
     if mode().is_some_and(|mode| mode.contains("optics-")) {
@@ -34,6 +153,7 @@ pub fn update(
     panels: &mut crate::ui::Panels,
     frame: u64,
     time: f32,
+    sea: &aurora_render::water_sea::Sea,
 ) -> bool {
     let Some(mode) = mode() else {
         return false;
@@ -56,6 +176,11 @@ pub fn update(
         }
         settings.water_effects.enabled = mode.split(':').next() != Some("off");
         settings.water_effects.waves = !mode.contains("no-waves");
+        // the fixtures' sea is the demo's wind as it is: what a `:sea-panel`
+        // run left in the demo's settings (a preset set here) is undone
+        if !mode.contains("sea-panel") && sea_preset().is_none() {
+            settings.sea = Default::default();
+        }
         settings.water_effects.interactions = !mode.contains("no-wake") && !mode.contains("waterline") && !mode.contains("optics-");
         settings.water_effects.absorption = !mode.contains("no-absorption");
         settings.water_effects.fresnel = !mode.contains("no-fresnel");
@@ -121,7 +246,14 @@ pub fn update(
             (eye, eye + horizontal.extend(angle.sin()))
         } else if mode.contains("waterline-split") {
             let xy = glam::Vec2::new(43.0, 118.0);
-            let level = aurora_render::water_effects::surface_level(xy, time, settings.water_effects.render(), 20.0, 0.0);
+            let level = aurora_render::water_effects::surface_level(
+                xy,
+                time,
+                settings.water_effects.render(),
+                sea,
+                20.0,
+                &aurora_render::water_sea::SeaPoint::open(20.0),
+            );
             let eye = xy.extend(level + if mode.contains("under") { -0.01 } else { 0.01 });
             (eye, eye + Vec3::new(12.0, 10.0, 0.0))
         } else if mode.contains("waterline") {
@@ -129,7 +261,16 @@ pub fn update(
             // water in a trough. The old flat-plane switch inverted both views.
             let crest = !mode.contains("trough");
             let mut xy = glam::Vec2::new(12.0, 118.0);
-            let sample = |p: glam::Vec2| aurora_render::water_effects::surface_level(p, time, settings.water_effects.render(), 20.0, 0.0);
+            let sample = |p: glam::Vec2| {
+                aurora_render::water_effects::surface_level(
+                    p,
+                    time,
+                    settings.water_effects.render(),
+                    sea,
+                    20.0,
+                    &aurora_render::water_sea::SeaPoint::open(20.0),
+                )
+            };
             for i in 1..96 {
                 let candidate = glam::Vec2::new(12.0 + i as f32 * 0.4, 118.0);
                 if (crest && sample(candidate) > sample(xy)) || (!crest && sample(candidate) < sample(xy)) {
@@ -155,6 +296,36 @@ pub fn update(
             (Vec3::new(61.0, 128.7, 22.1), Vec3::new(63.0, 130.0, 19.9))
         } else if mode.contains("avatar") {
             (Vec3::new(58.0, 120.0, 22.0), Vec3::new(60.0, 125.0, 19.7))
+        } else if mode.contains("sea-floor") {
+            // low over the floor laid at the water
+            (Vec3::new(58.0, 106.0, 21.6), Vec3::new(48.0, 116.0, 19.9))
+        } else if mode.contains("sea-lake") {
+            // the inland lake, from its shore
+            (Vec3::new(178.0, 64.0, 26.0), Vec3::new(146.0, 84.0, 19.5))
+        } else if mode.contains("sea-high") {
+            // from far up, over the lagoon and the open sea beyond
+            (Vec3::new(110.0, 60.0, 150.0), Vec3::new(20.0, 140.0, 20.0))
+        } else if mode.contains("sea-island") {
+            // over the lagoon's island, the swell wrapping round it
+            (Vec3::new(58.0, 118.0, 34.0), Vec3::new(28.0, 150.0, 19.0))
+        } else if mode.contains("sea-boat") {
+            // beside the boat and a buoy, the dock behind
+            (Vec3::new(35.0, 121.0, 22.2), Vec3::new(42.0, 131.0, 20.0))
+        } else if mode.contains("sea-roof") {
+            // off the four walls of `sea-roof`, from the open sea
+            (Vec3::new(1.0, 112.0, 24.5), Vec3::new(16.0, 112.0, 20.6))
+        } else if mode.contains("sea-crash") {
+            // off the breakwater's seaward face: the swell crashing on it
+            (Vec3::new(14.0, 96.0, 23.5), Vec3::new(27.0, 108.0, 20.5))
+        } else if mode.contains("sea-beach") {
+            // down onto the lagoon's beach: the swash running up and back
+            (Vec3::new(80.0, 120.0, 24.5), Vec3::new(67.0, 129.0, 19.8))
+        } else if mode.contains("sea-low") {
+            // at the waterline, along the beach, the breakers coming in
+            (Vec3::new(64.0, 112.0, 20.9), Vec3::new(40.0, 136.0, 19.8))
+        } else if mode.contains("sea") {
+            // from the dunes, out over the lagoon to the open water
+            (Vec3::new(82.0, 128.0, 27.5), Vec3::new(30.0, 128.0, 19.5))
         } else if mode.contains("shore") {
             (Vec3::new(72.0, 133.0, 22.2), Vec3::new(48.0, 119.0, 19.4))
         } else if mode.contains("close") {
@@ -242,6 +413,117 @@ pub fn update(
             world.apply(NetEvent::ObjectUpdates { handle, objects });
         }
         return changed;
+    }
+    if mode.contains("sea") {
+        // sheltered water (scene/water_shelter.rs): a dock on pilings off the
+        // beach, a house on stilts in the lagoon and a breakwater whose lee
+        // (east, with the default west wind) stays calm
+        let wood = [0.45, 0.32, 0.2, 1.0];
+        let mut parts = vec![
+            (99560, Vec3::new(50.0, 124.0, 20.75), Vec3::new(16.0, 3.0, 0.2), wood),
+            (99570, Vec3::new(34.0, 140.0, 21.0), Vec3::new(8.0, 8.0, 0.25), wood),
+            (
+                99571,
+                Vec3::new(34.0, 140.0, 22.6),
+                Vec3::new(7.0, 7.0, 3.0),
+                [0.85, 0.82, 0.74, 1.0],
+            ),
+            (
+                99580,
+                Vec3::new(28.0, 108.0, 19.5),
+                Vec3::new(2.5, 16.0, 3.5),
+                [0.42, 0.42, 0.44, 1.0],
+            ),
+            // a thin floor laid at the water: no sea shows through it
+            (
+                99581,
+                Vec3::new(50.0, 114.0, 20.05),
+                Vec3::new(8.0, 6.0, 0.15),
+                [0.3, 0.45, 0.25, 1.0],
+            ),
+        ];
+        for (n, x) in [44.0, 48.0, 52.0, 56.0].into_iter().enumerate() {
+            for (m, y) in [122.8, 125.2].into_iter().enumerate() {
+                parts.push((99561 + (n * 2 + m) as u32, Vec3::new(x, y, 18.5), Vec3::new(0.3, 0.3, 4.4), wood));
+            }
+        }
+        for (n, (x, y)) in [(30.5, 136.5), (37.5, 136.5), (30.5, 143.5), (37.5, 143.5)].into_iter().enumerate() {
+            parts.push((99572 + n as u32, Vec3::new(x, y, 18.5), Vec3::new(0.35, 0.35, 4.8), wood));
+        }
+        // `sea-roof`: four short walls in the open sea facing the swell, with
+        // open sky over the first and decks 3 m, 1.5 m and 0.4 m above the
+        // water over the others' seaward faces: the spray stops under a
+        // deck, and under the lowest nothing is thrown (scene/water_crash.rs)
+        if mode.contains("sea-roof") {
+            let stone = [0.42, 0.42, 0.44, 1.0];
+            for (n, (y, under)) in [(103.0f32, None), (109.0, Some(3.0f32)), (115.0, Some(1.5)), (121.0, Some(0.4))]
+                .into_iter()
+                .enumerate()
+            {
+                parts.push((99640 + n as u32 * 2, Vec3::new(16.0, y, 19.5), Vec3::new(2.0, 4.0, 3.5), stone));
+                if let Some(under) = under {
+                    parts.push((
+                        99641 + n as u32 * 2,
+                        Vec3::new(14.5, y, 20.0 + under + 0.15),
+                        Vec3::new(5.0, 4.4, 0.3),
+                        wood,
+                    ));
+                }
+            }
+        }
+        for (id, pos, scale, color) in parts {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                box_shape,
+                super::te(color, 0, false, 0.0),
+                Default::default(),
+                "",
+            ));
+        }
+        // floating, physical: they ride the waves (scene/water_ride.rs) -
+        // a boat with a cabin linked to its hull, and three buoys
+        let physical = |mut o: aurora_net::objects::ObjectUpdate| {
+            o.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+            o
+        };
+        let heading = Quat::from_rotation_z(0.5);
+        objects.push(physical(super::prim(
+            99590,
+            Vec3::new(42.0, 131.0, 20.05),
+            heading,
+            Vec3::new(6.0, 2.2, 0.8),
+            box_shape,
+            super::te([0.92, 0.92, 0.95, 1.0], 0, false, 0.0),
+            Default::default(),
+            "",
+        )));
+        let mut cabin = super::prim(
+            99591,
+            Vec3::new(-0.8, 0.0, 0.9),
+            Quat::IDENTITY,
+            Vec3::new(2.2, 1.8, 1.0),
+            box_shape,
+            super::te([0.15, 0.35, 0.6, 1.0], 0, false, 0.0),
+            Default::default(),
+            "",
+        );
+        cabin.parent_id = 99590;
+        objects.push(cabin);
+        for (n, (x, y)) in [(38.0, 118.0), (52.0, 141.0), (24.0, 128.0)].into_iter().enumerate() {
+            objects.push(physical(super::prim(
+                99592 + n as u32,
+                Vec3::new(x, y, 20.0),
+                Quat::IDENTITY,
+                Vec3::new(0.7, 0.7, 0.9),
+                box_shape,
+                super::te([0.95, 0.4, 0.05, 1.0], 0, false, 0.0),
+                Default::default(),
+                "",
+            )));
+        }
     }
     for (id, pos, scale, color) in [
         (
@@ -492,6 +774,16 @@ pub fn update(
             avatar.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         }
         avatar.name_values = "FirstName STRING RW SV Water\nLastName STRING RW SV Demo".into();
+        objects.push(avatar);
+    }
+    if mode.contains("sea") {
+        // someone standing on the boat's foredeck (the hull's top is 20.45 m):
+        // drawn, they ride with the deck (scene/water_ride.rs)
+        let mut avatar = super::action_avatar(false);
+        avatar.local_id = 99596;
+        avatar.full_id = Uuid::from_u128(99596);
+        avatar.position = Vec3::new(43.6, 131.9, 20.45 + avatar.scale.z.abs() * 0.5);
+        avatar.name_values = "FirstName STRING RW SV Deck\nLastName STRING RW SV Demo".into();
         objects.push(avatar);
     }
     if let Some(handle) = world.main_region {

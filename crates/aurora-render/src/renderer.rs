@@ -6814,7 +6814,14 @@ impl Backend {
                     },
                     wgpu::BindGroupEntry {
                         binding: 20,
-                        resource: wgpu::BindingResource::TextureView(if sample_water { &t.water_interface } else { &dummies.depth }),
+                        // (also where the water mask is: both are written in their own
+                        // pass before the scene, and the water particles drawn with
+                        // group a hide behind the nearest water surface)
+                        resource: wgpu::BindingResource::TextureView(if sample_water || sample_mask {
+                            &t.water_interface
+                        } else {
+                            &dummies.depth
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 21,
@@ -9448,10 +9455,13 @@ impl Backend {
         // ---- planar reflections this frame
         // LLViewerCamera::cameraUnderWater uses a flat region plane. Our
         // displaced surface needs the camera's actual wave height instead.
-        let camera_water_level =
-            lists
-                .water_ground
-                .camera_level(f.camera_pos.truncate(), f.time, self.settings.water_effects, f.water_height);
+        let camera_water_level = lists.water_ground.camera_level(
+            f.camera_pos.truncate(),
+            f.time,
+            self.settings.water_effects,
+            &lists.water_sea,
+            f.water_height,
+        );
         // Fine interaction height stays on the GPU. Keep both eligible paths
         // within its bounded displacement; their fragments select the side.
         let wake_margin = if self.settings.water_effects.enabled && self.settings.water_effects.interactions {
@@ -10630,6 +10640,7 @@ impl Backend {
             f.time,
             f.camera_pos.truncate(),
             &lists.water_ground,
+            &lists.water_sea,
             &lists.water_events,
             &lists.water_contacts,
         ) {
