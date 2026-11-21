@@ -180,6 +180,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (0: uncapped; 10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_BACKGROUND=1` | The window keeps drawing behind other windows and does not come to the front at launch (measurements) |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; turns "Match the display" off for the launch |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
@@ -458,6 +459,15 @@ that was closed, whichever agent launched it. The window is placed like that
 of a screenshot (neither position nor maximised state saved) and its size is
 not remembered for the next launch. The actual size is at the start of the
 `perf settings` line.
+
+`AURORA_BACKGROUND=1`: for a measurement that runs while the human works.
+macOS stops sending redraws to a window other windows cover entirely, and
+the demo's frame rate then drops to nothing (`draws=0` in the perf summary);
+with the variable the viewer draws such a window all the same, and on macOS
+it does not bring itself to the front at launch. Combine it with
+`AURORA_WINDOW_SIZE` (which also keeps the keyboard focus where it is) so
+that the measured size does not depend on the last session. A covered
+window then costs the GPU as much as a shown one: measurement only.
 
 `AURORA_FPS_LIMIT`: user cap for tests (0 disables the user cap; positive
 values are brought back into 10–500 fps, an invalid value is ignored). The lower cap in
@@ -5491,6 +5501,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SOFT_BLEND=1` | A glass desk top and a pane of streaked glass over shelves, left of the start view: glass whose opacity varies within a face, under things that occlude it |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
+| `AURORA_DEMO_MIRROR=plaza` | A mirror 12 m ahead of the start view, facing it, reflecting the plaza: a busy place drawn twice (#3218) |
 | `AURORA_DEMO_MIRROR_METAL=1` | With `AURORA_DEMO_MIRROR`: the mirror's panel in polished PBR metal, 5 cm thin (its face 2.5 cm off the probe's plane); with SSR on, the mirror must still show our avatar's front, not SSR's copy of its back (#3375) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
@@ -13840,6 +13851,17 @@ What the inventory must show with these scenarios:
   #3479 the mirror had neither the lace nor the glass, and lit its image
   by the sky and the sun through the roof: a pale grey avatar and a navy
   blue ball.
+- **`AURORA_DEMO_MIRROR=plaza`**: a dark mirror 3 m wide, its center
+  12 m ahead of the start view (or of `AURORA_DEMO_POS`) and 2.5 m over the
+  ground, facing the camera. It reflects the plaza and whatever the other
+  scenarios put there, so that the mirror pass draws a busy place a second
+  time, as a mirror in a store on the grid does (#3218). The load of such a
+  store: `AURORA_DEMO_CROWD=40`, `AURORA_DEMO_LIGHTS=64`, this mirror and
+  `AURORA_DEMO_VEILS=12,12` (blended layers between the camera and the
+  mirror), with the Graphics settings of the session to compare (mirrors on)
+  and `AURORA_BACKGROUND=1` to measure behind other windows. Look at the
+  `mirror`, `scene a` and `scene b` passes of a Metal System Trace and at
+  `gpu_frame=` in the perf summary.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended

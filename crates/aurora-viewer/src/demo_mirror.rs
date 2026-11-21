@@ -33,6 +33,36 @@ pub fn enabled() -> bool {
     *ENABLED
 }
 
+/// AURORA_DEMO_MIRROR=plaza: a mirror 12 m ahead of the start view (or of
+/// AURORA_DEMO_POS), facing it, its center 2.5 m over the ground. A mirror
+/// in a busy place draws all of it a second time: with AURORA_DEMO_CROWD,
+/// AURORA_DEMO_LIGHTS and AURORA_DEMO_VEILS, the load of a busy store on
+/// the grid (issue #3218).
+pub fn plaza_enabled() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("AURORA_DEMO").is_ok_and(|v| v.trim() == "1")
+            && std::env::var("AURORA_DEMO_MIRROR").is_ok_and(|v| v.trim() == "plaza")
+    });
+    *ENABLED
+}
+
+/// The probe and panel of `AURORA_DEMO_MIRROR=plaza`, from local id `first`.
+pub fn plaza(first: u32) -> [ObjectUpdate; 2] {
+    // the start view of the plaza (demo.rs `events`)
+    let look = Vec3::new(0.8, 0.4, 0.0).normalize();
+    let eye = std::env::var("AURORA_DEMO_POS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+        .filter(|p| p.len() >= 2)
+        .map_or(Vec3::new(132.0, 126.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
+    let at = eye + look * 12.0;
+    let center = Vec3::new(at.x, at.y, height(at.x, at.y) + 2.5);
+    // its plane along its local +Z, toward the start view; local Y up
+    let front = -look;
+    let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Z.cross(front), Vec3::Z, front));
+    mirror(first, center, rot, [0.05, 0.05, 0.05, 1.0])
+}
+
 /// The plaza's mirror: the center and rotation of its probe and panel (the
 /// probe's plane along its local +Z).
 pub fn placement() -> (Vec3, Quat) {

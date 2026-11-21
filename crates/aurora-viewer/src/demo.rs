@@ -6334,6 +6334,14 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += mirror::COUNT;
     }
+    // AURORA_DEMO_MIRROR=plaza: a mirror ahead of the start view, facing
+    // it, that reflects the plaza and what the other scenarios put in it
+    if mirror::plaza_enabled() {
+        for o in mirror::plaza(id) {
+            add(o);
+        }
+        id += 2;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)

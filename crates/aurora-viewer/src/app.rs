@@ -21538,6 +21538,16 @@ impl App {
     }
 }
 
+/// AURORA_BACKGROUND=1: the window keeps drawing while other windows cover
+/// it, where macOS stops sending it redraws, so that a measurement runs
+/// behind the user's work (a window opened with AURORA_WINDOW_SIZE or for a
+/// capture already opens without taking the focus). Measurement only: a
+/// covered window then spends the GPU as if it were shown.
+fn draws_hidden() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("AURORA_BACKGROUND").is_ok_and(|v| v.trim() == "1"));
+    *ON
+}
+
 /// AURORA_WINDOW_SIZE="w,h": the window size of this run (logical pixels),
 /// to measure by window size. It is not remembered: the next run opens at
 /// the size of the last session again.
@@ -25590,10 +25600,11 @@ impl ApplicationHandler for App {
         self.attention_window();
         self.external_links();
         self.game_control_dispatch(event_loop);
-        if self.gfx.as_ref().is_some_and(|g| !g.shown) {
+        if self.gfx.as_ref().is_some_and(|g| !g.shown) || (self.occluded && draws_hidden()) {
             // Hidden windows may receive no RedrawRequested event. Keep
             // producing frames until a real presentation makes it visible,
-            // including when the render thread returns the previous frame.
+            // including when the render thread returns the previous frame;
+            // and with AURORA_BACKGROUND=1, while covered by other windows.
             self.frame(event_loop);
         } else if let Some(g) = &self.gfx {
             g.window.request_redraw();
