@@ -159,7 +159,10 @@ impl BuildTool {
     pub fn surface_takes_texture(world: &World, idx: usize, faces: &[u8], override_ok: bool, remove_pbr: bool) -> bool {
         override_ok
             || remove_pbr
-            || world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview)
+            || world
+                .objects
+                .get(idx)
+                .is_some_and(|o| faces.iter().any(|face| o.is_blinn_phong_preview(*face as usize)))
             || faces.iter().any(|face| BuildTool::gltf_asset(world, idx, *face).is_none())
     }
 
@@ -219,7 +222,7 @@ impl BuildTool {
             self.apply_texture(world, env, PickTarget::PbrMaterial, asset, &selected);
             return;
         }
-        let blinn_phong = world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview);
+        let blinn_phong = |face: u8| world.objects.get(idx).is_some_and(|o| o.is_blinn_phong_preview(face as usize));
         let mut legacy = Vec::new();
         let mut updates = Vec::new();
         for face in selected {
@@ -232,7 +235,7 @@ impl BuildTool {
                         over: None,
                     });
                     legacy.push(face);
-                } else if blinn_phong {
+                } else if blinn_phong(face.face) {
                     legacy.push(face);
                 } else if override_ok {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);

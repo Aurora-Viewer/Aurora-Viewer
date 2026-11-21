@@ -899,8 +899,9 @@ pub struct BuildTool {
     /// for: rebuilt when the inventory changes, never walked each frame.
     pub(crate) export_assets: Option<(u64, Uuid, HashSet<Uuid>)>,
     wheel_selection: cycle::Wheel,
-    /// Last inspected selection/mode; object display choices live in the world.
-    material_preview_selection: HashSet<Uuid>,
+    /// Faces last inspected and their mode (object -> one bit per face shown
+    /// in Blinn-Phong); object display choices live in the world.
+    material_preview_faces: HashMap<Uuid, u64>,
     material_preview_mode: Option<bool>,
     /// Selection the Texture tab was last chosen for (`auto_material_tab`).
     material_tab_for: Option<MaterialTabKey>,
@@ -1005,7 +1006,7 @@ impl Default for BuildTool {
         BuildTool {
             export_assets: None,
             wheel_selection: cycle::Wheel::default(),
-            material_preview_selection: HashSet::new(),
+            material_preview_faces: HashMap::new(),
             material_preview_mode: None,
             material_tab_for: None,
             keep_material_tab: false,
