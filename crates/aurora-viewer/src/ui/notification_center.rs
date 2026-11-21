@@ -465,6 +465,9 @@ pub fn show(
                 });
             });
     }
+    if nui.open && nui.center.tab == Tab::ToDo && super::notifications::last_notification_answered(list, &answers) {
+        nui.open = false;
+    }
     if nui.open {
         // a click outside closes the list (not on the bell: it toggles itself)
         let out = ctx.input(|i| i.pointer.any_pressed())

@@ -487,3 +487,23 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
         assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
     }
 }
+
+#[test]
+fn final_notification_answer_closes_the_list() {
+    let mut list = Notifications::default();
+    let first = info(&mut list, "First");
+    let second = info(&mut list, "Second");
+    assert!(!super::super::notifications::last_notification_answered(
+        &list,
+        &[(first, Response::Dismiss)],
+    ));
+    list.respond(first, Response::Dismiss, |_| Uuid::nil(), Uuid::nil());
+    assert!(!super::super::notifications::last_notification_answered(
+        &list,
+        &[(first, Response::Dismiss)],
+    ));
+    assert!(super::super::notifications::last_notification_answered(
+        &list,
+        &[(second, Response::Dismiss)],
+    ));
+}
