@@ -359,9 +359,6 @@ pub struct EnvSelector {
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
     local_dirty: bool,
-    /// The user chose a local environment, or went back to the shared one,
-    /// since `take_local_choice`: a sky RLVa forced without a lock gives way.
-    local_choice: bool,
     /// FSEnvironmentManualTransitionTime (s): crossfade of manual changes.
     manual_transition: f32,
     /// Next local change without crossfade (TRANSITION_INSTANT).
@@ -397,17 +394,59 @@ pub struct EnvSelector {
 }
 
 impl EnvSelector {
-    pub fn has_fixed_sky(&self) -> bool {
-        self.edit.is_some() || self.local.as_ref().is_some_and(|l| l.sky.is_some())
-    }
-
-    pub fn day_sky_at(&self, pos: f32, altitude: f32) -> Option<SkyFrame> {
+    /// RlvEnvironment's `daytime` without `@setenv=n` (rlvenvironment.cpp):
+    /// the day of ENV_LOCAL, ENV_PUSH, ENV_PARCEL then ENV_REGION, blended
+    /// at `pos` on the ground-level sky track
+    /// (LLTrackBlenderLoopingManual(sky, day, 1): track 1 of the Legacy
+    /// Viewer is the first sky track, 0 here), whatever the altitude.
+    pub fn rlva_daytime_sky(&self, pos: f32) -> Option<SkyFrame> {
         self.local
             .as_ref()
             .and_then(|l| l.day.as_ref().map(|(_, d)| d))
+            .or_else(|| self.push.day())
             .or_else(|| self.parcel.as_ref().map(|s| &s.day))
             .or_else(|| self.region.as_ref().map(|s| &s.day))
-            .map(|day| day.sky_at(pos, day.track_for_altitude(&self.altitudes, altitude)))
+            .map(|day| day.sky_at(pos, 0))
+    }
+
+    /// RlvEnvironment::getTargetSky (rlvenvironment.cpp) without `@setenv=n`:
+    /// the fixed sky of the user's ENV_LOCAL when it has one, the sky shown
+    /// otherwise. Read from the local environment itself, not from the
+    /// frame shown, so that several forces in one message build on each
+    /// other.
+    pub fn rlva_target_sky(&self) -> SkyFrame {
+        self.local
+            .as_ref()
+            .and_then(|l| l.sky.as_ref().map(|(_, sky)| *sky))
+            .unwrap_or_else(|| self.current().0)
+    }
+
+    /// RlvEnvironment writes a force made without `@setenv=n` into ENV_LOCAL
+    /// (getTargetEnvironment, getTargetSky(true), rlvenvironment.cpp): the
+    /// user's own local environment, which keeps its day (the instance is
+    /// cloned) and, when it is new, freezes the water shown
+    /// (setEnvironment(fixedEnvironment_t)), with TRANSITION_INSTANT. It
+    /// stays once the object is gone, and the user's next choice replaces
+    /// it. Not refused by `rlva_locked`: a lock later in the same message
+    /// came after it.
+    pub fn rlva_local_sky(&mut self, sky: SkyFrame) {
+        let rights = self.current_rights_pair().0;
+        self.photo_yield(SettingsKind::Sky);
+        self.local_mut().sky = Some((LocalOrigin::Personal(rights), sky));
+        self.instant_next = true;
+        self.drop_preset();
+        self.note_local_choice();
+    }
+
+    /// `@setenv_asset`, `preset` and `daycycle` without `@setenv=n`:
+    /// LLEnvironment::setEnvironment(ENV_LOCAL, asset), by its type.
+    pub fn rlva_local_settings(&mut self, asset: Uuid, settings: &Settings) {
+        self.photo_yield(match settings {
+            Settings::Sky(_) => SettingsKind::Sky,
+            Settings::Water(_) => SettingsKind::Water,
+            Settings::Day(_) => SettingsKind::Day,
+        });
+        self.apply_settings(asset, settings, None, None);
     }
     /// An editor shows its sky or water (LLFloaterFixedEnvironment::
     /// updateEditEnvironment, TRANSITION_INSTANT); the other half stays what
@@ -765,6 +804,15 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.request_local_item(asset, kind);
+    }
+
+    /// An inventory item's "Apply only to myself": no RLVa check there
+    /// (LLSettingsBridge::performAction, indra/newview/llinventorybridge.cpp),
+    /// so under `@setenv` the item still becomes the local environment, shown
+    /// once the lock goes (setManualEnvironment(ENV_LOCAL); only
+    /// setSelectedEnvironment is refused, indra/newview/llenvironment.cpp).
+    pub fn request_local_item(&mut self, asset: Uuid, kind: SettingsKind) {
         self.photo_yield(kind);
         let mut preset_replaced = false;
         self.pending.retain(|p| {
@@ -794,9 +842,6 @@ impl EnvSelector {
         if self.local.take().is_some() {
             self.note_local_choice();
         }
-        // a choice even with no local environment to drop: the shared one
-        // replaces a sky RLVa forced without a lock
-        self.local_choice = true;
         self.drop_preset();
     }
 
@@ -982,16 +1027,9 @@ impl EnvSelector {
         std::mem::take(&mut self.local_dirty)
     }
 
-    /// A choice changed the local environment: to save, and to tell RLVa.
+    /// A choice changed the local environment: to save.
     fn note_local_choice(&mut self) {
         self.local_dirty = true;
-        self.local_choice = true;
-    }
-
-    /// The user chose an environment since the last call, the shared one
-    /// included (`World::rlva_yield_environment`).
-    pub fn take_local_choice(&mut self) -> bool {
-        std::mem::take(&mut self.local_choice)
     }
 
     /// The local environment to keep for the next session
@@ -1222,9 +1260,8 @@ impl EnvSelector {
             }
         }
         self.drain_pending();
-        // restoring is not a change to save again, nor a choice
+        // restoring is not a change to save again
         self.local_dirty = false;
-        self.local_choice = false;
     }
 
     /// The selected shared slot (getSelectedEnvironmentInstance below ENV_LOCAL).
@@ -2445,5 +2482,62 @@ mod tests {
             sel.wanted_settings(),
             vec![super::super::env::time_of_day_sky(4).expect("a preset")]
         );
+    }
+
+    /// registerSetEnvFn("daytime") (rlvenvironment.cpp): the day of LOCAL,
+    /// then PUSH, PARCEL and REGION, always its track 1 (the ground sky
+    /// track, index 0 here); no day, no sky.
+    #[test]
+    fn rlva_daytime_takes_the_nearest_day_and_its_ground_sky_track() {
+        let mut sel = EnvSelector::default();
+        assert!(sel.rlva_daytime_sky(0.5).is_none(), "no day: nothing happens");
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        assert!((sel.rlva_daytime_sky(0.5).expect("the region day").gamma - 0.7).abs() < 1e-6);
+        let sky = |gamma| SkyFrame {
+            gamma,
+            ..Default::default()
+        };
+        let mut day = DayCycle::default();
+        day.sky_tracks[0] = vec![(0.0, sky(2.0))];
+        day.sky_tracks[1] = vec![(0.0, sky(3.0))];
+        sel.apply_local_day(day);
+        assert!(
+            (sel.rlva_daytime_sky(0.5).expect("the local day").gamma - 2.0).abs() < 1e-6,
+            "the local day first, its ground track whatever the altitude"
+        );
+    }
+
+    /// getTargetSky (rlvenvironment.cpp): forces build on ENV_LOCAL's sky,
+    /// not on the frame drawn before them.
+    #[test]
+    fn rlva_forces_build_on_the_local_sky_before_it_is_drawn() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        sel.rlva_local_sky(SkyFrame {
+            gamma: 2.0,
+            ..sel.rlva_target_sky()
+        });
+        assert!((sel.rlva_target_sky().gamma - 2.0).abs() < 1e-6);
+        assert!(sel.has_local());
+        // the user's next choice replaces it
+        sel.clear_local();
+        assert!(!sel.has_local());
+    }
+
+    /// "Apply only to myself" from the inventory under `@setenv`: kept as the
+    /// local environment (no RLVa check in LLSettingsBridge::performAction),
+    /// where the environment window's pick is refused.
+    #[test]
+    fn rlva_lock_keeps_an_inventory_environment_for_after_the_lock() {
+        let mut sel = region_selector();
+        sel.rlva_locked = true;
+        sel.request_local(SKY, SettingsKind::Sky);
+        assert!(!sel.local_loading(), "the window's pick is refused");
+        sel.request_local_item(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert!(sel.has_local());
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
     }
 }

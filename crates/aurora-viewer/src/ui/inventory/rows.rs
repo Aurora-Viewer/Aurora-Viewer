@@ -104,7 +104,7 @@ pub struct PlainTree {
     restored: bool,
     revision: u64,
     saved: u64,
-    key: Option<(u64, Uuid, bool, bool, u64, Tiles, bool)>,
+    key: Option<(u64, Uuid, bool, bool, u64, Tiles)>,
     tiles_mode: Tiles,
     /// The first rows, drawn as tiles; the list draws the rows after them.
     pub tiles: usize,
@@ -158,17 +158,7 @@ impl PlainTree {
     /// changed since the last call. Returns whether it did.
     pub fn prepare(&mut self, view: &ViewCache, inv: &Inventory, root: Uuid, show_root: bool, show_library: bool) -> bool {
         let tiles = if show_root { Tiles::None } else { self.tiles_mode };
-        // RLVa's @viewtexture takes the pictures away, and with them the tiles
-        // of the combination view
-        let key = (
-            view.built(),
-            root,
-            show_root,
-            show_library,
-            self.revision,
-            tiles,
-            tiles != Tiles::None && inv.can_preview(0),
-        );
+        let key = (view.built(), root, show_root, show_library, self.revision, tiles);
         if self.key == Some(key) {
             return false;
         }

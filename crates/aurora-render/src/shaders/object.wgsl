@@ -267,7 +267,10 @@ fn prev_placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
 // their motion is left out.
 fn motion_clips(rec: DrawRecord, in: VsIn, ep: vec4<f32>) -> mat2x4<f32> {
     let prev = prev_placed_model(rec, in, frame.eye.xyz) * vec4<f32>(vertex_position(rec, in), 1.0);
-    return mat2x4<f32>(frame.motion_vp * ep, frame.motion_prev_vp * prev);
+    // both on this frame's curved planet: its centre moves with the camera,
+    // which changes the drop by d·Δ/R (a camera moving a metre a frame: a
+    // fifth of a millimetre at 1 km on the Earth), no motion to show
+    return mat2x4<f32>(frame.motion_vp * curve_eye(ep), frame.motion_prev_vp * curve_eye(prev));
 }
 
 // World matrix of a vertex.
@@ -290,8 +293,11 @@ fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
 // worn layer lying exactly on the body wins on every face whatever the order
 // of the draw records. Rank 0 leaves the depth untouched. Every pass that
 // tests depth against another goes through it (prepasses and scene pass).
+// The planet's curvature bends it here (curve_eye), and only here: the
+// prepasses and the scene pass keep the same operations, and `ep` stays
+// the flat position the rest of the vertex uses.
 fn eye_clip(rec: DrawRecord, ep: vec4<f32>) -> vec4<f32> {
-    let clip = frame.eye_view_proj * ep;
+    let clip = frame.eye_view_proj * curve_eye(ep);
     let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
     // reverse Z: a greater depth is nearer
     return vec4<f32>(clip.xy, clip.z * (1.0 + f32(rank) * LAYER_DEPTH_STEP), clip.w);
@@ -559,7 +565,7 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
         out.world_pos.z = max(out.world_pos.z, rec.params.y);
     }
     out.world_pos.z += 0.025;
-    out.clip = frame.eye_view_proj * vec4<f32>(out.world_pos - frame.eye.xyz, 1.0);
+    out.clip = frame.eye_view_proj * curve_eye(vec4<f32>(out.world_pos - frame.eye.xyz, 1.0));
     return out;
 }
 
@@ -1683,6 +1689,9 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         caustic_light = m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
     }
     var col: vec3<f32>;
+    // the share of `col` from the local lights and the emissive, which the
+    // depth under the water does not dim (water_scene_lit)
+    var own = m.emissive;
     let classic = is_classic_sky();
     var hazed = false;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
@@ -1696,16 +1705,19 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
+        var local: vec3<f32>;
         if ((rec.flags.x & FLAG_PBR) != 0u) {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, a);
-            col = (col + m.emissive) * ll_final_scale()
-                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
+            local = ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
-            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh, ll_sun_linear(a), 1.0);
-            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
+            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, shadow_lift(sh), ll_sun_linear(a), 1.0);
+            local = ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
+        col = (col + m.emissive) * ll_final_scale() + local;
+        // (ll_haze scales what it is given by a.atten, then adds its glow)
+        own = (local + m.emissive * ll_final_scale()) * a.atten;
         col = ll_haze(col + caustic_light, a);
         hazed = true;
     } else {
@@ -1715,20 +1727,27 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         // face without a PBR material lit as a legacy one
         let legacy = (rec.flags.x & FLAG_PBR) == 0u;
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, legacy) + m.emissive;
+        own += shade_pbr_local;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
+            // legacy_light mixes the local lights' share toward the
+            // emissive mask and the environment as the rest
             // its highlights in the sunlight (sunlit_linear) and its
-            // environment at the probes' radiance
+            // environment at the probes' radiance (legacy_light first: both
+            // add to legacy_glare, whose sum depends on the order)
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / 3.0, 1.0)
-                + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
+                               frame.sun_color.rgb / 3.0, 1.0);
+            let local_spec = legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
+            col += local_spec + m.emissive;
+            own = m.emissive + shade_pbr_local * (1.0 - clamp(m.unlit, 0.0, 1.0)) * (1.0 - clamp(m.legacy_env, 0.0, 1.0)) + local_spec;
         }
         col += caustic_light;
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
+        own *= 0.65;
     }
     if(water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
-        col = max(col-m.emissive,vec3<f32>(0.0))*water_scene_light(in.world_pos)+m.emissive;
+        col = water_scene_lit(col, own, in.world_pos);
     }
     col = rez_apply(rec, in, m.n, col);
     if (!hazed || water_fogs_source(in.world_pos)) {
@@ -3707,7 +3726,7 @@ fn vs_particle(in: PartIn) -> PartOut {
     }
     let wp = in.pos + offset;
     var out: PartOut;
-    out.clip = frame.view_proj * vec4<f32>(wp, 1.0);
+    out.clip = world_clip(wp);
     out.uv = uv;
     out.color = vec4<f32>(srgb_to_linear(in.color.rgb), in.color.a);
     // glow brightens the particle (no bloom pass)
@@ -3802,7 +3821,7 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let tile = (in.tile & ~(IMPOSTOR_FULLBRIGHT | IMPOSTOR_PENDING)) % (per * per);
     let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
-    out.clip = frame.view_proj * vec4<f32>(p, 1.0);
+    out.clip = world_clip(p);
     out.uv = (origin + vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5)) / impostor_tiles_per_row;
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));
@@ -3840,6 +3859,8 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
             col = ll_haze(col, ll_atmos(in.world_pos - frame.camera_pos.xyz));
         }
     }
+    // (the picture's own local lights cannot be told from its sunlight:
+    // the whole card takes the depth's dimming)
     col*=select(vec3<f32>(1.0),water_scene_light(in.world_pos),in.fullbright==0u);
     if(!is_classic_sky() || water_fogs_source(in.world_pos)){col=apply_fog(col,in.world_pos);}
     return vec4<f32>(col, 1.0);

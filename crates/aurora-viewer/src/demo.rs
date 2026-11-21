@@ -33,6 +33,10 @@ pub mod texture_library;
 #[path = "demo_water.rs"]
 pub mod water;
 
+/// Planet curvature over the void sea (AURORA_DEMO_HORIZON).
+#[path = "demo_horizon.rs"]
+pub mod horizon;
+
 pub(crate) const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
@@ -315,6 +319,10 @@ pub mod social_menu;
 /// occlude it (AURORA_DEMO_SOFT_BLEND).
 #[path = "demo_soft_blend.rs"]
 pub mod soft_blend;
+/// Things standing in the sun, for the penumbra of the soft shadows
+/// (AURORA_DEMO_SOFT_SHADOWS).
+#[path = "demo_soft_shadows.rs"]
+pub mod soft_shadows;
 /// A sound passing in front of the listener, back and forth, for the
 /// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
 #[path = "demo_sound_doppler.rs"]
@@ -1581,6 +1589,65 @@ fn chat_lines_said() -> Vec<NetEvent> {
             false,
             aurora_net::ChatType::Shout,
         ),
+    ]
+}
+
+/// `AURORA_DEMO_EMOTES=aurora|compact[:on]`: the nearby chat in the
+/// Conversations window of that style, where a resident says a line, an
+/// emote and another line, then another resident an emote and a line.
+/// `on` groups the emotes with their sender's messages for the run
+/// (Preferences > Chat), nothing saved; the option is the Aurora style's,
+/// so `compact:on` shows Compact unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmotesScene {
+    pub style: crate::settings::ChatStyle,
+    pub on: bool,
+}
+
+pub fn emotes_scene() -> Option<EmotesScene> {
+    parse_emotes(&std::env::var("AURORA_DEMO_EMOTES").ok()?)
+}
+
+fn parse_emotes(v: &str) -> Option<EmotesScene> {
+    use crate::settings::ChatStyle;
+    let mut flags = v.trim().split(':');
+    let style = match flags.next()? {
+        "aurora" | "1" => ChatStyle::Aurora,
+        "compact" => ChatStyle::Compact,
+        _ => return None,
+    };
+    Some(EmotesScene {
+        style,
+        on: flags.any(|f| f == "on"),
+    })
+}
+
+/// The emotes are grouped by the scenario.
+pub fn emotes_grouped() -> bool {
+    emotes_scene().is_some_and(|s| s.on)
+}
+
+fn emotes_events() -> Vec<NetEvent> {
+    use aurora_i18n::tr;
+    let say = |from: Uuid, name: &str, text: &str| {
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: name.into(),
+            source_id: from,
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            position: Vec3::ZERO,
+            message: text.into(),
+            region: Some(HANDLE),
+        })
+    };
+    let (nova, orion) = (tr!("demo-nova-example"), tr!("demo-orion-example"));
+    vec![
+        say(DEMO_NOVA, nova, tr!("demo-bubbles-local-1")),
+        say(DEMO_NOVA, nova, tr!("demo-emotes-nova")),
+        say(DEMO_NOVA, nova, tr!("demo-bubbles-local-2")),
+        say(DEMO_FRIEND, orion, tr!("demo-chat-lines-emote")),
+        say(DEMO_FRIEND, orion, tr!("demo-emotes-orion")),
     ]
 }
 
@@ -6751,6 +6818,9 @@ pub fn events() -> Vec<NetEvent> {
     if object_chat::scene().is_some() {
         ev.extend(object_chat::events(agent));
     }
+    if emotes_scene().is_some() {
+        ev.extend(emotes_events());
+    }
     if let Some(scene) = aurora_scenario() {
         ev.extend(aurora_events(&scene));
     }
@@ -6764,6 +6834,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(soft_blend::events());
+    ev.extend(soft_shadows::events());
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(oit_column::events());
@@ -7008,6 +7079,22 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         buttons,
     });
     ev
+}
+
+#[cfg(test)]
+mod emotes_tests {
+    use super::*;
+    use crate::settings::ChatStyle;
+
+    #[test]
+    fn the_emotes_scenario_names_a_workspace_style_and_groups_them_on() {
+        let scene = |style, on| Some(EmotesScene { style, on });
+        assert_eq!(parse_emotes("aurora"), scene(ChatStyle::Aurora, false));
+        assert_eq!(parse_emotes("1:on"), scene(ChatStyle::Aurora, true));
+        assert_eq!(parse_emotes("compact:on"), scene(ChatStyle::Compact, true));
+        assert_eq!(parse_emotes("legacy"), None);
+        assert_eq!(parse_emotes(""), None);
+    }
 }
 
 #[cfg(test)]
@@ -8720,7 +8807,10 @@ pub fn feet_demo() -> Option<bool> {
 /// under thick casters (issue 988).
 pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
-    *SUN.get_or_init(|| parse_sun(&std::env::var("AURORA_DEMO_SUN").ok()?))
+    *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
+        Some(v) => parse_sun(&v),
+        None => soft_shadows::sun(),
+    })
 }
 
 fn parse_sun(v: &str) -> Option<Vec3> {

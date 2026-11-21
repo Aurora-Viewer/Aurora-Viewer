@@ -31,6 +31,8 @@ New-Item -ItemType Directory -Force -Path $rel -ErrorAction Stop | Out-Null
 # GitHub's main, and only then falls back to the repository's copy, which
 # it also runs when src is no longer a Git worktree (recreated below).
 # Only written once: cmd reads a .bat from disk while running it.
+# PSModulePath is emptied for Windows PowerShell to rebuild it: from PowerShell
+# 7, cmd hands down that edition's module paths, which hide cmdlets from 5.1.
 $bat = Join-Path $rel 'build-release.bat'
 if (-not (Test-Path -LiteralPath $bat)) {
     @(
@@ -39,6 +41,7 @@ if (-not (Test-Path -LiteralPath $bat)) {
         'if not exist "%S%" (git -C "%~dp0src" fetch origin main --quiet && git -C "%~dp0src" checkout --detach --force --quiet origin/main)'
         'git -C "%~dp0src" rev-parse --git-dir >nul 2>nul || set "S="'
         "if not exist `"%S%`" set `"S=$(Join-Path $p.Main 'scripts\build-release.ps1')`""
+        'set "PSModulePath="'
         'powershell -NoProfile -ExecutionPolicy Bypass -File "%S%" %*'
         'pause'
     ) | Set-Content -LiteralPath $bat -Encoding ASCII -ErrorAction Stop
