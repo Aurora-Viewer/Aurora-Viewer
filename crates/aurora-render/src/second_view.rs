@@ -182,6 +182,8 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         // (each renderer moves its weather memory once, the window's from
         // its own packet)
         world_shift: main.world_shift,
+        // (traced by the window's renderer only: `rt_shadows::traced`)
+        rt: None,
         input_at: None,
     }
 }

@@ -1024,6 +1024,15 @@ pub struct PointLight {
     pub falloff: f32,
     /// A light with a texture lights its frustum only, through the texture.
     pub projector: Option<Projector>,
+    /// Half the diagonal of the prim the light shines from (m): what lies
+    /// that near the light (its bulb, its lamp's body) does not shadow it in
+    /// the traced light (rt_lights.wgsl). 0 for lights of no prim.
+    pub source_radius: f32,
+    /// What the light shines from, the same number at every frame, for what
+    /// follows a light from a frame to the next (how far it moved, for the
+    /// history of its traced shadow). 0 for lights of no prim, which stay
+    /// where they are.
+    pub source_id: u32,
 }
 
 /// Frustum and texture of a projector (a prim light with a light texture),
@@ -1198,6 +1207,40 @@ pub enum AoMethod {
     Gtao { quality: u8 },
 }
 
+/// What is ray-traced (rt_shadows.rs), on a device opened with ray
+/// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
+/// experimental and off by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RayTracing {
+    /// The sun's and the moon's shadows of the main view, in the shadow
+    /// maps' place (with the sun shadows only). The others trace the scene
+    /// it builds: none without it.
+    pub shadows: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place (with `ssr` only).
+    pub reflections: bool,
+}
+
+/// Whether the device can ray-trace: what Preferences › Graphics › Ray
+/// tracing shows of the graphics card.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RayTracingSupport {
+    /// The device was opened with ray queries: the options apply at once.
+    Ready,
+    /// The graphics card has ray queries and the device was opened without
+    /// them, for a launch that never traces (`AURORA_RT_SHADOWS=0`).
+    NotOpened,
+    /// The device is the VR runtime's: no ray tracing in a run set up for
+    /// VR.
+    Vr,
+    /// The graphics card or its driver has no ray queries.
+    #[default]
+    Unsupported,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     /// Requested per-eye XR size, bounded by runtime limits.
@@ -1248,6 +1291,7 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    pub ray_tracing: RayTracing,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1301,6 +1345,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            ray_tracing: RayTracing::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
@@ -1968,6 +2013,10 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// The GPU time a photo of `gpu_pixels` is planned by: `gpu_ms`, and
+    /// the rounds a photo's traced passes run that the view's frame does
+    /// not (the ray-traced lamps' shadows and indirect light).
+    pub gpu_photo_ms: Option<f32>,
     /// Video memory the render targets that follow the image's size take
     /// for each of its pixels, with the MSAA samples, the effects and the
     /// TAA history of the current settings: measured with wgpu's counters

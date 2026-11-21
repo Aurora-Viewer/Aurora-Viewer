@@ -81,6 +81,9 @@ pub struct GpuInfo {
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
+    /// Whether this device ray-traces (Preferences › Graphics › Ray
+    /// tracing).
+    pub ray_tracing: crate::RayTracingSupport,
 }
 
 impl GpuInfo {
@@ -207,10 +210,27 @@ pub struct Renderer {
     /// (`motion_history.rs`). The same size, unless video memory was full
     /// when the palettes grew.
     prev_palette_buffer: wgpu::Buffer,
+    /// What `palette_buffer` holds, kept when the device traces: the
+    /// ray-traced shadows build a skeleton again only when it moved
+    /// (rt_shadows.rs).
+    rt_palettes: Vec<[[f32; 4]; 4]>,
+    /// Its entries written since the ray tracer last read it.
+    rt_written: Vec<std::ops::Range<usize>>,
+    rt_poses: crate::rt_shadows::PoseTracker,
+    /// The last frame's `Faces::waiting` and `Faces::behind`.
+    rt_waiting: (u32, f32),
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
     /// `shift_world`'s moves not yet sent with a frame.
     world_shift: [f32; 2],
+    /// `rebase_world` was called since the last frame.
+    rt_rebased: bool,
+    /// The last frame gathered the faces to trace.
+    rt_gathered: bool,
+    /// The ray tracer the render thread last drew with (`FrameResult::rt`,
+    /// 0 without one), and the one the faces were last gathered for.
+    rt_made: u32,
+    rt_followed: u32,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -352,6 +372,10 @@ impl Renderer {
     /// driver of their own that crashes the start on PCs that never use VR
     /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
     /// for a restart (`VrState::Unavailable`).
+    ///
+    /// The device is opened with ray queries where the graphics card has
+    /// them, whatever the settings ask (`GpuInfo::ray_tracing`): ray
+    /// tracing turned on later needs no other device.
     pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
@@ -578,6 +602,7 @@ impl Renderer {
             timestamps,
             adapter_specific,
             max_textures,
+            ray_tracing,
         } = o;
         let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         // The same error every frame (a write into a buffer that could not
@@ -631,6 +656,7 @@ impl Renderer {
             adapters,
             notice,
             vulkan: vulkan_limits(&adapter),
+            ray_tracing,
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -773,7 +799,15 @@ impl Renderer {
             prev_palette_buffer,
             motion_cut: false,
             world_shift: [0.0; 2],
+            rt_rebased: false,
+            rt_gathered: false,
+            rt_made: 0,
+            rt_followed: 0,
             palettes_uploaded: 0,
+            rt_palettes: Vec::new(),
+            rt_written: Vec::new(),
+            rt_poses: Default::default(),
+            rt_waiting: (0, 0.0),
             vertices_uploaded: 0,
             geometry_uploaded: 0,
             skin_bind_buffer,
@@ -963,6 +997,7 @@ impl Renderer {
                     self.writes.write_buffer(buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 }
             }
+            self.mirror_palettes(mats, a, ((slot + 1) * per).min(fits));
         }
     }
 
@@ -983,6 +1018,48 @@ impl Renderer {
     pub fn shift_world(&mut self, by: Vec3) {
         self.world_shift[0] += by.x;
         self.world_shift[1] += by.y;
+    }
+
+    /// The main region changed (a border crossing, a teleport): the scene
+    /// writes every position again, relative to the new one, over the next
+    /// frames. The ray-traced shadows then take a face's new place as an
+    /// arrival and not as a move (rt_shadows.rs `StillTracker::rebase`).
+    pub fn rebase_world(&mut self) {
+        self.rt_rebased = true;
+    }
+
+    /// The skeletons whose ray-traced level had to be built again last
+    /// frame and waits for a later one, and the farthest one of them stands
+    /// from where its level was built (m): how far behind it its traced
+    /// shadow is.
+    pub fn rt_skeletons_waiting(&self) -> (u32, f32) {
+        self.rt_waiting
+    }
+
+    /// The same distance for one avatar, the one whose palette starts at
+    /// matrix `base`: 0 when its levels are those of last frame's pose.
+    pub fn rt_avatar_behind(&self, base: u32) -> f32 {
+        self.rt_poses.behind(base, &self.rt_palettes)
+    }
+
+    /// Whether the ray tracer drew the last frame that came back: not while
+    /// it is being made, after ray tracing was turned on.
+    pub fn rt_tracing(&self) -> bool {
+        self.rt_made != 0
+    }
+
+    /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
+    /// shadows (`rt_palettes`).
+    fn mirror_palettes(&mut self, mats: &[[[f32; 4]; 4]], a: usize, b: usize) {
+        let b = b.min(mats.len());
+        if a >= b || !self.device.features().contains(crate::rt_shadows::FEATURES) {
+            return;
+        }
+        if self.rt_palettes.len() < b {
+            self.rt_palettes.resize(b, glam::Mat4::IDENTITY.to_cols_array_2d());
+        }
+        self.rt_palettes[a..b].copy_from_slice(&mats[a..b]);
+        self.rt_written.push(a..b);
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -1013,6 +1090,7 @@ impl Renderer {
         let mats = &mats[..mats.len().min(self.palette_buffer.size() as usize / 64)];
         self.writes.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
         self.palettes_uploaded += (mats.len() * 64) as u64;
+        self.mirror_palettes(mats, 0, mats.len());
     }
 
     /// Upload only some palettes (`per` matrices each, by slot index): the
@@ -1040,6 +1118,7 @@ impl Renderer {
                 self.writes
                     .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 self.palettes_uploaded += ((b - a) * 64) as u64;
+                self.mirror_palettes(mats, a, b);
             }
         }
     }
@@ -1057,6 +1136,7 @@ impl Renderer {
             self.writes
                 .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
             self.palettes_uploaded += ((b - a) * 64) as u64;
+            self.mirror_palettes(mats, a, b);
         }
     }
 
@@ -1362,6 +1442,7 @@ impl Renderer {
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
         self.last_stats = r.stats;
+        self.rt_made = r.rt;
         self.fresh = true;
         if self.spare.len() < SPARE_PACKETS {
             self.spare.push(r.spent);
@@ -1581,6 +1662,26 @@ impl Renderer {
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
+        let rt_camera = params.camera_pos;
+        let rt_far = params.shadow_distance;
+        let rt_shifted = std::mem::take(&mut self.rt_rebased) || self.world_shift != [0.0; 2];
+        // Gathered for the ray tracer the render thread has: none while its
+        // worker makes it (renderer.rs `RtBuild`). The levels a frame's
+        // faces ask for are built by the one that draws it, and are not
+        // asked for again while they stand.
+        let rt_on = crate::rt_shadows::traced(&self.device, false, self.settings.ray_tracing).shadows && self.rt_made != 0;
+        if !rt_on || self.rt_made != self.rt_followed {
+            // turned off, or another ray tracer: nothing is followed for
+            // it, and it starts from nothing
+            if std::mem::take(&mut self.rt_gathered) {
+                self.records.unwatch_changes();
+                self.cull.objects.unwatch();
+                self.rt_poses = Default::default();
+            }
+            self.rt_written.clear();
+        }
+        self.rt_followed = self.rt_made;
+        self.rt_gathered = rt_on;
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1608,6 +1709,23 @@ impl Renderer {
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
+            rt: rt_on.then(|| {
+                let mut faces = crate::rt_shadows::Faces::default();
+                crate::rt_shadows::gather(
+                    &mut self.records,
+                    &mut self.cull,
+                    &self.rt_palettes,
+                    &mut self.rt_written,
+                    rt_camera,
+                    rt_far,
+                    rt_shifted,
+                    crate::rt_shadows::posed_ceiling(&self.device.limits()),
+                    &mut self.rt_poses,
+                    &mut faces,
+                );
+                self.rt_waiting = (faces.waiting, faces.behind);
+                std::sync::Arc::new(faces)
+            }),
         };
         self.frames += 1;
         let built = t0.elapsed();
@@ -1676,6 +1794,7 @@ impl Renderer {
                 video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
+                gpu_photo_ms: self.last_stats.gpu_photo_ms,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
@@ -1974,6 +2093,19 @@ struct OpenedDevice {
     timestamps: bool,
     adapter_specific: bool,
     max_textures: u32,
+    ray_tracing: crate::RayTracingSupport,
+}
+
+/// Whether a device ray-traces: `card` has ray queries, the device was
+/// `opened` with them, and it is the VR runtime's (`vr`).
+fn ray_tracing_support(card: bool, opened: bool, vr: bool) -> crate::RayTracingSupport {
+    use crate::RayTracingSupport as Support;
+    match (vr, card, opened) {
+        (true, ..) => Support::Vr,
+        (false, true, true) => Support::Ready,
+        (false, true, false) => Support::NotOpened,
+        (false, false, _) => Support::Unsupported,
+    }
 }
 
 /// The blocks of video memory wgpu's allocator carves resources out of
@@ -2025,6 +2157,16 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
+    // ray tracing (rt_shadows.rs), not with VR: its ray queries from the
+    // start, so that turning it on needs no other device
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    let vr = xr.is_some();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    let vr = false;
+    let ray_queries = afeat.contains(crate::rt_shadows::FEATURES);
+    if !vr && ray_queries && crate::rt_shadows::wanted_at_open() {
+        features |= crate::rt_shadows::FEATURES;
+    }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {
         features |= wgpu::Features::TIMESTAMP_QUERY;
@@ -2043,6 +2185,11 @@ fn open_device(
     if adapter_specific {
         features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     }
+    // the G-buffer in 16 normalized bits (renderer.rs `gbuf_format`)
+    if crate::renderer::gbuf_wide(adapter) {
+        features |= crate::renderer::GBUF_WIDE;
+    }
+    log::info!("G-buffer format: {:?}", crate::renderer::gbuf_format(features));
     // debug wireframe
     if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
         features |= wgpu::Features::POLYGON_MODE_LINE;
@@ -2098,26 +2245,48 @@ fn open_device(
         alim.max_sampled_textures_per_shader_stage,
         in_all_pools.map_or_else(|| "unknown".to_string(), |n| n.to_string()),
     );
-    let descriptor = wgpu::DeviceDescriptor {
+    let descriptor = |features: wgpu::Features| wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
-        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
+            // SAFETY: wgpu's ray queries are experimental (its API may still
+            // change). The device takes them on every card that has them, so
+            // that ray tracing turns on without a new device; a ray is only
+            // traced while that option, itself experimental, is on.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         memory_hints: wgpu::MemoryHints::Manual {
             suballocated_device_memory_block_size: MEMORY_BLOCK..MEMORY_BLOCK,
         },
         trace: wgpu::Trace::Off,
     };
+    // A driver that lists ray queries and does not open with them keeps its
+    // card: the device is opened without, and ray tracing is not offered.
+    let asked = features;
+    let mut request = || match pollster::block_on(adapter.request_device(&descriptor(features))) {
+        Err(e) if features.contains(crate::rt_shadows::FEATURES) => {
+            log::warn!("the GPU device does not open with ray queries ({e}): opened without them, no ray tracing");
+            features.remove(crate::rt_shadows::FEATURES);
+            pollster::block_on(adapter.request_device(&descriptor(features))).map_err(|e| RenderError::Device(e.to_string()))
+        }
+        opened => opened.map_err(|e| RenderError::Device(e.to_string())),
+    };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     let (device, queue) = if let Some(xr) = xr {
-        let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
+        let graphics = xr
+            .open(adapter, &descriptor(asked))
+            .map_err(|e| RenderError::Device(e.to_string()))?;
         log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
         graphics
     } else {
-        pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
+        request()?
     };
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
+    let (device, queue) = request()?;
+    let ray_queries = ray_queries && features.contains(crate::rt_shadows::FEATURES) == asked.contains(crate::rt_shadows::FEATURES);
     Ok(OpenedDevice {
         device,
         queue,
@@ -2126,6 +2295,7 @@ fn open_device(
         timestamps,
         adapter_specific,
         max_textures,
+        ray_tracing: ray_tracing_support(ray_queries, features.contains(crate::rt_shadows::FEATURES), vr),
     })
 }
 

@@ -192,6 +192,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_LOCAL_LIGHTS=0..64` | Overrides "Maximum nearby lights" (Graphics › Light) |
 | `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
+| `AURORA_SSR=0\|1` | Overrides the screen-space reflections |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings
@@ -4770,7 +4771,11 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
+| `AURORA_DEMO_GLOSSY_BUMPS=1` | An upright polished PBR panel with a bump normal map, seen along its face (ray-traced reflections) |
+| `AURORA_DEMO_SATIN=1\|room` | Satin PBR metal from a roughness of 0.15 to 0.55 and a frame of thin dark bars (blurred ray-traced reflections); `room`: inside the closed room of `AURORA_DEMO_PROBE_ROOM` |
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
+| `AURORA_DEMO_RT_WALK=1` | Our avatar, heavy and in a hat, walks: its ray-traced shadow follows it |
+| `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -5023,6 +5028,55 @@ both open states and the selection count. Capture at frame 620.
   (`AURORA_DEMO_CAMERA=drift,620,600,1`), compare its far highlights and
   the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
   second to the next.
+- **`AURORA_DEMO_GLOSSY_BUMPS=1`**: ahead of the start position, an
+  upright 7 × 3 m polished panel (PBR, roughness 0.05) with the bump normal
+  map, seen along its face, in front of the panel with holes. With
+  `AURORA_RT_REFLECTIONS=1`, the far slope of each bump mirrors what
+  stands before the panel (the lilac panel, the lamps), never the holes of
+  the panel behind it: the mirror ray of such a slope is kept on its own
+  side of the face (rt_reflect.wgsl `kept_above`).
+- **`AURORA_DEMO_SATIN=1`**: ahead of the start position, five strips of
+  white PBR metal on the ground, from a roughness of 0.15 (the nearest) to
+  0.55, the left half of each with the bump normal map, and to the right a
+  window frame of thin dark metal bars (roughness 0.35). With
+  `AURORA_RT_REFLECTIONS=1` the strips mirror what stands on and beyond
+  them (the glowing cube, the panels, the lamps) more blurred from one
+  strip to the next, with no grain, the view still or moving
+  (`AURORA_DEMO_CAMERA=alt,2200,1250`, a capture at frame 626), and the
+  bars stay dark; without it they show the probes' image, the same on
+  every strip (rt_reflect.wgsl `cs_gloss`). `room` puts them inside the
+  closed room (with `AURORA_DEMO_PROBE_ROOM=1,box` and
+  `AURORA_DEMO_POS="100,100"`) and adds an upright satin panel that faces
+  the start position: it mirrors the wall behind the camera in the room's
+  own warm colour, not in the sky's (rt_probes.wgsl).
+- **`AURORA_DEMO_RT_WALK=1`**: with `AURORA_RT_SHADOWS=1`,
+  `AURORA_DEMO_ANIMESH=1` and `AURORA_DEMO_ANIMESH_TRIS=315000`, our avatar
+  wears the rigged demo mesh twice (about 640,000 triangles, more than the
+  ray tracer poses again in a frame besides the nearest avatar's) and a
+  hat, nearer the camera than its body, and walks 8 m from frame 700. Its
+  shadow must stay under it all the way. At frame 940 the log says `demo rt
+  walk: the avatar walked 5.3 m in 240 frames; its traced levels were left
+  waiting in 0 of them, 0.00 m behind at most (any skeleton's: 0 frames,
+  0.00 m)`: the frames in which the bottom levels its shadow is traced from
+  were not built again though it had moved, and how far it stood from them.
+  Before the choice went by avatar (rt_shadows.rs `choose_rebuilds`), the
+  hat took the frame's budget and the same run said 239 of them, 5.33 m.
+  With `AURORA_PROFILE=1`, the `rt shadows:` line gives the same for every
+  skeleton (`… left waiting at most, … m behind at most`).
+- **`AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]`**: the sun's ray-traced
+  shadows turned on at the first frame, as Preferences › Graphics would
+  (leave `AURORA_RT_SHADOWS` unset: the setting is off in the demo), then at
+  the second, more than 240 frames later, the local lights' shadows, the
+  indirect light and the reflections. The picture must go on through both:
+  the shadow maps and the screen-space effects stay until the ray tracer,
+  made on a worker thread, takes over. The log says `ray tracer made in …
+  ms on a worker`, `demo rt switch: the sun's shadows traced … frames (…
+  ms) after they were turned on`, and the longest of the 240 frames before
+  the switch and after each step, which must be about the same. To see the
+  driver compile the ray tracer's pipelines as on a first use, add
+  `AURORA_PIPELINE_CACHE=0` and, with NVIDIA's driver on Linux,
+  `__GL_SHADER_DISK_CACHE=0`: 601 ms and 2,122 ms on the worker in one such
+  run, the longest frame 16.9 ms and 22.1 ms at 60 frames a second.
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
@@ -5436,9 +5490,11 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_SOFT_SHADOWS=1`, `near` or `slope` | A pergola, a 14 m pole, a table, a thin post and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
-| `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
+| `AURORA_DEMO_BLEND_SHADOWS=1`, `behind` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), a nearly opaque pane before a shadow, or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
+| `AURORA_DEMO_LAMP_BLINK=<frames>` | A lamp ahead of the start view, switched off and on every `frames` frames |
+| `AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]` | The same lamp carried from side to side behind a post, a crossing every `frames` frames |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
@@ -5765,7 +5821,7 @@ both open states and the selection count. Capture at frame 620.
   in from the contact (a 5 degree sun did that at 0.25 and, at 1, lost the
   post's, the table legs' and the pergola legs' shadows). `slope` adds a
   ramp tilted 35 degrees away from the sun with a second post on it.
-- **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
+- **`AURORA_DEMO_BLEND_SHADOWS=1|behind|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
   ground, 14 m along the start view and to its right (clear of the
@@ -5777,7 +5833,14 @@ both open states and the selection count. Capture at frame 620.
   Viewer's rules, `fs_shadow` in `object.wgsl`). The classic sun lights
   with `min(n·l, shadow)` as the Legacy Viewer does, so a dithered shadow
   barely darkens ground the sun already lights at a slant: see the
-  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `dense`: 400 upright
+  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `behind`: two upright panes
+  8 m along the start view, the left one blended at face alpha 0.95, the
+  right one opaque, each before an opaque slab lying 2.2 m up; with
+  `AURORA_DEMO_SUN=207,70` the slabs' shadows lie on the ground behind the
+  panes. With `AURORA_RT_SHADOWS=1` and `AURORA_CONTACT_SHADOWS=1`, the
+  blended pane is lit as the opaque one is: the ray-traced mask is made
+  from the depth that holds it, so it does not show the slab's shadow seen
+  through it. `dense`: 400 upright
   greenhouse panes over a 60 m square ahead, for the cost of the blended
   casters (`AURORA_PROFILE=1`, with `AURORA_BLEND_SHADOWS=0` to compare).
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
@@ -5939,6 +6002,31 @@ both open states and the selection count. Capture at frame 620.
   reach the view: the list holds 64 of those (#1032: the 64 nearest all
   around the camera held only 50, and the pools of light halfway across
   the ground went out).
+- **`AURORA_DEMO_LAMP_BLINK=<frames>`**: a lamp 6 m ahead of the start
+  view and 2.5 m up, lit for `frames` frames (240 if the value is not a
+  number), dark for as many, and so on from the first frame; the log line
+  `demo lamp:` names each switch. For what keeps a history of the
+  light: with the traced indirect light (`AURORA_RT_GI=1`) in the closed
+  room of `AURORA_DEMO_PROBE_ROOM=1` (`AURORA_DEMO_POS="100,100"`, at
+  night with `AURORA_DEMO_TOD=4`), capture a few frames after a switch
+  (`AURORA_CAPTURE_FRAMES=1204` with 1200) and long after it (2390): the
+  walls must not keep the lamp's glow once it is out. With
+  `AURORA_FPS_LIMIT=60` and `240`, the settled room must be as bright
+  (the history holds four times the frames at 240).
+- **`AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]`**: the lamp of
+  `AURORA_DEMO_LAMP_BLINK` (lit throughout unless that variable is set
+  too) carried from 3 m on one side to 3 m on the other in `frames`
+  frames (120 if the value is not a number) and back, and so on; from
+  the frame `stop` it stays where it is (the log line
+  `demo lamp: stopped at frame`). A post 1.5 m before it throws a shadow
+  that crosses the floor the other way. For what must follow a lamp that
+  moves: in the closed room of `AURORA_DEMO_PROBE_ROOM=1` at night
+  (`AURORA_DEMO_POS="100,100" AURORA_DEMO_CAM="0,30,2.6"
+  AURORA_DEMO_TOD=4`), with `AURORA_RT_LIGHTS=1` the post's shadow must
+  stay sharp and under the post while the lamp moves, not trail behind
+  it; with `AURORA_RT_GI=1` the glow on the walls must go with the lamp.
+  The viewer smooths an object's movement, so the lamp drawn is about
+  two frames behind the place sent.
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
@@ -8074,7 +8162,8 @@ failure. Grid validation and any paid upload are performed by the human.
     backup file would, and the chat says so.
   - the rows of the former filters, lit a moment and scrolled to:
     `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
-    Indirect light, its cog opened), `0:bloom`, `name-tags`, `attention`
+    Indirect light, its cog opened), `graphics/1:ray-tracing` (Light › Ray
+    tracing), `0:bloom`, `name-tags`, `attention`
     (Chat › Notifications), `tip-toast` (Chat › Notifications, the online /
     offline toasts' duration, greyed with Aurora's center) and
     `tip-toast-legacy` (the same with the Legacy toasts for the session: the
@@ -12708,6 +12797,10 @@ What the inventory must show with these scenarios:
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
 | `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
+| `AURORA_RT_SHADOWS=1`, `0`, `front` or `back` | Ray-traced sun shadows forced on or off for this launch |
+| `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
+| `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
+| `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13242,6 +13335,29 @@ What the inventory must show with these scenarios:
   the branch with the soft shadows off, on and at softness 2, and the
   median of each run's medians of `gpu`, `g_objects`, `g_terrain_sky`,
   `g_transparent`, `g_contact` and `g_soft`.
+- **`AURORA_RT_SHADOWS=1|0|front|back`**, **`AURORA_RT_LIGHTS=1|0`**,
+  **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
+  options of Preferences › Graphics › Ray tracing (experimental, off by
+  default; `rt_shadows.rs`) for this launch, without changing the saved
+  settings: `1` forces one on, `0` (or `off`) off, and an unset variable
+  leaves it to its setting. They need a graphics card with ray queries,
+  and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
+  sun's and the moon's shadows of the main view in the shadow maps' place
+  (the Shadows setting must be on); `front` and `back` also make the rays
+  pass the faces they meet from the front or from behind, to compare. The
+  three others trace the scene the sun's shadows build, so they do nothing
+  without them: the point lights' shadows, the indirect light (in the
+  screen-space one's place, at the Indirect light intensity) and the
+  reflections (in the screen-space ones' place, which must be on). The
+  GPU device has its ray queries from the start on a card that has them,
+  whatever the setting says: turned on later, the ray tracer is made on a
+  worker thread and the picture goes on (`AURORA_DEMO_RT_SWITCH`).
+  `AURORA_RT_SHADOWS=0` opens the device without them, as on a card that
+  has none: nothing is traced in that launch, whatever the setting. With
+  `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
+  (the faces posed, the levels built and the trace on the GPU, the faces
+  placed, and the render thread's time), `rt lights:`, `rt gi:` and
+  `rt reflections:` (each pass's GPU time).
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),

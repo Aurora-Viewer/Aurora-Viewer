@@ -192,6 +192,63 @@ fn night_sky_rows(cx: &mut Cx) {
     }
 }
 
+/// Ray tracing (aurora-render's rt_shadows.rs): the sun's shadows, and
+/// behind their cog what else traces the scene they build. Greyed with the
+/// reason on a graphics card that cannot, in a run set up for VR, and
+/// without the shadows.
+fn ray_tracing(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    use aurora_render::RayTracingSupport as Support;
+    cx.group(tr!("ui-options-ray-tracing"), |cx| {
+        let p = cx.p;
+        let card = match cx.st.ray_tracing {
+            Support::Unsupported => Some(tr!("ui-options-ray-tracing-unsupported")),
+            Support::Vr => Some(tr!("ui-options-ray-tracing-vr")),
+            Support::Ready | Support::NotOpened => None,
+        };
+        if let Some(why) = card {
+            cx.note(why);
+        }
+        let blocked = card.or((cx.s.shadow_quality == 0).then(|| tr!("ui-options-ray-tracing-needs-shadows")));
+        cx.experimental().keywords("RT raytracing").row(
+            tr!("ui-options-ray-traced-shadows"),
+            tr!("ui-options-ray-traced-shadows-help"),
+            &field!(ray_tracing.enabled),
+            |ui, s| {
+                let r = ui.add_enabled_ui(blocked.is_none(), |ui| toggle(ui, &p, &mut s.ray_tracing.enabled));
+                if let Some(why) = blocked {
+                    r.response.on_disabled_hover_text(why);
+                }
+                r.inner
+            },
+        );
+        let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-ray-traced-lights"),
+                tr!("ui-options-ray-traced-lights-help"),
+                &field!(ray_tracing.lights),
+            );
+            cx.toggle(
+                tr!("ui-options-ray-traced-indirect"),
+                tr!("ui-options-ray-traced-indirect-help"),
+                &field!(ray_tracing.indirect),
+            );
+            let ssr = cx.s.ssr;
+            cx.row(
+                tr!("ui-options-ray-traced-reflections"),
+                tr!("ui-options-ray-traced-reflections-help"),
+                &field!(ray_tracing.reflections),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(ssr, |ui| toggle(ui, &p, &mut s.ray_tracing.reflections));
+                    r.response.on_disabled_hover_text(tr!("ui-options-ray-tracing-needs-ssr"));
+                    r.inner
+                },
+            );
+        });
+    });
+}
+
 fn graphics_card(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-graphics-card"), |cx| {
@@ -761,6 +818,7 @@ fn light(cx: &mut Cx) {
             );
         });
     });
+    ray_tracing(cx);
     cx.group(tr!("ui-options-ambient-occlusion"), |cx| {
         cx.stepped(
             tr!("ui-options-ambient-occlusion"),

@@ -301,6 +301,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
     st.reveal = match what {
         "tonemap" => row(Page::Graphics, 4, tr!("ui-options-tone-mapping")),
         "occlusion" => row(Page::Graphics, 1, tr!("ui-options-screen-indirect-light")),
+        "ray-tracing" => row(Page::Graphics, 1, tr!("ui-options-ray-traced-shadows")),
         "bloom" => row(Page::Graphics, 1, tr!("ui-options-bloom")),
         "name-tags" => row(Page::Avatars, 0, tr!("ui-options-show-own-tag")),
         "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
@@ -504,6 +505,8 @@ pub struct OptionsUi {
     pub gpus: Vec<String>,
     pub gpu_in_use: String,
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
+    /// Whether the GPU device ray-traces; set by the app with the GPUs.
+    pub ray_tracing: aurora_render::RayTracingSupport,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
