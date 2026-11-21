@@ -10,6 +10,7 @@ use super::widgets;
 use crate::snapshot::looks::{Layer, WorldLook};
 use crate::theme::Palette;
 use egui::{RichText, Vec2};
+use std::collections::HashMap;
 
 pub const WINDOW: &str = "world_look";
 
@@ -30,7 +31,9 @@ pub fn show(
     open: &mut bool,
     state: &mut WorldLookUi,
     look: &mut WorldLook,
+    favorites: &mut Vec<String>,
     luts: &[String],
+    thumbs: &HashMap<String, usize>,
     photo_shown: bool,
     out: &mut Vec<Action>,
 ) {
@@ -55,14 +58,17 @@ pub fn show(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let before = look.looks.clone();
+                let thumb = |id: &str| thumbs.get(id).copied();
                 let opts = Options {
                     list_height: 260.0,
+                    height: None,
                     compare: false,
                     luts,
                     pano: false,
+                    thumb: &thumb,
                 };
                 let mut actions = Vec::new();
-                state.looks.show(ui, p, Stack::world(look), opts, &mut actions);
+                state.looks.show(ui, p, Stack::world(look, favorites), opts, &mut actions);
                 look.on = switched_on(&before, &look.looks, look.on);
                 for action in actions {
                     if matches!(action, Action::ImportLut) {

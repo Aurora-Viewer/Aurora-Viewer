@@ -13,6 +13,7 @@ impl App {
         }
         let mut open = true;
         let before = self.settings.world_look.clone();
+        let stars = self.settings.snapshot.look_favorites.len();
         let photo_shown = self.panels.snapshot || self.panels.director;
         let mut actions = Vec::new();
         ui::world_look::show(
@@ -21,15 +22,17 @@ impl App {
             &mut open,
             &mut self.snapshots.world_ui,
             &mut self.settings.world_look,
+            &mut self.settings.snapshot.look_favorites,
             &self.snapshots.ui.lut_names,
+            &self.snapshots.ui.thumbs,
             photo_shown,
             &mut actions,
         );
         self.panels.world_look = open;
         for action in actions {
-            self.photo_lut_action(action);
+            self.photo_lut_action(action, false);
         }
-        if self.settings.world_look != before {
+        if self.settings.world_look != before || self.settings.snapshot.look_favorites.len() != stars {
             self.settings.save();
         }
     }
@@ -47,7 +50,8 @@ impl App {
             None
         };
         let photo_shown = self.panels.snapshot || self.panels.director;
-        let stack = looks::world_stack(&self.settings.world_look, pointed, ui.mode, ui.selected, photo_shown);
+        let replace = ui.replace_target(self.settings.world_look.looks.len());
+        let stack = looks::world_stack(&self.settings.world_look, pointed, replace, photo_shown);
         if stack.is_empty() {
             return None;
         }
@@ -87,7 +91,6 @@ impl App {
         w.on = !w.looks.is_empty();
         let ui = &mut self.snapshots.world_ui.looks;
         ui.selected = w.looks.len().saturating_sub(1);
-        ui.mode = looks::Mode::Replace;
         if let Some(layer) = w.looks.last() {
             ui.tab = looks::tab_of(&layer.id);
         }

@@ -206,11 +206,17 @@ pub(super) struct Snapshots {
     /// A table being imported (its file chosen, read and copied on a
     /// worker; None: the dialog was closed).
     lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
+    /// The import was asked from the Director's Filters tab: its editor
+    /// takes the first table (with its own Replace).
+    lut_import_director: bool,
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
     /// The World filters window's state (`ui/world_look.rs`).
     pub world_ui: crate::ui::world_look::WorldLookUi,
+    /// The filters catalogue's pictures: which to draw, and when to take a
+    /// new still (`snapshot::look_thumbs`).
+    look_thumbs: crate::snapshot::look_thumbs::Thumbs,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// A photo to disk asked while the renderer draws the frame (the
@@ -463,8 +469,10 @@ impl Default for Snapshots {
             dialog: None,
             luts: None,
             lut_import: None,
+            lut_import_director: false,
             look_focus: None,
             world_ui: Default::default(),
+            look_thumbs: Default::default(),
             quiet: false,
             to_disk: false,
             confirm: None,
@@ -1258,28 +1266,16 @@ impl App {
     /// over the photo's frame of the `window` (pixels; `ui::snapshot::fit`),
     /// with the viewfinder's before / after line.
     pub(super) fn live_look(&mut self, window: (u32, u32), focus: Option<f32>) -> Option<aurora_render::looks::PhotoLook> {
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
-        let (photo, frame) = if self.panels.snapshot {
-            let photo = self.photo_size(window);
-            (photo, crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32))
-        } else if self.panels.director {
-            // the Director's Filters tab: the picture it films, between the
-            // bars of its format
-            let aspect = self.director.d.picture_aspect(window.0 as f32 / window.1.max(1) as f32);
-            let frame = crate::ui::snapshot::fit(screen, aspect);
-            (
-                (frame.width().round().max(1.0) as u32, frame.height().round().max(1.0) as u32),
-                frame,
-            )
-        } else {
-            return None;
+        let (photo, frame) = self.look_frame(window)?;
+        // the look pointed in the photo window's editor, or in the Director's
+        let ui = match &self.snapshots.ui.looks.hover {
+            None if self.panels.director && self.director.looks.hover.is_some() => &self.director.looks,
+            _ => &self.snapshots.ui.looks,
         };
-        let ui = &self.snapshots.ui.looks;
         let stack = looks::tried(
             &self.settings.snapshot.looks,
             ui.hover.as_ref().map(|h| h.as_deref()),
-            ui.mode,
-            ui.selected,
+            ui.replace_target(self.settings.snapshot.looks.len()),
         );
         let settings = self.settings.snapshot.look_settings.clone();
         let layers = looks::resolve_stack(&stack, &settings, self.photo_luts());
@@ -1290,6 +1286,28 @@ impl App {
         };
         let compare = self.snapshots.ui.looks.compare.filter(|_| self.viewfinder_on());
         looks::frame_look(&layers, place, compare, false, focus)
+    }
+
+    /// The picture the looks are drawn on in the live view, in a `window`
+    /// of pixels: the photo's size and its frame on screen, or the
+    /// Director's while only its window is open (None: neither).
+    fn look_frame(&self, window: (u32, u32)) -> Option<((u32, u32), egui::Rect)> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
+        if self.panels.snapshot {
+            let photo = self.photo_size(window);
+            Some((photo, crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32)))
+        } else if self.panels.director {
+            // the Director's Filters tab: the picture it films, between the
+            // bars of its format
+            let aspect = self.director.d.picture_aspect(window.0 as f32 / window.1.max(1) as f32);
+            let frame = crate::ui::snapshot::fit(screen, aspect);
+            Some((
+                (frame.width().round().max(1.0) as u32, frame.height().round().max(1.0) as u32),
+                frame,
+            ))
+        } else {
+            None
+        }
     }
 
     /// The photo's looks on a frame of the Director's offline render, the
@@ -1304,6 +1322,69 @@ impl App {
             scale: 1.0,
         };
         looks::frame_look(&layers, place, None, false, self.snapshots.look_focus)
+    }
+
+    /// The filters catalogue's pictures (`snapshot::look_thumbs`): while its
+    /// tiles show, a still of the photo's frame now and then and one look
+    /// drawn on it a frame, at its settings, the photo's proportions cropped
+    /// to the tiles'.
+    pub(super) fn look_thumbs_request(
+        &mut self,
+        window: (u32, u32),
+        focus: Option<f32>,
+    ) -> Option<aurora_render::look_thumbs::ThumbRequest> {
+        use aurora_render::look_thumbs::{MAX_THUMBS, THUMB_SIZE, still_rect};
+        // the tiles the catalogues drew last frame, the photo window's, the
+        // Director's and the World filters window's (none: none is shown)
+        let mut shown = std::mem::take(&mut self.snapshots.ui.looks.shown);
+        let others = [
+            std::mem::take(&mut self.director.looks.shown),
+            std::mem::take(&mut self.snapshots.world_ui.looks.shown),
+        ];
+        for id in others.into_iter().flatten() {
+            if !shown.contains(&id) {
+                shown.push(id);
+            }
+        }
+        if shown.is_empty() {
+            return None;
+        }
+        // the photo's frame and its looks' settings; with only the World
+        // filters window, the whole 3D view and the world's settings
+        let (photo, frame, settings) = match self.look_frame(window) {
+            Some((photo, frame)) => (photo, frame, &self.settings.snapshot.look_settings),
+            None => (
+                window,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32)),
+                &self.settings.world_look.look_settings,
+            ),
+        };
+        let settings = settings.clone();
+        let now = self.egui_ctx.input(|i| i.time);
+        let plan = self.snapshots.look_thumbs.plan(now, &shown, MAX_THUMBS, &settings);
+        let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);
+        let capture = plan
+            .capture
+            .then(|| still_rect([frame.left() / w, frame.top() / h, frame.right() / w, frame.bottom() / h], window));
+        let failed = plan.draw.as_ref().map(|(_, id)| id.clone());
+        let draw = plan.draw.and_then(|(slot, id)| {
+            // the still holds the middle of the photo at the tiles' proportions
+            let want = THUMB_SIZE.0 as f32 / THUMB_SIZE.1 as f32;
+            let (pw, ph) = (photo.0.max(1) as f32, photo.1.max(1) as f32);
+            let crop = if pw / ph > want { (ph * want, ph) } else { (pw, pw / want) };
+            let place = Placement {
+                origin: [0.0, 0.0],
+                photo: (crop.0.round() as u32, crop.1.round() as u32),
+                scale: THUMB_SIZE.0 as f32 / crop.0.max(1.0),
+            };
+            let layers = looks::resolve_stack(&[looks::Layer::new(id)], &settings, self.photo_luts());
+            Some((slot, looks::frame_look(&layers, place, None, false, focus)?))
+        });
+        if let (Some(id), None) = (failed, &draw) {
+            self.snapshots.look_thumbs.failed(&id);
+        }
+        self.snapshots.ui.thumbs = self.snapshots.look_thumbs.slots();
+        Some(aurora_render::look_thumbs::ThumbRequest { capture, draw })
     }
 
     /// How a photo of `size` is drawn (`snapshot::plan`), with the guard
@@ -2009,19 +2090,21 @@ impl App {
                 self.settings.save();
             }
             Action::Saved => self.settings.save(),
-            Action::ImportLut | Action::RemoveLut(_) | Action::OpenLutFolder => self.photo_lut_action(action),
+            Action::ImportLut | Action::RemoveLut(_) | Action::OpenLutFolder => self.photo_lut_action(action, false),
             Action::Reel(a) => self.photo_reel_action(a, renderer),
         }
     }
 
     /// The LUTs' actions of the looks editor: import, remove, open their
-    /// folder (the Photo window's and the Director's Filters tab).
-    pub(super) fn photo_lut_action(&mut self, action: Action) {
+    /// folder (the Photo window's, or the Director's Filters tab:
+    /// `director`).
+    pub(super) fn photo_lut_action(&mut self, action: Action, director: bool) {
         match action {
             Action::ImportLut => {
                 if self.snapshots.lut_import.is_some() {
                     return;
                 }
+                self.snapshots.lut_import_director = director;
                 let dir = self.photo_luts().dir().to_path_buf();
                 let (tx, rx) = crossbeam_channel::bounded(1);
                 std::thread::spawn(move || {
@@ -2099,16 +2182,17 @@ impl App {
             let id = format!("{}{name}", looks::LUT);
             if to_world {
                 let world = &mut self.settings.world_look;
-                self.snapshots
-                    .world_ui
-                    .looks
-                    .pick(&mut crate::ui::looks_editor::Stack::world(world), &id);
+                self.snapshots.world_ui.looks.pick(
+                    &mut crate::ui::looks_editor::Stack::world(world, &mut self.settings.snapshot.look_favorites),
+                    &id,
+                );
                 world.on = true;
             } else {
-                self.snapshots
-                    .ui
-                    .looks
-                    .pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
+                let editor = match self.snapshots.lut_import_director {
+                    true => &mut self.director.looks,
+                    false => &mut self.snapshots.ui.looks,
+                };
+                editor.pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
             }
             self.settings.save();
             self.snapshots.message = Some((text.clone(), false));
@@ -2123,6 +2207,7 @@ impl App {
     }
 
     /// AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel]
+    /// [:open][:menu][:replace][:folded][:favorites]
     /// [:tab=legacy|aurora|luts][:search=<text>][:set=<n>,<v>,…], with
     /// AURORA_DEMO_SNAPSHOT: the looks stacked in that order (`Sepia`,
     /// `aurora:vhs`, `lut:<file>`, `lut:demo` for a warm table written
@@ -2131,8 +2216,10 @@ impl App {
     /// default), the before / after line in the middle, the viewfinder's
     /// filter panel open on the chosen look's tab or the one given, a
     /// search typed, the chosen Aurora look's settings set (the photo
-    /// window's settings scrolled to the filters). Without it, the
-    /// scenarios start with no look.
+    /// window's settings scrolled to the filters), the cards open to their
+    /// settings, the last card's ⋯ actions shown, Replace on, the catalogue
+    /// folded, the stack's looks starred with the ★ list shown. Without it,
+    /// the scenarios start with no look.
     fn photo_look_demo(&mut self) {
         let value = std::env::var("AURORA_DEMO_PHOTO_LOOK").unwrap_or_default();
         let mut parts: Vec<&str> = value.split('+').collect();
@@ -2164,7 +2251,7 @@ impl App {
         let ui = &mut self.snapshots.ui.looks;
         ui.selected = s.looks.len().saturating_sub(1);
         ui.compare = None;
-        ui.mode = looks::Mode::Replace;
+        ui.replace = false;
         if let Some(layer) = s.looks.last() {
             ui.tab = looks::tab_of(&layer.id);
         }
@@ -2186,6 +2273,20 @@ impl App {
                 }
                 _ => match part {
                     "compare" => ui.compare = Some(0.5),
+                    "replace" => ui.replace = true,
+                    "open" => {
+                        for layer in &s.looks {
+                            ui.open_card(&layer.id);
+                        }
+                    }
+                    "menu" => ui.show_menu(s.looks.len().saturating_sub(1)),
+                    "folded" => ui.folded = true,
+                    "favorites" => {
+                        for layer in &s.looks {
+                            looks::toggle_favorite(&mut s.look_favorites, &layer.id);
+                        }
+                        ui.favorites = true;
+                    }
                     "panel" => {
                         self.snapshots.vf.looks = true;
                         self.snapshots.vf.hinted = true;
@@ -2199,6 +2300,7 @@ impl App {
                 },
             }
         }
+        looks::sanitize(&mut s.looks);
         for layer in &s.looks {
             log::info!("photo look demo: {} at {} %", layer.id, layer.strength);
         }

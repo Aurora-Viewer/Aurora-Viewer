@@ -67,6 +67,9 @@ fn saved_tracks(folder: &std::path::Path) -> Vec<String> {
 #[derive(Default)]
 pub(super) struct DirectorState {
     pub(super) d: Director,
+    /// The Filters tab's editor: the photo window's stack, with its own
+    /// cards and catalogue state, since both windows can show at once.
+    pub(super) looks: ui::looks_editor::LooksUi,
     /// The window's "Free camera" switch (the photo window's free camera,
     /// `App::photo_free_camera`).
     pub(super) free: bool,
@@ -777,6 +780,8 @@ impl App {
         let mut capture_out = Vec::new();
         let (capture, key_rows) = self.director.extra.views(&self.world.inventory, live.restricted, &mut capture_out);
         let looks_before = (self.settings.snapshot.looks.clone(), self.settings.snapshot.look_settings.clone());
+        // set again below when a tile is pointed (the tab may not show)
+        self.director.looks.hover = None;
         let mut looks_out = Vec::new();
         ui::director::window(
             ctx,
@@ -824,9 +829,10 @@ impl App {
             capture,
             key_rows,
             ui::director::Looks {
-                ui: &mut self.snapshots.ui.looks,
+                ui: &mut self.director.looks,
                 settings: &mut self.settings.snapshot,
                 luts: &self.snapshots.ui.lut_names,
+                thumbs: &self.snapshots.ui.thumbs,
                 out: &mut looks_out,
             },
             &mut actions,
@@ -863,7 +869,7 @@ impl App {
             self.settings.save();
         }
         for action in out {
-            self.photo_lut_action(action);
+            self.photo_lut_action(action, true);
         }
     }
 
