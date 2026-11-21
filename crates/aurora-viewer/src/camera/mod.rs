@@ -11,13 +11,18 @@
 //! held on the avatar); Firestorm turns the agent frame instead. Moving or
 //! Escape folds it back the way resetView does for an alt-orbited camera.
 
+pub mod account_slots;
 pub mod demo;
 mod focus;
 pub(crate) mod follow;
 pub mod free;
+pub mod legacy_slots;
 mod mouselook_zoom;
+mod precision;
 pub mod presets;
 pub mod second;
+
+pub use precision::{control_rate, precision_scale};
 mod settings;
 pub mod track;
 pub mod vr;

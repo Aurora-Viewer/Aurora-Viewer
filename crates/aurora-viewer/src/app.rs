@@ -52,6 +52,7 @@ mod blender_shape;
 mod buy_currency;
 mod buy_land;
 mod camera_presets;
+mod camera_slot_import;
 mod capture_360;
 mod chat_commands;
 mod chat_import;
@@ -648,6 +649,9 @@ pub struct App {
     /// joysticks hold this frame, and its "Object view": a left click in the
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
+    camera_slots: crate::camera::account_slots::Store,
+    slot_import: camera_slot_import::Job,
+    camera_shots: Vec<crate::camera::CameraShot>,
     controls_held: Vec<Action>,
     /// Its free camera joysticks this frame: move, look.
     controls_free: (egui::Vec2, egui::Vec2),
@@ -1830,6 +1834,9 @@ impl App {
         scene.surface_protection = settings.surface_protection();
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
+            camera_shots: settings.camera_shots.iter().filter(|s| s.quick_slot.is_none()).cloned().collect(),
+            camera_slots: Default::default(),
+            slot_import: Default::default(),
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
             settings,
             disk_cache,
@@ -3574,6 +3581,9 @@ impl App {
         self.record_inventory_logout();
         // the session's photo reel and its copies
         self.photo_reel_end();
+        self.camera_slots.select(None, Default::default(), &[]);
+        self.refresh_camera_shots();
+        self.controls_ui.reset_quick_names();
         if !self.demo {
             self.settings.release_hover_account();
         }
@@ -7259,6 +7269,9 @@ impl App {
         crate::world::region_tracker::save_before_exit();
         crate::autoreplace::save_before_exit();
         crate::tolerant::save_before_exit();
+        if !self.camera_slots.flush() {
+            log::warn!("camera slot saves did not finish before shutdown");
+        }
         event_loop.exit();
     }
 
@@ -9420,7 +9433,7 @@ impl App {
                     unlock = true;
                 }
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
-                rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
+                rate[n] = crate::camera::control_rate(held, self.settings.camera.precision);
             } else {
                 self.cam_key_since[n] = None;
             }
@@ -17894,6 +17907,9 @@ impl App {
             res.font_changed |= self.restore_settings(ctx, restored);
         }
         a.settings_changed = res.changed || std::mem::take(&mut self.folders.settings_changed);
+        if res.changed || res.reset {
+            self.refresh_camera_shots();
+        }
         a.ui_scale_changed = res.ui_scale_changed;
         a.font_changed = res.font_changed;
         if res.refresh_devices {
@@ -17954,6 +17970,7 @@ impl App {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
+        self.sync_camera_slots();
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
         // the Avatar Welcome Pack's page, worked out once for the toolbar and the window
@@ -20493,6 +20510,8 @@ impl App {
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
+                self.camera_slots_dialog(&ctx, &p);
+                self.legacy_slot_import_dialog(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
                 self.second_camera_window(&ctx, &p);

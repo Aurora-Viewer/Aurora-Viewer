@@ -797,7 +797,11 @@ impl App {
             return None;
         }
         self.snapshots.vf_free_up = 0.0;
-        let pad = self.snapshots.vf.pad;
+        let mut pad = self.snapshots.vf.pad;
+        let scale = crate::camera::precision_scale(self.settings.camera.precision);
+        pad.orbit *= scale;
+        pad.pan *= scale;
+        pad.rocker *= scale;
         if self.camera.mouselook() {
             // look around (about 90° a second at full tilt), the rocker on
             // the focal length
@@ -1111,7 +1115,7 @@ impl App {
             isolation: &self.world.photo_isolation,
             isolate_rows: &isolate_rows,
             isolate_hover,
-            presets: &self.settings.camera_shots,
+            presets: &self.camera_shots,
             preset_object,
             posing: self.ik_editor.open && self.ik_editor.posing(),
             reel: &reel,
@@ -1191,7 +1195,7 @@ impl App {
         let now = self.vf_now();
         match o {
             Preset::Apply(i) => {
-                let name = self.settings.camera_shots.get(i).map(|s| s.name.clone()).unwrap_or_default();
+                let name = self.camera_shots.get(i).map(|s| s.name.clone()).unwrap_or_default();
                 match self.apply_camera_preset(i) {
                     Ok(()) => self
                         .snapshots

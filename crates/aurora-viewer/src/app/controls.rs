@@ -15,8 +15,11 @@ impl App {
         let view = View {
             zoom: self.camera.zoom_fraction(),
             roll: self.camera.roll,
+            precision: self.settings.camera.precision,
             preset: self.settings.camera.preset,
-            shots: &self.settings.camera_shots,
+            shots: &self.camera_shots,
+            quick_state: self.camera_slots.state,
+            quick_write_failed: self.camera_slots.write_failed,
             views: &self.settings.camera_views,
             flying: self.world.agent.flying,
             always_run: self.always_run,
@@ -69,12 +72,14 @@ impl App {
         );
     }
 
-    fn control_action(&mut self, action: ControlAction) {
+    pub(super) fn control_action(&mut self, action: ControlAction) {
         if self.world.rlva.camera_preset_locked(uuid::Uuid::nil())
             && matches!(
                 action,
                 ControlAction::Preset(_)
                     | ControlAction::UseShot(_)
+                    | ControlAction::QuickSave(_, _)
+                    | ControlAction::QuickLoad(_)
                     | ControlAction::SaveShot(_)
                     | ControlAction::SaveView(_)
                     | ControlAction::RestoreView(_)
@@ -83,6 +88,24 @@ impl App {
             return;
         }
         match action {
+            ControlAction::QuickSetup => self.camera_slots.prompt_open = true,
+            ControlAction::QuickImport => self.start_legacy_slot_import(),
+            ControlAction::Precision(on) => {
+                self.settings.camera.precision = on;
+                self.settings.save();
+            }
+            ControlAction::QuickSave(slot, name) => {
+                if let Err(text) = self.save_quick_camera(slot, name) {
+                    self.camera_preset_message(text);
+                }
+            }
+            ControlAction::QuickLoad(slot) => {
+                if let Some(i) = self.camera_shots.iter().position(|s| s.quick_slot == Some(slot))
+                    && let Err(text) = self.apply_camera_preset(i)
+                {
+                    self.camera_preset_message(text);
+                }
+            }
             ControlAction::FreeSpeed(speed) => self.snapshots.ui.free.speed = speed,
             ControlAction::FreeCollisions(on) => self.snapshots.ui.free.no_collisions = on,
             ControlAction::FreeExit => {
@@ -182,6 +205,52 @@ impl App {
     fn controls_demo(&mut self) {
         if !self.demo {
             return;
+        }
+        // Quick views exercise world position, roll and lens through the production
+        // Save/Load actions, in both control layouts.
+        if let Ok(mode @ ("quick" | "classic-quick")) = std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
+            match self.frame_count {
+                600 => {
+                    self.settings.classic_controls = mode == "classic-quick";
+                    self.panels.camera_controls = true;
+                    self.panels.chat = false;
+                    self.panels.people = false;
+                    self.control_action(ControlAction::Precision(true));
+                    self.camera.roll = 0.4;
+                    self.settings.camera.fov =
+                        crate::camera::zoom_lens(crate::camera::DEFAULT_FOV, Some(1.0 / 1.2), self.view_aspect(), None);
+                    self.control_action(ControlAction::QuickSave(0, "Portrait".into()));
+                    log::info!(
+                        "demo quick view: saved position {:?}, roll {}, lens {}",
+                        self.camera.position,
+                        self.camera.roll,
+                        self.settings.camera.fov
+                    );
+                }
+                620 => {
+                    self.camera.demo_orbit(1.4, 0.35, Some(9.0), &self.settings.camera);
+                    self.camera.roll = -0.2;
+                    self.settings.camera.fov = crate::camera::zoom_lens(self.settings.camera.fov, Some(1.2), self.view_aspect(), None);
+                    log::info!("demo quick view: changed lens {}", self.settings.camera.fov);
+                }
+                660 => {
+                    self.camera.start_flycam(&self.settings.camera, false);
+                    self.joystick.active = true;
+                    self.control_action(ControlAction::QuickLoad(0));
+                    log::info!(
+                        "demo quick view: flycam stopped {}",
+                        !self.joystick.active && self.camera.flycam.is_none()
+                    );
+                }
+                720 => log::info!(
+                    "demo quick view: restored position {:?}, roll {}, lens {}, rendered FOV {}",
+                    self.camera.position,
+                    self.camera.roll,
+                    self.settings.camera.fov,
+                    self.camera.fov_y
+                ),
+                _ => {}
+            }
         }
         if self.frame_count == 640
             && std::env::var("AURORA_DEMO_CONTROLS").is_ok_and(|m| m.starts_with("free"))
