@@ -180,6 +180,7 @@ pub fn simulator_features() -> Option<NetEvent> {
         export_supported: false,
         group_chat_post_links: !v.split(':').any(|part| part == "no-links"),
         game_control: false,
+        max_agent_attachments: None,
     })
 }
 
