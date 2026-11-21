@@ -324,7 +324,7 @@ impl EnvironmentUi {
                 let font = widgets::control_font(ui, 12.0);
                 let label = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font, p.ink);
                 if ui
-                    .add(egui::Button::new(label).min_size(Vec2::new(0.0, 20.0)))
+                    .add_enabled(free, egui::Button::new(label).min_size(Vec2::new(0.0, 20.0)))
                     .on_hover_text(aurora_i18n::tr!("ui-weather-window-tip"))
                     .clicked()
                 {

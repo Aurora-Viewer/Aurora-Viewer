@@ -287,26 +287,34 @@ fn an_outfit_replacement_keeps_what_a_link_in_a_locked_folder_holds() {
     );
 }
 
-/// @getattach hides a locked attachment, except from the issuer of its lock;
-/// taking it off obeys the lock whoever asks.
+/// @getattach with the locked attachments hidden asks
+/// RlvForceWear::isForceDetachable with the asking object exempted, and
+/// RlvAttachmentLocks::isLockedAttachmentExcept (rlvlocks.cpp) then counts
+/// the object and point locks of the others only, never a folder lock;
+/// taking it off obeys the folder lock whoever asks.
 #[test]
-fn a_presence_query_exempts_the_issuer_of_a_link_lock_but_a_removal_does_not() {
+fn a_presence_query_leaves_folder_locks_out_but_a_removal_does_not() {
     let mut l = linked();
     let (body, issuer) = (l.body, l.issuer);
     assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("1"), "nothing locked");
     l.say(issuer, "@detachallthis:Body=n");
     assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("1"), "its own lock");
-    assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("0"), "someone else's lock");
+    assert_eq!(
+        l.worn_reply(OTHER_ISSUER, "chest").as_deref(),
+        Some("1"),
+        "a folder lock is not counted"
+    );
     assert!(!l.world.rlva_can_remove(body, issuer), "the issuer cannot take it off either");
     assert!(!l.world.rlva_can_remove(body, OTHER_ISSUER));
     assert!(!l.removable(body));
-    // a second issuer: no one is exempt from the other's lock
     l.say(OTHER_ISSUER, "@detachallthis:Body=n");
-    assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("0"));
-    assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("0"));
+    assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("1"));
     l.say(issuer, "@detachallthis:Body=y");
-    assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("1"));
-    assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("0"));
+    l.say(OTHER_ISSUER, "@detachallthis:Body=y");
+    // a point lock is counted, except for its own issuer
+    l.say(issuer, "@remattach:chest=n");
+    assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("1"), "its own lock");
+    assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("0"), "someone else's lock");
 }
 
 /// The links are indexed once and kept while the inventory, the rules and
@@ -387,8 +395,11 @@ fn a_link_holds_a_worn_item_whose_own_record_is_not_loaded() {
     assert!(!l.removable(body));
     assert_eq!(l.held(), BTreeSet::from([body]), "the watchdog holds it");
     assert!(l.world.rlva_has_locked_attachment(), "Release Keys stays greyed out");
-    assert_eq!(l.worn_reply(OTHER_ISSUER, "chest").as_deref(), Some("0"), "hidden from the others");
-    assert_eq!(l.worn_reply(issuer, "chest").as_deref(), Some("1"), "not from its issuer");
+    assert_eq!(
+        l.worn_reply(OTHER_ISSUER, "chest").as_deref(),
+        Some("1"),
+        "RlvAttachmentLocks::isLockedAttachmentExcept counts no folder lock"
+    );
     let mut detach = NetCommand::DetachAttachments(vec![body, free]);
     assert!(l.world.rlva_prepare_attachments(&mut detach, Uuid::nil()));
     assert!(
