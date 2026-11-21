@@ -2260,8 +2260,6 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    // a drag above the search row no longer scrolls the list up
-    drag::navigation::search_top(ui.ctx(), st.ui_id, ui.cursor().top());
     controls::search(ui, p, inv, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
@@ -2290,6 +2288,9 @@ fn inventory_contents(
     set_tab(st, prefs, tab_ids[visible_tab]);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     ui.add_space(6.0);
+    // a drag above the next owner row, toward the tabs, no longer scrolls
+    // the list up (the human's choice, 2026-11-21)
+    drag::navigation::search_top(ui.ctx(), st.ui_id, ui.cursor().top());
     next_owner_control(ui, p, st);
     let list_h = list_height(ui);
     let zone = tree::frame(ui, p, |ui| {
