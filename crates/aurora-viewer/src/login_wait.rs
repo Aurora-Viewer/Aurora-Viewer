@@ -188,20 +188,29 @@ fn path() -> PathBuf {
     crate::settings::config_dir().join(FILE)
 }
 
-fn change(key: &(String, String), update: impl FnOnce(&mut Option<Session>)) {
-    if let Err(error) = change_at(&path(), key, update) {
-        log::warn!("{FILE} not saved: {error}");
-    }
+/// The change is made by a save thread (saves.rs), after the changes asked
+/// before it: the login, the signs of life and the end land in their order,
+/// and the frame does not wait for the disk.
+fn change(key: &(String, String), update: impl FnOnce(&mut Option<Session>) + Send + 'static) {
+    let key = key.clone();
+    let path = path();
+    crate::saves::change(path.clone(), move || {
+        if let Err(error) = change_at(&path, &key, update) {
+            log::warn!("{FILE} not saved: {error}");
+        }
+    });
 }
 
 /// The last session of this account.
 pub fn load(key: &(String, String)) -> Option<Session> {
-    read(&path()).remove(&entry(key))
+    let path = path();
+    crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
+    read(&path).remove(&entry(key))
 }
 
 /// A session of this account began.
 pub fn started(key: &(String, String), session_id: uuid::Uuid, now: u64) {
-    change(key, |session| {
+    change(key, move |session| {
         *session = Some(Session {
             session_id,
             started: now,
@@ -211,17 +220,9 @@ pub fn started(key: &(String, String), session_id: uuid::Uuid, now: u64) {
     });
 }
 
-/// The session is still alive (`HEARTBEAT`), written on a thread of its own:
-/// the heartbeat comes from the frame, and the write waits for the disk
-/// (atomic_file.rs, #1809).
+/// The session is still alive (`HEARTBEAT`).
 pub fn alive(key: &(String, String), now: u64) {
-    let key = key.clone();
-    let spawned = std::thread::Builder::new()
-        .name("aurora-login-alive".into())
-        .spawn(move || change(&key, |session| touch(session, now)));
-    if let Err(e) = spawned {
-        log::warn!("{FILE}: no thread for the sign of life: {e}");
-    }
+    change(key, move |session| touch(session, now));
 }
 
 /// A sign of life written late never moves `alive` back (a session that
@@ -234,7 +235,7 @@ fn touch(session: &mut Option<Session>, now: u64) {
 
 /// The viewer saw the session end.
 pub fn ended(key: &(String, String), now: u64) {
-    change(key, |session| {
+    change(key, move |session| {
         if let Some(session) = session.as_mut().filter(|session| session.ended.is_none()) {
             session.alive = now;
             session.ended = Some(now);

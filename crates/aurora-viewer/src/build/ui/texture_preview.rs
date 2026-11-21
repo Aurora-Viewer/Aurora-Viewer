@@ -45,6 +45,10 @@ struct Saved {
     face: u8,
     original: Original,
     local: Option<LocalAppearance>,
+    /// For a PBR map, what the face shows: its override's texture, else its
+    /// base material's (`texture::pbr_maps_shown`); `None` while unknown.
+    /// `original` keeps the override alone, which is what Cancel restores.
+    map_shown: Option<Uuid>,
 }
 
 pub(super) struct Session {
@@ -63,6 +67,7 @@ impl Session {
         let mut saved = Vec::new();
         for s in super::texture::selected(tool, world) {
             let Some(object) = world.objects.get(s.idx) else { continue };
+            let mut map_shown = None;
             let original = match target {
                 PickTarget::Diffuse => Original::Diffuse(s.te.texture),
                 PickTarget::Normal | PickTarget::Specular => Original::Legacy(tool.face_legacy(env, world, s.idx, s.face, &s.te)),
@@ -74,6 +79,7 @@ impl Session {
                     if BuildTool::gltf_asset(world, s.idx, s.face).is_none() {
                         continue;
                     }
+                    map_shown = super::texture::pbr_maps_shown(world, env, s.idx, s.face).map(|shown| shown[i]);
                     Original::Map(BuildTool::gltf_override(world, s.idx, s.face).textures[i])
                 }
                 PickTarget::Sculpt => {
@@ -87,6 +93,7 @@ impl Session {
                 face: if target == PickTarget::LightTexture { 0 } else { s.face },
                 original,
                 local: object.local_appearance(if target == PickTarget::LightTexture { 0 } else { s.face as usize }),
+                map_shown,
             });
             // Object parameters, unlike texture entries, affect one prim.
             if matches!(target, PickTarget::Sculpt | PickTarget::LightTexture) {
@@ -107,14 +114,32 @@ impl Session {
 
     /// The value the picker shows for these faces: the first one's.
     fn current(&self) -> Uuid {
-        let Some(saved) = self.saved.first() else { return Uuid::nil() };
+        self.saved.first().and_then(|saved| self.value(saved)).unwrap_or_default()
+    }
+
+    /// The faces do not all hold the picker's value: its control is
+    /// tentative, and what it shows is only the first face's
+    /// (LLPanelFace::updateUI's `setTentative(!identical_diffuse)` and its
+    /// normal, specular and PBR counterparts, indra/newview/llpanelface.cpp).
+    fn mixed(&self) -> bool {
+        let Some((first, others)) = self.saved.split_first() else {
+            return false;
+        };
+        let current = self.value(first);
+        // A value still unknown (a PBR material that is loading) is no match.
+        others.iter().any(|saved| current.is_none() || self.value(saved) != current)
+    }
+
+    /// The value of this picker's control on one face; `None` while unknown.
+    fn value(&self, saved: &Saved) -> Option<Uuid> {
         if let Some(slot) = self.target.local_slot()
             && let Some(texture) = saved.local.and_then(|appearance| appearance.texture(slot))
         {
-            return texture;
+            return Some(texture);
         }
-        match &saved.original {
-            Original::Diffuse(id) | Original::Map(id) | Original::Sculpt(id) => *id,
+        Some(match &saved.original {
+            Original::Map(_) => return saved.map_shown,
+            Original::Diffuse(id) | Original::Sculpt(id) => *id,
             Original::Material { asset, .. } => *asset,
             Original::Legacy(material) => material
                 .as_ref()
@@ -127,7 +152,7 @@ impl Session {
                 })
                 .unwrap_or_default(),
             Original::Light(light) => light.map(|l| l.texture).unwrap_or_default(),
-        }
+        })
     }
 
     fn resolve(&self, tool: &BuildTool, world: &World) -> Vec<Sel> {
@@ -341,6 +366,7 @@ impl BuildTool {
             return;
         }
         self.ui.picker.follow(session.current());
+        self.ui.picker.set_tentative(session.mixed());
         self.ui.texture_edit = Some(session);
     }
 
@@ -523,6 +549,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         {
             tool.ui.picker.follow(id);
         }
+        tool.ui.picker.set_tentative(session.mixed());
         tool.ui.texture_edit = Some(session);
     }
     tool.ui.picker.allow_local = tool.ui.pick_target.and_then(PickTarget::local_slot).is_some();
@@ -644,6 +671,249 @@ mod tests {
         let mut te = o.te.as_deref().unwrap().clone();
         te.faces[face].texture = id;
         o.te = Some(Arc::new(te));
+    }
+
+    /// The picker opened from a swatch, as the Texture tab does: `show`
+    /// captures the session at the next frame.
+    fn open_from_swatch(tool: &mut BuildTool, target: PickTarget, current: Uuid) {
+        if target == PickTarget::PbrMaterial {
+            tool.ui.picker.open_materials("Material", current);
+        } else {
+            tool.ui.picker.open_with_defaults("Texture", current, None, true);
+        }
+        tool.ui.pick_target = Some(target);
+        tool.ui.texture_edit = None;
+    }
+
+    fn settle(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, env: &mut Env, time: f64) -> HashMap<String, egui::Pos2> {
+        let mut positions = HashMap::new();
+        for i in 0..10 {
+            positions = frame(ctx, tool, world, env, time + i as f64 / 60.0, vec![]);
+        }
+        positions
+    }
+
+    /// What OK could change on face 0 of `idx`, for every picker of the tab.
+    fn face_state(world: &World, tool: &BuildTool, idx: usize) -> (Uuid, Option<Uuid>, PbrOverride, Option<LegacyMaterial>) {
+        let o = world.objects.get(idx).unwrap();
+        (
+            texture(world, idx, 0),
+            BuildTool::gltf_asset(world, idx, 0),
+            BuildTool::gltf_override(world, idx, 0),
+            tool.ui.legacy_pending.get(&(o.full_id, 0)).and_then(|(_, m)| m.clone()),
+        )
+    }
+
+    #[test]
+    fn ok_waits_for_a_choice_while_the_selected_faces_differ() {
+        // LLFloaterTexturePicker::draw: Select is off while the control is
+        // tentative. The value shown is the first face's, not a choice.
+        fixture(|world, tool, env, prims| {
+            for (n, &idx) in prims.iter().enumerate() {
+                let n = n as u128;
+                let o = world.objects.get_mut(idx).unwrap();
+                o.extra.render_materials.push((0, Uuid::from_u128(300 + n)));
+                world.gltf_overrides.insert(
+                    o.key,
+                    Arc::from(vec![(
+                        0,
+                        PbrOverride {
+                            textures: [Uuid::from_u128(400 + n); 4],
+                            ..Default::default()
+                        },
+                    )]),
+                );
+                tool.ui.legacy_pending.insert(
+                    (o.full_id, 0),
+                    (
+                        o.te.as_ref().unwrap().faces[0].material_id,
+                        Some(LegacyMaterial {
+                            normal_map: Uuid::from_u128(800 + n),
+                            specular_map: Uuid::from_u128(810 + n),
+                            ..Default::default()
+                        }),
+                    ),
+                );
+            }
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let before: Vec<_> = prims.iter().map(|&idx| face_state(world, tool, idx)).collect();
+            assert_ne!(before[0], before[1]);
+            for (step, (target, current)) in [
+                (PickTarget::Diffuse, texture(world, prims[0], 0)),
+                (PickTarget::Normal, Uuid::from_u128(800)),
+                (PickTarget::Specular, Uuid::from_u128(810)),
+                (PickTarget::PbrMaterial, Uuid::from_u128(300)),
+                (PickTarget::PbrMap(0), Uuid::from_u128(400)),
+                (PickTarget::PbrMap(3), Uuid::from_u128(400)),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let time = step as f64 * 10.0;
+                open_from_swatch(tool, target, current);
+                let positions = settle(&ctx, tool, world, env, time);
+                assert!(tool.ui.picker.tentative(), "{target:?}");
+                assert!(
+                    positions.contains_key(aurora_i18n::tr!("build-ui-common-multiple")),
+                    "{target:?}: the preview says Multiple"
+                );
+                click(&ctx, tool, world, env, time + 1.0, positions[aurora_i18n::tr!("common-ok")]);
+                assert!(tool.ui.picker.open, "{target:?}: OK is greyed out");
+                for (&idx, state) in prims.iter().zip(&before) {
+                    assert_eq!(&face_state(world, tool, idx), state, "{target:?}");
+                }
+                tool.dismiss_texture_picker();
+            }
+        });
+    }
+
+    #[test]
+    fn a_pbr_map_picker_compares_what_the_faces_show() {
+        // LLSelectedTEGetmatId::apply compares the map of each face's base
+        // material under its override, not the overrides alone.
+        use crate::build::ui::texture::{pbr_maps_mixed, pbr_maps_shown};
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let maps = [Uuid::from_u128(520), Uuid::from_u128(521)];
+            let material = |map: Uuid| aurora_assets::material::PbrMaterial {
+                base_color_texture: Some(map),
+                ..Default::default()
+            };
+            let assets: Vec<_> = (0..prims.len() as u128).map(|n| Uuid::from_u128(500 + n)).collect();
+            for (n, &idx) in prims.iter().enumerate() {
+                world.objects.get_mut(idx).unwrap().extra.render_materials.push((0, assets[n]));
+                env.scene.materials.insert(assets[n], material(maps[n]));
+            }
+            let shown = |world: &World, env: &Env| -> Vec<_> { prims.iter().map(|&idx| pbr_maps_shown(world, env, idx, 0)).collect() };
+            let tentative = |tool: &mut BuildTool, world: &mut World, env: &mut Env, time: f64| {
+                let first = super::super::texture::selected(tool, world)[0];
+                let current = pbr_maps_shown(world, env, first.idx, first.face).map_or(Uuid::nil(), |maps| maps[0]);
+                open_from_swatch(tool, PickTarget::PbrMap(0), current);
+                let positions = settle(&ctx, tool, world, env, time);
+                let tentative = tool.ui.picker.tentative();
+                if tentative {
+                    click(&ctx, tool, world, env, time + 1.0, positions[aurora_i18n::tr!("common-ok")]);
+                    assert!(tool.ui.picker.open, "OK is greyed out");
+                }
+                tool.dismiss_texture_picker();
+                tentative
+            };
+
+            // No override anywhere, two base materials with different maps.
+            assert_eq!(pbr_maps_mixed(shown(world, env)), [true, false, false, false]);
+            assert!(tentative(tool, world, env, 0.0));
+            for &idx in prims {
+                assert_eq!(
+                    BuildTool::gltf_override(world, idx, 0),
+                    PbrOverride::default(),
+                    "nothing was written"
+                );
+            }
+
+            // The same map in both base materials: one value to confirm.
+            env.scene.materials.insert(assets[1], material(maps[0]));
+            assert_eq!(pbr_maps_mixed(shown(world, env)), [false; 4]);
+            assert!(!tentative(tool, world, env, 10.0));
+
+            // An override on one face makes them differ again; removing a map too.
+            let key = world.objects.get(prims[1]).unwrap().key;
+            for (n, over) in [maps[1], aurora_assets::material::OVERRIDE_NULL_UUID].into_iter().enumerate() {
+                world.gltf_overrides.insert(
+                    key,
+                    Arc::from(vec![(
+                        0,
+                        PbrOverride {
+                            textures: [over, Uuid::nil(), Uuid::nil(), Uuid::nil()],
+                            ..Default::default()
+                        },
+                    )]),
+                );
+                assert_eq!(pbr_maps_mixed(shown(world, env)), [true, false, false, false]);
+                // each frame later than the last one: egui's input history asserts it
+                assert!(tentative(tool, world, env, 20.0 + 5.0 * n as f64));
+            }
+            world.gltf_overrides.remove(&key);
+
+            // A material still loading is no match, whatever it will hold.
+            world.objects.get_mut(prims[1]).unwrap().extra.render_materials = vec![(0, Uuid::from_u128(599))];
+            assert_eq!(pbr_maps_mixed(shown(world, env)), [true; 4]);
+            assert!(tentative(tool, world, env, 30.0));
+            // One face alone is never tentative, loaded or not.
+            assert_eq!(pbr_maps_mixed([None]), [false; 4]);
+        });
+    }
+
+    #[test]
+    fn a_choice_ends_the_tentative_state_and_ok_confirms_it() {
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            open_from_swatch(tool, PickTarget::Diffuse, texture(world, prims[0], 0));
+            let positions = settle(&ctx, tool, world, env, 0.0);
+            assert!(tool.ui.picker.tentative());
+            click(&ctx, tool, world, env, 1.0, positions[aurora_i18n::tr!("common-blank")]);
+            assert!(!tool.ui.picker.tentative());
+            for &idx in prims {
+                assert_eq!(texture(world, idx, 0), aurora_prim::te::BLANK_TEXTURE);
+            }
+            let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
+            assert!(!positions.contains_key(aurora_i18n::tr!("build-ui-common-multiple")));
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
+            assert!(!tool.ui.picker.open);
+        });
+    }
+
+    #[test]
+    fn ok_confirms_the_value_shared_by_every_selected_face() {
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let shared = texture(world, prims[0], 0);
+            set_texture(world, prims[1], 0, shared);
+            open_from_swatch(tool, PickTarget::Diffuse, shared);
+            let positions = settle(&ctx, tool, world, env, 0.0);
+            assert!(!tool.ui.picker.tentative());
+            click(&ctx, tool, world, env, 1.0, positions[aurora_i18n::tr!("common-ok")]);
+            assert!(!tool.ui.picker.open);
+            for &idx in prims {
+                assert_eq!(texture(world, idx, 0), shared);
+            }
+        });
+    }
+
+    #[test]
+    fn a_face_added_under_the_open_picker_makes_it_tentative() {
+        // LLPanelFace refreshes its controls when the selection changes:
+        // setImageAssetID then setTentative on the open floater.
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let before: Vec<_> = prims.iter().map(|&idx| texture(world, idx, 0)).collect();
+            let (selection, faces) = (tool.selection.clone(), tool.faces.clone());
+            let one = |tool: &mut BuildTool| {
+                tool.selection.truncate(1);
+                tool.faces.retain(|key, _| *key == selection[0]);
+            };
+            one(tool);
+            let first = super::super::texture::selected(tool, world)[0].te.texture;
+            open_from_swatch(tool, PickTarget::Diffuse, first);
+            settle(&ctx, tool, world, env, 0.0);
+            assert!(!tool.ui.picker.tentative(), "one face is never tentative");
+            tool.selection = selection.clone();
+            tool.faces = faces.clone();
+            let positions = settle(&ctx, tool, world, env, 1.0);
+            assert!(tool.ui.picker.open && tool.ui.picker.tentative());
+            click(&ctx, tool, world, env, 2.0, positions[aurora_i18n::tr!("common-ok")]);
+            assert!(tool.ui.picker.open);
+            for (&idx, &texture_before) in prims.iter().zip(&before) {
+                assert_eq!(texture(world, idx, 0), texture_before);
+            }
+            one(tool);
+            settle(&ctx, tool, world, env, 3.0);
+            assert!(tool.ui.picker.open && !tool.ui.picker.tentative());
+        });
     }
 
     #[test]
@@ -928,7 +1198,7 @@ mod tests {
             }
             let changes = tool.local_appearance_changes.len();
             let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
-            click(&ctx, tool, world, env, 3.0, positions["OK"]);
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert!(tool.out.is_empty());
             assert_eq!(tool.local_appearance_changes.len(), changes);
@@ -1284,7 +1554,7 @@ mod tests {
             click(&ctx, tool, world, env, 7.0, positions[aurora_i18n::tr!("common-none-2")]);
             let positions = frame(&ctx, tool, world, env, 8.0, vec![]);
             let sent = tool.out.len();
-            click(&ctx, tool, world, env, 9.0, positions["OK"]);
+            click(&ctx, tool, world, env, 9.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert_eq!(tool.out.len(), sent, "OK confirms the removal without resending it");
             assert!(world.objects.get(idx).unwrap().extra.light_image.is_none());
@@ -1341,7 +1611,7 @@ mod tests {
             }
             let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
             let sent = tool.out.len();
-            click(&ctx, tool, world, env, 3.0, positions["OK"]);
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert!(tool.ui.texture_edit.is_none());
             assert_eq!(tool.out.len(), sent, "OK must not resend a preview");
@@ -1428,7 +1698,7 @@ mod tests {
             let positions = frame(&ctx, tool, world, env, 13.5, vec![]);
             assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-no-live-preview")));
             tool.out.clear();
-            click(&ctx, tool, world, env, 14.0, positions["OK"]);
+            click(&ctx, tool, world, env, 14.0, positions[aurora_i18n::tr!("common-ok")]);
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(16));
             }
@@ -1606,6 +1876,25 @@ mod tests {
             tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, true);
             assert_eq!(BuildTool::gltf_asset(world, idx, 1), None);
             assert_eq!(texture(world, idx, 1), pbr_map);
+        });
+    }
+
+    #[test]
+    fn a_blinn_phong_preview_face_does_not_divert_a_drop_on_another_face() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1910);
+            let map = Uuid::from_u128(1911);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let diffuse = texture(world, idx, 1);
+            // Face 0 alone is shown in Blinn-Phong (#4467): a texture dropped
+            // on face 1 still goes into its PBR override, not on the diffuse.
+            world.objects.set_blinn_phong_faces(idx, 1 << 0, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], map);
+            assert_eq!(texture(world, idx, 1), diffuse);
+            assert!(world.objects.get(idx).unwrap().is_blinn_phong_preview(0));
+            assert!(!world.objects.get(idx).unwrap().is_blinn_phong_preview(1));
         });
     }
 

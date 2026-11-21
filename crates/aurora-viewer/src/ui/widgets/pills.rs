@@ -127,6 +127,51 @@ pub fn filter_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: 
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A G / M / A toggle: its badge, and its name when `label` (a compact
+/// window shows the badge alone, the name in its tooltip), lit on `raised`
+/// while on; a rating the account may not see stays off and says why.
+/// Shared by Aurora's Search and Destinations.
+pub fn rating_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool, name: &str, allowed: bool, label: bool) -> bool {
+    let font = FontId::proportional(12.0);
+    let lit = *on && allowed;
+    let ink = if lit { p.ink } else { p.muted_dim };
+    let galley = label.then(|| ui.painter().layout_no_wrap(name.to_owned(), font, ink));
+    let text_w = galley.as_ref().map_or(0.0, |g| 6.0 + g.size().x + 3.0);
+    let size = Vec2::new(6.0 + 16.0 + 6.0 + text_w, 26.0);
+    let (rect, resp) = ui.allocate_exact_size(size, if allowed { Sense::click() } else { Sense::hover() });
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let fill = if lit {
+        p.raised
+    } else if allowed && resp.hovered() {
+        p.raised.gamma_multiply(0.5)
+    } else {
+        p.bar
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    let left = if label { rect.left() + 6.0 } else { rect.center().x - 8.0 };
+    let badge = Rect::from_center_size(egui::pos2(left + 8.0, rect.center().y), Vec2::splat(16.0));
+    let mut painter = ui.painter().clone();
+    if !lit {
+        painter.multiply_opacity(0.35);
+    }
+    super::paint_maturity_badge(&painter, p, name, badge, super::inner_radius(ui.visuals()));
+    if let Some(g) = galley {
+        super::paint_row_text(ui.painter(), g, badge.right() + 6.0, rect.center().y, ink);
+    }
+    let resp = if !allowed {
+        resp.on_hover_text(aurora_i18n::tr!("search-rating-not-allowed"))
+    } else if label {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name)
+    };
+    if allowed && resp.clicked() {
+        *on = !*on;
+        return true;
+    }
+    false
+}
+
 /// `filter_pill` at a place of its own (a row's right end laid out apart).
 pub fn filter_pill_at(ui: &mut egui::Ui, p: &Palette, rect: Rect, id: egui::Id, icon: &str, label: &str, on: bool) -> egui::Response {
     let resp = ui.interact(rect, id, Sense::click());
@@ -240,6 +285,44 @@ pub fn dot_pill(
         closed = c.on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
     }
     (resp.on_hover_cursor(egui::CursorIcon::PointingHand), closed)
+}
+
+/// A row of chips that may be wider than its window (the folders of Places,
+/// the categories of Destinations). It has no scroll bar, which would take a
+/// line of a narrow window, so the row has to move by other means (#3872: with
+/// a mouse there was none, the folders past the edge could not be reached):
+/// - the wheel scrolls it without Shift, the row moving one way only;
+/// - the chosen chip, which `add` returns with a key of its own, is brought
+///   to the middle of the row when the choice changes: a click on a chip at
+///   the edge shows the next ones, and a choice made elsewhere is in view.
+pub fn chip_row(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> Option<(egui::Id, Rect)>) {
+    let either_axis = std::mem::replace(&mut ui.style_mut().always_scroll_the_only_direction, true);
+    let mut area = egui::ScrollArea::horizontal()
+        .id_salt(salt)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+    // the place worked out at the end of the last frame, once the row was laid out
+    let wanted = ui.scope_id().with((salt, "wanted"));
+    if let Some(offset) = ui.ctx().data_mut(|d| d.remove_temp::<f32>(wanted)) {
+        area = area.horizontal_scroll_offset(offset);
+    }
+    let out = area.show(ui, |ui| ui.horizontal(add).inner);
+    ui.style_mut().always_scroll_the_only_direction = either_axis;
+    let shown = out.id.with("chosen");
+    let chosen = out.inner.map(|(key, _)| key);
+    if ui.ctx().data(|d| d.get_temp::<Option<egui::Id>>(shown)) != Some(chosen) {
+        ui.ctx().data_mut(|d| d.insert_temp(shown, chosen));
+        if let Some((_, chip)) = out.inner {
+            let view = out.inner_rect;
+            let most = (out.content_size.x - view.width()).max(0.0);
+            // the chip's rectangle is on screen, so already moved by the offset
+            let now = out.state.clamped_offset().x;
+            let offset = (now + chip.center().x - view.center().x).clamp(0.0, most);
+            if (offset - now).abs() > 0.5 {
+                ui.ctx().data_mut(|d| d.insert_temp(wanted, offset));
+                ui.ctx().request_repaint();
+            }
+        }
+    }
 }
 
 /// The width `filter_pill` takes.
@@ -420,7 +503,10 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
         egui::pos2(response.rect.right() - f32::from(CLEAR_WIDTH), response.rect.top()),
         response.rect.right_bottom(),
     );
-    let clear = ui.interact(rect, response.id.with("clear"), Sense::click());
+    // Not a Tab stop: LLSearchEditor builds its clear button with
+    // `tab_stop(false)` (indra/llui/llsearcheditor.cpp), so Tab leaves the
+    // field for the next control. `Sense::click()` would make it focusable.
+    let clear = ui.interact(rect, response.id.with("clear"), Sense::CLICK);
     super::paint_title_button(ui, p, "x", &clear);
     let label = aurora_i18n::tr!("common-clear");
     clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
@@ -428,6 +514,139 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
         text.clear();
         response.mark_changed();
         response.request_focus();
+    }
+}
+
+#[cfg(test)]
+mod chip_row_tests {
+    use super::*;
+
+    /// One frame of a 200-point window holding 20 chips; returns the chips'
+    /// rectangles.
+    fn frame(ctx: &egui::Context, chosen: &mut usize, events: Vec<egui::Event>) -> Vec<Rect> {
+        let p = crate::theme::Theme::default().palette();
+        let mut rects = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(200.0, 120.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                chip_row(ui, "chips", |ui| {
+                    let mut shown = None;
+                    for i in 0..20 {
+                        let on = *chosen == i;
+                        let response = filter_pill(ui, &p, "", &format!("Folder {i:02}"), on);
+                        rects.push(response.rect);
+                        if on {
+                            shown = Some((egui::Id::unique(i), response.rect));
+                        }
+                        if response.clicked() {
+                            *chosen = i;
+                        }
+                    }
+                    shown
+                });
+            },
+        );
+        // no renderer takes the font atlas here
+        output.textures_delta.clear();
+        rects
+    }
+
+    fn wheel(delta: Vec2) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            delta,
+            modifiers: Default::default(),
+        }
+    }
+
+    /// #3872: a mouse wheel turns up and down; the row of folders has no bar
+    /// and did not move with it, so the folders past the edge stayed there.
+    #[test]
+    fn the_wheel_scrolls_a_row_of_chips_without_shift() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut chosen = 0;
+        let start = frame(&ctx, &mut chosen, Vec::new());
+        assert!(start[19].left() > 200.0, "the last chips are past the edge: {:?}", start[19]);
+        let over = start[1].center();
+        frame(&ctx, &mut chosen, vec![egui::Event::PointerMoved(over)]);
+        let mut rects = Vec::new();
+        for _ in 0..40 {
+            frame(&ctx, &mut chosen, vec![wheel(egui::vec2(0.0, -120.0))]);
+        }
+        for _ in 0..30 {
+            rects = frame(&ctx, &mut chosen, Vec::new());
+        }
+        assert!(rects[19].right() <= 200.5, "the wheel reaches the last chip: {:?}", rects[19]);
+        assert_eq!(chosen, 0, "scrolling chooses nothing");
+        // and back
+        for _ in 0..40 {
+            frame(&ctx, &mut chosen, vec![wheel(egui::vec2(0.0, 120.0))]);
+        }
+        for _ in 0..30 {
+            rects = frame(&ctx, &mut chosen, Vec::new());
+        }
+        assert!((rects[0].left() - start[0].left()).abs() < 0.5, "back to the start: {:?}", rects[0]);
+    }
+
+    #[test]
+    fn the_chosen_chip_comes_to_the_middle_once() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        // a choice made elsewhere, out of view when the row opens
+        let mut chosen = 12;
+        frame(&ctx, &mut chosen, Vec::new());
+        let rects = frame(&ctx, &mut chosen, Vec::new());
+        assert!(
+            (rects[12].center().x - 100.0).abs() < 1.0,
+            "the chosen chip is in the middle: {:?}",
+            rects[12]
+        );
+
+        // a click on the chip cut by the edge shows the next ones
+        let edge = rects.iter().position(|r| r.right() > 200.0).expect("a chip at the edge");
+        let pos = egui::pos2(rects[edge].left() + 4.0, rects[edge].center().y);
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&ctx, &mut chosen, vec![egui::Event::PointerMoved(pos), press(true)]);
+        frame(&ctx, &mut chosen, vec![press(false)]);
+        assert_eq!(chosen, edge);
+        frame(&ctx, &mut chosen, vec![egui::Event::PointerGone]);
+        let rects = frame(&ctx, &mut chosen, Vec::new());
+        assert!(
+            (rects[edge].center().x - 100.0).abs() < 1.0,
+            "the clicked chip is in the middle: {:?}",
+            rects[edge]
+        );
+
+        // then the row is the user's: the wheel is not undone
+        frame(
+            &ctx,
+            &mut chosen,
+            vec![egui::Event::PointerMoved(egui::pos2(100.0, rects[edge].center().y))],
+        );
+        for _ in 0..10 {
+            frame(&ctx, &mut chosen, vec![wheel(egui::vec2(0.0, 120.0))]);
+        }
+        let mut after = Vec::new();
+        for _ in 0..30 {
+            after = frame(&ctx, &mut chosen, Vec::new());
+        }
+        assert!(
+            after[edge].center().x > 150.0,
+            "the row stays where the wheel left it: {:?}",
+            after[edge]
+        );
     }
 }
 
@@ -753,6 +972,44 @@ mod search_tests {
             }
             assert!(ctx.read_response(id.with("clear")).is_none(), "empty searches have no clear action");
             assert_eq!(field.rect.size(), rect.size(), "the field must not resize when cleared");
+        }
+    }
+
+    #[test]
+    fn tab_skips_the_search_clear_action() {
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for kind in 0..4 {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut text = "query".into();
+            let mut field = frame(&ctx, kind, &mut text, vec![], true);
+            for _ in 0..3 {
+                field = frame(&ctx, kind, &mut text, vec![], true);
+            }
+            let clear = field.id.with("clear");
+            assert!(ctx.read_response(clear).is_some(), "kind={kind}: a filled field has a clear action");
+            ctx.memory_mut(|m| m.request_focus(field.id));
+            frame(&ctx, kind, &mut text, vec![], true);
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(field.id),
+                "kind={kind}: the field holds the focus before Tab"
+            );
+            frame(&ctx, kind, &mut text, vec![tab.clone()], true);
+            for _ in 0..2 {
+                frame(&ctx, kind, &mut text, vec![], true);
+            }
+            assert_ne!(
+                ctx.memory(|m| m.focused()),
+                Some(clear),
+                "kind={kind}: Tab must not stop on the cross"
+            );
         }
     }
 

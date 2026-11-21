@@ -25,6 +25,16 @@ const BADGE: f32 = 14.0;
 
 /// The groups tab: the list, and the sheet of the group clicked.
 pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi) {
+    // Conversations › Contacts closes the sheet when the pane gets too narrow
+    // for it; widened again, it shows the selected group, as the friends'.
+    let shows_group = st.sheet.is_some() && st.sheet_group;
+    if c.embedded_contacts
+        && c.contact_sheet_on_click
+        && !shows_group
+        && let Some(id) = st.sel.first().copied().filter(|id| c.world.groups.group(id).is_some())
+    {
+        open_group_sheet(c, st, id);
+    }
     super::split(ui, c, data, st, "people-groups-list", list, group_sheet);
 }
 
@@ -194,7 +204,12 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let selected = st.sheet == Some(g.id) && st.sheet_group;
+    // In Conversations › Contacts too narrow for the sheet beside the list,
+    // a click only selects, as on the friends: the sheet would take the
+    // whole pane before the second click of a double click reached the row
+    // (it opens from the row's info button instead)
+    let narrow_pane = c.embedded_contacts && !c.contact_sheet_on_click;
+    let selected = (st.sheet == Some(g.id) && st.sheet_group) || (narrow_pane && st.sel.contains(&g.id));
     let hot = ui.rect_contains_pointer(rect) || st.demo_hover == Some(g.id);
     rows::face(ui, p, rect, selected, hot);
     let insignia = (!g.insignia.is_nil()).then_some(g.insignia);
@@ -255,8 +270,22 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     let tag = active.then(|| (aurora_i18n::tr!("people-groups-active-tag"), tag_ink, tag_fill));
     let color = if g.list_in_profile { p.ink } else { p.ink.gamma_multiply(0.85) };
     rows::names(ui, p, rect, left, end.names_right, &g.name, color, &second_line(c, g), None, tag);
+    if narrow_pane && hot {
+        let slot = rows::actions_slot(rect, left, end.names_right, 1, rows::BUTTON);
+        let tip = aurora_i18n::tr!("people-show-group-sheet");
+        if rows::actions(ui, p, slot, &[("info-circle-filled", tip)], ("people-group-act", g.id))[0].clicked() {
+            st.sel = vec![g.id];
+            st.anchor = Some(g.id);
+            open_group_sheet(c, st, g.id);
+            st.sheet_grow = false;
+        }
+    }
     if resp.clicked() {
-        open_group_sheet(c, st, g.id);
+        st.sel = vec![g.id];
+        st.anchor = Some(g.id);
+        if !narrow_pane {
+            open_group_sheet(c, st, g.id);
+        }
     }
     if resp.double_clicked() {
         c.actions.push(PeopleAction::GroupChat(g.id));
@@ -385,15 +414,20 @@ fn head(ui: &mut egui::Ui, c: &Ctx, st: &mut PeopleUi, g: &GroupMembership) -> b
         &rows::initials(&g.name),
         p.violet,
     );
+    // no cross where the sheet stays beside the list (as a friend's)
     let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
-    let resp = ui.interact(cross, ui.scope_id().with(("people-group-sheet-close", g.id)), Sense::click());
-    if resp.hovered() {
-        ui.painter()
-            .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
-    }
-    super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
+    let resp = (!c.contact_sheet_on_click).then(|| {
+        let resp = ui.interact(cross, ui.scope_id().with(("people-group-sheet-close", g.id)), Sense::click());
+        if resp.hovered() {
+            ui.painter()
+                .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        }
+        super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
+        resp
+    });
     let left = tile.right() + 10.0;
-    let width = (cross.left() - 8.0 - left).max(20.0);
+    let right = if resp.is_some() { cross.left() - 8.0 } else { rect.right() };
+    let width = (right - left).max(20.0);
     let mut sub = Vec::new();
     if c.world.groups.active == g.id {
         sub.push(aurora_i18n::tr!("people-groups-active").to_owned());
@@ -415,7 +449,7 @@ fn head(ui: &mut egui::Ui, c: &Ctx, st: &mut PeopleUi, g: &GroupMembership) -> b
     let name_h = name_g.size().y;
     ui.painter().galley(Pos2::new(left, top), name_g, p.ink);
     ui.painter().galley(Pos2::new(left, top + name_h), sub_g, p.muted);
-    resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
+    resp.is_some_and(|resp| resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked())
 }
 
 /// The size of a sheet's button a little tighter than the theme's (icon,
@@ -501,7 +535,14 @@ fn me_in_group(ui: &mut egui::Ui, c: &mut Ctx, g: &GroupMembership) {
             }
         },
     );
-    let titles = world.group_data.get(&g.id).map(|d| d.titles.clone()).unwrap_or_default();
+    // Like the group profile's "Title shown" combo, this menu leaves a blank
+    // title out (the Legacy Viewer never offers one); only the Group titles
+    // window lists it (#3147).
+    let titles: Vec<_> = world
+        .group_data
+        .get(&g.id)
+        .map(|d| d.titles.iter().filter(|t| !t.title.is_empty()).cloned().collect())
+        .unwrap_or_default();
     let current = titles
         .iter()
         .find(|t| t.selected)
@@ -638,7 +679,8 @@ mod tests {
                 };
                 group_sheet(ui, &mut c, &data, &mut st, group);
             });
-            assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
+            // (Japanese wraps fewer lines: its sheet fits in 360 points)
+            assert!(bar.is_some() || height > 300.0, "{height}: the content overflows, the bar shows");
             assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");
         }
     }

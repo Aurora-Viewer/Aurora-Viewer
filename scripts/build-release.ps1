@@ -31,6 +31,8 @@ New-Item -ItemType Directory -Force -Path $rel -ErrorAction Stop | Out-Null
 # GitHub's main, and only then falls back to the repository's copy, which
 # it also runs when src is no longer a Git worktree (recreated below).
 # Only written once: cmd reads a .bat from disk while running it.
+# PSModulePath is emptied for Windows PowerShell to rebuild it: from PowerShell
+# 7, cmd hands down that edition's module paths, which hide cmdlets from 5.1.
 $bat = Join-Path $rel 'build-release.bat'
 if (-not (Test-Path -LiteralPath $bat)) {
     @(
@@ -39,6 +41,7 @@ if (-not (Test-Path -LiteralPath $bat)) {
         'if not exist "%S%" (git -C "%~dp0src" fetch origin main --quiet && git -C "%~dp0src" checkout --detach --force --quiet origin/main)'
         'git -C "%~dp0src" rev-parse --git-dir >nul 2>nul || set "S="'
         "if not exist `"%S%`" set `"S=$(Join-Path $p.Main 'scripts\build-release.ps1')`""
+        'set "PSModulePath="'
         'powershell -NoProfile -ExecutionPolicy Bypass -File "%S%" %*'
         'pause'
     ) | Set-Content -LiteralPath $bat -Encoding ASCII -ErrorAction Stop
@@ -94,11 +97,26 @@ Push-Location $src
 # A shell inherited from a release job must not stamp another commit with
 # its tag. The local build resolves the version from this checkout's Git.
 $previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG', 'Process')
+# The OpenXR loader built in, like the published exe (release.yml): without
+# it, VR depends on an openxr_loader.dll found on the PC, which a headset
+# software update can remove. Building it needs CMake (docs/VR_WINDOWS.md).
+$features = @()
+if (Get-Command cmake -ErrorAction SilentlyContinue) {
+    $features = '--features', 'xr-static-loader'
+} else {
+    Write-Host 'CMake not found: the OpenXR loader is not built in, VR will need an openxr_loader.dll on this PC. Install CMake (winget install Kitware.CMake) to build it in.' -ForegroundColor Yellow
+}
 try {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
-    Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer }
+    # Removed, not emptied: PowerShell 7 passes $null to a .NET string as
+    # '', and an empty AURORA_VERSION_TAG is a tag the build refuses.
+    Remove-Item -LiteralPath Env:AURORA_VERSION_TAG -ErrorAction SilentlyContinue
+    # the Rust version this commit names, one install at a time for the PC
+    Install-RustVersion $src
+    Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer @features }
 } finally {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    if ($null -ne $previousVersionTag) {
+        [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    }
     Pop-Location
 }
 

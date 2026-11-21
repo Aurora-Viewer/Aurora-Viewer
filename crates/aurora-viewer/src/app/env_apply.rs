@@ -215,6 +215,11 @@ impl App {
     /// The environment lists' and Personal Lighting's choices.
     pub(super) fn env_actions(&mut self, actions: impl IntoIterator<Item = crate::ui::environment::EnvAction>) {
         use crate::ui::environment::EnvAction;
+        // @setenv: the lists and presets are greyed, and whatever still
+        // asks changes nothing, neither now nor once the restriction lifts
+        if self.world.eep.rlva_locked {
+            return;
+        }
         for action in actions {
             match action {
                 EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
@@ -506,6 +511,10 @@ impl App {
     /// Open the day cycle editor on a parcel's or region's day, or on
     /// Firestorm's default day when there is none (onBtnEdit).
     fn open_day_editor_in(&mut self, context: DayContext, day: Option<DayDoc>, timing: (i32, i32)) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         self.day_editor.close();
         self.day_fetch = None;
         let extended = self.extended_environment();

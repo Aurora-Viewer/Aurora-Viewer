@@ -81,7 +81,7 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (idx, o) in world.objects.avatars() {
-        if o.full_id.is_nil() || o.full_id == world.agent_id {
+        if o.full_id.is_nil() || o.full_id == world.agent_id || world.is_mirror(&o.full_id) {
             continue;
         }
         let Some(marker) = marked(world, &o.full_id) else { continue };
@@ -124,8 +124,10 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     out
 }
 
+/// The marker of a resident: none for a blocked one, none either for one
+/// whose name RLVa hides (its set would tell who stands there).
 fn marked(world: &World, id: &Uuid) -> Option<Marker> {
-    world.contact_sets.appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
+    world.rlva_contact_appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
 }
 
 /// One frame of markers. `shown` is off with the setting, in immersive mode
@@ -439,29 +441,17 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
 }
 
 /// The marker of a set in its editor: on screen, then pinned to an edge.
-pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
-    let radius = full_radius(marker.shape);
-    let pinned_width = radius * 2.0 + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
-    let size = vec2(radius * 3.0 + pinned_width, radius * 2.0 + 4.0);
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    let y = rect.center().y;
-    let placed = |x: f32, edge| Placed {
-        at: pos2(x, y),
-        radius,
+/// One marker at full size at `at`, as it stands over a resident seen from
+/// afar (the set editor's preview).
+pub fn paint_preview_at(painter: &egui::Painter, p: &Palette, at: Pos2, marker: &Marker) {
+    let placed = Placed {
+        at,
+        radius: full_radius(marker.shape),
         merge: 0.0,
         fade: 1.0,
-        edge,
+        edge: None,
     };
-    paint(&painter, p, &placed(rect.left() + radius, None), marker, 1.0, false);
-    paint(
-        &painter,
-        p,
-        &placed(rect.left() + radius * 4.0, Some(Vec2::RIGHT)),
-        marker,
-        1.0,
-        false,
-    );
+    paint(painter, p, &placed, marker, 1.0, false);
 }
 
 #[cfg(test)]

@@ -27,6 +27,30 @@ fn id(n: u128) -> Uuid {
 }
 
 #[test]
+fn an_open_folder_whose_read_failed_waits_before_it_is_asked_again() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let now = std::time::Instant::now();
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Unknown;
+    assert!(inv.shown_needs_fetch(root, now), "never read: asked at once");
+    inv.request(root);
+    assert!(!inv.shown_needs_fetch(root, now), "being read");
+    inv.failed_at_time(&[root], now);
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    // not every frame: only once the pause is over
+    assert!(!inv.shown_needs_fetch(root, now));
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY / 2));
+    assert!(inv.shown_needs_fetch(root, now + SHOWN_RETRY));
+    // a folder that failed with no time recorded is not left behind
+    inv.failed_at.clear();
+    assert!(inv.shown_needs_fetch(root, now));
+    // a read folder and an unknown id are never asked for
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetched;
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY));
+    assert!(!inv.shown_needs_fetch(id(999_999), now));
+}
+
+#[test]
 fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
     let mut inv = fixture();
     let mut selected = vec![id(8000), id(8001)];
@@ -659,6 +683,27 @@ fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
 }
 
 #[test]
+fn a_multi_resident_gift_rechecks_permissions_when_it_is_sent() {
+    let mut inv = fixture();
+    let worn = HashSet::new();
+    let item = id(8100);
+    assert!(offer_for_residents(&inv, item, &worn, 2).is_ok());
+    let first_mask = inv.items[&item].owner_mask;
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask & !COPY;
+    assert!(offer_for_residents(&inv, item, &worn, 2).is_err());
+    assert!(offer_for_residents(&inv, item, &worn, 1).is_ok());
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask & !TRANSFER;
+    for count in [1, 2] {
+        assert!(offer_for_residents(&inv, item, &worn, count).is_err());
+        assert!(offer_for_residents(&inv, id(8000), &worn, count).is_err());
+    }
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask;
+    inv.remove(&[id(8110), id(8113)]);
+    assert!(offer_for_residents(&inv, id(8000), &worn, 1).is_ok());
+    assert!(offer_for_residents(&inv, id(8000), &worn, 2).is_err());
+}
+
+#[test]
 fn folder_wear_filters_documents_and_preserves_the_required_body() {
     use crate::world::appearance::{self, Action, WearMode};
     let inv = fixture();
@@ -813,6 +858,112 @@ fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others()
 }
 
 #[test]
+fn an_appearance_xml_export_needs_modify_rights_on_the_wearable() {
+    let (agent, other, library) = (id(9911), id(9912), id(9913));
+    let item = |owner, group_owned, owner_mask, everyone_mask| InvItem {
+        owner,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own item, full permissions", item(agent, false, FULL, 0), true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0), true),
+        ("no transfer", item(agent, false, COPY | MODIFY, 0), true),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0), false),
+        ("group owned", item(agent, true, FULL, COPY), false),
+        ("someone else's", item(other, false, FULL, COPY), false),
+        ("a Library item", item(library, false, FULL, COPY | TRANSFER), false),
+    ];
+    for (what, item, allowed) in cases {
+        assert_eq!(appearance_xml_export_allowed(&item, agent), allowed, "{what}");
+    }
+}
+
+#[test]
+fn an_asset_export_needs_the_items_creator_or_its_export_bit_on_opensim() {
+    let (agent, other, library) = (id(9931), id(9932), id(9933));
+    let item = |owner, creator, group_owned, owner_mask, everyone_mask| InvItem {
+        owner,
+        creator,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let sl = ExportGrid::SecondLife;
+    let denied = ExportGrid::OpenSim { export_supported: false };
+    let allowed = ExportGrid::OpenSim { export_supported: true };
+    // (what, item, Second Life and OpenSim without export, OpenSim with export)
+    let cases = [
+        (
+            "its own upload, full permissions",
+            item(agent, agent, false, FULL | EXPORT, 0),
+            true,
+            true,
+        ),
+        ("its own upload, no Export bit", item(agent, agent, false, FULL, 0), true, false),
+        (
+            "its own upload, no copy",
+            item(agent, agent, false, MODIFY | TRANSFER, 0),
+            true,
+            false,
+        ),
+        (
+            "its own upload, no transfer",
+            item(agent, agent, false, COPY | MODIFY, 0),
+            true,
+            false,
+        ),
+        (
+            "its own upload, no modify",
+            item(agent, agent, false, COPY | TRANSFER, 0),
+            true,
+            false,
+        ),
+        ("bought, full permissions", item(agent, other, false, FULL, 0), false, false),
+        ("bought, Export allowed", item(agent, other, false, FULL | EXPORT, 0), false, true),
+        (
+            "group owned, its own upload",
+            item(agent, agent, true, FULL | EXPORT, 0),
+            true,
+            false,
+        ),
+        (
+            "group owned, Export to everyone",
+            item(agent, other, true, FULL | EXPORT, EXPORT),
+            false,
+            true,
+        ),
+        ("someone else's", item(other, other, false, FULL | EXPORT, 0), false, false),
+        (
+            "a Library item",
+            item(library, library, false, FULL | EXPORT, COPY | TRANSFER),
+            false,
+            false,
+        ),
+    ];
+    for (what, item, creator_rule, export_rule) in cases {
+        assert_eq!(asset_export_allowed(&item, agent, sl), creator_rule, "Second Life: {what}");
+        assert_eq!(
+            asset_export_allowed(&item, agent, denied),
+            creator_rule,
+            "OpenSim without export: {what}"
+        );
+        assert_eq!(
+            asset_export_allowed(&item, agent, allowed),
+            export_rule,
+            "OpenSim with export: {what}"
+        );
+    }
+    assert!(
+        !asset_export_allowed(&item(agent, Uuid::nil(), false, FULL, 0), Uuid::nil(), sl),
+        "no agent"
+    );
+}
+
+#[test]
 fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     let (agent, friend) = (id(9921), id(9922));
     let item = |owner_id, group_owned| aurora_net::build::TaskItem {
@@ -825,6 +976,57 @@ fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
     assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
     assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn an_object_rezzes_from_contents_when_the_agent_may_copy_it_and_its_owner_transfer_it() {
+    let (agent, other, library, group) = (id(9931), id(9932), id(9933), id(9934));
+    let item = |owner_id, group_owned, owner_mask, group_mask, everyone_mask| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        group_id: group,
+        owner_mask,
+        group_mask,
+        everyone_mask,
+        asset_type: 6,
+        inv_type: 6,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own object, full permissions", item(agent, false, FULL, 0, 0), group, true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0, 0), group, false),
+        ("no transfer, even its own", item(agent, false, COPY | MODIFY, 0, 0), group, false),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0, 0), group, true),
+        ("group owned, active group may copy", item(group, true, FULL, COPY, 0), group, true),
+        (
+            "group owned, another active group",
+            item(group, true, FULL, COPY, 0),
+            Uuid::nil(),
+            false,
+        ),
+        (
+            "group owned, owner may not transfer",
+            item(group, true, COPY | MODIFY, COPY, COPY),
+            group,
+            false,
+        ),
+        (
+            "someone else's, everyone may copy",
+            item(other, false, FULL, 0, COPY),
+            Uuid::nil(),
+            true,
+        ),
+        (
+            "someone else's, no copy for everyone",
+            item(other, false, FULL, 0, 0),
+            Uuid::nil(),
+            false,
+        ),
+        ("a Library item", item(library, false, FULL, 0, COPY | TRANSFER), Uuid::nil(), true),
+    ];
+    for (what, item, active, allowed) in cases {
+        assert_eq!(task_rez_allowed(&item, agent, active), allowed, "{what}");
+    }
 }
 
 #[test]
@@ -923,6 +1125,127 @@ fn god_permission_table_keeps_ordinary_agent_rights_and_grants_only_asset_bits()
 }
 
 #[test]
+fn contents_previews_open_textures_copyable_sounds_and_animations_of_modifiable_objects() {
+    let (agent, other, group) = (id(9971), id(9972), id(9973));
+    let sound = InvItem {
+        owner: agent,
+        owner_mask: FULL,
+        asset_type: 1,
+        inv_type: 1,
+        ..Default::default()
+    };
+    let open = |item: &InvItem, member: bool, manipulate: bool| task_preview_allowed(item, agent, member, manipulate, false, 0);
+    // the owner's, and full permissions
+    assert!(open(&sound, false, false));
+    // group-owned: the owner's rights with object manipulation, the
+    // group's for another member, the everyone mask outside the group
+    let shared = InvItem {
+        owner: group,
+        group_id: group,
+        group_owned: true,
+        owner_mask: FULL,
+        group_mask: 0,
+        everyone_mask: 0,
+        ..sound.clone()
+    };
+    assert!(open(&shared, true, true));
+    assert!(!open(&shared, true, false));
+    assert!(open(
+        &InvItem {
+            group_mask: COPY,
+            ..shared.clone()
+        },
+        true,
+        false
+    ));
+    assert!(!open(&shared, false, false));
+    // someone else's: their everyone mask
+    let theirs = InvItem {
+        owner: other,
+        everyone_mask: 0,
+        ..sound.clone()
+    };
+    assert!(!open(&theirs, false, false));
+    assert!(open(
+        &InvItem {
+            everyone_mask: COPY,
+            ..theirs.clone()
+        },
+        false,
+        false
+    ));
+    // a Library item: the Library's account allows what it allows everyone
+    let library = InvItem {
+        owner: id(9974),
+        everyone_mask: COPY | TRANSFER,
+        ..sound.clone()
+    };
+    assert!(open(&library, false, false));
+    // no copy refuses; no transfer and no modify do not matter
+    assert!(!open(
+        &InvItem {
+            owner_mask: MODIFY | TRANSFER,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    assert!(open(
+        &InvItem {
+            owner_mask: COPY | MODIFY,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    assert!(open(
+        &InvItem {
+            owner_mask: COPY | TRANSFER,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    // a maintenance god copies anything; a lesser god level does not
+    assert!(task_preview_allowed(&theirs, agent, false, false, false, GOD_MAINTENANCE));
+    assert!(!task_preview_allowed(&theirs, agent, false, false, false, 1));
+    // a texture opens whatever its rights; an animation follows the object
+    for owner_mask in [FULL, 0, COPY, MODIFY, TRANSFER] {
+        let texture = InvItem {
+            owner: other,
+            owner_mask,
+            everyone_mask: 0,
+            asset_type: 0,
+            inv_type: 0,
+            ..Default::default()
+        };
+        assert!(open(&texture, false, false));
+        let animation = InvItem {
+            asset_type: 20,
+            inv_type: 19,
+            ..texture
+        };
+        assert!(!open(&animation, false, false));
+        assert!(task_preview_allowed(&animation, agent, false, false, true, 0));
+        assert!(task_preview_allowed(&animation, agent, false, false, false, 1));
+    }
+    // other types keep their own windows
+    for asset_type in [6, 7, 10, 21] {
+        assert!(!task_preview_allowed(
+            &InvItem {
+                asset_type,
+                ..sound.clone()
+            },
+            agent,
+            true,
+            true,
+            true,
+            GOD_MAINTENANCE
+        ));
+    }
+}
+
+#[test]
 fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_distinct() {
     let (agent, other) = (id(9961), id(9962));
     let mut script = aurora_net::build::TaskItem {
@@ -952,4 +1275,444 @@ fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_disti
     note.owner = agent;
     assert_eq!(task_script_mask(&script, agent, false), FULL);
     assert_eq!(task_notecard_mask(&note, agent, false, false), FULL);
+}
+
+#[test]
+fn an_experience_logo_is_a_full_permission_texture_or_none() {
+    let (agent, other, group, library, asset) = (id(9981), id(9982), id(9983), id(9984), id(9985));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert!(experience_logo_allowed(&inv, Uuid::nil()), "no logo");
+    assert!(!experience_logo_allowed(&inv, asset), "not in the inventory");
+    let mut logo = |item: InvItem| {
+        inv.items.clear();
+        inv.items.insert(item.id, item);
+        experience_logo_allowed(&inv, asset)
+    };
+    // the owner's, full permissions
+    let mine = InvItem {
+        id: id(9986),
+        owner: agent,
+        asset_id: asset,
+        asset_type: 0,
+        inv_type: 0,
+        owner_mask: FULL,
+        ..Default::default()
+    };
+    assert!(logo(mine.clone()));
+    // no copy, no modify, no transfer
+    for missing in [COPY, MODIFY, TRANSFER] {
+        assert!(!logo(InvItem {
+            owner_mask: FULL & !missing,
+            ..mine.clone()
+        }));
+    }
+    // group-owned: what it allows everyone (LLViewerInventoryItem::getPermissionMask)
+    let shared = InvItem {
+        owner: group,
+        group_id: group,
+        group_owned: true,
+        group_mask: FULL,
+        everyone_mask: 0,
+        ..mine.clone()
+    };
+    assert!(!logo(shared.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..shared
+    }));
+    // someone else's: their everyone mask
+    let theirs = InvItem {
+        owner: other,
+        everyone_mask: COPY | TRANSFER,
+        ..mine.clone()
+    };
+    assert!(!logo(theirs.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..theirs
+    }));
+    // a Library texture: what the Library allows everyone
+    let lib = InvItem {
+        owner: library,
+        everyone_mask: COPY,
+        ..mine.clone()
+    };
+    assert!(!logo(lib.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..lib
+    }));
+    // only a texture
+    assert!(!logo(InvItem {
+        asset_type: 7,
+        inv_type: 7,
+        ..mine
+    }));
+}
+
+#[cfg(test)]
+mod outgoing_offers {
+    use super::*;
+    use crate::world::inventory::outgoing::{Effect, Feedback};
+    use aurora_net::{InventoryOfferStatus, NetCommand, inventory::ais::ItemReads};
+
+    fn start(inv: &mut Inventory, item: Uuid) -> Result<NetCommand, Feedback> {
+        let bucket = offer(inv, item, &HashSet::new()).expect("transferable synthetic original");
+        inv.begin_offer(Some(id(41)), id(42), item, bucket)
+    }
+
+    fn prepare() -> (Inventory, Uuid, crossbeam_channel::Sender<InventoryOfferStatus>) {
+        let mut inv = fixture();
+        inv.owner = id(2);
+        let item = id(8109);
+        let NetCommand::OfferInventory { receipt, .. } = start(&mut inv, item).expect("offer") else {
+            panic!("expected offer")
+        };
+        (inv, item, receipt)
+    }
+
+    fn cache(inv: &Inventory) -> CachedInventory {
+        let path = std::env::temp_dir().join(format!("aurora-offer-{}.bin", Uuid::new_v4()));
+        inv.save_cache(&path);
+        let cached = read_cache(&path).expect("synthetic inventory snapshot");
+        std::fs::remove_file(path).expect("remove synthetic snapshot");
+        cached
+    }
+
+    #[test]
+    fn closed_channel_neither_logs_a_gift_nor_removes_or_hides_the_original_at_next_login() {
+        let (mut inv, item, receipt) = prepare();
+        let folder = inv.items[&item].parent;
+        // Dropping the command unsent, as a closed queue or the offline worker does.
+        drop(receipt);
+        assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Feedback(Feedback::Unsent)]));
+        assert!(inv.items.contains_key(&item));
+        let mut login = fixture();
+        login.items.clear();
+        for target in login.folders.values_mut() {
+            target.items.clear();
+            target.state = FetchState::Unknown;
+        }
+        login.apply_cache(cache(&inv));
+        assert_eq!(login.folders[&folder].state, FetchState::Fetched);
+        assert!(login.items.contains_key(&item));
+        assert!(matches!(start(&mut inv, item), Ok(NetCommand::OfferInventory { .. })));
+    }
+
+    #[test]
+    fn one_simulator_ack_emits_one_offer_and_protects_against_a_stale_cached_original() {
+        let (mut inv, item, receipt) = prepare();
+        let original = inv.items[&item].clone();
+        receipt.send(InventoryOfferStatus::Transmitted).expect("status");
+        assert!(inv.poll_offers(Some(id(41))).is_empty());
+        assert!(inv.items.contains_key(&item));
+        assert!(matches!(start(&mut inv, item), Err(Feedback::Pending)));
+        assert!(!cache(&inv).folders.iter().any(|f| f.id == original.parent));
+        receipt.send(InventoryOfferStatus::Acknowledged).expect("ack");
+        assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Sent { recipient, folder: false, .. }] if *recipient == id(42)));
+        assert!(inv.poll_offers(Some(id(41))).is_empty());
+        assert!(!inv.items.contains_key(&item));
+        assert!(!cache(&inv).folders.iter().any(|f| f.id == original.parent));
+        inv.add_items(vec![original]); // a pre-offer inventory snapshot arrived late
+        assert!(matches!(start(&mut inv, item), Ok(NetCommand::CheckInventoryOffer { .. })));
+    }
+
+    fn lost_ack(inv: &mut Inventory, receipt: crossbeam_channel::Sender<InventoryOfferStatus>) -> crossbeam_channel::Sender<ItemReads> {
+        receipt.send(InventoryOfferStatus::Transmitted).expect("status");
+        drop(receipt);
+        let mut effects = inv.poll_offers(Some(id(41)));
+        assert!(matches!(&effects[..], [Effect::Feedback(Feedback::Uncertain), Effect::Check(_)]));
+        let Some(Effect::Check(cmd)) = effects.pop() else {
+            panic!("expected check")
+        };
+        let NetCommand::CheckInventoryOffer { session, items, reply } = *cmd else {
+            panic!("expected item read")
+        };
+        assert_eq!(session, id(41));
+        assert_eq!(items, vec![id(8109)]);
+        reply
+    }
+
+    #[test]
+    fn lost_ack_and_failed_read_never_release_an_original_or_repeat_a_gift() {
+        let (mut inv, item, receipt) = prepare();
+        let read = lost_ack(&mut inv, receipt);
+        read.send(ItemReads {
+            failed: vec![item],
+            ..Default::default()
+        })
+        .expect("failure");
+        assert!(matches!(
+            &inv.poll_offers(Some(id(41)))[..],
+            [Effect::Feedback(Feedback::CheckFailed)]
+        ));
+        assert!(inv.items.contains_key(&item));
+        let NetCommand::CheckInventoryOffer { reply, .. } = start(&mut inv, item).expect("retry the check") else {
+            panic!("sent a second gift")
+        };
+        assert!(matches!(start(&mut inv, item), Err(Feedback::Checking)));
+        reply
+            .send(ItemReads {
+                missing: vec![item],
+                ..Default::default()
+            })
+            .expect("absent");
+        assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Feedback(Feedback::Checked)]));
+        assert!(!inv.items.contains_key(&item));
+        assert!(offer(&inv, item, &HashSet::new()).is_err());
+    }
+
+    #[test]
+    fn a_timed_out_private_read_leaves_only_the_check_available_to_retry() {
+        let (mut inv, item, receipt) = prepare();
+        drop(lost_ack(&mut inv, receipt));
+        assert!(matches!(
+            &inv.poll_offers(Some(id(41)))[..],
+            [Effect::Feedback(Feedback::CheckFailed)]
+        ));
+        assert!(inv.items.contains_key(&item));
+        assert!(matches!(start(&mut inv, item), Ok(NetCommand::CheckInventoryOffer { .. })));
+    }
+
+    #[test]
+    fn an_authoritative_original_uses_its_current_rights_without_resending() {
+        let (mut inv, item, receipt) = prepare();
+        let read = lost_ack(&mut inv, receipt);
+        let mut changed = inv.items[&item].clone();
+        changed.owner_mask &= !TRANSFER;
+        read.send(ItemReads {
+            items: vec![changed],
+            ..Default::default()
+        })
+        .expect("response");
+        assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Feedback(Feedback::Checked)]));
+        assert!(inv.items.contains_key(&item));
+        assert!(offer(&inv, item, &HashSet::new()).is_err());
+    }
+
+    #[test]
+    fn a_copyable_offer_to_two_residents_confirms_each_once_and_keeps_the_item() {
+        let mut inv = fixture();
+        let item = id(8100);
+        let mut receipts = Vec::new();
+        for recipient in [id(42), id(43)] {
+            let bucket = offer(&inv, item, &HashSet::new()).expect("copyable object");
+            let NetCommand::OfferInventory { receipt, .. } =
+                inv.begin_offer(Some(id(41)), recipient, item, bucket).expect("independent offer")
+            else {
+                panic!("expected an offer");
+            };
+            receipts.push(receipt);
+        }
+        for receipt in receipts {
+            receipt.send(InventoryOfferStatus::Acknowledged).expect("ack");
+        }
+        let effects = inv.poll_offers(Some(id(41)));
+        assert!(
+            matches!(&effects[..], [Effect::Sent { recipient: a, .. }, Effect::Sent { recipient: b, .. }] if *a == id(42) && *b == id(43))
+        );
+        assert!(inv.items.contains_key(&item));
+        assert!(inv.outgoing.uncached_folders(&inv.items).is_empty());
+    }
+
+    #[test]
+    fn a_read_issued_before_a_local_move_cannot_remove_the_moved_item_or_an_unrelated_item() {
+        let (mut inv, item, receipt) = prepare();
+        let read = lost_ack(&mut inv, receipt);
+        let mut moved = inv.items[&item].clone();
+        moved.parent = id(8001);
+        inv.add_items(vec![moved.clone()]);
+        let other = id(8100);
+        let original_name = inv.items[&other].name.clone();
+        let mut unrelated = inv.items[&other].clone();
+        unrelated.name = "Unrequested".into();
+        read.send(ItemReads {
+            items: vec![unrelated],
+            missing: vec![item, other],
+            ..Default::default()
+        })
+        .expect("stale read");
+        let reply = next_check(inv.poll_offers(Some(id(41))));
+        assert_eq!(inv.items[&item].parent, moved.parent);
+        assert_eq!(inv.items[&other].name, original_name);
+        let uncached = inv.outgoing.uncached_folders(&inv.items);
+        assert!(uncached.contains(&id(8000)) && uncached.contains(&moved.parent));
+        reply
+            .send(ItemReads {
+                items: vec![moved],
+                ..Default::default()
+            })
+            .expect("fresh read");
+        assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Feedback(Feedback::Checked)]));
+        assert!(inv.items.contains_key(&item));
+        assert!(matches!(start(&mut inv, item), Ok(NetCommand::OfferInventory { .. })));
+    }
+
+    fn next_check(effects: Vec<Effect>) -> crossbeam_channel::Sender<ItemReads> {
+        assert_eq!(effects.len(), 1);
+        let Effect::Check(cmd) = effects.into_iter().next().expect("one follow-up") else {
+            panic!("expected an inventory check")
+        };
+        let NetCommand::CheckInventoryOffer { reply, .. } = *cmd else {
+            panic!("expected a private read")
+        };
+        reply
+    }
+
+    #[test]
+    fn stale_reads_cannot_resurrect_deleted_originals_or_overwrite_current_rights() {
+        for deleted in [true, false] {
+            let (mut inv, item, receipt) = prepare();
+            let read = lost_ack(&mut inv, receipt);
+            let old = inv.items[&item].clone();
+            if deleted {
+                inv.remove(&[item]);
+            } else {
+                let mut changed = old.clone();
+                changed.owner_mask &= !TRANSFER;
+                inv.add_items(vec![changed]);
+            }
+            read.send(ItemReads {
+                items: vec![old],
+                ..Default::default()
+            })
+            .expect("stale reply");
+            let retry = next_check(inv.poll_offers(Some(id(41))));
+            assert!(offer(&inv, item, &HashSet::new()).is_err());
+            let mut fresh = ItemReads::default();
+            if deleted {
+                fresh.missing.push(item);
+            } else {
+                fresh.items.push(inv.items[&item].clone());
+            }
+            retry.send(fresh).expect("fresh reply");
+            assert!(matches!(&inv.poll_offers(Some(id(41)))[..], [Effect::Feedback(Feedback::Checked)]));
+            assert!(offer(&inv, item, &HashSet::new()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_pending_logout_write_does_not_restore_the_previous_inventory_snapshot() {
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("aurora-offer-pending-{}", Uuid::new_v4()));
+        let path = crate::cache::path(&dir, "inventory", &id(2), "inv");
+        let other_path = crate::cache::path(&dir, "inventory", &id(3), "inv");
+        let mut inventory = fixture();
+        let item = id(8109);
+        let parent = inventory.items[&item].parent;
+        inventory.save_cache(&path);
+        let old = read_cache(&path).expect("snapshot from before the give");
+        assert!(old.folders.iter().any(|f| f.items.iter().any(|it| it.id == item)));
+        let (release, blocked) = crossbeam_channel::bounded(1);
+        let (started, writing) = crossbeam_channel::bounded(1);
+        let before = crate::cache::read(&path).expect("first cache");
+        let in_flight = path.clone();
+        crate::saves::change(path.clone(), move || {
+            started.send(()).expect("writer started");
+            if blocked.recv().is_ok() {
+                crate::cache::write(&in_flight, &before).expect("write late snapshot");
+            }
+        });
+        writing
+            .recv_timeout(Duration::from_secs(10))
+            .expect("writer holds this synthetic path");
+        inventory.remove(&[item]);
+        inventory.save_cache(&path);
+        let stale = read_cache_with_timeout(&path, Duration::ZERO);
+        let mut other = fixture();
+        other.owner = id(3);
+        let mut other_item = other.items[&item].clone();
+        other_item.id = id(9801);
+        other_item.owner = other.owner;
+        other.items.clear();
+        for folder in other.folders.values_mut() {
+            folder.items.clear();
+        }
+        other.add_items(vec![other_item.clone()]);
+        other.save_cache(&other_path);
+        let independent = read_cache(&other_path).expect("second account reads its own cache while the first account is blocked");
+        release.send(()).expect("release the writer");
+        assert!(
+            independent
+                .folders
+                .iter()
+                .flat_map(|f| &f.items)
+                .any(|it| it.id == other_item.id && it.owner == other.owner)
+        );
+        assert!(independent.folders.iter().all(|f| f.items.iter().all(|it| it.id != item)));
+        assert!(stale.is_none(), "the old snapshot cannot stand for the pending one");
+        let fresh = read_cache(&path).expect("new snapshot");
+        assert!(fresh.folders.iter().any(|f| f.id == parent));
+        assert!(
+            fresh
+                .folders
+                .iter()
+                .all(|f| f.items.iter().all(|it| it.id != item && it.id != other_item.id))
+        );
+        std::fs::remove_file(path).expect("remove first cache");
+        std::fs::remove_file(other_path).expect("remove second cache");
+        std::fs::remove_dir(dir.join("inventory")).expect("empty inventory directory");
+        std::fs::remove_dir(dir).expect("empty synthetic cache");
+    }
+    #[test]
+    fn a_v3_cache_missing_a_no_copy_original_refetches_once_and_reuses_the_rebuilt_folder() {
+        use aurora_llsd::llsd_map;
+        let old = fixture();
+        let item = old.items[&id(8109)].clone();
+        let parent = item.parent;
+        let version = old.folders[&parent].info.version;
+        let row = llsd_map! { "id" => parent, "version" => version };
+        let snapshot = llsd_map! { "version" => 3, "folders" => Llsd::Array(vec![row]), "items" => Llsd::Array(vec![]) };
+        let path = std::env::temp_dir().join(format!("aurora-offer-v3-{}.bin", Uuid::new_v4()));
+        crate::cache::write(&path, &aurora_llsd::to_binary(&snapshot)).expect("synthetic v3 snapshot");
+        let skeleton = || {
+            let mut inv = fixture();
+            inv.items.clear();
+            inv.queue.clear();
+            for folder in inv.folders.values_mut() {
+                folder.items.clear();
+                folder.state = FetchState::Unknown;
+            }
+            inv
+        };
+        let mut first = skeleton();
+        assert!(read_cache(&path).is_none(), "v3 could omit this original at the same version");
+        first.request(parent);
+        assert_eq!(first.queue, [(parent, false)]);
+        first.apply(vec![FolderContents {
+            folder_id: parent,
+            owner_id: id(2),
+            version,
+            folders: vec![],
+            items: vec![item.clone()],
+        }]);
+        assert!(first.items.contains_key(&item.id));
+        first.save_cache(&path);
+        let mut second = skeleton();
+        assert_eq!(second.apply_cache(read_cache(&path).expect("current snapshot")), 1);
+        second.request(parent);
+        assert!(second.queue.is_empty(), "the rebuilt folder is reused at the next login");
+        assert_eq!(second.items[&item.id].id, item.id);
+        assert_eq!(second.items[&item.id].owner_mask, item.owner_mask);
+        std::fs::remove_file(path).expect("remove synthetic cache");
+    }
+    #[test]
+    fn late_receipts_and_private_reads_cannot_mutate_a_new_login() {
+        let (mut inv, item, receipt) = prepare();
+        receipt.send(InventoryOfferStatus::Acknowledged).expect("late ack");
+        assert!(inv.poll_offers(Some(id(43))).is_empty());
+        assert!(inv.items.contains_key(&item));
+        let (mut inv, item, receipt) = prepare();
+        let read = lost_ack(&mut inv, receipt);
+        read.send(ItemReads {
+            missing: vec![item],
+            ..Default::default()
+        })
+        .expect("late read");
+        assert!(inv.poll_offers(Some(id(43))).is_empty());
+        assert!(inv.items.contains_key(&item));
+    }
 }

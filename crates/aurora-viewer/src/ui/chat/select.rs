@@ -25,6 +25,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+mod document;
+pub(crate) use document::show as document;
+
 /// One end of a selection: a line (its number) and a character of its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
@@ -98,6 +101,15 @@ impl Selection {
         self.texts.clear();
         self.texts.insert(seq, row_text.to_owned());
         self.anchor = Some(Point { seq, at: range.start });
+        self.head = Some(Point { seq, at: range.end });
+    }
+
+    /// Characters `range` of one line (a triple click on a paragraph),
+    /// copied as a drag over them is: the paragraph that starts the message
+    /// takes the line's "[time] Name: " prefix, which begins that line in the
+    /// Legacy Viewer's transcript; one after a line break does not.
+    pub fn select_paragraph(&mut self, seq: u64, range: Range<usize>, row_text: &str) {
+        self.start_at(Point { seq, at: range.start }, row_text);
         self.head = Some(Point { seq, at: range.end });
     }
 
@@ -238,7 +250,7 @@ pub fn row<R>(ui: &mut egui::Ui, seq: u64, selected: Option<Range<usize>>, paint
 }
 
 /// The stable number of the message whose sender is being drawn.
-pub(super) fn current_seq() -> Option<u64> {
+pub(crate) fn current_seq() -> Option<u64> {
     CURRENT.with_borrow(|c| c.as_ref().map(|c| c.seq))
 }
 
@@ -261,14 +273,24 @@ pub fn colors(background: egui::Color32, text: egui::Color32) {
 /// A run of text: in a line of a conversation it is recorded and its
 /// selected part painted; elsewhere the usual selectable label.
 pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
+    label_with_sense(ui, text.into(), egui::Sense::hover())
+}
+
+/// A styled name-link paragraph can keep its click target while recording
+/// every character for a notice's selection.
+pub(crate) fn label_with_sense(ui: &mut egui::Ui, text: egui::WidgetText, sense: egui::Sense) -> egui::Response {
     if CURRENT.with_borrow(Option::is_none) {
-        return ui.add(egui::Label::new(text).wrap().selectable(true));
+        let label = egui::Label::new(text).wrap().selectable(true);
+        return ui.add(if sense == egui::Sense::hover() { label } else { label.sense(sense) });
     }
     let shown = text.text().to_owned();
-    let (pos, visual, resp) = if bidi::has_rtl(&shown) {
-        bidi_label(ui, text)
+    // A caller-supplied galley also defines its link hit boxes. Preserve
+    // those positions instead of reordering that paragraph a second time.
+    let laid_out = matches!(&text, egui::WidgetText::Galley(_));
+    let (pos, visual, resp) = if !laid_out && bidi::has_rtl(&shown) {
+        bidi_label(ui, text, sense)
     } else {
-        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).layout_in_ui(ui);
+        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).sense(sense).layout_in_ui(ui);
         (pos, Visual::plain(galley), resp)
     };
     let len = shown.chars().count();
@@ -322,10 +344,9 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
 /// `Label::layout_in_ui` for a text with right-to-left characters, in
 /// display order (`bidi`): in a wrapping row of widgets it starts after the
 /// previous one and goes on on the rows below, as a label does.
-fn bidi_label(ui: &mut egui::Ui, text: egui::RichText) -> (Pos2, Visual, egui::Response) {
-    let job = egui::WidgetText::from(text).into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
+fn bidi_label(ui: &mut egui::Ui, text: egui::WidgetText, sense: egui::Sense) -> (Pos2, Visual, egui::Response) {
+    let job = text.into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
     let mut job = Arc::unwrap_or_clone(job);
-    let sense = egui::Sense::hover();
     let available = ui.available_width();
     if ui.layout().main_dir() == egui::Direction::LeftToRight && ui.layout().main_wrap() && available.is_finite() {
         // (Label::layout_in_ui's own rules for a wrapping layout)
@@ -349,7 +370,7 @@ fn bidi_label(ui: &mut egui::Ui, text: egui::RichText) -> (Pos2, Visual, egui::R
     job.wrap.max_width = available;
     job.halign = ui.layout().horizontal_placement();
     let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
-    let (rect, response) = ui.allocate_exact_size(visual.galley.size(), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(visual.galley.size(), sense);
     let pos = match visual.galley.job.halign {
         egui::Align::LEFT => rect.left_top(),
         egui::Align::Center => rect.center_top(),
@@ -420,6 +441,32 @@ pub fn word_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
         Shape::Galley { .. } => word_range(&row.text, piece.at(pos))?,
     };
     Some((row.seq, range, &row.text))
+}
+
+/// What a triple click at `pos` selects: the paragraph (up to a line break, or
+/// the whole message) under the pointer (`paragraph_range`). None off the lines
+/// or on an empty paragraph. Like the triple-click block of
+/// LLTextBase::handleMouseDown (indra/llui/lltextbase.cpp): a press within
+/// TRIPLE_CLICK_INTERVAL (0.3 s) of a double click (the timer starts in
+/// LLTextBase::handleDoubleClick) selects the whole logical line (`mLineNum`,
+/// its wrapped rows included). The transcript, FSChatHistory
+/// (indra/newview/fschathistory.h), is an LLTextEditor and has it; only
+/// LLTextBox skips it (`mSkipTripleClick`, indra/llui/lltextbox.cpp).
+pub fn paragraph_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
+    let row = rows.iter().find(|r| r.rect.top() <= pos.y && pos.y < r.rect.bottom())?;
+    let piece = nearest_piece(row, pos)?;
+    let range = paragraph_range(&row.text, piece.at(pos))?;
+    Some((row.seq, range, &row.text))
+}
+
+/// The paragraph around caret `at` of `text`, bounded by line breaks (`\n`) or
+/// the message's ends.
+fn paragraph_range(text: &str, at: usize) -> Option<Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = at.min(chars.len());
+    let start = chars[..at].iter().rposition(|&c| c == '\n').map_or(0, |p| p + 1);
+    let end = chars[at..].iter().position(|&c| c == '\n').map_or(chars.len(), |p| at + p);
+    (start < end).then_some(start..end)
 }
 
 /// LLWStringUtil::isPartOfWord: a letter, a digit or '_'.
@@ -551,6 +598,39 @@ mod tests {
         assert_eq!(word_range(text, usize::MAX), None);
         // a message of one word
         assert_eq!(word_range("hello", 3), Some(0..5));
+    }
+
+    #[test]
+    fn a_triple_click_takes_the_paragraph_under_it() {
+        assert_eq!(paragraph_range("hello from Jane", 7), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 0), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 15), Some(0..15));
+        let multi = "first paragraph\nsecond paragraph\nthird";
+        assert_eq!(paragraph_range(multi, 0), Some(0..15));
+        assert_eq!(paragraph_range(multi, 15), Some(0..15));
+        assert_eq!(paragraph_range(multi, 16), Some(16..32));
+        assert_eq!(paragraph_range(multi, 32), Some(16..32));
+        assert_eq!(paragraph_range(multi, 33), Some(33..38));
+        assert_eq!(paragraph_range(multi, usize::MAX), Some(33..38));
+        assert_eq!(paragraph_range("", 0), None);
+    }
+
+    /// A triple-clicked paragraph is copied as a drag over it: the first one
+    /// with the line's prefix, one after a line break without; a double
+    /// click still copies the word alone.
+    #[test]
+    fn a_triple_clicked_paragraph_is_copied_as_a_drag_over_it() {
+        let text = "first paragraph\nsecond one";
+        let lines = [(10, "[12:00] Jane: ", text)];
+        let mut sel = Selection::default();
+        let first = paragraph_range(text, 3).expect("the first paragraph");
+        sel.select_paragraph(10, first, text);
+        assert_eq!(copy(&sel, &lines), "[12:00] Jane: first paragraph");
+        let second = paragraph_range(text, 20).expect("the second paragraph");
+        sel.select_paragraph(10, second, text);
+        assert_eq!(copy(&sel, &lines), "second one");
+        sel.select_in_row(10, 0..5, text);
+        assert_eq!(copy(&sel, &lines), "first");
     }
 
     #[test]

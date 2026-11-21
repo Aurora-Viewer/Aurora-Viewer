@@ -55,7 +55,7 @@ impl BuildTool {
         scene.set_mesh_lod_override(world, &keys, level);
         scene.inspect_mesh(
             world,
-            if asset.is_some() && (self.tab == 5 || level.is_some()) {
+            if asset.is_some() && (self.section_visible(5) || level.is_some()) {
                 primary
             } else {
                 None
