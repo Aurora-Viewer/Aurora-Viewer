@@ -1099,7 +1099,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
-| `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
+| `AURORA_DEMO_TP_AWAY=1\|snow` | Departure out of range of the demo region, then return; `snow`: over lying snow |
 | `AURORA_DEMO_AUTO_UNMUTE=1` | Ambient sounds and sound effects muted, unmuted by the demo teleport (see Details) |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -1676,6 +1676,13 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
   Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
   stays, through her map rights), and enabled again at frame 1000.
+  `snow` (#3664): the same trip over lying snow. At frame 300 the ground
+  fills with snow in calm weather (the Weather window's snow-fill button),
+  and both arrivals go through the app as from the network. Each one, in
+  another region, cleans up what lay (log: `weather: arrival in another
+  region, ground cleaned up true`): captured at frames 700 and 1100,
+  the plaza is white, then bare. With `AURORA_SNOW=0.5` (my own snow
+  falling) the log says `false` and the snow stays.
   The departure's arrival also says "Teleport completed from" and a link to
   the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
   return says nothing, the far region having no name.
@@ -3344,6 +3351,9 @@ neither may be interrupted by saving an intermediate digit or drag position.
 The window stays open. Changes must update the original object's item even
 after changing the build selection, and survive closing and reopening its
 properties. Check the same behavior with `AURORA_DEMO_INVENTORY=properties`.
+`contents-properties-multi,object:118` opens three items' properties at once,
+as Properties on a multi-selection does: one window each, cascaded, none
+hiding another; Properties again on an item already shown adds no window.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents`, New script, Reset scripts and Refresh share a
 row. Rights, the inventory's shared CMT menu and the search field share the
@@ -4200,14 +4210,19 @@ That ignored test creates and removes its own isolated profile.
   you wear but not your HUDs, stands 1 m in front of you facing you as Person
   B, with no name tag, and goes when couple mode ends. The scripted modes turn
   the view to the side once B is there. Capture from frame 1400.
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
+- **`AURORA_DEMO_POSER=self|frame|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar.
   The additional `connected` mode restores a T-pose at 450 and moves the
   left wrist down/inwards at 480; capture 620 shows the bent elbow and
   connected wrist, with the position inspector in avatar coordinates.
   `camera` views the same head rotation from a quarter-turn camera orbit;
-  compare the trackball axes with `self`. `together` selects the left
+  compare the trackball axes with `self`. `frame` is `self` with Preferences ›
+  Camera › "Frame the avatar while posing" on for this launch only (the
+  saved settings untouched), its window on the left: a click selects the
+  left wrist at 540 and the camera frames it at the centre of the view, no
+  farther than 2.8 m; capture 620 and compare with `self`, where the camera
+  stays at the demo's view. `together` selects the left
   eye, adds the right eye with Shift + click and turns the left eye at 450:
   capture 620 shows both eyes looking the same way (not mirrored), both
   markers ringed, and "+ 1 joint moves with it" under the joint's name.
@@ -4767,6 +4782,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
 | `AURORA_DEMO_CLOUDS_PITCH=<degrees>` | Camera pitch of `AURORA_DEMO_CLOUDS` (default 12; 2 shows the clouds at the horizon) |
+| `AURORA_DEMO_HORIZON=<eye height m>[:flat\|:<radius km>]` | Planet curvature on (the Earth's radius, or the one given; `flat` off) and a level view over the void sea from that height |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
@@ -4782,6 +4798,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
+| `AURORA_SNOW_AFTER=<s>` | `AURORA_SNOW` starts this many seconds after the weather is first drawn, `AURORA_RAIN` falling until then |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
 | `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
 | `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
@@ -4789,7 +4806,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
-| `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
+| `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
 
@@ -4805,6 +4822,14 @@ both open states and the selection count. Capture at frame 620.
   settles" off still hides it; without the variable it builds over minutes:
   a dusting, then a white cover on what faces up, none on walls or steep
   roofs).
+  `AURORA_SNOW_AFTER=<s>` (with `AURORA_SNOW` and `AURORA_RAIN`) lets the
+  rain fall for that many seconds (from the weather's first frame), then
+  stops it and starts the snow: the
+  puddles the rain left freeze, for captures of the ice
+  (`AURORA_RAIN=1 AURORA_SNOW=0.3 AURORA_SNOW_AFTER=35
+  AURORA_DEMO_WATER=high:puddles`, captured after 45 s or so). The ice must
+  look milky and frosted, the frost thickest at each puddle's rim and in
+  fine streaks gathered in drifts, never in white blots.
   `AURORA_SNOW_DEEP`, `AURORA_SNOW_DEEP_REACH` (metres) and `AURORA_WEATHER_QUALITY` set deep snow, its reach and the
   quality the same way, to measure each with `AURORA_PROFILE`. The wind,
   the puddles and the thunder come from the settings.
@@ -4844,8 +4869,16 @@ both open states and the selection count. Capture at frame 620.
   near map). `AURORA_THUNDER_AT=<s>` makes one strike
   1 km away, `s` seconds after the start, whether Thunder is on or not: its
   flash at once and, for most strikes, a bolt in the sky in its direction,
-  then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
-  demo mode). `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
+  then its thunder as sound travels, about 3 s later (heard only with
+  `AURORA_DEMO_SOUND` in demo mode). `AURORA_THUNDER_AT=<s>:<m>` strikes `m`
+  metres away instead (300 to 6000): under 700 m it cracks, its sharpest
+  highs softened (`4:400`, heard about 1.2 s later), farther it rolls
+  (`4:2000`); with Preferences › Sound's 3D sound it comes from its side of
+  the sky as you turn. Indoors (the falling rain in sight tells indoors from
+  out, measured while thunder is on its way, with or without rain) only a
+  muffled rumble comes through, and the room's reverb carries it; both
+  follow as you walk in or out while it rolls.
+  `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
   the world at this brightness (about 1 for a strike a kilometre away, up to
   1.6 for the nearest), to capture the lit sky and scene; it does not hold
   the bolt. A capture of the bolt itself: `AURORA_THUNDER_AT` with
@@ -5134,6 +5167,18 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_HORIZON=<eye height m>[:flat|:<radius km>]`**: turns on
+  Preferences › Graphics › Sky and environment › Planet curvature for this
+  launch (in memory) with the Earth's radius, or the radius given in km;
+  `flat` keeps it off for the before / after (`demo_horizon.rs`). The camera
+  stands over the sea at the demo region's southern edge, that many metres
+  above the water (1 to 3000), and looks level to the south over the void
+  water. What to look at: flat, the sea runs out to the middle of the
+  picture; curved, it ends at a sharp horizon just under the middle, with
+  the sky below it (from 10 m on the Earth only ~0.1°, 2 px at 1080p; from
+  300 m 0.56°; `300:1000` puts a 1,000 km planet's horizon ~25 km out, 1.4° under eye level; radii under 1,000 km are raised to it). The sea
+  has no seam or step where the region's cells meet the far slabs, and
+  nothing in the region moves. Capture from `AURORA_CAPTURE_FRAMES=800`.
 - **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on
   Preferences › Aurora › Clouds › Volumetric for this launch (in memory,
   `AURORA_CLOUDS=legacy` keeps the Legacy Viewer's flat layer under the
@@ -5226,7 +5271,7 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_PROFILE=1`, `g_terrain_sky` is about 0.18 ms at 1600 × 900 on
   an RTX 5070 Ti.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
-  `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
+  `culling`, `lights`, `probes`, `skeletons`, `hitboxes`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
   `check_probes`, `pass`: the toggles of the Dev Toolbox (formerly
   Preferences › Debug); `pass` is R3, every face tinted by its pass (green
@@ -5236,7 +5281,9 @@ both open states and the selection count. Capture at frame 620.
   off); `check_lights` and `check_probes` are the checks of
   `AURORA_LIGHT_TILES=check` and `AURORA_PROBE_WALK=check`, asked while the
   viewer runs. One view at a time replaces the image (glow, shadows or
-  ambient occlusion). `lod` (Preferences › Debug › Detail
+  ambient occlusion). `hitboxes` is O10, the avatars' hitboxes of the
+  Legacy Viewer's Avatar Hitboxes, on the avatars within 32 m, each in the
+  colour of its minimap dot, drawn over the scene with no depth test. `lod` (Preferences › Debug › Detail
   levels) labels the objects around the pointer with the level they are
   drawn at (0 to 3), the one their distance asks for when it is another,
   and the distance and radius it comes from, the numbers of Firestorm's
@@ -5388,6 +5435,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask`, `blend` or `layers` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059); `layers`: three blended faces on it and on one another |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
+| `AURORA_DEMO_SOFT_SHADOWS=1`, `near` or `slope` | A pergola, a 14 m pole, a table, a thin post and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -5696,6 +5744,27 @@ both open states and the selection count. Capture at frame 620.
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
   on the tree behind the palm, capture at frame 760.
+- **`AURORA_DEMO_SOFT_SHADOWS=1|near|slope`**: things standing on a pale receiving plate (level whatever the terrain) in the sun to see how
+  the penumbra of a shadow grows with the distance of its caster
+  (`demo_soft_shadows.rs`), from `AURORA_DEMO_POS="132,126"`: a pergola
+  (a 6 m roof 3 m up), a pole 14 m high, a table (top 0.75 m up) and a
+  sphere on the ground. The sun is fixed 35 degrees up
+  (`AURORA_DEMO_SUN` overrides it), the soft shadows are on at the
+  Preferences' softness, and the shadows are on at least at High.
+  `AURORA_SOFT_SHADOWS=0` shows the shadows of before; compare the pole's
+  shadow, sharp at its foot and blurred at its tip, and the roof's, with
+  `AURORA_SHADOW_SOFTNESS=1` (a light 2.3 degrees across) and `2`. `AURORA_SHADOW_INTENSITY=0.5`
+  lets half the light into every shadow. `AURORA_DEMO_CROWD=1` adds a
+  standing avatar. Look for acne on the sphere, none on the faces of the
+  table, and no halo at the avatars' edges with `AURORA_AA=3` (MSAA 4x).
+  A thin lamp post (9 cm, 3.5 m) stands flush on the plate in both modes
+  (`1` puts it 8 m ahead, `near` 3.2 m): `near` with `AURORA_DEMO_SUN=27,5`
+  (shadow towards the camera) shows its shadow, which must be darkest and
+  sharpest where it touches the post and, with `AURORA_SHADOW_SOFTNESS=1`,
+  only lighten further out, at 5, 15, 30 and 60 degrees; it must not fade
+  in from the contact (a 5 degree sun did that at 0.25 and, at 1, lost the
+  post's, the table legs' and the pergola legs' shadows). `slope` adds a
+  ramp tilted 35 degrees away from the sun with a second post on it.
 - **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
@@ -6322,7 +6391,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
-| `AURORA_DEMO_PHOTOTOOLS=env\|general` | Opens the Phototools window (toolbar `phototools`) on a tab |
+| `AURORA_DEMO_PHOTOTOOLS=env\|light\|dof\|general[:photo]` | Opens the Phototools window (toolbar `phototools`) on a tab, with `:photo` the photo window too |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6399,6 +6468,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_CHAT_RANGE=aurora\|compact\|bubbles\|legacy\|lines` | Residents and objects talking from near and from beyond the say range, the far lines dimmed |
+| `AURORA_DEMO_EMOTES=aurora\|compact[:on]` | A resident's line, emote and line in the nearby chat of a workspace style; `on` groups the emotes with their sender's messages (Aurora style only) |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -6438,7 +6508,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: no button with `up`; `new` with three messages come in and the button back to the latest messages (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
@@ -6448,7 +6518,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|custom\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
-| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit, sorted by date, favorites or images |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -6784,17 +6854,35 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
-- **`AURORA_DEMO_PHOTOTOOLS=env|general`**: opens Phototools at the first
-  frame, as the toolbar's button does, on the Environment tab (`env`, also the
-  default) or the General one. Environment, as sections that fold: Environment
-  settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
-  clouds, the same switch as the photo window's), Quick environments (four
-  times of day, the shared environment), Environment presets (three "New"
-  buttons), Reflections (SSR, mirrors, probes, probe range). General: General
+- **`AURORA_DEMO_PHOTOTOOLS=env|light|dof|general[:photo]`**: opens Phototools
+  at the first frame, as the toolbar's button does, on the Environment tab
+  (`env`, also the default), Light, Depth of field & glow (`dof`) or General;
+  with `:photo` the photo window opens too (the viewfinder, Aurora's default
+  style, with Phototools over it). Environment, as sections that fold:
+  Environment settings (the Sky, Water and Day/Night lists, Personal
+  lighting, Pause clouds, the same switch as the photo window's), Quick
+  environments (four times of day, the shared environment), Environment
+  presets (three "New" buttons), Reflections (SSR, mirrors, probes, probe
+  range). Light: Lights and shadows settings (shadow quality, projector
+  shadows, worn lights, nearby lights), Ambient occlusion settings. Depth of
+  field & glow: Depth of field settings (the switch, the focus, Show focus
+  point, the view angle, the lens), HDR tone mapping, Glow. General: General
   render settings (draw distance to exposure), Render options, Quality
-  (anti-aliasing to avatar display). Each row is the Preferences row: a change
-  in one shows in the other, and a modified row has its dot. Compare with
-  Preferences › Graphics for ranges and help.
+  (anti-aliasing to avatar display). With the photo window closed, each row is
+  the Preferences row: a change in one shows in the other, and a modified row
+  has its dot; compare with Preferences › Graphics for ranges and help. With
+  the photo window open, a banner under the tabs says what the photo window
+  changes, with its "Keep this light" (the environment only), and the rows
+  the photo window also has (the depth of field's switch, aperture and focus,
+  the shadow quality, the ambient occlusion, the worn lights, the exposure,
+  the sky, water, day and time of day, Pause clouds) change the photo: try the aperture and
+  the shadow quality, then close the photo window and look at Preferences,
+  which kept its own values. The shadow and occlusion rows are greyed while a
+  photo is being made. In the viewfinder the View angle row is greyed (the
+  viewfinder owns it and puts yours back when it closes). With the depth of
+  field on and Preferences › Graphics › Depth of field › "Show focus point"
+  on, a small yellow triad (red when the focus is locked) marks the focus
+  point, over everything and never in a photo.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
@@ -7875,7 +7963,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Windows notification (on Linux, one from the desktop's notification
   service) per arrival, a click brings the window back on the conversation,
   the nearby chat or the bell's list. The log says `taskbar flash` and
-  `system notification shown (<what a click opens>)`, never the text.
+  `system notification shown (<what a click opens>, <category>)`, never
+  the text; the category (`im.received`, `x-aurora.mention`…) and the
+  `x-aurora-thread` hint go with it on Linux, the toast's `Group` on
+  Windows (the conversation's id, `presence` for a friend online or
+  offline, else `nearby-chat`, `notifications` or `window`).
   `front` keeps the window in front: nothing flashes and nothing is shown.
   `capture` brings the window back at frame 1150 with the bell's list open:
   capture with `AURORA_FPS_LIMIT=60` at frame 1300. The first notification
@@ -8278,8 +8370,14 @@ failure. Grid validation and any paid upload are performed by the human.
   "Except from my friends" lets Orion's through and still ignores Tess's.
   The log says `ignoring conference (ad-hoc) chat from <name>` for each.
 
+- **`AURORA_DEMO_CONV_LINE_MENU=object`**: with
+  `AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy`, right-click the
+  name of the last object line at frame 702: Inspect and Ignore, after Copy
+  and Quote in the Aurora and Compact styles. Capture at frame 780.
 - **`AURORA_DEMO_CONV_LINE_MENU=1`**: with `AURORA_DEMO_CONV=aurora:group`
   or `aurora:compact:group`, right-click a visible message at frame 702.
+  `AURORA_DEMO_OBJECT_CHAT=aurora|compact` works too: the menu of the line
+  in the middle of the view, Inspect and Ignore on an object's.
   Combine with `AURORA_DEMO_SNOOZE=300` (without `auto`) and `AURORA_FPS_LIMIT=60`:
   captures at frames 780 and 1500 show the same highlighted target while
   new group messages arrive below the paused viewport. Inline place, avatar,
@@ -9099,6 +9197,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_DEMO_OPTIONS=chat:script-errors` opens that section: the switch
   on, "Also say them on a chat channel" off, its channel (1) among its
   sub-settings.
+- **`AURORA_DEMO_EMOTES=aurora|compact[:on]`**: the nearby chat in the
+  Conversations window of that workspace style (`1` is `aurora`): Tess says
+  a line, an emote ("/me sets a bench down…") and another line, then Nova
+  an emote and a line. Without `:on`, each emote and the line after it
+  open their own header: five headers. `:on` turns Preferences › Chat ›
+  "Group emotes with the sender's messages" on for the run (nothing saved):
+  Tess's three lines under one header, the emote in italics with the
+  name in its text and no picture of its own, Nova's two under another:
+  two headers. The option shows only with the Aurora style: with
+  `compact`, `:on` changes nothing, since each Compact row names its sender.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
@@ -9683,7 +9791,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
+  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
@@ -11253,20 +11361,24 @@ descriptions, chat, notice bodies and local filenames continue to accept Unicode
 The same rules apply in both interface styles. The agent uses demo mode only;
 the human verifies actual saved inventory names on the grid.
 
-**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
-`AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
-"Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`**
+— with `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names
+like "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
-one in four. `closed` leaves the window closed; `scroll` turns the wheel
-over the list or gallery of the default window from frame 700, down then up
-every 300 frames; `locate` presses the locate button of the current outfit
-banner at start: the gallery or list scrolls to the worn outfit, selects
-it and flashes it for 1.6 s (the flash is gone by frame 620, the selection
-stays). With `AURORA_PROFILE=1`, read `ui` of `perf summary`
-(and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
-the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
-2.5 ms closed before the wardrobe's links were walked only on inventory
-changes and only the rows in sight laid out.
+one in four, and dates a day apart that do not follow the names. `newest`
+and `oldest` start on that date order, `favorites` (one outfit in five is
+then a favorite) and `images` turn on the matching Sort outfits toggle,
+saved in the demo profile like any choice of the menu, so a later run
+without a mode starts on it. `closed` leaves the window closed; `scroll`
+turns the wheel over the list or gallery of the default window from frame
+700, down then up every 300 frames; `locate` presses the locate button of
+the current outfit banner at start: the gallery or list scrolls to the worn
+outfit, selects it and flashes it for 1.6 s (the flash is gone by frame
+620, the selection stays). With `AURORA_PROFILE=1`, read `ui` of `perf
+summary` (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8
+ms with the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms
+open and 2.5 ms closed before the wardrobe's links were walked only on
+inventory changes and only the rows in sight laid out.
 
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the
@@ -12595,6 +12707,9 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
+| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
+| `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13100,6 +13215,35 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
+- **`AURORA_SOFT_SHADOWS=0|1|alt`**: the soft sun shadows (Preferences ›
+  Graphics › Soft shadows, experimental; `soft_shadows.rs`) for this
+  launch, without changing the saved setting: `0` off, `1` on, `alt` off and
+  on by turns, one second each (on in odd seconds), the mask kept ready.
+  Percentage-closer soft shadows in compute, once per pixel of the depth
+  prepass: a search of the shadow map finds the casters and their mean
+  distance (read in the minimum depths of blocks of 4, 8 and 16 texels of
+  the atlas, rebuilt each frame, so that no thin caster slips between the texels of a block), the
+  light's size (2.3 degrees across at a softness of 1) gives the
+  penumbra, and 12 rotated taps take the light (32 in a photo), then a
+  bilateral blur in the world's metres removes their noise. The penumbra is
+  never narrower than the filter of before (3 cm across): where it would be, the shadow takes that filter (the same taps for every pixel, so no grain and nothing that crawls with the camera; it ignores the `AURORA_SHADOW_FILTER=gaps` and `AURORA_SHADOW_BIAS=legacy` comparisons), fading into the rotated taps over three times the half width that filter spans in the cascade, and the two cascades of a split are mixed as before where both take it. At the default softness (0.25) a caster less than about 9 m above the receiver gives that filter, so the default is close to the previous shadows by design. A softness of 0 draws no mask at all: exactly the shadows of before. The shading reads the mask where its surface is the one of the
+  prepass; blended faces in front of it, water, reflections and probes keep
+  the filter of before. Off, nothing is created or drawn, the scene's shaders are compiled without the soft path (a variant built in the background when the setting changes, like the samples and SSR) and the casters'
+  culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**
+  (the slider, active with the soft shadows only; the default is 0.25, a light about 0.6 degrees across, close to the real sun (0.53 degrees, a softness of 0.23); 1 is a light 2.3 degrees
+  across, the look of PR 2288; 0 a light with no
+  size) and
+  **`AURORA_SHADOW_INTENSITY=<0-1>`** (how dark the sun's shadows are, with
+  or without the soft shadows; 1 is as before) override the settings.
+  **`AURORA_SOFT_PROJECTORS=0`** keeps the 5 taps of the projectors' shadows
+  while the sun's are soft (the projectors' soft shadows search their map
+  and filter 12 taps, only under the projectors' cones). `g_soft` of `perf
+  summary` is the mask's GPU time. To measure (the protocol of the PR):
+  `AURORA_DEMO=1 AURORA_DEMO_CROWD=40 AURORA_AUTO_EXPOSURE=0
+  AURORA_PROFILE=1`, a 2560 × 1369 window, five alternated runs of main,
+  the branch with the soft shadows off, on and at softness 2, and the
+  median of each run's medians of `gpu`, `g_objects`, `g_terrain_sky`,
+  `g_transparent`, `g_contact` and `g_soft`.
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),
@@ -14311,8 +14455,10 @@ parts, against the scene without weather. `--scenes` picks some,
     also counted in `g_effects`;
   - `g_contact`: the sun's contact shadows alone (`AURORA_CONTACT_SHADOWS`),
     also counted in `g_effects`;
+  - `g_soft`: the soft sun shadows alone (`AURORA_SOFT_SHADOWS`, 0 while
+    off), also counted in `g_effects`;
   - `g_planar`, `g_probe`, `g_copy`, `g_ssr`: the rest of `g_effects`,
-    after the occlusion and the contact shadows: the planar reflections
+    after the occlusion, the contact shadows and the soft shadows: the planar reflections
     (water, mirrors; the refracted water light is counted with them), the
     reflection probe face with its filtering, the copy of the scene for
     refraction and SSR (the cut-out pass and the submerged water particles
@@ -14769,7 +14915,7 @@ The enhanced-water master is disabled by default (2026-10-19), including missing
 
 Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. `:alpha-layers` adds, with its own camera, blended layers stacked under the water, as the animated surfaces of a pond lying in region water: a blue and a yellow sheet tilted opposite ways, crossing along a line, and a red tile under both. From above (`off:alpha-layers`, `medium:alpha-layers`, also with `AURORA_AA=3` for the MSAA path), both sheets must tint the whole area they cover and the red tile must show through them, on both sides of the crossing; before the fix the first sheet drawn cut the other out along the crossing line and hid the tile. The water must still fog and refract them like the ground around. `:alpha-cross` adds, with the same camera, one faint white sheet crossing the water plane, half just under the water and half just above it: the water must keep its fog and its reflection on both sides of the crossing line. Use a dense fog to see it (`AURORA_DEMO_SKY=midday AURORA_DEMO_WATER_EEP=0.5,0.4,0.04,2,0.25,0.648,0.953,32`, without `AURORA_DEMO_TOD`; `off:alpha-cross`, `medium:alpha-cross`, also with `AURORA_AA=3`): before the fix the half under the water was a dark hole in the blue, the bed seen without any fog, cut along the sheet's edge; with `off:alpha-layers` and the same fog, the stacked sheets were such a hole too. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:caustics` looks down at the lagoon's bed 2 to 4 m under the water, from under it: with `AURORA_DEMO_TOD=5` (midday) the caustics must show no repeating grid, their lines broken up without a period, with faint red and blue fringes. `:glint` looks down 56 degrees at the lagoon from 12 m above it, toward the sun of `AURORA_DEMO_TOD=5` (`:glint-<heading>`: another heading, in degrees from east, 45 by default): the sun's glint on the ripples and the caustics on the bed must be scattered, never set out in rows. `:puddles` looks at the plaza's floor and the ground beside it: with `AURORA_RAIN=1` (after 30 s or so, as the puddles fill) the puddles' ripples must show no grid, and a downpour greys them a little with its splash mist; with `AURORA_SNOW_AFTER` their ice (the weather details). `:rain-sea` looks across the lagoon from 2.5 m above it: with `AURORA_RAIN=1` the downpour roughens and greys the water, its reflections softened; at `AURORA_RAIN=0.3` rings on a clear surface. `:deep-lights` looks down at a floor 48 m under the water line, a warm point light just above it and a pale blue one over a slab 30 m under: the lamps light the floor around them in their own colour (seen through the water's fog, which stays), where before the fix the depth dimmed them as the sunlight and only a faint blue glow was left. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. `:alpha-layers` adds, with its own camera, blended layers stacked under the water, as the animated surfaces of a pond lying in region water: a blue and a yellow sheet tilted opposite ways, crossing along a line, and a red tile under both. From above (`off:alpha-layers`, `medium:alpha-layers`, also with `AURORA_AA=3` for the MSAA path), both sheets must tint the whole area they cover and the red tile must show through them, on both sides of the crossing; before the fix the first sheet drawn cut the other out along the crossing line and hid the tile. The water must still fog and refract them like the ground around. `:alpha-cross` adds, with the same camera, one faint white sheet crossing the water plane, half just under the water and half just above it: the water must keep its fog and its reflection on both sides of the crossing line. Use a dense fog to see it (`AURORA_DEMO_SKY=midday AURORA_DEMO_WATER_EEP=0.5,0.4,0.04,2,0.25,0.648,0.953,32`, without `AURORA_DEMO_TOD`; `off:alpha-cross`, `medium:alpha-cross`, also with `AURORA_AA=3`): before the fix the half under the water was a dark hole in the blue, the bed seen without any fog, cut along the sheet's edge; with `off:alpha-layers` and the same fog, the stacked sheets were such a hole too. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
 
 With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
 

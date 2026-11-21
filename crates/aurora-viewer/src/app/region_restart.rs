@@ -10,8 +10,8 @@ use crate::ui::region_restart::{self as alert, Action, BellInfo, Destinations, L
 use crate::ui_sound::UiSound;
 use crate::world::notifications::{Data, Kind, Response};
 use crate::world::region_restart::{Cue, Level, Phase, Shake, view_shake};
+use aurora_net::NetCommand;
 use aurora_net::region_restart::Notice;
-use aurora_net::{ChatType, NetCommand};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -257,13 +257,11 @@ impl App {
     /// cancellation) whispered on FSRegionRestartAnnounceChannel.
     fn announce_restart(&mut self, seconds: Option<i32>) {
         let s = &self.settings.region_restart;
-        if s.show_alert && s.announce && s.channel != 0 {
+        // fs_report_region_restart_to_channel (indra/newview/llviewermessage.cpp)
+        // builds its ChatFromViewer itself, past RLVa
+        if s.show_alert && s.announce {
             let channel = s.channel;
-            self.send(NetCommand::Chat {
-                message: aurora_net::region_restart::announcement(seconds),
-                channel,
-                chat_type: ChatType::Whisper,
-            });
+            self.send_to_script_channel(&aurora_net::region_restart::announcement(seconds), channel);
         }
     }
 

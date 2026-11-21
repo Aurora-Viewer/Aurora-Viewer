@@ -753,6 +753,46 @@ fn poser_hand_tab_and_preset_apply_through_actual_pointer_events() {
     assert!(session.edited(rig.names["mHandIndex1Left"]) && session.edited(rig.names["mHandIndex1Right"]));
 }
 #[test]
+fn the_poser_frames_only_on_an_explicit_click_select() {
+    use crate::camera::PoserFraming;
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let (head, neck) = (rig.names["mHead"], rig.names["mNeck"]);
+    let (left, right) = (rig.names["mElbowLeft"], rig.names["mElbowRight"]);
+    // a selection the code makes (the first pick, the Avatar position row)
+    editor.select_pose_bone(left, &rig, &frame);
+    assert_eq!(editor.take_poser_focus_request(), None);
+    // a click that selects another joint asks once
+    editor.click_pose_bone(head, &rig, &frame, false);
+    assert_eq!(editor.take_poser_focus_request(), Some((head, PoserFraming::Joint)));
+    editor.click_pose_bone(head, &rig, &frame, false);
+    assert_eq!(editor.take_poser_focus_request(), None, "the joint already selected");
+    // Shift + click adds a follower: the lead and the camera stay
+    editor.click_pose_bone(neck, &rig, &frame, true);
+    assert_eq!(editor.take_poser_focus_request(), None);
+    // a drag begun on another joint selects it, the camera stays
+    editor.grab_pose_bone(left, &rig, &frame);
+    assert_eq!(editor.selected, Some(left));
+    assert_eq!(editor.take_poser_focus_request(), None, "never under a drag");
+    // a side switch
+    editor.set_pose_side(Side::Right, &rig, &frame);
+    assert_eq!(editor.selected, Some(right));
+    assert_eq!(editor.take_poser_focus_request(), None, "never on a side switch");
+    editor.set_pose_side(Side::Mirror, &rig, &frame);
+    assert_eq!(editor.take_poser_focus_request(), None, "never on Mirror");
+    // a tab change that picks the tab's first joint
+    editor.select_pose_group(1, &rig, &frame);
+    assert_ne!(editor.selected, Some(right));
+    assert_eq!(editor.take_poser_focus_request(), None, "never on a tab change");
+    // in the photo viewfinder, the shot is the user's
+    editor.over_viewfinder = true;
+    let chest = rig.names["mChest"];
+    editor.click_pose_bone(chest, &rig, &frame, false);
+    assert_eq!(editor.selected, Some(chest));
+    assert_eq!(editor.take_poser_focus_request(), None, "never in the viewfinder");
+}
+#[test]
 fn poser_side_selector_chooses_the_edited_bone_and_mirror_is_the_symmetry() {
     let (world, mut editor) = fixture();
     let rig = world.avatar_lib.rig.clone();
