@@ -49,9 +49,21 @@ pub struct SessionLog {
     pending: Vec<(SystemTime, String, String)>,
     /// The chat server's history, held until the end of the file was read.
     server_history: Option<Vec<HistoryLine>>,
-    /// When the message that opened the chat was sent (Unix time), until
-    /// the server's history it asked for is merged.
-    opener: Option<u32>,
+    /// The message that opened the chat, until the server's history it
+    /// asked for is merged.
+    opener: Option<Opener>,
+}
+
+/// Where the server's history of a chat a message opened stops
+/// (LLIMSession::addMessagesFromServerHistory, llimview.cpp).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Opener {
+    /// The invitation's timestamp (Unix time): the lines sent before it.
+    At(u32),
+    /// No timestamp: the lines before the server's last copy of the opening
+    /// message (its sender and trimmed text), or every line when it has
+    /// none. Never the local clock: it need not match the server's.
+    Message(Uuid, String),
 }
 
 impl SessionLog {
@@ -59,10 +71,10 @@ impl SessionLog {
         self.stem.as_deref()
     }
 
-    /// The chat was opened by a message sent at `time`: the server's
-    /// history stops before it (the target_* of chatterBoxHistoryCoro).
-    pub(super) fn opened_by(&mut self, time: u32) {
-        self.opener = Some(time);
+    /// The chat was opened by a message: the server's history stops
+    /// before it (the target_* of chatterBoxHistoryCoro).
+    pub(super) fn opened_by(&mut self, opener: Opener) {
+        self.opener = Some(opener);
     }
 }
 
@@ -718,11 +730,23 @@ impl World {
             .filter(|l| l.origin != Origin::Log)
             .map(|l| (l.source, l.text.trim()))
             .collect();
+        // the server's last copy of the opening message, when the
+        // invitation had no timestamp
+        let copy = match &opener {
+            Some(Opener::Message(from, text)) => history.iter().rposition(|h| h.from_id == *from && h.message.trim() == text),
+            _ => None,
+        };
         let older: Vec<ChatLine> = history
             .into_iter()
+            .enumerate()
             // the opening message and what came after it are, or will be,
             // live lines
-            .filter(|h| opener.is_none_or(|t| h.time < t))
+            .filter(|(i, h)| match &opener {
+                Some(Opener::At(t)) => h.time < *t,
+                Some(Opener::Message(..)) => copy.is_none_or(|c| *i < c),
+                None => true,
+            })
+            .map(|(_, h)| h)
             .filter(|h| !self.mutes.text_muted(&h.from_id, &h.from))
             .filter(|h| match last_minute {
                 Some(m) => {
@@ -1185,6 +1209,65 @@ mod tests {
         assert_eq!(
             shown,
             [("earlier", Origin::ServerLog), ("hi all", Origin::Live), ("second", Origin::Live)]
+        );
+        clean(&w, &root);
+    }
+
+    /// #2174 without an invitation timestamp: the cut is the server's own
+    /// copy of the opening message, never this PC's clock (a clock ahead or
+    /// behind the server's must not drop or repeat lines), and with no copy
+    /// there is no cut (LLIMSession::addMessagesFromServerHistory).
+    #[test]
+    fn without_a_timestamp_the_history_stops_at_the_servers_copy_of_the_opening_message() {
+        let root = temp();
+        let (group, other, jane, bob) = (
+            Uuid::from_u128(0x6200),
+            Uuid::from_u128(0x6400),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+        );
+        let mut w = world(&root, Uuid::from_u128(1));
+        join(&mut w, group, "Les Loups");
+        join(&mut w, other, "Les Ours");
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        // server times far from this PC's clock either way
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u32;
+        let ahead = now + 3600;
+        w.apply(invite(group, jane, "Jane Doe", " hi all ", 0));
+        settle(&mut w);
+        w.add_server_history(
+            group,
+            vec![
+                server_line(bob, "Bob Roe", ahead - 5, "just before"),
+                server_line(jane, "Jane Doe", ahead, "hi all"),
+                server_line(bob, "Bob Roe", now - 3600, "after, by a slow server clock"),
+            ],
+        );
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == group).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.trim(), l.origin)).collect();
+        assert_eq!(shown, [("just before", Origin::ServerLog), ("hi all", Origin::Live)]);
+
+        // no copy of the opening message in the server's answer: no cut
+        w.apply(invite(other, jane, "Jane Doe", "anyone here?", 0));
+        settle(&mut w);
+        w.add_server_history(
+            other,
+            vec![
+                server_line(bob, "Bob Roe", ahead, "first"),
+                server_line(bob, "Bob Roe", ahead + 1, "second"),
+            ],
+        );
+        settle(&mut w);
+        let s = w.social.ims.iter().find(|s| s.other == other).unwrap();
+        let shown: Vec<(&str, Origin)> = s.lines.iter().map(|l| (l.text.trim(), l.origin)).collect();
+        assert_eq!(
+            shown,
+            [
+                ("first", Origin::ServerLog),
+                ("second", Origin::ServerLog),
+                ("anyone here?", Origin::Live)
+            ]
         );
         clean(&w, &root);
     }
