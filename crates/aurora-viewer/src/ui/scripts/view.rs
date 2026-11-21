@@ -637,21 +637,21 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             // Make only the active Find result prominent, even while the Find
                             // floater owns the keyboard focus. Match notecard search styling.
                             if search.owns(base_id)
-                                && let Some(range) = search.active_range(text)
+                                && !ui.memory(|m| m.has_focus(id))
+                                && let Some(matches) = e.highlighter.matches_for(text, &query, insensitive, whole_words)
+                                && let Some(range) = search.active_range_from_matches(ui.ctx(), id, matches)
                             {
-                                let color = egui::Color32::from_rgba_unmultiplied(p.amber.r(), p.amber.g(), p.amber.b(), 145);
                                 let mut shapes = Vec::new();
                                 for rect in crate::ui::chat::range_rects(&output.galley, output.galley_pos, range) {
                                     if !rect.intersects(output.text_clip_rect) {
                                         continue;
                                     }
                                     let rect = rect.intersect(output.text_clip_rect);
-                                    shapes.push(egui::Shape::rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, color));
                                     shapes.push(egui::Shape::rect_stroke(
                                         rect,
                                         ui.visuals().widgets.inactive.corner_radius,
                                         egui::Stroke::new(1.5, p.amber),
-                                        egui::StrokeKind::Inside,
+                                        egui::StrokeKind::Outside,
                                     ));
                                 }
                                 ui.painter().with_clip_rect(output.text_clip_rect).add(egui::Shape::Vec(shapes));

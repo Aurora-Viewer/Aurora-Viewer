@@ -463,18 +463,59 @@ pub(crate) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Rang
 
 /// Optional whole-word filtering shared by script and notecard Find / Replace.
 /// Character offsets, not UTF-8 byte offsets, match TextEdit's cursor model.
-/// Underscores, punctuation and whitespace delimit words for Find / Replace.
+/// Underscores belong to identifiers; punctuation and whitespace delimit words.
+/// A rejected match must not hide an overlapping, valid whole-word match.
 pub(crate) fn matches_filtered(source: &str, needle: &str, insensitive: bool, whole_words: bool) -> Vec<Range<usize>> {
-    let found = matches(source, needle, insensitive);
     if !whole_words {
-        return found;
+        return matches(source, needle, insensitive);
     }
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
     let chars: Vec<char> = source.chars().collect();
-    let word_char = |c: char| c.is_alphanumeric();
-    found
-        .into_iter()
-        .filter(|r| (r.start == 0 || !word_char(chars[r.start - 1])) && (r.end == chars.len() || !word_char(chars[r.end])))
-        .collect()
+    let word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+    // Preserve original character boundaries even when Unicode lowercase
+    // expands a character into multiple characters.
+    let mut folded = String::new();
+    let mut boundaries = Vec::with_capacity(chars.len() + 1);
+    for c in &chars {
+        boundaries.push(folded.len());
+        if insensitive {
+            folded.extend(c.to_lowercase());
+        } else {
+            folded.push(*c);
+        }
+    }
+    boundaries.push(folded.len());
+    let needle = if insensitive { needle.to_lowercase() } else { needle.to_owned() };
+
+    let mut result = Vec::new();
+    let mut offset = 0;
+    while offset < folded.len() {
+        let Some(relative) = folded[offset..].find(&needle) else { break };
+        let byte = offset + relative;
+        let end_byte = byte + needle.len();
+
+        let candidate = boundaries
+            .binary_search(&byte)
+            .ok()
+            .zip(boundaries.binary_search(&end_byte).ok())
+            .map(|(start, end)| start..end);
+
+        if let Some(range) = candidate
+            && (range.start == 0 || !word_char(chars[range.start - 1]))
+            && (range.end == chars.len() || !word_char(chars[range.end]))
+        {
+            offset = end_byte;
+            result.push(range);
+        } else {
+            // Advance one character, not the rejected match's full length.
+            offset = byte + folded[byte..].chars().next().unwrap().len_utf8();
+        }
+    }
+    result
 }
 
 pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
@@ -506,11 +547,22 @@ mod tests {
             .iter()
             .map(|range| text.chars().skip(range.start).take(range.len()).collect())
             .collect();
-        assert_eq!(substrings, vec!["hi", "hi", "hi", "hi"]);
+        assert_eq!(substrings, vec!["hi", "hi", "hi"]);
         // The original partial-word search still includes "hi" inside "This".
         assert!(matches_filtered(text, "hi", true, false).len() > found.len());
         assert_eq!(matches_filtered("HI hi Hi", "hi", false, true), vec![3..5]);
         assert_eq!(matches_filtered("HI hi Hi", "hi", true, true), vec![0..2, 3..5, 6..8]);
+    }
+
+    #[test]
+    fn whole_word_search_checks_overlapping_candidates_and_identifier_boundaries() {
+        assert_eq!(matches_filtered("xab ab ab", "ab ab", false, true), vec![4..9]);
+        assert_eq!(matches_filtered("xAB aB AB", "ab ab", true, true), vec![4..9]);
+        assert_eq!(matches_filtered("hi_there _hi hi_ hi", "hi", false, true), vec![17..19]);
+
+        // Unicode case expansion must still respect original character boundaries.
+        assert!(matches_filtered("İ", "i", true, true).is_empty());
+        assert_eq!(matches_filtered("İ", "i\u{307}", true, true), vec![0..1]);
     }
 
     #[test]

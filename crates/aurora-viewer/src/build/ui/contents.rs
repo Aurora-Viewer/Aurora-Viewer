@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD};
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD, item_renameable};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -331,7 +331,7 @@ fn item_row(
         if r.drag_started() && !selected {
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
-        let item_modify = item.owner_mask & perm::MODIFY != 0;
+        let item_modify = item_renameable(world, item);
         // A selected row carries the whole selection (LLFolderView::startDrag).
         let dragged = if r.hovered() || r.drag_started() || r.dragged() {
             contents_selection::acted_on(tool, object_id, item)

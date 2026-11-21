@@ -114,6 +114,18 @@ impl Find {
         self.open = true;
         self.focus = true;
         self.status.clear();
+        // The selected match stays the current one (LLFloaterSearchReplace
+        // keeps the editor's selection), so Replace changes that one even
+        // after the bar takes the keyboard and egui shrinks the selection.
+        // Without one, the match the bar went to stays current while the
+        // caret egui left on it has not moved (Ctrl+F again after Find).
+        let ranges = self.matches(text);
+        let selected = Self::selected(ctx, editor);
+        self.current = if ranges.contains(&selected) {
+            Some(selected)
+        } else {
+            self.current(ctx, editor, &ranges)
+        };
     }
 
     /// Close the bar and give the keyboard back to the text (onClose).
@@ -230,12 +242,13 @@ impl Find {
 
     /// The match the bar went to, while it is still one and the editor's
     /// cursor has not moved since. egui keeps a selection only in the field
-    /// with the keyboard: elsewhere it shrinks to its end, which is where
-    /// the cursor of a match the bar selected stays.
+    /// with the keyboard: elsewhere it shrinks to its moving end, the start
+    /// of a match selected right to left, else its end.
     fn current(&self, ctx: &egui::Context, editor: Id, ranges: &[Range<usize>]) -> Option<Range<usize>> {
         let current = self.current.clone()?;
         let selected = Self::selected(ctx, editor);
-        (ranges.contains(&current) && (selected == current || selected == (current.end..current.end))).then_some(current)
+        let caret_at_edge = selected.is_empty() && (selected.start == current.start || selected.start == current.end);
+        (ranges.contains(&current) && (selected == current || caret_at_edge)).then_some(current)
     }
 
     fn selected(ctx: &egui::Context, editor: Id) -> Range<usize> {
@@ -370,19 +383,19 @@ mod tests {
         // Changing the option must invalidate cached results.
         bar.whole_words = true;
         let whole = bar.matches(&text);
-        assert_eq!(whole.len(), 3);
+        assert_eq!(whole.len(), 2);
         assert!(!Arc::ptr_eq(&all, &whole));
 
         // Highlighting and replacement use the same filtered matches.
         bar.publish(&ctx, id, &text);
-        assert_eq!(highlights(&ctx, id).expect("published").ranges.len(), 3);
+        assert_eq!(highlights(&ctx, id).expect("published").ranges.len(), 2);
 
         bar.replacement = "HELLO".into();
         assert!(bar.replace_all(&ctx, id, &mut text));
-        assert_eq!(text, "HELLO high HELLO_there (HELLO)");
+        assert_eq!(text, "HELLO high hi_there (HELLO)");
 
         bar.whole_words = false;
-        assert_eq!(bar.matches(&text).len(), 1);
+        assert_eq!(bar.matches(&text).len(), 2);
     }
     #[test]
     fn find_is_case_sensitive_by_default_and_wraps_both_ways() {
@@ -496,6 +509,32 @@ mod tests {
         editing::select(&ctx, id, 0..20, false);
         bar.begin(&ctx, id, NOTE);
         assert_eq!(bar.query, " P");
+    }
+
+    #[test]
+    fn replace_after_begin_changes_the_selected_word_whichever_way_it_was_selected() {
+        // egui shrinks the editor's selection to its moving end once the bar
+        // takes the keyboard: the start of a word selected right to left.
+        for (anchor, caret) in [(7, 12), (12, 7)] {
+            let ctx = egui::Context::default();
+            let id = Id::unique(("note_replace_selected", anchor));
+            let mut text = "count, count, count_max".to_owned();
+            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(anchor),
+                egui::text::CCursor::new(caret),
+            )));
+            state.store(&ctx, id);
+            let mut bar = Find {
+                replacement: "total".into(),
+                ..Default::default()
+            };
+            bar.begin(&ctx, id, &text);
+            assert_eq!(bar.query, "count");
+            editing::select(&ctx, id, caret..caret, false);
+            assert!(bar.replace(&ctx, id, &mut text), "{anchor}..{caret}");
+            assert_eq!(text, "count, total, count_max", "{anchor}..{caret}");
+        }
     }
 
     #[test]

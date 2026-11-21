@@ -580,18 +580,17 @@ struct FloaterTitleDraft {
 }
 
 fn clean_floater_title_name(input: &str) -> Option<String> {
-    let name: String = input.trim().chars().filter(|c| *c != '|').take(63).collect();
-    (!name.trim().is_empty()).then_some(name)
+    crate::world::inventory::actions::clean_name(input).ok()
 }
 
 /// Label (or inline input) occupying only the visible document-name glyphs.
 /// The rest of the header remains the ordinary minimize double-click target.
 /// Decide title-edit completion without conflating a click in the field
 /// with an actual click away. Escape has priority over focus loss or Enter.
-fn floater_title_finish(escape: bool, enter: bool, click_outside: bool) -> Option<bool> {
-    if escape {
+fn floater_title_finish(focused: bool, escape: bool, enter: bool, lost_focus: bool) -> Option<bool> {
+    if (focused || lost_focus) && escape {
         Some(false)
-    } else if enter || click_outside {
+    } else if focused && enter || lost_focus {
         Some(true)
     } else {
         None
@@ -610,14 +609,12 @@ fn floater_title_name(
     if let Some(edit) = draft.as_mut() {
         // Capture shortcuts before the TextEdit can use Escape to release focus.
         // That focus loss must never be mistaken for an accepted rename.
+        let focused = ui.memory(|m| m.has_focus(field));
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut edit.text)
-                .id(field)
-                .char_limit(63)
-                .desired_width(225.0),
-        );
+        let response = restricted_text_field(ui, true, &mut edit.text, TextPolicy::PrintableNoPipe, |buffer, _| {
+            egui::TextEdit::singleline(buffer).id(field).char_limit(63).desired_width(225.0)
+        });
         if edit.focus {
             response.request_focus();
             edit.focus = false;
@@ -626,7 +623,7 @@ fn floater_title_name(
             i.pointer.button_pressed(egui::PointerButton::Primary)
                 && i.pointer.interact_pos().is_some_and(|pos| !response.rect.contains(pos))
         });
-        if let Some(result) = floater_title_finish(escape, enter, click_outside) {
+        if let Some(result) = floater_title_finish(focused, escape, enter, response.lost_focus() || focused && click_outside) {
             *finished = Some(result);
         }
         response.rect
@@ -1364,7 +1361,7 @@ impl<'a> Floater<'a> {
                     if on_name && self.title_rename.is_some() {
                         // A minimized document restores on double-click,
                         // whether or not the item has Modify permission.
-                        if minimized {
+                        if minimized || self.title_rename.as_ref().is_some_and(|(_, allowed)| !*allowed) {
                             toggle_min = true;
                         } else if title_draft.is_none()
                             && let Some((name, true)) = &self.title_rename
@@ -4048,23 +4045,32 @@ mod floater_title_rename_tests {
     use super::{clean_floater_title_name, floater_title_finish};
 
     #[test]
-    fn title_rename_rejects_blank_strips_pipes_and_limits_name_length() {
+    fn title_rename_rejects_blank_pipes_controls_and_limits_name_length() {
         assert_eq!(clean_floater_title_name("  "), None);
-        assert_eq!(clean_floater_title_name("  Hello|World  ").as_deref(), Some("HelloWorld"));
+        assert_eq!(clean_floater_title_name("  Hello|World  "), None);
+        assert_eq!(clean_floater_title_name("Bad\nName"), None);
+        assert_eq!(clean_floater_title_name("  Hello  ").as_deref(), Some("Hello"));
         assert_eq!(clean_floater_title_name(&"x".repeat(70)).unwrap().len(), 63);
     }
 
     #[test]
-    fn title_escape_always_cancels_even_when_a_click_or_enter_occurs() {
-        assert_eq!(floater_title_finish(true, false, false), Some(false));
-        assert_eq!(floater_title_finish(true, true, true), Some(false));
+    fn title_escape_cancels_only_when_the_field_was_focused() {
+        assert_eq!(floater_title_finish(true, true, false, false), Some(false));
+        assert_eq!(floater_title_finish(true, true, true, true), Some(false));
+        assert_eq!(
+            floater_title_finish(false, true, false, true),
+            Some(false),
+            "Escape cancels even when TextEdit has already surrendered focus"
+        );
+        assert_eq!(floater_title_finish(false, true, false, false), None);
     }
 
     #[test]
-    fn title_field_clicks_do_not_finish_but_clicking_outside_or_enter_does() {
-        assert_eq!(floater_title_finish(false, false, false), None);
-        assert_eq!(floater_title_finish(false, false, true), Some(true));
-        assert_eq!(floater_title_finish(false, true, false), Some(true));
+    fn title_rename_commits_on_focused_enter_or_lost_focus() {
+        assert_eq!(floater_title_finish(true, false, false, false), None);
+        assert_eq!(floater_title_finish(true, false, true, false), Some(true));
+        assert_eq!(floater_title_finish(false, false, true, false), None);
+        assert_eq!(floater_title_finish(true, false, false, true), Some(true));
     }
 }
 

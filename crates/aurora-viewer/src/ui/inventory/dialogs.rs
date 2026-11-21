@@ -777,17 +777,8 @@ pub(super) fn preview(
                         fields.extend(super::find::field_ids(editor_id));
                         fields.extend(super::find::field_ids(preview_id));
                         let shortcut = crate::ui::find_shortcut::take(ui, &fields);
-                        let opening = shortcut && !st.notecard_find.open;
-                        if shortcut && !opening {
-                            let focus = if view == super::markdown::View::Markdown {
-                                preview_id
-                            } else if !text_editable {
-                                editor_id.with("notecard_window_focus")
-                            } else {
-                                editor_id
-                            };
-                            st.notecard_find.close(ui.ctx(), focus);
-                        }
+                        // Ctrl+F always opens or refocuses Find, as in the Legacy Viewer.
+                        let opening = shortcut;
                         // the Markdown view is read-only: its find searches
                         // the text it shows, and replaces nothing
                         if view == super::markdown::View::Markdown {
@@ -1510,7 +1501,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_f_toggles_notecard_find_in_editable_and_read_only_views() {
+    fn ctrl_f_refocuses_notecard_find_in_editable_and_read_only_views() {
         use super::super::NotecardView;
 
         for can_edit in [true, false] {
@@ -1541,11 +1532,22 @@ mod tests {
                 assert!(st.notecard_find.open, "{can_edit:?} {view:?}: open");
 
                 document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
-                assert!(!st.notecard_find.open, "{can_edit:?} {view:?}: close");
-                assert_eq!(ctx.memory(|m| m.focused()), Some(focus));
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: repeated Ctrl+F");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find has focus"
+                );
 
+                // Return to the notecard and invoke Find again.
+                ctx.memory_mut(|m| m.request_focus(focus));
                 document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
-                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: reopen");
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: refocus");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find regains focus"
+                );
                 assert!(!st.preview_dirty);
             }
         }
