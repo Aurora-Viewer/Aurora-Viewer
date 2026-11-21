@@ -481,6 +481,11 @@ impl Runtime {
             self.water_target = None;
             self.exit_flight = false;
         }
+        // Up replaces a dive tap's goal with a rise while held, as Down drops a
+        // surface return: either key moves a swimmer only while held.
+        if input.up && !input.down && self.water_target.is_some_and(|(mode, _)| mode == 7) {
+            self.water_target = None;
+        }
         if input.down {
             if self.exit_flight || self.water_target.is_some_and(|(mode, _)| mode == 8) {
                 self.water_target = None;

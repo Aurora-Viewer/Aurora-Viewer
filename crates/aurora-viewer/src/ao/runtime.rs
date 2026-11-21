@@ -586,7 +586,10 @@ impl Runtime {
             && !desired.is_empty()
             && (previous_state == self.current || (water_loop(previous_state) && water_loop(self.current)))
             && desired.iter().any(|id| !ready(id));
-        self.hold_since = holding.then(|| self.hold_since.unwrap_or(now));
+        // Each change of state gets its own LOADING_HOLD: two water
+        // transitions in a row do not share one.
+        let fresh = previous_state != self.current;
+        self.hold_since = holding.then(|| if fresh { now } else { self.hold_since.unwrap_or(now) });
         let holding = holding
             && self
                 .hold_since

@@ -1520,6 +1520,35 @@ fn short_down_tap_completes_a_dive_after_release_and_keeps_the_new_depth() {
 }
 
 #[test]
+fn up_held_after_a_dive_tap_rises_instead_of_finishing_the_dive() {
+    let now = Instant::now();
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    let prefs = prefs();
+    runtime.update(&prefs, &f, &MoveInput::default(), now);
+    let down = MoveInput {
+        down: true,
+        ..Default::default()
+    };
+    assert_eq!(runtime.update(&prefs, &f, &down, now + Duration::from_millis(10)).motion.mode, 7);
+    runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
+    // Part way down the dive.
+    f.position.z = 18.8;
+    runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(120));
+    assert_eq!(runtime.state, State::Submerged);
+    assert_eq!(runtime.swim_intent(&MoveInput::default()), Some(crate::ao::State::SwimmingDown));
+    let up = MoveInput {
+        up: true,
+        ..Default::default()
+    };
+    let rising = runtime.update(&prefs, &f, &up, now + Duration::from_millis(150));
+    assert_eq!(rising.motion.mode, 6, "Up drops the dive goal");
+    assert_eq!(runtime.swim_intent(&up), Some(crate::ao::State::SwimmingUp));
+    let held = runtime.update(&prefs, &f, &up, now + Duration::from_millis(400));
+    assert_eq!(held.motion.mode, 6);
+}
+
+#[test]
 fn an_underwater_up_hold_to_the_surface_floats_without_starting_flight() {
     let now = Instant::now();
     let mut runtime = Runtime::default();
