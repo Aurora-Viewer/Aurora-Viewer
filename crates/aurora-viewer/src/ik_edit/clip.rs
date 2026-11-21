@@ -66,7 +66,21 @@ pub(super) struct TimelineTrack {
     pub name: String,
     pub enabled: bool,
     pub authored: bool,
+    /// The frames of every key, then of the rotation and location keys.
     pub keys: Vec<u32>,
+    pub rotation: Vec<u32>,
+    pub location: Vec<u32>,
+}
+
+impl TimelineTrack {
+    /// The keys a row of `channel` shows.
+    pub(super) fn keys_of(&self, channel: document::Channel) -> &[u32] {
+        match channel {
+            document::Channel::Both => &self.keys,
+            document::Channel::Rotation => &self.rotation,
+            document::Channel::Location => &self.location,
+        }
+    }
 }
 
 fn wave_demo_bones(rig: &Rig) -> Option<[usize; 8]> {
@@ -99,10 +113,12 @@ pub(super) struct State {
     /// The press of a box: Shift or Ctrl went down over the lanes. The box
     /// starts once that press becomes a drag, wherever it began.
     key_box_armed: bool,
-    drag_key: Option<(usize, u32, u32)>,
+    /// The grabbed key's bone and row, the frame it left and the frame
+    /// under the pointer.
+    drag_key: Option<((usize, document::Channel), u32, u32)>,
     /// The keys picked in the timeline, as (bone, frame): a drag of one of
     /// them moves them all, Delete removes them all.
-    pub(super) selected_keys: BTreeSet<(usize, u32)>,
+    pub(super) selected_keys: BTreeSet<document::KeyPick>,
     /// A box drawn over the lanes to pick the keys inside it.
     key_box: Option<timeline::KeyBox>,
     /// Presses the timeline's shortcuts acted on, until egui's next pass.
@@ -136,6 +152,10 @@ pub(super) struct State {
     /// The joints that follow the selected one (`together`).
     pub(super) together: Vec<usize>,
     pub(super) translations: HashSet<usize>,
+    /// What the Key button, K and auto-key record (`document::Keying`).
+    pub(super) keying: document::Keying,
+    /// The bones whose timeline row shows its rotation and location rows.
+    pub(super) expanded: HashSet<usize>,
     clear_after: Option<u64>,
     clear_bones: Vec<usize>,
     saved_goals: Vec<Goal>,
@@ -206,6 +226,8 @@ impl Default for State {
             modified: HashSet::new(),
             together: Vec::new(),
             translations: HashSet::new(),
+            keying: document::Keying::default(),
+            expanded: HashSet::new(),
             clear_after: None,
             clear_bones: Vec::new(),
             saved_goals: Vec::new(),
@@ -231,6 +253,10 @@ impl Default for State {
     }
 }
 impl State {
+    /// Location keying is on: joints move freely (`Keying::frees_joints`).
+    pub(super) fn frees_joints(&self) -> bool {
+        self.active && self.keying.frees_joints()
+    }
     pub(super) fn is_playing(&self) -> bool {
         self.playing
     }
@@ -719,10 +745,10 @@ impl Editor {
     /// track the user authored (the hidden rest keys of a draft stay).
     pub(super) fn has_deletable_key_selection(&mut self) -> bool {
         let Some(tracks) = self.clip.timeline_tracks() else { return false };
-        self.clip.selected_keys.iter().any(|(bone, frame)| {
+        self.clip.selected_keys.iter().any(|(bone, channel, frame)| {
             tracks
                 .iter()
-                .any(|track| track.bone == *bone && track.authored && track.keys.binary_search(frame).is_ok())
+                .any(|track| track.bone == *bone && track.authored && track.keys_of(*channel).binary_search(frame).is_ok())
         })
     }
 
@@ -747,7 +773,7 @@ impl Editor {
         }
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
-            Arc::make_mut(document).remove_track_keyframe(bone, self.clip.frame);
+            Arc::make_mut(document).remove_track_keyframe(bone, document::Channel::Both, self.clip.frame);
             self.clip.changed();
         }
         // Drop the staged pose edits like a seek does: the avatar then shows
@@ -902,6 +928,26 @@ impl Editor {
             if mode == "clip-crop" {
                 document.range(15, 45);
             }
+            if mode == "clip-channels" {
+                // the head's location keyed alone at 45, and the pelvis's
+                // rotation alone at 75: each lands on its own row
+                let mut sample = Frame {
+                    model: frame.model,
+                    joints: frame.joints.clone(),
+                    at: frame.at,
+                };
+                sample.joints[head].w_axis += frame.model.transform_vector3(Vec3::new(0.03, 0.0, 0.02)).extend(0.0);
+                let _ = document.record_keying(rig, &sample, 45, &[head], &[], document::Keying::Location);
+                let (scale, q, p) = frame.joints[pelvis].to_scale_rotation_translation();
+                let model_q = frame.model.to_scale_rotation_translation().1;
+                sample.joints[pelvis] =
+                    Mat4::from_scale_rotation_translation(scale, model_q * Quat::from_rotation_z(0.5) * model_q.inverse() * q, p);
+                let _ = document.record_keying(rig, &sample, 75, &[pelvis], &[], document::Keying::Rotation);
+            }
+        }
+        if mode == "clip-channels" {
+            self.clip.keying = document::Keying::Location;
+            self.clip.expanded = HashSet::from([head, pelvis]);
         }
         self.clip.changed();
         self.clip.frame = if mode == "clip-frame" { 45 } else { 15 };
@@ -1212,7 +1258,7 @@ impl Editor {
         };
         self.clip.checkpoint();
         let Some(document) = self.clip.document.as_mut() else { return };
-        match Arc::make_mut(document).record(rig, &authored, self.clip.frame, &bones, &translations) {
+        match Arc::make_mut(document).record_keying(rig, &authored, self.clip.frame, &bones, &translations, self.clip.keying) {
             Ok(()) => {
                 if advance_after_auto_key && let Some(document) = self.clip.document.as_mut() {
                     let document = Arc::make_mut(document);

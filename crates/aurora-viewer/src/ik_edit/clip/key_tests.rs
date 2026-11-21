@@ -2,6 +2,7 @@
 use super::*;
 use crate::scene::avatar::AvatarLibrary;
 use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+use document::{Channel, Keying};
 
 fn frame(lib: &AvatarLibrary, rot: &[Quat]) -> Frame {
     let rig = &lib.rig;
@@ -75,7 +76,7 @@ fn an_off_grid_key_can_be_deleted_from_the_frame_that_shows_it() {
     let mut document = imported_head(rig, &[0.0, 0.504, 1.0]);
     assert_eq!(document.frames(Some(head)), vec![0, 15, 30]);
 
-    document.remove_track_keyframe(head, 15);
+    document.remove_track_keyframe(head, Channel::Both, 15);
 
     assert_eq!(document.frames(Some(head)), vec![0, 30]);
     let track = head_track(&document, rig);
@@ -91,7 +92,7 @@ fn dragging_an_off_grid_key_snaps_it_to_the_destination_frame() {
     let mut document = imported_head(rig, &[0.0, 0.504, 1.0]);
     let moved = head_track(&document, rig).motion.rot_keys[1].rotation;
 
-    document.move_track_keyframe(head, 15, 20);
+    document.move_track_keyframe(head, Channel::Both, 15, 20);
 
     assert_eq!(document.frames(Some(head)), vec![0, 20, 30]);
     let track = head_track(&document, rig);
@@ -100,7 +101,7 @@ fn dragging_an_off_grid_key_snaps_it_to_the_destination_frame() {
     assert_eq!(track.motion.rot_keys[1].rotation, moved, "the dragged key keeps its value");
 
     // dropped onto an off-grid key, the dragged key replaces it
-    document.move_track_keyframe(head, 20, 30);
+    document.move_track_keyframe(head, Channel::Both, 20, 30);
     let track = head_track(&document, rig);
     assert_eq!(document.frames(Some(head)), vec![0, 30]);
     assert_eq!(track.motion.rot_keys.len(), 2);
@@ -158,7 +159,7 @@ fn keys_left_between_frames_by_an_fps_change_stay_editable() {
     assert_eq!(pasted.frames(Some(head)), vec![0, 6]);
     assert_eq!(head_track(&pasted, rig).motion.rot_keys.len(), 2, "the paste replaced the key");
 
-    document.remove_track_keyframe(head, 6);
+    document.remove_track_keyframe(head, Channel::Both, 6);
     assert_eq!(document.frames(Some(head)), vec![0]);
 }
 
@@ -260,7 +261,7 @@ fn picked_keys_move_together_and_keep_their_spacing() {
     let head = rig.names["mHead"];
     let mut document = imported_head(rig, &[0.0, 10.0 / 30.0, 20.0 / 30.0, 1.0]);
     let values: Vec<Quat> = head_track(&document, rig).motion.rot_keys.iter().map(|key| key.rotation).collect();
-    let picked = std::collections::BTreeSet::from([(head, 10), (head, 20)]);
+    let picked = std::collections::BTreeSet::from([(head, Channel::Both, 10), (head, Channel::Both, 20)]);
 
     // moved onto each other's frames, neither replaces the other
     assert_eq!(document.move_keys(&picked, 10), 10);
@@ -281,7 +282,7 @@ fn a_group_move_stops_at_frame_zero_for_every_key() {
     let rig = &lib.rig;
     let head = rig.names["mHead"];
     let mut document = imported_head(rig, &[0.0, 5.0 / 30.0, 15.0 / 30.0, 1.0]);
-    let picked = std::collections::BTreeSet::from([(head, 5), (head, 15)]);
+    let picked = std::collections::BTreeSet::from([(head, Channel::Both, 5), (head, Channel::Both, 15)]);
 
     assert_eq!(document.move_keys(&picked, -12), -5, "the first key stops on frame 0");
 
@@ -298,7 +299,7 @@ fn a_group_move_past_the_end_grows_the_range() {
     let mut document = imported_head(rig, &[0.0, 1.0]);
     document.range(0, 30);
 
-    document.move_keys(&std::collections::BTreeSet::from([(head, 30)]), 15);
+    document.move_keys(&std::collections::BTreeSet::from([(head, Channel::Both, 30)]), 15);
 
     assert_eq!(document.end, 45);
     assert_eq!(document.frames(Some(head)), vec![0, 45]);
@@ -317,7 +318,11 @@ fn deleting_picked_keys_removes_them_all_and_keeps_the_hidden_rest_keys() {
     rest.motion.joint_name = "mNeck".into();
     document.tracks.push(rest);
 
-    document.remove_selected_keys(&std::collections::BTreeSet::from([(head, 10), (head, 30), (neck, 10)]));
+    document.remove_selected_keys(&std::collections::BTreeSet::from([
+        (head, Channel::Both, 10),
+        (head, Channel::Both, 30),
+        (neck, Channel::Both, 10),
+    ]));
 
     assert_eq!(document.frames(Some(head)), vec![0, 20]);
     assert_eq!(document.frames(Some(neck)), vec![0, 10, 20, 30], "a draft's rest track stays whole");
@@ -331,7 +336,10 @@ fn copied_keys_paste_at_the_playhead_with_their_spacing() {
     let mut document = imported_head(rig, &[0.0, 10.0 / 30.0, 0.5, 1.0]);
     document.range(0, 30);
     let source = head_track(&document, rig);
-    let copied = document.copy_keys(&std::collections::BTreeSet::from([(head, 10), (head, 15)]));
+    let copied = document.copy_keys(&std::collections::BTreeSet::from([
+        (head, Channel::Both, 10),
+        (head, Channel::Both, 15),
+    ]));
     assert_eq!(copied.len(), 2);
     assert_eq!((copied[0].offset, copied[1].offset), (0, 5));
     assert_eq!(
@@ -342,7 +350,10 @@ fn copied_keys_paste_at_the_playhead_with_their_spacing() {
 
     let pasted = document.paste_keys(28, &copied);
 
-    assert_eq!(pasted, std::collections::BTreeSet::from([(head, 28), (head, 33)]));
+    assert_eq!(
+        pasted,
+        std::collections::BTreeSet::from([(head, Channel::Both, 28), (head, Channel::Both, 33)])
+    );
     assert_eq!(document.frames(Some(head)), vec![0, 10, 15, 28, 30, 33]);
     assert_eq!(document.end, 33, "the range grows to the last pasted key");
     let track = head_track(&document, rig);
@@ -352,6 +363,149 @@ fn copied_keys_paste_at_the_playhead_with_their_spacing() {
     let max = document.max_frame();
     assert_eq!(
         document.paste_keys(max - 2, &copied),
-        std::collections::BTreeSet::from([(head, max - 2)])
+        std::collections::BTreeSet::from([(head, Channel::Both, max - 2)])
     );
+}
+
+/// The keys `record_keying` leaves on `bone`, as (rotation frames, position frames).
+fn channel_frames(document: &Document, bone: usize) -> (Vec<u32>, Vec<u32>) {
+    let track = document.tracks.iter().find(|track| track.bone == bone).expect("the track exists");
+    let frames = |times: Vec<f32>| times.into_iter().map(|time| (time * document.fps as f32).round() as u32).collect();
+    (
+        frames(track.motion.rot_keys.iter().map(|key| key.time).collect()),
+        frames(track.motion.pos_keys.iter().map(|key| key.time).collect()),
+    )
+}
+
+#[test]
+fn each_keying_choice_records_its_own_channels() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let (head, pelvis) = (rig.names["mHead"], rig.pelvis);
+    let pose = frame(&lib, &rig.local_rot);
+    let key = |keying| {
+        let mut document = Document::new();
+        document
+            .record_keying(rig, &pose, 10, &[head, pelvis], &[], keying)
+            .expect("recorded");
+        (channel_frames(&document, head), channel_frames(&document, pelvis))
+    };
+    // the editor's rule: a rotation, a location for the pelvis only (from
+    // its rest offset on frame 0, as before)
+    assert_eq!(key(Keying::Auto), ((vec![10], vec![]), (vec![10], vec![0, 10])));
+    // a location on a joint that never moved
+    assert_eq!(key(Keying::LocationRotation), ((vec![10], vec![0, 10]), (vec![10], vec![0, 10])));
+    assert_eq!(
+        key(Keying::Rotation),
+        ((vec![10], vec![]), (vec![10], vec![])),
+        "not even the pelvis"
+    );
+    assert_eq!(key(Keying::Location), ((vec![], vec![0, 10]), (vec![], vec![0, 10])));
+}
+
+#[test]
+fn a_one_channel_key_on_a_rest_track_drops_its_other_rest_channel() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let (head, pelvis) = (rig.names["mHead"], rig.pelvis);
+    let pose = frame(&lib, &rig.local_rot);
+    let fresh = || {
+        // a fresh draft: every bone keyed at rest on frame 0, hidden
+        let mut document = Document::new();
+        document.record(rig, &pose, 0, &[head, pelvis], &[]).expect("recorded");
+        for track in &mut document.tracks {
+            track.authored = false;
+        }
+        document
+    };
+    let mut document = fresh();
+    document
+        .record_keying(rig, &pose, 10, &[head], &[], Keying::Location)
+        .expect("recorded");
+    assert_eq!(
+        channel_frames(&document, head),
+        (vec![], vec![0, 10]),
+        "its rest rotation would be exported"
+    );
+
+    let mut document = fresh();
+    document
+        .record_keying(rig, &pose, 10, &[pelvis], &[], Keying::Rotation)
+        .expect("recorded");
+    assert_eq!(
+        channel_frames(&document, pelvis),
+        (vec![0, 10], vec![]),
+        "its rest position would be exported"
+    );
+
+    // an authored track keeps what was keyed before
+    document
+        .record_keying(rig, &pose, 20, &[pelvis], &[], Keying::Location)
+        .expect("recorded");
+    assert_eq!(channel_frames(&document, pelvis), (vec![0, 10], vec![0, 20]));
+    let animation = document.animation().expect("exports");
+    let joint = animation
+        .joints
+        .iter()
+        .find(|joint| joint.joint_name == "mPelvis")
+        .expect("exported");
+    assert!(!joint.rot_keys.is_empty() && !joint.pos_keys.is_empty());
+    assert!(
+        animation.joints.iter().all(|joint| joint.joint_name != "mHead"),
+        "the untouched head stays out"
+    );
+}
+
+#[test]
+fn a_location_only_track_exports_without_rotation_keys() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let pose = frame(&lib, &rig.local_rot);
+    let mut document = Document::new();
+    document.range(0, 30);
+    document
+        .record_keying(rig, &pose, 0, &[head], &[], Keying::Location)
+        .expect("recorded");
+    document
+        .record_keying(rig, &pose, 30, &[head], &[], Keying::Location)
+        .expect("recorded");
+    let animation = document.animation().expect("exports");
+    let joint = animation.joints.iter().find(|joint| joint.joint_name == "mHead").expect("exported");
+    assert!(joint.rot_keys.is_empty());
+    assert_eq!(joint.pos_keys.len(), 2);
+}
+
+#[test]
+fn channel_picks_move_delete_and_copy_one_channel() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let set = |picks: &[(Channel, u32)]| picks.iter().map(|&(channel, frame)| (head, channel, frame)).collect();
+    let mut document = imported_head(rig, &[0.0, 10.0 / 30.0, 1.0]);
+
+    // the rotation key of frame 10 moves alone; its position key stays
+    assert_eq!(document.move_keys(&set(&[(Channel::Rotation, 10)]), 5), 5);
+    assert_eq!(channel_frames(&document, head), (vec![0, 15, 30], vec![0, 10, 30]));
+    document.move_track_keyframe(head, Channel::Location, 10, 20);
+    assert_eq!(channel_frames(&document, head), (vec![0, 15, 30], vec![0, 20, 30]));
+
+    // copied from the location row: the position alone
+    let copied = document.copy_keys(&set(&[(Channel::Location, 20)]));
+    assert!(copied[0].rotation.is_none() && copied[0].position.is_some());
+    let pasted = document.paste_keys(25, &copied);
+    assert_eq!(pasted, set(&[(Channel::Location, 25)]), "picked on the row it was copied from");
+    assert_eq!(channel_frames(&document, head), (vec![0, 15, 30], vec![0, 20, 25, 30]));
+    // both rows of one frame copied: one key each
+    let copied = document.copy_keys(&set(&[(Channel::Rotation, 30), (Channel::Location, 30)]));
+    assert_eq!(copied.len(), 2);
+
+    document.remove_selected_keys(&set(&[(Channel::Location, 25), (Channel::Rotation, 30)]));
+    assert_eq!(channel_frames(&document, head), (vec![0, 15], vec![0, 20, 30]));
+    document.remove_track_keyframe(head, Channel::Rotation, 15);
+    assert_eq!(channel_frames(&document, head), (vec![0], vec![0, 20, 30]));
+
+    // a frame picked on the bone's row and on a channel row moves once
+    assert_eq!(document.move_keys(&set(&[(Channel::Both, 20), (Channel::Location, 20)]), 2), 2);
+    assert_eq!(channel_frames(&document, head), (vec![0], vec![0, 22, 30]));
 }
