@@ -7,8 +7,11 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// The rows of the Phototools window, borrowed from the pages.
+mod phototools;
 /// Aurora's own marked in its gradient, outside Preferences too.
 pub(crate) use pages::aurora::aurora_word;
+pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
@@ -22,6 +25,7 @@ use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::widgets;
+use aurora_i18n::UiUpper;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -483,6 +487,9 @@ pub struct OptionsUi {
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
+    /// The width reserved for a number box, measured once per frame
+    /// (`Cx::new`): the frame, the font, the button padding, the width.
+    number_width: Option<(u64, egui::FontId, f32, f32)>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -574,6 +581,22 @@ pub struct OptionsUi {
 }
 
 impl OptionsUi {
+    /// What the app tells Preferences about the world, for a second window
+    /// of borrowed rows (Phototools has its own `OptionsUi`, so that the
+    /// two windows never share the sizes the rows measured): the fields the
+    /// rows of the pages it borrows from read.
+    pub fn share_from(&mut self, from: &OptionsUi) {
+        self.rlva_camera_preset_locked = from.rlva_camera_preset_locked;
+        self.rlva_camera_fov_locked = from.rlva_camera_fov_locked;
+        self.sky_tone_mapped = from.sky_tone_mapped;
+        self.vram = from.vram;
+        if self.gpu_in_use != from.gpu_in_use || self.gpus != from.gpus {
+            self.gpu_in_use.clone_from(&from.gpu_in_use);
+            self.gpus.clone_from(&from.gpus);
+        }
+        self.gpu_notice = from.gpu_notice;
+    }
+
     pub fn joystick_capturing(&self) -> bool {
         self.joystick_capture.is_some()
     }
@@ -1339,6 +1362,32 @@ pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
     });
 }
 
+/// One section of the Phototools window: the rows it borrows from the
+/// pages, drawn in `ui` (`options/phototools.rs`). `st` is Phototools' own
+/// `OptionsUi` (`share_from` gives it the app's fields). The result is
+/// Preferences' own (`changed`, and what a row asks of the app), for the app
+/// to handle like Preferences' result. `photo` is the photo window's layer
+/// while it is open: the rows it overrides are its own.
+pub fn phototools_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    st: &mut OptionsUi,
+    section: PhotoSection,
+    photo: Option<&mut PhotoLayer>,
+) -> OptionsResult {
+    let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
+    let mut r = OptionsResult::default();
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut cx = Cx::new(ui, *p, s, &d, st, &mut r, Mode::Show, "");
+    phototools::draw(&mut cx, section, photo);
+    let changed = cx.changed;
+    drop(cx);
+    r.changed |= changed;
+    st.defaults = Some(d);
+    r
+}
+
 /// Puts the rows of `page` (every page: `None`) back to their defaults.
 fn reset_rows(
     ui: &mut egui::Ui,
@@ -1756,7 +1805,7 @@ fn sidebar(
                 if let Some(title) = page.section() {
                     ui.add_space(10.0);
                     let font = egui::FontId::new(11.0, super::fonts::semibold(ui.ctx()));
-                    let galley = ui.painter().layout_no_wrap(title.to_uppercase(), font, p.violet_light);
+                    let galley = ui.painter().layout_no_wrap(title.ui_upper(), font, p.violet_light);
                     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
                     super::widgets::paint_row_text(ui.painter(), galley, rect.left() + 8.0, rect.center().y, p.violet_light);
                 }

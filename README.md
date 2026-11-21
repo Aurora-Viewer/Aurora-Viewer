@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
@@ -415,8 +415,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In eight languages** (English, French, Japanese, German, Russian,
-  Brazilian Portuguese, Simplified and Traditional Chinese): the interface follows
+- **In fifteen languages** (English, French, Japanese, German, Spanish,
+  Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
+  Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -725,7 +726,7 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in eight languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
@@ -788,8 +789,11 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 ### Language
 
 The viewer ships English, French, Japanese (日本語), Simplified Chinese
-(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch)
-and Brazilian Portuguese (Português (Brasil)). It detects the system language
+(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
+Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
+(Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
+(Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
+detects the system language
 by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic

@@ -290,6 +290,10 @@ pub mod sim_extras;
 /// (AURORA_DEMO_SIM_VERSION).
 #[path = "demo_sim_version.rs"]
 pub mod sim_version;
+/// A soft-edged blended layer over a sphere in an occluded corner, the
+/// layers worn over mesh bodies (AURORA_DEMO_BLEND_AO=layer).
+#[path = "demo_skin_layer.rs"]
+pub mod skin_layer;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
@@ -307,6 +311,10 @@ pub mod snow_spin;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Glass whose opacity crosses one half within a face, under things that
+/// occlude it (AURORA_DEMO_SOFT_BLEND).
+#[path = "demo_soft_blend.rs"]
+pub mod soft_blend;
 /// A sound passing in front of the listener, back and forth, for the
 /// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
 #[path = "demo_sound_doppler.rs"]
@@ -1049,6 +1057,11 @@ fn demo_raw() -> Llsd {
     // Exercise the login clock correction on the normal LoggedIn path.
     if std::env::var("AURORA_DEMO_EVENT_TIMES").as_deref() == Ok("grid-behind") {
         let seconds = crate::ui::bars::clock::now_unix().saturating_sub(3600);
+        raw.insert("seconds_since_epoch", seconds.to_string());
+    }
+    // AURORA_DEMO_CHATLOG=service:skew: the computer behind the grid (#4233)
+    if chatlog::service_skew() {
+        let seconds = crate::ui::bars::clock::now_unix().saturating_add(chatlog::SKEW_SECS);
         raw.insert("seconds_since_epoch", seconds.to_string());
     }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
@@ -2312,6 +2325,33 @@ pub fn maturity_reply(asked: u8) -> Option<u8> {
         Some("fail") => None,
         _ => Some(asked),
     }
+}
+
+/// AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure[:accept]: the demo's
+/// neighbouring regions are adult, and refuse a teleport while the
+/// preference excludes them (`world/teleport_access.rs`); `:accept` answers
+/// the prompt by its first button. The scene, and whether to accept.
+pub fn teleport_access_scene() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_ACCESS").ok()?;
+    Some(match value.split_once(':') {
+        Some((scene, answer)) => (scene.to_owned(), answer == "accept"),
+        None => (value, false),
+    })
+}
+
+/// The demo server's refusal of a teleport away from our region, while the
+/// preference is below adult: TeleportEntryAccessBlocked, or
+/// RegionTPAccessBlocked for `region`.
+pub fn teleport_access_refusal(preferred: u8) -> Option<aurora_net::teleport_access::AccessBlocked> {
+    use aurora_net::teleport_access::{ENTRY_ACCESS_BLOCKED, REGION_TP_ACCESS_BLOCKED};
+    let code = match teleport_access_scene()?.0.as_str() {
+        "region" => REGION_TP_ACCESS_BLOCKED,
+        _ => ENTRY_ACCESS_BLOCKED,
+    };
+    (preferred < aurora_net::search::SIM_ACCESS_ADULT).then(|| aurora_net::teleport_access::AccessBlocked {
+        code: code.into(),
+        region_access: aurora_net::search::SIM_ACCESS_ADULT,
+    })
 }
 
 pub fn lure_scene() -> Option<LureScene> {
@@ -6158,6 +6198,19 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += wet_layer::COUNT;
     }
+    if skin_layer::enabled() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        for o in skin_layer::objects(id, sx, sy) {
+            add(o);
+        }
+        id += skin_layer::COUNT;
+    }
     if mirror::enabled() {
         for o in mirror::objects(id) {
             add(o);
@@ -6265,7 +6318,7 @@ pub fn events() -> Vec<NetEvent> {
     // eye), with a nose across the middle, under a wide hat brim and
     // between two curtains of hair that occlude it (issue #882: the blended
     // half took no ambient occlusion, a line down the middle of the head)
-    if std::env::var_os("AURORA_DEMO_BLEND_AO").is_some() {
+    if std::env::var_os("AURORA_DEMO_BLEND_AO").is_some() && !skin_layer::enabled() {
         let (sx, sy) = std::env::var("AURORA_DEMO_POS")
             .ok()
             .and_then(|v| {
@@ -6430,6 +6483,9 @@ pub fn events() -> Vec<NetEvent> {
 
     if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
         ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
+    }
+    if crate::build::deep_perms::demo::mode().is_some() {
+        ev.extend(crate::build::deep_perms::demo::events(HANDLE, height(134.5, 127.5)));
     }
     // our avatar + a second one
     let mut avatars = Vec::new();
@@ -6707,6 +6763,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(soft_blend::events());
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(oit_column::events());
@@ -7807,6 +7864,14 @@ pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uu
         NetEvent::MainRegionChanged { handle },
         NetEvent::AgentMovementComplete { handle, position, look_at },
     ])
+}
+
+/// AURORA_DEMO_TP_AWAY=snow (#3664): the same trip over lying snow. The
+/// ground fills with snow at frame 300 in calm weather (the Weather window's
+/// snow-fill button), and the arrivals go through the app as from the
+/// network, which cleans the snow left behind.
+pub fn away_snow() -> bool {
+    std::env::var("AURORA_DEMO_TP_AWAY").is_ok_and(|v| v == "snow")
 }
 
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,
@@ -9497,6 +9562,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(texture) = wet_layer::texture(id) {
         return Some(texture);
     }
+    if let Some(texture) = skin_layer::texture(id) {
+        return Some(texture);
+    }
     if let Some(texture) = mirror::texture(id) {
         return Some(texture);
     }
@@ -9557,6 +9625,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(pane) = blend_shadows::texture(id) {
         return Some(pane);
+    }
+    if let Some(glass) = soft_blend::texture(id) {
+        return Some(glass);
     }
     if let Some(lace) = veils::texture(id) {
         return Some(lace);

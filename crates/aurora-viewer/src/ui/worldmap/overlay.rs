@@ -24,6 +24,7 @@ use crate::world::place_details::Source;
 use crate::world::social::rights;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::location_label;
+use aurora_i18n::UiUpper;
 use aurora_net::map_item;
 use egui::{Align, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -1202,7 +1203,7 @@ impl WorldMapUi {
             }
             Row::Section(i) => {
                 let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
-                let name = tphistory::history_sections()[(*i).min(8)].to_uppercase();
+                let name = tphistory::history_sections()[(*i).min(8)].ui_upper();
                 widgets::paint_elided(ui, &name, pos2(rect.left() + 2.0, rect.center().y), rect.width(), font, p.muted_dim);
                 None
             }
@@ -1947,7 +1948,7 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, text: &str) {
     let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
     widgets::paint_elided(
         ui,
-        &text.to_uppercase(),
+        &text.ui_upper(),
         pos2(rect.left() + 8.0, rect.center().y + 2.0),
         rect.width() - 16.0,
         font,

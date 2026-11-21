@@ -17,6 +17,7 @@ pub mod contents;
 pub mod contents_drop;
 pub mod costs;
 mod cycle;
+pub mod deep_perms;
 pub mod demo;
 pub mod demo_sim;
 pub mod draw;
@@ -2303,6 +2304,7 @@ impl BuildTool {
         self.last_frame = Some(now);
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
+        self.advance_deep_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
         // "Place on surface" lives in the Edit tool of the open tools

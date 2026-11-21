@@ -1082,9 +1082,6 @@ import-lod-low = Низкий
 import-lod-lowest = Минимальный
 import-source-file = Файл
 import-lod-auto = Автоматическое создание
-import-lod-combine = Комбинированное создание
-import-lod-fast = Быстрое создание
-import-lod-legacy = Классическое создание
 import-lod-reliable = Надёжное создание
 import-lod-above = LOD уровнем выше
 import-mesh-info =
@@ -2127,7 +2124,7 @@ keybinds-numpad-4 = . (цифровой блок)
 keybinds-numpad-5 = / (цифровой блок)
 ui-options-0-hide-avatar-names = 0 = скрыть имена аватаров
 ui-options-0-no-chat-bubbles-above-the-chat-bar = 0 = не показывать реплики над строкой чата
-demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " Ящик со спамом|0\u000A0 " }{ $value2 }{ " Рекламный щит|\u000A0 " }{ $value3 }{ " Группа:" }{ $value4 }{ "|\u000A" }
+demo-1-violet-wolf-0-2-spam-box-0-0 = { "1 " }{ $value0 }{ " Violet Wolf|0\u000A2 " }{ $value1 }{ " Ящик со спамом|0\u000A0 " }{ $value2 }{ " Рекламный щит|\u000A0 " }{ $value3 }{ " Group:" }{ $value4 }{ "|\u000A" }
 ui-land-dialogs-1-set-a-price = 1. Укажите цену
 build-ui-general-127-bytes-maximum = Не более 127 байт.
 ui-land-dialogs-2-sell-the-land-to = 2. Укажите покупателя
@@ -2865,6 +2862,8 @@ ui-appearance-items-right-forearm = Правое предплечье
 ui-appearance-items-left-forearm = Левое предплечье
 ui-options-avatars = Аватары
 ui-options-loading-avatars = Загрузка аватаров
+ui-options-avatar-cache = Аватары из кэша
+ui-options-avatar-cache-help = Пока загружаются внешность аватара и надетые на него объекты, отображаются его фигура, кожа и объекты такими, какими они были в последний раз (с анимациями, которые ваши собственные объекты проигрывают на вас), а затем — полученные от региона (только в Aurora; классический вьюер показывает облако, пока регион их не пришлёт).
 ui-options-fully-rendered-avatars = Полностью отрисованные аватары
 ui-perf-avatars-and-camera = Аватары и камера
 ui-sound-typing-avatars = Набор текста аватарами
@@ -7187,6 +7186,8 @@ ui-options-collision-sounds = Звуки столкновений
 ui-options-interface-sounds = Звуки интерфейса
 ui-options-gesture-sounds = Звуки жестов
 ui-options-sounds-played-by-other-avatars-gestures = Звуки, которые воспроизводят жесты других аватаров
+ui-options-media-sounds-ear = Слышать медиа и звуки от
+ui-options-media-sounds-ear-help = Звуки мира и медиа слышны в точке камеры или у вашего аватара, где бы ни была камера. Для голоса есть отдельная настройка.
 ui-options-sound-doppler = Эффект Доплера
 ui-options-sound-doppler-help = Движущийся источник звучит выше при приближении и ниже при удалении, как проезжающая машина. 1 — как в классическом вьюере, 0 — выключено, 2 — вдвое сильнее.
 ui-options-unmute-ambient-after-teleport = Включать фоновые звуки после телепорта
@@ -8466,6 +8467,17 @@ photo-lut-imported-many =
     }
 photo-lut-pack = Автор: { $creator }
 photo-lut-pack-tip = LUT от { $creator }, доступные всем пользователям Aurora
+world-look-title = Фильтры мира
+world-look-help = Фильтры и LUT на 3D-виде всё время, отдельно от фильтров снимков. Интерфейс никогда не окрашивается.
+world-look-on = Показывать фильтры на мире
+world-look-note = Накладываются на 3D-вид, под интерфейсом. Фото и видео сохраняют фильтры окна «Снимок».
+world-look-photo-open = Открыто окно «Снимок» или «Режиссёр»: вместо этих показаны его собственные фильтры.
+ui-options-world-look = Фильтры мира
+ui-options-world-look-on = Фильтры на мире
+ui-options-world-look-on-help = Постоянно накладывает на 3D-вид фильтры и LUT, выбранные в окне «Фильтры мира». Фото и видео сохраняют свои.
+ui-options-world-look-choose = Выбранные фильтры
+ui-options-world-look-choose-help = Открывает окно «Фильтры мира»: те же фильтры и LUT, что и в режиме съёмки, со своими настройками.
+ui-options-world-look-open = Выбрать…
 photo-lut-mine = Мои LUT
 photo-lut-failed = Не удалось прочитать LUT: { $error }
 photo-look-a-fine-grain = Мелкое зерно
@@ -10758,7 +10770,13 @@ script-edit-outdent = Уменьшить отступ (Shift+Tab)
 script-selection-edit-failed = Не удалось изменить код. Он слишком велик или уже содержит блочный комментарий. Для вложенных комментариев используйте //.
 script-fold-collapse = Свернуть блок
 script-fold-expand = Развернуть блок
-script-fold-lines = строк
+script-fold-line-count =
+    { $count ->
+        [one] { $count } строка
+        [few] { $count } строки
+        [many] { $count } строк
+        *[other] { $count } строки
+    }
 script-fold-all = Свернуть всё
 script-expand-all = Развернуть всё
 loading-residents =
@@ -11192,7 +11210,6 @@ ui-options-plates-friend-tint-help = Слегка окрашивает фон в
 ui-options-plates-hover-expand = Разворачивать табличку при наведении
 ui-options-plates-hover-expand-help = Табличка показывается полностью, пока указатель находится над ней.
 ui-options-plate-click = Щелчок по табличке
-ui-options-plate-click-help = Действие левой кнопки по чужой табличке. Указатель принимает форму руки.
 ui-options-plate-shift-click = Shift + левая кнопка по табличке
 ui-options-plate-shift-click-help = Отдельное действие по чужой табличке с Shift. Alt и Ctrl+Shift сохраняют обычные действия.
 ui-options-plate-ctrl-click = Ctrl + левая кнопка по табличке
@@ -15771,6 +15788,11 @@ ui-weather-northern-lights-display = Яркое сияние
 ui-weather-northern-lights-night = Видно только после заката.
 ui-weather-clean-up = Очистить
 ui-weather-snow-fill = Засыпать снегом
+ui-weather-enabled-tip = Погода Aurora включена: дождь или снег, ветер, гроза и северное сияние, как задано ниже. При отключении ничего из этого не отображается; настройки сохраняются.
+ui-weather-now-off = Погода отключена
+ui-weather-precipitation-on-tip = Дождь или снег идёт, как задано ниже. При отключении ничего не падает и грозы нет.
+ui-weather-wind-on-tip = Ветер погоды несёт дождь и снег и слышен на открытом воздухе. При отключении воздух неподвижен.
+ui-weather-wind-follow-region = Ветер региона
 picker-pipette-hint = Щёлкните по грани объекта, чтобы выбрать из инвентаря её текстуру или материал.
 picker-pipette-no-texture = В вашем инвентаре нет подходящей текстуры с правом копирования.
 picker-pipette-no-material = В вашем инвентаре нет подходящего материала с правом копирования.
@@ -16155,3 +16177,5 @@ game-control-action-truck-right = Сдвинуть камеру вправо →
 game-control-action-boom-up = Поднять камеру ↑
 game-control-action-boom-down = Опустить камеру ↓
 game-control-action-escape = Esc
+picker-local-newest = Сначала новые
+picker-local-name = Имя А–Я

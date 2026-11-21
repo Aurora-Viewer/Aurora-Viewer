@@ -169,6 +169,8 @@ pub enum BarAction {
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// The top bar's "Clouds paused" chip: let the clouds move again.
+    ResumeClouds,
     /// World › Environment › New sky / water / day cycle (World.EnvPreset
     /// new_sky, new_water, new_day_cycle).
     NewEnvironment(crate::world::env_select::SettingsKind),
@@ -279,6 +281,9 @@ pub struct StatusInfo<'a> {
     pub fps: f32,
     pub flying: bool,
     pub seated: bool,
+    /// The clouds are paused (Pause clouds) while the photo window is
+    /// closed: a chip that resumes them.
+    pub clouds_paused: bool,
     pub ping_ms: u32,
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
@@ -1515,6 +1520,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
             super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
         }
+        // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
+        let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
+        if menu::item_keys(ui, p, "camera-cog", aurora_i18n::tr!("toolbar-command-phototools"), &phototools) {
+            super::widgets::toggle_floater(ui.ctx(), super::phototools::WINDOW, &mut panels.phototools);
+        }
         // the Director (camera tracks and films), Aurora's own, beside the
         // photo: it was only on the toolbar
         if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {
@@ -2563,6 +2573,21 @@ pub fn top_bars(
                             state_chip(ui, p, text);
                         }
                     }
+                    // Pause clouds lasts the session: say so, and a click ends it
+                    if st.clouds_paused
+                        && super::widgets::action_button(
+                            ui,
+                            p,
+                            "cloud-filled",
+                            aurora_i18n::tr!("ui-bars-clouds-paused"),
+                            super::widgets::ActionKind::Flat,
+                            Vec2::new(0.0, CHIP_HEIGHT + 4.0),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-bars-clouds-paused-tip"))
+                        .clicked()
+                    {
+                        action = BarAction::ResumeClouds;
+                    }
                     ui.add_space(4.0);
                     egui::Frame::new()
                         .fill(p.field)
@@ -2730,6 +2755,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
         "photo_roll" => return BarAction::PhotoRoll,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
+        // Floater.Toggle phototools
+        "phototools" => toggle(super::phototools::WINDOW, &mut panels.phototools),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
         // Aurora's own: the Director's window and its timeline
@@ -2846,6 +2873,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
+        "phototools" => panels.phototools,
         "quickprefs" => panels.quick_prefs,
         "director" => panels.director,
         "second_camera" => panels.second_camera,
@@ -4466,6 +4494,7 @@ mod tests {
             ("avatar", super::super::avatar_welcome::WINDOW, |p| p.avatar_welcome),
             ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
+            ("phototools", super::super::phototools::WINDOW, |p| p.phototools),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("director", super::super::director::WINDOW, |p| p.director),
             ("second_camera", super::super::second_camera::WINDOW, |p| p.second_camera),
@@ -4677,6 +4706,21 @@ mod tests {
         assert!(command_active("quickprefs", &panels, false, false, false));
         run_command(&ctx, "quickprefs", &mut panels);
         assert!(!panels.quick_prefs);
+    }
+
+    /// The toolbar's Phototools button toggles its window and lights while
+    /// it is open.
+    #[test]
+    fn the_phototools_toolbar_command_toggles_its_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("phototools"));
+        assert!(!command_active("phototools", &panels, false, false, false));
+        run_command(&ctx, "phototools", &mut panels);
+        assert!(panels.phototools);
+        assert!(command_active("phototools", &panels, false, false, false));
+        run_command(&ctx, "phototools", &mut panels);
+        assert!(!panels.phototools);
     }
 
     #[test]
