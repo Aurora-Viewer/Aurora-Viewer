@@ -37,6 +37,70 @@ fn row_rects(ui: &egui::Ui) -> (Rect, Rect) {
     (rect, Rect::from_x_y_ranges(left..=rect.right(), rect.y_range()))
 }
 
+/// Whether a row drags by its icon and name only, as in Windows Explorer's
+/// Details view, a click anywhere on it selecting it and a drag from its
+/// other columns drawing the rubber band (`marquee`): the explorer's
+/// folder, and its lists of Recent, Worn, Favorites and the results at the
+/// medium and wide widths. The narrow window's tree drags by the whole row.
+fn by_name(frame: Frame) -> bool {
+    frame.explorer || frame.layout != Layout::Compact
+}
+
+/// A row's own sense: a click only where its name handle drags it
+/// (`by_name`), a click and a drag otherwise.
+fn row_sense(frame: Frame, draggable: bool) -> Sense {
+    if by_name(frame) || !draggable {
+        Sense::click()
+    } else {
+        Sense::click_and_drag()
+    }
+}
+
+/// The explorer's drag handle of a row: from its left edge to the end of
+/// its name (`row_sense`). Laid out before the row itself: egui gives a
+/// click to the row on top and a drag to the handle under it, where a
+/// drag-only widget on top would hide the row's clicks (egui's hit_test).
+#[allow(clippy::too_many_arguments)]
+fn name_handle(
+    ui: &egui::Ui,
+    frame: Frame,
+    st: &mut InventoryUi,
+    id: Uuid,
+    rect: Rect,
+    name_left: f32,
+    name: &str,
+    name_end: f32,
+    folder: bool,
+    draggable: bool,
+) {
+    if !by_name(frame) || !draggable {
+        return;
+    }
+    let width = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), egui::FontId::proportional(NAME), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    let end = (name_left + width + 4.0).min(name_end);
+    let handle = Rect::from_x_y_ranges(rect.left()..=end.clamp(rect.left(), rect.right()), rect.y_range());
+    // click as well as drag: egui starts a drag-only widget's drag at the
+    // press, which would take the click from the row above it
+    let response = ui.interact(handle, ui.make_persistent_id(("inv_name_drag", id)), Sense::click_and_drag());
+    drag::source(ui, &response, id, folder, st);
+}
+
+/// The keyboard's place when it is not the selection (Ctrl+↑/↓).
+fn focus_ring(ui: &egui::Ui, p: &Palette, full: Rect, st: &InventoryUi, id: Uuid) {
+    if st.focus == Some(id) {
+        ui.painter().rect_stroke(
+            full.shrink(0.5),
+            ui.visuals().window_corner_radius,
+            egui::Stroke::new(1.0, p.violet),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
 fn background(ui: &egui::Ui, p: &Palette, full: Rect, selected: bool) {
     let fill = if selected {
         p.violet.gamma_multiply(0.28)
@@ -52,7 +116,7 @@ fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, center: Pos2, tint: Colo
     if let Some(texture) = icons.get(name) {
         ui.painter().image(
             texture.id(),
-            Rect::from_center_size(center, Vec2::splat(ICON)),
+            Rect::from_center_size(center, Vec2::splat(super::super::category::row_icon_size(name, ICON))),
             Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
             tint,
         );
@@ -297,6 +361,7 @@ pub(super) fn show_quick(
                 {
                     st.select(ui, id, true);
                     st.row_menu = Some((id, rect.left_bottom()));
+                    st.background_menu = false;
                 }
             }
         }
@@ -374,11 +439,18 @@ pub(in super::super) fn item(
         ui.set_opacity(opacity);
         return;
     }
-    let r = ui.interact(rect, ui.make_persistent_id(("inv_item", id)), Sense::click_and_drag());
+    name_handle(ui, frame, st, id, rect, name_left, &it.name, cols.name_end, false, true);
+    let r = ui.interact(rect, ui.make_persistent_id(("inv_item", id)), row_sense(frame, true));
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
     background(ui, p, full, selected);
+    focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon_name, icon_center, tint);
     let permissions = Permissions::inventory(inv, id);
     let hovered = ui.rect_contains_pointer(full) && ui.ctx().dragged_id().is_none();
@@ -500,16 +572,31 @@ pub(in super::super) fn folder(
         ui.set_opacity(opacity);
         return;
     }
-    let sense = if folder_draggable(inv, id, prefs) {
-        Sense::click_and_drag()
-    } else {
-        Sense::click()
-    };
+    let draggable = folder_draggable(inv, id, prefs);
+    let sense = row_sense(frame, draggable);
+    name_handle(
+        ui,
+        frame,
+        st,
+        id,
+        rect,
+        name_left,
+        &folder_name(inv, id),
+        cols.name_end,
+        true,
+        draggable,
+    );
     let r = ui.interact(rect, ui.make_persistent_id(("inv_folder", id)), sense);
     ui.advance_cursor_after_rect(rect);
     #[cfg(test)]
     tests::record(ui, id, rect);
+    // the band notes the rows only while it is drawn
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
     background(ui, p, full, selected);
+    focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon, icon_center, tint);
     let caret = (!frame.explorer).then(|| {
         let caret_rect = Rect::from_center_size(caret_center, Vec2::splat(CARET + 4.0));
@@ -598,6 +685,9 @@ pub(in super::super) fn folder(
             st.browse = id;
             st.selection.clear();
             st.selected = None;
+        } else if r.middle_clicked() {
+            // Explorer's and Dolphin's middle click: a tab behind
+            super::tabs::open(st, prefs, id, false);
         }
         *open = false;
     } else if r.double_clicked() {

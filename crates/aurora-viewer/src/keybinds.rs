@@ -570,6 +570,144 @@ pub enum Action {
     /// Ctrl+Tab / Ctrl+Shift+Tab).
     ChatNextConversation,
     ChatPreviousConversation,
+    /// The inventory lists' own shortcuts (`ui/inventory/shortcuts.rs`),
+    /// read there from the list's key events while it has the keyboard and
+    /// never by the world (`is_inventory`); the focused list keeps them
+    /// over the viewer's shortcuts. Aurora's: the keys of Windows Explorer
+    /// and Dolphin (#2520; rebindable by human request of 2026-11-18).
+    InvBack,
+    InvForward,
+    InvUp,
+    InvRoot,
+    InvRefresh,
+    InvEditPath,
+    InvSearch,
+    InvSelectAll,
+    InvInvertSelection,
+    InvToggleSelection,
+    InvNewFolder,
+    InvProperties,
+    InvContextMenu,
+    InvPurge,
+    /// Explorer's Ctrl+Z / Ctrl+Y on the inventory's own changes
+    /// (`world::inventory::undo`); Ctrl+Shift+Z redoes too, as Dolphin's.
+    InvUndo,
+    InvRedo,
+    /// The explorer's tabs (`ui::inventory::aurora::tabs`), as Explorer's
+    /// and Dolphin's: Ctrl+T, Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab.
+    InvNewTab,
+    InvCloseTab,
+    InvNextTab,
+    InvPreviousTab,
+}
+
+/// The inventory lists' shortcuts: matched on the list's key events and
+/// its mouse buttons (`ui::inventory::shortcuts`), never by the world's
+/// dispatch; they only conflict with each other, as the focused list keeps
+/// its chords over the world's (`app::shortcut_claims_focus`).
+pub fn is_inventory(a: Action) -> bool {
+    matches!(
+        a,
+        Action::InvBack
+            | Action::InvForward
+            | Action::InvUp
+            | Action::InvRoot
+            | Action::InvRefresh
+            | Action::InvEditPath
+            | Action::InvSearch
+            | Action::InvSelectAll
+            | Action::InvInvertSelection
+            | Action::InvToggleSelection
+            | Action::InvNewFolder
+            | Action::InvProperties
+            | Action::InvContextMenu
+            | Action::InvPurge
+            | Action::InvUndo
+            | Action::InvRedo
+            | Action::InvNewTab
+            | Action::InvCloseTab
+            | Action::InvNextTab
+            | Action::InvPreviousTab
+    )
+}
+
+/// Whether an inventory list's shortcut (`is_inventory`) may take this
+/// binding. The list reads its own key events and mouse buttons: refused
+/// are what it could never see or would see twice:
+/// - a key egui has no name for;
+/// - a mouse button, but the middle, back and forward ones for the
+///   explorer's moves (Back, Forward, Up, the top), the only ones read on
+///   the mouse (`shortcuts::mouse`);
+/// - a printable key without Ctrl or Alt: the list types it to find a
+///   name (type-ahead, `select_keys`);
+/// - the keys the list keeps fixed: the arrows, Home, End and the page keys
+///   alone (with Shift too), Ctrl+↑ / ↓ (the keyboard's place), Enter,
+///   Delete, F2, Esc and Tab alone (Shift+Tab goes back through the
+///   fields), Ctrl+C / X / V, and Backspace alone on a Mac (it deletes
+///   there);
+/// - on Windows, what egui reads as a clipboard command instead of a key
+///   (Shift+Delete, Shift+Insert, Ctrl+Insert), but Shift+Delete for Purge,
+///   which the list reads back from it (`clipboard::shortcuts`).
+pub fn inventory_accepts(action: Action, b: &Binding) -> bool {
+    inventory_accepts_on(action, b, cfg!(target_os = "macos"), cfg!(target_os = "windows"))
+}
+
+fn inventory_accepts_on(action: Action, b: &Binding, mac: bool, windows: bool) -> bool {
+    match &b.input {
+        Input::Mouse(button) => {
+            matches!(button.as_str(), "Middle" | "Back" | "Forward")
+                && matches!(action, Action::InvBack | Action::InvForward | Action::InvUp | Action::InvRoot)
+        }
+        Input::Key(name) => {
+            let Some(key) = egui::Key::from_name(name) else {
+                return false;
+            };
+            use egui::Key as E;
+            let bare = !b.ctrl && !b.alt;
+            let typed = {
+                let n = key.name();
+                n.chars().count() == 1
+                    || matches!(
+                        key,
+                        E::Space
+                            | E::Minus
+                            | E::Equals
+                            | E::OpenBracket
+                            | E::CloseBracket
+                            | E::Backslash
+                            | E::Semicolon
+                            | E::Quote
+                            | E::Comma
+                            | E::Period
+                            | E::Slash
+                            | E::Backtick
+                            | E::Plus
+                            | E::Colon
+                            | E::Pipe
+                            | E::Questionmark
+                            | E::Exclamationmark
+                    )
+            };
+            let fixed = match key {
+                // Ctrl+↑ / ↓ move the keyboard's place; on a Mac that is the
+                // Control key, and Cmd+↑ (stored as Ctrl) stays Finder's Up
+                E::ArrowUp | E::ArrowDown => bare || (!mac && b.ctrl && !b.alt && !b.shift),
+                E::ArrowLeft | E::ArrowRight | E::Home | E::End | E::PageUp | E::PageDown => bare,
+                E::Enter | E::Delete | E::F2 | E::Escape => bare && !b.shift,
+                E::Tab => bare,
+                E::C | E::X | E::V => b.ctrl && !b.alt && !b.shift,
+                E::Backspace => mac && bare && !b.shift,
+                _ => false,
+            };
+            let clipboard = windows
+                && match key {
+                    E::Delete => b.shift && !b.ctrl && !b.alt && action != Action::InvPurge,
+                    E::Insert => (b.shift || b.ctrl) && !b.alt,
+                    _ => false,
+                };
+            !fixed && !clipboard && !(bare && typed)
+        }
+    }
 }
 
 /// The chat fields' shortcuts: matched on the fields' key events
@@ -748,6 +886,33 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 ],
             ),
             (
+                // the inventory lists' own keys (`is_inventory`), a tab of
+                // their own on the Shortcuts page
+                aurora_i18n::tr!("common-inventory"),
+                vec![
+                    (Action::InvBack, aurora_i18n::tr!("inventory-back")),
+                    (Action::InvForward, aurora_i18n::tr!("inventory-forward")),
+                    (Action::InvUp, aurora_i18n::tr!("inventory-up")),
+                    (Action::InvRoot, aurora_i18n::tr!("keybinds-inventory-root")),
+                    (Action::InvRefresh, aurora_i18n::tr!("ui-inventory-context-reload-folder")),
+                    (Action::InvEditPath, aurora_i18n::tr!("inventory-path-edit")),
+                    (Action::InvSearch, aurora_i18n::tr!("keybinds-inventory-search")),
+                    (Action::InvSelectAll, aurora_i18n::tr!("common-select-all")),
+                    (Action::InvInvertSelection, aurora_i18n::tr!("inventory-invert-selection")),
+                    (Action::InvToggleSelection, aurora_i18n::tr!("keybinds-inventory-toggle")),
+                    (Action::InvNewFolder, aurora_i18n::tr!("common-new-folder")),
+                    (Action::InvProperties, aurora_i18n::tr!("common-properties")),
+                    (Action::InvContextMenu, aurora_i18n::tr!("keybinds-inventory-menu")),
+                    (Action::InvPurge, aurora_i18n::tr!("keybinds-inventory-purge")),
+                    (Action::InvUndo, aurora_i18n::tr!("inventory-undo")),
+                    (Action::InvRedo, aurora_i18n::tr!("inventory-redo")),
+                    (Action::InvNewTab, aurora_i18n::tr!("inventory-new-tab")),
+                    (Action::InvCloseTab, aurora_i18n::tr!("inventory-close-tab")),
+                    (Action::InvNextTab, aurora_i18n::tr!("inventory-next-tab")),
+                    (Action::InvPreviousTab, aurora_i18n::tr!("inventory-previous-tab")),
+                ],
+            ),
+            (
                 aurora_i18n::tr!("preferences-group-huds"),
                 vec![
                     (Action::ShowHuds, aurora_i18n::tr!("keybinds-show-huds")),
@@ -850,6 +1015,135 @@ fn kalt(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
         shift,
         alt: true,
     })
+}
+
+/// The inventory lists' default keys (`is_inventory`): Windows Explorer's
+/// and Dolphin's, Finder's on a Mac (Cmd counts as Ctrl there,
+/// `control_down`; Backspace deletes there as in the Legacy Viewer, so it
+/// does not go up). The mouse's back and forward buttons go back and
+/// forward everywhere.
+fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
+    use KeyCode as K;
+    let mouse = |name: &str| Some(Binding::plain(Input::Mouse(name.into())));
+    vec![
+        (
+            Action::InvBack,
+            [
+                if mac {
+                    kmod(K::BracketLeft, true, false)
+                } else {
+                    kalt(K::ArrowLeft, false, false)
+                },
+                mouse("Back"),
+            ],
+        ),
+        (
+            Action::InvForward,
+            [
+                if mac {
+                    kmod(K::BracketRight, true, false)
+                } else {
+                    kalt(K::ArrowRight, false, false)
+                },
+                mouse("Forward"),
+            ],
+        ),
+        (
+            Action::InvUp,
+            if mac {
+                [kmod(K::ArrowUp, true, false), None]
+            } else {
+                [kalt(K::ArrowUp, false, false), k(K::Backspace)]
+            },
+        ),
+        // Finder: Cmd+Shift+H for the home folder (Macs mostly lack Home)
+        (
+            Action::InvRoot,
+            [
+                if mac {
+                    kmod(K::KeyH, true, true)
+                } else {
+                    kalt(K::Home, false, false)
+                },
+                None,
+            ],
+        ),
+        (Action::InvRefresh, [k(K::F5), None]),
+        (
+            Action::InvEditPath,
+            [kmod(K::KeyL, true, false), if mac { None } else { kalt(K::KeyD, false, false) }],
+        ),
+        // F3 is Mission Control on most Macs
+        (Action::InvSearch, [if mac { None } else { k(K::F3) }, None]),
+        (Action::InvSelectAll, [kmod(K::KeyA, true, false), None]),
+        (Action::InvInvertSelection, [kmod(K::KeyA, true, true), None]),
+        // Cmd+Space is Spotlight: no default there
+        (
+            Action::InvToggleSelection,
+            [if mac { None } else { kmod(K::Space, true, false) }, None],
+        ),
+        (Action::InvNewFolder, [kmod(K::KeyN, true, true), None]),
+        // Alt+Enter (Option+Enter on a Mac), not Finder's Get Info: Cmd+I
+        // is the Legacy Viewer's toggle of the Inventory window there, which
+        // a focused list would take
+        (Action::InvProperties, [kalt(K::Enter, false, false), None]),
+        (Action::InvContextMenu, [kmod(K::F10, false, true), None]),
+        // Finder's Delete Immediately (Cmd+Option+Backspace)
+        (
+            Action::InvPurge,
+            [
+                if mac {
+                    Some(Binding {
+                        input: Input::key(K::Backspace),
+                        ctrl: true,
+                        shift: false,
+                        alt: true,
+                    })
+                } else {
+                    kmod(K::Delete, false, true)
+                },
+                None,
+            ],
+        ),
+        // Explorer's and Finder's (Cmd+Z, Cmd+Shift+Z): Ctrl+Y, and
+        // Ctrl+Shift+Z as Dolphin and most editors
+        (Action::InvUndo, [kmod(K::KeyZ, true, false), None]),
+        (
+            Action::InvRedo,
+            if mac {
+                [kmod(K::KeyZ, true, true), None]
+            } else {
+                [kmod(K::KeyY, true, false), kmod(K::KeyZ, true, true)]
+            },
+        ),
+        // Explorer's, Dolphin's and Finder's (Cmd+T, Cmd+W; Finder and
+        // Safari go from tab to tab with Cmd+Shift+] / [, as Ctrl+Tab
+        // elsewhere)
+        (Action::InvNewTab, [kmod(K::KeyT, true, false), None]),
+        (Action::InvCloseTab, [kmod(K::KeyW, true, false), None]),
+        (
+            Action::InvNextTab,
+            [
+                if mac {
+                    kmod(K::BracketRight, true, true)
+                } else {
+                    kmod(K::Tab, true, false)
+                },
+                None,
+            ],
+        ),
+        (
+            Action::InvPreviousTab,
+            [
+                if mac {
+                    kmod(K::BracketLeft, true, true)
+                } else {
+                    kmod(K::Tab, true, true)
+                },
+                None,
+            ],
+        ),
+    ]
 }
 
 impl Default for KeyBindings {
@@ -1140,7 +1434,9 @@ impl KeyBindings {
                 [kmod(K::Tab, true, true), kalt(K::ArrowUp, false, false)],
             ),
         ];
-        KeyBindings { map: defaults }
+        let mut map = defaults;
+        map.extend(inventory_defaults(cfg!(target_os = "macos")));
+        KeyBindings { map }
     }
 }
 
@@ -1582,15 +1878,47 @@ impl KeyBindings {
     fn follow_letters_of(&mut self, layout: &layout::KeyboardLayout) {
         let before = Self::us_places(layout.movement_keys());
         let after = Self::for_layout(layout);
+        // the defaults still in place that move: (action, slot, old, new)
+        let mut moves: Vec<(Action, usize, Binding, Binding)> = Vec::new();
         for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
             for slot in 0..2 {
-                let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
-                    continue;
-                };
-                if old == new || self.get(*action)[slot].as_ref() != Some(old) || !self.rivals(*action, new).is_empty() {
-                    continue;
+                if let (Some(old), Some(new)) = (&old[slot], &new[slot])
+                    && old != new
+                    && self.get(*action)[slot].as_ref() == Some(old)
+                {
+                    moves.push((*action, slot, old.clone(), new.clone()));
                 }
-                self.set(*action, slot, Some(new.clone()));
+            }
+        }
+        // A move is refused while its new key is someone else's, unless that
+        // someone moves away from it too: two defaults that swap letters
+        // (AZERTY's Z and W: the inventory's Undo and Close tab) move
+        // together. Refused moves keep their key, which may refuse others.
+        let rivals: Vec<Vec<Action>> = moves.iter().map(|(action, _, _, new)| self.rivals(*action, new)).collect();
+        let mut allowed = vec![true; moves.len()];
+        loop {
+            let next: Vec<bool> = rivals
+                .iter()
+                .zip(&moves)
+                .enumerate()
+                .map(|(n, (rivals, (_, _, _, new)))| {
+                    allowed[n]
+                        && rivals.iter().all(|rival| {
+                            moves
+                                .iter()
+                                .zip(&allowed)
+                                .any(|((action, _, old, _), ok)| *ok && action == rival && old == new)
+                        })
+                })
+                .collect();
+            if next == allowed {
+                break;
+            }
+            allowed = next;
+        }
+        for ((action, slot, _, new), ok) in moves.into_iter().zip(allowed) {
+            if ok {
+                self.set(action, slot, Some(new));
             }
         }
     }
@@ -1641,7 +1969,15 @@ impl KeyBindings {
         let meet_while_typing = (b.ctrl || b.alt) && !kept_on_every_layout(b);
         self.users(b)
             .into_iter()
-            .filter(|x| *x != a && (is_chat(*x) == is_chat(a) || meet_while_typing))
+            .filter(|x| {
+                *x != a
+                    && match (is_inventory(*x), is_inventory(a)) {
+                        (true, true) => true,
+                        (false, false) => is_chat(*x) == is_chat(a) || meet_while_typing,
+                        // the focused list keeps its keys: no meeting
+                        _ => false,
+                    }
+            })
             .collect()
     }
 
@@ -1680,6 +2016,7 @@ impl KeyBindings {
         let exact = self.map.iter().find(|(a, bs)| {
             !is_held(*a)
                 && !is_chat(*a)
+                && !is_inventory(*a)
                 && bs
                     .iter()
                     .flatten()
@@ -1693,7 +2030,12 @@ impl KeyBindings {
         }
         self.map
             .iter()
-            .find(|(a, bs)| !is_held(*a) && !is_chat(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
+            .find(|(a, bs)| {
+                !is_held(*a)
+                    && !is_chat(*a)
+                    && !is_inventory(*a)
+                    && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift)
+            })
             .map(|(a, _)| *a)
     }
 
@@ -1728,6 +2070,7 @@ impl KeyBindings {
                 *a != Action::Up
                     && *a != Action::HudDrag
                     && !is_chat(*a)
+                    && !is_inventory(*a)
                     && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
             })
     }
@@ -2595,6 +2938,89 @@ mod tests {
         assert_eq!(kb.sanitized().get(Action::LensZoomIn)[0], None);
     }
 
+    /// The inventory's commands share chords with the world's shortcuts
+    /// without conflicting with them, and the keys the list keeps are
+    /// refused.
+    #[test]
+    fn inventory_keys_only_meet_each_other() {
+        let kb = KeyBindings::default();
+        // People and Invert selection, the sunset and New folder
+        for (world, list) in [
+            (Action::People, Action::InvInvertSelection),
+            (Action::EnvSunset, Action::InvNewFolder),
+        ] {
+            let b = kb.get(list)[0].clone().expect("default binding");
+            assert!(kb.users(&b).contains(&world));
+            assert!(!kb.rivals(list, &b).contains(&world));
+            assert!(!kb.rivals(world, &b).contains(&list));
+        }
+        // never dispatched by the world
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        let a = kb.get(Action::InvInvertSelection)[0].clone().expect("default binding");
+        assert_ne!(kb.triggered(&a.input, ctrl_shift), Some(Action::InvInvertSelection));
+        // two inventory commands on one key do conflict
+        let mut kb = kb;
+        kb.set(Action::InvRefresh, 0, Some(a.clone()));
+        assert!(kb.rivals(Action::InvRefresh, &a).contains(&Action::InvInvertSelection));
+        // keys the list keeps fixed, or types, are refused, its others accepted
+        let with = |code, ctrl: bool, shift: bool, alt: bool| Binding::captured(Input::key(code), Mods { ctrl, shift, alt });
+        let plain = |code| with(code, false, false, false);
+        let ok = |a: Action, b: &Binding| inventory_accepts_on(a, b, false, false);
+        let refresh = Action::InvRefresh;
+        assert!(!ok(refresh, &plain(KeyCode::Enter)));
+        assert!(!ok(refresh, &plain(KeyCode::ArrowDown)));
+        assert!(
+            !ok(refresh, &with(KeyCode::ArrowDown, true, false, false)),
+            "Ctrl+Down moves the keyboard's place"
+        );
+        assert!(
+            !ok(refresh, &with(KeyCode::Tab, false, true, false)),
+            "Shift+Tab goes back through the fields"
+        );
+        assert!(!ok(refresh, &plain(KeyCode::KeyR)), "a letter alone is type-ahead");
+        assert!(!ok(refresh, &with(KeyCode::KeyR, false, true, false)));
+        assert!(!ok(refresh, &plain(KeyCode::Space)));
+        assert!(ok(refresh, &with(KeyCode::KeyR, true, false, false)));
+        assert!(ok(refresh, &plain(KeyCode::F6)));
+        // Backspace deletes on a Mac
+        assert!(ok(Action::InvUp, &plain(KeyCode::Backspace)));
+        assert!(!inventory_accepts_on(Action::InvUp, &plain(KeyCode::Backspace), true, false));
+        // egui's clipboard chords on Windows, Shift+Delete for Purge only
+        let shift_delete = with(KeyCode::Delete, false, true, false);
+        assert!(inventory_accepts_on(Action::InvPurge, &shift_delete, false, true));
+        assert!(!inventory_accepts_on(refresh, &shift_delete, false, true));
+        assert!(!inventory_accepts_on(
+            refresh,
+            &with(KeyCode::Insert, true, false, false),
+            false,
+            true
+        ));
+        // mouse buttons for the explorer's moves only
+        let back = Binding::captured(Input::Mouse("Back".into()), Mods::default());
+        assert!(ok(Action::InvBack, &back));
+        assert!(!ok(Action::InvSelectAll, &back));
+        assert!(!ok(
+            Action::InvBack,
+            &Binding::captured(Input::Mouse("Other8".into()), Mods::default())
+        ));
+        // every default is one the list takes, and none is the Inventory
+        // window's toggle (Ctrl+I, Cmd+I on a Mac): a focused list would
+        // keep it from closing the window
+        let toggle = kmod(KeyCode::KeyI, true, false).expect("binding");
+        for mac in [false, true] {
+            for (a, bindings) in inventory_defaults(mac) {
+                for b in bindings.iter().flatten() {
+                    assert!(inventory_accepts_on(a, b, mac, !mac), "{a:?} {b:?} mac={mac}");
+                    assert_ne!(*b, toggle, "{a:?} mac={mac}");
+                }
+            }
+        }
+    }
+
     /// World › Environment's shortcuts (menu_viewer.xml): Ctrl+Shift+U / Y /
     /// N / X / J, added to older settings files and rebindable.
     #[test]
@@ -2616,7 +3042,12 @@ mod tests {
         ] {
             let code = letter(us_code);
             assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
-            assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
+            let binding = kb.get(action)[0].clone().expect("default binding");
+            // the inventory list's own Ctrl+Shift+N (New folder) shares the
+            // chord without a conflict: the focused list keeps it
+            let world: Vec<Action> = kb.users(&binding).into_iter().filter(|a| !is_inventory(*a)).collect();
+            assert_eq!(world, [action]);
+            assert!(kb.rivals(action, &binding).is_empty());
             assert_eq!(action.time_of_day(), Some(time));
         }
         assert_eq!(Action::Fly.time_of_day(), None);

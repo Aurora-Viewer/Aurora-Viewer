@@ -1372,6 +1372,17 @@ inventory-move-to = Move to…
 inventory-move-filter = Filter folders by name…
 inventory-move-selection-name = Move “{ $name }”
 inventory-move-selection-count = Move { $count } items
+inventory-copy-selection-count = { $count ->
+    [one] Copy 1 item
+   *[other] Copy { $count } items
+}
+inventory-link-selection-count = { $count ->
+    [one] Link 1 item
+   *[other] Link { $count } items
+}
+inventory-drop-move-here = Move here
+inventory-drop-copy-here = Copy here
+inventory-drop-link-here = Create links here
 inventory-move-no-folders = No folders available for this filter.
 inventory-widen = Widen the window
 inventory-additional-window = Additional inventory window
@@ -1425,6 +1436,65 @@ inventory-column-both-rights = You → next owner
 inventory-columns = Columns
 inventory-column-permissions = Permissions
 inventory-columns-reset = Reset inventory layout
+inventory-back = Back
+inventory-forward = Forward
+inventory-up = Up one level
+keybinds-inventory-root = Go to the top
+keybinds-inventory-search = Search the inventory
+keybinds-inventory-toggle = Select or unselect the row in focus
+keybinds-inventory-menu = Open the menu of the selection
+keybinds-inventory-purge = Purge from the Trash
+keybinds-inventory-refused = { $keys } stays the inventory list's own key: choose another.
+inventory-path-edit = Type a path
+inventory-path-subfolders = Subfolders
+inventory-copy-path = Copy path
+inventory-show-in-folder = Show in folder
+inventory-pin = Pin to Quick access
+inventory-unpin = Unpin from Quick access
+inventory-quick-access = Quick access
+inventory-quick-access-drop = Drop a folder here to pin it
+inventory-invert-selection = Invert selection
+inventory-undo = Undo
+inventory-redo = Redo
+inventory-undo-step = Undo { $what }
+inventory-redo-step = Redo { $what }
+inventory-history-move = { $count ->
+    [one] move of 1 item
+   *[other] move of { $count } items
+    }
+inventory-history-delete = { $count ->
+    [one] delete of 1 item
+   *[other] delete of { $count } items
+    }
+inventory-history-rename = rename
+inventory-history-new-folder = new folder
+inventory-history-copy = { $count ->
+    [one] copy of 1 item
+   *[other] copy of { $count } items
+    }
+inventory-history-link = { $count ->
+    [one] link to 1 item
+   *[other] links to { $count } items
+    }
+inventory-undo-nothing = Nothing left to undo: those items have moved or are gone.
+inventory-redo-nothing = Nothing left to redo: those items have moved or are gone.
+inventory-undo-empty = Nothing to undo.
+inventory-redo-empty = Nothing to redo.
+inventory-undo-dropped = The last step's items have moved or are gone: it was dropped. Undo again for the step before.
+inventory-redo-dropped = The next step's items have moved or are gone: it was dropped. Redo again for the step after.
+inventory-undo-folder-not-empty = That new folder holds items put there since: move them out first, or delete the folder yourself.
+inventory-undo-kept-out = Those items are in the current outfit or the Marketplace listings now: change them there.
+inventory-restore-to = Restore to “{ $folder }”
+inventory-restore-to-origins = Restore to their folders
+inventory-purge-no-undo = Undo cannot bring them back.
+inventory-new-tab = New tab
+inventory-close-tab = Close tab
+inventory-next-tab = Next tab
+inventory-previous-tab = Previous tab
+inventory-open-in-new-tab = Open in new tab
+inventory-tabs-limit = At most { $count } tabs.
+inventory-copy-to-other-pane = Copy to the other pane
+inventory-move-to-other-pane = Move to the other pane
 inventory-resize-columns = Drag to resize columns. Double-click to reset their widths.
 inventory-resize-sidebar = Drag to resize the folder sidebar. Double-click to reset its width.
 inventory-resize-gallery = Drag to share the room between the tiles and the list. Double-click to reset it.

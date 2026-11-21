@@ -1375,6 +1375,17 @@ inventory-move-to = Déplacer vers…
 inventory-move-filter = Filtrer les dossiers par nom…
 inventory-move-selection-name = Déplacer « { $name } »
 inventory-move-selection-count = Déplacer { $count } éléments
+inventory-copy-selection-count = { $count ->
+    [one] Copier 1 élément
+   *[other] Copier { $count } éléments
+}
+inventory-link-selection-count = { $count ->
+    [one] Lier 1 élément
+   *[other] Lier { $count } éléments
+}
+inventory-drop-move-here = Déplacer ici
+inventory-drop-copy-here = Copier ici
+inventory-drop-link-here = Créer des liens ici
 inventory-move-no-folders = Aucun dossier disponible pour ce filtre.
 inventory-widen = Élargir la fenêtre
 inventory-additional-window = Fenêtre d’inventaire supplémentaire
@@ -1428,6 +1439,65 @@ inventory-column-both-rights = Vous → prochain
 inventory-columns = Colonnes
 inventory-column-permissions = Permissions
 inventory-columns-reset = Réinitialiser la disposition de l’inventaire
+inventory-back = Précédent
+inventory-forward = Suivant
+inventory-up = Dossier parent
+keybinds-inventory-root = Aller tout en haut
+keybinds-inventory-search = Rechercher dans l’inventaire
+keybinds-inventory-toggle = Sélectionner ou désélectionner la ligne active
+keybinds-inventory-menu = Ouvrir le menu de la sélection
+keybinds-inventory-purge = Purger de la corbeille
+keybinds-inventory-refused = { $keys } reste une touche propre à la liste de l’inventaire : choisissez-en une autre.
+inventory-path-edit = Saisir un chemin
+inventory-path-subfolders = Sous-dossiers
+inventory-copy-path = Copier le chemin
+inventory-show-in-folder = Afficher dans le dossier
+inventory-pin = Épingler à l’accès rapide
+inventory-unpin = Désépingler de l’accès rapide
+inventory-quick-access = Accès rapide
+inventory-quick-access-drop = Déposez un dossier ici pour l’épingler
+inventory-invert-selection = Inverser la sélection
+inventory-undo = Annuler
+inventory-redo = Rétablir
+inventory-undo-step = Annuler { $what }
+inventory-redo-step = Rétablir { $what }
+inventory-history-move = { $count ->
+    [one] le déplacement d’un élément
+   *[other] le déplacement de { $count } éléments
+    }
+inventory-history-delete = { $count ->
+    [one] la suppression d’un élément
+   *[other] la suppression de { $count } éléments
+    }
+inventory-history-rename = le changement de nom
+inventory-history-new-folder = la création du dossier
+inventory-history-copy = { $count ->
+    [one] la copie d’un élément
+   *[other] la copie de { $count } éléments
+    }
+inventory-history-link = { $count ->
+    [one] le lien vers un élément
+   *[other] les liens vers { $count } éléments
+    }
+inventory-undo-nothing = Plus rien à annuler : ces éléments ont été déplacés ou n’existent plus.
+inventory-redo-nothing = Plus rien à rétablir : ces éléments ont été déplacés ou n’existent plus.
+inventory-undo-empty = Rien à annuler.
+inventory-redo-empty = Rien à rétablir.
+inventory-undo-dropped = Les éléments de la dernière étape ont été déplacés ou n’existent plus : elle est abandonnée. Annulez de nouveau pour l’étape précédente.
+inventory-redo-dropped = Les éléments de l’étape suivante ont été déplacés ou n’existent plus : elle est abandonnée. Rétablissez de nouveau pour l’étape d’après.
+inventory-undo-folder-not-empty = Ce nouveau dossier contient des éléments ajoutés depuis : sortez-les d’abord, ou supprimez le dossier vous-même.
+inventory-undo-kept-out = Ces éléments sont maintenant dans la tenue actuelle ou les annonces de la Place du marché : modifiez-les là-bas.
+inventory-restore-to = { "Restaurer dans « " }{ $folder }{ " »" }
+inventory-restore-to-origins = Restaurer dans leurs dossiers
+inventory-purge-no-undo = Annuler ne pourra pas les récupérer.
+inventory-new-tab = Nouvel onglet
+inventory-close-tab = Fermer l’onglet
+inventory-next-tab = Onglet suivant
+inventory-previous-tab = Onglet précédent
+inventory-open-in-new-tab = Ouvrir dans un nouvel onglet
+inventory-tabs-limit = { $count } onglets au plus.
+inventory-copy-to-other-pane = Copier dans l’autre volet
+inventory-move-to-other-pane = Déplacer dans l’autre volet
 inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rétablir leurs largeurs.
 inventory-resize-sidebar = Faites glisser pour redimensionner le panneau des dossiers. Double-cliquez pour rétablir sa largeur.
 inventory-resize-gallery = Faites glisser pour partager la place entre les vignettes et la liste. Double-cliquez pour la rétablir.

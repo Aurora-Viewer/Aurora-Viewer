@@ -361,6 +361,14 @@ fn pane(
         if blank.clicked() {
             clipboard::request_focus(ui, st);
         }
+        // its right-click: the menu of the folder shown
+        if blank.secondary_clicked()
+            && st.tab == 0
+            && let Some(pos) = blank.interact_pointer_pos()
+        {
+            st.row_menu = Some((root, pos));
+            st.background_menu = true;
+        }
         if count == 0 {
             if own {
                 let text = match inv.folders.get(&root).map(|f| f.state) {
@@ -633,6 +641,10 @@ fn tile(
     };
     let key = if item.is_some() { "inv_item" } else { "inv_folder" };
     let r = ui.interact(rect, ui.make_persistent_id((key, id)), sense);
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
     #[cfg(test)]
     row::tests::record(ui, id, rect);
     fill(ui);
@@ -744,6 +756,8 @@ fn tile(
                 st.browse = id;
                 st.selection.clear();
                 st.selected = None;
+            } else if r.middle_clicked() {
+                super::tabs::open(st, prefs, id, false);
             }
         }
         _ => {}
@@ -751,7 +765,8 @@ fn tile(
 }
 
 fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, center: Pos2, size: f32, tint: Color32) {
-    if let Some(texture) = icons.get(name) {
+    // sharp up to 256-point tiles at 200%
+    if let Some(texture) = icons.sized(ui.ctx(), name, size) {
         ui.painter().image(
             texture.id(),
             Rect::from_center_size(center, Vec2::splat(size)),

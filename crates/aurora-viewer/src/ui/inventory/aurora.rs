@@ -10,17 +10,25 @@
 //! (`details`). The tree, the search, the drag and drop, the menus and the
 //! dialogs are the inventory's own, shared with the Legacy window.
 
+mod breadcrumb;
 mod columns;
 mod details;
 mod gallery;
+mod history;
+pub(super) mod marquee;
 mod rights;
 pub(super) mod rows;
 mod sidebar;
 mod smart_bar;
+pub(super) mod tabs;
 mod toolbar;
 
+pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
+pub(super) use history::{History, Place};
+pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
+pub(super) use tabs::Tabs;
 
 use super::permissions::Rights;
 use super::*;
@@ -111,12 +119,24 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" | "aurora-gallery-medium" => {
-                egui::vec2(800.0, 640.0)
-            }
+            "aurora-medium"
+            | "aurora-sidebar-medium"
+            | "aurora-worn-medium"
+            | "aurora-delete-confirm-medium"
+            | "aurora-gallery-medium"
+            | "aurora-explorer-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-gallery"
+            | "aurora-system-folders"
+            | "aurora-gallery-system-folders"
+            | "aurora-filtered"
             | "aurora-gallery-large"
+            | "aurora-explorer"
+            | "aurora-explorer-path"
+            | "aurora-explorer-menu"
+            | "aurora-explorer-undo"
+            | "aurora-explorer-tabs"
+            | "aurora-explorer-split"
             | "aurora-combination"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
@@ -257,7 +277,11 @@ pub(super) fn contents(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
 ) {
-    let layout = Layout::for_width(ui.available_width());
+    // In the split view each pane is an explorer, without the column below
+    // the medium width (Dolphin's split view keeps its places panel aside).
+    let width = Layout::for_width(ui.available_width());
+    let narrow = st.other_pane.is_some() && width == Layout::Compact;
+    let layout = if narrow { Layout::Medium } else { width };
     st.aurora = Some(Frame {
         layout,
         rights: prefs.rights,
@@ -273,9 +297,21 @@ pub(super) fn contents(
     if st.browse.is_nil() || !inv.folders.contains_key(&st.browse) || (base != inv.root && !rules::under(inv, st.browse, base)) {
         st.browse = base;
     }
+    if layout != Layout::Compact {
+        st.demo_explorer_now(inv);
+        st.history.retain(|id| inv.folders.contains_key(&id));
+        tabs::retain(st, prefs, inv);
+        if st.history.observe(history::Place::of(st)) {
+            // the keyboard's place and a typed path belong to the folder left
+            st.focus = None;
+            st.path_edit = None;
+        }
+    } else {
+        st.path_edit = None;
+    }
     match layout {
         Layout::Compact => compact(ui, p, icons, inv, st, prefs, facts, images, actions),
-        Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
+        Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout, narrow),
     }
     row_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -303,11 +339,41 @@ fn row_menu(
         pos,
         &mut open,
         p,
-        |ui| context::show(ui, p, inv, id, st, prefs, facts, actions),
+        |ui| {
+            if st.background_menu {
+                context::show_background(ui, p, inv, id, st, prefs, facts, actions);
+            } else {
+                context::show(ui, p, inv, id, st, prefs, facts, actions);
+            }
+        },
     );
     if !open || !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) {
         st.row_menu = None;
+        st.background_menu = false;
     }
+}
+
+/// The letters typed to find a row, at the list's top right while they
+/// count (Aurora's: the Legacy Viewer's and Explorer's type-ahead show
+/// nothing, which leaves it unknown).
+fn type_ahead_label(ui: &egui::Ui, p: &Palette, st: &InventoryUi, list: Rect) {
+    let now = ui.input(|i| i.time);
+    let Some(text) = st.type_ahead.shown(now) else { return };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.5), p.ink);
+    let size = galley.size() + egui::vec2(16.0, 8.0);
+    let rect = Rect::from_min_size(egui::pos2(list.right() - size.x - 14.0, list.top() + 6.0), size);
+    let painter = ui.painter().with_clip_rect(list);
+    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+    painter.rect_stroke(
+        rect,
+        ui.visuals().window_corner_radius,
+        egui::Stroke::new(1.0, p.violet),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, p.ink);
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
 }
 
 /// Lay `body` out in exactly `height` of the room left: the list keeps the
@@ -395,6 +461,7 @@ fn compact(
     });
     ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 /// The medium and wide window: the column at the left, the explorer, and
@@ -411,22 +478,35 @@ fn explorer(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
     layout: Layout,
+    narrow: bool,
 ) {
-    toolbar::explorer_row(ui, p, inv, st, prefs, layout, actions);
+    let window = ui.max_rect();
+    history::input(ui, inv, st, prefs, actions, window);
+    if clipboard::list_has_focus(ui, st) && !ui.ctx().text_edit_focused() {
+        tabs::input(ui, st, prefs);
+    }
+    tabs::strip(ui, p, inv, st, prefs, facts, actions);
+    toolbar::explorer_row(ui, p, inv, st, prefs, facts, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
     let pane_w = if layout == Layout::Wide && prefs.show_details { 300.0 } else { 0.0 };
     const GAP: f32 = 8.0;
-    let side_w = columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer);
+    let side_w = if narrow {
+        0.0
+    } else {
+        columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer)
+    };
     let side = Rect::from_min_size(area.min, egui::vec2(side_w, area.height()));
     let pane = Rect::from_min_max(egui::pos2(area.right() - pane_w, area.top()), area.max);
     let content = Rect::from_min_max(
-        egui::pos2(side.right() + GAP, area.top()),
+        egui::pos2(if narrow { area.left() } else { side.right() + GAP }, area.top()),
         egui::pos2(if pane_w > 0.0 { pane.left() - GAP } else { area.right() }, area.bottom()),
     );
-    let mut side_ui = ui.new_child(egui::UiBuilder::new().max_rect(side).id_salt("aurora_inventory_side"));
-    side_ui.set_clip_rect(side.intersect(ui.clip_rect()));
-    sidebar::show(&mut side_ui, p, icons, inv, st, prefs, facts, actions);
+    if !narrow {
+        let mut side_ui = ui.new_child(egui::UiBuilder::new().max_rect(side).id_salt("aurora_inventory_side"));
+        side_ui.set_clip_rect(side.intersect(ui.clip_rect()));
+        sidebar::show(&mut side_ui, p, icons, inv, st, prefs, facts, actions);
+    }
     let mut content_ui = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(content)
@@ -465,7 +545,7 @@ fn explorer_list(
 ) {
     match layout {
         Layout::Wide => toolbar::chips(ui, p, st, prefs),
-        _ => toolbar::breadcrumb_row(ui, p, inv, st),
+        _ => toolbar::breadcrumb_row(ui, p, inv, st, prefs, facts, actions),
     }
     let list_id = ui.scope_id().with("aurora_inventory_list");
     let Some(mut frame) = st.aurora else { return };
@@ -512,6 +592,11 @@ fn explorer_list(
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
+        // a band drawn from the empty space selects rows or tiles
+        let banded = shown != view::ExplorerView::Combination;
+        if banded {
+            marquee::begin(ui, st, list_rect);
+        }
         let out = match shown {
             view::ExplorerView::List => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
                 list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
@@ -523,17 +608,25 @@ fn explorer_list(
                 gallery::combination(ui, p, icons, inv, st, prefs, facts, images, actions, list_rect, list_id, browse)
             }
         };
+        if banded {
+            marquee::end(ui, p, st, list_rect, out.id, out.inner_rect);
+        }
         if let Some(frame) = &mut st.aurora {
             frame.explorer = false;
         }
         std::mem::swap(&mut st.plain, &mut st.flat);
         out
     } else {
-        in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+        // Recent, Worn, Favorites and the results take the band too
+        marquee::begin(ui, st, list_rect);
+        let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
             list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false)
-        })
+        });
+        marquee::end(ui, p, st, list_rect, out.id, out.inner_rect);
+        out
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
+    type_ahead_label(ui, p, st, list_rect);
     // between the tiles too, what is dropped goes into the folder shown
     let zone_rect = if shown == view::ExplorerView::List {
         out.inner_rect
@@ -556,6 +649,7 @@ fn explorer_list(
     });
     ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 #[cfg(test)]
@@ -790,6 +884,232 @@ mod tests {
         fn row(&self, id: u128) -> Rect {
             rows::tests::drawn(&self.ctx, Uuid::from_u128(id)).unwrap_or_else(|| panic!("row {id} drawn at {} px", self.width))
         }
+    }
+
+    /// Press at `from`, move to `to` in steps, and report what was carried
+    /// before the release.
+    fn press_and_move(h: &mut Harness, from: egui::Pos2, to: egui::Pos2) -> bool {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![button(from, true)]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
+        }
+        let carried = drag::carried_ids(&h.ctx).is_some();
+        h.run(vec![button(to, false)]);
+        h.frames(2);
+        carried
+    }
+
+    #[test]
+    fn f2_renames_and_alt_enter_opens_the_properties_after_a_click() {
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        assert_eq!(h.st.selected, Some(Uuid::from_u128(8100)));
+        h.run(vec![key(egui::Key::Enter, egui::Modifiers::ALT)]);
+        h.frames(2);
+        // in a window of its own; a second Alt+Enter on another row opens
+        // another, the first kept
+        let open = |h: &Harness| {
+            h.st.windows
+                .iter()
+                .filter_map(|w| match w.state.dialog {
+                    Some(EditDialog::Properties(id)) => Some(id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(open(&h), vec![Uuid::from_u128(8100)], "selection {:?}", h.st.selection.len());
+        assert!(h.st.dialog.is_none(), "the list stays free");
+        let other = h.row(8102);
+        // the first press let go, as a hand does (else egui reads a repeat)
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        }]);
+        h.click(egui::pos2(other.left() + 40.0, other.center().y), Default::default());
+        h.run(vec![key(egui::Key::Enter, egui::Modifiers::ALT)]);
+        h.frames(2);
+        assert_eq!(open(&h), vec![Uuid::from_u128(8100), Uuid::from_u128(8102)]);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        h.run(vec![key(egui::Key::F2, egui::Modifiers::NONE)]);
+        h.frames(2);
+        assert_eq!(h.st.rename.as_ref().map(|r| r.id), Some(Uuid::from_u128(8100)), "F2 renames");
+    }
+
+    #[test]
+    fn a_pin_takes_left_and_right_clicks_and_drags_to_reorder() {
+        let mut h = Harness::new(WIDE_SIZE);
+        let (a, b) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        h.prefs.pinned = vec![a, b];
+        h.frames(4);
+        let pin = |h: &Harness, id: Uuid| {
+            h.ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("aurora_pin", id))))
+                .expect("pin drawn")
+        };
+        // a left click shows it
+        h.click(pin(&h, b).center(), Default::default());
+        assert_eq!(h.st.browse, b);
+        // a right click opens its menu, not a drag
+        let at = pin(&h, a).center();
+        h.run(vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            h.run(vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+        h.frames(2);
+        assert!(egui::Popup::is_any_open(&h.ctx), "the pin's menu");
+        assert!(drag::carried_ids(&h.ctx).is_none());
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(2);
+        // dragged onto the other pin, it takes its place
+        let (from, to) = (pin(&h, b).center(), pin(&h, a).center());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![button(from, true)]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
+        }
+        h.run(vec![button(to, false)]);
+        h.frames(2);
+        assert_eq!(h.prefs.pinned, vec![b, a]);
+    }
+
+    #[test]
+    fn letters_typed_after_a_click_find_a_row() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        h.click(egui::pos2(row.left() + 40.0, row.center().y), Default::default());
+        let before = h.st.selected;
+        let name = |h: &Harness| h.st.selected.map(|id| rules::name(&h.inv, id)).unwrap_or_default();
+        h.run(vec![egui::Event::Text("i".into())]);
+        h.frames(2);
+        assert!(
+            name(&h).to_lowercase().starts_with('i'),
+            "typed i: {} (before {:?})",
+            name(&h),
+            before
+        );
+    }
+
+    #[test]
+    fn esc_during_a_drag_drops_nothing() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        let folder = h.row(8001);
+        let name = egui::pos2(row.left() + 40.0, row.center().y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(name)]);
+        h.run(vec![button(name, true)]);
+        for step in 1..=4 {
+            h.run(vec![egui::Event::PointerMoved(name + egui::vec2(0.0, 6.0 * step as f32))]);
+        }
+        assert!(drag::carried_ids(&h.ctx).is_some(), "the drag started");
+        h.run(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        let over = folder.center();
+        for _ in 0..3 {
+            h.run(vec![egui::Event::PointerMoved(over)]);
+        }
+        assert!(drag::carried_ids(&h.ctx).is_none(), "Esc ended the drag");
+        h.actions.clear();
+        h.run(vec![button(over, false)]);
+        h.frames(2);
+        assert!(
+            !h.actions.iter().any(|a| matches!(a, InvAction::Drop(_) | InvAction::Edit(_))),
+            "nothing dropped"
+        );
+    }
+
+    #[test]
+    fn a_row_drags_by_its_name_and_its_other_columns_draw_the_band() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        // from the date column, down over the next rows: a band, no cargo
+        let from = egui::pos2(row.right() - 12.0, row.center().y);
+        let to = egui::pos2(from.x, row.bottom() + 70.0);
+        assert!(!press_and_move(&mut h, from, to), "the other columns do not carry the item");
+        assert!(
+            h.st.selection.len() >= 3,
+            "the band selects the rows it crossed: {:?}",
+            h.st.selection.len()
+        );
+        // a click there still selects the row alone
+        h.click(from, Default::default());
+        assert_eq!(h.st.selection, HashSet::from([Uuid::from_u128(8100)]));
+        // from its name: the item is carried, nothing banded
+        let name = egui::pos2(row.left() + 40.0, row.center().y);
+        assert!(
+            press_and_move(&mut h, name, egui::pos2(name.x + 10.0, row.bottom() + 70.0)),
+            "the name carries the item"
+        );
+    }
+
+    #[test]
+    fn results_rows_drag_by_their_name_and_their_other_columns_draw_the_band() {
+        // Recent, Worn, Favorites and a search list results, not a folder
+        let mut h = Harness::new(WIDE_SIZE);
+        h.frames(3);
+        h.st.search = "Demo".into();
+        h.frames(6);
+        let drawn: Vec<Rect> = (8000..8300u128)
+            .filter_map(|n| rows::tests::drawn(&h.ctx, Uuid::from_u128(n)))
+            .collect();
+        let first = drawn.iter().min_by(|a, b| a.top().total_cmp(&b.top())).copied().expect("rows");
+        let from = egui::pos2(first.right() - 12.0, first.center().y);
+        let to = egui::pos2(from.x, first.bottom() + 70.0);
+        assert!(!press_and_move(&mut h, from, to), "the other columns do not carry the row");
+        assert!(h.st.selection.len() >= 3, "banded: {}", h.st.selection.len());
     }
 
     #[test]

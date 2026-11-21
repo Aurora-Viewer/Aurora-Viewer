@@ -527,3 +527,46 @@ fn inventory_double_click_attaches_an_object_then_detaches_it_once_worn() {
     f.click(101, false);
     assert!(f.actions.is_empty());
 }
+
+#[test]
+fn inventory_drag_with_ctrl_copies_an_item_whose_copy_has_no_operations() {
+    // an item's copy is in `copies` alone: the drop must still take it
+    let (inv, ids) = crate::world::inventory::undo::tests_support::fixture();
+    let none = HashSet::new();
+    let copy = rules::paste(&inv, &[ids.hat], ids.objects, false, false, &none, &none).expect("copy");
+    assert!(copy.operations.is_empty() && !copy.copies.is_empty());
+    assert!(drag::changes(&copy));
+    assert!(!drag::changes(&Mutation::default()));
+}
+
+#[test]
+fn copy_to_the_other_pane_is_refused_for_a_no_copy_item() {
+    let (inv, ids) = crate::world::inventory::undo::tests_support::fixture();
+    let prefs = InventoryPreferences::default();
+    let facts = Facts::default();
+    // the sword lacks Copy in the fixture; the hat has it
+    assert!(!drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Move,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.hat],
+        ids.objects,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+}

@@ -616,6 +616,34 @@ pub(crate) fn editable_row(
     row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
+/// [`editable_row`] with the keys of the entry's shortcut at its right end
+/// (an empty `keys` shows none).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn editable_row_keys(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    checked: Option<bool>,
+    down: Option<bool>,
+    editable: bool,
+    keys: &str,
+) -> egui::Response {
+    if keys.is_empty() || down.is_some() {
+        return editable_row(ui, p, icon, label, enabled, checked, down, editable);
+    }
+    let end = checked.map_or(End::Keys(keys), |on| End::CheckKeys(on, keys));
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+}
+
 /// One absolute cell of an editable menu toolbar, including its empty cells.
 pub(crate) fn icon_cell(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, editable: bool, size: Vec2) -> egui::Response {
     let sense = if editable {
