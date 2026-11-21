@@ -468,13 +468,13 @@ impl Set {
         }
     }
     pub fn folder_name(&self) -> String {
-        format!(
-            "{}{}{}{}{}",
-            self.name,
+        let suffix = format!(
+            "{}{}{}{}",
             if self.sits { ":SO" } else { "" },
             if self.smart { ":SM" } else { "" },
             if self.mouselook { ":DM" } else { "" },
             if self.default { ":**" } else { "" }
-        )
+        );
+        inventory::encoded_name(&self.name, &suffix)
     }
 }

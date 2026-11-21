@@ -261,7 +261,7 @@ impl App {
     }
 
     pub(super) fn gesture_play(&mut self, id: Uuid, key: Option<u8>) {
-        if self.world.rlva.has("sendgesture") {
+        if !gesture_allowed(&self.world.rlva) {
             return;
         }
         if let Some(definition) = self.gesture_state.manager.entries.get(&id).map(|e| e.definition.clone()) {
@@ -272,6 +272,12 @@ impl App {
     }
 
     fn gesture_preview(&mut self, id: Uuid, definition: Gesture, key: Option<u8>) {
+        // LLGestureMgr::playGesture (indra/newview/llgesturemgr.cpp) stops
+        // every play under @sendgesture, the gesture editor's Preview
+        // (LLPreviewGesture::onClickPreview) included
+        if !gesture_allowed(&self.world.rlva) {
+            return;
+        }
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
@@ -1230,6 +1236,11 @@ fn demo_replay_gestures(sound: Uuid) -> Vec<(u128, &'static str, Gesture)> {
     ]
 }
 
+/// RlvActions::canPlayGestures (indra/newview/rlvactions.cpp).
+fn gesture_allowed(rlva: &crate::world::rlva::Rlva) -> bool {
+    !rlva.has("sendgesture")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1337,5 +1348,17 @@ mod tests {
         state.queue_load(item, new, true, false, None, false);
         assert!(state.take_load(item, old).is_none());
         assert_eq!(state.take_load(item, new).expect("new load").asset, new);
+    }
+
+    /// LLGestureMgr::playGesture: @sendgesture stops the editor's Preview
+    /// too, which plays the gesture through `gesture_preview`.
+    #[test]
+    fn rlva_sendgesture_stops_every_gesture_play() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.rlva.configure(true);
+        assert!(gesture_allowed(&world.rlva));
+        world.rlva_console_input("@sendgesture=n");
+        assert!(!gesture_allowed(&world.rlva));
     }
 }

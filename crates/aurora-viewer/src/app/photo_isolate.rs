@@ -143,11 +143,9 @@ impl App {
             .get(id)
             .map(|p| p.name.clone())
             .filter(|n| !n.is_empty())
-            .or_else(|| {
-                object
-                    .map(|o| o.text.lines().next().unwrap_or("").to_owned())
-                    .filter(|n| !n.is_empty())
-            })
+            // the floating text as it is shown: none under @showhovertext*,
+            // the names and places hidden (LLHUDText::setString, llhudtext.cpp)
+            .or_else(|| crate::ui::hud::hover_text_title(&self.world, *id))
             .unwrap_or_else(|| aurora_i18n::tr!("photo-isolate-object").to_owned());
         (name, false)
     }

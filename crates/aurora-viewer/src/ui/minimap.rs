@@ -1390,6 +1390,7 @@ impl MiniMap {
     /// The mini-map's image of a region for another window (the header of
     /// "About Land"): its map tile, else the terrain drawn from
     /// the heights received (no map server, or the tile is not there yet).
+    /// None under RLVa `@showworldmap` or `@showminimap` (`header_image_shown`).
     pub fn region_image(
         &mut self,
         ctx: &egui::Context,
@@ -1397,6 +1398,9 @@ impl MiniMap {
         tiles: &mut MapTiles,
         handle: RegionHandle,
     ) -> Option<egui::TextureHandle> {
+        if !header_image_shown(world) {
+            return None;
+        }
         let (ox, oy) = aurora_net::handle_to_origin(handle);
         if let Ok(tile) = tiles.get(1, ox / 256, oy / 256, true) {
             return Some(tile);
@@ -1410,6 +1414,15 @@ impl MiniMap {
     pub fn prune(&mut self, world: &World) {
         self.terrain.retain(|h, _| world.regions.contains_key(h));
     }
+}
+
+/// The map image of the About Land and Region headers, an Aurora-only
+/// picture: the Legacy Viewer's floaters have none, so the rules of the
+/// nearest pictures of the region apply, the world map's tiles
+/// (`@showworldmap`, RlvActions::canShowWorldMap) and the mini-map's
+/// (`@showminimap`, RlvActions::canShowMinimap; rlvactions.cpp).
+pub(crate) fn header_image_shown(world: &World) -> bool {
+    !world.rlva.has("showworldmap") && !world.rlva.has("showminimap")
 }
 
 /// Ground under a global position, else our own height (teleport target).
@@ -1958,5 +1971,24 @@ mod beacon_tests {
         track.pending = false;
         track.invalid = true;
         assert!(!hit.contains(hit.rect.center(), &track));
+    }
+}
+
+#[cfg(test)]
+mod rlva_header_tests {
+    use super::*;
+
+    /// The About Land and Region headers' map image follows RLVa's map
+    /// pictures: none under `@showworldmap` or `@showminimap`.
+    #[test]
+    fn map_restrictions_hide_the_header_image() {
+        let mut w = crate::world::rlva_location_tests::showloc_world();
+        assert!(header_image_shown(&w), "@showloc alone keeps it");
+        for rule in ["showworldmap", "showminimap"] {
+            w.rlva_console_input(&format!("@{rule}=n"));
+            assert!(!header_image_shown(&w), "{rule}");
+            w.rlva_console_input(&format!("@{rule}=y"));
+            assert!(header_image_shown(&w), "{rule} lifted");
+        }
     }
 }

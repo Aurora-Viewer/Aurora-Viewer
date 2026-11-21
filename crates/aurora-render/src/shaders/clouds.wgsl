@@ -29,6 +29,7 @@ struct U {
     sizes: vec4u,          // full w, h, half w, h
     misc: vec4u,           // frame, steps, light steps, history valid
     gen: vec4u,            // x: z of the first noise layer of this frame's slice; a still: yz: its first pixel in the whole image, w: sub-samples
+    planet: vec4f,         // x: the planet's radius (km), y: the camera's height above the sea (km), z: 1 = the world is drawn curved (curvature.rs)
 }
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -49,7 +50,10 @@ struct U {
 @group(0) @binding(19) var depth_t: texture_depth_2d;
 
 const PI: f32 = 3.14159265;
-const R_PLANET: f32 = 6371.0;
+// The layer is a shell around the planet, the camera on its surface: the
+// Earth's, or planet curvature's (Params::planet_km), so that the clouds
+// bend as the sea under them does.
+fn r_planet() -> f32 { return u.planet.x; }
 const FAR_KM: f32 = 45.0;
 // The base noise is stretched sideways: a heap is wider than tall (width to
 // height 1 to 2 for fair-weather cumulus), and its tile covers 10.5 km across
@@ -178,7 +182,7 @@ fn gen_curl(@builtin(global_invocation_id) id: vec3u) {
 }
 
 // ---------------------------------------------------------------- density
-fn height_of(p: vec3f) -> f32 { return length(p + vec3f(0.0, R_PLANET, 0.0)) - R_PLANET; }
+fn height_of(p: vec3f) -> f32 { return length(p + vec3f(0.0, r_planet(), 0.0)) - r_planet(); }
 fn top_km() -> f32 { return u.layer.y; }
 
 // The weather map, laid over the layer: one tile is `u.drift.z` km. `off` is
@@ -269,9 +273,18 @@ fn mie(c: f32) -> f32 {
 // Exit distance of a ray from the camera (inside the sphere) through the
 // sphere of radius `r`.
 fn sphere_far(d: vec3f, r: f32) -> f32 {
-    let b = R_PLANET * d.y;
-    let c = R_PLANET * R_PLANET - r * r;
+    let b = r_planet() * d.y;
+    let c = r_planet() * r_planet() - r * r;
     return -b + sqrt(b * b - c);
+}
+
+// Whether a y-up ray from the camera goes down into the sea: the sphere
+// under the layer's, `u.planet.y` below the camera.
+fn meets_sea(d: vec3f) -> bool {
+    let h = min(u.planet.y, r_planet());
+    let b = r_planet() * d.y;
+    // R² - (R - h)², written so that it does not cancel on a large planet
+    return b < 0.0 && b * b >= h * (2.0 * r_planet() - h);
 }
 
 struct Res {
@@ -287,10 +300,12 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
     r.col = vec3f(0.0);
     r.t = 1.0;
     r.depth = FAR_KM;
-    // no clouds below the horizon (as Legacy Viewer SL-11589)
-    if dir.y <= 0.0 { return r; }
-    let t0 = sphere_far(dir, R_PLANET + u.layer.x);
-    let t1 = min(sphere_far(dir, R_PLANET + top_km()), FAR_KM);
+    // No clouds below the horizon (as Legacy Viewer SL-11589). A curved
+    // world has sky under eye level, down to the sea's horizon: a ray there
+    // that misses the sea goes on to the layer.
+    if dir.y <= 0.0 && (u.planet.z < 0.5 || meets_sea(dir)) { return r; }
+    let t0 = sphere_far(dir, r_planet() + u.layer.x);
+    let t1 = min(sphere_far(dir, r_planet() + top_km()), FAR_KM);
     if t0 >= t1 { return r; }
     let len = t1 - t0;
     let sun = yup(u.sun.xyz);
@@ -364,7 +379,7 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
             let hf = saturate((height_of(p) - u.layer.x) / (top_km() - u.layer.x));
             // The sky light reaches a point through the cloud above it: one
             // tap straight up darkens the undersides and the cores.
-            let up = normalize(p + vec3f(0.0, R_PLANET, 0.0));
+            let up = normalize(p + vec3f(0.0, r_planet(), 0.0));
             let ap = p + up * 0.3;
             let bp = p + up * 0.6;
             let cp = p + up * 1.0;
@@ -503,7 +518,7 @@ fn trace(@builtin(global_invocation_id) id: vec3u) {
         if band >= 0.0 && band < 3.0 && hh >= 0.0 && hh < top_km() - u.layer.x {
             let x = fpx.x / 100.0;
             let z = 2.0 + 5.0 * band;
-            let ycorr = u.layer.x + hh - (x * x + z * z) / (2.0 * R_PLANET);
+            let ycorr = u.layer.x + hh - (x * x + z * z) / (2.0 * r_planet());
             let p = vec3f(x, ycorr, z);
             let d = density(p, weather_at(p, sky_off()), sky_off(), true);
             o = vec3f(select(0.0, 1.0, d > 0.02), select(0.0, 1.0, d > 0.15), 0.0);

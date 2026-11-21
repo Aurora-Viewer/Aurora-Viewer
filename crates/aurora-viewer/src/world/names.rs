@@ -501,6 +501,21 @@ impl AvatarNames {
     pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
         self.cache.get(id)
     }
+    /// The display name RlvUtil::filterNames (indra/newview/rlvcommon.cpp)
+    /// replaces for `id`: the one LLAvatarNameCache::get gives with the
+    /// contact sets' custom name check (indra/llmessage/llavatarnamecache.cpp,
+    /// LGGContactSets::checkCustomName): the alias in quotes, or the legacy
+    /// name, "Resident" included, when the display name is removed. None
+    /// until the name is cached. Canonical data for privacy filtering.
+    pub fn rlva_filter_display_name(&self, id: &Uuid) -> Option<String> {
+        let n = self.cache.get(id)?;
+        Some(match self.aliases.get(id) {
+            Some(alias) if alias == super::contact_sets::DN_REMOVED => format!("{} {}", n.legacy_first, n.legacy_last),
+            Some(alias) => format!("'{alias}'"),
+            None => n.display_name.clone(),
+        })
+    }
+
     /// The cached name (even expired, which queues a refresh); a missing
     /// one is queued for the next request. The name of someone met in the
     /// world (`NameScope::World`): `get_in` for the other cases.
