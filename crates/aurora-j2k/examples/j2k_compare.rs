@@ -1,18 +1,27 @@
 //! Compares this decoder with OpenJPEG on JPEG 2000 codestreams, sample for
 //! sample, and measures both. Read-only: nothing is written.
 //!
-//! Usage: j2k_compare <folder or file>... [--sample N] [--cuts N] [--bench] [--rounds N]
+//! Usage: j2k_compare <folder or file>... [--sample N] [--cuts N] [--bench] [--rounds N] [--threads T] [--busy] [--retain MB]
 //!
 //! - whole files: every file at every reduce level up to 5, both decoders,
 //!   every sample compared;
 //! - `--cuts N`: N prefixes of every file (what a download that stopped
 //!   there holds), at reduce 0, 1, 2, 3 and 5. A cut decode may differ from
 //!   OpenJPEG's only where this decoder says it kept what OpenJPEG drops
-//!   (`Image::cut_in_decoded`); such a decode must then be at least as
-//!   close to the whole file's as OpenJPEG's is;
+//!   (`Image::cut_in_decoded`); such a decode should then be at least as
+//!   close to the whole file's as OpenJPEG's is (the few that are not are
+//!   counted and listed);
 //! - `--bench`: the time of whole decodes on one thread, by size class and
 //!   reduce level, for both decoders (`--rounds N` decodes of each, the best
-//!   kept). Build with `--release`, on a quiet machine.
+//!   kept). Build with `--release`, on a quiet machine;
+//! - `--threads T`: every decode of this decoder is lent T threads (the
+//!   comparisons then check that they change no sample), and the bench also
+//!   times it with them, next to its time on one;
+//! - `--busy`: with `--threads`, no lent thread ever comes, as on a pool
+//!   whose threads all have a texture of their own: the bench then shows
+//!   what offering the work costs the calling thread;
+//! - `--retain MB`: the bench's decoder keeps that much working memory
+//!   between two decodes (`Decoder::set_retained_bytes`; 8 MiB without it).
 //!
 //! The files are raw codestreams (`.j2c`, `.j2k`), as the viewer caches
 //! textures.
@@ -21,10 +30,10 @@
 mod oracle;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use aurora_j2k::{Decoder, Limits, Options};
+use aurora_j2k::{Decoder, Limits, Options, Threads};
 use oracle::{Plane, Verdict};
 use rayon::prelude::*;
 
@@ -34,6 +43,9 @@ struct Args {
     cuts: usize,
     bench: bool,
     rounds: usize,
+    threads: usize,
+    busy: bool,
+    retain: Option<usize>,
 }
 
 fn args() -> Option<Args> {
@@ -43,6 +55,9 @@ fn args() -> Option<Args> {
         cuts: 0,
         bench: false,
         rounds: 3,
+        threads: 1,
+        busy: false,
+        retain: None,
     };
     let mut a = std::env::args().skip(1);
     while let Some(k) = a.next() {
@@ -50,7 +65,10 @@ fn args() -> Option<Args> {
             "--sample" => out.sample = a.next()?.parse().ok()?,
             "--cuts" => out.cuts = a.next()?.parse().ok()?,
             "--rounds" => out.rounds = a.next()?.parse().ok()?,
+            "--threads" => out.threads = a.next()?.parse().ok()?,
             "--bench" => out.bench = true,
+            "--busy" => out.busy = true,
+            "--retain" => out.retain = Some(a.next()?.parse().ok()?),
             _ => out.paths.push(PathBuf::from(k)),
         }
     }
@@ -80,13 +98,27 @@ fn name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-fn ours(dec: &mut Decoder, cs: &[u8], reduce: u8) -> Result<aurora_j2k::Image, aurora_j2k::Error> {
+/// `--busy`: the pool has no idle thread.
+static BUSY: AtomicBool = AtomicBool::new(false);
+
+/// The lent threads are the idle ones of rayon's pool, as in the viewer.
+fn pool_spawn(task: Box<dyn FnOnce() + Send + 'static>) {
+    if !BUSY.load(Ordering::Relaxed) {
+        rayon::spawn(task);
+    }
+}
+
+fn ours(dec: &mut Decoder, cs: &[u8], reduce: u8, threads: usize) -> Result<aurora_j2k::Image, aurora_j2k::Error> {
     dec.decode(
         cs,
         &Options {
             reduce,
             components: 0,
             limits: Limits::NONE,
+            threads: Threads {
+                count: threads,
+                spawn: Some(pool_spawn),
+            },
         },
     )
 }
@@ -142,9 +174,12 @@ fn cut_points(len: usize, n: usize, seed: u64) -> Vec<usize> {
 
 fn main() {
     let Some(args) = args() else {
-        eprintln!("usage: j2k_compare <folder or file>... [--sample N] [--cuts N] [--bench] [--rounds N]");
+        eprintln!(
+            "usage: j2k_compare <folder or file>... [--sample N] [--cuts N] [--bench] [--rounds N] [--threads T] [--busy] [--retain MB]"
+        );
         std::process::exit(2);
     };
+    BUSY.store(args.busy, Ordering::Relaxed);
     let mut list = files(&args.paths);
     if list.len() > args.sample {
         // an even sample over the sorted names
@@ -169,7 +204,7 @@ fn main() {
         let mut full: Vec<Option<Vec<Plane>>> = Vec::new();
         for reduce in 0..=levels.min(5) {
             let a = oracle::decode(&cs, u32::from(reduce));
-            let b = ours(dec, &cs, reduce);
+            let b = ours(dec, &cs, reduce, args.threads);
             bump(&whole.requests);
             match oracle::compare(&a, &b) {
                 Verdict::Same => bump(if a.is_some() { &whole.same } else { &whole.both_refused }),
@@ -184,7 +219,9 @@ fn main() {
                     note(format!("WHOLE {} reduce {reduce}: {count} samples differ, first in component {comp} at {at}", name(path)));
                 }
             }
-            full.push(a);
+            // (a file that is itself a download that stopped has no whole
+            // image to measure its prefixes against)
+            full.push(a.filter(|_| !b.as_ref().is_ok_and(|img| img.truncated)));
         }
         if args.cuts == 0 {
             return;
@@ -198,7 +235,7 @@ fn main() {
                     continue;
                 }
                 let a = oracle::decode(part, u32::from(reduce));
-                let b = ours(dec, part, reduce);
+                let b = ours(dec, part, reduce, args.threads);
                 bump(&cut.requests);
                 match oracle::compare(&a, &b) {
                     Verdict::Same => bump(if a.is_some() { &cut.same } else { &cut.both_refused }),
@@ -257,9 +294,12 @@ fn main() {
         return;
     }
     const CLASSES: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
-    // [class][reduce] -> (files, pixels, oracle time, our time)
-    let mut table = vec![[(0usize, 0u64, Duration::ZERO, Duration::ZERO); 6]; CLASSES.len() + 1];
+    // [class][reduce] -> (files, pixels, oracle time, our time, our time with the threads)
+    let mut table = vec![[(0usize, 0u64, Duration::ZERO, Duration::ZERO, Duration::ZERO); 6]; CLASSES.len() + 1];
     let mut dec = Decoder::new();
+    if let Some(mb) = args.retain {
+        dec.set_retained_bytes(mb << 20);
+    }
     for path in &list {
         let Ok(cs) = std::fs::read(path) else { continue };
         let Ok(header) = aurora_j2k::read_header(&cs, &Limits::NONE) else {
@@ -268,26 +308,37 @@ fn main() {
         let (w, h) = (header.x1 - header.x0, header.y1 - header.y0);
         let class = CLASSES.iter().position(|&c| w.max(h) <= c).unwrap_or(CLASSES.len());
         for reduce in 0..=header.max_reduce().min(5) {
-            let best = |f: &mut dyn FnMut() -> bool| -> Option<Duration> {
-                let mut best = None;
-                for _ in 0..args.rounds.max(1) {
-                    let t = Instant::now();
-                    if !f() {
-                        return None;
-                    }
-                    let d = t.elapsed();
-                    best = Some(best.map_or(d, |b: Duration| b.min(d)));
+            // a round times each decoder in turn, so that what else the machine
+            // does weighs on all of them alike; the best of each is kept
+            let timed = |best: &mut Option<Duration>, f: &mut dyn FnMut() -> bool| -> bool {
+                let t = Instant::now();
+                if !f() {
+                    return false;
                 }
-                best
+                let d = t.elapsed();
+                *best = Some(best.map_or(d, |b| b.min(d)));
+                true
             };
-            let a = best(&mut || oracle::decode(&cs, u32::from(reduce)).is_some());
-            let b = best(&mut || ours(&mut dec, &cs, reduce).is_ok());
-            if let (Some(a), Some(b)) = (a, b) {
+            let (mut a, mut b, mut c) = (None, None, None);
+            for _ in 0..args.rounds.max(1) {
+                if !timed(&mut a, &mut || oracle::decode(&cs, u32::from(reduce)).is_some())
+                    || !timed(&mut b, &mut || ours(&mut dec, &cs, reduce, 1).is_ok())
+                    || (args.threads > 1 && !timed(&mut c, &mut || ours(&mut dec, &cs, reduce, args.threads).is_ok()))
+                {
+                    (a, b, c) = (None, None, None);
+                    break;
+                }
+            }
+            if args.threads <= 1 {
+                c = b;
+            }
+            if let (Some(a), Some(b), Some(c)) = (a, b, c) {
                 let e = &mut table[class][usize::from(reduce)];
                 e.0 += 1;
                 e.1 += u64::from(w >> reduce) * u64::from(h >> reduce);
                 e.2 += a;
                 e.3 += b;
+                e.4 += c;
             }
         }
     }
@@ -341,4 +392,28 @@ fn main() {
         px as f64 / 1e6 / a.as_secs_f64().max(1e-9),
         px as f64 / 1e6 / b.as_secs_f64().max(1e-9)
     );
+    if args.threads > 1 {
+        println!(
+            "\naurora-j2k, mean ms a decode on one thread / lent {} threads{} / ratio:",
+            args.threads,
+            if args.busy { " that never come" } else { "" }
+        );
+        for (i, row) in table.iter().enumerate() {
+            if row.iter().all(|e| e.0 == 0) {
+                continue;
+            }
+            let class = CLASSES.get(i).map_or(">2048".to_string(), |c| format!("<={c}"));
+            let cells: Vec<String> = row
+                .iter()
+                .map(|e| {
+                    if e.0 == 0 {
+                        return format!("{:^24}", "-");
+                    }
+                    let (b, c) = (e.3.as_secs_f64() * 1e3 / e.0 as f64, e.4.as_secs_f64() * 1e3 / e.0 as f64);
+                    format!("{b:8.3} {c:8.3} {:5.2}", c / b)
+                })
+                .collect();
+            println!("{class:>7} {:>6} | {}", row[0].0, cells.join(" | "));
+        }
+    }
 }

@@ -767,6 +767,42 @@ const NATIVE_LIMITS: aurora_j2k::Limits = aurora_j2k::Limits {
     max_memory: DECODE_BUDGET,
 };
 
+/// Threads one texture's decode is shared between at most (`AURORA_J2K_THREADS`
+/// sets another number; 1 for none).
+const LENT_THREADS: usize = 16;
+
+/// Queues a task of the decoder on the pool whose thread is decoding
+/// (`rayon::spawn` from a pool's thread queues in that pool).
+fn pool_spawn(task: Box<dyn FnOnce() + Send + 'static>) {
+    rayon::spawn(task);
+}
+
+/// The threads lent to a decode: the idle ones of the pool the decode runs
+/// on (the viewer's background jobs, scene/jobs.rs), which `aurora-j2k`
+/// asks for a large texture only. A thread of that pool takes the offer at
+/// once when it has nothing to do, and never on a busy pool: a texture
+/// decoded alone gets the idle cores, textures decoded together a core
+/// each. The decoder waits for the threads that came on a condition
+/// variable, not on the pool, so it never takes another job of the pool
+/// onto its stack (the loop that did, #1689). Off a pool, the calling
+/// thread alone.
+fn lent_threads() -> aurora_j2k::Threads {
+    static COUNT: OnceLock<usize> = OnceLock::new();
+    let count = *COUNT.get_or_init(|| {
+        std::env::var("AURORA_J2K_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(LENT_THREADS)
+    });
+    if count < 2 || rayon::current_thread_index().is_none() {
+        return aurora_j2k::Threads::default();
+    }
+    aurora_j2k::Threads {
+        count: count.min(rayon::current_num_threads()),
+        spawn: Some(pool_spawn),
+    }
+}
+
 thread_local! {
     /// The decoding thread's `aurora-j2k` decoder: its working memory serves
     /// the next texture (it keeps a few MiB, and gives back the rest).
@@ -780,6 +816,7 @@ fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Erro
         reduce,
         components: 4,
         limits: NATIVE_LIMITS,
+        threads: lent_threads(),
     };
     let image = NATIVE.with_borrow_mut(|decoder| decoder.decode(cs, &options))?;
     match image.samples {

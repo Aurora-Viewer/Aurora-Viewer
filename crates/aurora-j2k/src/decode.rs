@@ -46,6 +46,7 @@ use crate::header::{
     self, MainHeader, be16, be32, ceildivpow2, mk, part2_marker, read_tile_part_marker, resolve_tile, resolve_tile_component, segmentless,
 };
 use crate::mct::{self, Mct, Region};
+use crate::par::Threads;
 use crate::t2::{self, PackedCursor, PacketHeaders, PacketInput};
 use crate::tile::{SampleWork, Tile};
 use crate::{Component, Error, Limits, Samples, Scratch};
@@ -122,6 +123,7 @@ pub(crate) struct Output<'a> {
 
 struct Walk<'a, 'o> {
     data: &'a [u8],
+    threads: Threads,
     mh: &'a mut MainHeader,
     limits: &'a Limits,
     /// The reduce factor in effect.
@@ -670,16 +672,25 @@ impl Walk<'_, '_> {
             let n = self.tile.samples(c);
             // (Tier-1 writes every sample of a component: nothing to clear)
             if plane.len() < n {
-                plane.try_reserve_exact(n - plane.len()).map_err(|_| Error::Memory)?;
-                plane.resize(n, 0);
+                *plane = Vec::new();
+                *plane = crate::zeroed(n)?;
             }
         }
         let coding_mct = params[0].coding.mct != 0;
+        // a shared decode holds each code-block's samples until they are in
+        // their component: with a limit that has no room for them, one thread
+        let threads = if self.limits.max_memory != 0 && total.saturating_mul(2) > self.limits.max_memory {
+            Threads::default()
+        } else {
+            self.threads
+        };
         let work = SampleWork {
             t1: &mut scratch.t1,
             dwt: &mut scratch.dwt,
             planes: &mut scratch.planes,
             blocks: &mut scratch.blocks,
+            helpers: &mut scratch.helpers,
+            threads,
         };
         self.tile.decode_samples(coding_mct, tile_data, &scratch.resno, work)?;
         write_tile(self.tile, mh, factor, decoded, &scratch.resno, &mut scratch.planes, &mut self.out)
@@ -903,6 +914,7 @@ pub(crate) struct Job<'a> {
     pub limits: &'a Limits,
     pub factor: u32,
     pub decoded: usize,
+    pub threads: Threads,
     pub tile: &'a mut Tile,
     pub scratch: &'a mut Scratch,
 }
@@ -914,6 +926,7 @@ pub(crate) fn decode_codestream(job: Job<'_>, comps: &mut [OutComp], samples: &m
     job.mh.tiles.clear();
     let mut w = Walk {
         data: job.data,
+        threads: job.threads,
         mh: job.mh,
         limits: job.limits,
         factor: job.factor,
@@ -948,9 +961,7 @@ pub(crate) fn new_planes(mh: &MainHeader, comps: &[OutComp]) -> Result<Vec<Compo
     let mut planes = Vec::with_capacity(comps.len());
     for (c, sc) in comps.iter().zip(&mh.comps) {
         let n = c.w as usize * c.h as usize;
-        let mut data = Vec::new();
-        data.try_reserve_exact(n).map_err(|_| Error::Memory)?;
-        data.resize(n, 0);
+        let data = crate::zeroed(n)?;
         planes.push(Component {
             width: c.w,
             height: c.h,

@@ -29,10 +29,14 @@
 //! The arrays are kept between decodes: a decoder that has decoded an image
 //! of some size decodes the next one of that size without a heap call.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use crate::Error;
 use crate::dwt::{self, DwtScratch, ResRect, RowLayout};
 use crate::header::{CBLK_HT, MAX_RESOLUTIONS, MainHeader, TileComponentParams, ceildivpow2};
 use crate::mct::{Finish, Mct};
+use crate::par::{self, Queue, Threads};
 use crate::t1::{self, T1, T1Block};
 
 /// The bytes of one contribution (a codeword segment's part from one
@@ -222,6 +226,181 @@ pub(crate) struct SampleWork<'a> {
     pub dwt: &'a mut DwtScratch,
     pub planes: &'a mut [Vec<i32>],
     pub blocks: &'a mut Vec<BlockRef>,
+    /// What each thread of a shared decode works with.
+    pub helpers: &'a mut Vec<Helper>,
+    pub threads: Threads,
+}
+
+/// What a lent thread of a shared decode works with: its scratch, and the
+/// code-blocks it decoded. (The calling thread has the decoder's own, and
+/// decodes into the image.)
+#[derive(Default)]
+pub(crate) struct Helper {
+    t1: T1,
+    dwt: DwtScratch,
+    /// A block's index among the tile's, and its samples as `t1::store`
+    /// leaves them, row after row (none for a code-block without data).
+    done: Vec<(u32, Option<Vec<i32>>)>,
+}
+
+/// A code-block of a shared Tier-1: what `Tile::t1_block` reads of the
+/// tile, and its band's dequantisation.
+struct SharedBlock {
+    w: u16,
+    h: u16,
+    numbps: u32,
+    orient: u8,
+    roishift: u8,
+    cblksty: u8,
+    reversible: bool,
+    stepsize: f32,
+    /// Its contributions in `BlockWork::chunks`, its segments with data in
+    /// `BlockWork::segs`.
+    chunks: (u32, u32),
+    segs: (u32, u32),
+}
+
+/// A tile's Tier-1 shared between threads (`par.rs`). The tasks that help
+/// may run after the tile is gone, so the work owns what they read: the
+/// tile's bytes and each code-block's description.
+struct BlockWork {
+    data: Vec<u8>,
+    blocks: Vec<SharedBlock>,
+    chunks: Vec<Chunk>,
+    segs: Vec<Segment>,
+    queue: Queue,
+    /// A thread met a block OpenJPEG refuses: the decode fails.
+    refused: AtomicBool,
+    /// Each lent thread's scratch, taken back once the step is over.
+    helpers: Vec<Mutex<Option<Helper>>>,
+}
+
+/// A lent thread's share of a tile's Tier-1: the next code-block nobody
+/// has, decoded with its own scratch, its samples kept, until none is left.
+/// (The image is the calling thread's: what a lent thread decodes is put in
+/// it afterwards, `plane_jobs`.)
+fn block_step(work: &BlockWork, i: usize) {
+    let Some(Ok(mut slot)) = i.checked_sub(1).and_then(|i| work.helpers.get(i)).map(|m| m.lock()) else {
+        return;
+    };
+    let Some(h) = slot.as_mut() else {
+        return;
+    };
+    while !work.refused.load(Ordering::Relaxed)
+        && let Some(at) = work.queue.take()
+    {
+        let b = &work.blocks[at];
+        let block = T1Block {
+            w: u32::from(b.w),
+            h: u32::from(b.h),
+            numbps: b.numbps,
+            orient: u32::from(b.orient),
+            roishift: u32::from(b.roishift),
+            cblksty: u32::from(b.cblksty),
+            chunks: &work.chunks[b.chunks.0 as usize..b.chunks.1 as usize],
+            segs: &work.segs[b.segs.0 as usize..b.segs.1 as usize],
+        };
+        if block.chunks.is_empty() {
+            if !t1::empty_cblk_ok(&block) {
+                work.refused.store(true, Ordering::Relaxed);
+                return;
+            }
+            h.done.push((at as u32, None));
+            continue;
+        }
+        if !h.t1.decode_cblk(&block, &work.data) {
+            work.refused.store(true, Ordering::Relaxed);
+            return;
+        }
+        h.t1.unshift_roi(block.roishift);
+        // (a buffer a code-block: one that grows would be copied as it does)
+        let mut samples = vec![0; usize::from(b.w) * usize::from(b.h)];
+        t1::store(
+            Some(h.t1.data()),
+            block.w,
+            block.h,
+            b.reversible,
+            b.stepsize,
+            &mut samples,
+            usize::from(b.w),
+        );
+        h.done.push((at as u32, Some(samples)));
+    }
+}
+
+/// A code-block's samples to put in their component's buffer: `w` x `h`
+/// from `dst` on, its rows `stride` samples apart; zeros without samples.
+struct BlockCopy {
+    dst: usize,
+    stride: usize,
+    w: u16,
+    h: u16,
+    src: Option<Vec<i32>>,
+}
+
+/// A component of a shared decode: its buffer, the code-blocks to put in
+/// it, and its inverse wavelet.
+struct PlaneJob {
+    plane: Vec<i32>,
+    copies: Vec<BlockCopy>,
+    stride: usize,
+    rects: Vec<ResRect>,
+    numres: usize,
+    reversible: bool,
+}
+
+/// The components of a tile shared between threads once its Tier-1 is done:
+/// a component a thread.
+struct PlaneWork {
+    comps: Vec<Mutex<PlaneJob>>,
+    queue: Queue,
+    /// Each lent thread's wavelet scratch, taken back once the step is over.
+    scratch: Vec<Mutex<DwtScratch>>,
+}
+
+/// A lent thread's share of a tile's components.
+fn plane_step(work: &PlaneWork, i: usize) {
+    if let Some(Ok(mut scratch)) = i.checked_sub(1).and_then(|i| work.scratch.get(i)).map(|m| m.lock()) {
+        plane_jobs(work, &mut scratch);
+    }
+}
+
+/// One thread's share of a tile's components: the next one nobody has, the
+/// code-blocks the lent threads decoded put in place and its inverse
+/// wavelet.
+fn plane_jobs(work: &PlaneWork, scratch: &mut DwtScratch) {
+    while let Some(c) = work.queue.take() {
+        let Ok(mut job) = work.comps[c].lock() else {
+            return;
+        };
+        let PlaneJob {
+            plane,
+            copies,
+            stride,
+            rects,
+            numres,
+            reversible,
+        } = &mut *job;
+        for copy in copies.iter() {
+            let (w, rows) = (usize::from(copy.w), usize::from(copy.h));
+            let dst = &mut plane[copy.dst..];
+            match &copy.src {
+                Some(src) => {
+                    for (j, row) in src.chunks_exact(w).take(rows).enumerate() {
+                        dst[j * copy.stride..j * copy.stride + w].copy_from_slice(row);
+                    }
+                }
+                None => {
+                    for j in 0..rows {
+                        dst[j * copy.stride..j * copy.stride + w].fill(0);
+                    }
+                }
+            }
+        }
+        if !rects.is_empty() {
+            dwt::decode(plane, *stride, rects, *numres, *reversible, scratch);
+        }
+    }
 }
 
 /// OpenJPEG's struct sizes on 64-bit platforms, which its "system limits"
@@ -609,26 +788,35 @@ impl Tile {
     /// `self.mct` says which transform the samples still need. The transform
     /// and the DC shift ([`Tile::finish_of`]) are the output pass's.
     pub fn decode_samples(&mut self, coding_mct: bool, data: &[u8], resno_decoded: &[u32], work: SampleWork<'_>) -> Result<(), Error> {
-        // Tier-1 (opj_t1_decode_cblks, whole tile), component by component
+        // Tier-1 (opj_t1_decode_cblks, whole tile), component by component,
+        // then the inverse wavelet up to the resolution decoded
+        // (opj_tcd_dwt_decode)
         self.collect_blocks(work.blocks);
-        self.decode_blocks(work.blocks, data, work.t1, work.planes)?;
-
-        // the inverse wavelet up to the resolution decoded (opj_tcd_dwt_decode)
-        let mut rects = [ResRect::default(); MAX_RESOLUTIONS];
-        for (compno, tc) in self.comps.iter().enumerate() {
-            if !tc.decoded {
-                continue;
+        let largest = (0..self.comps.len())
+            .filter(|&c| self.comps[c].decoded)
+            .map(|c| self.samples(c))
+            .max()
+            .unwrap_or(0);
+        if work.threads.share(largest) {
+            self.decode_shared(data, resno_decoded, work)?;
+        } else {
+            self.decode_blocks(work.blocks, data, work.t1, work.planes)?;
+            let mut rects = [ResRect::default(); MAX_RESOLUTIONS];
+            for (compno, tc) in self.comps.iter().enumerate() {
+                if !tc.decoded {
+                    continue;
+                }
+                let top = self.rects(compno, &mut rects);
+                let numres = resno_decoded[compno] as usize + 1;
+                dwt::decode(
+                    &mut work.planes[compno],
+                    tc.data_w as usize,
+                    &rects[..top],
+                    numres,
+                    tc.reversible,
+                    work.dwt,
+                );
             }
-            let top = self.rects(compno, &mut rects);
-            let numres = resno_decoded[compno] as usize + 1;
-            dwt::decode(
-                &mut work.planes[compno],
-                tc.data_w as usize,
-                &rects[..top],
-                numres,
-                tc.reversible,
-                work.dwt,
-            );
         }
 
         // the colour transform (opj_tcd_mct_decode)
@@ -661,39 +849,188 @@ impl Tile {
         Ok(())
     }
 
+    /// Tier-1 and the inverse wavelets of a large tile, shared between the
+    /// calling thread and the threads its caller lends (`par.rs`): the
+    /// code-blocks first, each thread taking the next one nobody has; then
+    /// the components, a thread each, which puts in the component's buffer
+    /// the code-blocks the lent threads decoded and transforms it. The
+    /// calling thread decodes its code-blocks into the buffers, as it does
+    /// alone: when no thread comes (a pool whose threads all have a texture
+    /// of their own), sharing costs it one copy of the tile's bytes. A
+    /// code-block's samples depend on nothing but its own bytes and a
+    /// component's wavelet on nothing but its own samples, so the samples
+    /// are those of one thread's walk; and where OpenJPEG stops at a block
+    /// it refuses, the decode fails here too, whichever thread met it.
+    fn decode_shared(&self, data: &[u8], resno_decoded: &[u32], scratch: SampleWork<'_>) -> Result<(), Error> {
+        let SampleWork {
+            t1,
+            dwt,
+            planes,
+            blocks,
+            helpers,
+            threads,
+        } = scratch;
+        let blocks: &[BlockRef] = blocks;
+        // (a thread for a handful of code-blocks at least)
+        let lent = threads.count.min(blocks.len() / 4).max(1) - 1;
+        if helpers.len() < lent {
+            helpers.resize_with(lent, Helper::default);
+        }
+        let mut work = BlockWork {
+            data: data.to_vec(),
+            blocks: Vec::with_capacity(blocks.len()),
+            chunks: Vec::new(),
+            segs: Vec::new(),
+            queue: Queue::new(blocks.len()),
+            refused: AtomicBool::new(false),
+            helpers: Vec::with_capacity(lent),
+        };
+        for mut h in helpers.drain(..lent) {
+            h.done.clear();
+            work.helpers.push(Mutex::new(Some(h)));
+        }
+        for b in blocks {
+            let tc = &self.comps[usize::from(b.comp)];
+            let block = self.t1_block(b);
+            let (chunks, segs) = (work.chunks.len() as u32, work.segs.len() as u32);
+            work.chunks.extend_from_slice(block.chunks);
+            work.segs.extend_from_slice(block.segs);
+            work.blocks.push(SharedBlock {
+                w: b.w,
+                h: b.h,
+                numbps: block.numbps,
+                orient: b.orient,
+                roishift: tc.roishift,
+                cblksty: tc.cblksty,
+                reversible: tc.reversible,
+                stepsize: b.stepsize,
+                chunks: (chunks, work.chunks.len() as u32),
+                segs: (segs, work.segs.len() as u32),
+            });
+        }
+        let work = Arc::new(work);
+        let ok = par::share(threads, lent, &work, block_step, |work| {
+            while !work.refused.load(Ordering::Relaxed)
+                && let Some(at) = work.queue.take()
+            {
+                if !self.decode_block(&blocks[at], data, t1, planes) {
+                    work.refused.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+        let mut taken: Vec<Helper> = work
+            .helpers
+            .iter()
+            .filter_map(|slot| slot.lock().unwrap_or_else(|e| e.into_inner()).take())
+            .collect();
+        let refused = work.refused.load(Ordering::Relaxed);
+        if !ok || refused {
+            helpers.append(&mut taken);
+            return Err(Error::Data(if refused {
+                "code-block with too many bit-planes"
+            } else {
+                "a decoding thread stopped"
+            }));
+        }
+
+        // the components: each one's buffer goes to the thread that takes it, and comes back
+        let mut jobs: Vec<PlaneJob> = Vec::with_capacity(self.comps.len());
+        let mut rects = [ResRect::default(); MAX_RESOLUTIONS];
+        for (c, tc) in self.comps.iter().enumerate() {
+            let top = if tc.decoded { self.rects(c, &mut rects) } else { 0 };
+            jobs.push(PlaneJob {
+                plane: if tc.decoded { std::mem::take(&mut planes[c]) } else { Vec::new() },
+                copies: Vec::new(),
+                stride: tc.data_w as usize,
+                rects: rects[..top].to_vec(),
+                numres: resno_decoded[c] as usize + 1,
+                reversible: tc.reversible,
+            });
+        }
+        for h in &mut taken {
+            for (at, src) in h.done.drain(..) {
+                let b = &blocks[at as usize];
+                jobs[usize::from(b.comp)].copies.push(BlockCopy {
+                    dst: b.dst,
+                    stride: b.stride,
+                    w: b.w,
+                    h: b.h,
+                    src,
+                });
+            }
+        }
+        let decoded = self.comps.iter().filter(|tc| tc.decoded).count();
+        let lent = threads.count.min(decoded).max(1) - 1;
+        let work = Arc::new(PlaneWork {
+            queue: Queue::new(jobs.len()),
+            comps: jobs.into_iter().map(Mutex::new).collect(),
+            scratch: (0..lent)
+                .map(|i| Mutex::new(taken.get_mut(i).map(|h| std::mem::take(&mut h.dwt)).unwrap_or_default()))
+                .collect(),
+        });
+        let ok = par::share(threads, lent, &work, plane_step, |work| plane_jobs(work, dwt));
+        for (h, slot) in taken.iter_mut().zip(&work.scratch) {
+            h.dwt = std::mem::take(&mut slot.lock().unwrap_or_else(|e| e.into_inner()));
+        }
+        helpers.append(&mut taken);
+        for (c, slot) in work.comps.iter().enumerate() {
+            if self.comps[c].decoded {
+                planes[c] = std::mem::take(&mut slot.lock().unwrap_or_else(|e| e.into_inner()).plane);
+            }
+        }
+        if !ok {
+            return Err(Error::Data("a decoding thread stopped"));
+        }
+        Ok(())
+    }
+
+    /// What Tier-1 needs of a code-block of the walk.
+    fn t1_block(&self, b: &BlockRef) -> T1Block<'_> {
+        let tc = &self.comps[usize::from(b.comp)];
+        let cb = &self.cblks[b.cblk as usize];
+        T1Block {
+            w: u32::from(b.w),
+            h: u32::from(b.h),
+            numbps: cb.numbps,
+            orient: u32::from(b.orient),
+            roishift: u32::from(tc.roishift),
+            cblksty: u32::from(tc.cblksty),
+            chunks: &cb.chunks,
+            segs: &cb.segs[..(cb.real_num_segs as usize).min(cb.segs.len())],
+        }
+    }
+
     /// Tier-1 of the whole walk, in its order; an error at a block OpenJPEG
     /// refuses, as `opj_t1_decode_cblks` stops there.
     fn decode_blocks(&self, blocks: &[BlockRef], data: &[u8], t1: &mut T1, planes: &mut [Vec<i32>]) -> Result<(), Error> {
         for b in blocks {
-            let tc = &self.comps[usize::from(b.comp)];
-            let cb = &self.cblks[b.cblk as usize];
-            let block = T1Block {
-                w: u32::from(b.w),
-                h: u32::from(b.h),
-                numbps: cb.numbps,
-                orient: u32::from(b.orient),
-                roishift: u32::from(tc.roishift),
-                cblksty: u32::from(tc.cblksty),
-                chunks: &cb.chunks,
-                segs: &cb.segs[..(cb.real_num_segs as usize).min(cb.segs.len())],
-            };
-            let dst = &mut planes[usize::from(b.comp)][b.dst..];
-            // one code-block decoded (zeros without data) and stored into
-            // its component's buffer
-            if block.chunks.is_empty() {
-                if !t1::empty_cblk_ok(&block) {
-                    return Err(Error::Data("code-block with too many bit-planes"));
-                }
-                t1::store(None, block.w, block.h, tc.reversible, b.stepsize, dst, b.stride);
-                continue;
-            }
-            if !t1.decode_cblk(&block, data) {
+            if !self.decode_block(b, data, t1, planes) {
                 return Err(Error::Data("code-block with too many bit-planes"));
             }
-            t1.unshift_roi(block.roishift);
-            t1::store(Some(t1.data()), block.w, block.h, tc.reversible, b.stepsize, dst, b.stride);
         }
         Ok(())
+    }
+
+    /// One code-block decoded (zeros without data) and stored into its
+    /// component's buffer; false for a block OpenJPEG refuses.
+    #[inline]
+    fn decode_block(&self, b: &BlockRef, data: &[u8], t1: &mut T1, planes: &mut [Vec<i32>]) -> bool {
+        let tc = &self.comps[usize::from(b.comp)];
+        let block = self.t1_block(b);
+        let dst = &mut planes[usize::from(b.comp)][b.dst..];
+        if block.chunks.is_empty() {
+            if !t1::empty_cblk_ok(&block) {
+                return false;
+            }
+            t1::store(None, block.w, block.h, tc.reversible, b.stepsize, dst, b.stride);
+            return true;
+        }
+        if !t1.decode_cblk(&block, data) {
+            return false;
+        }
+        t1.unshift_roi(block.roishift);
+        t1::store(Some(t1.data()), block.w, block.h, tc.reversible, b.stepsize, dst, b.stride);
+        true
     }
 
     /// Component `compno`'s DC shift (`opj_tcd_dc_level_shift_decode`'s

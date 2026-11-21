@@ -9,10 +9,21 @@
 //! rebuilds everything around it; NOTICE.md has both notices. Each module
 //! names the files it follows. What this crate adds to neo-j2k is in
 //! `dwt.rs` (the rows of a tile-component stored where the inverse wavelet
-//! leaves them) and `t1.rs` (masked indices instead of raw pointers).
+//! leaves them), `t1.rs` (masked indices instead of raw pointers) and
+//! `par.rs` (a large tile shared with the threads its caller lends, with
+//! no `unsafe` either).
 //!
 //! The crate has no `unsafe` and no dependency. A decode allocates nothing
 //! but the image once its [`Decoder`] has decoded an image of that size.
+//!
+//! # Threads
+//!
+//! A decode runs on the thread that calls it. A caller with a pool of
+//! threads can lend its idle ones ([`Options::threads`]): a tile of 512 x
+//! 512 samples or more is then decoded by the calling thread and by the
+//! threads of the pool that are free at that moment, with the same samples
+//! whatever comes. The decoder creates no thread and blocks none: on a pool
+//! whose threads are all busy, a decode is one thread's work, as without.
 //!
 //! What it decodes: every Part 1 codestream OpenJPEG decodes, but HT
 //! code-blocks (Part 15), which no Second Life texture has. What it leaves
@@ -40,12 +51,14 @@ mod decode;
 mod dwt;
 mod header;
 mod mct;
+mod par;
 mod t1;
 mod t1_luts;
 mod t2;
 mod tile;
 
 pub use header::{MainHeader, SizComponent};
+pub use par::{Spawn, Threads, spawn_thread};
 
 /// Why a codestream was not decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +148,8 @@ pub struct Options {
     /// colour transform ties them.
     pub components: u8,
     pub limits: Limits,
+    /// The threads the caller lends this decode; none by default.
+    pub threads: Threads,
 }
 
 impl Default for Options {
@@ -143,6 +158,7 @@ impl Default for Options {
             reduce: 0,
             components: 0,
             limits: Limits::NONE,
+            threads: Threads::default(),
         }
     }
 }
@@ -187,6 +203,22 @@ pub struct Image {
     pub cut_in_decoded: bool,
 }
 
+/// `n` zeros. Up to 1 GiB they come from the allocator as zeros (pages the
+/// system hands over blank, which nothing has to fill, and which are first
+/// touched by whoever writes them: the threads of a shared decode); above
+/// it, a size only a codestream without limits asks for, the memory is
+/// asked for first, so that a refusal is an error and not the end of the
+/// process.
+pub(crate) fn zeroed<T: Clone + Default>(n: usize) -> Result<Vec<T>, Error> {
+    if n.saturating_mul(std::mem::size_of::<T>()) <= 1 << 30 {
+        return Ok(vec![T::default(); n]);
+    }
+    let mut data = Vec::new();
+    data.try_reserve_exact(n).map_err(|_| Error::Memory)?;
+    data.resize(n, T::default());
+    Ok(data)
+}
+
 /// Working memory of the decodes, kept between them.
 #[derive(Default)]
 pub(crate) struct Scratch {
@@ -203,6 +235,8 @@ pub(crate) struct Scratch {
     pub ppt: Vec<u8>,
     /// Each component's decoded resolution.
     pub resno: Vec<u32>,
+    /// The threads' own scratch when a tile's Tier-1 is shared.
+    pub helpers: Vec<tile::Helper>,
 }
 
 /// A decoder: the working memory of its decodes, which the next one uses
@@ -290,10 +324,7 @@ impl Decoder {
                 .checked_mul(height as usize)
                 .and_then(|n| n.checked_mul(decoded))
                 .ok_or(Error::Memory)?;
-            let mut data = Vec::new();
-            data.try_reserve_exact(n).map_err(|_| Error::Memory)?;
-            data.resize(n, 0u8);
-            Samples::Packed(data)
+            Samples::Packed(zeroed(n)?)
         } else {
             Samples::Planes(decode::new_planes(&mh, used)?)
         };
@@ -305,6 +336,7 @@ impl Decoder {
             limits,
             factor,
             decoded,
+            threads: options.threads,
             tile: &mut self.tile,
             scratch: &mut self.scratch,
         };

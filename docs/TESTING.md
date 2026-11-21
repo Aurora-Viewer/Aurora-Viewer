@@ -12637,6 +12637,7 @@ What the inventory must show with these scenarios:
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_J2K=openjpeg` | Textures decoded by OpenJPEG, as before `aurora-j2k` |
+| `AURORA_J2K_THREADS=<n>` | Threads a large texture's decode is shared between at most (16; `1` for one thread a texture) |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
@@ -13789,7 +13790,21 @@ What the inventory must show with these scenarios:
   [--sample N] [--cuts N] [--bench]` decodes every file with both, whole at
   each reduce level and cut at N places, counts the decodes that are
   identical and lists any that are not, and with `--bench` times both on
-  one thread by size and level.
+  one thread by size and level (a round times each decoder in turn and the
+  best of each is kept: `--rounds N`).
+- **`AURORA_J2K_THREADS=<n>`**: a texture of 512 x 512 pixels or more at
+  the decoded level is decoded by the thread that has its job and by the
+  threads of the background pool that have none at that moment, `n` at most
+  in all (16 without the variable; `1`: one thread a texture, as before).
+  The pixels are the same whatever the number. Nothing changes while every
+  thread of the pool has a job (an arrival in a busy place): each texture
+  then has its one thread; what changes is the decode time of a large
+  texture that arrives alone (the `texture load:` line). Offline,
+  `j2k_compare … --bench --threads T` also times each decode with T
+  threads lent by an idle pool, next to its time on one, and compares the
+  decodes made with them; with `--busy` the threads never come (a pool
+  with no idle thread: what offering the work costs), and `--retain MB`
+  sets the working memory the bench's decoder keeps between two decodes.
 - **`AURORA_TEXTURE_BC7_CACHE=0`**: the textures compressed to BC7 are
   neither written to the disk cache (`cache\tex\<id>.bc7`) nor read back:
   each texture is decoded from its JPEG2000 as on a first visit, to measure

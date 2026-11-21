@@ -7,7 +7,7 @@
 
 mod oracle;
 
-use aurora_j2k::{Decoder, Error, Limits, Options, Samples};
+use aurora_j2k::{Decoder, Error, Limits, Options, Samples, Threads};
 use oracle::{Encode, Verdict};
 
 /// A picture with edges, gradients and noise, the same on every platform.
@@ -37,6 +37,7 @@ fn ours(dec: &mut Decoder, cs: &[u8], reduce: u8) -> Result<aurora_j2k::Image, E
             reduce,
             components: 0,
             limits: Limits::NONE,
+            ..Options::default()
         },
     )
 }
@@ -391,6 +392,7 @@ fn the_viewer_s_requests() {
                     reduce,
                     components: 4,
                     limits: Limits::SL_TEXTURE,
+                    ..Options::default()
                 },
             )
             .expect("decode");
@@ -411,10 +413,85 @@ fn the_viewer_s_requests() {
                 reduce: 0,
                 components: 2,
                 limits: Limits::NONE,
+                ..Options::default()
             },
         )
         .expect("decode");
     assert_eq!(img.components, 3);
+}
+
+#[test]
+fn lent_threads_change_no_sample() {
+    // a tile large enough to be shared: the same image whatever the threads,
+    // and OpenJPEG's
+    for (irreversible, comps, origin) in [(true, 4, (0, 0)), (false, 3, (0, 0)), (true, 3, (3, 5))] {
+        let e = Encode {
+            w: 600,
+            h: 540,
+            comps,
+            irreversible,
+            origin,
+            numresolution: 6,
+            rates: if irreversible { vec![20.0, 6.0] } else { vec![0.0] },
+            ..Encode::default()
+        };
+        let cs = oracle::encode(&e, sample_for(&e)).expect("encode");
+        let mut dec = Decoder::new();
+        let decode = |dec: &mut Decoder, cs: &[u8], reduce: u8, count: usize| {
+            dec.decode(
+                cs,
+                &Options {
+                    reduce,
+                    threads: Threads::os(count),
+                    ..Options::default()
+                },
+            )
+        };
+        for reduce in [0, 1] {
+            let alone = decode(&mut dec, &cs, reduce, 1);
+            assert_eq!(
+                oracle::compare(&oracle::decode(&cs, u32::from(reduce)), &alone),
+                Verdict::Same,
+                "{e:?}, reduce {reduce}"
+            );
+            for count in [2, 3, 8, 64] {
+                assert_eq!(
+                    decode(&mut dec, &cs, reduce, count),
+                    alone,
+                    "{count} threads, reduce {reduce}, {e:?}"
+                );
+            }
+            // a pool with no idle thread, whose tasks never run: the calling
+            // thread decodes everything, the same image
+            fn never(_: Box<dyn FnOnce() + Send + 'static>) {}
+            let busy = Options {
+                reduce,
+                threads: Threads {
+                    count: 8,
+                    spawn: Some(never),
+                },
+                ..Options::default()
+            };
+            assert_eq!(dec.decode(&cs, &busy), alone, "no thread came, reduce {reduce}, {e:?}");
+            // cut: the same too
+            let cut = &cs[..cs.len() * 2 / 3];
+            assert_eq!(
+                decode(&mut dec, cut, reduce, 5),
+                decode(&mut dec, cut, reduce, 1),
+                "cut, reduce {reduce}"
+            );
+        }
+        // with a memory limit that has no room for the threads' samples: one thread, the same image
+        let tight = Options {
+            limits: Limits {
+                max_memory: 12 << 20,
+                ..Limits::NONE
+            },
+            threads: Threads::os(8),
+            ..Options::default()
+        };
+        assert_eq!(dec.decode(&cs, &tight), decode(&mut dec, &cs, 0, 1), "{e:?}");
+    }
 }
 
 #[test]
@@ -433,6 +510,7 @@ fn limits_refuse_before_allocating() {
         reduce: 0,
         components: 0,
         limits,
+        ..Options::default()
     };
     assert!(dec.decode(&cs, &with(Limits::SL_TEXTURE)).is_ok());
     assert!(matches!(
@@ -484,7 +562,8 @@ fn limits_refuse_before_allocating() {
                 limits: Limits {
                     max_decoded_side: 64,
                     ..Limits::NONE
-                }
+                },
+                ..Options::default()
             }
         )
         .is_ok()
@@ -549,6 +628,7 @@ fn damaged_bytes_never_panic() {
                     reduce: 0,
                     components: 0,
                     limits,
+                    ..Options::default()
                 },
             );
             let _ = dec.decode(
@@ -557,6 +637,7 @@ fn damaged_bytes_never_panic() {
                     reduce: 1,
                     components: 4,
                     limits,
+                    ..Options::default()
                 },
             );
         }
