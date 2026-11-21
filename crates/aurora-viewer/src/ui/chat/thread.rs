@@ -17,7 +17,7 @@
 //! stay in the thread. The texts are the classic lines' (`chat_text_marked`:
 //! links, places, mentions, emoji, find highlights, selection).
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
+use super::{LineEnv, Mark, chat_text_bracketed, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
@@ -575,18 +575,19 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(
+            chat_text_bracketed(
                 ui,
                 p,
                 env.emoji,
                 env.world,
                 line.wording(env.names),
                 env.want_names,
-                &super::system_text(&line.text),
+                &line.text,
                 chat_size(ui.ctx(), 12.0),
                 tone,
                 false,
                 mark,
+                super::system_brackets(env.world, line),
             );
         });
     });
