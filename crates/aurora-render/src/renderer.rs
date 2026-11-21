@@ -613,6 +613,15 @@ fn spot_shadow_views(
     views
 }
 
+/// Whether the traced passes light and shadow by the frame's light,
+/// `sun_dir`: the one that shades, the moon's at night as the shadow maps'
+/// (world/env.rs: the sun when it is up, else the moon, else straight down;
+/// LLEnvironment::getLightDirection). Tracing only while the sun was
+/// visible let the moon through every roof.
+fn traced_light_up(sun_dir: Vec3) -> bool {
+    sun_dir.z > 0.0
+}
+
 /// Whether the shadow map of the projector at `light` in the frame's list is
 /// drawn while the first `traced` lights are traced: only past them.
 fn projector_map_drawn(light: u32, traced: usize) -> bool {
@@ -9690,7 +9699,7 @@ impl Backend {
                 fu.proj * fu.view,
                 fu.camera_pos,
                 f.sun_dir,
-                f.sun_visible > 0.0,
+                traced_light_up(f.sun_dir),
                 self.contact_now,
                 self.settings.rt_tuning.sun_softness,
             );
@@ -10724,7 +10733,7 @@ impl Backend {
                 clip_from_world: rt_clip_from_world,
                 camera: fu_camera,
                 sun_dir: f.sun_dir,
-                sun_up: f.sun_visible > 0.0,
+                sun_up: traced_light_up(f.sun_dir),
                 sun_color: fu_sun_color,
                 sky_zenith: fu_sky[0],
                 sky_horizon: fu_sky[1],
@@ -11544,7 +11553,7 @@ impl Backend {
                         clip_from_world: rt_clip_from_world,
                         camera: fu_camera,
                         sun_dir: f.sun_dir,
-                        sun_up: f.sun_visible > 0.0,
+                        sun_up: traced_light_up(f.sun_dir),
                         sun_color: fu_sun_color,
                         sky_zenith: fu_sky[0],
                         sky_horizon: fu_sky[1],
@@ -13361,6 +13370,15 @@ mod tests {
                 assert!(m.levels < 16);
             }
         }
+    }
+
+    #[test]
+    fn the_moon_is_traced_at_night() {
+        // the sun up, then the moon at night: both traced
+        assert!(traced_light_up(Vec3::new(0.3, 0.2, 0.68)));
+        assert!(traced_light_up(Vec3::new(-0.1, 0.35, 0.93)));
+        // neither up (straight down): nothing to trace
+        assert!(!traced_light_up(Vec3::NEG_Z));
     }
 
     #[test]
