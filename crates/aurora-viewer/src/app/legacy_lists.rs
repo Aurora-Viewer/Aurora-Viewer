@@ -3,7 +3,9 @@
 //! the import window shows, and what a finished import says.
 use super::*;
 use crate::demo::legacy_lists::{Mode, mode};
+use crate::legacy_profile::Account;
 use crate::world::legacy_lists::{self, Found, Parts, Report};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
 #[derive(Default)]
@@ -15,20 +17,40 @@ pub(super) struct LegacyLists {
     /// AURORA_DEMO_LEGACY_LISTS: the folder is written, then imports left.
     demo_started: bool,
     demo_imports: u8,
+    /// The demo's Legacy Viewer folder, looked in instead of the PC's.
+    demo_apps: Option<Vec<PathBuf>>,
 }
 
 impl App {
+    /// Who to look for: the account logged in, on the grid of its
+    /// transcripts (`chat_log::grid_name`), with or without transcripts.
+    fn legacy_lists_account(&self) -> Option<Account> {
+        let login = self.world.login.as_ref()?;
+        let grid = match self.world.chat_log.identity() {
+            Some(identity) => identity.grid.clone(),
+            None => crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, self.demo),
+        };
+        Some(Account {
+            first: login.first_name.clone(),
+            last: login.last_name.clone(),
+            grid,
+        })
+    }
+
     /// The import window opens: read the viewers' folders.
     pub(super) fn legacy_lists_opened(&mut self) {
         self.options_ui.legacy_lists_status.clear();
         self.options_ui.legacy_lists = Default::default();
         self.options_ui.legacy_lists.open = true;
-        let Some((account, _)) = self.chat_import_account() else {
+        let Some(account) = self.legacy_lists_account() else {
             self.options_ui.legacy_lists.found = Some(Vec::new());
             return;
         };
         self.options_ui.legacy_lists.other_grid = !account.grid_known() || mode() == Some(Mode::OtherGrid);
-        let apps = self.world.chat_log.legacy_apps();
+        let apps = match &self.legacy_lists.demo_apps {
+            Some(apps) => apps.clone(),
+            None => self.world.chat_log.legacy_apps(),
+        };
         let (tx, rx) = channel();
         self.legacy_lists.looking = Some(rx);
         let _ = std::thread::Builder::new().name("aurora-legacy-lists".into()).spawn(move || {
@@ -90,27 +112,23 @@ impl App {
         if !self.demo || self.legacy_lists.demo_started || !self.in_world() {
             return;
         }
-        let (Some(mode), Some(dir)) = (mode(), self.world.chat_log.dir().map(std::path::Path::to_path_buf)) else {
+        let (Some(mode), Some(login)) = (mode(), self.world.login.as_ref()) else {
             return;
         };
         self.legacy_lists.demo_started = true;
-        let root = crate::demo::legacy_lists::root(&dir);
+        // in the demo's own settings folder, never beside the transcripts,
+        // which can be in a folder of the user's
+        let root = crate::demo::legacy_lists::root(&crate::settings::account_dir(&login.agent_id));
         let object = self.world.objects.iter().find(|(_, o)| o.parent_id == 0).map(|(_, o)| o.full_id);
         if let Err(e) = crate::demo::legacy_lists::seed(&root, &self.world.own_name(), mode, object) {
             log::warn!("demo Legacy Viewer lists not written: {e}");
         }
-        self.world.chat_log.set_legacy_apps(vec![root]);
-        // kept in memory, and what the run writes wiped: a run must not
-        // change what the next one shows
+        self.legacy_lists.demo_apps = Some(vec![root]);
+        // kept in memory: a run must not change what the next one shows
         self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(Vec::new());
         self.world.derender = Default::default();
         self.world.media_filter = Default::default();
         self.world.contact_sets = Default::default();
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
         self.legacy_lists.demo_imports = match mode {
             Mode::Window | Mode::None | Mode::Unreadable | Mode::OtherGrid => 0,
             Mode::Run => 1,

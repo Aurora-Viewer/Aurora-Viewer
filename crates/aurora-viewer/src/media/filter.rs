@@ -306,6 +306,8 @@ impl MediaFilter {
             path: Some(path.clone()),
             ..MediaFilter::default()
         };
+        // a save of it still under way (a logout's) lands first
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -338,10 +340,13 @@ impl MediaFilter {
         }
         let added = self.rules.len() - before;
         if added > 0 {
-            if let Err(e) = self.write() {
+            if let Err(e) = self.write_now() {
                 self.rules.truncate(before);
                 return Err(e);
             }
+            // again by the save thread, flushed to the disk, after any save
+            // of the file it still holds
+            self.save();
             // the questions a new rule settles go too
             let (rules, session) = (&self.rules, &self.session);
             self.questions
@@ -350,18 +355,38 @@ impl MediaFilter {
         Ok(added)
     }
 
+    /// saveDomainFilterList, written by a save thread (saves.rs): an edit
+    /// does not wait for the disk on the frame.
     fn save(&self) {
-        if let Err(e) = self.write() {
-            log::warn!("media filter list not saved: {e}");
-        }
+        let Some((path, xml)) = self.file() else {
+            return;
+        };
+        crate::saves::replace(path.clone(), move || {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = crate::atomic_file::write(&path, &xml) {
+                log::warn!("media filter list not saved: {e}");
+            }
+        });
     }
 
-    /// saveDomainFilterList, in one step: a full disk leaves the old list.
-    /// No disk flush, on the frame thread.
-    fn write(&self) -> std::io::Result<()> {
-        let Some(path) = &self.path else {
+    /// In one step, for the import, which has to know it worked: a full
+    /// disk leaves the old list. No disk flush, on the frame thread: the
+    /// save that follows flushes it.
+    fn write_now(&self) -> std::io::Result<()> {
+        let Some((path, xml)) = self.file() else {
             return Ok(());
         };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        crate::atomic_file::publish(&path, &xml)
+    }
+
+    /// The file's path and contents.
+    fn file(&self) -> Option<(PathBuf, Vec<u8>)> {
+        let path = self.path.as_ref()?;
         let list = self
             .rules
             .iter()
@@ -372,10 +397,7 @@ impl MediaFilter {
                 Llsd::Map(m)
             })
             .collect();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        crate::atomic_file::publish(path, &aurora_llsd::to_xml(&Llsd::Array(list)))
+        Some((path.clone(), aurora_llsd::to_xml(&Llsd::Array(list))))
     }
 
     pub fn rules(&self) -> &[Rule] {
@@ -623,6 +645,26 @@ mod tests {
         f.path = Some(dir.join(FILE));
         assert_eq!(f.merge(vec![rule("new.example")]).unwrap(), 1);
         assert_eq!(MediaFilter::load(dir.join(FILE)).rules.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_edit_saved_before_a_merge_never_lands_after_it() {
+        let dir = std::env::temp_dir().join(format!("aurora-media-filter-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let mut f = MediaFilter::load(path.clone());
+        // ordinary edits go to the writer, one after the other
+        for i in 0..20 {
+            f.apply(Edit::Set(format!("edit{i}.example"), Action::Allow));
+        }
+        let rule = Rule {
+            pattern: "imported.example".into(),
+            action: Action::Deny,
+        };
+        assert_eq!(f.merge(vec![rule]).unwrap(), 1);
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
+        assert_eq!(MediaFilter::load(path).rules, f.rules);
+        assert_eq!(f.rules.len(), 21);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

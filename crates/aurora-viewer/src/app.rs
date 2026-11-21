@@ -3352,9 +3352,7 @@ impl App {
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
-        let off = self.demo
-            && crate::demo::legacy_lists::mode().is_none()
-            && !matches!(crate::demo::chatlog::mode(), Some(m) if !matches!(m, crate::demo::chatlog::Mode::Long { .. }));
+        let off = self.demo && !matches!(crate::demo::chatlog::mode(), Some(m) if !matches!(m, crate::demo::chatlog::Mode::Long { .. }));
         log.set_grid(if off {
             String::new()
         } else {
@@ -17677,6 +17675,7 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.legacy_lists_ready = self.in_world() && self.world.login.is_some();
         self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.options_ui.chat_log_shared = self.world.chat_log.shared();

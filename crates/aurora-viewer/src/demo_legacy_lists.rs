@@ -33,9 +33,10 @@ pub fn mode() -> Option<Mode> {
     })
 }
 
-/// The Legacy Viewer's folder of the scenario, beside the account's.
-pub fn root(account_logs: &Path) -> PathBuf {
-    account_logs.with_extension("legacy-lists")
+/// The Legacy Viewer's folder of the scenario, in the demo account's own
+/// settings folder (`settings::account_dir`, under the demo's folder).
+pub fn root(account_dir: &Path) -> PathBuf {
+    account_dir.join("legacy-lists")
 }
 
 /// Write the folder (each run starts from the same files). `object`: a
@@ -70,6 +71,10 @@ pub fn seed(root: &Path, own_name: &str, mode: Mode, object: Option<Uuid>) -> st
     let mut media = MediaFilter::load(dir.join(filter::FILE));
     media.apply(Edit::Set("radio.example".into(), Action::Allow));
     media.apply(Edit::Set("tracker.example".into(), Action::Deny));
+    // both are saved by the writer: on the disk before the window reads them
+    for file in [derender::FILE, filter::FILE] {
+        crate::saves::wait_for(&dir.join(file), crate::saves::BEFORE_READ);
+    }
     std::fs::write(
         dir.join(CONTACT_SETS_FILE),
         format!(
@@ -78,4 +83,42 @@ pub fn seed(root: &Path, own_name: &str, mode: Mode, object: Option<Uuid>) -> st
             super::chatlog::PEER
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::legacy_profile::Account;
+    use crate::world::legacy_lists::{Counts, find};
+
+    #[test]
+    fn the_window_finds_every_list_the_scenario_writes() {
+        let account_dir = std::env::temp_dir().join(format!("aurora-demo-legacy-lists-{}", Uuid::new_v4()));
+        let root = root(&account_dir);
+        assert!(root.starts_with(&account_dir));
+        // the demo's grid (`chat_log::grid_name`)
+        let account = Account {
+            first: "Demo".into(),
+            last: "Resident".into(),
+            grid: "demo".into(),
+        };
+        seed(&root, "Demo Resident", Mode::Window, Some(Uuid::from_u128(7))).unwrap();
+        let found = find(std::slice::from_ref(&root), &account);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].counts,
+            Counts {
+                teleports: 2,
+                derender: 1,
+                media: 2,
+                contact_sets: 1,
+            }
+        );
+        seed(&root, "Demo Resident", Mode::Unreadable, None).unwrap();
+        let found = find(std::slice::from_ref(&root), &account);
+        assert_eq!(found[0].folder().unreadable, [filter::FILE]);
+        seed(&root, "Demo Resident", Mode::None, None).unwrap();
+        assert!(find(std::slice::from_ref(&root), &account).is_empty());
+        std::fs::remove_dir_all(&account_dir).unwrap();
+    }
 }

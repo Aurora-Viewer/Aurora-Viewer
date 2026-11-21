@@ -15399,6 +15399,7 @@ ui-weather-wind-follow-region = リージョンの風
 ui-options-legacy-lists = Legacy Viewer からリストをインポート
 ui-options-legacy-lists-help = このアカウントのテレポート履歴、アセットのブロックリスト、メディアフィルターのリスト、コンタクトセットを追加します。Legacy Viewer のファイルは読み取るだけです。
 ui-options-legacy-lists-button = Legacy Viewer からインポート…
+ui-options-legacy-lists-no-account = このアカウントのリストをインポートするにはログインしてください。
 ui-options-legacy-lists-title = Legacy Viewer からインポート
 ui-options-legacy-lists-text = すべてこのアカウントのリストに追加され、ここにあるものは削除されません。アセットのブロックリストの対象はすぐにワールドから消えます。再度インポートすると、ここで削除した項目が戻ります。
 ui-options-legacy-lists-searching = Legacy Viewer のフォルダーを探しています…
