@@ -293,6 +293,20 @@ fn delete_follows_the_remove_rule_and_a_drop_the_move_rule() {
     assert_eq!(l.world.rlva_send_boundary(&mut command.clone(), nil), super::Boundary::Refused);
     l.world.rlva.deletes.insert(request);
     assert_eq!(l.world.rlva_send_boundary(&mut command, nil), super::Boundary::Send);
+    l.world.rlva.deletes.remove(&request);
+    say(&mut l.world, issuer, "@unsharedwear=y");
+    // typed in the RLVa console, the lock is the agent's own and refuses
+    // the drop the same way, until closing the console clears it
+    // (RlvFloaterConsole::onClose, rlvfloaters.cpp)
+    assert!(!l.world.agent_id.is_nil());
+    l.world.rlva_console_input("@unsharedwear=n");
+    assert!(
+        !l.world.rlva_inventory_mutation_allowed(&binned(spare, true), nil),
+        "console lock: dropped on the Trash"
+    );
+    let agent = l.world.agent_id;
+    l.world.rlva.close_console(agent);
+    assert!(l.world.rlva_inventory_mutation_allowed(&binned(spare, true), nil), "console closed");
 }
 
 /// A refused inventory change is answered as a failed one, with its own
