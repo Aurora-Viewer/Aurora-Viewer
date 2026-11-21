@@ -787,9 +787,10 @@ thread_local! {
 /// To call on each thread of a pool that decodes textures, when the thread
 /// starts: `jobs` is the pool's count of jobs, queued and running. A large
 /// texture decoded on this thread then shares its decode with the pool's
-/// other threads only while the pool has fewer jobs than threads
-/// ([`lent_count`]). Without it the decoder offers its work whatever the
-/// pool does.
+/// other threads, while the pool has fewer jobs than threads
+/// ([`lent_count`]). A thread that did not say so decodes alone: the pool
+/// must be one whose threads may take such work (its jobs counted, a panic
+/// handler), which the frame's own pool is not.
 pub fn pool_thread(jobs: Arc<AtomicUsize>) {
     POOL_JOBS.set(Some(jobs));
 }
@@ -802,8 +803,8 @@ pub fn pool_thread(jobs: Arc<AtomicUsize>) {
 /// so offers made then would put the pool's threads on the textures being
 /// decoded while the others wait, for the price of handing code-blocks
 /// from a thread to another.
-fn lent_count(max: usize, threads: usize, jobs: Option<usize>) -> usize {
-    let idle = jobs.map_or(threads, |jobs| threads.saturating_sub(jobs));
+fn lent_count(max: usize, threads: usize, jobs: usize) -> usize {
+    let idle = threads.saturating_sub(jobs);
     max.min(idle + 1).min(threads).max(1)
 }
 
@@ -814,7 +815,7 @@ fn lent_count(max: usize, threads: usize, jobs: Option<usize>) -> usize {
 /// textures decoded together a core each. The decoder waits for the
 /// threads that came on a condition variable, not on the pool, so it never
 /// takes another job of the pool onto its stack (the loop that did,
-/// #1689). Off a pool, the calling thread alone.
+/// #1689). Off such a pool, the calling thread alone.
 fn lent_threads() -> aurora_j2k::Threads {
     static COUNT: OnceLock<usize> = OnceLock::new();
     let max = *COUNT.get_or_init(|| {
@@ -826,7 +827,9 @@ fn lent_threads() -> aurora_j2k::Threads {
     if max < 2 || rayon::current_thread_index().is_none() {
         return aurora_j2k::Threads::default();
     }
-    let jobs = POOL_JOBS.with_borrow(|jobs| jobs.as_ref().map(|jobs| jobs.load(Ordering::Relaxed)));
+    let Some(jobs) = POOL_JOBS.with_borrow(|jobs| jobs.as_ref().map(|jobs| jobs.load(Ordering::Relaxed))) else {
+        return aurora_j2k::Threads::default();
+    };
     let count = lent_count(max, rayon::current_num_threads(), jobs);
     if count < 2 {
         return aurora_j2k::Threads::default();
@@ -1134,19 +1137,17 @@ mod tests {
 
     #[test]
     fn a_decode_is_shared_with_idle_threads_only() {
-        // a pool that says nothing of its jobs: the most allowed
-        assert_eq!(lent_count(16, 30, None), 16);
-        assert_eq!(lent_count(16, 6, None), 6);
         // this decode alone on the pool, then more jobs than idle threads
-        assert_eq!(lent_count(16, 30, Some(1)), 16);
-        assert_eq!(lent_count(16, 30, Some(20)), 11);
-        assert_eq!(lent_count(16, 30, Some(28)), 3);
+        assert_eq!(lent_count(16, 30, 1), 16);
+        assert_eq!(lent_count(16, 6, 1), 6);
+        assert_eq!(lent_count(16, 30, 20), 11);
+        assert_eq!(lent_count(16, 30, 28), 3);
         // every thread has a job, or jobs wait: the calling thread alone
-        assert_eq!(lent_count(16, 30, Some(30)), 1);
-        assert_eq!(lent_count(16, 30, Some(5000)), 1);
+        assert_eq!(lent_count(16, 30, 30), 1);
+        assert_eq!(lent_count(16, 30, 5000), 1);
         // never more than the pool, never fewer than the calling thread
-        assert_eq!(lent_count(16, 1, Some(0)), 1);
-        assert_eq!(lent_count(0, 30, Some(1)), 1);
+        assert_eq!(lent_count(16, 1, 0), 1);
+        assert_eq!(lent_count(0, 30, 1), 1);
     }
 
     struct VecWriter {

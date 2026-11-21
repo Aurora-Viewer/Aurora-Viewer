@@ -303,7 +303,12 @@ impl Decoder {
                 written: false,
             });
         }
-        if limits.max_memory != 0 && header::decode_working_memory(&mh, factor, decoded) > limits.max_memory {
+        let need = if limits.max_memory != 0 {
+            header::decode_working_memory(&mh, factor, decoded)
+        } else {
+            0
+        };
+        if need > limits.max_memory {
             return Err(Error::Limit("the decode needs more working memory than the decoder's limit"));
         }
         let used = &comps[..decoded];
@@ -337,6 +342,7 @@ impl Decoder {
             factor,
             decoded,
             threads: options.threads,
+            need,
             tile: &mut self.tile,
             scratch: &mut self.scratch,
         };

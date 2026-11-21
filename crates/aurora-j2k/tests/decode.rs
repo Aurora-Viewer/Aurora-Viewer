@@ -7,7 +7,9 @@
 
 mod oracle;
 
-use aurora_j2k::{Decoder, Error, Limits, Options, Samples, Threads};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use aurora_j2k::{Decoder, Error, Limits, Options, Samples, Spawn, Threads};
 use oracle::{Encode, Verdict};
 
 /// A picture with edges, gradients and noise, the same on every platform.
@@ -420,9 +422,74 @@ fn the_viewer_s_requests() {
     assert_eq!(img.components, 3);
 }
 
+/// A lent thread that runs where it is queued, before the calling thread
+/// starts on the work: every code-block and every component is then a lent
+/// thread's, whatever else the machine does.
+fn inline(task: Box<dyn FnOnce() + Send + 'static>) {
+    task();
+}
+
+/// A pool with no idle thread: its tasks never run.
+fn never(_: Box<dyn FnOnce() + Send + 'static>) {}
+
+fn lent(reduce: u8, count: usize, spawn: Spawn) -> Options {
+    Options {
+        reduce,
+        threads: Threads { count, spawn: Some(spawn) },
+        ..Options::default()
+    }
+}
+
+/// The same image whatever the threads lent, and OpenJPEG's, at each of
+/// `reduces`.
+fn check_threads(e: &Encode, reduces: &[u8]) {
+    assert!(encodable(e), "{e:?}");
+    let cs = oracle::encode(e, sample_for(e)).expect("encode");
+    let mut dec = Decoder::new();
+    for &reduce in reduces {
+        let alone = ours(&mut dec, &cs, reduce);
+        assert_eq!(
+            oracle::compare(&oracle::decode(&cs, u32::from(reduce)), &alone),
+            Verdict::Same,
+            "{e:?}, reduce {reduce}"
+        );
+        for count in [2, 3, 8, 64] {
+            assert_eq!(
+                dec.decode(&cs, &lent(reduce, count, aurora_j2k::spawn_thread)),
+                alone,
+                "{count} threads, reduce {reduce}, {e:?}"
+            );
+        }
+        // every code-block a lent thread's, then none
+        assert_eq!(
+            dec.decode(&cs, &lent(reduce, 4, inline)),
+            alone,
+            "lent threads alone, reduce {reduce}, {e:?}"
+        );
+        assert_eq!(
+            dec.decode(&cs, &lent(reduce, 8, never)),
+            alone,
+            "no thread came, reduce {reduce}, {e:?}"
+        );
+        // cut: the same too
+        let cut = &cs[..cs.len() * 2 / 3];
+        let cut_alone = ours(&mut dec, cut, reduce);
+        assert_eq!(
+            dec.decode(cut, &lent(reduce, 5, aurora_j2k::spawn_thread)),
+            cut_alone,
+            "cut, reduce {reduce}"
+        );
+        assert_eq!(
+            dec.decode(cut, &lent(reduce, 3, inline)),
+            cut_alone,
+            "cut, lent threads alone, reduce {reduce}"
+        );
+    }
+}
+
 #[test]
 fn lent_threads_change_no_sample() {
-    // a tile large enough to be shared: the same image whatever the threads,
+    // tiles large enough to be shared: the same image whatever the threads,
     // and OpenJPEG's
     for (irreversible, comps, origin) in [(true, 4, (0, 0)), (false, 3, (0, 0)), (true, 3, (3, 5))] {
         let e = Encode {
@@ -435,63 +502,125 @@ fn lent_threads_change_no_sample() {
             rates: if irreversible { vec![20.0, 6.0] } else { vec![0.0] },
             ..Encode::default()
         };
-        let cs = oracle::encode(&e, sample_for(&e)).expect("encode");
-        let mut dec = Decoder::new();
-        let decode = |dec: &mut Decoder, cs: &[u8], reduce: u8, count: usize| {
-            dec.decode(
-                cs,
-                &Options {
-                    reduce,
-                    threads: Threads::os(count),
-                    ..Options::default()
-                },
-            )
-        };
-        for reduce in [0, 1] {
-            let alone = decode(&mut dec, &cs, reduce, 1);
-            assert_eq!(
-                oracle::compare(&oracle::decode(&cs, u32::from(reduce)), &alone),
-                Verdict::Same,
-                "{e:?}, reduce {reduce}"
-            );
-            for count in [2, 3, 8, 64] {
-                assert_eq!(
-                    decode(&mut dec, &cs, reduce, count),
-                    alone,
-                    "{count} threads, reduce {reduce}, {e:?}"
-                );
-            }
-            // a pool with no idle thread, whose tasks never run: the calling
-            // thread decodes everything, the same image
-            fn never(_: Box<dyn FnOnce() + Send + 'static>) {}
-            let busy = Options {
-                reduce,
-                threads: Threads {
-                    count: 8,
-                    spawn: Some(never),
-                },
-                ..Options::default()
-            };
-            assert_eq!(dec.decode(&cs, &busy), alone, "no thread came, reduce {reduce}, {e:?}");
-            // cut: the same too
-            let cut = &cs[..cs.len() * 2 / 3];
-            assert_eq!(
-                decode(&mut dec, cut, reduce, 5),
-                decode(&mut dec, cut, reduce, 1),
-                "cut, reduce {reduce}"
-            );
-        }
-        // with a memory limit that has no room for the threads' samples: one thread, the same image
-        let tight = Options {
-            limits: Limits {
-                max_memory: 12 << 20,
-                ..Limits::NONE
-            },
-            threads: Threads::os(8),
-            ..Options::default()
-        };
-        assert_eq!(dec.decode(&cs, &tight), decode(&mut dec, &cs, 0, 1), "{e:?}");
+        check_threads(&e, &[0]);
     }
+    // one level down, still shared
+    let e = Encode {
+        w: 1100,
+        h: 1000,
+        comps: 3,
+        irreversible: true,
+        numresolution: 6,
+        rates: vec![20.0, 6.0],
+        ..Encode::default()
+    };
+    check_threads(&e, &[0, 1]);
+    // two tiles, each shared: the second with what the first left
+    let e = Encode {
+        w: 1100,
+        h: 600,
+        comps: 3,
+        irreversible: false,
+        numresolution: 5,
+        rates: vec![0.0],
+        tile: Some((560, 600)),
+        ..Encode::default()
+    };
+    check_threads(&e, &[0]);
+}
+
+#[test]
+fn a_memory_limit_without_room_for_lent_threads_keeps_one() {
+    static OFFERS: AtomicUsize = AtomicUsize::new(0);
+    fn counted(task: Box<dyn FnOnce() + Send + 'static>) {
+        OFFERS.fetch_add(1, Ordering::Relaxed);
+        task();
+    }
+    let e = Encode {
+        w: 600,
+        h: 540,
+        comps: 4,
+        irreversible: true,
+        numresolution: 6,
+        rates: vec![20.0, 6.0],
+        ..Encode::default()
+    };
+    let cs = oracle::encode(&e, sample_for(&e)).expect("encode");
+    let mut dec = Decoder::new();
+    let alone = ours(&mut dec, &cs, 0);
+    assert!(alone.is_ok());
+    let with = |dec: &mut Decoder, max_memory: u64| {
+        dec.decode(
+            &cs,
+            &Options {
+                limits: Limits {
+                    max_memory,
+                    ..Limits::NONE
+                },
+                ..lent(0, 4, counted)
+            },
+        )
+    };
+    // the least memory the decode is allowed with: what the limit counts
+    let (mut refused, mut need) = (1u64, 256u64 << 20);
+    while need - refused > 1 {
+        let mid = refused + (need - refused) / 2;
+        match with(&mut dec, mid) {
+            Err(Error::Limit(_)) => refused = mid,
+            _ => need = mid,
+        }
+    }
+    // with exactly that, no room for what a shared decode holds besides:
+    // nothing is offered, and the image is the same
+    OFFERS.store(0, Ordering::Relaxed);
+    assert_eq!(with(&mut dec, need), alone);
+    assert_eq!(OFFERS.load(Ordering::Relaxed), 0, "no room, no lent thread");
+    // with room for the lent threads' samples and the tile's bytes: shared
+    let samples = 600 * 540 * 4 * 4;
+    assert_eq!(with(&mut dec, need + samples + cs.len() as u64), alone);
+    assert!(OFFERS.load(Ordering::Relaxed) > 0, "room for the lent threads");
+}
+
+#[test]
+fn damaged_bytes_decode_alike_with_lent_threads() {
+    // a damaged codestream large enough to be shared: one thread's image or
+    // one thread's error, and decoders that go on
+    let e = Encode {
+        w: 600,
+        h: 540,
+        comps: 3,
+        irreversible: true,
+        numresolution: 6,
+        rates: vec![30.0, 10.0],
+        ..Encode::default()
+    };
+    let cs = oracle::encode(&e, sample_for(&e)).expect("encode");
+    let (mut one, mut shared) = (Decoder::new(), Decoder::new());
+    let limits = Limits {
+        max_memory: 256 << 20,
+        ..Limits::SL_TEXTURE
+    };
+    for i in 0..96 {
+        let at = i * cs.len() / 96;
+        let mut bad = cs.clone();
+        bad[at] ^= if i % 2 == 0 { 0xFF } else { 0x10 };
+        let alone = one.decode(
+            &bad,
+            &Options {
+                limits,
+                ..Options::default()
+            },
+        );
+        let with_lent = shared.decode(
+            &bad,
+            &Options {
+                limits,
+                ..lent(0, 4, inline)
+            },
+        );
+        assert_eq!(with_lent, alone, "byte {at}");
+    }
+    assert_eq!(shared.decode(&cs, &lent(0, 4, inline)), ours(&mut one, &cs, 0));
 }
 
 #[test]

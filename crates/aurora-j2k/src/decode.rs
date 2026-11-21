@@ -148,6 +148,9 @@ struct Walk<'a, 'o> {
     ppm: PackedCursor,
     /// `image_working_memory`, once a tile needs it.
     image_need: Option<u64>,
+    /// The working memory the limit counted for this decode
+    /// (`decode_working_memory`); 0 without a memory limit.
+    need: u64,
 }
 
 impl Walk<'_, '_> {
@@ -585,6 +588,7 @@ impl Walk<'_, '_> {
         // The decoder limits' working memory for a tile whose own coding (a
         // tile-part COD or COC) changes it: the decode's check when it
         // started took the main header's coding.
+        let mut need = self.need;
         if self.limits.max_memory != 0 && ov.is_some_and(|ov| ov.cod.is_some() || !ov.coc.is_empty()) {
             let image = *self
                 .image_need
@@ -595,6 +599,7 @@ impl Walk<'_, '_> {
                     "a tile's own coding needs more working memory than the decoder's limit",
                 ));
             }
+            need = need.max(image.saturating_add(part));
         }
         // opj_j2k_merge_ppt: the tile's PPT markers in Zppt order, in one buffer
         scratch.ppt.clear();
@@ -677,9 +682,12 @@ impl Walk<'_, '_> {
             }
         }
         let coding_mct = params[0].coding.mct != 0;
-        // a shared decode holds each code-block's samples until they are in
-        // their component: with a limit that has no room for them, one thread
-        let threads = if self.limits.max_memory != 0 && total.saturating_mul(2) > self.limits.max_memory {
+        // A shared decode holds, beyond what the limit counted, a copy of the
+        // tile's bytes and the code-blocks the lent threads decoded (all of
+        // them at most) until they are in their component: with a limit that
+        // has no room for them, one thread.
+        let shared = need.saturating_add(total).saturating_add(tile_data.len() as u64);
+        let threads = if self.limits.max_memory != 0 && shared > self.limits.max_memory {
             Threads::default()
         } else {
             self.threads
@@ -915,6 +923,8 @@ pub(crate) struct Job<'a> {
     pub factor: u32,
     pub decoded: usize,
     pub threads: Threads,
+    /// `decode_working_memory`, as the limit counted it; 0 without a limit.
+    pub need: u64,
     pub tile: &'a mut Tile,
     pub scratch: &'a mut Scratch,
 }
@@ -947,6 +957,7 @@ pub(crate) fn decode_codestream(job: Job<'_>, comps: &mut [OutComp], samples: &m
         tiles: BTreeMap::new(),
         ppm: PackedCursor::default(),
         image_need: None,
+        need: job.need,
     };
     w.run()?;
     Ok(Outcome {

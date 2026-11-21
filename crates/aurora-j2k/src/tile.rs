@@ -381,7 +381,9 @@ fn plane_jobs(work: &PlaneWork, scratch: &mut DwtScratch) {
             numres,
             reversible,
         } = &mut *job;
-        for copy in copies.iter() {
+        // (each code-block's samples freed once in place: a task that never
+        // ran keeps this work until its pool drops it)
+        for copy in copies.drain(..) {
             let (w, rows) = (usize::from(copy.w), usize::from(copy.h));
             let dst = &mut plane[copy.dst..];
             match &copy.src {
@@ -925,6 +927,10 @@ impl Tile {
             .collect();
         let refused = work.refused.load(Ordering::Relaxed);
         if !ok || refused {
+            // (what the lent threads decoded goes with the decode)
+            for h in &mut taken {
+                h.done.clear();
+            }
             helpers.append(&mut taken);
             return Err(Error::Data(if refused {
                 "code-block with too many bit-planes"

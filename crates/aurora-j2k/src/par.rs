@@ -89,6 +89,17 @@ impl Drop for Entered {
     }
 }
 
+/// Closes the gate when the calling thread is done with its share, a panic
+/// included: a task that starts after that returns at once, and works for
+/// nobody.
+struct Close<'a>(&'a Gate);
+
+impl Drop for Close<'_> {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner()).closed = true;
+    }
+}
+
 /// Runs `own(work)` on the calling thread and `step(work, i)`, `i` from 1
 /// to `extra`, on the threads of the pool that are free to take them, and
 /// returns when the calling thread and every task that started have
@@ -120,9 +131,11 @@ pub(crate) fn share<W: Send + Sync + 'static>(
             }));
         }
     }
-    own(work);
+    {
+        let _close = Close(&gate);
+        own(work);
+    }
     let mut state = gate.state.lock().unwrap_or_else(|e| e.into_inner());
-    state.closed = true;
     while state.active > 0 {
         state = gate.left.wait(state).unwrap_or_else(|e| e.into_inner());
     }
@@ -227,15 +240,45 @@ mod tests {
 
     #[test]
     fn a_panic_in_a_task_is_reported() {
-        fn fail(_: &(), i: usize) {
-            // (the calling thread gives the task time to start)
-            if i == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(300));
-            } else {
-                panic!("the task that fails");
-            }
+        // the task runs where it is queued, and its panic stops there, as
+        // on a pool's thread
+        fn inline(task: Box<dyn FnOnce() + Send + 'static>) {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task));
         }
-        assert!(!share(Threads::os(2), 1, &Arc::new(()), fail, |w| fail(w, 0)));
+        fn fail(_: &(), _: usize) {
+            panic!("the task that fails");
+        }
+        let threads = Threads {
+            count: 2,
+            spawn: Some(inline),
+        };
+        assert!(!share(threads, 1, &Arc::new(()), fail, |_| {}));
+    }
+
+    #[test]
+    fn a_panic_of_the_calling_thread_turns_late_tasks_away() {
+        static LATE: Mutex<Vec<Box<dyn FnOnce() + Send + 'static>>> = Mutex::new(Vec::new());
+        fn later(task: Box<dyn FnOnce() + Send + 'static>) {
+            LATE.lock().expect("no panic").push(task);
+        }
+        let work = counting(10);
+        let threads = Threads {
+            count: 3,
+            spawn: Some(later),
+        };
+        let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            share(threads, 2, &work, count, |_| panic!("the calling thread fails"))
+        }));
+        assert!(stopped.is_err());
+        let late: Vec<_> = std::mem::take(&mut *LATE.lock().expect("no panic"));
+        assert_eq!(late.len(), 2);
+        for task in late {
+            task();
+        }
+        assert!(
+            work.seen.iter().all(|n| n.load(Ordering::Relaxed) == 0),
+            "nothing is done for a caller that is gone"
+        );
     }
 
     #[test]
