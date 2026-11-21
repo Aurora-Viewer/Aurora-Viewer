@@ -902,12 +902,13 @@ fn toolbar_sanitize_skips_the_retired_howto_command() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 97);
-    assert_eq!(COMMANDS.len(), 97);
+    // main's 83 commands, plus the 15 menu commands (`ao_mini` is already in the 83).
+    assert_eq!(all.len(), 98);
+    assert_eq!(COMMANDS.len(), 98);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 97, "each command once");
+    assert_eq!(ids.len(), 98, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));

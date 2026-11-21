@@ -16425,6 +16425,17 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
+            BarAction::ToggleAoMini => {
+                // as every toolbar window (LLFloaterReg::toggleInstance): a
+                // minimized one expands; flipping the flag closed it, and it
+                // came back minimized
+                let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::ao::mini::WINDOW, &mut saved.mini_open);
+                self.panels.ao_mini = saved.mini_open;
+                if !self.demo {
+                    self.settings.save();
+                }
+            }
             BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(self.world.hud_zoom_min(), 1.0),
             BarAction::None => {}
@@ -18075,6 +18086,14 @@ impl App {
             self.settings.save();
             self.world
                 .system_message(aurora_i18n::tr!("app-section-settings-reset", section = page.name()));
+        }
+        if res.setting_unavailable {
+            self.world.notifications.push(
+                crate::world::notifications::Kind::Info,
+                aurora_i18n::tr!("ui-options-setting-unavailable"),
+                "",
+                crate::world::notifications::Data::None,
+            );
         }
         if res.open_dev_toolbox {
             self.panels.dev_toolbox = true;
@@ -23399,7 +23418,9 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_swimming_incomplete(&mut self.world.inventory, self.world.agent_id)
                 } else if matches!(mode.as_str(), "empty" | "quick-empty") {
                     uuid::Uuid::nil()
-                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick") {
+                } else if mode.starts_with("design-")
+                    || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick" | "mini")
+                {
                     crate::ao::demo::seed_movement_design(&mut self.world.inventory, self.world.agent_id)
                 } else {
                     crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id)
@@ -23409,6 +23430,8 @@ impl ApplicationHandler for App {
                     crate::ao::Account {
                         enabled: mode != "off",
                         selected,
+                        // the Mini AO window, open as after a relog
+                        mini_open: mode == "mini",
                         ..Default::default()
                     },
                 );
