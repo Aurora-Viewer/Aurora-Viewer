@@ -797,6 +797,23 @@ struct HeldPose {
 }
 
 impl ObjectStore {
+    /// At exit: lets go of every object without freeing it, as the system
+    /// takes the memory back when the process ends. Freeing tens of
+    /// thousands of objects one block at a time took up to half a minute
+    /// after a long session (memory Windows had moved out to disk is read
+    /// back to be freed), with the window no longer answering (#2894,
+    /// #3612). Objects save nothing when dropped.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.slots));
+        std::mem::forget(std::mem::take(&mut self.graveyard));
+        std::mem::forget(std::mem::take(&mut self.by_key));
+        std::mem::forget(std::mem::take(&mut self.by_uuid));
+        std::mem::forget(std::mem::take(&mut self.children));
+        self.free.clear();
+        self.removed_slots.clear();
+        self.count = 0;
+    }
+
     pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
         let Some(o) = self.get(idx) else { return };
         if o.render.blinn_phong_preview == preview {
