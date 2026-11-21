@@ -6356,7 +6356,7 @@ impl World {
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
                 // the name is a link to the resident (social::online_chat_line)
-                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::Radar);
             }
         }
     }
