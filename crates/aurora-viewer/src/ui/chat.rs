@@ -57,6 +57,8 @@ mod chat_lines_tests;
 #[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
+mod earshot_tests;
+#[cfg(test)]
 mod volume_tests;
 
 use super::context::CtxAction;
@@ -252,6 +254,9 @@ pub struct ChatUi {
     /// A conversation's notices too (its sub-option, off), given every
     /// frame by the app.
     pub compact_im_notices: bool,
+    /// Emotes join their sender's group in the Aurora style
+    /// (Preferences › Chat, off), given every frame by the app.
+    pub group_emotes: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
@@ -350,6 +355,38 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// Route text started from the world to the Nearby field that will
+    /// actually receive keyboard focus (LLViewerWindow::handleKey).
+    pub fn start_nearby_with(&mut self, ctx: &egui::Context, main_open: bool, text: &str) {
+        let target = nearby_typing_target(
+            self.nearby_window_shown(ctx),
+            main_open && !self.contacts && self.selected.is_none() && !crate::ui::widgets::floater_minimized(ctx, "conversations"),
+        );
+        match target {
+            NearbyTypingTarget::Detached => {
+                self.draft_mut(None).push_str(text);
+                self.popped.raise(None, true);
+            }
+            NearbyTypingTarget::Main => {
+                self.draft_mut(None).push_str(text);
+                self.conv_focus_request = true;
+            }
+            NearbyTypingTarget::ChatBar => {
+                self.input.push_str(text);
+                self.focus_request = true;
+            }
+        }
+    }
+
+    /// How far residents can hear the selected nearby chat volume.
+    pub(crate) fn earshot_range(&self, ranges: crate::world::radar::ChatRanges) -> f32 {
+        match self.volume {
+            compose::Volume::Whisper => ranges.whisper,
+            compose::Volume::Say => ranges.say,
+            compose::Volume::Shout => ranges.shout,
+        }
+    }
+
     /// The column's saved state, given every frame by the app
     /// (`Settings::chat_column_collapsed`), or the demo session's own.
     pub fn follow_column_setting(&mut self, saved: bool) {
@@ -859,6 +896,12 @@ impl ChatUi {
         self.local_typing.update(now, std::mem::take(&mut self.local_field))
     }
 
+    /// `local_typing_update` while RLVa holds the typing start back
+    /// (`LocalTyping::update_held`).
+    pub fn local_typing_update_held(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update_held(now, std::mem::take(&mut self.local_field))
+    }
+
     /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
     /// it starts.
     pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {
@@ -875,6 +918,28 @@ impl ChatUi {
     pub fn stop_local_typing(&mut self) -> bool {
         self.local_typing.stop()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NearbyTypingTarget {
+    Detached,
+    Main,
+    ChatBar,
+}
+
+fn nearby_typing_target(detached_visible: bool, main_visible: bool) -> NearbyTypingTarget {
+    if detached_visible {
+        NearbyTypingTarget::Detached
+    } else if main_visible {
+        NearbyTypingTarget::Main
+    } else {
+        NearbyTypingTarget::ChatBar
+    }
+}
+
+/// Count residents whose known range is within the selected nearby chat range.
+pub(crate) fn earshot_count(entries: impl IntoIterator<Item = Option<f32>>, range: f32) -> usize {
+    entries.into_iter().filter(|distance| distance.is_some_and(|d| d <= range)).count()
 }
 
 pub struct OutgoingChat {
@@ -3120,6 +3185,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
             let clearing_filter = view.is_filtered() && filter.is_empty();
+            view.set_group_emotes(st.group_emotes);
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -3241,7 +3307,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -3250,8 +3316,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         super::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
     }
     line_menu::show(ui, menu, p, |ui, target| {
-        if let Some(avatar) = target.sender {
-            super::context::chat_sender_menu(ui, p, w, avatar, env.names, &target.line);
+        if let Some(sender) = target.sender {
+            sender_menu(ui, p, w, sender, env.names, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
             thread::message_menu(ui, &env, th, target);
         }
@@ -3391,7 +3457,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.set_width(w - 8.0);
                 ui.horizontal(|ui| {
                     if object {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                        let (rect, cube) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        line_object_sender(cube, p, world, line, env.menu);
                         let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
                         if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
@@ -3424,8 +3491,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
-                    if object && !line.source.is_nil() {
-                        object_sender(&r.clone().on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+                    if object {
+                        line_object_sender(r.clone(), p, world, line, env.menu);
                     } else if !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                     }
@@ -3444,7 +3511,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             });
         ui.add_space(2.0);
     }
-    let (text, italics) = line_body(line, &name);
+    // an emote of ours starts with "(You)" too, as the Legacy Viewer's plain
+    // text history writes it (FSChatHistory::appendMessage)
+    let (text, italics) = line_body(line, shown_name(line, &name));
     let visible = previews::text(env.previews.as_deref(), line, &text, ui.available_width() - 8.0);
     egui::Frame::new()
         .inner_margin(egui::Margin {
@@ -4478,6 +4547,15 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
 }
 
+/// The nearby history hides the overlay independently of its container
+/// (#2546). Reuse the detached-window visibility check; a stale main-tab
+/// selection must not hide lines while that detached window is hidden.
+/// LLFloaterIMNearbyChatHandler::processChat likewise tests the history's
+/// visibility before showing nearby chat toasts.
+pub fn nearby_chat_shown(ctx: &egui::Context, st: &ChatUi, conversations_open: bool) -> bool {
+    st.nearby_window_shown(ctx) || (conversations_open && !st.nearby_apart() && local_chat_shown(ctx, st))
+}
+
 /// A demo's window of its own for `conversation`, at `pos` (whatever the
 /// cascade or a previous run would give it).
 pub fn demo_place_window(ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
@@ -4980,44 +5058,82 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
         });
 }
 
+/// The object a line can be inspected or blocked by: what it said, and its
+/// IMs, which carry its id in their session id (IM_FROM_TASK).
+pub(super) fn line_object(line: &crate::world::ChatLine) -> Option<uuid::Uuid> {
+    (matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !line.source.is_nil()).then_some(line.source)
+}
+
+/// The inspector of a line's object: the line's own origin, its name alone
+/// when none was kept.
+fn object_inspect(world: &World, line: &crate::world::ChatLine) -> CtxAction {
+    CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
+        || crate::slapp::RemoteObject {
+            id: line.source,
+            name: line.from.clone(),
+            owner: uuid::Uuid::nil(),
+            group_owned: false,
+            owner_hidden: false,
+            slurl: String::new(),
+        },
+    )))
+}
+
+/// The rows of an object's menu: inspect, ignore (the Block of
+/// menu_object_icon.xml and menu_url_objectim.xml).
+fn object_menu(ui: &mut egui::Ui, p: &Palette, world: &World, line: &crate::world::ChatLine) {
+    let id = line.source;
+    if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+        super::context::request(ui.ctx(), object_inspect(world, line));
+    }
+    let (icon, label) = if world.object_block_entry(&id).is_some() {
+        ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+    } else {
+        ("ban", aurora_i18n::tr!("common-ignore"))
+    };
+    if super::menu::item(ui, p, icon, label) {
+        super::context::request(
+            ui.ctx(),
+            CtxAction::ToggleBlockObject {
+                id,
+                name: line.from.clone(),
+            },
+        );
+    }
+}
+
+/// The menu of a line's sender, a resident's or an object's.
+pub(super) fn sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, scope: NameScope, line: &crate::world::ChatLine) {
+    if line_object(line) == Some(id) {
+        object_menu(ui, p, world, line);
+    } else {
+        super::context::chat_sender_menu(ui, p, world, id, scope, line);
+    }
+}
+
 /// An object's name in a line: a click inspects it, a right click offers
 /// to inspect or to ignore it (the Legacy Viewer's objectim link of the name,
 /// LLViewerChat::getSenderSLURL).
 fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine) {
-    let id = line.source;
-    let inspect = || {
-        CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
-            || crate::slapp::RemoteObject {
-                id,
-                name: line.from.clone(),
-                owner: uuid::Uuid::nil(),
-                group_owned: false,
-                owner_hidden: false,
-                slurl: String::new(),
-            },
-        )))
-    };
-    super::menu::context_menu(resp, p, |ui| {
-        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-            super::context::request(ui.ctx(), inspect());
-        }
-        let (icon, label) = if world.mutes.is_muted_id(&id) {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        if super::menu::item(ui, p, icon, label) {
-            super::context::request(
-                ui.ctx(),
-                CtxAction::ToggleBlockObject {
-                    id,
-                    name: line.from.clone(),
-                },
-            );
-        }
-    });
+    super::menu::context_menu(resp, p, |ui| object_menu(ui, p, world, line));
     if resp.clicked() {
-        super::context::request(&resp.ctx, inspect());
+        super::context::request(&resp.ctx, object_inspect(world, line));
+    }
+}
+
+/// The name or the cube of a full-size line from an object: `object_sender`,
+/// in the transcript's own menu where it has one.
+pub(super) fn line_object_sender(r: egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    let Some(id) = line_object(line) else { return };
+    line_menu::demo_mark_object(&r);
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(menu) = menu {
+        line_menu::sender(&r, menu, id, line);
+        if r.clicked() {
+            super::context::request(&r.ctx, object_inspect(world, line));
+        }
+    } else {
+        object_sender(&r, p, world, line);
     }
 }
 
@@ -5295,6 +5411,32 @@ mod tests {
         assert_eq!(super::ooc(""), "");
         // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
         assert_eq!(super::parse_channel(&super::ooc("/5 hi")), (0, "(( /5 hi ))".into()));
+    }
+
+    #[test]
+    fn nearby_world_typing_targets_the_field_that_will_be_drawn() {
+        assert_eq!(nearby_typing_target(true, false), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(true, true), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(false, true), NearbyTypingTarget::Main);
+        assert_eq!(nearby_typing_target(false, false), NearbyTypingTarget::ChatBar);
+    }
+
+    #[test]
+    fn world_typing_focuses_detached_nearby_without_changing_main_im() {
+        let ctx = egui::Context::default();
+        let mut chat = ChatUi::default();
+        let im = uuid::Uuid::from_u128(0x2753);
+        chat.selected = Some(im);
+        chat.draft_mut(Some(im)).push_str("untouched");
+        chat.popped.pop_out(None, false, false, false);
+        chat.start_nearby_with(&ctx, true, "x");
+        assert_eq!(chat.draft_mut(None), "x");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
+        assert!(!chat.conv_focus_request, "main IM must not receive focus");
+        assert!(chat.popped.focus_requested(None));
+        chat.start_nearby_with(&ctx, false, "y");
+        assert_eq!(chat.draft_mut(None), "xy", "later frame keeps typing in Nearby");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
     }
 
     use super::*;
@@ -5666,6 +5808,46 @@ mod tests {
             nearby_chat_shortcut(nearby(true, true, false, true, true, false)),
             NearbyChatShortcut::HideDetached
         ));
+    }
+
+    /// A detached nearby window hides the overlay independently of the
+    /// container; hidden or minimized nearby windows never do (#2546).
+    #[test]
+    fn nearby_history_visibility_tracks_its_own_window() {
+        for main_open in [false, true] {
+            for main_minimized in [false, true] {
+                for contacts in [false, true] {
+                    for selected in [None, Some(uuid::Uuid::from_u128(42))] {
+                        for detached in [None, Some((false, false)), Some((true, false)), Some((false, true))] {
+                            let ctx = egui::Context::default();
+                            let mut st = ChatUi {
+                                contacts,
+                                selected,
+                                ..ChatUi::default()
+                            };
+                            if main_minimized {
+                                super::super::widgets::minimize_floater(&ctx, "conversations");
+                            }
+                            let expected = if let Some((hidden, minimized)) = detached {
+                                st.popped.pop_out(None, false, false, false);
+                                st.popped.set_hidden(None, hidden);
+                                if minimized {
+                                    super::super::widgets::minimize_floater(&ctx, &popout::floater_id(None));
+                                }
+                                !hidden && !minimized
+                            } else {
+                                main_open && !main_minimized && !contacts && selected.is_none()
+                            };
+                            assert_eq!(
+                                nearby_chat_shown(&ctx, &st, main_open),
+                                expected,
+                                "open={main_open}, minimized={main_minimized}, contacts={contacts}, selected={selected:?}, detached={detached:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

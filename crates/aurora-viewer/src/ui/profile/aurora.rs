@@ -27,6 +27,7 @@ use crate::world::World;
 use crate::world::names::NameScope;
 use crate::world::profiles::{self, Online};
 use crate::world::social::{Friend, rights};
+use aurora_i18n::UiUpper;
 use aurora_llsd::llsd_map;
 use aurora_net::{AvatarProfile, NetCommand};
 use egui::{Color32, FontId, Pos2, Rect, Response, RichText, Sense, Vec2, pos2};
@@ -198,6 +199,12 @@ fn status_of(world: &World, id: &Uuid, own: bool, profile: Option<&AvatarProfile
 /// The region of a resident the viewer sees (its coarse location), or ours.
 fn region_of(world: &World, id: &Uuid, own: bool) -> Option<String> {
     if world.rlva.has("showloc") {
+        return None;
+    }
+    // Another resident's region comes from the avatars around us, which
+    // RlvActions::canShowNearbyAgents (indra/newview/rlvactions.cpp) hides
+    // from the nearby list and the radar under @shownearby.
+    if !own && world.rlva.has("shownearby") {
         return None;
     }
     if own {
@@ -1505,7 +1512,7 @@ fn card(
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
                     paint_icon(ui, icon, rect.center(), 11.0, p.muted_dim);
-                    ui.label(RichText::new(title.to_uppercase()).font(semibold(ui, 10.5)).color(p.muted_dim));
+                    ui.label(RichText::new(title.ui_upper()).font(semibold(ui, 10.5)).color(p.muted_dim));
                     if let Some(link) = link {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
@@ -2167,3 +2174,29 @@ impl Edit {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    #[test]
+    fn another_residents_region_is_hidden_under_shownearby_but_ours_is_not() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        // a resident known by the coarse locations of our region
+        let handle = world.main_region.expect("the demo has a region");
+        let near = Uuid::from_u128(0x5eed);
+        world.coarse.entry(handle).or_default().push((near, glam::Vec3::ONE));
+        assert!(world.regions.get(&handle).is_some_and(|r| !r.name.is_empty()));
+        assert!(region_of(&world, &near, false).is_some());
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert_eq!(region_of(&world, &near, false), None, "who stands around is hidden");
+        let own = world.agent_id;
+        assert!(region_of(&world, &own, true).is_some(), "our own region is not nearby information");
+        world.rlva_console_input("@shownearby=y");
+        assert!(region_of(&world, &near, false).is_some());
+    }
+}

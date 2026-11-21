@@ -176,7 +176,13 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
 /// (FSFloaterContacts, indra/newview/fsfloatercontacts.cpp), and its menu
 /// tells who stands around. Under `@showloc` the region is the hidden one's
 /// label, as every region name shown (RlvActions::canShowLocation).
+/// Under `@shownearby` the line says nothing: who stands around is what
+/// RlvActions::canShowNearbyAgents (indra/newview/rlvactions.cpp) hides from
+/// the nearby list and the radar, the closest Legacy rule for this line.
 fn regions_around(world: &crate::world::World) -> HashMap<Uuid, String> {
+    if world.rlva.has("shownearby") {
+        return HashMap::new();
+    }
     let hidden = world.rlva.has("showloc");
     crate::world::radar::sightings(world)
         .into_iter()
@@ -1004,5 +1010,26 @@ mod tests {
     fn view_settings_default_to_the_mockup() {
         // online first, with the online and offline parts
         assert_eq!(super::super::FriendsSettings::default().sort, SORT_STATUS);
+    }
+    /// The second line tells who stands around: `@shownearby` hides it, as
+    /// RlvActions::canShowNearbyAgents hides the nearby list and the radar.
+    #[test]
+    fn a_friend_around_loses_their_region_under_shownearby() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        assert!(regions_around(&world).contains_key(&near));
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert!(regions_around(&world).is_empty(), "nobody around is told");
+        world.rlva_console_input("@shownearby=y");
+        assert!(regions_around(&world).contains_key(&near));
     }
 }

@@ -10,6 +10,7 @@
 //! copied the full screen depth and waited every frame. The waiting read
 //! is kept for comparison ([`DepthPick::blocking`]).
 
+use crate::curvature::Curvature;
 use crate::pipeline_cache::CachedPipelines;
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -45,6 +46,9 @@ pub struct PickPixel {
     pub width: u32,
     pub height: u32,
     pub inv_view_proj: Mat4,
+    /// The planet's curvature the pixel was drawn with: the depth gives
+    /// the bent point, `world` the flat one under it (curvature.rs).
+    pub curvature: Curvature,
 }
 
 impl PickPixel {
@@ -61,7 +65,9 @@ impl PickPixel {
             1.0,
         );
         let p = self.inv_view_proj * ndc;
-        (p.w.abs() > 1e-9).then(|| p.truncate() / p.w).filter(|v| v.is_finite())
+        (p.w.abs() > 1e-9)
+            .then(|| self.curvature.unbend(p.truncate() / p.w))
+            .filter(|v| v.is_finite())
     }
 }
 
@@ -297,6 +303,7 @@ impl DepthPick {
         depth: &wgpu::TextureView,
         size: (u32, u32),
         inv_view_proj: Mat4,
+        curvature: Curvature,
     ) {
         let Some((x, y)) = self.request else {
             return;
@@ -318,6 +325,7 @@ impl DepthPick {
             width: size.0,
             height: size.1,
             inv_view_proj,
+            curvature,
         });
         s.encoded = true;
     }
@@ -349,6 +357,7 @@ impl DepthPick {
         depth: &wgpu::TextureView,
         size: (u32, u32),
         inv_view_proj: Mat4,
+        curvature: Curvature,
         asked: Vec<ClickRequest>,
     ) {
         self.click_queue.extend(asked);
@@ -381,6 +390,7 @@ impl DepthPick {
                     width: size.0,
                     height: size.1,
                     inv_view_proj,
+                    curvature,
                 },
             ));
             copied.push(i);
@@ -480,6 +490,7 @@ mod tests {
             width: 101,
             height: 101,
             inv_view_proj: view_proj.inverse(),
+            curvature: Curvature::FLAT,
         }
     }
 

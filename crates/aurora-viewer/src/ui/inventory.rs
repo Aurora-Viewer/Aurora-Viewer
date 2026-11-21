@@ -41,6 +41,7 @@ mod document;
 pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
+mod find;
 mod folder_colors;
 pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
@@ -346,7 +347,8 @@ impl Facts {
                     )
                 }),
             rlva: world.rlva_wear_locks(),
-            landmark_blocked: !world.rlva_can_teleport_landmark(),
+            // (LLLandmarksPanel::isActionEnabled: @tplm only)
+            landmark_blocked: !world.rlva_landmark_button_enabled(),
             opensim: world.home_grid.is_some(),
         }
     }
@@ -361,7 +363,8 @@ impl Facts {
         if self.worn.contains(&item) {
             return self.rlva.can_remove(item);
         }
-        let wear = self.rlva.wear(inv, item, 0);
+        // the row itself: a link is worn by its own folder's locks
+        let wear = self.rlva.wear(inv, id, 0);
         if add { wear.add } else { wear.replace }
     }
 
@@ -665,6 +668,8 @@ pub struct InventoryUi {
     /// Seeded from the shared preference on first display, then kept per window.
     pub notecard_view: Option<NotecardView>,
     notecard_markdown: markdown::Cache,
+    /// The find bar of the notecard (Ctrl+F), with its last text.
+    notecard_find: find::Find,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
     preview_description: Option<document::Description>,

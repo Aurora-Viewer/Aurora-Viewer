@@ -410,10 +410,12 @@ pub(super) fn shown(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     let texture = textures.next()?;
     (!texture.is_nil() && textures.next().is_none()).then_some(texture)
 }
-/// The picture of an entry's tile: none while RLVa forbids previews, as for
-/// its tooltip.
+/// The picture of an entry's tile. RLVa's @viewtexture leaves it
+/// (LLInventoryGallery and LLThumbnailCtrl, indra/newview, ask nothing of
+/// RLVa): it takes the tooltip's picture alone (LLInspectTexture,
+/// llinspecttexture.cpp).
 pub(super) fn tile_picture(inv: &Inventory, id: Uuid) -> Option<Uuid> {
-    inv.can_preview(0).then(|| shown(inv, id)).flatten()
+    shown(inv, id)
 }
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
     match inv.items.get(&item) {
@@ -967,5 +969,19 @@ mod tests {
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"))));
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"))));
+    }
+
+    /// LLInventoryGallery and LLThumbnailCtrl (indra/newview) ask nothing of
+    /// RLVa: @viewtexture leaves the tiles' pictures, and takes the
+    /// tooltip's (LLInspectTexture, llinspecttexture.cpp; `hover.rs`).
+    #[test]
+    fn rlva_viewtexture_leaves_the_tiles_pictures() {
+        let mut inv = super::super::tests::view_inventory(false);
+        crate::world::inventory::demo::seed_gallery(&mut inv);
+        let item = Uuid::from_u128(8100);
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
+        inv.rlva_preview_mask = 1;
+        assert!(!inv.can_preview(0));
+        assert_eq!(tile_picture(&inv, item), Some(crate::demo::TEX_SNAPSHOT));
     }
 }

@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
@@ -111,37 +111,38 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.11 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.12 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A complete Director</h3>
-      Ready-made shots, renders up to 4K, films with their sound, montages
-      of several tracks, the photo looks and LUTs, and move and turn
-      handles on the cameras. No ffmpeg yet? The Director downloads it in
-      one click.
+      <h3>Fifteen languages</h3>
+      German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian,
+      Norwegian, Brazilian and European Portuguese, Simplified and
+      Traditional Chinese join English, French and Japanese, built on the
+      community's translations. Translators can load a language file of
+      their own.
     </td>
     <td width="50%" valign="top">
-      <h3>Gaming mode</h3>
-      Aurora steps back while you play a game: the world stops drawing
-      and gives the video memory and RAM back, while chat, sounds and
-      notifications keep working. Coming back to the window ends it.
+      <h3>Like the LL viewer 26.5</h3>
+      Game Controls drive the avatar, the camera and scripts with a game
+      controller; direct messages sent from another device show up in the
+      conversation; a Second Life account is created from the login
+      screen; the microphone closes while you are muted.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>360° pictures and better photos</h3>
-      Take a 360° picture and view it as a panorama, keep the camera's
-      tilt in presets, let you and others look at the camera, and tune
-      shadows and ambient occlusion in the viewfinder.
+      <h3>A look for the world</h3>
+      Keep a photo look or a LUT on the world every day, with JuicyBomb's
+      30 new looks. A redesigned Aurora Weather window holds every weather
+      setting, and a second camera window keeps your avatar in view.
     </td>
     <td valign="top">
-      <h3>More like the Legacy Viewer</h3>
-      The Omnifilter, the pose stand, Favorite wearables, a target frame
-      rate (Autotune), proxy settings, script sync with outside editors,
-      saved poses from the Legacy Viewer and Alchemy, and the missing
-      interface sounds.
+      <h3>Faster arrivals, richer inventory</h3>
+      Avatars you have already seen show at once from a local copy while
+      the region sends them. The inventory gets a gallery view, notecards
+      get find and replace, and Linux installs its updates in place.
     </td>
   </tr>
 </table>
@@ -415,7 +416,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In English, French and Japanese (日本語)**: the whole interface follows
+- **In fifteen languages** (English, French, Japanese, German, Spanish,
+  Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
+  Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -724,7 +727,7 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
@@ -786,18 +789,25 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English, French and Japanese (日本語): system
-language detection, a choice saved in Preferences and applied at once. The
+The viewer ships English, French, Japanese (日本語), Simplified Chinese
+(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
+Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
+(Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
+(Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
+detects the system language
+by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
-UI or MS UI Gothic) and writes dates the Japanese way. Fluent catalogues make
-it possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+UI or MS UI Gothic) and writes dates the Japanese way. The other languages
+use the Second Life terms of the Legacy Viewer's interface in that language,
+and Chinese draws with the system's Chinese fonts (Microsoft YaHei or
+Microsoft JhengHei on Windows). Fluent catalogues make it possible to add a
+language; see [the translation guide](docs/TRANSLATING.md).
 
-The viewer first follows the language saved in **Preferences › Interface ›
-Language**, then the system's if "System language" is selected. English is
-the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like the Legacy Viewer. The translations are in
-`crates/aurora-i18n/locales/`.
+Find the language picker and the custom Fluent file option in
+**Preferences › Language and updates**. Untranslated messages appear in
+English. The "Language visible to scripts" setting is on by default, like
+the Legacy Viewer. The translations are in `crates/aurora-i18n/locales/`.
 
 ### Frame limiter
 

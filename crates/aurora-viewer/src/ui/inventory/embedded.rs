@@ -125,6 +125,8 @@ pub(super) fn editor(
     let code_background = markdown
         .filter(|rendered| !rendered.code_blocks.is_empty())
         .map(|_| ui.painter().add(egui::Shape::Noop));
+    // The open find bar's matches (find.rs).
+    let find = super::find::highlights(ui.ctx(), id);
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
@@ -239,6 +241,36 @@ pub(super) fn editor(
                     .collect(),
             ),
         );
+    }
+    if let Some(found) = find {
+        let clip = output.text_clip_rect.translate(-output.galley_pos.to_vec2());
+        let focused = output.response.has_focus();
+        let painter = ui.painter().with_clip_rect(output.text_clip_rect);
+        for (rect, current) in super::find::rects(&output.galley, &found, clip.top(), clip.bottom()) {
+            // over the text: the editor's field face is opaque. A light wash
+            // keeps the glyphs readable; the match the bar went to also gets
+            // an outline while the bar has the keyboard (with the keyboard
+            // here, egui's own selection shows it)
+            let rect = rect.translate(output.galley_pos.to_vec2());
+            painter.add(egui::Shape::rect_filled(
+                rect,
+                egui::CornerRadius::ZERO,
+                p.amber.gamma_multiply(0.3),
+            ));
+            if current && !focused {
+                painter.add(egui::Shape::rect_stroke(
+                    rect,
+                    egui::CornerRadius::ZERO,
+                    egui::Stroke::new(1.5, p.amber),
+                    egui::StrokeKind::Outside,
+                ));
+            }
+        }
+    }
+    if super::find::take_scroll(ui.ctx(), id) {
+        let cursor = output.state.cursor.char_range().unwrap_or_default().primary;
+        let rect = output.galley.pos_from_cursor(cursor).translate(output.galley_pos.to_vec2());
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
     }
     let mut result = EditorResult {
         changed: output.response.changed(),
@@ -360,14 +392,11 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
-    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
-    // a texture preview already open closes when @viewtexture applies, as
-    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
-    if !inv.can_preview(0) {
-        st.attachment_preview = None;
-    }
+    // (@viewtexture refuses to open it, `App::open_notecard_attachment`; one
+    // already open stays: RlvUIEnabler::filterFloaterViewXXX, rlvui.cpp,
+    // validates the opening of "preview_texture" alone)
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(

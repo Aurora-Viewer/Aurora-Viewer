@@ -1,6 +1,6 @@
 use super::*;
 
-/// Exercise real Vulkan pipelines, including the two-pass modes and chained
+/// Exercise real Vulkan pipelines, including the blur modes and chained
 /// targets. This catches feedback attachments and per-pass uniform reuse that
 /// parsing a WGSL module cannot detect.
 #[test]
@@ -535,5 +535,17 @@ fn world_upscale_controls_sharpness_preserves_alpha_and_matches_color_encodings(
             linear.iter().zip(srgb).all(|(a, b)| a.abs_diff(*b) <= 2),
             "sRGB and manually encoded targets agree"
         );
+    }
+}
+
+/// RlvSphereEffect::run and LLShaderEffectParams::step: the two blur passes
+/// read the same source and write the same target, so the vertical one is
+/// what shows; one pass per sphere draws it.
+#[test]
+fn rlva_sphere_blurs_are_vertical_only_like_the_legacy_viewer() {
+    assert_eq!(sphere_pass_axis(1), 1);
+    assert_eq!(sphere_pass_axis(2), 1);
+    for mode in [0, 3, 4] {
+        assert_eq!(sphere_pass_axis(mode), 0);
     }
 }
