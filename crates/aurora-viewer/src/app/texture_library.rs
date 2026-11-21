@@ -548,11 +548,11 @@ impl App {
                         egui::pos2(20.0 + (index % 2) as f32 * 340.0, 60.0 + (index / 2) as f32 * 345.0),
                         egui::vec2(300.0, 290.0),
                     );
-                    self.texture_library.open_preview(ctx, &self.world, item);
+                    self.open_library_preview(ctx, item);
                 }
             }
             if self.frame_count == 720 {
-                self.texture_library.open_preview(ctx, &self.world, items[0]);
+                self.open_library_preview(ctx, items[0]);
             }
             if self.frame_count >= 760 && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("multi-preview-closed") {
                 self.panels.texture_library = false;
@@ -580,7 +580,7 @@ impl App {
                     egui::pos2(20.0, 60.0),
                     egui::vec2(720.0, 480.0),
                 );
-                self.texture_library.open_preview(ctx, &self.world, item);
+                self.open_library_preview(ctx, item);
             }
             if self.frame_count == 700 {
                 self.texture_library.demo_panorama(&mode);
@@ -590,7 +590,7 @@ impl App {
             let items = crate::demo::texture_library::preview_items();
             for (item, frame) in items.into_iter().zip([620, 670, 690, 740]) {
                 if self.frame_count == frame {
-                    self.texture_library.open_preview(ctx, &self.world, item);
+                    self.open_library_preview(ctx, item);
                 }
             }
             if self.frame_count == 780 {
@@ -618,7 +618,7 @@ impl App {
             self.settings.texture_library.texture_display = Default::default();
             let items = crate::demo::texture_library::preview_items();
             for (index, item) in [items[0], items[2]].into_iter().enumerate() {
-                self.texture_library.open_preview(ctx, &self.world, item);
+                self.open_library_preview(ctx, item);
                 ui::widgets::place_floater(
                     ctx,
                     &library::preview_window_id(item),

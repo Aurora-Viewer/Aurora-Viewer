@@ -93,6 +93,9 @@ pub struct GroupChats {
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The active group's name as AgentDataUpdate gave it
+    /// (LLAgent::mGroupName), cleared when that group is left.
+    pub active_name: String,
     /// The group list (AgentGroupDataUpdate) and the active group
     /// (AgentDataUpdate) arrived this session.
     pub list_received: bool,
@@ -479,7 +482,25 @@ impl World {
             self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
             return;
         }
-        let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        // A conference we started and whose start reply has not come yet has
+        // no speaker yet in the Legacy Viewer: LLIMModel::LLIMSession starts
+        // with an empty LLIMSpeakerMgr (llimview.cpp, llspeakers.cpp) that
+        // only sessionInitReplyReceived, agent list updates and arriving
+        // chatters fill. FSFloaterIM::sendMsg (fsfloaterim.cpp) checks
+        // @sendim against that list for an ad-hoc session, so a line queued
+        // before init finds no one to refuse and leaves unchanged.
+        let text = if self.calls.conferences.contains_key(&session) {
+            text.to_owned()
+        } else {
+            self.rlva_outgoing_im_text(session, true, text).into_owned()
+        };
+        self.send_session_text(session, text, false);
+    }
+
+    /// A line of a session, its RLVa text already chosen; `decided`: it was
+    /// queued before the conference started and leaves as it was decided
+    /// then (`rlva_send_as_decided`).
+    pub(super) fn send_session_text(&mut self, session: Uuid, text: String, decided: bool) {
         if self.calls.conferences.contains_key(&session) {
             if let Some(info) = self.groups.sessions.get_mut(&session) {
                 info.pending_messages.push(text);
@@ -489,6 +510,9 @@ impl World {
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
+            if decided {
+                self.rlva_send_as_decided(session, dialog::SESSION_SEND, part);
+            }
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
         let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());
@@ -693,6 +717,8 @@ impl World {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
                 self.groups.active_title = title.clone();
+                // LLAgent::processAgentDataUpdate: no name without a group
+                self.groups.active_name = if id.is_nil() { String::new() } else { name.clone() };
                 self.groups.active_received = true;
                 // A blank worn title leaves the name tag without a title.
                 // The Group titles window still lists that role (#3147).
@@ -704,6 +730,10 @@ impl World {
                 }
             }
             NetEvent::GroupDropped(id) => {
+                // LLAgent::processAgentDropGroup: the active group's name goes
+                if id == self.groups.active {
+                    self.groups.active_name.clear();
+                }
                 self.cancel_saved_im(id);
                 self.discard_restoring_group(id);
                 self.groups.groups.retain(|g| g.id != id);

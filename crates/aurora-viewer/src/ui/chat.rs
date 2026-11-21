@@ -254,6 +254,9 @@ pub struct ChatUi {
     /// A conversation's notices too (its sub-option, off), given every
     /// frame by the app.
     pub compact_im_notices: bool,
+    /// Emotes join their sender's group in the Aurora style
+    /// (Preferences › Chat, off), given every frame by the app.
+    pub group_emotes: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
@@ -868,6 +871,12 @@ impl ChatUi {
     /// chat starts (Some(true)) or stops (Some(false)).
     pub fn local_typing_update(&mut self, now: std::time::Instant) -> Option<bool> {
         self.local_typing.update(now, std::mem::take(&mut self.local_field))
+    }
+
+    /// `local_typing_update` while RLVa holds the typing start back
+    /// (`LocalTyping::update_held`).
+    pub fn local_typing_update_held(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update_held(now, std::mem::take(&mut self.local_field))
     }
 
     /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
@@ -3136,6 +3145,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
             let clearing_filter = view.is_filtered() && filter.is_empty();
+            view.set_group_emotes(st.group_emotes);
             let changed = view.sync(
                 &view::Source {
                     lines,

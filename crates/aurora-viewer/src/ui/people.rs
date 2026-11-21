@@ -402,11 +402,21 @@ impl PeopleUi {
 }
 
 /// Nearby avatars, nearest first: the loaded ones at their exact place, the
-/// others from the coarse locations (the radar's sightings).
+/// others from the coarse locations (the radar's sightings). None under
+/// RLVa's @shownearby (RlvActions::canShowNearbyAgents, rlvactions.cpp).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     if world.rlva.has("shownearby") {
         return Vec::new();
     }
+    around(world)
+}
+
+/// `nearby` without its @shownearby test, for the lists the Legacy Viewer
+/// does not test it in: the avatar picker's "Near me" tab
+/// (LLFloaterAvatarPicker, which greys it under @shownames alone) and the
+/// nearby chat's name prediction (FSNearbyChat::handleChatBarKeystroke,
+/// which tests @shownames alone).
+pub fn around(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     let me = world.agent.position;
     let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
         .into_iter()

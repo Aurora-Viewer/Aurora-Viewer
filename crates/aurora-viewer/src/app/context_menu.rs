@@ -283,6 +283,7 @@ impl App {
         // what `toggle_fly` itself answers
         f.fly_blocked = !w.agent.flying && !crate::autopilot::can_takeoff(w);
         f.build_blocked = !self.build.open && !w.rlva_can_build();
+        f.show_original_blocked = w.rlva.has("showinv");
         if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
             f.object_sit_blocked = refused(NetCommand::RequestSit {
                 handle: key.region,
@@ -948,7 +949,7 @@ impl App {
             }
             CtxAction::OfferTeleport(id) => {
                 if self.world.rlva_can_offer_teleport(id) {
-                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_region_label());
+                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_lure_region());
                 }
             }
             CtxAction::OpenPeople(tab) => {
@@ -1017,7 +1018,7 @@ impl App {
             }
             CtxAction::OfferTeleports(ids) => {
                 let ids = ids.into_iter().filter(|id| self.world.rlva_can_offer_teleport(*id)).collect();
-                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => {
