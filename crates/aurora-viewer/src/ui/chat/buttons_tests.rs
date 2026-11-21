@@ -738,7 +738,8 @@ fn the_message_menu_acts() {
 
 /// A double click on the first or the last word of a message, then Ctrl+C,
 /// copies that word alone: not the line's "[time] Name: " prefix, nor the
-/// whole message.
+/// whole message. A third click copies the message as a drag from the start
+/// of its line does, with the prefix.
 #[test]
 fn a_double_clicked_word_is_copied_alone() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -751,6 +752,7 @@ fn a_double_clicked_word_is_copied_alone() {
             ] {
                 let mut h = H::new(style);
                 let message = line("Jane", JANE, ChatKind::Im, said);
+                let prefixed = format!("{}{said}", super::copy_prefix(&message, &message.from));
                 if let Some(id) = conversation {
                     h.world.social.session_mut(id).lines = [message].into();
                 } else {
@@ -776,7 +778,8 @@ fn a_double_clicked_word_is_copied_alone() {
                     _ => None,
                 });
                 assert_eq!(copied.as_deref(), Some(word), "{style:?}, {conversation:?}, {said:?}");
-                // a third click selects and copies the whole paragraph alone
+                // a third click selects the whole paragraph, copied as a drag
+                // from the start of the line: with the "[time] Name: " prefix
                 h.frame(vec![button(true)]);
                 h.frame(vec![button(false)]);
                 h.settle();
@@ -784,7 +787,50 @@ fn a_double_clicked_word_is_copied_alone() {
                     egui::OutputCommand::CopyText(t) => Some(t),
                     _ => None,
                 });
-                assert_eq!(copied.as_deref(), Some(said), "{style:?}, {conversation:?}, {said:?}");
+                assert_eq!(copied, Some(prefixed), "{style:?}, {conversation:?}, {said:?}");
+            }
+        }
+    }
+}
+
+/// A triple click on a message of two paragraphs, then Ctrl+C: the first
+/// paragraph is copied with the line's "[time] Name: " prefix, the one after
+/// the line break without it.
+#[test]
+fn a_triple_clicked_paragraph_after_a_line_break_is_copied_without_the_prefix() {
+    let said = "first paragraph\nsecond one";
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            let message = line("Jane", JANE, ChatKind::Im, said);
+            let prefix = super::copy_prefix(&message, &message.from);
+            // the upper and the lower row of the message
+            for (row, expected) in [(0.25, format!("{prefix}first paragraph")), (0.75, "second one".into())] {
+                let mut h = H::new(style);
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = [message.clone()].into();
+                } else {
+                    h.world.chat = [message.clone()].into();
+                }
+                h.open(conversation);
+                let text = h.text_rect(said);
+                let pos = egui::pos2(text.left() + 20.0, text.top() + text.height() * row);
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(pos)]);
+                for _ in 0..3 {
+                    h.frame(vec![button(true)]);
+                    h.frame(vec![button(false)]);
+                }
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied, Some(expected), "{style:?}, {conversation:?}, row {row}");
             }
         }
     }

@@ -2428,18 +2428,23 @@ fn select_lines(
         sel.clear();
     }
     // a double click selects the word under the pointer (its second click
-    // cleared the selection just above); a triple click selects the paragraph
+    // cleared the selection just above)
     if content.double_clicked()
         && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
     }
+    // a triple click selects the paragraph under the pointer, as the
+    // triple-click block of LLTextBase::handleMouseDown
+    // (indra/llui/lltextbase.cpp) selects the logical line in the Legacy
+    // Viewer's transcript (FSChatHistory, an LLTextEditor); it is copied as a
+    // drag over it, the first paragraph with the "[time] Name: " prefix
     if content.triple_clicked()
         && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
         && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
     {
-        sel.select_in_row(seq, range, text);
+        sel.select_paragraph(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)
