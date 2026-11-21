@@ -3977,6 +3977,7 @@ dev-toolbox-o6 = 名前タグの複雑度
 dev-toolbox-o7 = オブジェクトを調査
 dev-toolbox-o8 = アバターの状態
 dev-toolbox-o9 = スカルプトを追跡
+dev-toolbox-o10 = アバターのヒットボックス
 dev-toolbox-n1 = ネットワークグラフ
 dev-toolbox-n2 = リージョンの概要
 dev-toolbox-p1 = パフォーマンス
