@@ -5,8 +5,8 @@
 //! the landmarks, the online friends and the teleport history, with its
 //! suggestions grouped, and under it a drawer with the landmarks by folder,
 //! the history and the friends; top right, the layers as pills; bottom
-//! left, the card of the selected place; bottom right, the zoom, our
-//! position and home. Every control of Firestorm's side panel
+//! left, the card of the selected place (or of our own position when none
+//! is); bottom right, the zoom, our position and home. Every control of Firestorm's side panel
 //! (`WorldMapUi::side_panel`, the legacy layout) has its place here. The
 //! panels fade while the map is dragged, and those of the last frame keep
 //! the map from taking their clicks.
@@ -23,7 +23,7 @@ use crate::world::landmarks::{Landmarks, Resolved};
 use crate::world::place_details::Source;
 use crate::world::social::rights;
 use crate::world::tphistory::{self, HistoryItem};
-use crate::world::worldmap::location_label;
+use crate::world::worldmap::{SIM_ACCESS_NONE, SimInfo, Track, location_label};
 use aurora_i18n::UiUpper;
 use aurora_net::map_item;
 use egui::{Align, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
@@ -221,6 +221,9 @@ enum Selection {
     Landmark(Uuid),
     Avatar(Uuid),
     Spot(i64, i64),
+    /// Nothing selected: our own position (LLFloaterWorldMap's
+    /// mSetToUserPosition).
+    Me,
 }
 
 /// The floating panels' state.
@@ -257,6 +260,12 @@ struct Panel {
 }
 
 impl Overlay {
+    /// The map opens: a card closed with its cross during the last visit
+    /// shows again.
+    pub(super) fn reopen_card(&mut self) {
+        self.card_closed = None;
+    }
+
     pub(super) fn demo_search(&mut self, text: &str) {
         self.query = text.to_owned();
         self.asked = text.trim().to_lowercase();
@@ -741,12 +750,11 @@ impl WorldMapUi {
             Some(Selection::Landmark(*item))
         } else if let Some(a) = &world.map.avatar {
             Some(Selection::Avatar(a.id))
+        } else if let Some(t) = &world.map.track {
+            Some(Selection::Spot((t.x * 10.0) as i64, (t.y * 10.0) as i64))
         } else {
-            world
-                .map
-                .track
-                .as_ref()
-                .map(|t| Selection::Spot((t.x * 10.0) as i64, (t.y * 10.0) as i64))
+            // nothing selected: the card is ours, with our own SLURL
+            Some(Selection::Me)
         }
     }
 
@@ -1633,12 +1641,53 @@ impl WorldMapUi {
             return None;
         }
         self.ov.card_closed = None;
-        let track = world.map.track.clone();
+        // nothing selected: the card is about our own position, with the
+        // Legacy Viewer's mSetToUserPosition spot
+        let ours = selection == Selection::Me;
+        let own = ours.then(|| to_global(world, world.agent.position));
+        let track = match own {
+            Some((x, y)) => Some(Track {
+                x,
+                y,
+                z: world.agent.position.z,
+                label: String::new(),
+                tooltip: String::new(),
+                pending: false,
+                teleport: false,
+                invalid: false,
+            }),
+            None => world.map.track.clone(),
+        };
         let avatar = world.map.avatar.clone();
-        let region = track
-            .as_ref()
-            .and_then(|t| world.map.sim_at_global(t.x, t.y))
-            .map(|(k, s)| (k, s.clone()));
+        let region = match own {
+            Some((x, y)) => match world.map.sim_at_global(x, y) {
+                Some((k, s)) => Some((k, s.clone())),
+                // before the map knows the region, name it from the world
+                None => world.main_origin().and_then(|(ox, oy)| {
+                    let name = world.region_name();
+                    (!name.is_empty()).then(|| {
+                        (
+                            (ox / 256, oy / 256),
+                            SimInfo {
+                                name,
+                                access: SIM_ACCESS_NONE,
+                                flags: 0,
+                                image: Uuid::nil(),
+                                size_x: 256,
+                                size_y: 256,
+                            },
+                        )
+                    })
+                }),
+            },
+            None => track
+                .as_ref()
+                .and_then(|t| world.map.sim_at_global(t.x, t.y))
+                .map(|(k, s)| (k, s.clone())),
+        };
+        if ours && region.is_none() {
+            return None;
+        }
         let landmark = self.landmark.clone();
         let title = if world.rlva.has("showloc") && landmark.is_none() && avatar.is_none() {
             aurora_i18n::tr!("rlva-hidden-region").to_owned()
@@ -1713,8 +1762,9 @@ impl WorldMapUi {
         // what its buttons do: the map's Teleport button follows the
         // tracking alone (LLFloaterWorldMap::draw); RLVa refuses the
         // teleport itself, with its notice (teleportViaLandmark,
-        // teleportViaLocation)
-        let can_teleport = landmark.is_some() || track.as_ref().is_some_and(|t| !t.pending && !t.invalid);
+        // teleportViaLocation). Our own position is not a destination: its
+        // card only copies the SLURL.
+        let can_teleport = !ours && (landmark.is_some() || track.as_ref().is_some_and(|t| !t.pending && !t.invalid));
         let local = |t: &crate::world::worldmap::Track, (sx, sy): (u32, u32)| {
             glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z)
         };
@@ -1722,16 +1772,20 @@ impl WorldMapUi {
             .as_ref()
             .zip(region.as_ref())
             .map(|(t, (k, s))| crate::slurl::make(&s.name, local(t, *k)));
-        let source = match (&landmark, &track, &region) {
-            (Some((item, asset, _)), ..) => Some(Source::Landmark {
-                item: *item,
-                asset: *asset,
-            }),
-            (None, Some(t), Some((k, s))) => Some(Source::Link {
-                region: s.name.clone(),
-                pos: local(t, *k),
-            }),
-            _ => None,
+        let source = if ours {
+            None
+        } else {
+            match (&landmark, &track, &region) {
+                (Some((item, asset, _)), ..) => Some(Source::Landmark {
+                    item: *item,
+                    asset: *asset,
+                }),
+                (None, Some(t), Some((k, s))) => Some(Source::Link {
+                    region: s.name.clone(),
+                    pos: local(t, *k),
+                }),
+                _ => None,
+            }
         };
         let me = to_global(world, world.agent.position);
 
@@ -1804,8 +1858,13 @@ impl WorldMapUi {
                     edited = Some((k.0 as f64 * 256.0 + lx as f64, k.1 as f64 * 256.0 + ly as f64, lz, moved));
                 }
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let d = (t.x - me.0).hypot(t.y - me.1);
-                    ui.label(egui::RichText::new(distance_text(d)).size(12.0).color(p.muted));
+                    let text = if ours {
+                        aurora_i18n::tr!("ui-worldmap-you-are-here").to_string()
+                    } else {
+                        let d = (t.x - me.0).hypot(t.y - me.1);
+                        distance_text(d)
+                    };
+                    ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
                 });
             });
         }
@@ -1848,7 +1907,7 @@ impl WorldMapUi {
             )
             .on_hover_text(aurora_i18n::tr!("ui-worldmap-info-help"))
             .clicked();
-            show = widgets::action_button_if(ui, p, "focus-centered", "", ActionKind::Flat, icon_only, track.is_some())
+            show = widgets::action_button_if(ui, p, "focus-centered", "", ActionKind::Flat, icon_only, !ours && track.is_some())
                 .on_hover_text(aurora_i18n::tr!("ui-worldmap-show-selection"))
                 .clicked();
             track_region = widgets::action_button_if(
@@ -1858,10 +1917,10 @@ impl WorldMapUi {
                 aurora_i18n::tr!("region-tracker-track-region"),
                 ActionKind::Flat,
                 h,
-                region.is_some() && !world.rlva.has("showloc"),
+                !ours && region.is_some() && !world.rlva.has("showloc"),
             )
             .clicked();
-            clear = widgets::action_button(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only)
+            clear = widgets::action_button_if(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only, !ours)
                 .on_hover_text(format!(
                     "{}\n{}",
                     aurora_i18n::tr!("ui-waypoint-remove"),

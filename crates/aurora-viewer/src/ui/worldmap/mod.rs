@@ -224,6 +224,7 @@ impl WorldMapUi {
             self.target_pan = Vec2::ZERO;
             self.zoom = (opts.world_scale.max(1.0) / 256.0).log2().clamp(ZOOM_MIN, ZOOM_MAX);
             self.target_zoom = self.zoom;
+            self.ov.reopen_card();
             world.map.reload_items(false);
         }
         self.focus(world, cam);
@@ -1091,21 +1092,11 @@ impl WorldMapUi {
                     c => world.map.push(c),
                 }
             }
-            let slurl = world.map.track.as_ref().and_then(|t| {
-                let ((sx, sy), s) = world.map.sim_at_global(t.x, t.y)?;
-                Some(crate::slurl::make(
-                    &s.name,
-                    glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z),
-                ))
-            });
+            let slurl = self.current_slurl(world);
             if column_widget(ui, id("slurl"), |ui| {
-                ui.add_enabled(
-                    slurl.is_some() && !world.rlva.has("showloc"),
-                    egui::Button::new(aurora_i18n::tr!("common-copy-slurl")),
-                )
+                ui.add_enabled(slurl.is_some(), egui::Button::new(aurora_i18n::tr!("common-copy-slurl")))
             })
             .clicked()
-                && !world.rlva.has("showloc")
                 && let Some(u) = slurl
             {
                 ui.ctx().copy_text(u);
@@ -1165,6 +1156,44 @@ impl WorldMapUi {
         }
         self.center_on(world, cam, x, y);
     }
+
+    /// The SLURL of the map's current location: the tracked spot, or our own
+    /// position when nothing is tracked (LLFloaterWorldMap::updateLocation's
+    /// mSetToUserPosition, and the copy_slurl tool tip of
+    /// floater_world_map.xml). A landmark or a followed friend still being
+    /// resolved has no SLURL yet.
+    fn current_slurl(&self, world: &World) -> Option<String> {
+        if self.landmark.is_some() || world.map.avatar.is_some() {
+            world.map.track.as_ref().and_then(|t| map_slurl(world, Some(t)))
+        } else {
+            map_slurl(world, world.map.track.as_ref())
+        }
+    }
+}
+
+/// The SLURL of `track`, or of our own position when nothing is tracked.
+/// None under RLVa `@showloc`, or when no region is known yet.
+fn map_slurl(world: &World, track: Option<&Track>) -> Option<String> {
+    if world.rlva.has("showloc") {
+        return None;
+    }
+    let (x, y, z) = match track {
+        Some(t) => (t.x, t.y, t.z),
+        None => {
+            let (ox, oy) = world.main_origin()?;
+            let p = world.agent.position;
+            (ox as f64 + p.x as f64, oy as f64 + p.y as f64, p.z)
+        }
+    };
+    if let Some(((sx, sy), s)) = world.map.sim_at_global(x, y) {
+        let local = glam::Vec3::new((x - sx as f64 * 256.0) as f32, (y - sy as f64 * 256.0) as f32, z);
+        return Some(crate::slurl::make(&s.name, local));
+    }
+    // a tracked place is disabled until the map knows its region; our own
+    // position can still be named from the connected region
+    let name = track.is_none().then(|| world.region_name())?;
+    let (ox, oy) = world.main_origin()?;
+    (!name.is_empty()).then(|| crate::slurl::make(&name, glam::Vec3::new((x - ox as f64) as f32, (y - oy as f64) as f32, z)))
 }
 
 /// A region's label in the full-frame layout, at its bottom left: the
@@ -1622,6 +1651,16 @@ mod coordinate_tests {
         assert_eq!((t.x, t.y, t.z), (256600.0, 256700.0, 30.0));
         assert!(t.pending && !t.teleport);
     }
+
+    #[test]
+    fn the_slurl_without_a_beacon_is_our_own_position() {
+        let mut b = Bench::new();
+        let ours = b.map.current_slurl(&b.world).expect("our own SLURL");
+        assert!(ours.ends_with("Coordinate%20Region/32/48/70"), "{ours}");
+        b.world.map.track_location(256_100.0, 256_110.0, 90.0, false);
+        let tracked = b.map.current_slurl(&b.world).expect("the tracked place's SLURL");
+        assert!(tracked.ends_with("Coordinate%20Region/100/110/90"), "{tracked}");
+    }
 }
 
 /// The side panel layout's region search.
@@ -1788,6 +1827,64 @@ mod size_tests {
     #[test]
     fn the_full_frame_layout_keeps_its_size() {
         assert_steady(WorldMapStyle::Aurora, aurora_i18n::tr!("common-copy-slurl"));
+    }
+
+    /// With no place selected, both layouts still offer the SLURL of our own
+    /// position (LLFloaterWorldMap's mSetToUserPosition): the side panel's
+    /// button and the full-frame layout's place card.
+    #[test]
+    fn the_copy_slurl_button_copies_our_position_with_nothing_selected() {
+        let library = Arc::new(AvatarLibrary::load());
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut map = Map::new(&library);
+            map.world.map.clear_track();
+            map.world.agent.position = glam::Vec3::new(128.0, 128.0, 25.0);
+            map.world.map.apply_blocks(vec![aurora_net::MapBlock {
+                x: 1000,
+                y: 1000,
+                name: "Home Region".into(),
+                access: 13,
+                region_flags: 0,
+                water_height: 20,
+                agents: 0,
+                map_image_id: Uuid::nil(),
+                size_x: 256,
+                size_y: 256,
+            }]);
+            let mut frames = Frames::new();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&frames.ctx, 1.0);
+            crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+            let p = theme.palette();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                texts = frames.run(vec![], |ui| map.show(ui.ctx(), &p, style));
+            }
+            let label = aurora_i18n::tr!("common-copy-slurl");
+            let button = texts
+                .iter()
+                .find(|t| t.source == label)
+                .unwrap_or_else(|| panic!("{style:?}: {label:?} is drawn"));
+            let pos = button.rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let (_, out) = frames.run_with_output(vec![egui::Event::PointerMoved(pos), press(true), press(false)], |ui| {
+                map.show(ui.ctx(), &p, style)
+            });
+            let copied = out
+                .commands
+                .iter()
+                .find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{style:?}: {label:?} copies"));
+            assert!(copied.ends_with("Home%20Region/128/128/25"), "{style:?}: {copied}");
+        }
     }
 
     /// The side panel layout in a window placed at (40, 40) with `size`,
