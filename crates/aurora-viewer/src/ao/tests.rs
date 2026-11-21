@@ -1453,3 +1453,75 @@ fn held_changes_keep_the_last_change_of_each_animation() {
     runtime::hold_changes(&mut held, vec![(a, true)]);
     assert_eq!(held, vec![(b, false), (c, true), (a, true)]);
 }
+
+/// FloaterAO::handleDragAndDrop takes a selection of animations
+/// (ACCEPT_YES_MULTI): one request links them all after the entries already
+/// there, in name order; one entry that is not an animation refuses the batch.
+#[test]
+fn a_dropped_selection_of_animations_is_linked_in_one_request() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::operations::Operation;
+    let (mut inv, set) = fixture();
+    let mut picked: Vec<Animation> = Vec::new();
+    for config in set.states.values() {
+        for a in config.steps.iter().flat_map(|s| &s.members) {
+            if !picked.iter().any(|p| p.name == a.name) {
+                picked.push(a.clone());
+            }
+        }
+    }
+    assert!(picked.len() >= 3, "the demo set has several animations");
+    let picked = &picked[..3];
+    let mut ids: Vec<Uuid> = picked.iter().map(|a| a.original).collect();
+    ids.reverse();
+    let mut names: Vec<String> = picked.iter().map(|a| a.name.clone()).collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    let before = set.states[&State::Standing].steps.len();
+
+    // the same entry twice is linked once
+    let mut doubled = ids.clone();
+    doubled.push(ids[0]);
+    let change = inventory::add_many(&inv, &set, State::Standing, &doubled, None).expect("batch");
+    let [Operation::Links { parent, links }] = change.operations.as_slice() else {
+        panic!("one links request: {:?}", change.operations)
+    };
+    assert_eq!(*parent, set.states[&State::Standing].folder);
+    assert_eq!(links.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), names);
+    assert_eq!(
+        links.iter().map(|l| l.desc.clone()).collect::<Vec<_>>(),
+        (before..before + 3).map(|n| n.to_string()).collect::<Vec<_>>()
+    );
+    assert!(inventory::editable(&inv, &change, &Default::default()));
+    actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(&mut inv);
+    let steps = &catalog.selected(set.id).expect("set").states[&State::Standing].steps;
+    assert_eq!(steps.len(), before + 3);
+    assert_eq!(steps[before..].iter().map(|s| s.name.clone()).collect::<Vec<_>>(), names);
+
+    // a folder, an unknown id or nothing at all: the whole batch is refused
+    for refused in [vec![ids[0], set.id], vec![Uuid::from_u128(0xdead), ids[1]], vec![]] {
+        let reason = inventory::add_many(&inv, &set, State::Standing, &refused, None).expect_err("refused");
+        assert_eq!(reason, aurora_i18n::tr!("ao-not-animation"));
+    }
+
+    // a state with no folder yet gets it once, holding the whole batch
+    let empty = State::ALL
+        .into_iter()
+        .find(|s| !set.states.contains_key(s))
+        .expect("a state without a folder");
+    let change = inventory::add_many(&inv, &set, empty, &ids, None).expect("new state");
+    let folders: Vec<Uuid> = change
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Folder { id, parent, .. } if *parent == set.id => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(folders.len(), 1, "{:?}", change.operations);
+    assert!(matches!(
+        change.operations.last(),
+        Some(Operation::Links { parent, links }) if *parent == folders[0] && links.len() == 3 && links[0].desc == "0"
+    ));
+}

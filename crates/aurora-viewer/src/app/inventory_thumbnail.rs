@@ -70,6 +70,18 @@ fn panel(st: &mut InventoryUi, request: Uuid) -> Option<&mut ThumbnailUi> {
     }
     st.windows.iter_mut().find_map(|w| panel(&mut w.state, request))
 }
+fn inventory_panel(app: &mut App, request: Uuid) -> Option<&mut ThumbnailUi> {
+    panel(&mut app.inventory_ui, request).or_else(|| panel(&mut app.dual_inventory_ui, request))
+}
+fn inventory_state(st: &mut InventoryUi, request: Uuid) -> Option<&mut InventoryUi> {
+    if st.thumbnail.pending == Some(request) {
+        return Some(st);
+    }
+    st.windows.iter_mut().find_map(|window| inventory_state(&mut window.state, request))
+}
+fn inventory_request_state(app: &mut App, request: Uuid) -> Option<&mut InventoryUi> {
+    inventory_state(&mut app.inventory_ui, request).or_else(|| inventory_state(&mut app.dual_inventory_ui, request))
+}
 impl App {
     pub(super) fn demo_inventory_file_choices(&mut self, landscape: bool) {
         let Some(item) = self.inventory_ui.thumbnail.item else { return };
@@ -284,17 +296,16 @@ impl App {
             }
             return;
         }
-        if let Some(st) = panel(&mut self.inventory_ui, request) {
+        if let Some(st) = inventory_panel(self, request) {
             st.pending = None;
             st.error = error.unwrap_or_default();
         }
     }
     pub(super) fn finish_inventory_image_upload(&mut self, request: Uuid, error: Option<String>) {
-        if let Some(st) = panel(&mut self.inventory_ui, request) {
-            st.saved = error.is_none();
+        if let Some(st) = inventory_request_state(self, request) {
+            st.thumbnail.saved = error.is_none();
+            st.finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
         }
-        self.inventory_ui
-            .finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
         self.finish_inventory_image(request, error);
     }
     /// The item image window's Copy: an id the asset id rule allows went on
@@ -324,7 +335,7 @@ impl App {
                 continue;
             };
             let outfit = self.inventory_images.outfit == Some(reply.request);
-            if !outfit && panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
+            if !outfit && inventory_panel(self, reply.request).is_none_or(|st| st.item != Some(item)) {
                 self.finish_inventory_image(reply.request, None);
                 continue;
             }
@@ -332,8 +343,9 @@ impl App {
                 Err(error) => self.finish_inventory_image(reply.request, Some(error)),
                 Ok(None) => self.finish_inventory_image(reply.request, None),
                 Ok(Some(Prepared::Choices(pixels))) => {
-                    if let Some(st) = panel(&mut self.inventory_ui, reply.request) {
-                        st.set_file_choices(&self.egui_ctx, pixels);
+                    let ctx = self.egui_ctx.clone();
+                    if let Some(st) = inventory_panel(self, reply.request) {
+                        st.set_file_choices(&ctx, pixels);
                     }
                     self.finish_inventory_image(reply.request, None);
                 }
@@ -350,7 +362,7 @@ impl App {
                         egui::ColorImage::from_rgba_unmultiplied([256, 256], &pixels),
                         egui::TextureOptions::LINEAR,
                     );
-                    if let Some(st) = panel(&mut self.inventory_ui, reply.request) {
+                    if let Some(st) = inventory_panel(self, reply.request) {
                         st.photo = Some(texture);
                         st.pixels = Some(Arc::new(pixels));
                     }
@@ -388,7 +400,9 @@ impl App {
                             ) {
                                 Ok(change) => {
                                     self.inventory_ui.pending = Some(reply.request);
-                                    self.inventory_ui.begin_thumbnail_upload(reply.request);
+                                    if let Some(st) = inventory_request_state(self, reply.request) {
+                                        st.begin_thumbnail_upload(reply.request);
+                                    }
                                     self.inventory_ui.pending_refresh = change.refresh.clone();
                                     self.send(NetCommand::EditInventory {
                                         request: reply.request,
@@ -400,7 +414,9 @@ impl App {
                         }
                         Prepared::Upload(data) => {
                             self.inventory_ui.pending = Some(reply.request);
-                            self.inventory_ui.begin_thumbnail_upload(reply.request);
+                            if let Some(st) = inventory_request_state(self, reply.request) {
+                                st.begin_thumbnail_upload(reply.request);
+                            }
                             self.inventory_ui.pending_refresh = vec![parent];
                             self.send(NetCommand::UploadInventoryThumbnail {
                                 request: reply.request,
@@ -439,6 +455,7 @@ impl App {
             }
         }
         poll(&mut self.inventory_ui, &self.world.inventory, &mut self.scene.anims);
+        poll(&mut self.dual_inventory_ui, &self.world.inventory, &mut self.scene.anims);
     }
 }
 
@@ -577,6 +594,22 @@ fn crop_at(image: &image::RgbaImage, [x, y]: [u32; 2]) -> Result<image::RgbaImag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_callbacks_resolve_to_the_pane_that_started_the_request() {
+        let mut primary = InventoryUi::default();
+        let mut dual = InventoryUi::default();
+        let primary_request = Uuid::from_u128(101);
+        let dual_request = Uuid::from_u128(202);
+        primary.thumbnail.pending = Some(primary_request);
+        dual.thumbnail.pending = Some(dual_request);
+
+        assert!(inventory_state(&mut primary, dual_request).is_none());
+        assert!(inventory_state(&mut dual, primary_request).is_none());
+        assert!(inventory_state(&mut primary, primary_request).is_some());
+        assert!(inventory_state(&mut dual, dual_request).is_some());
+    }
+
     #[test]
     fn a_copy_kept_in_the_viewer_pastes_until_the_clipboard_changes() {
         let kept = Uuid::from_u128(0xa1);

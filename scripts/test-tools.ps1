@@ -67,36 +67,62 @@ if ($ConsoleFixture) {
         . "$PSScriptRoot/tools/update-policy.ps1"
         Set-TestSize 100 20
         $script:keyIndex = 0
+        # The second choice of each step but the last: require this version,
+        # 24 hours of grace, clear the cache, keep the settings. Each screen
+        # shows what the earlier ones chose.
+        $minimumChoice = 'required below 0.5.0 (they can still log in for 24 h'
+        $steps = @(
+            @{ Key = 'DownArrow'; Shows = @('2/4', 'Minimum version') }
+            @{ Key = 'Enter'; Shows = @('2/4', 'Minimum version') }
+            @{ Key = 'DownArrow'; Shows = @('2/4', 'Grace period', 'Minimum: 0.5.0.') }
+            @{ Key = 'Enter'; Shows = @('2/4', 'Grace period', 'Minimum: 0.5.0.') }
+            @{ Key = 'DownArrow'; Shows = @('3/4', $minimumChoice) }
+            @{ Key = 'Enter'; Shows = @('3/4', $minimumChoice) }
+            @{ Key = 'Enter'; Shows = @('4/4', $minimumChoice, 'cleared for versions before 0.5.0.') }
+        )
         $KeySource = {
             $screen = @(Get-TestScreen) -join "`n"
             Assert-ToolsTest ($screen.Contains('v0.5.0')) 'Each release step must show the chosen version.'
-            if ($script:keyIndex -eq 2) { Assert-ToolsTest ($screen.Contains('3/3') -and $screen.Contains('0.5.0.')) 'The settings step must show the prior cache choice.' }
-            $key = if ($script:keyIndex++ -eq 0) { 'DownArrow' } else { 'Enter' }
-            [pscustomobject]@{ Key = $key; KeyChar = [char]0 }
+            Assert-ToolsTest ($script:keyIndex -lt $steps.Count) 'The release steps must not ask for more keys than the four steps take.'
+            $step = $steps[$script:keyIndex]
+            foreach ($text in $step.Shows) {
+                Assert-ToolsTest ($screen.Contains($text)) "Key $($script:keyIndex): the step must show '$text' (its number and the choices made before it)."
+            }
+            $script:keyIndex++
+            [pscustomobject]@{ Key = $step.Key; KeyChar = [char]0 }
         }
-        $policy = Read-ReleaseMaintenance ([ordered]@{ schema = 1; version = '0.5.0'; cache_invalidation_before = $null; settings_reset_before = $null })
-        Assert-ToolsTest ($policy.cache_invalidation_before -eq '0.5.0' -and -not $policy.settings_reset_before) 'Release steps must preserve the selected maintenance options.'
+        $policy = Read-ReleaseMaintenance ([ordered]@{ schema = 1; version = '0.5.0'; minimum_supported_version = $null; cache_invalidation_before = $null; settings_reset_before = $null })
+        Assert-ToolsTest ($script:keyIndex -eq $steps.Count) 'The release steps must show every screen: minimum, grace period, cache, settings.'
+        Assert-ToolsTest ($policy.minimum_supported_version -eq '0.5.0' -and $policy.grace_hours -eq 24 -and $policy.cache_invalidation_before -eq '0.5.0' -and -not $policy.settings_reset_before) 'Release steps must preserve the selected maintenance options.'
         # Exercise the whole release flow against synthetic read-only data.
         . "$PSScriptRoot/tools/releases.ps1"
         function Invoke-GhJson { @{ status = 'completed'; conclusion = 'success' } }
         function Get-ReleaseContext {
             @{ Last = @{ Tag = 'v0.5.0'; V = @{ Major = 0; Minor = 5; Patch = 0 } }; Prs = @(@{ number = 1; title = 'Fixture'; labels = @(@{ name = 'feature' }) }) }
         }
-        function Get-UpdatePolicy { [ordered]@{ schema = 1; version = '0.6.0'; cache_invalidation_before = $null; settings_reset_before = $null } }
-        function git { $global:LASTEXITCODE = 0 }
+        function Get-UpdatePolicy { [ordered]@{ schema = 1; version = '0.6.0'; minimum_supported_version = $null; cache_invalidation_before = $null; settings_reset_before = $null } }
+        $script:gitCalls = @()
+        function git { $script:gitCalls += ($args -join ' '); $global:LASTEXITCODE = 0 }
         $Paths = @{ Repo = 'fixture only' }
         $DryRun = $true
         $script:keyIndex = 0
+        # Enter on every screen: the number, the three maintenance steps (the
+        # minimum is kept, so no grace period), the confirmation, then the
+        # way back from the dry run's report.
         $KeySource = {
             $screen = @(Get-TestScreen) -join "`n"
-            $stage = switch ($script:keyIndex) { 0 { '1/3' }; 1 { '2/3' }; 2 { '3/3' }; default { 'Confirmation' } }
+            $stage = switch ($script:keyIndex) { 0 { '1/4' }; 1 { '2/4' }; 2 { '3/4' }; 3 { '4/4' }; default { 'Confirmation' } }
             Assert-ToolsTest ($screen.Contains($stage)) 'Release options and confirmation must have separate screens.'
             Assert-ToolsTest ($screen.Contains('v0.6.0')) 'The chosen version must reach the confirmation.'
+            if ($script:keyIndex -eq 5) { Assert-ToolsTest ($screen.Contains('[dry run]')) 'The dry run must report the tag instead of creating it.' }
             $script:keyIndex++
             [pscustomobject]@{ Key = 'Enter'; KeyChar = [char]0 }
         }
         New-AuroraRelease @{ Slug = 'fixture only' }
-        Assert-ToolsTest ($script:keyIndex -eq 5) 'The dry run must reach confirmation and return without publishing.'
+        Assert-ToolsTest ($script:keyIndex -eq 6) 'The dry run must reach confirmation and return without publishing.'
+        $tagRead = @($script:gitCalls | Where-Object { $_ -match 'tag --list v0\.6\.0' })
+        $tagWrites = @($script:gitCalls | Where-Object { $_ -match 'tag -a|push' })
+        Assert-ToolsTest ($tagRead.Count -eq 1 -and -not $tagWrites.Count) 'The dry run must look the tag up, and neither create nor push it.'
         # The footer may receive more status text than a narrow window fits.
         Set-TestSize 30 6
         $FooterStatus = { @(('x' * 200), 'success') }

@@ -15,14 +15,52 @@ use aurora_llsd::{Llsd, llsd_map};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
-    Auto,
-    Combine,
-    Fast,
     Reliable,
     Above,
+    /// Automatic generation retains the Legacy Viewer's chain and saved identity.
+    #[serde(alias = "Auto", alias = "Combine", alias = "Fast")]
+    Legacy,
+}
+/// Lowest, Low, Medium and High targets, following
+/// LLModelPreview::genMeshOptimizerLODs (indra/newview/llmodelpreview.cpp):
+/// base triangles / 3^(3 - level), with at least one triangle per nonempty
+/// material face so a generated level cannot discard one of its surfaces.
+pub fn default_lod_targets(high_triangles: usize, minimum_triangles: usize) -> [usize; 4] {
+    let minimum = minimum_triangles.min(high_triangles);
+    std::array::from_fn(|level| (high_triangles / 3usize.pow((3 - level) as u32)).max(minimum))
+}
+
+pub fn minimum_lod_triangles(scene: &Scene) -> usize {
+    scene.models.iter().map(process::minimum_lod_triangles).sum()
+}
+
+/// Reserve every model's material faces before sharing the reducible triangles.
+/// Cumulative integer shares spend the requested budget without rounding losses.
+fn model_lod_targets(models: &[Model], triangles: usize) -> Vec<usize> {
+    let minimum: usize = models.iter().map(process::minimum_lod_triangles).sum();
+    let total: usize = models.iter().map(Model::triangles).sum();
+    let available = total - minimum;
+    let remaining = triangles.clamp(minimum, total) - minimum;
+    let mut cumulative = 0u128;
+    let mut assigned = 0;
+    models
+        .iter()
+        .map(|model| {
+            let minimum = process::minimum_lod_triangles(model);
+            cumulative += (model.triangles() - minimum) as u128;
+            let share = if available == 0 {
+                0
+            } else {
+                (remaining as u128 * cumulative / available as u128) as usize
+            };
+            let target = minimum + share - assigned;
+            assigned = share;
+            target
+        })
+        .collect()
 }
 #[derive(Clone)]
 pub struct Lod {
@@ -158,16 +196,17 @@ impl Draft {
     }
     pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
+        let targets = default_lod_targets(triangles, minimum_lod_triangles(&scene));
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         let mut draft = Self {
             inspector: inspector::Inspector::new(&scene),
             scene,
             images,
             lods: std::array::from_fn(|i| Lod {
-                source: if i == 3 { LodSource::File } else { LodSource::Auto },
+                source: if i == 3 { LodSource::File } else { LodSource::Legacy },
                 file: None,
                 path: None,
-                triangles: (triangles / 4usize.pow((3 - i) as u32)).max(1),
+                triangles: targets[i],
                 error: 0.01,
                 error_mode: false,
             }),
@@ -401,7 +440,16 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     {
         return Err(AssetError::invalid("mesh scale or linkset size"));
     }
-    let total = draft.scene.models.iter().map(Model::triangles).sum::<usize>().max(1);
+    let targets = draft
+        .lods
+        .each_ref()
+        .map(|lod| model_lod_targets(&draft.scene.models, lod.triangles));
+    let mut hull_scales = vec![Vec::new(); draft.scene.models.len()];
+    for instance in &draft.scene.instances {
+        if let Some(scales) = hull_scales.get_mut(instance.model) {
+            scales.push(instance.transform.to_scale_rotation_translation().0.abs());
+        }
+    }
     let mut prepared = Prepared {
         lods: Vec::new(),
         physics: Vec::new(),
@@ -435,22 +483,17 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         .and_then(Option::as_ref)
                         .cloned()
                         .ok_or_else(|| AssetError::invalid("high LOD cannot use the LOD above"))?,
-                    method => process::lod(
+                    source @ (LodSource::Legacy | LodSource::Reliable) => process::lod(
                         high,
                         process::LodOptions {
-                            triangles: if spec.error_mode {
-                                0
-                            } else {
-                                high.triangles() * spec.triangles / total
-                            },
+                            triangles: if spec.error_mode { 0 } else { targets[level][index] },
                             // Firestorm uses 100% error in triangle-budget mode;
                             // the saved error threshold applies only to error mode.
                             error: if spec.error_mode { spec.error } else { 1.0 },
-                            method: match method {
-                                LodSource::Auto => process::Method::Auto,
-                                LodSource::Reliable => process::Method::Reliable,
-                                LodSource::Fast => process::Method::Fast,
-                                _ => process::Method::Precise,
+                            method: if source == LodSource::Legacy {
+                                process::Method::Legacy
+                            } else {
+                                process::Method::Reliable
                             },
                             crease_angle: None,
                             error_only: spec.error_mode,
@@ -473,7 +516,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 // (indra/newview/llmeshrepository.cpp) also supplies a base
                 // hull for split models whose instance collision is None.
                 let hulls = process::Physics {
-                    base: Some(process::base_hull(high)?),
+                    base: Some(process::adaptive_base_hull(
+                        hull_source(None, &lods, high),
+                        &hull_scales[index],
+                        &draft.cancel,
+                    )?),
                     hulls: Vec::new(),
                 };
                 return Ok((lods, None, hulls));
@@ -527,7 +574,11 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 )?
             } else {
                 process::Physics {
-                    base: Some(process::base_hull(high)?),
+                    base: Some(if physics.is_none() {
+                        process::adaptive_base_hull(hull_source(None, &lods, high), &hull_scales[index], &draft.cancel)?
+                    } else {
+                        process::base_hull(hull_source(physics.as_ref(), &lods, high))?
+                    }),
                     hulls: Vec::new(),
                 }
             };
@@ -561,6 +612,19 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     Ok(prepared)
 }
 
+/// Custom collision comes first, as LLMeshUploadThread::generateHulls
+/// (indra/newview/llmeshrepository.cpp) requires for volumetric physics files
+/// on flat visual parts (#4213). The human-requested adaptive default starts
+/// at Lowest, then falls back through Low, Medium and High.
+/// This deliberately differs from the Legacy Viewer's Low-first default.
+fn hull_source<'a>(physics: Option<&'a Model>, lods: &'a [Option<Model>; 4], high: &'a Model) -> &'a Model {
+    [physics, lods[0].as_ref(), lods[1].as_ref(), lods[2].as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|model| model.triangles() > 0)
+        .unwrap_or(high)
+}
+
 fn floats(values: impl IntoIterator<Item = f32>) -> Llsd {
     Llsd::Array(values.into_iter().map(|f| Llsd::Real(f64::from(f))).collect())
 }
@@ -582,10 +646,10 @@ pub fn request(
     }
     let meshes = prepared
         .lods
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(i, lods)| {
-            encode::asset(
+            encode::upload_asset(
                 lods,
                 prepared.physics[i].as_ref(),
                 &prepared.hulls[i],

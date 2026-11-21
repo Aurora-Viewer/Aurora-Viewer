@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub(super) struct State {
     options: BulkPerms,
-    original: Option<BulkPerms>,
     roots: Vec<Uuid>,
     open: bool,
     job: Option<Job>,
@@ -50,7 +49,6 @@ impl State {
             return;
         }
         self.roots = roots;
-        self.original = Some(self.options.clone());
         self.status.clear();
         self.open = true;
     }
@@ -157,18 +155,11 @@ impl Job {
                     "group_mask" => group as i32, "everyone_mask" => everyone as i32, "next_owner_mask" => next as i32
                 };
                 let body = if item.asset_type == 6 {
-                    // LLSidepanelItemInfo::updatePermissions: stored objects
-                    // must carry these overrides so rez applies the new masks.
-                    let mut flags = item.flags;
-                    if next != item.next_owner_mask {
-                        flags |= 0x100;
-                    }
-                    if group != item.group_mask {
-                        flags |= 0x040000;
-                    }
-                    if everyone != item.everyone_mask {
-                        flags |= 0x080000;
-                    }
+                    let flags = crate::world::inventory::actions::object_permission_flags(
+                        item.flags,
+                        [item.group_mask, item.everyone_mask, item.next_owner_mask],
+                        [group, everyone, next],
+                    );
                     llsd_map! { "permissions" => masks, "flags" => flags as i32 }
                 } else {
                     llsd_map! { "permissions" => masks }
@@ -220,7 +211,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
         return;
     }
     let mut open = true;
-    let mut response = (false, false, false);
+    let mut response = (false, false);
     let busy =
         state.job.is_some() || state.submitted || st.pending.is_some() || actions.iter().any(|action| matches!(action, InvAction::Edit(_)));
     let status = progress.as_deref().unwrap_or(&state.status);
@@ -232,23 +223,22 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &m
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
-        response = controls(ui, p, &mut state.options, status, busy, aurora_i18n::tr!("inventory-bulk-adjust"));
+        response = controls(
+            ui,
+            p,
+            &mut state.options,
+            status,
+            busy,
+            aurora_i18n::tr!("inventory-bulk-adjust"),
+            None,
+            None,
+        );
     });
-    let (apply, accept, cancel) = response;
-    if apply || accept {
+    let (apply, close) = response;
+    if apply {
         state.start();
     }
-    if accept {
-        state.original = None;
-        open = false;
-    }
-    if cancel || !open && !accept {
-        if let Some(original) = state.original.take() {
-            state.options = original;
-        }
-        open = false;
-    }
-    state.open = open;
+    state.open = open && !close;
 }
 
 impl InventoryUi {

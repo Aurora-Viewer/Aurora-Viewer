@@ -15,6 +15,10 @@
 //! asking to take L$; `fees-answered` then accepts the invitation (the
 //! cost is confirmed) and denies the question (its nearby chat line);
 //! `fees-short` asks a fee the demo balance cannot pay.
+//! `pie-toasts` (and `legacy-pie-toasts`) stacks four toasts at frame
+//! `PIE_TOASTS_AT`, a friend online among them, then opens the pie menu
+//! in the middle of the window, with a wider gap between the toasts
+//! (`PIE_TOASTS_GAP`) and a more transparent pie (`PIE_TOASTS_OPACITY`).
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
@@ -33,6 +37,18 @@ pub const LIST_AT: u64 = 2700;
 pub const ANSWER_AT: u64 = 2650;
 /// Frame at which the purchase is delivered (`purchase`, `purchase-open`).
 pub const PURCHASE_AT: u64 = 700;
+/// Frame at which the toasts of `pie-toasts` arrive; the pie menu opens
+/// 30 frames later.
+pub const PIE_TOASTS_AT: u64 = 600;
+/// The gap between toasts of `pie-toasts` (ToastGap; 7 by default).
+pub const PIE_TOASTS_GAP: f32 = 20.0;
+/// The pie's opacity of `pie-toasts` (PieMenuOpacity, its override on).
+pub const PIE_TOASTS_OPACITY: f32 = 0.5;
+
+/// `pie-toasts` or `legacy-pie-toasts`.
+pub fn pie_toasts() -> bool {
+    mode().is_some_and(|m| m.ends_with("pie-toasts"))
+}
 
 /// The friend who comes online (Orion in the demo).
 fn friend() -> Uuid {
@@ -184,6 +200,26 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             ]
         } else {
             Vec::new()
+        };
+    }
+    // a stack of four: two notices, an offer and a friend online (gone
+    // offline during the loading screen)
+    if pie_toasts() {
+        return match frame {
+            300 => vec![NetEvent::FriendsOnline {
+                ids: vec![friend()],
+                online: false,
+            }],
+            PIE_TOASTS_AT => vec![
+                notice(agent, aurora_i18n::tr!("demo-notifs-group-notice")),
+                notice(agent, aurora_i18n::tr!("demo-notifs-paid")),
+                gift(agent, 1),
+                NetEvent::FriendsOnline {
+                    ids: vec![friend()],
+                    online: true,
+                },
+            ],
+            _ => Vec::new(),
         };
     }
     if let Some(mode) = mode().filter(|m| m.starts_with("fees")) {

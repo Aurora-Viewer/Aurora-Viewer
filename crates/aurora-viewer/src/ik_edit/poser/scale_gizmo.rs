@@ -76,6 +76,7 @@ struct Drag {
     part: Part,
     origin: Pos2,
     scale: Vec3,
+    sensitivity: f32,
 }
 impl Drag {
     fn update(&self, pointer: Pos2) -> Option<Vec3> {
@@ -84,9 +85,9 @@ impl Drag {
         match self.part {
             Part::Axis(axis) => {
                 let span = self.geometry.cam.project(self.geometry.end(axis))? - self.geometry.cam.project(self.geometry.pivot)?;
-                factor[axis] += delta.dot(span) / span.length_sq().max(1.0);
+                factor[axis] += delta.dot(span) / span.length_sq().max(1.0) * self.sensitivity;
             }
-            Part::Uniform => factor = Vec3::splat(1.0 + (delta.x - delta.y) / 100.0),
+            Part::Uniform => factor = Vec3::splat(1.0 + (delta.x - delta.y) / 100.0 * self.sensitivity),
         }
         // a drag past the pivot shrinks to the floor, never turns the joint over
         Some(data::bounded_scale(self.scale * factor.max(Vec3::splat(1e-6))))
@@ -103,7 +104,15 @@ impl Gizmo {
     pub(super) fn dragging(&self) -> bool {
         self.drag.is_some()
     }
-    fn show(&mut self, ctx: &egui::Context, palette: &Palette, geometry: Geometry, scale: Vec3, allow_hover: bool) -> (bool, Option<Vec3>) {
+    fn show(
+        &mut self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        geometry: Geometry,
+        scale: Vec3,
+        allow_hover: bool,
+        sensitivity: f32,
+    ) -> (bool, Option<Vec3>) {
         let (pointer, pressed, down, released, alt) = ctx.input(|i| {
             (
                 i.pointer.interact_pos(),
@@ -125,6 +134,7 @@ impl Gizmo {
                 part,
                 origin,
                 scale,
+                sensitivity: gizmo::sensitivity_scale(sensitivity),
             });
         }
         let mut change = None;
@@ -205,10 +215,14 @@ impl Editor {
             && ctx.input(|i| i.pointer.interact_pos()).is_none_or(|p| {
                 geometry.cam.project(geometry.pivot).is_some_and(|c| c.distance(p) <= 9.0) || !self.point_owns_pointer(ctx, rig, p)
             });
-        let (owns, change) = self
-            .poser
-            .scale_gizmo
-            .show(ctx, palette, geometry, session.pose.scales[bone], allow_hover);
+        let (owns, change) = self.poser.scale_gizmo.show(
+            ctx,
+            palette,
+            geometry,
+            session.pose.scales[bone],
+            allow_hover,
+            self.poser.sensitivity,
+        );
         if let Some(scale) = change {
             self.set_pose_scale(rig, bone, scale);
         }
@@ -255,7 +269,7 @@ mod tests {
                 button: egui::PointerButton::Primary,
                 modifiers: egui::Modifiers::NONE,
             };
-            for events in [
+            for (frame_index, events) in [
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -263,8 +277,17 @@ mod tests {
                 vec![egui::Event::PointerMoved(start.lerp(end, 0.5))],
                 vec![egui::Event::PointerMoved(end)],
                 vec![button(end, false)],
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+                if frame_index >= 3 {
+                    assert!(
+                        editor.manipulator_owns_pointer(),
+                        "the scale handle keeps scene camera input during press, drag, and release"
+                    );
+                }
                 render(&mut world, &editor);
             }
             let session = &editor.poser.sessions[&world.agent_id];
@@ -287,6 +310,33 @@ mod tests {
             assert!(!editor.poser.scale_gizmo.dragging());
             editor.poser.sessions.get_mut(&world.agent_id).unwrap().history(false);
             assert_eq!(editor.poser.sessions[&world.agent_id].pose.scales, initial.scales);
+        }
+    }
+
+    #[test]
+    fn poser_sensitivity_scales_axis_and_uniform_scale_gizmo_drags() {
+        let (world, editor) = selected_fixture();
+        let bone = editor.selected.unwrap();
+        let frame = editor.editor_frame(&world).unwrap();
+        let geometry = Geometry::new(&projector(frame.joints[bone].w_axis.truncate()), frame.joints[bone]).unwrap();
+        let center = geometry.cam.project(geometry.pivot).unwrap();
+        for (part, origin, end, expected) in [
+            (
+                Part::Axis(0),
+                geometry.cam.project(geometry.end(0)).unwrap(),
+                geometry.cam.project(geometry.end(0)).unwrap() + (geometry.cam.project(geometry.end(0)).unwrap() - center) * 0.4,
+                Vec3::new(1.2, 1.0, 1.0),
+            ),
+            (Part::Uniform, center, center + egui::vec2(25.0, -15.0), Vec3::splat(1.2)),
+        ] {
+            let drag = Drag {
+                geometry,
+                part,
+                origin,
+                scale: Vec3::ONE,
+                sensitivity: gizmo::sensitivity_scale(0.25),
+            };
+            assert!(drag.update(end).unwrap().abs_diff_eq(expected, 1e-4));
         }
     }
 }

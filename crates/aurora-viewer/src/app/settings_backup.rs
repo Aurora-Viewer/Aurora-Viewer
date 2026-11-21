@@ -8,13 +8,17 @@ use crate::ui::options::backup::{Pending, Restored};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-/// What a dialog's thread found.
+/// What a dialog's thread found, or what a restore wrote.
 enum Outcome {
     Saved(PathBuf),
     Read(Backup),
     NotABackup,
     Failed,
     Cancelled,
+    /// The restore's files are written; `failed` when some were not.
+    Restored {
+        failed: bool,
+    },
 }
 
 #[derive(Default)]
@@ -95,13 +99,23 @@ impl App {
                 ui.restore = Some(Pending::new(backup, self.world.login.as_ref().map(|l| l.agent_id)));
             }
             Outcome::NotABackup => ui.restore_status = aurora_i18n::tr!("ui-options-backup-not-a-backup").to_owned(),
+            Outcome::Restored { failed } => {
+                ui.restore_status = if failed {
+                    aurora_i18n::tr!("ui-options-backup-restore-failed").to_owned()
+                } else {
+                    aurora_i18n::tr!("ui-options-backup-restored").to_owned()
+                };
+                self.world.system_message(ui.restore_status.clone());
+            }
             Outcome::Cancelled => {}
         }
     }
 
     /// Puts back what the preferences did not (they swapped the settings):
     /// the windows' layout, the skin, the accounts' files. True when the
-    /// layout was replaced.
+    /// layout was replaced. The skin's and the accounts' files are written
+    /// by a save thread (saves.rs); the status says how it went once they
+    /// are on the disk (`poll_settings_backup`).
     pub(super) fn restore_settings(&mut self, ctx: &egui::Context, restored: Restored) -> bool {
         let Restored { backup, parts } = restored;
         let config = crate::settings::config_dir();
@@ -118,36 +132,36 @@ impl App {
                 }
             }
         }
-        if parts.skin
-            && let Err(e) = backup.write_skin(&config)
-        {
-            log::warn!("settings backup: skin not restored ({e})");
-            failed = true;
-        }
-        if parts.accounts {
-            // the account logged in saves its own files over them
-            match backup.write_accounts(&config, self.world.login.as_ref().map(|l| l.agent_id)) {
-                Ok(count) => log::info!("settings backup: files of {count} accounts restored"),
-                Err(e) => {
-                    log::warn!("settings backup: account files not all restored ({e})");
-                    failed = true;
+        self.settings.save();
+        // the account logged in saves its own files over them
+        let skip = self.world.login.as_ref().map(|l| l.agent_id);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.settings_backup.0 = Some(rx);
+        crate::saves::change(config.join("settings-backup-restore"), move || {
+            if parts.skin
+                && let Err(e) = backup.write_skin(&config)
+            {
+                log::warn!("settings backup: skin not restored ({e})");
+                failed = true;
+            }
+            if parts.accounts {
+                match backup.write_accounts(&config, skip) {
+                    Ok(count) => log::info!("settings backup: files of {count} accounts restored"),
+                    Err(e) => {
+                        log::warn!("settings backup: account files not all restored ({e})");
+                        failed = true;
+                    }
                 }
             }
-        }
-        self.settings.save();
-        log::info!(
-            "settings restored from the backup of {} (settings {}, layout {layout}, skin {}, accounts {})",
-            backup.created(),
-            parts.settings,
-            parts.skin,
-            parts.accounts
-        );
-        self.options_ui.restore_status = if failed {
-            aurora_i18n::tr!("ui-options-backup-restore-failed").to_owned()
-        } else {
-            aurora_i18n::tr!("ui-options-backup-restored").to_owned()
-        };
-        self.world.system_message(self.options_ui.restore_status.clone());
+            log::info!(
+                "settings restored from the backup of {} (settings {}, layout {layout}, skin {}, accounts {})",
+                backup.created(),
+                parts.settings,
+                parts.skin,
+                parts.accounts
+            );
+            let _ = tx.send(Outcome::Restored { failed });
+        });
         layout
     }
 }

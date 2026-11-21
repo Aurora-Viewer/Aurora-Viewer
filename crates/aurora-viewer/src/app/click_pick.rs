@@ -275,6 +275,12 @@ impl ClickWait {
         self.demo.spec().is_some()
     }
 
+    /// AURORA_DEMO_CLICKS=...,clickable: its left clicks act on every
+    /// scripted rigged mesh, ours included, whatever the preferences say.
+    fn demo_clickable(&self) -> bool {
+        self.demo.spec().is_some_and(|spec| spec.clickable)
+    }
+
     pub(super) fn hold(&mut self, input: Held) {
         if let (Held::Motion(dx, dy), Some(Held::Motion(x, y))) = (&input, self.held.back_mut()) {
             *x += dx;
@@ -286,10 +292,29 @@ impl ClickWait {
 }
 
 impl App {
+    /// The rigged meshes a left click and the hover cursor act on
+    /// (scene/drawn.rs): the three preferences, for the plain click only.
+    /// With Alt, Ctrl or Shift held the click reaches what it reached
+    /// before them; a demo script asks for every kind without touching the
+    /// saved settings.
+    pub(super) fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
+        use crate::scene::drawn::RiggedClicks;
+        if self.clicks.demo_clickable() {
+            RiggedClicks::ALL
+        } else if self.alt || self.ctrl || self.shift {
+            RiggedClicks::MODIFIER_CLICK
+        } else {
+            self.settings.rigged_clicks()
+        }
+    }
+
     pub(super) fn ui_takes_pointer(&self) -> bool {
         if self.cursor_hold.held() {
             // the hidden cursor is the camera's: the crosshair, never a window (#1343)
             return false;
+        }
+        if self.ik_editor.manipulator_owns_pointer() {
+            return true;
         }
         let ppp = self.egui_ctx.pixels_per_point();
         ui::widgets::pointer_over_ui(&self.egui_ctx, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp))
@@ -298,6 +323,9 @@ impl App {
     /// A mouse button of the window, pressed or released: handled now, or
     /// in its turn behind the click that waits for its depth.
     pub(super) fn mouse_input(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
+        if self.studio_mouse(button, pressed, over_ui) {
+            return;
+        }
         if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
@@ -308,6 +336,12 @@ impl App {
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
+            MouseButton::Left if pressed && self.mouse_mode == MouseMode::Steer && self.steer_by_right => {
+                // MMO-style buttons: while the right button steers, the left
+                // one walks forward (a double press runs) and clicks nothing
+                self.left_down = true;
+                self.walk_tap(0, true);
+            }
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && self.camera.mouselook() {
                     self.double_click.reset();
@@ -513,10 +547,22 @@ impl App {
                     None
                 }
             });
-        if picked.tag.is_some() || picked.particles.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
-            None
-        } else {
-            Some(picked)
+        let hud = object.map(|idx| self.world.hud_root(idx).is_some());
+        match overlay_pick(
+            picked.tag.is_some(),
+            picked.particles.is_some(),
+            hud,
+            picked.visible_point().is_some(),
+        ) {
+            OverlayPick::Keep => Some(picked),
+            OverlayPick::Drop => None,
+            // the particle stays picked, along the whole ray
+            OverlayPick::Particles => Some(Picked {
+                depth: None,
+                drawn: Default::default(),
+                tag: None,
+                ..picked
+            }),
         }
     }
 
@@ -684,8 +730,19 @@ impl App {
             }
             let got = shown.and_then(|d| local(d.idx));
             let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
+            // a left click passes through the rigged mesh it was aimed at
+            // unless the preferences (or `clickable`) give it the click
+            let through = |expected: u32| {
+                gesture == crate::scene::drawn::Gesture::Touch
+                    && [picked.drawn.blend, picked.drawn.opaque]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| self.scene.record_object(f.record))
+                        .any(|(i, _)| local(i) == Some(expected) && self.scene.touch_passes_through(&self.world, i))
+            };
             let aimed = match self.clicks.demo.expected.take() {
                 Some(expected) if got == Some(expected) => format!("aimed at {expected}: OK"),
+                Some(expected) if through(expected) => format!("aimed at {expected}: PASSED THROUGH"),
                 Some(expected) => format!("aimed at {expected}: MISSED"),
                 None => "not aimed".to_string(),
             };
@@ -722,6 +779,9 @@ impl App {
             }
         }
         self.clicks.held.clear();
+        self.build.drop_press();
+        // nor does a click on our own plate run its action
+        self.own_plate_click = None;
     }
 
     /// The build tools' release of a demo script, behind its press.
@@ -979,18 +1039,20 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]": a
+/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]": a
 /// click on the world every `ms` milliseconds (250 if it is not a number)
 /// once the world shows, held 60 ms: at pixel (x, y) of the window (a
 /// quarter of the width, near the bottom, by default), or with `sweep` at a
 /// new place of the window each time, or with `rigged` at the rigged meshes
 /// on screen in turn (`demo drawn pick` in the log says what each click
-/// designated).
+/// designated). `clickable`: the left clicks act on scripted rigged meshes,
+/// as with the three "Left click on rigged objects" preferences on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DemoSpec {
     period: Duration,
     at: DemoAt,
     kind: DemoKind,
+    clickable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1038,6 +1100,7 @@ fn demo_spec(var: &str) -> DemoSpec {
         period: Duration::from_millis(ms.clamp(20, 60_000)),
         at,
         kind,
+        clickable: parts.contains(&"clickable"),
     }
 }
 
@@ -1058,6 +1121,33 @@ impl DemoClicks {
     fn spec(&self) -> Option<DemoSpec> {
         static SPEC: std::sync::OnceLock<Option<DemoSpec>> = std::sync::OnceLock::new();
         *SPEC.get_or_init(|| std::env::var("AURORA_DEMO_CLICKS").ok().map(|v| demo_spec(&v)))
+    }
+}
+
+/// What a click keeps under an overlay that blocks the touch.
+#[derive(Debug, PartialEq)]
+enum OverlayPick {
+    Keep,
+    Drop,
+    /// The particles only: the world hit goes.
+    Particles,
+}
+
+/// LLPickInfo::fetchResults (indra/newview/llviewerwindow.cpp) under an
+/// overlay that blocks the touch: whatever the ray hit that is not a HUD
+/// attachment is dropped, the ground included (the land is a surface patch
+/// object there) and an avatar's name tag (LLPipeline::lineSegmentIntersectInWorld
+/// returns the avatar for it). The particle pick is kept: it then runs along
+/// the whole ray. `hud` is None when no object was hit, `surface` whether
+/// something was (the ground, the water).
+fn overlay_pick(tag: bool, particles: bool, hud: Option<bool>, surface: bool) -> OverlayPick {
+    if hud == Some(true) && !tag {
+        return OverlayPick::Keep;
+    }
+    match (tag || hud.is_some() || surface, particles) {
+        (false, _) => OverlayPick::Keep,
+        (true, true) => OverlayPick::Particles,
+        (true, false) => OverlayPick::Drop,
     }
 }
 
@@ -1360,11 +1450,40 @@ mod tests {
         );
         assert_eq!(demo_spec("250,focus").kind, DemoKind::Focus);
         let d = demo_spec("300,rigged,menu");
-        assert_eq!((d.at, d.kind), (DemoAt::Rigged, DemoKind::Menu));
+        assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Menu, false));
+        let d = demo_spec("300,rigged,clickable,left");
+        assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Left, true));
         // a sweep stays in the window and does not repeat itself soon
         let places: Vec<(f32, f32)> = (1..200).map(sweep_point).collect();
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));
         let cells: std::collections::HashSet<(u32, u32)> = places.iter().map(|(u, v)| ((u * 8.0) as u32, (v * 8.0) as u32)).collect();
         assert!(cells.len() > 56, "{} of 64 cells", cells.len());
+    }
+
+    /// LLPickInfo::fetchResults: under a blocking overlay a HUD is still
+    /// touched; objects and the ground are not; a click on the sky hit
+    /// nothing to drop.
+    #[test]
+    fn rlva_overlay_drops_ground_and_world_picks_but_not_huds() {
+        assert_eq!(overlay_pick(false, false, Some(true), true), OverlayPick::Keep, "a HUD");
+        assert_eq!(overlay_pick(false, false, Some(false), true), OverlayPick::Drop, "an object");
+        assert_eq!(overlay_pick(false, false, None, true), OverlayPick::Drop, "the ground");
+        assert_eq!(overlay_pick(false, false, None, false), OverlayPick::Keep, "the sky");
+        assert_eq!(overlay_pick(true, false, None, false), OverlayPick::Drop, "a name tag");
+    }
+
+    /// The particle pick of LLPickInfo::fetchResults is not under the
+    /// overlay's test: a particle in front of an object stays picked.
+    #[test]
+    fn rlva_overlay_keeps_the_particle_pick() {
+        assert_eq!(
+            overlay_pick(false, true, Some(false), true),
+            OverlayPick::Particles,
+            "before an object"
+        );
+        assert_eq!(overlay_pick(false, true, None, true), OverlayPick::Particles, "before the ground");
+        assert_eq!(overlay_pick(true, true, None, false), OverlayPick::Particles, "before a name tag");
+        assert_eq!(overlay_pick(false, true, None, false), OverlayPick::Keep, "against the sky");
+        assert_eq!(overlay_pick(false, true, Some(true), true), OverlayPick::Keep, "on a HUD");
     }
 }
