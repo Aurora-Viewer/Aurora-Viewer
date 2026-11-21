@@ -12,12 +12,14 @@
 
 mod columns;
 mod details;
+mod gallery;
 mod rights;
 pub(super) mod rows;
 mod sidebar;
 mod smart_bar;
 mod toolbar;
 
+pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
 
 use super::permissions::Rights;
@@ -109,12 +111,18 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" | "aurora-gallery-medium" => {
+                egui::vec2(800.0, 640.0)
+            }
             "aurora-wide"
+            | "aurora-gallery"
+            | "aurora-gallery-large"
+            | "aurora-combination"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
             | "aurora-keyboard-wide"
+            | "aurora-delete-confirm-wide"
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"
@@ -154,7 +162,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
 
 /// The count after the title: the number alone at the narrow width.
 pub fn item_count(inv: &Inventory, layout: Layout) -> String {
-    let count = inv.item_count();
+    let count = inv.total_count();
     let number = aurora_i18n::integer(count as i64);
     if layout == Layout::Compact {
         number
@@ -167,8 +175,11 @@ pub fn item_count(inv: &Inventory, layout: Layout) -> String {
 /// being fetched.
 pub fn sync_state(p: &Palette, inv: &Inventory, st: &InventoryUi) -> (egui::Color32, String) {
     let fetching = !inv.queue.is_empty() || st.fetch_all || inv.folders.values().any(|f| f.state == FetchState::Fetching);
+    let failed = inv.folders.values().any(|f| f.state == FetchState::Failed);
     if fetching {
         (p.muted_dim, aurora_i18n::tr!("inventory-syncing").to_owned())
+    } else if failed {
+        (p.amber, aurora_i18n::tr!("inventory-sync-incomplete").to_owned())
     } else {
         (p.teal, aurora_i18n::tr!("inventory-synced").to_owned())
     }
@@ -460,11 +471,18 @@ fn explorer_list(
     let Some(mut frame) = st.aurora else { return };
     frame.rights = prefs.rights;
     frame.columns = prefs.explorer;
-    rows::header(ui, p, frame, list_id, &mut prefs.explorer);
-    frame.columns = prefs.explorer;
+    let (root, filtered) = list_scope(inv, st, prefs, facts);
+    let explore = !filtered && !root.is_nil();
+    // A search or a filter lists its results, from every folder, as rows:
+    // the tiles show one folder.
+    let shown = if explore { prefs.explorer.view } else { view::ExplorerView::List };
+    // the combination view titles its list under its tiles
+    if shown == view::ExplorerView::List {
+        rows::header(ui, p, frame, list_id, &mut prefs.explorer);
+        frame.columns = prefs.explorer;
+    }
     st.aurora = Some(frame);
     ui.add_space(2.0);
-    let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
     let foot_h = match layout {
         Layout::Medium => card_height(prefs) + if message.is_some() { toolbar::MESSAGE } else { 0.0 },
@@ -472,7 +490,6 @@ fn explorer_list(
     };
     let (room, list_rect, foot) = list_and_foot(ui, foot_h);
     let list_h = list_rect.height();
-    let explore = !filtered && !root.is_nil();
     let target = if explore { st.browse } else { list_destination(st, root) };
     let out = if explore {
         // A revealed entry (Find original, a new item) shows in its folder;
@@ -491,12 +508,21 @@ fn explorer_list(
         st.expand_all = None;
         let browse = st.browse;
         std::mem::swap(&mut st.plain, &mut st.flat);
+        st.plain.set_tiles(gallery::tiles(shown));
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
-        let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
-            list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
-        });
+        let out = match shown {
+            view::ExplorerView::List => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+                list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
+            }),
+            view::ExplorerView::Gallery => in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+                gallery::gallery(ui, p, icons, inv, st, prefs, facts, images, actions, list_h, browse)
+            }),
+            view::ExplorerView::Combination => {
+                gallery::combination(ui, p, icons, inv, st, prefs, facts, images, actions, list_rect, list_id, browse)
+            }
+        };
         if let Some(frame) = &mut st.aurora {
             frame.explorer = false;
         }
@@ -508,7 +534,13 @@ fn explorer_list(
         })
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
-    let zone = ui.interact(out.inner_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
+    // between the tiles too, what is dropped goes into the folder shown
+    let zone_rect = if shown == view::ExplorerView::List {
+        out.inner_rect
+    } else {
+        list_rect
+    };
+    let zone = ui.interact(zone_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
     task_drop::target(ui, p, &zone, inv, target, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
     in_rect(ui, foot, "aurora_inventory_foot", |ui| match layout {
@@ -529,6 +561,39 @@ fn explorer_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_status_line_reports_folders_that_could_not_be_loaded() {
+        let mut h = Harness::new(800.0);
+        let p = crate::theme::Theme::default().palette();
+        let (_, text) = sync_state(&p, &h.inv, &h.st);
+        assert_eq!(text, aurora_i18n::tr!("inventory-synced"));
+        let root = h.inv.root;
+        h.inv.folders.get_mut(&root).expect("root").state = FetchState::Failed;
+        let (color, text) = sync_state(&p, &h.inv, &h.st);
+        assert_eq!(text, aurora_i18n::tr!("inventory-sync-incomplete"));
+        assert_eq!(color, p.amber, "an incomplete load is a warning, not a success");
+    }
+
+    #[test]
+    fn inventory_total_is_shared_by_every_title_width() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: inv.root,
+            ..Default::default()
+        }]);
+        let number = aurora_i18n::integer(1);
+        assert_eq!(item_count(&inv, Layout::Compact), number);
+        for layout in [Layout::Medium, Layout::Wide] {
+            assert_eq!(
+                item_count(&inv, layout),
+                aurora_i18n::tr!("inventory-items-count", count = 1, number = number.clone())
+            );
+        }
+    }
 
     #[test]
     fn the_window_widens_into_the_explorer_then_the_details() {
@@ -960,6 +1025,208 @@ mod tests {
         }
     }
 
+    fn press(h: &mut Harness, key: egui::Key) {
+        h.run(vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frames(2);
+    }
+
+    /// The explorer on the right-click tests' folder, with the demo's
+    /// pictures, in `view`; its list's order first.
+    fn tiled(width: f32, view: view::ExplorerView) -> (Harness, Vec<Uuid>) {
+        let mut h = Harness::new(width);
+        crate::world::inventory::demo::seed_gallery(&mut h.inv);
+        h.frames(2);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let listed = h.st.flat.order.clone();
+        h.prefs.explorer.view = view;
+        // small tiles: the whole folder in sight at both widths
+        h.prefs.explorer.tile_size = 64;
+        h.st.selection.clear();
+        h.st.selected = None;
+        h.frames(4);
+        (h, listed)
+    }
+
+    /// A tile's name, below its picture (and its wear buttons).
+    fn name_of(rect: Rect) -> egui::Pos2 {
+        egui::pos2(rect.center().x, rect.bottom() - 8.0)
+    }
+
+    #[test]
+    fn the_gallery_tiles_folders_then_items_pictures_first() {
+        for width in [800.0, WIDE_SIZE] {
+            let (mut h, listed) = tiled(width, view::ExplorerView::Gallery);
+            assert_eq!(h.st.browse, Uuid::from_u128(8000));
+            let pictured = |id: &Uuid| thumbnail::tile_picture(&h.inv, *id).is_some();
+            // LLInventoryGallery::compareGalleryItem: the folders, then the
+            // items, the pictured ones first, in the list's order otherwise
+            let mut expected = listed.clone();
+            expected.sort_by_key(|id| (h.inv.items.contains_key(id), !pictured(id)));
+            assert_eq!(h.st.flat.order, expected, "{width} px");
+            assert_eq!(h.st.flat.tiles, listed.len(), "every entry is a tile");
+            assert_eq!(h.st.flat.order[0], Uuid::from_u128(8001), "the pictured folder leads");
+            // a tile is a row: a click selects it, Ctrl adds one
+            h.click(name_of(h.row(8101)), Default::default());
+            assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
+            h.click(name_of(h.row(8102)), egui::Modifiers::COMMAND);
+            assert_eq!(h.st.selection.len(), 2, "{width} px");
+            // a double-click opens a notecard, and goes into a folder
+            h.actions.clear();
+            h.double_click(name_of(h.row(8103)));
+            assert!(
+                h.actions
+                    .iter()
+                    .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103))),
+                "{width} px"
+            );
+            h.double_click(name_of(h.row(8001)));
+            assert_eq!(h.st.browse, Uuid::from_u128(8001), "{width} px");
+        }
+    }
+
+    #[test]
+    fn the_arrows_move_across_the_tiles_and_down_a_row() {
+        let (mut h, _) = tiled(WIDE_SIZE, view::ExplorerView::Gallery);
+        let order = h.st.flat.order.clone();
+        let first = h.row(order[0].as_u128());
+        let second = h.row(order[1].as_u128());
+        // the tiles' row: as many as the width holds
+        let columns = order
+            .iter()
+            .take_while(|id| (h.row(id.as_u128()).top() - first.top()).abs() < 0.5)
+            .count();
+        assert!(columns >= 2 && second.left() > first.right(), "tiles side by side");
+        h.click(name_of(first), Default::default());
+        press(&mut h, egui::Key::ArrowRight);
+        assert_eq!(h.st.selected, Some(order[1]));
+        press(&mut h, egui::Key::ArrowDown);
+        assert_eq!(h.st.selected, Some(order[1 + columns]), "down one row");
+        press(&mut h, egui::Key::ArrowLeft);
+        press(&mut h, egui::Key::ArrowUp);
+        assert_eq!(h.st.selected, Some(order[0]));
+        assert_eq!(h.st.selection.len(), 1);
+    }
+
+    #[test]
+    fn the_combination_view_tiles_the_pictured_entries_above_the_list() {
+        for width in [800.0, WIDE_SIZE] {
+            let (mut h, listed) = tiled(width, view::ExplorerView::Combination);
+            let pictured: Vec<Uuid> = listed
+                .iter()
+                .copied()
+                .filter(|id| thumbnail::tile_picture(&h.inv, *id).is_some())
+                .collect();
+            let others: Vec<Uuid> = listed.iter().copied().filter(|id| !pictured.contains(id)).collect();
+            assert_eq!(pictured.len(), 7, "five items, a link to one and a folder have pictures");
+            assert_eq!(h.st.flat.tiles, pictured.len());
+            assert_eq!(h.st.flat.order, [pictured.clone(), others.clone()].concat(), "{width} px");
+            // the tiles above, the list's rows (as tall as rows) below
+            let tile = h.row(pictured[0].as_u128());
+            let row = h.row(others[0].as_u128());
+            assert!(tile.height() > rows::HEIGHT * 2.0 && row.height() < rows::HEIGHT + 1.0);
+            assert!(row.top() > tile.bottom(), "{width} px");
+            // down from the last tiles' row goes on into the list
+            h.click(name_of(h.row(pictured[pictured.len() - 1].as_u128())), Default::default());
+            press(&mut h, egui::Key::ArrowDown);
+            assert_eq!(h.st.selected, Some(others[0]), "{width} px");
+            press(&mut h, egui::Key::ArrowDown);
+            assert_eq!(h.st.selected, Some(others[1]), "the list steps its rows");
+            // the bar between them sets the tiles' height, a double-click resets it
+            let hit = h
+                .ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_gallery_split")))
+                .expect("split drawn");
+            let start = hit.center();
+            h.run(vec![egui::Event::PointerMoved(start)]);
+            h.run(vec![egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            }]);
+            h.run(vec![egui::Event::PointerMoved(start + egui::vec2(0.0, 40.0))]);
+            h.run(vec![egui::Event::PointerButton {
+                pos: start + egui::vec2(0.0, 40.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+            h.frames(2);
+            assert!(h.prefs.explorer.gallery_height > 0, "{width} px");
+            let hit = h
+                .ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_gallery_split")))
+                .expect("split drawn");
+            h.double_click(hit.center());
+            assert_eq!(h.prefs.explorer.gallery_height, 0);
+        }
+    }
+
+    #[test]
+    fn a_folder_with_no_picture_leaves_the_combination_view_to_its_list() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.frames(2);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.prefs.explorer.view = view::ExplorerView::Combination;
+        h.frames(4);
+        assert_eq!(h.st.flat.tiles, 0);
+        assert!(
+            h.ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_gallery_split")))
+                .is_none(),
+            "no bar without tiles"
+        );
+        let row = h.row(8101);
+        assert!(row.height() < rows::HEIGHT + 1.0, "the entries are rows");
+        // a search lists its results as rows, in every view
+        h.prefs.explorer.view = view::ExplorerView::Gallery;
+        h.st.search = "demo".into();
+        h.frames(6);
+        assert!(h.row(8101).height() < rows::HEIGHT + 1.0);
+    }
+
+    #[test]
+    fn a_folder_s_or_a_link_s_picture_shows_and_a_texture_is_not_its_own() {
+        let mut h = Harness::new(WIDE_SIZE);
+        crate::world::inventory::demo::seed_gallery(&mut h.inv);
+        let id = Uuid::from_u128;
+        // its own, a folder's
+        assert_eq!(thumbnail::tile_picture(&h.inv, id(8100)), Some(crate::demo::TEX_SNAPSHOT));
+        assert_eq!(thumbnail::tile_picture(&h.inv, id(8001)), Some(crate::demo::TEX_TILES));
+        // the link to the object shows the object's
+        assert_eq!(thumbnail::tile_picture(&h.inv, id(8113)), Some(crate::demo::TEX_SNAPSHOT));
+        // a texture without one is not its own picture (its tooltip shows it)
+        assert_eq!(thumbnail::tile_picture(&h.inv, id(8104)), None);
+        // an outfit folder: its only texture, none with two
+        let outfit = id(0x0ff1);
+        h.inv.folders.insert(
+            outfit,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: outfit,
+                    parent: id(8000),
+                    type_default: 47,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![id(8104)],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        assert_eq!(thumbnail::tile_picture(&h.inv, outfit), Some(crate::demo::TEX_SNAPSHOT));
+        h.inv.folders.get_mut(&outfit).expect("outfit").items.push(id(8104));
+        assert_eq!(thumbnail::tile_picture(&h.inv, outfit), None, "two textures: no single picture");
+        h.st.selection.clear();
+    }
+
     #[test]
     fn a_click_selects_a_row_and_the_explorer_goes_into_a_folder() {
         for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
@@ -984,7 +1251,7 @@ mod tests {
             assert!(
                 h.actions
                     .iter()
-                    .any(|a| matches!(a, InvAction::Preview(id) if *id == Uuid::from_u128(8103))),
+                    .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103))),
                 "{width} px"
             );
             if width >= 800.0 {

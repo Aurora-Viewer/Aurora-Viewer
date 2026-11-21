@@ -128,6 +128,9 @@ struct State {
     shown: f32,
     /// When each part was last complete (the `shown after` log line).
     timeline: Timeline,
+    /// A copy of an avatar already loaded (the animation editor's mirror):
+    /// shown once its parts are there, with no settling delay.
+    copy: bool,
 }
 
 /// When each kind of part of a loading avatar became complete, in seconds
@@ -206,6 +209,7 @@ impl State {
             reported: false,
             shown: 0.0,
             timeline: Timeline::default(),
+            copy: false,
         }
     }
 
@@ -249,7 +253,7 @@ impl State {
         }
         let delay = if self.shown_once { LOADED_DELAY } else { FIRST_MIN_DELAY };
         let since = now.duration_since(self.loading_at).as_secs_f32();
-        let settled = since > delay || (!self.shown_once && textures && since > LOADED_DELAY);
+        let settled = self.copy || since > delay || (!self.shown_once && textures && since > LOADED_DELAY);
         let loaded = !still && (settled || waited > MAX_WAIT);
         let first_show = loaded && !self.shown_once;
         if loaded {
@@ -431,6 +435,42 @@ impl Scene {
         self.avatar_load_parts(world, idx, None).2.is_empty()
     }
 
+    /// LLVOAvatar::getRezzedStatus, as far as the avatar render info needs
+    /// it: 0 an appearance still missing (getHasMissingParts), 1 grey (a
+    /// bake not downloaded yet), 2 textured, 4 also everything it wears
+    /// built (`worn`: only then is what it wears looked at). Aurora shows a
+    /// bake once downloaded, so the Legacy Viewer's 3 (bakes fully
+    /// downloaded but something worn missing) reads as 2.
+    pub fn avatar_rez_status(&self, world: &World, idx: usize, worn: bool) -> u8 {
+        let mut status = 2;
+        for (te, name, _) in avatar::BAKES {
+            let main = matches!(name, "head" | "upper" | "lower");
+            match bake_need(world.bake_texture(idx, te), main) {
+                BakeNeed::Undefined => return 0,
+                BakeNeed::Texture(t) if self.textures.is_wanted(&t) && !self.textures.is_loaded(&t) => status = 1,
+                _ => {}
+            }
+        }
+        if status == 2 && worn && self.avatar_complete(world, idx) {
+            status = 4;
+        }
+        status
+    }
+
+    /// Our own avatar fully shown in its new look: not loading, its bakes
+    /// downloaded and shown (none held behind the last good one), what it
+    /// wears built; what the rez effect waits for after an outfit change.
+    /// The outfit's batch portraits wait for it before each photo.
+    pub fn own_look_complete(&self, world: &World) -> bool {
+        let Some(idx) = world.objects.index_of_uuid(&world.agent_id) else {
+            return false;
+        };
+        !self.loading.indices.contains(&idx)
+            && self.gpu.get(idx).is_some_and(|g| !g.faces.is_empty())
+            && self.avatar_complete(world, idx)
+            && !self.holds_bake(&world.agent_id)
+    }
+
     /// Diagnostic: the first missing parts with the state of what they wait
     /// for (asset ids and fetch states, never a URL).
     fn describe_missing(&self, world: &World, missing: &[Missing]) -> String {
@@ -481,6 +521,10 @@ impl Scene {
             let id = o.full_id;
             seen.push(id);
             let s = loading.states.entry(id).or_insert_with(|| State::new(now));
+            // the animation editor's mirror of us is made of what is already
+            // loaded: it shows as soon as its copies are built, with no
+            // settling delay
+            s.copy = world.is_mirror(&id);
             // shown once, an avatar is never a cloud again: nothing below
             // would be used, and what it wears was looked up here every
             // frame (a club crowd wears hundreds of prims each)
@@ -488,9 +532,24 @@ impl Scene {
                 continue;
             }
             let own = id == world.agent_id;
-            let worn = world.objects.children_of(&o.key).len();
-            // (ours is not compared with the simulator's list: `!isSelf()`)
-            let announced = if own { 0 } else { world.announced_attachments(&id) };
+            // the region's objects, and the copies drawn from the cache for
+            // those not there yet, each once (world/avatar_cache): an avatar
+            // whose objects were kept shows with their copies, where the
+            // Legacy Viewer keeps it a cloud until the region sends them
+            let worn = world
+                .objects
+                .children_of(&o.key)
+                .iter()
+                .filter(|&&i| world.objects.get(i).is_some_and(|c| !c.is_client_preview()))
+                .count()
+                + world.avatar_cache.standing_in(&id);
+            // (ours is not compared with the simulator's list: `!isSelf()`,
+            // nor the animation editor's mirror of us, which has no HUDs)
+            let announced = if own || world.is_mirror(&id) {
+                0
+            } else {
+                world.announced_attachments(&id)
+            };
             // its missing bakes rank with the meshes it wears (`wait_px`),
             // the textures on what it wears just behind them: the geometry
             // is what it waits for, the textures only shorten the delay
@@ -696,6 +755,15 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_of_a_loaded_avatar_shows_once_its_parts_are_there() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        s.copy = true;
+        assert!(!s.tick(t0, 2, 0, false, true).loaded, "its copies are being built");
+        assert!(s.tick(t0 + secs(0.03), 2, 0, true, true).loaded);
+    }
+
+    #[test]
     fn a_missing_part_restarts_the_delay() {
         let t0 = Instant::now();
         let mut s = State::new(t0);
@@ -860,7 +928,7 @@ mod tests {
             cof_version: 1,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let (_, _, missing) = scene.avatar_load_parts(&world, loup, Some(&mut hurry));
         assert_eq!(missing, [Missing::Appearance; 3]);

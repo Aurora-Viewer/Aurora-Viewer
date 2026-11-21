@@ -36,18 +36,13 @@ impl Writer {
     fn start(path: PathBuf) -> Option<Self> {
         let (snapshots, received) = mpsc::unbounded::<Vec<u8>>();
         let worker = std::thread::Builder::new().name("aurora-rlva-points".into()).spawn(move || {
-            while let Ok(mut bytes) = received.recv() {
-                while let Ok(newer) = received.try_recv() {
-                    bytes = newer;
-                }
-                let written = path
-                    .parent()
+            // a refused write is tried again, and once more when the
+            // writer goes (save_retry)
+            crate::save_retry::write_latest("rlva: attachment points", &received, |bytes| {
+                path.parent()
                     .map_or(Ok(()), std::fs::create_dir_all)
-                    .and_then(|()| crate::atomic_file::write(&path, &bytes));
-                if let Err(e) = written {
-                    log::warn!("rlva: attachment points not saved to {}: {e}", path.display());
-                }
-            }
+                    .and_then(|()| crate::atomic_file::write(&path, bytes))
+            });
         });
         match worker {
             Ok(worker) => Some(Self {
@@ -113,6 +108,11 @@ impl LastPoints {
 
     pub fn get(&self, item: &Uuid) -> Option<u8> {
         self.points.get(item).map(|(point, _)| *point)
+    }
+
+    /// Changes with every point noted: what a copy (`snapshot`) is good for.
+    pub fn revision(&self) -> u64 {
+        self.seq
     }
 
     pub fn snapshot(&self) -> HashMap<Uuid, u8> {

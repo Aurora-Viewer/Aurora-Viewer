@@ -127,7 +127,7 @@ impl Cache {
     }
 
     /// Outline the selected objects ((object index, root color)).
-    pub fn draw(&mut self, p: &Painter3d, world: &World, scene: &Scene, prims: &[(usize, bool)]) {
+    pub fn draw(&mut self, p: &Painter3d, world: &World, scene: &Scene, prims: &[(usize, bool)], hidden: bool) {
         let now = Instant::now();
         let eye = p.cam.eye;
         for &(idx, root) in prims.iter().take(512) {
@@ -171,8 +171,13 @@ impl Cache {
             for e in &topo.border {
                 let (a, b) = (world_pt(e.a), world_pt(e.b));
                 let n = rot * (e.n * inv_scale);
+                // the back side: hidden, unless RenderHiddenSelections asks
+                // for it (fainter, as its GL_GEQUAL pass)
                 if n.dot(if hud { -p.cam.at } else { eye - (a + b) * 0.5 }) < 0.0 {
-                    continue; // back side: hidden (RenderHiddenSelections off)
+                    if hidden {
+                        p.line(a, b, c.gamma_multiply(0.4), 1.5);
+                    }
+                    continue;
                 }
                 p.line(a, b, c, 2.0);
             }
@@ -194,34 +199,6 @@ fn obb(p: &Painter3d, pos: Vec3, rot: Quat, half: Vec3, c: Color32) {
             p.line(corner(a, b, -1.0), corner(a, b, 1.0), c, 1.5);
         }
     }
-}
-
-thread_local! {
-    static PREVIEWS: std::cell::RefCell<HashMap<u64, Arc<Vec<(Vec3, Vec3)>>>> = std::cell::RefCell::new(HashMap::new());
-}
-
-/// Outline segments of a shape for the Create palette icons.
-pub fn preview_edges(params: &aurora_prim::VolumeParams) -> Arc<Vec<(Vec3, Vec3)>> {
-    let key = params.cache_key();
-    PREVIEWS.with(|m| {
-        m.borrow_mut()
-            .entry(key)
-            .or_insert_with(|| {
-                let t = topology(params);
-                // borders, plus the outline seen from the icon's viewpoint
-                let view = Vec3::new(0.6, -0.9, 0.7) * 10.0;
-                let facing: Vec<bool> = t.tris.iter().map(|(v, n)| n.dot(view - *v) > 0.0).collect();
-                let mut out: Vec<(Vec3, Vec3)> = t.border.iter().map(|e| (e.a, e.b)).collect();
-                out.extend(
-                    t.inner
-                        .iter()
-                        .filter(|e| facing[e.tris.0 as usize] != facing[e.tris.1 as usize])
-                        .map(|e| (e.a, e.b)),
-                );
-                Arc::new(out)
-            })
-            .clone()
-    })
 }
 
 #[cfg(test)]

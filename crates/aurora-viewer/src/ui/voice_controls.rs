@@ -24,6 +24,7 @@ use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::calls::{CallKind, CallState};
+use crate::world::names::NameScope;
 use egui::{RichText, Sense, Vec2};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -100,6 +101,16 @@ impl Channel {
     /// "Leave Call" is hidden for nearby chat (leave_call_btn_panel).
     pub fn can_leave(&self) -> bool {
         *self != Channel::Nearby
+    }
+
+    /// The names its list shows under RLVa's `@shownames`: only the nearby
+    /// channel's are hidden (FSFloaterVoiceControls::updateSession:
+    /// `setRlvCheckShowNames(is_local_chat)`, fsfloatervoicecontrols.cpp).
+    fn names(&self) -> NameScope {
+        match self {
+            Channel::Nearby => NameScope::World,
+            _ => NameScope::Roster,
+        }
     }
 
     /// updateListVisibility: RLVa's @shownearby replaces the nearby list
@@ -299,7 +310,7 @@ fn gather(world: &World, levels: &HashMap<Uuid, (f32, bool)>) -> Gathered {
     let me = world.agent_id;
     if let Some(call) = world.calls.active.as_ref() {
         let channel = match call.kind {
-            CallKind::P2p { other } => Channel::P2p(world.social.name_of(&other)),
+            CallKind::P2p { other } => Channel::P2p(world.social.name_in(NameScope::Roster, &other)),
             CallKind::Group => Channel::Group(call.name.clone()),
             CallKind::AdHoc => Channel::AdHoc,
         };
@@ -441,7 +452,7 @@ impl VoiceControlsUi {
             }
             let rows: Vec<Entry> = self
                 .roster
-                .sorted(sort, |id| f.world.social.name_of(id))
+                .sorted(sort, |id| f.world.social.name_in(g.channel.names(), id))
                 .into_iter()
                 .cloned()
                 .collect();
@@ -464,9 +475,16 @@ impl VoiceControlsUi {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for e in &rows {
-                    let resp = self.row(ui, p, f, e);
+                    let resp = self.row(ui, p, f, g.channel.names(), e);
                     if resp.clicked() || resp.secondary_clicked() {
                         clicked = Some(e.id);
+                    }
+                    // LLAvatarList::handleRightMouseDown: the list of the
+                    // nearby voice (`setRlvCheckShowNames(is_local_chat)`,
+                    // fsfloatervoicecontrols.cpp) opens no menu while RLVa's
+                    // `@shownames` is set, on an exception's row either
+                    if g.channel.names() == NameScope::World && f.world.rlva.has("shownames") {
+                        continue;
                     }
                     menu::context_menu(&resp, p, |ui| {
                         // menu_participant_list.xml: the sort, when there is
@@ -553,11 +571,11 @@ impl VoiceControlsUi {
 
     /// One participant: picture (ringed green while speaking), name, state
     /// and voice indicator.
-    fn row(&mut self, ui: &mut egui::Ui, p: &Palette, f: &Inputs, e: &Entry) -> egui::Response {
+    fn row(&mut self, ui: &mut egui::Ui, p: &Palette, f: &Inputs, scope: NameScope, e: &Entry) -> egui::Response {
         let id = e.id;
         self.wanted_pics.insert(id);
         f.world.social.avatar_names.want(&id);
-        let name = f.world.social.name_of(&id);
+        let name = f.world.social.name_in(scope, &id);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
         // an id of the resident, not of the row's place: the rows reorder, and
         // the menu opened on one stays theirs

@@ -55,12 +55,13 @@ impl App {
         for action in actions {
             match action {
                 Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
+                Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
                 Action::Paste { change, cut } => {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);
                 }
-                Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
-                Action::OpenExternal(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
+                Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
                 Action::CreateRoot => self.open_marketplace_listings(),
             }
@@ -204,12 +205,13 @@ impl App {
                     }));
                 }
                 Action::Edit(change) => self.submit_inventory_change(change),
+                Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
                 Action::Paste { change, cut } => {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);
                 }
-                Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
-                Action::OpenExternal(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
+                Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
             }
         }
