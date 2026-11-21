@@ -25,6 +25,7 @@ pub struct Scenario {
     pub advanced: bool,
     pub threshold: Option<f32>,
     pub blur: Option<f32>,
+    pub taper: Option<f32>,
     sweep: bool,
     occluded: bool,
     dark: bool,
@@ -53,6 +54,7 @@ pub fn scenario() -> Option<&'static Scenario> {
             advanced: false,
             threshold: None,
             blur: None,
+            taper: None,
             sweep: false,
             occluded: name == "occluded",
             dark: name == "dark",
@@ -67,6 +69,7 @@ pub fn scenario() -> Option<&'static Scenario> {
                 "sweep" => scene.sweep = true,
                 _ => match part.split_once('=')? {
                     ("threshold", value) => scene.threshold = Some(value.parse().ok()?),
+                    ("taper", value) => scene.taper = Some(value.parse().ok()?),
                     ("blur", value) => scene.blur = Some(value.parse().ok()?),
                     _ => return None,
                 },

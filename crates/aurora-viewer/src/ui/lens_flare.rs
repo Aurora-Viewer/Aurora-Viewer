@@ -271,6 +271,7 @@ fn advanced(ui: &mut egui::Ui, p: &Palette, flare: &mut LensFlare) {
     widgets::section_header(ui, p, "line", tr!("lens-flare-streaks"));
     slider(ui, tr!("lens-flare-strength"), &mut flare.streaks, 0.0..=1.0);
     slider(ui, tr!("lens-flare-length"), &mut flare.streak_length, 0.0..=1.0);
+    slider(ui, tr!("lens-flare-taper"), &mut flare.streak_taper, 0.0..=1.0);
     slider(ui, tr!("lens-flare-angle"), &mut flare.streak_angle, 0.0..=180.0);
 
     widgets::section_header(ui, p, "sparkles-filled", tr!("lens-flare-starburst"));

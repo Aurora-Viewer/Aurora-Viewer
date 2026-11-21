@@ -14,6 +14,10 @@ enum StoredQuality {
     Balanced,
 }
 
+fn default_streak_taper() -> f32 {
+    LensFlare::default().streak_taper
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(remote = "LensFlare")]
 struct StoredValues {
@@ -34,6 +38,8 @@ struct StoredValues {
     halo_softness: f32,
     streaks: f32,
     streak_length: f32,
+    #[serde(default = "default_streak_taper")]
+    streak_taper: f32,
     streak_angle: f32,
     starburst: f32,
     star_length: f32,
@@ -247,6 +253,14 @@ mod tests {
     }
 
     #[test]
+    fn presets_saved_before_taper_keep_the_original_streak() {
+        let mut values = serde_json::to_value(SavedPreset(BuiltIn::BlueAnamorphic.values())).expect("preset");
+        values.as_object_mut().expect("preset fields").remove("streak_taper");
+        let restored: SavedPreset = serde_json::from_value(values).expect("older preset");
+        assert_eq!(restored.0, BuiltIn::BlueAnamorphic.values());
+    }
+
+    #[test]
     fn named_presets_and_modified_values_survive_restart() {
         let mut flare = Settings {
             enabled: true,
@@ -254,6 +268,7 @@ mod tests {
         };
         flare.current.quality = Quality::High;
         flare.current.blur = 0.6;
+        flare.current.streak_taper = 0.8;
         flare.save_as("  Portrait  ");
         flare.current.threshold = 3.0;
         flare.save_as("Portrait");

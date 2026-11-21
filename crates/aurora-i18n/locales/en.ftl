@@ -16038,6 +16038,7 @@ lens-flare-softness = Softness
 lens-flare-halo = Halo
 lens-flare-radius = Radius
 lens-flare-streaks = Streaks
+lens-flare-taper = Taper
 lens-flare-length = Length
 lens-flare-angle = Angle (°)
 lens-flare-starburst = Starburst

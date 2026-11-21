@@ -732,6 +732,8 @@ opens it with the advanced controls visible, and
 `sweep` moves the camera so the specular reflection travels across the
 sphere and the emitter approaches the edge of the frame. The fixed camera
 gives repeatable comparisons with `AURORA_BLOOM=0` and `AURORA_BLOOM=1`.
+Compare `blue:taper=0`, `blue:taper=0.5`, and `blue:taper=1` with the camera fixed.
+The streak tips fade more strongly as taper increases.
 Compare `golden:threshold=0` and `golden:threshold=32` to check highlight
 selection across its full range. Compare `golden:blur=0` and
 `golden:blur=1` to check the softening of the ghosts and halos. In the

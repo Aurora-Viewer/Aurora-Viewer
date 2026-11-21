@@ -22036,6 +22036,7 @@ impl ApplicationHandler for App {
                 flare.quality = scene.quality;
                 flare.threshold = scene.threshold.unwrap_or(flare.threshold);
                 flare.blur = scene.blur.unwrap_or(flare.blur);
+                flare.streak_taper = scene.taper.unwrap_or(flare.streak_taper);
                 *flare = flare.sanitized();
                 self.settings.lens_flare.enabled = scene.enabled;
                 self.panels.time_of_day = 4;

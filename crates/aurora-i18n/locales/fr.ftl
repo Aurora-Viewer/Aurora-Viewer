@@ -16044,6 +16044,7 @@ lens-flare-softness = Douceur
 lens-flare-halo = Halo
 lens-flare-radius = Rayon
 lens-flare-streaks = Traînées
+lens-flare-taper = Atténuation aux extrémités
 lens-flare-length = Longueur
 lens-flare-angle = Angle (°)
 lens-flare-starburst = Étoile

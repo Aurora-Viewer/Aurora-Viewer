@@ -15899,6 +15899,7 @@ lens-flare-softness = 柔らかさ
 lens-flare-halo = ハロー
 lens-flare-radius = 半径
 lens-flare-streaks = ストリーク
+lens-flare-taper = 先端の減衰
 lens-flare-length = 長さ
 lens-flare-angle = 角度 (°)
 lens-flare-starburst = スターバースト

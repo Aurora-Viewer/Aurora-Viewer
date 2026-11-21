@@ -51,6 +51,7 @@ pub struct LensFlare {
     pub halo_softness: f32,
     pub streaks: f32,
     pub streak_length: f32,
+    pub streak_taper: f32,
     pub streak_angle: f32,
     pub starburst: f32,
     pub star_length: f32,
@@ -77,6 +78,7 @@ impl Default for LensFlare {
             halo_softness: 0.4,
             streaks: 0.0,
             streak_length: 0.55,
+            streak_taper: 0.5,
             streak_angle: 0.0,
             starburst: 0.0,
             star_length: 0.37,
@@ -112,6 +114,7 @@ impl LensFlare {
             halo_softness,
             streaks,
             streak_length,
+            streak_taper,
             starburst,
             star_length,
             chromatic
@@ -194,7 +197,7 @@ impl Optics {
             tint: [r, g, b, flare.intensity],
             ghost: [flare.ghosts, flare.ghost_count as f32, flare.ghost_spread, flare.ghost_softness],
             halo: [flare.halo, flare.halo_radius, flare.halo_softness, flare.chromatic],
-            streak: [flare.streaks, streak_extent, flare.streak_angle.to_radians(), 0.0],
+            streak: [flare.streaks, streak_extent, flare.streak_angle.to_radians(), flare.streak_taper],
             star: [flare.starburst, star_extent, flare.star_angle.to_radians(), flare.star_rays as f32],
             geometry: [short / width.max(1.0), short / height.max(1.0), flare.blur, 0.0],
         }

@@ -60,11 +60,11 @@ fn ray_source(uv: vec2<f32>, first: bool) -> vec3<f32> {
     return textureSampleLevel(highlights, linear_clamp, uv, 0.0).rgb;
 }
 
-fn ray_filter(uv: vec2<f32>, step: vec2<f32>, first: bool) -> vec3<f32> {
+fn ray_filter(uv: vec2<f32>, step: vec2<f32>, first: bool, weights: vec4<f32>) -> vec3<f32> {
     let a = ray_source(uv - step, first) + ray_source(uv + step, first);
     let b = ray_source(uv - 2.0 * step, first) + ray_source(uv + 2.0 * step, first);
     let c = ray_source(uv - 3.0 * step, first) + ray_source(uv + 3.0 * step, first);
-    return (4.0 * ray_source(uv, first) + 3.0 * a + 2.0 * b + c) * (1.0 / 16.0);
+    return weights.x * ray_source(uv, first) + weights.y * a + weights.z * b + weights.w * c;
 }
 
 @fragment
@@ -80,11 +80,19 @@ fn fs_flare_ray(in: VertexOut) -> @location(0) vec4<f32> {
     let stride = f32(1u << (2u * stage)) / f32((1u << (2u * levels)) - 1u);
     let step = direction * optics.geometry.xy * (radius * stride);
     let first = stage == 0u;
-    var color = ray_filter(in.uv, step, first);
+    // The midpoint and starburst use the original 4:3:2:1 filter.
+    // Normalize the symmetric taps so taper redistributes the streak's light.
+    // Keep the inner stages triangular so neighbouring coarse taps blend smoothly.
+    let taper = select(0.5, optics.streak.w, is_streak && stage + 1u == levels);
+    let original = vec4<f32>(4.0, 3.0, 2.0, 1.0);
+    var weights = mix(vec4<f32>(4.0), original, min(2.0 * taper, 1.0));
+    weights = mix(weights, vec4<f32>(4.0, 2.0, 0.65, 0.15), max(2.0 * taper - 1.0, 0.0));
+    weights /= dot(weights, vec4<f32>(1.0, 2.0, 2.0, 2.0));
+    var color = ray_filter(in.uv, step, first, weights);
     if (stage + 1u == levels) {
         if (optics.halo.w > 0.0) {
             let split = vec2<f32>(-direction.y, direction.x) * optics.geometry.xy * optics.halo.w * 0.002;
-            color = vec3<f32>(ray_filter(in.uv - split, step, first).r, color.g, ray_filter(in.uv + split, step, first).b);
+            color = vec3<f32>(ray_filter(in.uv - split, step, first, weights).r, color.g, ray_filter(in.uv + split, step, first, weights).b);
         }
         let gain = select(optics.star.x * 1.8 / sqrt(axes), optics.streak.x * 2.2, is_streak);
         color *= optics.tint.rgb * optics.tint.a * gain;
