@@ -47,7 +47,7 @@ mod wardrobe;
 pub mod watchdog;
 mod wear_locks;
 
-pub use boundary::Boundary;
+pub use boundary::{Boundary, refusal_shown};
 pub use inventory::{LAYERS, POINTS};
 pub use wear_locks::WearLocks;
 

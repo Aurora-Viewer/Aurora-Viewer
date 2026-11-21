@@ -20,6 +20,11 @@ pub struct Sim {
     seat: Option<(Vec3, Vec3)>,
     /// The objects a relay script was saved in.
     relays: HashSet<Uuid>,
+    /// The Current Outfit folder is the viewer's to keep, as on a grid: an
+    /// object that arrives is linked a moment later and the link of one that
+    /// left is dropped when its removal is seen, never by the simulator
+    /// itself (`update_attachment_inventory`, `unregister_attachment`).
+    pub viewer_links: bool,
 }
 
 /// One of the test's own inventory objects.
@@ -106,7 +111,9 @@ impl Sim {
             }
             NetCommand::RezAttachments(items) if items.iter().all(|i| own(world, &i.item_id)) => {
                 let ids: Vec<Uuid> = items.iter().map(|i| i.item_id).collect();
-                relink(world, &ids, true);
+                if !self.viewer_links {
+                    relink(world, &ids, true);
+                }
                 whole.then(|| {
                     vec![NetEvent::ObjectUpdates {
                         handle,
@@ -115,7 +122,9 @@ impl Sim {
                 })
             }
             NetCommand::DetachAttachments(items) if items.iter().all(|i| own(world, i)) => {
-                relink(world, items, false);
+                if !self.viewer_links {
+                    relink(world, items, false);
+                }
                 whole.then(|| {
                     vec![NetEvent::ObjectsKilled {
                         handle,

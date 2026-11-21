@@ -799,12 +799,17 @@ impl World {
                     let worn = self.worn_attachment_items().contains(&target)
                         || appearance::cof(&self.inventory)
                             .is_some_and(|id| appearance::folder_links(&self.inventory, id).iter().any(|l| l.target == target));
-                    self.inventory.items.get(id).is_some_and(|it| {
-                        [false, true].into_iter().all(|add| {
-                            self.rlva_folder_signature(it.parent, add, actor)
-                                .iter()
-                                .all(|(_, name, _)| !name.contains("this"))
-                        })
+                    let Some(it) = self.inventory.items.get(id) else {
+                        // The link of a detached attachment leaves the viewer's
+                        // own model before its removal is sent
+                        // (`appearance::unlink_attachment`): nothing is left
+                        // to check, and no restriction ever held it (#3633).
+                        return change.removed.contains(id);
+                    };
+                    [false, true].into_iter().all(|add| {
+                        self.rlva_folder_signature(it.parent, add, actor)
+                            .iter()
+                            .all(|(_, name, _)| !name.contains("this"))
                     }) && (!worn || self.rlva_can_remove(target, actor))
                 }
                 Operation::Links { parent, links } if Some(*parent) == appearance::cof(&self.inventory) => {
@@ -1078,7 +1083,11 @@ impl World {
     pub(super) fn rlva_can_add_in(&self, locks: &FolderLocks, item: Uuid, at: u8, actor: Uuid) -> bool {
         let r = &self.rlva;
         if r.enabled() && actor == super::watchdog::ACTOR {
-            return r.watchdog.restore_allowed(item, at);
+            // An object already on the avatar is no wear: its link only
+            // records it. `plan` carries the ones that arrived worn and are
+            // not linked yet along with every outfit write, the recovery's
+            // included, and that write must not be refused for them (#3633).
+            return r.watchdog.restore_allowed(item, at) || self.worn_attachment(&item).is_some();
         }
         if r.enabled() && at != 0 && r.watchdog.pending.iter().any(|(id, p)| *id != item && p.attachment.point == at) {
             return false;
