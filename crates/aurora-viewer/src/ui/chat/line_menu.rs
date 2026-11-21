@@ -174,6 +174,18 @@ pub(super) fn demo_mark(ui: &Ui, drawn: &[super::select::Row]) {
     }
 }
 
+/// `AURORA_DEMO_CONV_LINE_MENU=object`: the right click lands on the name or
+/// the cube of the last full-size object line drawn, in every style.
+pub(super) fn demo_mark_object(response: &Response) {
+    static ENABLED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("AURORA_DEMO_CONV_LINE_MENU").is_ok_and(|v| v == "object"));
+    if *ENABLED {
+        response
+            .ctx
+            .data_mut(|d| d.insert_temp(Id::unique("chat_line_menu_demo"), response.rect.center()));
+    }
+}
+
 pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     if !(700..=702).contains(&frame) {
         return Vec::new();
