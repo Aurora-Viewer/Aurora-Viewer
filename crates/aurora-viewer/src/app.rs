@@ -1108,6 +1108,9 @@ pub struct App {
     beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
+    /// A left press on our own plate whose action waits for the release
+    /// (app/plate_click.rs).
+    own_plate_click: Option<plate_click::OwnPlateClick>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -2247,6 +2250,7 @@ impl App {
             name_tag_visibility: Default::default(),
             beacon_hit: None,
             plate_hover: None,
+            own_plate_click: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
@@ -4595,6 +4599,13 @@ impl App {
                         self.settings.camera.reset_on_teleport,
                         self.camera.focus_point().is_none()
                     );
+                    // Aurora Weather (#3664): what the weather left on the
+                    // ground belongs to the place left
+                    if self.world.arrived_in_another_region {
+                        let clean = crate::weather::clean_on_arrival(&self.weather_now);
+                        log::info!("weather: arrival in another region, ground cleaned up {clean}");
+                        self.env_ui.weather_clean |= clean;
+                    }
                     // a teleport to another place (TELEPORT_MOVING), not the
                     // login nor a teleport inside the region (TELEPORT_LOCAL)
                     if arrived_before && !local {
@@ -4855,6 +4866,9 @@ impl App {
         }
         if self.hud_drag.is_some() {
             return;
+        }
+        if let Some(click) = &mut self.own_plate_click {
+            click.motion(dx, dy, self.egui_ctx.pixels_per_point());
         }
         let s = self.settings.mouse_sensitivity;
         if self.camera.mouselook() {
@@ -5646,6 +5660,7 @@ impl App {
     fn world_press(&mut self) {
         self.left_down = true;
         self.world_mouse_walk_pending = false;
+        self.own_plate_click = None;
         if self.hud_drag_requested()
             && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
@@ -5708,7 +5723,9 @@ impl App {
         // (kept until the depth is in hand: the press is run again then)
         let double = std::mem::take(&mut self.double_press);
         let (ray, depth) = (picked.ray, picked.depth);
-        // another avatar's plate with a click action takes the click
+        // someone else's plate with a click action takes the press; on our
+        // own plate the press is our avatar's, its action waits for the
+        // release (own_plate_press, below)
         if self.plate_press(picked.tag) {
             return;
         }
@@ -5871,6 +5888,9 @@ impl App {
                 self.hold_focus_cursor();
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
+            // a press on our own plate: its click action waits for a
+            // release without a drag (app/plate_click.rs)
+            self.own_plate_press(picked.tag);
             // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick):
             // always LLToolCamera::pickCallback on the hit, then only when the
             // option is off call setFocusOnAvatar(true) (snap behind + steer).
@@ -6728,7 +6748,7 @@ impl App {
             // sound's: on foot, the weather's wind is heard as it blows,
             // not faster as we walk or run into it
             velocity: if agent.flying { agent.velocity } else { Vec3::ZERO },
-            rotation: agent.body_rotation(),
+            camera_view: self.camera.view(),
             audible: matches!(self.screen, Screen::World)
                 && !demo_silent
                 && (agent.flying || weather_wind)
@@ -8406,6 +8426,10 @@ impl App {
         }
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
+            // a walk, not a click on our own plate
+            if let Some(click) = &mut self.own_plate_click {
+                click.other_button();
+            }
             self.right_gesture = RightGesture {
                 start: self.cursor_pos,
                 ..RightGesture::default()
@@ -8551,6 +8575,8 @@ impl App {
         } else if self.mouse_mode != MouseMode::None {
             self.end_mouse_drag();
         }
+        // a click on our own plate: its action, now that the press is over
+        self.own_plate_release();
     }
 
     /// RlvActions::canTeleport*: reject before UI and demo side effects.
@@ -10304,12 +10330,15 @@ impl App {
                 self.send(c);
             }
         }
-        for c in self.world.take_map_commands() {
-            if let NetCommand::TeleportTo { handle, .. } = &c {
+        for mut c in self.world.take_map_commands() {
+            if matches!(c, NetCommand::TeleportTo { .. }) {
                 let join = self.world.prepare_friend_join(&c);
                 let flight_target = self.world.friend_teleport_avatar(&c);
+                // Friend intents match the map's tile command; convert only
+                // afterwards, before local/remote UI and the RLVa preflight.
+                self.world.normalize_map_teleport(&mut c);
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                let show = Some(*handle) != self.world.main_region;
+                let show = matches!(&c, NetCommand::TeleportTo { handle, .. } if Some(*handle) != self.world.main_region);
                 let accepted = if join.is_none()
                     && let Some(avatar) = flight_target
                 {
@@ -14915,12 +14944,21 @@ impl App {
                 self.world.apply(ev);
             }
         }
-        // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
+        // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back;
+        // `snow`: over lying snow, the arrivals through the app too
+        let away_snow = self.demo && crate::demo::away_snow();
+        if away_snow && self.frame_count == 300 {
+            self.env_ui.weather_fill = true;
+        }
         if self.demo
             && let Some(events) = crate::demo::away_teleport(self.frame_count, &self.world, &mut self.away_coarse)
         {
             for ev in events {
-                self.world.apply(ev);
+                if let Some(e) = self.world.apply(ev)
+                    && away_snow
+                {
+                    self.on_app_event(e);
+                }
             }
             log::info!(
                 "demo teleport away: frame {}, {} objects in the store",
@@ -18214,6 +18252,8 @@ impl App {
                     // behind the photo mode), and the reminder that someone
                     // may pose us stays in sight
                     self.poser_consent_ui(&ctx, &p, true);
+                    // Phototools stays over it too, as Personal Lighting does
+                    self.phototools_over_photo(&ctx, &p);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
@@ -18287,6 +18327,7 @@ impl App {
                         self.settings.lookat.show_names,
                     );
                     self.draw_walk_mark(&ctx, &p, projector);
+                    self.draw_focus_point(&ctx, projector);
                 }
                 let classic_tags = self.classic_name_tags();
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
@@ -19420,15 +19461,16 @@ impl App {
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, `World::is_typing_nearby`;
                 // never one whose chat is blocked, #1395)
-                self.chat_ui.nearby_count = 0;
+                let chat_ranges = crate::world::radar::chat_ranges();
+                self.chat_ui.nearby_count = ui::chat::earshot_count(
+                    self.radar.entries().filter(|e| !e.left_behind).map(|e| e.range),
+                    self.chat_ui.earshot_range(chat_ranges),
+                );
                 self.chat_ui.nearby_typing.clear();
-                let say = crate::world::radar::chat_ranges().say;
+                let say = chat_ranges.say;
                 for e in self.radar.entries() {
-                    if !e.left_behind && e.range.is_some_and(|d| d <= say) {
-                        self.chat_ui.nearby_count += 1;
-                        if e.typing && !self.world.nearby_typing_hidden(&e.id) {
-                            self.chat_ui.nearby_typing.push(e.id);
-                        }
+                    if !e.left_behind && e.range.is_some_and(|d| d <= say) && e.typing && !self.world.nearby_typing_hidden(&e.id) {
+                        self.chat_ui.nearby_typing.push(e.id);
                     }
                 }
                 // AURORA_DEMO_CONV=aurora / bubbles: someone types in the
@@ -19506,6 +19548,12 @@ impl App {
                 // friends tab
                 let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
                 let friends_before = self.settings.friends_list.clone();
+                // its Groups pill is the Legacy look's Groups tab, kept in
+                // the settings
+                if people_aurora {
+                    self.contacts_people_ui.pane_groups = self.settings.contacts.tab == 1;
+                }
+                let pane_groups_before = self.contacts_people_ui.pane_groups;
                 let second_life = self.second_life();
                 let contacts_radar = ui::people::RadarData {
                     radar: &self.radar,
@@ -19709,6 +19757,13 @@ impl App {
                 } // a YouTube video playing in its window, or a card's that
                 // stopped being drawn
                 self.chat_ui.previews.player_window(&ctx, &p);
+                if self.contacts_people_ui.pane_groups != pane_groups_before {
+                    self.settings.contacts.tab = u8::from(self.contacts_people_ui.pane_groups);
+                    // (demo mode: this session only, never the file)
+                    if !self.demo {
+                        self.settings.save();
+                    }
+                }
                 if self.settings.friends_list != friends_before {
                     self.settings.save();
                 }
@@ -22380,6 +22435,10 @@ impl ApplicationHandler for App {
                 }
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
                     self.contacts_ui.filter_groups(&filter);
+                    // the same in Aurora's look of People, under its Groups pill
+                    if self.settings.contacts.tab == 1 {
+                        self.contacts_people_ui.filter = filter;
+                    }
                 }
             }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants;

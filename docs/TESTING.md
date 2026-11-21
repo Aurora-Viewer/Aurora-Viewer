@@ -1099,7 +1099,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
-| `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
+| `AURORA_DEMO_TP_AWAY=1\|snow` | Departure out of range of the demo region, then return; `snow`: over lying snow |
 | `AURORA_DEMO_AUTO_UNMUTE=1` | Ambient sounds and sound effects muted, unmuted by the demo teleport (see Details) |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -1676,6 +1676,13 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
   Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
   stays, through her map rights), and enabled again at frame 1000.
+  `snow` (#3664): the same trip over lying snow. At frame 300 the ground
+  fills with snow in calm weather (the Weather window's snow-fill button),
+  and both arrivals go through the app as from the network. Each one, in
+  another region, cleans up what lay (log: `weather: arrival in another
+  region, ground cleaned up true`): captured at frames 700 and 1100,
+  the plaza is white, then bare. With `AURORA_SNOW=0.5` (my own snow
+  falling) the log says `false` and the snow stays.
   The departure's arrival also says "Teleport completed from" and a link to
   the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
   return says nothing, the far region having no name.
@@ -6322,7 +6329,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
-| `AURORA_DEMO_PHOTOTOOLS=env\|general` | Opens the Phototools window (toolbar `phototools`) on a tab |
+| `AURORA_DEMO_PHOTOTOOLS=env\|light\|dof\|general[:photo]` | Opens the Phototools window (toolbar `phototools`) on a tab, with `:photo` the photo window too |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6784,17 +6791,35 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
-- **`AURORA_DEMO_PHOTOTOOLS=env|general`**: opens Phototools at the first
-  frame, as the toolbar's button does, on the Environment tab (`env`, also the
-  default) or the General one. Environment, as sections that fold: Environment
-  settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
-  clouds, the same switch as the photo window's), Quick environments (four
-  times of day, the shared environment), Environment presets (three "New"
-  buttons), Reflections (SSR, mirrors, probes, probe range). General: General
+- **`AURORA_DEMO_PHOTOTOOLS=env|light|dof|general[:photo]`**: opens Phototools
+  at the first frame, as the toolbar's button does, on the Environment tab
+  (`env`, also the default), Light, Depth of field & glow (`dof`) or General;
+  with `:photo` the photo window opens too (the viewfinder, Aurora's default
+  style, with Phototools over it). Environment, as sections that fold:
+  Environment settings (the Sky, Water and Day/Night lists, Personal
+  lighting, Pause clouds, the same switch as the photo window's), Quick
+  environments (four times of day, the shared environment), Environment
+  presets (three "New" buttons), Reflections (SSR, mirrors, probes, probe
+  range). Light: Lights and shadows settings (shadow quality, projector
+  shadows, worn lights, nearby lights), Ambient occlusion settings. Depth of
+  field & glow: Depth of field settings (the switch, the focus, Show focus
+  point, the view angle, the lens), HDR tone mapping, Glow. General: General
   render settings (draw distance to exposure), Render options, Quality
-  (anti-aliasing to avatar display). Each row is the Preferences row: a change
-  in one shows in the other, and a modified row has its dot. Compare with
-  Preferences › Graphics for ranges and help.
+  (anti-aliasing to avatar display). With the photo window closed, each row is
+  the Preferences row: a change in one shows in the other, and a modified row
+  has its dot; compare with Preferences › Graphics for ranges and help. With
+  the photo window open, a banner under the tabs says what the photo window
+  changes, with its "Keep this light" (the environment only), and the rows
+  the photo window also has (the depth of field's switch, aperture and focus,
+  the shadow quality, the ambient occlusion, the worn lights, the exposure,
+  the sky, water, day and time of day, Pause clouds) change the photo: try the aperture and
+  the shadow quality, then close the photo window and look at Preferences,
+  which kept its own values. The shadow and occlusion rows are greyed while a
+  photo is being made. In the viewfinder the View angle row is greyed (the
+  viewfinder owns it and puts yours back when it closes). With the depth of
+  field on and Preferences › Graphics › Depth of field › "Show focus point"
+  on, a small yellow triad (red when the focus is locked) marks the focus
+  point, over everything and never in a photo.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
@@ -7875,7 +7900,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Windows notification (on Linux, one from the desktop's notification
   service) per arrival, a click brings the window back on the conversation,
   the nearby chat or the bell's list. The log says `taskbar flash` and
-  `system notification shown (<what a click opens>)`, never the text.
+  `system notification shown (<what a click opens>, <category>)`, never
+  the text; the category (`im.received`, `x-aurora.mention`…) and the
+  `x-aurora-thread` hint go with it on Linux, the toast's `Group` on
+  Windows (the conversation's id, `presence` for a friend online or
+  offline, else `nearby-chat`, `notifications` or `window`).
   `front` keeps the window in front: nothing flashes and nothing is shown.
   `capture` brings the window back at frame 1150 with the bell's list open:
   capture with `AURORA_FPS_LIMIT=60` at frame 1300. The first notification
@@ -9683,7 +9712,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
+  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
