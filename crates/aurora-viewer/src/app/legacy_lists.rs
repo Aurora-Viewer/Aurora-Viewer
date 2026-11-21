@@ -88,8 +88,15 @@ impl App {
         let Some(rx) = &self.legacy_lists.looking else {
             return;
         };
-        let Ok(found) = rx.try_recv() else {
-            return;
+        let found = match rx.try_recv() {
+            Ok(found) => found,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            // the reader did not start or panicked: the search ends with
+            // nothing found, not "searching" for ever
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::warn!("legacy lists: the folders' reader stopped without an answer");
+                Vec::new()
+            }
         };
         self.legacy_lists.looking = None;
         self.options_ui.legacy_lists.found = Some(found.iter().map(Found::folder).collect());

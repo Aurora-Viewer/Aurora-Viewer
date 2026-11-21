@@ -70,27 +70,32 @@ impl ImportData {
                     continue;
                 }
                 _ => {
-                    if !["color", "friends", "notify"].iter().any(|k| fields.contains_key(*k)) {
-                        skipped += 1;
-                        continue;
-                    }
+                    let mut left_out = 0;
                     if fields.get("color").is_some_and(|c| validate_color(c).is_err()) {
                         fields.remove("color");
-                        skipped += 1;
+                        left_out += 1;
                     }
                     if let Some(friends) = fields.get_mut("friends") {
                         match friends {
                             Llsd::Map(members) => {
                                 let before = members.len();
                                 members.retain(|key, value| valid_resident(key, value, false));
-                                skipped += before - members.len();
+                                left_out += before - members.len();
                             }
                             _ => {
                                 fields.remove("friends");
-                                skipped += 1;
+                                left_out += 1;
                             }
                         }
                     }
+                    // what is left must still be a set, or `from_llsd`
+                    // refuses the whole file for it: the set is the one
+                    // entry left out
+                    if !["color", "friends", "notify"].iter().any(|k| fields.contains_key(*k)) {
+                        skipped += 1;
+                        continue;
+                    }
+                    skipped += left_out;
                 }
             }
             kept.insert(name.clone(), Llsd::Map(fields));
@@ -440,6 +445,26 @@ mod tests {
         assert_eq!(work.friends.iter().copied().collect::<Vec<_>>(), [id(1)]);
         assert_eq!(cs.pseudonym(&id(1)), Some("Nick"));
         assert_eq!(cs.pseudonym(&id(2)), None);
+    }
+
+    #[test]
+    fn a_legacy_set_left_with_nothing_is_left_out_not_the_file() {
+        let xml = format!(
+            "<llsd><map>\
+             <key>Work</key><map><key>color</key><string>x</string></map>\
+             <key>Odd</key><map><key>friends</key><string>x</string></map>\
+             <key>Home</key><map><key>friends</key><map><key>{good}</key><string></string></map></map>\
+             </map></llsd>",
+            good = id(1),
+        );
+        let (data, skipped) = ImportData::from_legacy_xml(xml.as_bytes()).expect("the good set");
+        // two sets, each one entry
+        assert_eq!(skipped, 2);
+        let mut cs = ContactSets::default();
+        cs.merge_import(data, |_| true).expect("merge");
+        assert_eq!(cs.set_names(), ["Home"]);
+        let only = b"<llsd><map><key>Work</key><map><key>color</key><string>x</string></map></map></llsd>";
+        assert!(ImportData::from_legacy_xml(only).is_err(), "nothing readable is still an error");
     }
 
     #[test]
