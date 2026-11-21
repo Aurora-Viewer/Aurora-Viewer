@@ -5,32 +5,22 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutoCameraMove {
-    PoserOpenFraming,
-    PoserSelectionFraming,
-    AutomaticTracking,
-    FollowEyes,
-    MovementReset,
-}
-
-pub fn camera_auto_move_allowed(posing: bool, setting: bool, _cause: AutoCameraMove) -> bool {
-    !posing || setting
-}
-
 impl CameraSettings {
-    /// The settings a camera frame uses: while posing with automatic moves
-    /// off, the focus tracking, the movement reset, the body-part follow and
-    /// the first-person eye follow are off; otherwise unchanged.
+    /// While posing with "Keep the camera still while posing" on (Aurora,
+    /// #2477): the camera does not move on its own.
+    pub fn keeps_still(&self, posing: bool) -> bool {
+        posing && self.still_while_posing
+    }
+
+    /// The settings a camera frame uses: while the camera keeps still for
+    /// the poser, the focus tracking, the movement reset, the body-part
+    /// follow and the first-person eye follow are off; otherwise unchanged.
     pub fn while_posing(&self, posing: bool) -> CameraSettings {
-        let allowed = |cause| camera_auto_move_allowed(posing, self.auto_move_while_posing, cause);
         let mut s = self.clone();
-        if !allowed(AutoCameraMove::AutomaticTracking) {
+        if self.keeps_still(posing) {
             s.track_focus_object = false;
             s.reset_on_movement = false;
             s.third_person_follow_joint = None;
-        }
-        if !allowed(AutoCameraMove::FollowEyes) {
             s.mouselook_follow_eyes = false;
         }
         s
@@ -42,45 +32,48 @@ mod first_person_tests {
     use super::*;
 
     #[test]
-    fn poser_camera_preference_gates_all_automatic_move_causes() {
-        for cause in [AutoCameraMove::PoserOpenFraming, AutoCameraMove::PoserSelectionFraming] {
-            assert!(camera_auto_move_allowed(true, true, cause));
-            assert!(!camera_auto_move_allowed(true, false, cause));
-            assert!(camera_auto_move_allowed(false, false, cause));
-        }
-        for cause in [
-            AutoCameraMove::AutomaticTracking,
-            AutoCameraMove::FollowEyes,
-            AutoCameraMove::MovementReset,
-        ] {
-            assert!(!camera_auto_move_allowed(true, false, cause));
-        }
-    }
-
-    #[test]
-    fn posing_with_camera_moves_off_stops_every_automatic_follow() {
+    fn posing_with_the_camera_kept_still_stops_every_automatic_follow() {
         let chosen = CameraSettings {
             track_focus_object: true,
             reset_on_movement: true,
             mouselook_follow_eyes: true,
             third_person_follow_joint: Some(CameraFollowJoint::Head),
-            auto_move_while_posing: false,
+            still_while_posing: true,
             ..CameraSettings::default()
         };
+        assert!(chosen.keeps_still(true));
         let still = chosen.while_posing(true);
         assert!(!still.track_focus_object && !still.reset_on_movement && !still.mouselook_follow_eyes);
         assert_eq!(still.third_person_follow_joint, None, "the camera does not follow a posed joint");
-        for unchanged in [
-            chosen.while_posing(false),
-            CameraSettings {
-                auto_move_while_posing: true,
-                ..chosen.clone()
-            }
-            .while_posing(true),
-        ] {
+        // not posing, or the option at its default: today's follows stay
+        let default_still = CameraSettings {
+            still_while_posing: false,
+            ..chosen.clone()
+        };
+        assert!(!chosen.keeps_still(false) && !default_still.keeps_still(true));
+        for unchanged in [chosen.while_posing(false), default_still.while_posing(true)] {
             assert!(unchanged.track_focus_object && unchanged.reset_on_movement && unchanged.mouselook_follow_eyes);
             assert_eq!(unchanged.third_person_follow_joint, Some(CameraFollowJoint::Head));
         }
+    }
+
+    #[test]
+    fn the_poser_camera_options_default_to_todays_behaviour_and_keep_a_saved_choice() {
+        // an existing settings file, and a fresh one: no framing, the
+        // camera's own moves while posing as before (#2477)
+        let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
+        for s in [&migrated, &CameraSettings::default()] {
+            assert!(!s.frame_while_posing, "the poser does not frame unless asked");
+            assert!(!s.still_while_posing, "the automatic moves while posing stay as before");
+            assert!(!s.keeps_still(true));
+        }
+        let chosen = CameraSettings {
+            frame_while_posing: true,
+            still_while_posing: true,
+            ..migrated
+        };
+        let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&chosen).unwrap()).unwrap();
+        assert!(loaded.frame_while_posing && loaded.still_while_posing);
     }
 
     #[test]
@@ -111,13 +104,11 @@ mod first_person_tests {
         let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
         assert!(!migrated.show_avatar_in_mouselook);
         assert!(!migrated.mouselook_follow_eyes);
-        assert!(migrated.auto_move_while_posing);
         assert_eq!(migrated.third_person_follow_joint, None);
         assert_eq!(migrated.third_person_follow_intensity, 100);
         let chosen = CameraSettings {
             show_avatar_in_mouselook: true,
             mouselook_follow_eyes: true,
-            auto_move_while_posing: false,
             third_person_follow_joint: Some(CameraFollowJoint::Head),
             third_person_follow_intensity: 75,
             ..migrated
@@ -126,7 +117,6 @@ mod first_person_tests {
         let loaded: CameraSettings = serde_json::from_str(&saved).unwrap();
         assert!(loaded.show_avatar_in_mouselook);
         assert!(loaded.mouselook_follow_eyes);
-        assert!(!loaded.auto_move_while_posing);
         assert_eq!(loaded.third_person_follow_joint, Some(CameraFollowJoint::Head));
         assert_eq!(loaded.third_person_follow_intensity, 75);
     }
@@ -444,8 +434,15 @@ pub struct CameraSettings {
     pub disable_wheel_zoom: bool,
     /// ClickOnAvatarKeepsCamera.
     pub click_avatar_keeps_camera: bool,
-    /// Allow automatic camera movements initiated while editing a pose.
-    pub auto_move_while_posing: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477; its poser, FSFloaterPoser,
+    /// never moves the camera): opening the poser frames the avatar, and a
+    /// click that selects a joint frames that joint. Off by default.
+    pub frame_while_posing: bool,
+    /// Aurora's, not the Legacy Viewer's (#2477): while a pose is edited the
+    /// camera stops moving on its own (focus tracking, the reset on
+    /// movement, the body-part and eye follows). Off by default: those moves
+    /// stay as in the Legacy Viewer.
+    pub still_while_posing: bool,
     /// FSResetCameraOnMovement.
     pub reset_on_movement: bool,
     /// FSResetCameraOnTP.
@@ -555,7 +552,8 @@ impl Default for CameraSettings {
             ignore_sim_constraints: false,
             disable_wheel_zoom: false,
             click_avatar_keeps_camera: false,
-            auto_move_while_posing: true,
+            frame_while_posing: false,
+            still_while_posing: false,
             reset_on_movement: true,
             reset_on_teleport: true,
             reset_view_turns_avatar: false,

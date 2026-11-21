@@ -1693,27 +1693,28 @@ fn open_notification_to_type(
     Some(conversation)
 }
 
-fn apply_poser_focus_request(
+/// The poser's framing request, applied only with "Frame the avatar while
+/// posing" on (an Aurora option, off by default: the Legacy Viewer's poser
+/// never moves the camera).
+fn apply_poser_framing(
     camera: &mut crate::camera::Camera,
     agent: &mut crate::agent::AgentState,
     settings: &crate::camera::CameraSettings,
-    posing: bool,
-    focus: Option<(Vec3, crate::camera::AutoCameraMove)>,
+    focus: Option<(Vec3, crate::camera::PoserFraming)>,
 ) {
-    if let Some((focus, cause)) = focus
-        && crate::camera::camera_auto_move_allowed(posing, settings.auto_move_while_posing, cause)
+    if settings.frame_while_posing
+        && let Some((focus, framing)) = focus
     {
-        let distance = if cause == crate::camera::AutoCameraMove::PoserOpenFraming {
-            4.2
-        } else {
-            2.8
-        };
-        camera.frame_poser_joint(focus, distance, agent, settings);
+        camera.frame_poser_joint(focus, framing, agent, settings);
     }
 }
 
-fn world_press_stops_for_poser_subject(posing: bool, alt_camera_gesture: bool, on_subject: bool) -> bool {
-    posing && !alt_camera_gesture && on_subject
+/// A world press the poser keeps: one on our own body, while we pose
+/// ourselves, that nothing in the world took first (a touchable worn prim
+/// or rigged mesh returned before this is asked). Alt stays the camera's
+/// gesture, Build keeps selecting, and our name tag keeps its menu.
+fn world_press_stops_for_poser_subject(posing_self: bool, alt: bool, build_open: bool, on_own_body: bool) -> bool {
+    posing_self && !alt && !build_open && on_own_body
 }
 
 impl App {
@@ -5792,19 +5793,13 @@ impl App {
                 _ => axis.map(|t| o + d * t),
             }
         });
+        let on_own_body = avatar_hit.is_some();
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
             let (idx, p) = self.pick_name_tag(hit, ray)?;
             (self.world.objects.get(idx)?.full_id == self.world.agent_id).then_some(p)
         });
         let on_avatar = avatar_hit.is_some();
-        // The poser owns presses on our posed body even when its overlay has
-        // no handle there. Do this before click actions, camera focus, and
-        // avatar steering can observe the press. Alt remains the explicit
-        // camera gesture and continues through this path.
-        if world_press_stops_for_poser_subject(self.ik_editor.posing(), alt, on_avatar) {
-            return;
-        }
         // a media face takes the click (LLToolPie::handleMediaClick)
         self.media.build_mode = self.build.open;
         // "Object view" of the Controls window: the click is Alt's
@@ -5897,6 +5892,12 @@ impl App {
                 self.arm_world_mouse_walk();
             }
             self.activate_object_action(target, idx, point, ray);
+            return;
+        }
+        // Posing ourselves, a press on our body that the poser overlay did
+        // not use and that no worn touch target took above stops here: it
+        // must not turn the avatar or move the camera's focus.
+        if world_press_stops_for_poser_subject(self.ik_editor.posing_self(&self.world), alt, self.build.open, on_own_body) {
             return;
         }
         if alt {
@@ -9394,14 +9395,9 @@ impl App {
         {
             self.world.agent.yaw = yaw;
         }
-        // The poser's camera preference can keep the camera where the user
-        // put it: moving still walks, only the camera reset is skipped.
-        let movement_resets_camera = moving
-            && crate::camera::camera_auto_move_allowed(
-                self.ik_editor.posing(),
-                self.settings.camera.auto_move_while_posing,
-                crate::camera::AutoCameraMove::MovementReset,
-            );
+        // "Keep the camera still while posing" keeps the camera where the
+        // user put it: moving still walks, only the camera reset is skipped.
+        let movement_resets_camera = moving && !self.settings.camera.keeps_still(self.ik_editor.posing());
         if movement_resets_camera && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
@@ -11260,11 +11256,7 @@ impl App {
                 self.end_mouselook_zoom();
             }
             self.follow_awaited_zoom();
-            let poser_auto_moves = crate::camera::camera_auto_move_allowed(
-                self.ik_editor.posing(),
-                self.settings.camera.auto_move_while_posing,
-                crate::camera::AutoCameraMove::AutomaticTracking,
-            );
+            let poser_auto_moves = !self.settings.camera.keeps_still(self.ik_editor.posing());
             let camera_settings = self.settings.camera.while_posing(self.ik_editor.posing());
             let frame = crate::camera::FrameInput {
                 dt,
@@ -18300,14 +18292,9 @@ impl App {
                         ui::layout::set_move_area(&ctx, screen);
                         self.ik_editor.over_viewfinder = true;
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
-                        let focus = self.ik_editor.take_poser_focus(&self.world);
-                        apply_poser_focus_request(
-                            &mut self.camera,
-                            &mut self.world.agent,
-                            &self.settings.camera,
-                            self.ik_editor.posing(),
-                            focus,
-                        );
+                        // the viewfinder's shot is the user's: never framed
+                        // (the editor asks for none here either)
+                        self.ik_editor.take_poser_focus_request();
                         self.ik_editor.over_viewfinder = false;
                     }
                     // the posing consent too, poser open or not: a request
@@ -19163,14 +19150,13 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
-                let focus = self.ik_editor.take_poser_focus(&self.world);
-                apply_poser_focus_request(
-                    &mut self.camera,
-                    &mut self.world.agent,
-                    &self.settings.camera,
-                    self.ik_editor.posing(),
-                    focus,
-                );
+                if let Some(focus) = self.ik_editor.take_poser_focus(&self.world) {
+                    let mut settings = self.settings.camera.clone();
+                    // AURORA_DEMO_POSER=frame: the option on for this launch
+                    // only, the shared settings untouched
+                    settings.frame_while_posing |= self.demo && std::env::var("AURORA_DEMO_POSER").is_ok_and(|m| m == "frame");
+                    apply_poser_framing(&mut self.camera, &mut self.world.agent, &settings, Some(focus));
+                }
                 for prepared in self.ik_editor.take_clip_imports() {
                     self.imports.authored_animation(
                         &self.world,
@@ -25549,17 +25535,36 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn world_press_does_not_fall_through_for_unhandled_poser_subject_clicks() {
-        let stops_world_press = super::world_press_stops_for_poser_subject;
-        assert!(stops_world_press(true, false, true), "body press cannot reach world steering/focus");
-        assert!(!stops_world_press(true, true, true), "Alt camera gesture remains available");
+    fn the_poser_keeps_only_untaken_presses_on_our_own_body() {
+        let stops = super::world_press_stops_for_poser_subject;
+        // posing ourselves, a press on our body nothing took
+        assert!(stops(true, false, false, true), "the body press cannot steer or refocus");
+        assert!(!stops(true, true, false, true), "Alt stays the camera gesture");
+        assert!(!stops(true, false, true, true), "with Build open, the press selects as usual");
+        assert!(!stops(true, false, false, false), "away from our body (our name tag too) as usual");
+        assert!(!stops(false, false, false, true), "posing someone else, or not posing: as usual");
+    }
+
+    #[test]
+    fn the_poser_frames_only_with_its_option_on() {
+        use glam::Vec3;
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent.position = Vec3::new(128.0, 128.0, 25.0);
+        let joint = Vec3::new(128.0, 128.0, 25.4);
+        let request = Some((joint, crate::camera::PoserFraming::Joint));
+        let mut camera = crate::camera::Camera::default();
+        let off = crate::camera::CameraSettings::default();
+        let before = camera.focus_point();
+        super::apply_poser_framing(&mut camera, &mut world.agent, &off, request);
+        assert_eq!(camera.focus_point(), before, "the default leaves the camera alone");
+        let on = crate::camera::CameraSettings {
+            frame_while_posing: true,
+            ..off
+        };
+        super::apply_poser_framing(&mut camera, &mut world.agent, &on, request);
         assert!(
-            !stops_world_press(true, false, false),
-            "clicks away from the posed subject keep normal behavior"
-        );
-        assert!(
-            !stops_world_press(false, false, true),
-            "outside posing, subject click keeps normal behavior"
+            camera.focus_point().is_some_and(|p| p.distance(joint) < 1e-4),
+            "framed with the option on"
         );
     }
 
