@@ -363,10 +363,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-customize-animation-hint"),
                     &field!(customize_animation),
                 );
-            });
-            // FSPlayDefaultBentoAnimation (panel_preferences_firestorm.xml, Extras)
-            cx.group(tr!("ui-options-bento-idle-group"), |cx| {
-                cx.toggle(tr!("ui-options-bento-idle"), tr!("ui-options-bento-idle-hint"), &field!(bento_idle));
+                // FSPlayDefaultBentoAnimation (panel_preferences_firestorm.xml, Extras)
+                cx.keywords("FSPlayDefaultBentoAnimation").toggle(
+                    tr!("ui-options-bento-idle"),
+                    tr!("ui-options-bento-idle-hint"),
+                    &field!(bento_idle),
+                );
             });
         }
     }
