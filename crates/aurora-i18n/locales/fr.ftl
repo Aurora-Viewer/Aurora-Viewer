@@ -4259,6 +4259,7 @@ ui-options-input-used-for-voice = Entrée utilisée pour la voix
 ui-environment-sky-environment = Env. ciel
 ui-environment-water-environment = Env. eau
 build-ui-features-convex-hull = Enveloppe convexe
+build-ui-features-physics-none-root-hint = Seules les primitives enfants d'un groupe lié peuvent prendre la forme physique Aucun : la primitive racine, ou une primitive seule, garde Prim ou Enveloppe convexe.
 common-environment = Environnement
 ui-environment-shared-environment = Environnement partagé
 ui-options-shared-environment-region-parcel-eep-day-cycle = Environnement partagé = cycle EEP de la région / parcelle
