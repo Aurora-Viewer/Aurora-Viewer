@@ -1,6 +1,11 @@
 //! Local render-only heave. Simulator positions and bridge targets stay flat.
 use glam::Vec3;
 
+/// The most the float lifts or lowers the drawn avatar (m), and how fast
+/// (m/s).
+const MAX_HEAVE: f32 = 6.0;
+const MAX_RISE: f32 = 2.5;
+
 #[derive(Default)]
 pub struct Follower {
     previous: Option<(u64, Vec3, f32)>,
@@ -66,8 +71,11 @@ impl Follower {
         }
         // The macro spectrum is slow: a short exponential response removes
         // state/quality transitions without noticeable phase lag or overshoot.
-        let change = (target.clamp(-0.6, 0.6) - self.z) * (1.0 - (-dt / 0.10).exp());
-        self.z += change.clamp(-dt, dt);
+        // As high as the wind's sea goes (a gale's swell grown in the
+        // shallows), as fast as its crests rise, as for a floating object
+        // (water_ride.rs).
+        let change = (target.clamp(-MAX_HEAVE, MAX_HEAVE) - self.z) * (1.0 - (-dt / 0.10).exp());
+        self.z += change.clamp(-MAX_RISE * dt, MAX_RISE * dt);
         if self.z.abs() < 0.0001 {
             self.z = 0.0;
         }
@@ -86,7 +94,7 @@ mod tests {
                 let target = 0.3 * (time * 1.4).sin();
                 let old = follower.offset();
                 follower.update(1, Vec3::X * time, time, target, false);
-                assert!((follower.offset() - old).abs() <= 1.001 / fps as f32);
+                assert!((follower.offset() - old).abs() <= MAX_RISE * 1.001 / fps as f32);
                 if time > 1.0 {
                     assert!((follower.offset() - target).abs() < 0.05);
                 }
@@ -95,6 +103,16 @@ mod tests {
                 follower.update(1, Vec3::X * 8.0, 8.0 + frame as f32 / fps as f32, 0.0, false);
             }
             assert_eq!(follower.offset(), 0.0, "disabling waves or leaving the surface settles to zero");
+        }
+        // a gale's swell: a metre and a half, rising at 2 m/s
+        let mut follower = Follower::default();
+        for frame in 0..60 * 10 {
+            let time = frame as f32 / 60.0;
+            let target = 1.4 * (time * 1.3).sin();
+            follower.update(1, Vec3::ZERO, time, target, false);
+            if time > 2.0 {
+                assert!((follower.offset() - target).abs() < 0.25, "{} vs {target}", follower.offset());
+            }
         }
     }
     #[test]

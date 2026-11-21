@@ -302,7 +302,7 @@ impl XfCache {
 /// Whether an object moves by itself and so must be placed again every
 /// frame, with everything that follows it.
 pub fn moves_by_itself(o: &Object, agent: Uuid, rigged: bool) -> bool {
-    o.has_motion() || o.is_avatar() || o.full_id == agent || rigged || o.is_flexible()
+    o.has_motion() || o.is_avatar() || o.full_id == agent || rigged || o.is_flexible() || o.render.rides_water
 }
 
 /// Ancestors of an object known to the store (0 for a root), at most

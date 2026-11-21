@@ -45,6 +45,9 @@ pub struct RenderState {
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
     /// Temporary material-inspector display mode; no simulator state changes.
     pub blinn_phong_preview: bool,
+    /// A floating root drawn riding the wind's sea (scene/water_ride.rs):
+    /// placed every frame while it does, as what moves by itself.
+    pub rides_water: bool,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
