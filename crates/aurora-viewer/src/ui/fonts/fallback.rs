@@ -75,11 +75,14 @@ pub const CANDIDATES: &[Candidate] = &[
     candidate("Hebrew", 'א', "segoeui.ttf|tahoma.ttf|arial.ttf|ArialHB.ttc|NotoSansHebrew-Regular.ttf|DejaVuSans.ttf"),
     candidate("symbols, mathematical letters", '𝓐', "seguisym.ttf|cambria.ttc|STIXGeneral.otf|STIXTwoMath.otf|NotoSansMath-Regular.ttf|DejaVuSans.ttf"),
     // `░` is absent from Noto Sans Symbols, so that file was never opened
-    // and `♱ ♰ ✞` stayed squares. Symbols 2 also lacks `░`. The crosses are
-    // their own probe. Box drawing stays on the faces that have `░`
-    // (DejaVu, and a CJK face already loaded for Japanese).
+    // and `♱ ♰ ✞` stayed squares. Symbols 2 also lacks `░`, and Fedora
+    // ships the symbols face as the variable file `NotoSansSymbols[wght].ttf`
+    // rather than `NotoSansSymbols-Regular.ttf`. Box drawing stays on the
+    // faces that have `░`. The crosses and the ballot marks (`✘`, which
+    // Symbols 2 has) are their own probes.
     candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansSymbols2-Regular.ttf"),
-    candidate("crosses, dingbats", '♱', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols-Regular.ttf|DejaVuSans.ttf"),
+    candidate("crosses, dingbats", '♱', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols-Regular.ttf|NotoSansSymbols[wght].ttf|DejaVuSans.ttf"),
+    candidate("ballot marks", '✘', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols2-Regular.ttf|NotoSansSymbols[wght].ttf|NotoSansSymbols-Regular.ttf|DejaVuSans.ttf"),
     candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKjp-Regular.otf"),
     candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKkr-Regular.otf"),
     candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKsc-Regular.otf"),
@@ -452,6 +455,9 @@ mod tests {
         assert!(has("Armenian", "NotoSansArmenian-Regular.ttf"));
         assert!(has("Georgian, Armenian", "NotoSansGeorgian-Regular.ttf"));
         assert!(has("crosses, dingbats", "NotoSansSymbols-Regular.ttf"));
+        assert!(has("crosses, dingbats", "NotoSansSymbols[wght].ttf"));
+        assert!(has("ballot marks", "NotoSansSymbols2-Regular.ttf"));
+        assert!(has("ballot marks", "NotoSansSymbols[wght].ttf"));
         assert!(has("Chinese (traditional)", "NotoSansCJK-Regular.ttc"));
         assert!(has("Vai", "NotoSansVai-Regular.ttf"));
         assert!(has("Egyptian hieroglyphs", "NotoSansEgyptianHieroglyphs-Regular.ttf"));
