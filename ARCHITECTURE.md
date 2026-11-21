@@ -1,5 +1,18 @@
 # Aurora Viewer architecture
 
+`imports/mesh.rs` exposes Automatic through the retained `LodSource::Legacy` /
+`process::Method::Legacy` chain, and Reliable. Retired serialized generation
+choices alias to Legacy. Scene budgets reserve `process::minimum_lod_triangles`
+for every model before sharing the remainder; defaults and the UI use the same
+occupied-material floor. `aurora-assets/src/import_mesh/process/material_floor.rs`
+restores a representative triangle from a lost material slot after simplification
+(the full source face when an error limit is active).
+At Automatic's explicit minimum it runs the Legacy passes per material and keeps
+one noncollapsed representative triangle where the source has one, preserving
+that material's vertex attributes. Error-threshold generation does not force the
+minimum, and empty source slots stay empty. Fast remains internal to collision
+reduction; the former Auto and Precise algorithms are removed.
+
 `imports/file_picker.rs` owns pending native selections and their import-window
 identity. Closing that window cancels and retires the request without discarding
 existing drafts; request ids reject late replies. Native dialogs run on dedicated
