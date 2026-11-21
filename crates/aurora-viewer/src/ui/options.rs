@@ -11,7 +11,7 @@ mod pages;
 mod phototools;
 /// Aurora's own marked in its gradient, outside Preferences too.
 pub(crate) use pages::aurora::aurora_word;
-pub use phototools::Section as PhotoSection;
+pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
@@ -1366,13 +1366,21 @@ pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
 /// pages, drawn in `ui` (`options/phototools.rs`). `st` is Phototools' own
 /// `OptionsUi` (`share_from` gives it the app's fields). The result is
 /// Preferences' own (`changed`, and what a row asks of the app), for the app
-/// to handle like Preferences' result.
-pub fn phototools_section(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, section: PhotoSection) -> OptionsResult {
+/// to handle like Preferences' result. `photo` is the photo window's layer
+/// while it is open: the rows it overrides are its own.
+pub fn phototools_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    st: &mut OptionsUi,
+    section: PhotoSection,
+    photo: Option<&mut PhotoLayer>,
+) -> OptionsResult {
     let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
     let mut r = OptionsResult::default();
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut cx = Cx::new(ui, *p, s, &d, st, &mut r, Mode::Show, "");
-    phototools::draw(&mut cx, section);
+    phototools::draw(&mut cx, section, photo);
     let changed = cx.changed;
     drop(cx);
     r.changed |= changed;

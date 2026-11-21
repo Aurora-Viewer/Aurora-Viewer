@@ -2214,6 +2214,203 @@ fn the_contacts_tab_shows_peoples_friends() {
     assert!(texts.iter().all(|t| t.source != groups), "no contact list tabs");
 }
 
+/// Two of our groups, for the Contacts tab's Groups pill.
+fn add_groups(world: &mut World) {
+    for (n, name) in ["Builders Guild", "Night Owls"].into_iter().enumerate() {
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: Uuid::from_u128(0x6000 + n as u128),
+            name: name.to_owned(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+    }
+}
+
+/// The frames of a click at `at` (a move, a press, a release).
+fn click_frames(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    vec![vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+}
+
+/// Conversations with the Contacts tab in Aurora's look of People, a frame
+/// per `input` entry then three still ones; the texts of the last.
+fn contacts_pane_frames(
+    h: &mut Harness,
+    people: &mut crate::ui::people::PeopleUi,
+    input: Vec<Vec<egui::Event>>,
+) -> Vec<crate::ui::widgets::elide_tests::Text> {
+    let p = crate::theme::Theme::default().palette();
+    let radar = crate::world::radar::Radar::default();
+    let mut radar_settings = crate::ui::people::RadarSettings::default();
+    let (voice, pics) = (HashMap::new(), HashMap::new());
+    let data = crate::ui::people::RadarData {
+        radar: &radar,
+        settings: &mut radar_settings,
+        voice: &voice,
+        draw_distance: 64.0,
+        second_life: true,
+        now: 0.0,
+        pics: &pics,
+    };
+    let mut friends = crate::ui::people::FriendsSettings::default();
+    let mut texts = Vec::new();
+    for events in input.into_iter().chain([Vec::new(), Vec::new(), Vec::new()]) {
+        let mut open = true;
+        let Harness {
+            frames,
+            world,
+            st,
+            icons,
+            emoji,
+            contacts,
+            contacts_settings,
+            gestures,
+            actions,
+            ..
+        } = &mut *h;
+        texts = frames.run(events, |ui| {
+            actions.extend(show(
+                ui.ctx(),
+                &p,
+                icons,
+                emoji,
+                &pics,
+                &pics,
+                world,
+                gestures,
+                st,
+                contacts,
+                contacts_settings,
+                true,
+                Some(crate::ui::people::FriendsPane {
+                    st: &mut *people,
+                    data: &data,
+                    settings: &mut friends,
+                    images: &pics,
+                }),
+                &mut open,
+            ));
+        });
+    }
+    texts
+}
+
+/// The pane's pill named `label`, right of the column (which may name its
+/// groups section).
+fn pane_pill(texts: &[crate::ui::widgets::elide_tests::Text], label: &str) -> egui::Pos2 {
+    texts
+        .iter()
+        .filter(|t| t.source == label)
+        .max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .unwrap_or_else(|| panic!("the {label} pill"))
+        .rect
+        .center()
+}
+
+/// The Contacts tab's Groups pill in Aurora's look of People: our groups'
+/// rows instead of the friends', and back to the friends with the other
+/// pill (the Legacy look's Contacts › Groups tab).
+#[test]
+fn the_contacts_tab_shows_our_groups_under_its_pill() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_friends(&mut h.world);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(!people.pane_groups, "the friends first");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-groups"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(people.pane_groups, "the Groups pill opened");
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the groups' rows");
+    assert!(texts.iter().all(|t| t.source != "Friend 00"), "no friend left");
+    let sub = aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = 2);
+    assert!(texts.iter().any(|t| t.source == sub), "the column says {sub:?}");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-friends"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(!people.pane_groups, "back to the friends");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows again");
+}
+
+/// In a Contacts pane too narrow for the group's sheet beside the list, a
+/// double click on a group opens its chat: the first click only selects,
+/// the list stays under the pointer for the second (the sheet alone would
+/// take the pane, its buttons under the second click).
+#[test]
+fn a_double_click_on_a_group_in_a_narrow_contacts_pane_opens_its_chat() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    // too narrow for the sheet beside the list: no "No group to display"
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    assert!(texts.iter().all(|t| t.source != empty), "the pane is narrow");
+    let mut input = click_frames(row);
+    input.extend(click_frames(row).into_iter().skip(1));
+    let texts = contacts_pane_frames(&mut h, &mut people, input);
+    let group = Uuid::from_u128(0x6001);
+    assert!(
+        h.actions
+            .iter()
+            .any(|a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::GroupChat(id)) if *id == group)),
+        "the group's chat opened"
+    );
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list stayed");
+}
+
+/// A group shown beside the list in a wide Contacts pane comes back when the
+/// pane, made too narrow for the sheet, is widened again: the sheet is not
+/// left empty.
+#[test]
+fn a_group_sheet_comes_back_when_the_contacts_pane_widens_again() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    let wide = egui::vec2(960.0, 560.0);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == empty), "the pane is wide, nothing shown yet");
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(row));
+    assert!(texts.iter().all(|t| t.source != empty), "the click shows the group");
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    contacts_pane_frames(&mut h, &mut people, Vec::new());
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list is back");
+    assert!(
+        texts.iter().all(|t| t.source != empty),
+        "the group's sheet is back, not an empty one"
+    );
+}
+
 /// Who types in the nearby chat shows above the field, their name in the
 /// ink (a layout that once took the fonts' lock twice and froze the
 /// viewer at its first frame: this frame must end).

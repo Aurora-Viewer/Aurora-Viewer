@@ -143,6 +143,11 @@ pub struct WeatherSettings {
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
     pub touched: bool,
+    /// The former switch "Let regions set the weather" (removed with the
+    /// region weather, #4280), read once by `upgrade_to_switches`: on, none
+    /// of these settings was drawn.
+    #[serde(rename = "region_weather", skip_serializing)]
+    pub(crate) former_region_weather: Option<bool>,
 }
 
 impl Default for WeatherSettings {
@@ -180,8 +185,20 @@ impl Default for WeatherSettings {
             aurora_colours: AuroraColours::Green,
             quality: WeatherQuality::High,
             touched: false,
+            former_region_weather: None,
         }
     }
+}
+
+/// A teleport to another region (#3664): whether what the weather left on
+/// the ground (lying snow, wet ground and puddles, footprints, snow on the
+/// avatars) goes, as with the Weather window's clean-up button. It belongs
+/// to the place left, and kept, it lay on the new region for many minutes
+/// while it melted. Only rain or snow falling now keeps it: it falls the
+/// same everywhere, and cleaned up, the ground went bare or dry under it and
+/// filled again.
+pub fn clean_on_arrival(now: &WeatherSettings) -> bool {
+    now.fall() <= 0.0
 }
 
 impl WeatherSettings {
@@ -216,11 +233,15 @@ impl WeatherSettings {
 
     /// A file from before the switches (settings version 43): what it drew
     /// stays on. Nothing falling, no wind and no aurora was how it was off;
-    /// a fall at 0 then starts at full strength, as a new one does.
+    /// a fall at 0 then starts at full strength, as a new one does. With
+    /// "Let regions set the weather" on, none of it was drawn (the region's
+    /// weather, or a clear and calm sky where it set none): the main switch
+    /// stays off, the cards keep these settings for when it is turned on.
     pub fn upgrade_to_switches(&mut self) {
+        let regions_set_it = self.former_region_weather.take() == Some(true);
         self.precipitation_on = self.amount > 0.0;
         self.wind_on = self.wind_max > 0.0;
-        self.enabled = self.precipitation_on || self.wind_on || self.aurora;
+        self.enabled = !regions_set_it && (self.precipitation_on || self.wind_on || self.aurora);
         if self.amount <= 0.0 {
             self.amount = 1.0;
         }
@@ -242,7 +263,8 @@ impl WeatherSettings {
         if !self.touched
             && let Some(v) = env_rain()
         {
-            return v;
+            // AURORA_SNOW_AFTER: the rain stops when the snow starts
+            return if env_snow_now().is_some() { 0.0 } else { v };
         }
         match self.precipitation {
             Precipitation::Rain => self.amount.clamp(0.0, 1.0),
@@ -253,7 +275,7 @@ impl WeatherSettings {
 
     /// Snow is chosen (the menu's, or `AURORA_SNOW` until the menu is used).
     pub fn snowing(&self) -> bool {
-        if !self.touched && env_snow().is_some() {
+        if !self.touched && env_snow_now().is_some() {
             return true;
         }
         self.precipitation == Precipitation::Snow
@@ -263,7 +285,7 @@ impl WeatherSettings {
     /// pass draws.
     pub fn fall(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow()
+            && let Some(v) = env_snow_now()
         {
             return v;
         }
@@ -277,7 +299,7 @@ impl WeatherSettings {
     /// the menu is used.
     pub fn rain_or_amount(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_snow().or_else(env_rain)
+            && let Some(v) = env_snow_now().or_else(env_rain)
         {
             return v;
         }
@@ -502,6 +524,23 @@ impl Wind {
     }
 }
 
+/// `AURORA_SNOW` once `AURORA_SNOW_AFTER=<s>` seconds have passed since
+/// launch (at once without it): before, `AURORA_RAIN` falls, so that a
+/// capture shows the puddles it left frozen.
+fn env_snow_now() -> Option<f32> {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static AFTER: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    let after = *AFTER.get_or_init(|| {
+        std::env::var("AURORA_SNOW_AFTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0)
+    });
+    env_snow().filter(|_| start.elapsed().as_secs_f32() >= after)
+}
+
 /// `AURORA_SNOW=<0..1>`: snow of this strength until the menu is used
 /// (demo captures).
 fn env_snow() -> Option<f32> {
@@ -575,6 +614,20 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teleport_cleans_up_unless_rain_or_snow_is_falling() {
+        let weather = |precipitation, amount| WeatherSettings {
+            precipitation,
+            amount,
+            touched: true,
+            ..WeatherSettings::default()
+        };
+        assert!(!clean_on_arrival(&weather(Precipitation::Snow, 0.6)));
+        assert!(!clean_on_arrival(&weather(Precipitation::Rain, 0.6)));
+        assert!(clean_on_arrival(&weather(Precipitation::Snow, 0.0)), "snow at amount 0");
+        assert!(clean_on_arrival(&weather(Precipitation::Rain, 0.0)), "rain at amount 0");
+    }
 
     #[test]
     fn the_renderer_gets_both_distances_and_deep_snows_reach() {
@@ -834,6 +887,25 @@ mod tests {
         assert_eq!(night.amount, 1.0);
         let clear = read("{\"amount\": 0.0, \"wind_max\": 0.0, \"aurora\": false}");
         assert!(!clear.enabled && !clear.precipitation_on && !clear.wind_on);
+        // "Let regions set the weather" off: its own weather was drawn
+        let own = read("{\"amount\": 0.4, \"wind_max\": 0.3, \"aurora\": true, \"region_weather\": false}");
+        assert!(own.enabled && own.precipitation_on && own.wind_on);
+    }
+
+    #[test]
+    fn a_file_where_regions_set_the_weather_stays_off() {
+        // the region decided, and where it set none the sky was clear: none
+        // of these settings was drawn, so the main switch stays off and the
+        // cards keep them for when it is turned on
+        let mut w: WeatherSettings =
+            serde_json::from_str("{\"amount\": 0.6, \"wind_max\": 0.3, \"aurora\": true, \"region_weather\": true}").expect("parse");
+        w.upgrade_to_switches();
+        assert!(!w.enabled && w.precipitation_on && w.wind_on && w.aurora);
+        assert_eq!((w.amount, w.former_region_weather), (0.6, None));
+        assert_eq!(w.in_effect().fall(), 0.0);
+        // read once, never written again
+        let saved = serde_json::to_value(&w).expect("serialize");
+        assert!(saved.get("region_weather").is_none());
     }
 
     #[test]
