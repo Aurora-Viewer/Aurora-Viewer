@@ -62,42 +62,7 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// A colour target of 16 normalized bits per channel, on the device that has
-/// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
-pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
-
-/// The adapter draws into that target, resolves it and filters it: what the
-/// G-buffer needs of its format.
-pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
-    if !adapter
-        .features()
-        .contains(GBUF_WIDE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
-    {
-        return false;
-    }
-    let f = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm);
-    f.allowed_usages
-        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
-        && f.flags.contains(
-            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
-                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
-                | wgpu::TextureFormatFeatureFlags::FILTERABLE,
-        )
-}
-
-/// The G-buffer (octahedral normal, roughness, metallic): 16 bits per
-/// channel, as the normals of LLPipeline::addDeferredAttachments
-/// (indra/newview/pipeline.cpp, GL_RGBA16; originally LGPL 2.1). Eight bits
-/// step the normal by 0.45 degrees, and a mirror doubles it: the reflection
-/// of a smooth face came in terraces, 30 cm apart at 20 m. Without the
-/// normalized format, 16-bit floats: steps of 0.06 degrees at most.
-pub(crate) fn gbuf_format(features: wgpu::Features) -> wgpu::TextureFormat {
-    if features.contains(GBUF_WIDE) {
-        wgpu::TextureFormat::Rgba16Unorm
-    } else {
-        wgpu::TextureFormat::Rgba16Float
-    }
-}
+const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -3103,7 +3068,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
     }
     if d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: gbuf_format(device.features()),
+            format: GBUF_FORMAT,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -4434,7 +4399,7 @@ impl Backend {
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(gbuf_format(device.features()));
+        let gbuf_features = adapter.get_texture_format_features(GBUF_FORMAT);
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -6456,8 +6421,8 @@ impl Backend {
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         let (gbuf_msaa, gbuf) = if s.gbuffer() {
             (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, gbuf_format(device.features()), samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, gbuf_format(device.features()), 1, sampled).1),
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
             )
         } else {
             (None, None)
@@ -11581,14 +11546,7 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(
-                &self.device,
-                scene_samples,
-                scene_gbuf,
-                HDR_FORMAT,
-                gbuf_format(self.device.features()),
-                DEPTH_FORMAT,
-            );
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }

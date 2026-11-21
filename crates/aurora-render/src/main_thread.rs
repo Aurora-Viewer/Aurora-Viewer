@@ -2185,11 +2185,6 @@ fn open_device(
     if adapter_specific {
         features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     }
-    // the G-buffer in 16 normalized bits (renderer.rs `gbuf_format`)
-    if crate::renderer::gbuf_wide(adapter) {
-        features |= crate::renderer::GBUF_WIDE;
-    }
-    log::info!("G-buffer format: {:?}", crate::renderer::gbuf_format(features));
     // debug wireframe
     if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
         features |= wgpu::Features::POLYGON_MODE_LINE;
