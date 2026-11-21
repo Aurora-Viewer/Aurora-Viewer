@@ -1061,18 +1061,10 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
             [if mac { None } else { kmod(K::Space, true, false) }, None],
         ),
         (Action::InvNewFolder, [kmod(K::KeyN, true, true), None]),
-        // Finder's Get Info
-        (
-            Action::InvProperties,
-            [
-                if mac {
-                    kmod(K::KeyI, true, false)
-                } else {
-                    kalt(K::Enter, false, false)
-                },
-                None,
-            ],
-        ),
+        // Alt+Enter (Option+Enter on a Mac), not Finder's Get Info: Cmd+I
+        // is the Legacy Viewer's toggle of the Inventory window there, which
+        // a focused list would take
+        (Action::InvProperties, [kalt(K::Enter, false, false), None]),
         (Action::InvContextMenu, [kmod(K::F10, false, true), None]),
         // Finder's Delete Immediately (Cmd+Option+Backspace)
         (
@@ -2923,11 +2915,15 @@ mod tests {
             Action::InvBack,
             &Binding::captured(Input::Mouse("Other8".into()), Mods::default())
         ));
-        // every default is one the list takes
+        // every default is one the list takes, and none is the Inventory
+        // window's toggle (Ctrl+I, Cmd+I on a Mac): a focused list would
+        // keep it from closing the window
+        let toggle = kmod(KeyCode::KeyI, true, false).expect("binding");
         for mac in [false, true] {
             for (a, bindings) in inventory_defaults(mac) {
                 for b in bindings.iter().flatten() {
                     assert!(inventory_accepts_on(a, b, mac, !mac), "{a:?} {b:?} mac={mac}");
+                    assert_ne!(*b, toggle, "{a:?} mac={mac}");
                 }
             }
         }
