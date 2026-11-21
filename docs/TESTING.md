@@ -10094,6 +10094,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_DEMO_GROUP_PROFILE`), our abilities in "Aurora Builders" are an
   officer's, so clicking "Invite" on another resident's profile opens the
   group picker with "Aurora Builders" and then the group invitation window.
+  "Invite to group" in the "…" menu (Aurora) or the ☰ menu beside Block
+  (classic window) does the same; neither menu is on our own profile.
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's

@@ -1766,6 +1766,13 @@ fn overflow_menu(
         ) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
         }
+        // menu_profile_other.xml's invite_to_group (LLPanelProfileSecondLife::
+        // onCommitMenu → LLAvatarActions::inviteToGroup, llpanelprofile.cpp):
+        // no enable callback, and never on our own profile (menu_profile_self.xml
+        // has none, mGroupInviteButton->setVisible(!own_profile))
+        if id != world.agent_id && menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+            actions.push(ProfileAction::InviteToGroup(id));
+        }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")
         } else {

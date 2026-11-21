@@ -1004,9 +1004,10 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
 
 /// "…": the actions that have no button (menu_fs_profile_overflow.xml and
 /// the name field's copy menu).
-fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
+fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: bool) {
     let (p, world) = (env.p, env.world);
     let id = w.id;
+    let mut invite = false;
     let names = &world.social.avatar_names;
     let display = names.get_in(w.scope, &id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name_in(w.scope, &id);
@@ -1029,6 +1030,13 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
             act(CtxAction::RemoveFriend(id));
+        }
+        // menu_profile_other.xml's invite_to_group, after remove_friend
+        // (LLPanelProfileSecondLife::onCommitMenu → LLAvatarActions::
+        // inviteToGroup, llpanelprofile.cpp): no enable callback, and never on
+        // our own profile (menu_profile_self.xml has none)
+        if id != world.agent_id && menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+            invite = true;
         }
         // menu_profile_other.xml: separator_group_bans, then the ban and its
         // lifting in all our groups (Profile.EnableItem: canBanFromAnyGroup)
@@ -1071,6 +1079,9 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         context::admin_submenu(ui, p, world, id, act);
     });
+    if invite {
+        env.actions.push(ProfileAction::InviteToGroup(id));
+    }
 }
 
 /// The People tab that has the resident: Friends, Blocked, else Nearby
@@ -1955,7 +1966,8 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
     let title = aurora_i18n::tr!("ui-profile-aurora-groups", count = pr.groups.len() as i64);
     let invite = (!own).then(|| Link {
         text: aurora_i18n::tr!("ui-profile-aurora-invite"),
-        icon: Some("user-plus"),
+        // the group invitation's icon everywhere (avatar menu, profile menus)
+        icon: Some("users-plus"),
         tip: Some(aurora_i18n::tr!("ui-context-invite-to-group")),
     });
     if card(ui, p, Some(("users-group", &title)), invite, false, |ui| {
