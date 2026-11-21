@@ -587,7 +587,7 @@ pub struct App {
     /// The interface's windows outside the viewer's (outside.rs).
     outside: crate::outside::Outside,
     /// AURORA_DEMO_OUTSIDE: the test window outside, until it is closed.
-    outside_demo: Option<crate::outside::demo::Scenario>,
+    outside_demo: Option<crate::outside::demo::Demo>,
     /// egui's textures kept on the CPU, for the renderer of a GPU recovery
     /// (egui_shadow.rs), and whether the next frame hands them all over.
     egui_shadow: egui_shadow::EguiShadow,
@@ -10546,7 +10546,7 @@ impl App {
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
         let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
-        let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
+        let (focused, minimized) = effective_window_state(self.in_front(), minimized, presenting);
         self.scene.textures.set_window_state(focused, minimized);
         // (gaming mode gives the textures back too, app/gaming_mode.rs)
         self.scene.textures.set_stepped_back(self.gaming_mode_pauses());
@@ -10562,7 +10562,7 @@ impl App {
             !self.demo && !timed,
             crate::instances::Own {
                 usage: self.scene.textures.video_usage(),
-                active: self.focused && !minimized,
+                active: self.in_front() && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
             switch,
@@ -12087,7 +12087,7 @@ impl App {
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
-                    window_focused: effective_window_state(self.focused, false, self.vr_camera.is_some()).0,
+                    window_focused: effective_window_state(self.in_front(), false, self.vr_camera.is_some()).0,
                     gaming_mode: self.gaming_mode.on,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
@@ -13357,6 +13357,9 @@ impl App {
         if self.capture.is_none() {
             self.layout_autosave.after_pass(&ctx, Instant::now());
         }
+        // what the windows outside copy or open leaves with the viewer's
+        // own output: the same rules, and one clipboard
+        full.platform_output.commands.splice(0..0, self.outside.take_commands());
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // interface sounds of the widgets; the sounds are SL assets, loaded
@@ -13581,6 +13584,7 @@ impl App {
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
+        self.outside.platform(event_loop);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         self.evict_ui_images(&full.shapes);
@@ -13896,7 +13900,7 @@ impl App {
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         let cap = frame_cap(
             &self.settings,
-            self.focused,
+            self.in_front(),
             gfx.renderer.vr_engaged(),
             self.in_world(),
             monitor_hz,
@@ -13907,7 +13911,7 @@ impl App {
         // (instances.rs)
         let cap = crate::instances::throttle(
             cap,
-            self.focused,
+            self.in_front(),
             self.instances.peers().in_front(),
             timed || !self.settings.background_fps_cap,
         );
@@ -21703,12 +21707,12 @@ impl ApplicationHandler for App {
                 // The update preview stays offline on a synthetic login screen.
                 return;
             }
-            // AURORA_DEMO_OUTSIDE=still|busy[,sync]: a test window outside
+            // AURORA_DEMO_OUTSIDE=still|busy[,sync][,click]: a test window outside
             // the viewer's (outside/demo.rs)
             if let Ok(v) = std::env::var("AURORA_DEMO_OUTSIDE") {
-                self.outside_demo = crate::outside::demo::parse(&v);
+                self.outside_demo = crate::outside::demo::parse(&v).map(crate::outside::demo::Demo::new);
                 if self.outside_demo.is_none() {
-                    log::warn!("AURORA_DEMO_OUTSIDE={v}: still or busy, then \",sync\"");
+                    log::warn!("AURORA_DEMO_OUTSIDE={v}: still or busy, then \",sync\" and \",click\"");
                 }
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
@@ -24772,11 +24776,14 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
-        // a window of the interface outside the viewer's: none of what
-        // follows is its own (the viewer's size, focus, keys and exit)
-        if self.outside_window_event(id, &event) {
-            return;
-        }
+        // a window of the interface outside the viewer's reads its own
+        // events; a key it does not read, the modifiers and its focus that
+        // goes come on here, without the viewer's interface (app/outside.rs)
+        let from_outside = match self.outside_window_event(id, &event) {
+            outside::Went::Own => false,
+            outside::Went::Outside => return,
+            outside::Went::On => true,
+        };
         self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
@@ -24940,15 +24947,22 @@ impl ApplicationHandler for App {
             return;
         };
         let first_event = g.egui_state.egui_input().events.len();
-        let resp =
-            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
-                egui_winit::EventResponse {
-                    consumed: false,
-                    repaint: true,
-                }
-            } else {
-                g.egui_state.on_window_event(&g.window, &event)
-            };
+        let resp = if from_outside
+            || chat_pass
+            || web_tab
+            || lens_shortcut
+            || held_pointer
+            || stationary_hidden_pointer
+            || altgr_shortcut
+            || claim_over_focus
+        {
+            egui_winit::EventResponse {
+                consumed: false,
+                repaint: true,
+            }
+        } else {
+            g.egui_state.on_window_event(&g.window, &event)
+        };
         let events = &mut g.egui_state.egui_input_mut().events;
         if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
             && !self.cursor_hold.held()

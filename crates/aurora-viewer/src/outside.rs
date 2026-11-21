@@ -12,6 +12,16 @@
 //! gives the renderer the windows whose picture changed. A window that
 //! shows the same thing costs its pass and a comparison, no drawing.
 //!
+//! Each window reads its own events of the system, as the viewer's does
+//! (`egui_winit::State`): the pointer, the wheel, the keys, the text. A
+//! key that no field or menu of the window reads goes on to the viewer's
+//! own handling (shortcuts, movement), as under a window inside; so do
+//! the releases, the modifiers and the focus that goes, which let go of
+//! what was held. What a window copies leaves with the viewer's own
+//! output: one clipboard, and the same rules on what may be copied.
+//! [`Outside::focused`]: the viewer is in front while any of its windows
+//! has the focus (`App::in_front`).
+//!
 //! The native windows are made and let go between passes
 //! ([`Outside::open`], [`Outside::close`]), with the event loop the frame
 //! has. A closed window stays until the render thread has destroyed its
@@ -38,6 +48,24 @@ pub(crate) enum Asked {
     Nothing,
     /// The system's close button.
     Close(egui::ViewportId),
+    /// The viewer's own handling takes the event too, without its
+    /// interface: a key the window does not read, a release, the
+    /// modifiers, the focus that goes.
+    Viewer,
+}
+
+/// Whether a key of a window outside goes on to the viewer's own handling:
+/// a press only when no field or menu of the window reads the keyboard, a
+/// release always (what the press held is let go, wherever it was read).
+fn key_goes_on(pressed: bool, reads_keys: bool) -> bool {
+    !pressed || !reads_keys
+}
+
+/// The viewer is in front: its own window or one of its windows outside
+/// has the focus. The frame rate, the textures and the pause of a viewer
+/// behind follow this, not the focus of the viewer's own window alone.
+pub(crate) fn in_front(own_window: bool, window_outside: bool) -> bool {
+    own_window || window_outside
 }
 
 pub(crate) struct Outside {
@@ -55,13 +83,24 @@ struct Shared {
     /// The texture changes of this frame's passes outside, older than the
     /// viewer's own pass's: they leave with its interface, before them.
     textures: egui::TexturesDelta,
+    /// What this frame's passes outside ask of the system besides their
+    /// own window (a text to copy, a link to open): the viewer's output
+    /// takes them.
+    commands: Vec<egui::OutputCommand>,
 }
 
 struct Native {
     key: u64,
     window: Arc<Window>,
+    /// The window's events of the system, as egui reads them.
+    input: egui_winit::State,
+    focused: bool,
+    /// A field or a menu of the window read the keyboard at its last pass.
+    reads_keys: bool,
     /// What its pass left this frame.
     pass: Option<Pass>,
+    /// What its pass asks of its own window: the cursor, the text input.
+    output: Option<egui::PlatformOutput>,
     /// What was handed to the renderer last, and at which size.
     shown: Vec<ClippedShape>,
     shown_size: (u32, u32),
@@ -75,9 +114,10 @@ struct Pass {
     pixels_per_point: f32,
 }
 
-/// What the pass of a window outside starts from: a screen of the native
-/// window's size at its scale, on the viewer's clock.
+/// What the pass of a window outside starts from: the events `raw` of the
+/// window, on a screen of its size at its scale, on the viewer's clock.
 fn pass_input(
+    raw: egui::RawInput,
     ids: egui::ViewportIdPair,
     size: (u32, u32),
     scale: f32,
@@ -102,8 +142,13 @@ fn pass_input(
         time: Some(time),
         predicted_dt,
         focused,
-        ..Default::default()
+        ..raw
     }
+}
+
+/// A field or a menu of the pass under way reads the keyboard.
+fn reads_keys(ctx: &egui::Context) -> bool {
+    ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx)
 }
 
 /// Whether a window whose pass left `shapes` at `size` is drawn again.
@@ -126,25 +171,33 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     } = viewport;
     let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
     let zoom = ctx.zoom_factor();
-    let input = shared.borrow().windows.get(&ids.this).map(|native| {
+    let input = shared.borrow_mut().windows.get_mut(&ids.this).map(|native| {
         let size = native.window.inner_size();
         pass_input(
+            native.input.take_egui_input(&native.window),
             ids,
             (size.width, size.height),
             native.window.scale_factor() as f32,
             zoom,
-            native.window.has_focus(),
+            native.focused,
             clock,
         )
     });
     // (egui wants the window's code run whatever happens: `Outside::show`
     // only asks for a window that is open, so this is never the case)
-    let input = input.unwrap_or_else(|| pass_input(ids, (640, 480), 1.0, zoom, false, clock));
+    let input = input.unwrap_or_else(|| pass_input(egui::RawInput::default(), ids, (640, 480), 1.0, zoom, false, clock));
+    let mut keys = false;
     // (nothing of `shared` is borrowed while the window's code runs)
-    let out = ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+    let mut out = ctx.run_ui(input, |ui| {
+        viewport_ui_cb(ui);
+        keys = reads_keys(ui.ctx());
+    });
     let mut shared = shared.borrow_mut();
     shared.textures.append(out.textures_delta);
+    shared.commands.append(&mut out.platform_output.commands);
     if let Some(native) = shared.windows.get_mut(&ids.this) {
+        native.reads_keys = keys;
+        native.output = Some(out.platform_output);
         native.pass = Some(Pass {
             shapes: out.shapes,
             pixels_per_point: out.pixels_per_point,
@@ -179,6 +232,7 @@ impl Outside {
         &mut self,
         event_loop: &ActiveEventLoop,
         renderer: &mut Renderer,
+        ctx: &egui::Context,
         id: egui::ViewportId,
         attributes: WindowAttributes,
         sync: bool,
@@ -193,12 +247,25 @@ impl Outside {
         renderer
             .open_outside(key, window.clone(), size.width, size.height, sync)
             .map_err(|e| e.to_string())?;
+        let input = egui_winit::State::new(
+            ctx.clone(),
+            id,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(renderer.device.limits().max_texture_dimension_2d as usize),
+        );
+        let focused = window.has_focus();
         self.shared.borrow_mut().windows.insert(
             id,
             Native {
                 key,
                 window,
+                input,
+                focused,
+                reads_keys: false,
                 pass: None,
+                output: None,
                 shown: Vec::new(),
                 shown_size: (0, 0),
                 redraw: true,
@@ -248,14 +315,23 @@ impl Outside {
         Some(ctx.show_viewport_immediate(id, egui::ViewportBuilder::default(), |ui, _| add(ui)))
     }
 
+    /// One of the windows outside has the focus.
+    pub fn focused(&self) -> bool {
+        self.shared.borrow().windows.values().any(|native| native.focused)
+    }
+
     /// An event of the system: `None` when `id` is not a window outside
-    /// (the viewer's own), else what the window asks.
+    /// (the viewer's own), else what the window asks. The window's pass
+    /// reads the event at the next frame.
     pub fn window_event(&mut self, id: WindowId, event: &WindowEvent) -> Option<Asked> {
         if self.closing.iter().any(|(_, window)| window.id() == id) {
             return Some(Asked::Nothing);
         }
         let mut shared = self.shared.borrow_mut();
         let (viewport, native) = shared.windows.iter_mut().find(|(_, native)| native.window.id() == id)?;
+        // (what egui answers is about the viewer's own window between two
+        // frames: `reads_keys`, from the window's last pass, is its own)
+        let _ = native.input.on_window_event(&native.window, event);
         Some(match event {
             WindowEvent::CloseRequested => Asked::Close(*viewport),
             WindowEvent::Resized(_)
@@ -265,8 +341,48 @@ impl Outside {
                 native.redraw = true;
                 Asked::Nothing
             }
+            WindowEvent::Focused(focused) => {
+                native.focused = *focused;
+                if *focused { Asked::Nothing } else { Asked::Viewer }
+            }
+            WindowEvent::ModifiersChanged(_) => Asked::Viewer,
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key_goes_on(key.state == winit::event::ElementState::Pressed, native.reads_keys) =>
+            {
+                Asked::Viewer
+            }
             _ => Asked::Nothing,
         })
+    }
+
+    /// The window of `id` and where the point `at` of its pass is in it,
+    /// in pixels: for a scripted pointer.
+    pub fn pixel(&self, id: egui::ViewportId, at: egui::Pos2, zoom: f32) -> Option<(WindowId, winit::dpi::PhysicalPosition<f64>)> {
+        let shared = self.shared.borrow();
+        let native = shared.windows.get(&id)?;
+        let scale = native.window.scale_factor() * f64::from(zoom);
+        Some((
+            native.window.id(),
+            winit::dpi::PhysicalPosition::new(f64::from(at.x) * scale, f64::from(at.y) * scale),
+        ))
+    }
+
+    /// What this frame's passes outside ask of the system besides their
+    /// own window, to put before what the viewer's own pass asks.
+    pub fn take_commands(&mut self) -> Vec<egui::OutputCommand> {
+        std::mem::take(&mut self.shared.borrow_mut().commands)
+    }
+
+    /// After the viewer's pass: each window outside takes what its pass
+    /// asks of it (the cursor's shape, the text input's place).
+    pub fn platform(&mut self, event_loop: &ActiveEventLoop) {
+        for native in self.shared.borrow_mut().windows.values_mut() {
+            if let Some(output) = native.output.take() {
+                native
+                    .input
+                    .handle_platform_output_with_event_loop(&native.window, event_loop, output);
+            }
+        }
     }
 
     /// The texture changes of this frame's passes outside, to put before
@@ -344,7 +460,11 @@ mod tests {
     #[test]
     fn the_pass_of_a_window_outside_has_its_size_in_its_own_points() {
         // a 1200 x 800 window on a screen at 200 %, the interface at 125 %
-        let input = pass_input(ids(), (1200, 800), 2.0, 1.25, true, (12.5, 1.0 / 144.0, 8192));
+        let events = egui::RawInput {
+            events: vec![egui::Event::PointerMoved(egui::pos2(10.0, 20.0))],
+            ..Default::default()
+        };
+        let input = pass_input(events, ids(), (1200, 800), 2.0, 1.25, true, (12.5, 1.0 / 144.0, 8192));
         assert_eq!(input.viewport_id, ids().this);
         assert_eq!(
             input.screen_rect,
@@ -357,8 +477,46 @@ mod tests {
         // the viewer's clock: an animation runs at one pace in every window
         assert_eq!(input.time, Some(12.5));
         assert_eq!(input.max_texture_side, Some(8192));
-        // no event of the viewer's own window is the window's outside
-        assert!(input.events.is_empty());
+        // the window's own events, and no other
+        assert_eq!(input.events, [egui::Event::PointerMoved(egui::pos2(10.0, 20.0))]);
+    }
+
+    #[test]
+    fn a_key_goes_on_to_the_viewer_unless_the_window_outside_reads_it() {
+        // a list, a picture: the key is a shortcut or a movement, as under
+        // a window inside
+        assert!(key_goes_on(true, false));
+        // a text field or an open menu keeps the press
+        assert!(!key_goes_on(true, true));
+        // what a press held is let go wherever the release arrives
+        assert!(key_goes_on(false, true));
+        assert!(key_goes_on(false, false));
+    }
+
+    #[test]
+    fn the_viewer_is_in_front_with_the_focus_in_any_of_its_windows() {
+        assert!(in_front(true, false));
+        assert!(in_front(false, true));
+        assert!(in_front(true, true));
+        // another program has the focus
+        assert!(!in_front(false, false));
+    }
+
+    #[test]
+    fn a_focused_field_or_an_open_menu_reads_the_keys() {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let mut read = Vec::new();
+        for focus in [false, true, true] {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let field = ui.text_edit_singleline(&mut text);
+                if focus {
+                    field.request_focus();
+                }
+                read.push(reads_keys(ui.ctx()));
+            });
+        }
+        assert_eq!(read, [false, true, true]);
     }
 
     #[test]
@@ -397,7 +555,7 @@ mod tests {
                 ids, mut viewport_ui_cb, ..
             } = viewport;
             let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
-            let input = pass_input(ids, (600, 400), 2.0, ctx.zoom_factor(), false, clock);
+            let input = pass_input(egui::RawInput::default(), ids, (600, 400), 2.0, ctx.zoom_factor(), false, clock);
             *for_pass.borrow_mut() = Some(ctx.run_ui(input, |ui| viewport_ui_cb(ui)));
         });
         let mut root = ctx.run_ui(egui::RawInput::default(), |ui| {

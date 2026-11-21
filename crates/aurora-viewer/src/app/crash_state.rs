@@ -493,7 +493,7 @@ impl App {
             "minimized"
         } else if self.occluded {
             "occluded"
-        } else if !self.focused {
+        } else if !self.in_front() {
             "background"
         } else {
             "focused"
