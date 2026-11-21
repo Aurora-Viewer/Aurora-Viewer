@@ -140,9 +140,21 @@ fn right_drag_id() -> egui::Id {
 }
 
 /// The drag in progress was started with the right button: its drop asks
-/// what to do (Windows Explorer and Dolphin).
+/// what to do (Windows Explorer and Dolphin). Only `source` sets the flag,
+/// while many other places start inventory drags (the Texture Library,
+/// the pickers, the profile…): it holds only while the right button is
+/// down or is being released, and is forgotten otherwise, so a later left
+/// drag from anywhere is never taken for a right one.
 fn right_drag(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(right_drag_id())).unwrap_or(false)
+    if !ctx.data(|d| d.get_temp::<bool>(right_drag_id())).unwrap_or(false) {
+        return false;
+    }
+    // read apart from `data`: egui's context locks once at a time
+    let held = ctx.input(|i| i.pointer.secondary_down() || i.pointer.button_released(egui::PointerButton::Secondary));
+    if !held {
+        ctx.data_mut(|d| d.remove::<bool>(right_drag_id()));
+    }
+    held
 }
 
 /// The mode the drag in progress would drop with.
@@ -619,5 +631,35 @@ mod right_button_tests {
             );
         }
         assert!(ctx.input(|i| i.pointer.secondary_down()));
+    }
+
+    /// A right-button drag ended long ago; a later left drag, started
+    /// anywhere (not through `source`), is not a right one.
+    #[test]
+    fn a_left_drag_after_a_right_one_is_a_left_drag() {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| d.insert_temp(right_drag_id(), true));
+        egui::DragAndDrop::set_payload(&ctx, InvDrag(Uuid::from_u128(1)));
+        let pos = egui::pos2(100.0, 100.0);
+        let mut right = true;
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                right = right_drag(ui.ctx());
+                // the keys held decide again, not the old right button
+                let held = ui.input(|i| i.modifiers);
+                assert_eq!(current_mode(ui.ctx()), mode_for(held, cfg!(target_os = "macos")));
+            },
+        );
+        assert!(!right);
+        assert!(ctx.data(|d| d.get_temp::<bool>(right_drag_id())).is_none(), "the flag is forgotten");
     }
 }

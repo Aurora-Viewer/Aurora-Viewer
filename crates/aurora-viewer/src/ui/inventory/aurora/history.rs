@@ -11,7 +11,9 @@
 //! `LIMIT` places; the keys of Windows Explorer and Dolphin (Alt+←/→/↑,
 //! the mouse's back and forward buttons, Backspace; all rebindable) and a
 //! right-click on Back or Forward listing the places, as in Explorer; Up
-//! and Back select the folder they come out of, as Explorer and Dolphin do.
+//! and Back select the folder they come out of, as Explorer and Dolphin do;
+//! a new place forgets what was ahead, as in Explorer (`changeFolderRoot`
+//! keeps `mForwardFolders`).
 
 use super::super::shortcuts::{self, Command};
 use super::super::*;
@@ -161,31 +163,44 @@ fn go(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, place
         st.anchor = Some(left);
         st.reveal = Some(left);
     }
-    // the history already stands there
+}
+
+/// Back or Forward: the history has already stepped, and stands where the
+/// explorer now is (it was not a new place).
+fn go_stepped(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, place: Place) {
+    go(inv, st, prefs, place);
     st.history.current = Some(Place::of(st));
+}
+
+/// Up or the top: a new place like any other, so the folder left goes
+/// behind and Forward is forgotten (`LLInventorySingleFolderPanel::
+/// changeFolderRoot` pushes the folder left to `mBackwardFolders`).
+fn go_new(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, place: Place) {
+    go(inv, st, prefs, place);
+    st.history.observe(Place::of(st));
 }
 
 pub(crate) fn go_back(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, steps: usize) {
     if let Some(place) = st.history.back(steps) {
-        go(inv, st, prefs, place);
+        go_stepped(inv, st, prefs, place);
     }
 }
 
 pub(crate) fn go_forward(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, steps: usize) {
     if let Some(place) = st.history.forward(steps) {
-        go(inv, st, prefs, place);
+        go_stepped(inv, st, prefs, place);
     }
 }
 
 pub(crate) fn go_up(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences) {
     if let Some(folder) = parent(inv, st) {
-        go(inv, st, prefs, Place { tab: 0, folder });
+        go_new(inv, st, prefs, Place { tab: 0, folder });
     }
 }
 
 pub(crate) fn go_root(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences) {
     let folder = super::base(inv, st);
-    go(inv, st, prefs, Place { tab: 0, folder });
+    go_new(inv, st, prefs, Place { tab: 0, folder });
 }
 
 /// Asks the server for the explorer's folder again (F5), as "Reload
@@ -418,6 +433,60 @@ mod tests {
         // 1, 2, 1 → 1 once
         assert_eq!(h.behind().collect::<Vec<_>>(), vec![at(1)]);
         assert_eq!(h.back(1), Some(at(1)));
+    }
+
+    fn tree() -> Inventory {
+        use crate::world::inventory::{FetchState, Folder};
+        let mut inv = Inventory::default();
+        for (id, parent) in [(1u128, 0u128), (2, 1), (3, 2)] {
+            let (id, parent) = (Uuid::from_u128(id), Uuid::from_u128(parent));
+            inv.folders.insert(
+                id,
+                Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id,
+                        parent,
+                        name: format!("{id}"),
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Fetched,
+                    library: false,
+                },
+            );
+            if let Some(p) = inv.folders.get_mut(&parent) {
+                p.children.push(id);
+            }
+        }
+        inv.root = Uuid::from_u128(1);
+        inv
+    }
+
+    /// Up and the top are steps like any other: Back returns to the folder
+    /// left (`onUpFolderClicked` → `changeFolderRoot`).
+    #[test]
+    fn up_and_the_top_are_steps_back_returns_from() {
+        let inv = tree();
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        for n in 1..=3 {
+            st.browse = Uuid::from_u128(n);
+            st.history.observe(Place::of(&st));
+        }
+        go_up(&inv, &mut st, &prefs);
+        assert_eq!(st.browse, Uuid::from_u128(2));
+        // the next frame sees no new place
+        assert!(!st.history.observe(Place::of(&st)));
+        go_back(&inv, &mut st, &prefs, 1);
+        assert_eq!(st.browse, Uuid::from_u128(3), "Back returns to B");
+        go_root(&inv, &mut st, &prefs);
+        assert_eq!(st.browse, Uuid::from_u128(1));
+        assert!(!st.history.can_forward(), "a new place forgets what was ahead");
+        go_back(&inv, &mut st, &prefs, 1);
+        assert_eq!(st.browse, Uuid::from_u128(3));
+        go_back(&inv, &mut st, &prefs, 1);
+        assert_eq!(st.browse, Uuid::from_u128(2));
     }
 
     #[test]

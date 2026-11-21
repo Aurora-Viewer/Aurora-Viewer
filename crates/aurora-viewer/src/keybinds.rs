@@ -2941,8 +2941,9 @@ mod tests {
         assert_eq!(kb.sanitized().get(Action::LensZoomIn)[0], None);
     }
 
-    /// World › Environment's shortcuts (menu_viewer.xml): Ctrl+Shift+U / Y /
-    /// N / X / J, added to older settings files and rebindable.
+    /// The inventory's commands share chords with the world's shortcuts
+    /// without conflicting with them, and the keys the list keeps are
+    /// refused.
     #[test]
     fn inventory_keys_only_meet_each_other() {
         let kb = KeyBindings::default();
@@ -3019,6 +3020,8 @@ mod tests {
         }
     }
 
+    /// World › Environment's shortcuts (menu_viewer.xml): Ctrl+Shift+U / Y /
+    /// N / X / J, added to older settings files and rebindable.
     #[test]
     fn environment_shortcuts_pick_the_legacy_times_of_day() {
         let mut kb = KeyBindings::default();
