@@ -5249,7 +5249,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list|order|order-az`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -5268,6 +5268,13 @@ both open states and the selection count. Capture at frame 620.
   sky inventory copies and opens the photo's sky list at frame 900. Keep
   it open, scroll, search and clear the search: its width must stay stable,
   also with `AURORA_TEXT_SIZE=1.5` or `2` (#3421).
+  `order`: the items are dated (a later
+  one newer) and the sky list opens (2500) in the inventory's order,
+  newest first: the user's sky, then the library's from Annan Adored
+  Pink Sky down to A-12AM. `order-az`: the same with the lists' A–Z
+  switch on (2490): the user's sky, then the library's skies A to Z
+  (A-6PM before A-12AM: numbers by value, as the inventory's by-name
+  order), the switch lit beside the search field.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -6315,6 +6322,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
+| `AURORA_DEMO_PHOTOTOOLS=env\|general` | Opens the Phototools window (toolbar `phototools`) on a tab |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6396,6 +6404,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_TELEPORT_ACCESS=entry\|region\|lure[:accept]` | A teleport refused for its content rating, and its prompt |
 | `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
@@ -6775,6 +6784,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
+- **`AURORA_DEMO_PHOTOTOOLS=env|general`**: opens Phototools at the first
+  frame, as the toolbar's button does, on the Environment tab (`env`, also the
+  default) or the General one. Environment, as sections that fold: Environment
+  settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
+  clouds, the same switch as the photo window's), Quick environments (four
+  times of day, the shared environment), Environment presets (three "New"
+  buttons), Reflections (SSR, mirrors, probes, probe range). General: General
+  render settings (draw distance to exposure), Render options, Quality
+  (anti-aliasing to avatar display). Each row is the Preferences row: a change
+  in one shows in the other, and a modified row has its dot. Compare with
+  Preferences › Graphics for ranges and help.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
@@ -9337,6 +9357,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
+- **`AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure[:accept]`**: the demo account's
+  preference is set to "General" and the demo's neighbouring regions are
+  adult. At frame 700 the viewer teleports to the eastern neighbour, which
+  refuses it (capture at about 780). `entry` (TeleportEntryAccessBlocked):
+  the notification "Teleport blocked" offers "Change and continue"; accepting
+  sets the preference to "Adult" and the teleport starts again by itself
+  (the log shows `teleport: restarting the refused teleport`), then "Content
+  rating changed" once it arrives. `region` (RegionTPAccessBlocked): "The
+  location you've chosen is rated Adult." with "Allow Adult content", the
+  same restart without the last notice. `lure`: an accepted teleport offer
+  is refused; the prompt offers "Change preferences" only, since a lure
+  cannot be sent again. Cancel leaves the preference and the teleport as
+  they are. `:accept` presses the prompt's first button at frame 760
+  (the log shows `demo: the rating prompt accepted`); capture after about
+  frame 1000 to see the arrival and its notice.
 - **`AURORA_DEMO_HOME=ok|refused|region|fail|udp|forbidden[:set]`**: the
   demo region answers World › Set Home to Here (also the right click of the
   home button). `ok` (the default): the capability keeps the place in whole
