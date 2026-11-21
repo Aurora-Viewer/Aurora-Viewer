@@ -615,11 +615,21 @@ mod tests {
         prim.parent_id = 0;
         prim.state = 0;
         prim.scale = Vec3::ONE;
-        let idx = world.objects.upsert_at(1, prim.clone(), Some(now));
+        let idx = world.objects.upsert_at(1, prim.clone(), Some(now), now);
         world.objects.get_mut(idx).expect("prim").render.local_scale = Some(Vec3::splat(9.0));
         prim.scale = Vec3::splat(2.0);
-        world.objects.upsert_at(1, prim, Some(now));
+        world.objects.upsert_at(1, prim, Some(now), now);
         let half = now + Duration::from_millis(60);
+        world.objects.damp_drawables(
+            0.06,
+            |_| false,
+            |_| {
+                Some(crate::world::motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
         world.objects.expire_corrections(half);
         // The existing world helpers retain network dimensions, while the
         // renderer's object overlay keeps its previous preview behavior.

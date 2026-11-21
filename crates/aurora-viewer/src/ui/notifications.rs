@@ -605,6 +605,24 @@ pub(super) fn card(
                     buttons.push((accept.into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
+                // handle_teleport_access_blocked's prompts and the maturity
+                // dialog (world/teleport_access.rs)
+                Data::MaturityChange { rating, prompt } => {
+                    use crate::world::teleport_access::Prompt;
+                    let accept: String = match prompt {
+                        Prompt::ChangeAndReteleport => aurora_i18n::tr!("world-teleport-access-change-and-continue").into(),
+                        Prompt::Change => aurora_i18n::tr!("world-teleport-access-change-preferences").into(),
+                        Prompt::Allow => aurora_i18n::tr!(
+                            "world-teleport-access-allow-button",
+                            rating = crate::ui::bars::maturity_name(*rating).to_owned()
+                        ),
+                        _ => aurora_i18n::tr!("common-ok").into(),
+                    };
+                    buttons.push((accept, Response::Accept, true));
+                    if *prompt != Prompt::OutOfSync {
+                        buttons.push((aurora_i18n::tr!("common-cancel").into(), Response::Decline, false));
+                    }
+                }
                 // TeleportRequest: Yes offers a teleport, No sends nothing
                 Data::TeleportRequest { .. } => {
                     buttons.push((aurora_i18n::tr!("common-yes").into(), Response::Accept, true));

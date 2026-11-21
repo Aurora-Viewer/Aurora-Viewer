@@ -85,7 +85,7 @@ fn base_params(agent_id: Uuid, secure_session_id: Uuid, amount: i32) -> Map {
     let mut p = Map::new();
     p.insert("agentId".into(), agent_id.to_string().into());
     p.insert("secureSessionId".into(), secure_session_id.to_string().into());
-    p.insert("language".into(), aurora_i18n::language().into());
+    p.insert("language".into(), aurora_i18n::grid_language().into());
     p.insert("currencyBuy".into(), amount.into());
     p.insert("viewerChannel".into(), crate::login::CHANNEL.into());
     p.insert("viewerMajorVersion".into(), number().into());

@@ -1,0 +1,65 @@
+name: Sign test
+
+# A manual run (Actions › Sign test › Run workflow) that tries the SignPath
+# setup without publishing anything (docs/UPDATES.md, "Code signing"): it
+# builds the release exe of the chosen branch as the Release workflow does,
+# has SignPath sign it with the project's test certificate (signing policy
+# test-signing, no approval), checks that the exe carries a signature, and
+# keeps the signed exe as the run's artifact for three days. The test
+# certificate chains to no trusted root: Windows shows the signature as not
+# trusted, which is expected.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # SignPath reads the job and downloads the unsigned exe
+  actions: read
+
+concurrency:
+  group: sign-test
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    runs-on: windows-latest
+    steps:
+      - name: SignPath set up
+        shell: pwsh
+        env:
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: |
+          if (-not $env:ORGANIZATION_ID) { throw 'The repository has no SIGNPATH_ORGANIZATION_ID variable (docs/UPDATES.md, "Code signing")' }
+          if ($env:HAS_TOKEN -ne 'true') { throw 'The repository has no SIGNPATH_API_TOKEN secret (docs/UPDATES.md, "Code signing")' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # the same build as the Release workflow; the version is the one Git
+      # describes, which the exe's version block carries
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p aurora-viewer --features xr-static-loader
+          "VERSION=$((Get-Item target/release/aurora-viewer.exe).VersionInfo.ProductVersion)" >> $env:GITHUB_ENV
+      - name: Sign (test certificate)
+        uses: ./.github/actions/signpath-sign
+        with:
+          exe: target/release/aurora-viewer.exe
+          version: ${{ env.VERSION }}
+          signing-policy: test-signing
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          trusted: 'false'
+          timeout: '600'
+      - name: Signed exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aurora-viewer-test-signed
+          path: target/release/aurora-viewer.exe
+          if-no-files-found: error
+          retention-days: 3

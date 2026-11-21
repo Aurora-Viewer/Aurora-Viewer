@@ -209,6 +209,8 @@ pub(super) struct Snapshots {
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
+    /// The World filters window's state (`ui/world_look.rs`).
+    pub world_ui: crate::ui::world_look::WorldLookUi,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// A photo to disk asked while the renderer draws the frame (the
@@ -462,6 +464,7 @@ impl Default for Snapshots {
             luts: None,
             lut_import: None,
             look_focus: None,
+            world_ui: Default::default(),
             quiet: false,
             to_disk: false,
             confirm: None,
@@ -1684,6 +1687,7 @@ impl App {
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.world_look_demo();
         self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
@@ -1940,11 +1944,7 @@ impl App {
                 }
             }
             Action::PersonalLighting => self.panels.personal_lighting = true,
-            Action::KeepLight => {
-                if self.world.eep.keep_photo() {
-                    self.snapshots.ui.light.env = Default::default();
-                }
-            }
+            Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
                     self.panels.camera_controls = true;
@@ -2042,6 +2042,7 @@ impl App {
                 }
                 let id = format!("{}{name}", looks::LUT);
                 self.settings.snapshot.looks.retain(|l| l.id != id);
+                self.settings.world_look.looks.retain(|l| l.id != id);
                 self.settings.save();
             }
             Action::OpenLutFolder => {
@@ -2056,7 +2057,8 @@ impl App {
     /// The tables' list for the interface, and an import that came back:
     /// the table chosen and said.
     fn photo_luts_update(&mut self) {
-        if !self.panels.snapshot && !self.panels.director {
+        // (the world's filters read a table of the library too)
+        if !(self.panels.snapshot || self.panels.director || self.panels.world_look || self.settings.world_look.on) {
             return;
         }
         self.photo_luts().poll();
@@ -2072,6 +2074,7 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
+        let to_world = std::mem::take(&mut self.snapshots.world_ui.importing);
         let Some(results) = result else { return };
         // the tables kept, the first one chosen; the failures said together
         let mut first = None;
@@ -2097,7 +2100,19 @@ impl App {
                 aurora_i18n::tr!("photo-lut-imported-many", count = count)
             };
             let id = format!("{}{name}", looks::LUT);
-            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            if to_world {
+                let world = &mut self.settings.world_look;
+                self.snapshots
+                    .world_ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::world(world), &id);
+                world.on = true;
+            } else {
+                self.snapshots
+                    .ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
+            }
             self.settings.save();
             self.snapshots.message = Some((text.clone(), false));
             let now = self.egui_ctx.input(|i| i.time);
@@ -2739,7 +2754,7 @@ LUT_3D_SIZE {n}
             return;
         }
         if !self.panels.snapshot {
-            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            self.snapshots.ui.light = self.snapshots.ui.light.closed();
             // the outfit's auto portrait in its studio light
             if let Some(studio) = self.outfit_portrait_light() {
                 self.world.eep.set_photo(studio);
@@ -2757,6 +2772,15 @@ LUT_3D_SIZE {n}
         }
         self.world.eep.set_photo(light.env);
         self.scene.attached_lights = light.attached_lights;
+    }
+
+    /// "Keep this light" (the photo window's button and Phototools'
+    /// banner): the photo's environment becomes the user's own, and only it
+    /// (`EnvSelector::keep_photo`).
+    pub(super) fn keep_photo_light(&mut self) {
+        if self.world.eep.keep_photo() {
+            self.snapshots.ui.light.env = Default::default();
+        }
     }
 
     /// The lists of the Light section load like the environment window's.
@@ -2788,7 +2812,9 @@ LUT_3D_SIZE {n}
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The photo's light holds the clouds still.
+    /// The clouds are held still: a switch of the session (never saved)
+    /// shared by the photo window and Phototools, kept when the photo
+    /// window closes (`PhotoLight::closed`).
     pub(super) fn photo_clouds_paused(&self) -> bool {
         self.snapshots.ui.light.clouds_paused
     }
@@ -3323,7 +3349,7 @@ LUT_3D_SIZE {n}
 }
 
 /// The Light section's view of the environment beneath the photo's.
-fn env_view<'a>(
+pub(super) fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {

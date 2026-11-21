@@ -194,6 +194,14 @@ pub enum Data {
         /// first ("Change and Continue").
         change_rating: bool,
     },
+    /// A teleport refused for the destination's content rating
+    /// (handle_teleport_access_blocked, `teleport_access.rs`): Accept
+    /// changes the preference to `rating`, and restarts the teleport for
+    /// the prompts that say so.
+    MaturityChange {
+        rating: u8,
+        prompt: super::teleport_access::Prompt,
+    },
     /// A teleport request (IM_TELEPORT_REQUEST): Yes offers a teleport.
     TeleportRequest {
         from: Uuid,
@@ -704,6 +712,15 @@ impl Notifications {
         } else {
             text
         }
+    }
+
+    /// The text of the notice `id` is shown as it was written, whatever
+    /// RLVa's `@shownames` and `@showloc` hide: who it is about was named
+    /// or not when it was made (`name_resident`), and the Legacy Viewer
+    /// runs no filter over the rest of it (an inventory offer:
+    /// inventory_offer_handler, indra/newview/llimprocessing.cpp).
+    pub fn keep_as_written(&mut self, id: u64) {
+        self.settled.insert(id);
     }
 
     /// The listed notices that came since the last call: their text is

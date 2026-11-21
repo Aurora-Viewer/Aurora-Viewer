@@ -378,7 +378,11 @@ impl ChatLog {
             return;
         };
         let from = if from.trim().is_empty() { format::SYSTEM_FROM } else { from };
-        let line = format::format_line(Some(&format::stamp(time, true)), from, text);
+        // stamped with the grid's time, as LLLogChat::saveHistory stamps
+        // time_corrected(): a computer behind the grid writes the minute
+        // the Chat Service rows have too (#4233)
+        let stamp = format::stamp(crate::ui::bars::clock::grid_time(time), true);
+        let line = format::format_line(Some(&stamp), from, text);
         let mut text = if store::EOL == "\n" { line } else { line.replace('\n', store::EOL) };
         text.push_str(store::EOL);
         if let Some(w) = self.worker() {

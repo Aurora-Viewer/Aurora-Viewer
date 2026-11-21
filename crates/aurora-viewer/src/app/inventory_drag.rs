@@ -70,7 +70,6 @@ const RLVA_LOCKED: &str = "rlva-locked";
 
 fn reason_text(reason: &str) -> &'static str {
     match reason {
-        "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
         "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
         "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
         "rez-task-single" => aurora_i18n::tr!("rez-task-single"),
@@ -80,12 +79,9 @@ fn reason_text(reason: &str) -> &'static str {
     }
 }
 
-fn portal_support(world: &World, surface: (Vec3, Option<usize>), ready: bool) -> Result<(), &'static str> {
+fn portal_support(world: &World, surface: (Vec3, Option<usize>)) -> Result<(), &'static str> {
     if let Some(idx) = surface.1 {
         contents_drop::surface_allowed(world, idx)?;
-    }
-    if !ready {
-        return Err("portal-bridge-required");
     }
     let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
     if !center.is_finite()
@@ -665,13 +661,12 @@ impl App {
             (drag.position.x * ppp, drag.position.y * ppp),
             drag.released,
         );
-        let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
-        super::portals::landmark::preview(ctx, &self.palette, drag.position, drag.shift, ready);
+        super::portals::landmark::preview(ctx, &self.palette, drag.position);
         let result = self
             .inventory_drag
             .surface
             .ok_or("rez-no-surface")
-            .and_then(|surface| portal_support(&self.world, surface, ready).map(|()| surface.0));
+            .and_then(|surface| portal_support(&self.world, surface).map(|()| surface.0));
         self.inventory_drag.cursor = Some(if result.is_ok() {
             egui::CursorIcon::Copy
         } else {
@@ -681,7 +676,7 @@ impl App {
             egui::DragAndDrop::clear_payload(ctx);
             match result {
                 Ok(point) => {
-                    self.queue_location_portal(drag.target, point, drag.shift);
+                    self.queue_location_portal(drag.target, point);
                     self.inventory_ui.release_world_drag_focus(ctx);
                 }
                 Err(reason) => self.portal_drop_notice(reason),
@@ -703,9 +698,8 @@ impl App {
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
         let started = Instant::now();
         let landmark = !ctrl && super::portals::landmark::cargo(&self.world.inventory, drag.item).is_some();
-        let portal_ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
         if landmark {
-            super::portals::landmark::preview(ctx, &self.palette, pos, drag.shift, portal_ready);
+            super::portals::landmark::preview(ctx, &self.palette, pos);
         }
         let item = if landmark {
             super::portals::landmark::cargo(&self.world.inventory, drag.item).ok_or("portal-landmark-unavailable")
@@ -741,7 +735,7 @@ impl App {
                 if item.asset_id.is_nil() {
                     return Err("portal-landmark-unavailable");
                 }
-                portal_support(&self.world, surface, portal_ready)?;
+                portal_support(&self.world, surface)?;
                 Ok(egui::CursorIcon::Copy)
             } else if let Some(idx) = surface.1.filter(|_| contents) {
                 self.inventory_drag
@@ -769,7 +763,7 @@ impl App {
             match result {
                 Ok(_) => {
                     if let Some((point, _)) = self.inventory_drag.surface {
-                        self.queue_landmark_portal(drag.item, point, drag.shift);
+                        self.queue_landmark_portal(drag.item, point);
                         self.inventory_ui.release_world_drag_focus(ctx);
                     }
                 }
@@ -829,7 +823,7 @@ impl App {
     /// DT_AVATAR → dad3dGiveInventory): `texture_library_drag_input` yields
     /// while they are the target.
     fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
-        let ids = ui::inventory::drag::carried_ids(ctx)?;
+        let ids = ui::inventory::drag::give_ids(ctx)?;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
             return None;
         }

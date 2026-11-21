@@ -31,11 +31,26 @@ pub struct PhotoLight {
     /// The ambient occlusion for the photo (0 off, as Preferences'
     /// levels); None: Preferences' one.
     pub ambient_occlusion: Option<u8>,
-    /// The clouds stop moving (LLEnvironment::pauseCloudScroll).
+    /// The clouds stop moving (LLEnvironment::pauseCloudScroll). A switch
+    /// of the session, shared with Phototools and kept when the window
+    /// closes (`closed`).
     pub clouds_paused: bool,
     /// The lights worn by avatars light the scene
     /// (LLPipeline::sRenderAttachedLights).
     pub attached_lights: bool,
+}
+
+impl PhotoLight {
+    /// The light while the photo window is closed: everything back to the
+    /// user's own, but the paused clouds, which are a switch of the session
+    /// (never saved) that Phototools shares with the photo window, as the
+    /// Legacy Viewer's pauseCloudScroll lasts the session.
+    pub fn closed(self) -> Self {
+        Self {
+            clouds_paused: self.clouds_paused,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for PhotoLight {
@@ -110,6 +125,26 @@ mod tests {
         assert_eq!(photo_level(true, Some(4), 3, true), 3, "never past the fit");
         assert_eq!(photo_level(true, Some(0), 3, true), 0, "lowered at will");
         assert_eq!(photo_level(true, None, 3, true), 3);
+    }
+
+    #[test]
+    fn closing_the_photo_window_keeps_only_the_paused_clouds() {
+        let light = PhotoLight {
+            exposure: Some(2.0),
+            clouds_paused: true,
+            attached_lights: false,
+            ..Default::default()
+        };
+        let closed = light.closed();
+        assert!(closed.clouds_paused, "a session switch, shared with Phototools");
+        assert_eq!(
+            closed,
+            PhotoLight {
+                clouds_paused: true,
+                ..Default::default()
+            }
+        );
+        assert!(!PhotoLight::default().closed().clouds_paused);
     }
 
     #[test]

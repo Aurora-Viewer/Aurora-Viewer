@@ -10,7 +10,6 @@ pub mod swim;
 mod tests;
 pub mod water_float;
 pub mod water_jump;
-pub mod water_volume;
 pub mod water_walk;
 use crate::agent::MoveInput;
 use aurora_net::bridge::Motion;
@@ -35,6 +34,17 @@ pub fn horizontal_heading(camera_forward: Vec3, body_forward: Vec3) -> Vec3 {
     } else {
         body_forward.with_z(0.0).normalize_or(Vec3::X)
     }
+}
+
+/// The aids let go of the avatar during a teleport or a region load, under
+/// the photo's free camera and under autopilot. Not when the window loses
+/// the focus (`focused` is taken so that the caller passes it and a test
+/// can hold the rule): LLViewerWindow::handleFocusLost only releases the
+/// held keys, so Stand on water or a float keeps holding the avatar behind
+/// another window while a held walk still stops (#2449).
+pub fn aids_suspended(teleporting: bool, loading: bool, free_camera: bool, autopilot: bool, focused: bool) -> bool {
+    let _ = focused;
+    teleporting || loading || free_camera || autopilot
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,7 +263,7 @@ pub struct Runtime {
     last_jump: Option<Instant>,
     swim_signal: Option<crate::world::PlayingAnimation>,
     swim_pose: Option<crate::ao::State>,
-    /// Keep animation context when a free camera/focus loss releases physics.
+    /// Keep animation context when a free camera or a load releases physics.
     swim_inspection: Option<State>,
     entry_fall: bool,
     flight_exit_pose: bool,

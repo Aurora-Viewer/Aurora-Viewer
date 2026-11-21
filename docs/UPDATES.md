@@ -74,10 +74,11 @@ main a few days before a stable version, to catch crashes before everyone.
   no downgrade, since a beta may already have migrated the settings or the
   cache in a way the older stable does not read. Switching channel checks
   again at once.
-- **Signing.** Betas are not signed: code signing (SignPath, not set up
-  yet) asks for a manual approval of every release, which a build every
-  12 hours cannot wait for. Its step must skip the tags with a pre-release
-  part (`-`). Beta testers are told to expect an unknown-publisher warning.
+- **Signing.** Betas are not signed: code signing ("Code signing" below)
+  asks for a manual approval of every release, which a build every 12 hours
+  cannot wait for, so the Release workflow skips the tags with a
+  pre-release part (`-`). Beta testers are told to expect an
+  unknown-publisher warning.
 
 `scripts/test-nightly.ps1` holds the fixture tests of the versions, the
 next tag, the pruning and the policy line; the Nightly workflow runs them on
@@ -153,6 +154,83 @@ installation. macOS remains out of scope: its application bundle is signed
 and replaced as a whole. The current ZIP is kept: Velopack was studied, but
 its chain of packages and installers is not that of the Aurora releases.
 
+## Code signing
+
+The Windows exe can be signed by [SignPath](https://signpath.io), with the
+certificate of the [SignPath Foundation](https://signpath.org), free for
+open source projects. A signed exe is what antivirus software (Norton,
+Defender) and SmartScreen trust; an unsigned one may be blocked or
+quarantined. The publisher Windows shows is "SignPath Foundation". The
+policy page is <https://aurora-viewer.org/code-signing/> (website
+repository, `code-signing/`).
+
+Two workflows sign, both through the composite action
+`.github/actions/signpath-sign` (the SignPath project `Aurora-Viewer`, the
+artifact configuration `initial` of
+[`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml)):
+
+- **Sign test** (`sign-test.yml`), run by hand from the Actions tab on any
+  branch: it builds the release exe, has it signed with the project's
+  **test certificate** (signing policy `test-signing`, no approval), checks
+  that the exe carries a signature and keeps it as the run's artifact
+  `aurora-viewer-test-signed` for three days. It publishes nothing. The
+  test certificate chains to no trusted root: Windows shows that signature
+  as not trusted, which is expected. It needs the variable and the secret
+  below, not `SIGNPATH_SIGN_RELEASES`.
+- **Release** (`release.yml`), for a stable tag once the repository has the
+  variable `SIGNPATH_SIGN_RELEASES` set to `true`; without it, releases ship
+  unsigned as before. After the build and the symbols:
+  1. the exe alone is uploaded as an artifact of the run;
+  2. `signpath/github-action-submit-signing-request` sends it to SignPath
+     under the signing policy `release-signing`, with the version (the tag
+     without its `v`) that the artifact configuration checks against the
+     exe, and waits up to an hour: **an approver of the project accepts
+     each release by hand in SignPath** (link in the step's log);
+  3. the signed exe replaces the built one: its signature must be one
+     Windows trusts, and `scripts/verify-version.ps1` runs again on it;
+  4. the package, its `.sha256` and the release are made from the signed
+     exe, and the release notes start with the code signing line and the
+     policy link (the SignPath Foundation's terms ask for it on the
+     download pages).
+
+  A refused or expired request fails the run before anything is published:
+  tag again after fixing it. Betas (tags with a pre-release part, the
+  nightly's) are never signed, see "Beta channel" above.
+
+Signing only adds a certificate to the file: its code and debug id do not
+change, so the symbols zip, made before, still matches the published exe.
+The media plugins pack (separate `media-plugins-<n>` releases) is not
+signed: its binaries are built from, or are, upstream projects' code, which
+SignPath leaves to their own maintainers.
+
+### Setting it up
+
+What only a maintainer can do, never an agent (accounts, tokens):
+
+1. In SignPath (the open source subscription is granted): the project
+   `Aurora-Viewer` linked to the trusted build system **GitHub.com**, the
+   artifact configuration `initial` replaced by the content of
+   `.signpath/artifact-configuration.xml` (a zip with the exe at its root:
+   GitHub hands its artifacts over as zips), and the CI user as a
+   submitter of `test-signing` and `release-signing`. Both policies
+   require the trusted build system; `release-signing` also uses the
+   approval process, with the approvers of the policy page.
+2. In GitHub, Settings › Secrets and variables › Actions:
+   - secret `SIGNPATH_API_TOKEN`: the CI user's API token (Regenerate token
+     in SignPath, pasted straight into GitHub);
+   - variable `SIGNPATH_ORGANIZATION_ID`: the organization id, shown in the
+     CI Integration tab of a signing policy.
+3. Run **Sign test**, download its artifact and check Properties › Digital
+   Signatures of the exe: a signature by the test certificate.
+4. Once the SignPath Foundation has reviewed the setup and imported the
+   production certificate (`release-signing` turns valid): the variable
+   `SIGNPATH_SIGN_RELEASES` = `true`. The next stable tag waits at "Sign
+   (SignPath)" for an approver; Properties › Digital Signatures of the
+   published exe then shows "SignPath Foundation".
+5. Optionally, the SignPath GitHub App on the repository (origin checks:
+   branch, tag, build definition) and the origin verification of
+   `release-signing`.
+
 ## Replacement and rollback
 
 Download, hash and extraction run in the background. Extraction refuses
@@ -174,9 +252,14 @@ outside the installed folder. It waits for the end of the parent (a Windows
 handle, or the parent's `/proc` entry on Linux, with its start time so that a
 reused PID is not taken for it), takes a lock, moves the old package entries
 into the backup and puts the new ones in place. The arguments are kept. The
-new instance signals a presented frame; the backup is then deleted. If it
-exits or shows nothing for 90 seconds, the old version is restored and
-restarted with a message. The errors offer the release page.
+new instance signals a presented frame; the backup is then deleted. While
+it starts, it also signals each step (a pipeline compiled, the next phase):
+if it exits, goes 90 seconds without a step, or shows no frame after 15
+minutes, the old version is restored and restarted with a message. A new
+version that does not signal its steps gets 90 seconds in all, as before.
+The rule is the helper's, a copy of the version being updated: it applies
+from the updates made by a version that has it. The errors offer the
+release page.
 
 Where the folder cannot be replaced, the viewer does not try: a sandbox owns
 it as a read-only package (Flatpak, Snap, AppImage), or the account cannot

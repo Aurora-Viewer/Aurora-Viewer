@@ -3040,6 +3040,22 @@ mod tests {
     }
 
     #[test]
+    fn save_as_suggests_an_editable_name_for_an_existing_unicode_outfit() {
+        let mut inv = crate::world::inventory::Inventory::default();
+        model::seed_demo(&mut inv, Uuid::from_u128(1));
+        let id = model::base(&inv).expect("saved outfit");
+        inv.folders.get_mut(&id).expect("outfit folder").info.name = "花見コーデ".into();
+
+        let mut st = AppearanceUi::default();
+        st.begin_save_as(&inv);
+
+        let name = st.save_as.expect("Save as dialog");
+        assert!(!name.is_empty() && !name.contains('?'));
+        assert!(crate::text_validation::Policy::Ascii.accepts(&name));
+        assert_eq!(inv.folders[&id].info.name, "花見コーデ");
+    }
+
+    #[test]
     fn floater_stays_compact_and_save_as_rejects_empty_names() {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
