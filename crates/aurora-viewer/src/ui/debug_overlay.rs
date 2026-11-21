@@ -27,15 +27,26 @@ const RED: Color32 = Color32::from_rgb(240, 70, 70);
 const ORANGE: Color32 = Color32::from_rgb(245, 160, 50);
 const GREY: Color32 = Color32::from_gray(140);
 
+/// The hitbox frame the Legacy Viewer draws for Developer › Render Metadata ›
+/// Avatar Hitboxes: the avatar's own position and rotation, half its scale
+/// in either direction. Port of `LLDrawPoolAvatar::renderAvatars`
+/// (indra/newview/lldrawpoolavatar.cpp, originally LGPL 2.1), gated by
+/// `DebugRenderHitboxes` (indra/newview/app_settings/settings.xml).
+fn avatar_hitbox_frame(pos: Vec3, rot: Quat, scale: Vec3) -> (Vec3, Quat, Vec3) {
+    (pos, rot, scale * 0.5)
+}
+
 struct Lines<'a> {
     painter: egui::Painter,
     proj: &'a Projector,
+    /// Stroke width (points).
+    width: f32,
 }
 
 impl Lines<'_> {
     fn seg(&self, a: Vec3, b: Vec3, color: Color32) {
         if let (Some((pa, _)), Some((pb, _))) = (self.proj.project(a), self.proj.project(b)) {
-            self.painter.line_segment([pa, pb], Stroke::new(1.0, color));
+            self.painter.line_segment([pa, pb], Stroke::new(self.width, color));
         }
     }
 
@@ -237,6 +248,7 @@ pub fn draw(
     let lines = Lines {
         painter: ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("debug_overlay"))),
         proj,
+        width: 1.0,
     };
     let now = Instant::now();
 
@@ -400,6 +412,31 @@ pub fn draw(
             for (a, b) in bone_segments(&bones, poses, &rest, model) {
                 lines.seg(a, b, BONE);
             }
+        }
+    }
+
+    // O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
+    // control avatars), in the colour of their minimap dot and 2 points
+    // wide like the Legacy Viewer's. Visual parity only: picking still tests
+    // the fixed click box (scene::picking).
+    if dv.avatar_hitboxes {
+        let wide = Lines {
+            painter: lines.painter.clone(),
+            proj,
+            width: 2.0,
+        };
+        for (idx, o) in world.objects.avatars() {
+            if scene.gpu.get(idx).is_none() {
+                continue;
+            }
+            let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            if pp.distance(eye) > SKELETON_RANGE {
+                continue;
+            }
+            let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
+            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id, o));
         }
     }
 }
@@ -568,6 +605,23 @@ mod tests {
         let first = lod_labels(&[small, large], egui::pos2(380.0, 100.0), 150.0, 1, on_plane);
         assert_eq!(first[0].1.shown, 1);
     }
+
+    #[test]
+    fn the_hitbox_follows_the_avatars_own_frame_like_the_legacy_viewer() {
+        // half the avatar's scale in either direction, kept oriented
+        let (pos, rot, half) = avatar_hitbox_frame(
+            Vec3::new(10.0, 4.0, 1.0),
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Vec3::new(0.6, 0.6, 1.9),
+        );
+        assert!(pos.abs_diff_eq(Vec3::new(10.0, 4.0, 1.0), 1e-6));
+        assert!(rot.abs_diff_eq(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-6));
+        assert!(half.abs_diff_eq(Vec3::new(0.3, 0.3, 0.95), 1e-6));
+        // the corners reach the rotated half extents, not an axis-aligned box
+        let corner = pos + rot * (half * Vec3::new(1.0, 1.0, 1.0));
+        assert!(corner.abs_diff_eq(Vec3::new(9.7, 4.3, 1.95), 1e-5), "{corner}");
+    }
+
     /// The debug texts go where the floating text goes
     /// (LLViewerObject::setDebugText): an object @showhovertext names, then
     /// every world object under @showhovertextworld, loses them; a HUD's

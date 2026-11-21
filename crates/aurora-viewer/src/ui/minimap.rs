@@ -283,6 +283,19 @@ fn fallback_name(world: &World, object: &crate::world::objects::Object) -> Optio
         .or_else(|| world.social.names.get(&object.full_id).filter(|name| !name.is_empty()).cloned())
 }
 
+/// The colour of a visible avatar's dot: LLNetMap::getAvatarColor (its mark,
+/// its contact set, its relation), or the others' colour while RLVa or the
+/// name settings hide its name (LLNetMap::draw, indra/newview/llnetmap.cpp).
+/// The Dev Toolbox's hitboxes take it too, as LLDrawPoolAvatar::renderAvatars
+/// does (stricter there: the Legacy Viewer's hitbox does not ask RLVa).
+pub(crate) fn avatar_color(world: &World, id: &Uuid, object: &crate::world::objects::Object) -> Color32 {
+    if names_allowed(world, id) {
+        super::colors::map_color(world, id, &fallback_name(world, object).unwrap_or_default())
+    } else {
+        super::colors::c(super::colors::get().map_other)
+    }
+}
+
 fn names_allowed(world: &World, id: &Uuid) -> bool {
     world.rlva_can_name(*id) && world.social.avatar_names.shows(crate::world::names::NameScope::World, id)
 }
@@ -956,10 +969,8 @@ impl MiniMap {
             }
             let visible = visible_avatar(world, &id);
             let col = match visible {
-                Some(object) if names_allowed(world, &id) => {
-                    super::colors::map_color(world, &id, &fallback_name(world, object).unwrap_or_default())
-                }
-                _ => super::colors::c(k.map_other),
+                Some(object) => avatar_color(world, &id, object),
+                None => super::colors::c(k.map_other),
             };
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {

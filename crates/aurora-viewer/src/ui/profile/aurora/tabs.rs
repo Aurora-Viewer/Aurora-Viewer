@@ -407,6 +407,9 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
             None => {}
         }
     }
+    // LLPanelProfilePicks::updateButtons greys New under @showloc; here the
+    // add tile is hidden instead (the human's choice, 2026-11-20): no new
+    // pick either way, only the look differs
     let add =
         editing && !w.pick_save_waits() && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
     thumbs(ui, env, w, &items, add.then_some((pr.picks.len(), limit)), compact);
@@ -507,7 +510,7 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
 /// A pick's or a classified's place, as it is written: the Legacy Viewer's
 /// LLPanelProfilePick::setPickLocation and LLPanelProfileClassified
 /// (indra/newview/llpanelprofilepicks.cpp, llpanelprofileclassifieds.cpp)
-/// show it with no RLVa filter (`@showloc` greys only New).
+/// show it with no RLVa filter (`@showloc` only takes New away).
 fn place_row(ui: &mut egui::Ui, p: &Palette, place: &str) {
     if place.is_empty() {
         return;
