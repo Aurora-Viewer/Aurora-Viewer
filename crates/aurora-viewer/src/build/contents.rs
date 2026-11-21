@@ -149,6 +149,9 @@ impl BuildTool {
             if let Some(job) = self.replacement.job.as_ref().filter(|job| !job.stage.terminal()) {
                 keep.extend(job.inventory_ids());
             }
+            if let Some(job) = self.ui.bulk.deep.as_ref() {
+                keep.extend(job.objects());
+            }
             self.contents.objects.retain(|k, _| keep.contains(k));
         }
     }

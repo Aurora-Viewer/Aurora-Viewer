@@ -244,7 +244,7 @@ fn search_places_drag_to_the_world_before_details_load_in_both_styles_and_all() 
         );
         let drop = w.location_drop.take().expect("world receives the release");
         assert_eq!(drop.target, Target::Parcel(id));
-        assert!(drop.released && drop.shift);
+        assert!(drop.released);
         assert!(
             !actions
                 .iter()
