@@ -5442,7 +5442,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask`, `blend` or `layers` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059); `layers`: three blended faces on it and on one another |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
-| `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
+| `AURORA_DEMO_BLEND_SHADOWS=1`, `behind` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), a nearly opaque pane before a shadow, or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_LAMP_BLINK=<frames>` | A lamp ahead of the start view, switched off and on every `frames` frames |
@@ -5752,7 +5752,7 @@ both open states and the selection count. Capture at frame 620.
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
   on the tree behind the palm, capture at frame 760.
-- **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
+- **`AURORA_DEMO_BLEND_SHADOWS=1|behind|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
   ground, 14 m along the start view and to its right (clear of the
@@ -5764,7 +5764,14 @@ both open states and the selection count. Capture at frame 620.
   Viewer's rules, `fs_shadow` in `object.wgsl`). The classic sun lights
   with `min(n·l, shadow)` as the Legacy Viewer does, so a dithered shadow
   barely darkens ground the sun already lights at a slant: see the
-  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `dense`: 400 upright
+  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `behind`: two upright panes
+  8 m along the start view, the left one blended at face alpha 0.95, the
+  right one opaque, each before an opaque slab lying 2.2 m up; with
+  `AURORA_DEMO_SUN=207,70` the slabs' shadows lie on the ground behind the
+  panes. With `AURORA_RT_SHADOWS=1` and `AURORA_CONTACT_SHADOWS=1`, the
+  blended pane is lit as the opaque one is: the ray-traced mask is made
+  from the depth that holds it, so it does not show the slab's shadow seen
+  through it. `dense`: 400 upright
   greenhouse panes over a 60 m square ahead, for the cost of the blended
   casters (`AURORA_PROFILE=1`, with `AURORA_BLEND_SHADOWS=0` to compare).
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of

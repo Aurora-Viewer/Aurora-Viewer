@@ -9219,10 +9219,12 @@ impl Backend {
             main.contact[0] = 1.0;
             main.contact[2] = 1.0;
         }
+        // the blended faces opaque enough are in the depth the contact
+        // shadows read
+        let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();
         if self.contact_now {
             main.contact[0] = 1.0;
-            // the blended faces opaque enough are in the depth it read
-            if crate::contact_shadows::Override::from_env().all_casters() {
+            if contact_blend {
                 main.contact[1] = 1.0;
             }
         }
@@ -10763,7 +10765,7 @@ impl Backend {
         // copy of its depth, which the pass then reads; the occlusion's
         // depth already holds those blended faces
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            let more = contact_blend && (n_blend > 0 || n_sprites > 0);
             if more {
                 let source = match &self.targets.ao_depth {
                     Some((tex, _)) if blend_in_ao_depth => tex,
@@ -10831,21 +10833,21 @@ impl Backend {
             }
             self.contact.encode(&mut encoder, t, more);
         }
+        // The depth the ray-traced mask is made from. Where `frame.contact.y`
+        // tells a blended face solid to the eye that the mask is its own
+        // (object.wgsl `contact_share`), it is the solid depth, which holds
+        // those faces: traced from the prepass, the mask held there the
+        // shadow of what lies behind the face.
+        let rt_mask_depth = match &self.targets.solid_depth {
+            Some((_, solid)) if contact_blend && n_blend > 0 => solid,
+            _ => &self.targets.depth_ss,
+        };
         if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
             let contact = match (self.contact_now, &self.targets.contact) {
                 (true, Some(c)) => &c.result,
                 _ => &self.dummies.black,
             };
-            rt.encode(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                t,
-                &self.targets.depth_ss,
-                contact,
-                &scene,
-                faces,
-            );
+            rt.encode(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, faces);
             // A photo (a tile of one, a 360° face, an offline film's frame)
             // has no frame before it: its passes run their rounds over its
             // view (rt_shadows.rs `STILL_ROUNDS`). The small frame that
@@ -10880,16 +10882,7 @@ impl Backend {
                     crate::rt_shadows::Round::Live
                 };
                 if n > 0 {
-                    rt.retrace(
-                        &self.device,
-                        &self.queue,
-                        &mut encoder,
-                        t,
-                        &self.targets.depth_ss,
-                        contact,
-                        &scene,
-                        round,
-                    );
+                    rt.retrace(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, round);
                 }
                 rt.encode_lights(
                     &self.device,
@@ -10898,7 +10891,7 @@ impl Backend {
                     t,
                     &light,
                     &f.lights,
-                    &self.targets.depth_ss,
+                    rt_mask_depth,
                     rt_motion_drawn,
                     &self.dummies.black,
                     &scene,
