@@ -8,7 +8,8 @@
 //!
 //! Both services ask, in their terms of use:
 //! * the requests leave the user's own application, never a proxy or a
-//!   server of ours (there is none);
+//!   server of ours (there is none); a proxy the user set up in Preferences
+//!   › Network is theirs, and these requests follow it like all others;
 //! * one key per application, a test key limited to about 100 requests an
 //!   hour until the service grants a production key;
 //! * their results shown as they come, in their order, never mixed with
@@ -597,15 +598,15 @@ pub fn client() -> Option<reqwest::Client> {
             attempt.follow()
         }
     });
-    reqwest::Client::builder()
-        .user_agent(format!("{} (GIF search)", aurora_version::user_agent()))
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .retry(reqwest::retry::never())
-        .redirect(policy)
-        .build()
-        .map_err(|e| log::warn!("GIF search: no HTTP client: {e}"))
-        .ok()
+    aurora_proxy::http_client(|b| {
+        b.user_agent(format!("{} (GIF search)", aurora_version::user_agent()))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(policy)
+    })
+    .map_err(|e| log::warn!("GIF search: no HTTP client: {e}"))
+    .ok()
 }
 
 /// The body of `url`, at most `max` bytes.

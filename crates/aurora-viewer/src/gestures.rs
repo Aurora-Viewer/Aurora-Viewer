@@ -28,6 +28,7 @@ pub struct Entry {
 struct Playing {
     definition: Gesture,
     step: usize,
+    preloaded: bool,
     wait: Option<Instant>,
     requested: BTreeSet<Uuid>,
     observed: BTreeSet<Uuid>,
@@ -86,6 +87,7 @@ impl Manager {
             Playing {
                 definition,
                 step: 0,
+                preloaded: false,
                 wait: None,
                 requested: BTreeSet::new(),
                 observed: BTreeSet::new(),
@@ -249,19 +251,19 @@ impl Manager {
         (words.join(" "), found)
     }
 
-    pub fn similar(&self, item: Uuid, definition: &Gesture) -> Vec<Uuid> {
-        self.active
-            .iter()
-            .copied()
-            .filter(|id| {
-                *id != item
-                    && self.entries.get(id).is_some_and(|entry| {
-                        let g = &entry.definition;
-                        (!g.trigger.is_empty() && g.trigger == definition.trigger)
-                            || (g.key != KEY_NONE && g.key == definition.key && g.mask == definition.mask)
-                    })
-            })
-            .collect()
+    /// LLGestureMgr::replaceGesture, after a save from the editor: the
+    /// gesture's playback stops and its new definition takes its place. The
+    /// other active gestures stay as they are, even with the same shortcut
+    /// or trigger (#4167): replaceGesture loads with mDeactivateSimilar off,
+    /// and the one caller that asks for it (activateGestures, an outfit's
+    /// gestures) has already marked each item active, so its
+    /// deactivateSimilarGestures never runs. Two gestures on one key both
+    /// stay, and a press plays one of them at random ([`Manager::key_trigger`]).
+    pub fn replace(&mut self, item: Uuid, entry: Entry) -> Vec<Effect> {
+        let effects = self.stop(item);
+        self.entries.insert(item, entry);
+        self.changed();
+        effects
     }
 
     /// Requested animations remain pending until a simulator signal confirms
@@ -274,8 +276,14 @@ impl Manager {
     pub fn tick_ready(&mut self, now: Instant, signaled: &BTreeSet<Uuid>, mut ready: impl FnMut(&Step) -> bool) -> Vec<Effect> {
         let mut effects = Vec::new();
         self.playing.retain(|_, p| {
-            if p.definition.steps.iter().any(|step| !ready(step)) {
-                return true;
+            // LLGestureMgr::playGesture / hasLoadingAssets tracks the batch
+            // requested by this playback. A later retry or sound-cache eviction
+            // must not suspend steps that have already started (#2931).
+            if !p.preloaded {
+                if p.definition.steps.iter().any(|step| !ready(step)) {
+                    return true;
+                }
+                p.preloaded = true;
             }
             p.observed.retain(|id| signaled.contains(id));
             let started: Vec<_> = p.requested.intersection(signaled).copied().collect();

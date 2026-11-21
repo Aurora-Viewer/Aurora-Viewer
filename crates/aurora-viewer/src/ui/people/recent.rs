@@ -1,4 +1,4 @@
-//! People › Recent in Aurora's look (the People mock-up v2): the residents
+//! People â€º Recent in Aurora's look (the People mock-up v2): the residents
 //! we dealt with lately (`world/recent.rs`, LLRecentPeople; the recent tab
 //! of LLPanelPeople, panel_people.xml) as Near you's rows, newest first,
 //! with how long ago and the region we were in. The menu is the avatar
@@ -9,6 +9,7 @@ use super::rows::{self, RICH_GAP, RICH_H};
 use super::{Ctx, PeopleAction, PeopleUi};
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, widgets};
+use crate::world::names::NameScope;
 use crate::world::recent::Met;
 use egui::{Rect, Vec2};
 use uuid::Uuid;
@@ -18,14 +19,14 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
-/// "12 min ago · Ahern".
+/// "12 min ago Â· Ahern".
 fn ago(met: &Met) -> String {
     let seconds = met.when.elapsed().map_or(0.0, |d| d.as_secs_f64());
     let when = aurora_i18n::tr!("people-recent-ago", when = super::nearby::seen_text(seconds));
     if met.region.is_empty() {
         when
     } else {
-        format!("{when} · {}", met.region)
+        format!("{when} Â· {}", met.region)
     }
 }
 
@@ -40,7 +41,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         Vec2::new(w, rows::TOOLBAR_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+            widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
         },
     );
     ui.add_space(7.0);
@@ -50,8 +51,8 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         .recent
         .list()
         .iter()
-        .map(|m| (m.clone(), rows::display_name(world, &m.id)))
-        .filter(|(met, name)| super::matches_name(world, &met.id, name, &filter))
+        .map(|m| (m.clone(), rows::display_name(world, NameScope::Roster, &m.id)))
+        .filter(|(met, name)| super::matches_name(world, NameScope::Roster, &met.id, name, &filter))
         .collect();
     let order: Vec<Uuid> = people.iter().map(|(m, _)| m.id).collect();
     st.sel.retain(|id| order.contains(id));
@@ -76,8 +77,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let world = c.world;
     let id = met.id;
     let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor
+            .filter(|id| st.sel.contains(id))
+            .or_else(|| st.sel.last().copied())
+            .or(st.sheet)
+            == Some(id),
+    );
     if !ui.is_rect_visible(rect) {
-        rows::person_menu(&resp, p, world, &st.sel, id);
+        rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
         return;
     }
     if !data.pics.contains_key(&id) {
@@ -86,7 +96,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
+    let left = rows::picture(ui, p, world, NameScope::Roster, rect, data.pics.get(&id), id, name, false);
     let friend = world.social.is_friend(&id);
     // Near you's quick actions: profile, IM, a friendship offer, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
@@ -94,7 +104,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             ("user-filled", aurora_i18n::tr!("common-view-profile")),
             ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
         ];
-        if !friend {
+        // LLPanelPeople::updateButtons (llpanelpeople.cpp): no friendship
+        // offer from this list to a resident `@shownames` hides
+        if !friend && world.rlva_can_name(id) {
             b.push(("user-plus", aurora_i18n::tr!("radar-add-friend")));
         }
         b.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
@@ -131,7 +143,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     if action.activate {
         c.actions.push(PeopleAction::OpenIm(id));
     }
-    rows::person_menu(&resp, p, world, &st.sel, id);
+    rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
     let detail = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then_some(name);
     rows::contact_tip(resp, detail);
 }
@@ -142,12 +154,12 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, sl
     let mut menu_open = false;
     for ((icon, _), resp) in buttons.iter().zip(rows::actions(ui, p, slot, buttons, ("people-recent-act", id))) {
         match *icon {
-            "user-filled" if resp.clicked() => c.actions.push(PeopleAction::Profile(id)),
+            "user-filled" if resp.clicked() => c.actions.push(PeopleAction::RosterProfile(id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(PeopleAction::OpenIm(id)),
             "user-plus" if resp.clicked() => context::request(ui.ctx(), CtxAction::AddFriend(id)),
             "dots-filled" => {
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    context::avatar_list_menu(ui, p, world, id, AvatarList::Nearby);
+                    context::avatar_roster_menu(ui, p, world, id, AvatarList::Nearby);
                 });
             }
             _ => {}

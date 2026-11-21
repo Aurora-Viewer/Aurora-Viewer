@@ -16,11 +16,39 @@ pub struct AudioUi {
     pub panel_open: bool,
     /// When the pointer left both the speaker and the open panel.
     left_at: Option<f64>,
+    /// The media button this frame, and whether the pointer is on it: the
+    /// nearby media panel (`ui/nearby_media.rs`) opens under it.
+    pub media_button: Option<egui::Rect>,
+    pub media_button_hovered: bool,
 }
 
 /// How long the panel stays once the pointer left the speaker and the panel:
 /// long enough to travel from the icon down to the panel.
-const CLOSE_DELAY: f64 = 0.35;
+pub(crate) const CLOSE_DELAY: f64 = 0.35;
+
+/// Hover state of a panel opened from a bar icon, for one frame. It opens
+/// as soon as the pointer is on the icon, stays while the pointer is on the
+/// icon or the panel (or a button is held, a slider being dragged past its
+/// edge), and closes `CLOSE_DELAY` after the pointer left both. Returns
+/// whether a repaint is needed to close it on time.
+pub(crate) fn hover_step(open: &mut bool, left_at: &mut Option<f64>, on_icon: bool, on_panel: bool, held: bool, now: f64) -> bool {
+    if on_icon || (*open && (on_panel || held)) {
+        *open = true;
+        *left_at = None;
+        return false;
+    }
+    if !*open {
+        return false;
+    }
+    let left = *left_at.get_or_insert(now);
+    if now - left >= CLOSE_DELAY {
+        *open = false;
+        *left_at = None;
+        false
+    } else {
+        true
+    }
+}
 
 /// Channels that get an enable box in the panel (indices of
 /// `audio_channels`): the music, the media and the voice, the ones people
@@ -28,28 +56,9 @@ const CLOSE_DELAY: f64 = 0.35;
 const PANEL_TOGGLES: [usize; 3] = [4, 5, 6];
 
 impl AudioUi {
-    /// Hover state of the panel for one frame. It opens as soon as the
-    /// pointer is on the speaker, stays while the pointer is on the speaker
-    /// or the panel (or a button is held, a slider being dragged past its
-    /// edge), and closes `CLOSE_DELAY` after the pointer left both. Returns
-    /// whether a repaint is needed to close it on time.
+    /// Hover state of the volume panel for one frame ([`hover_step`]).
     fn hover(&mut self, on_icon: bool, on_panel: bool, held: bool, now: f64) -> bool {
-        if on_icon || (self.panel_open && (on_panel || held)) {
-            self.panel_open = true;
-            self.left_at = None;
-            return false;
-        }
-        if !self.panel_open {
-            return false;
-        }
-        let left = *self.left_at.get_or_insert(now);
-        if now - left >= CLOSE_DELAY {
-            self.panel_open = false;
-            self.left_at = None;
-            false
-        } else {
-            true
-        }
+        hover_step(&mut self.panel_open, &mut self.left_at, on_icon, on_panel, held, now)
     }
 }
 
@@ -64,8 +73,7 @@ fn toggle_master_mute(audio: &mut AudioSettings) {
 /// Preferences › Sound › Voice. Music and media switch their channel.
 fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
     match i {
-        6 => Some(&mut audio.voice_enabled),
-        _ if PANEL_TOGGLES.contains(&i) => Some(&mut audio.enabled[i]),
+        _ if PANEL_TOGGLES.contains(&i) => Some(audio.channel_box(i)),
         _ => None,
     }
 }
@@ -81,10 +89,72 @@ pub enum MusicStatus {
     Waiting,
     Blocked,
     Connecting,
-    Playing,
-    Error,
+    /// Heard; with the failed certificate of an `https` station played
+    /// anyway (aurora-audio `tls.rs`), shown as a red warning.
+    Playing(Option<aurora_audio::CertificateIssue>),
+    /// The last attempt failed, with its reason; kept while a retry connects.
+    Error(aurora_audio::StreamError),
     NoDevice,
 }
+
+/// Why the station cannot be heard, in the resident's language; the server's
+/// own text stays in the log.
+fn error_reason(error: aurora_audio::StreamError) -> String {
+    use aurora_audio::StreamError;
+    match error {
+        StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
+        StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
+        StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
+        StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
+        StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
+        StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
+        StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
+        StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
+        StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
+    }
+}
+
+/// What is wrong with the certificate of a station played anyway, and that
+/// its connection is not secure. An expiry says when, in local time.
+pub fn certificate_warning(issue: aurora_audio::CertificateIssue) -> String {
+    use aurora_audio::CertificateIssue;
+    use chrono::{Datelike, Timelike};
+    let reason = match issue {
+        CertificateIssue::Expired { not_after: Some(secs) } => match chrono::DateTime::from_timestamp(secs, 0) {
+            Some(at) => {
+                let at = at.with_timezone(&chrono::Local);
+                aurora_i18n::tr!(
+                    "music-certificate-expired-on",
+                    date = super::land::day_month(Some(i64::from(at.year())), at.month() as usize, i64::from(at.day())),
+                    time = format!("{:02}:{:02}", at.hour(), at.minute())
+                )
+            }
+            None => aurora_i18n::tr!("music-certificate-expired").to_owned(),
+        },
+        CertificateIssue::Expired { not_after: None } => aurora_i18n::tr!("music-certificate-expired").to_owned(),
+        CertificateIssue::NotYetValid => aurora_i18n::tr!("music-certificate-not-yet-valid").to_owned(),
+        CertificateIssue::Untrusted => aurora_i18n::tr!("music-certificate-untrusted").to_owned(),
+        CertificateIssue::WrongName => aurora_i18n::tr!("music-certificate-wrong-name").to_owned(),
+        CertificateIssue::Revoked => aurora_i18n::tr!("music-certificate-revoked").to_owned(),
+        CertificateIssue::Other => aurora_i18n::tr!("music-certificate-other").to_owned(),
+    };
+    aurora_i18n::tr!("music-certificate-warning", reason = reason)
+}
+
+/// A red warning line: the filled triangle, then `text` wrapped beside it.
+/// The music tooltips of both bar styles show the certificate warning so.
+pub fn warning_line(ui: &mut egui::Ui, p: &Palette, icons: &Icons, text: &str, size: f32) {
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        if let Some(icon) = icons.get(WARNING_ICON) {
+            ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(size + 2.0)).tint(p.danger));
+        }
+        ui.add(egui::Label::new(RichText::new(text).size(size).color(p.danger)).wrap());
+    });
+}
+
+/// The warning sign of the interface (a script error, a refused action).
+const WARNING_ICON: &str = "alert-triangle-filled";
 
 impl MusicStatus {
     pub fn read(
@@ -115,8 +185,8 @@ impl MusicStatus {
         }
         match stream {
             None => Self::NoDevice,
-            Some(aurora_audio::StreamStatus::Playing { .. }) => Self::Playing,
-            Some(aurora_audio::StreamStatus::Error(_)) => Self::Error,
+            Some(aurora_audio::StreamStatus::Playing { certificate, .. }) => Self::Playing(*certificate),
+            Some(aurora_audio::StreamStatus::Error(error)) => Self::Error(*error),
             Some(_) => Self::Connecting,
         }
     }
@@ -125,16 +195,24 @@ impl MusicStatus {
         match self {
             Self::Unavailable => aurora_i18n::tr!("ui-bars-tip-music-none"),
             Self::Stopped => aurora_i18n::tr!("ui-bars-tip-music-stopped"),
-            Self::Playing => aurora_i18n::tr!("ui-bars-tip-music-playing"),
+            Self::Playing(_) => aurora_i18n::tr!("ui-bars-tip-music-playing"),
             Self::Disabled => aurora_i18n::tr!("ui-music-disabled"),
             Self::Muted => aurora_i18n::tr!("ui-music-muted"),
             Self::Waiting => aurora_i18n::tr!("ui-music-waiting"),
             Self::Blocked => aurora_i18n::tr!("ui-music-blocked"),
             Self::Connecting => aurora_i18n::tr!("ui-music-connecting"),
-            Self::Error => aurora_i18n::tr!("ui-music-error"),
             Self::NoDevice => aurora_i18n::tr!("ui-music-no-device"),
+            Self::Error(error) => return aurora_i18n::tr!("music-state-error", reason = error_reason(error)),
         }
         .to_owned()
+    }
+
+    /// The certificate issue of the station heard, if any.
+    pub fn certificate(self) -> Option<aurora_audio::CertificateIssue> {
+        match self {
+            Self::Playing(issue) => issue,
+            _ => None,
+        }
     }
 }
 
@@ -144,7 +222,10 @@ pub struct MediaState {
     pub music_available: bool,
     pub music_playing: bool,
     pub music_status: MusicStatus,
+    /// Media around to start or stop: the parcel's or on a prim
+    /// (LLStatusBar::refresh: hasInWorldMedia, hasParcelMedia).
     pub media_available: bool,
+    /// A media is on.
     pub media_playing: bool,
 }
 
@@ -152,6 +233,8 @@ pub struct MediaState {
 pub enum AudioAction {
     None,
     ToggleMusic,
+    /// Start or stop all media (LLStatusBar::onClickMediaToggle,
+    /// LLViewerMedia::setAllMediaEnabled).
     ToggleMedia,
     /// Volumes / mutes / toggles changed: apply to the audio engine.
     Changed,
@@ -226,9 +309,6 @@ pub fn top_controls(
     media: MediaState,
     slot: Vec2,
 ) -> AudioAction {
-    let toggle = |ui: &mut egui::Ui, icon: &str, tip: &str, active: bool, enabled: bool| {
-        slot_button(ui, p, icons, icon, active, enabled, slot).on_hover_text(tip)
-    };
     let mut action = AudioAction::None;
     // demo captures: AURORA_DEMO_VOLUME=open pins the panel open, `muted`
     // also draws the speaker muted (display only, the settings stay)
@@ -255,27 +335,50 @@ pub fn top_controls(
             } else {
                 aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
             };
-            let music_tip = format!("{action_tip}\n{}", media.music_status.text());
-            let music = toggle(ui, "radio", &music_tip, media.music_playing, media.music_available);
+            // A parcel without music says so alone, without a second "none".
+            let music_tip = if media.music_available {
+                format!("{action_tip}\n{}", media.music_status.text())
+            } else {
+                action_tip.to_owned()
+            };
+            let music = slot_button(ui, p, icons, "radio", media.music_playing, media.music_available, slot);
+            // a station heard under a failed certificate: the warning sign on
+            // the radio's corner, the reason in red in its tooltip
+            let warning = media.music_status.certificate().map(certificate_warning);
+            let music = match &warning {
+                Some(text) => {
+                    if let Some(icon) = icons.get(WARNING_ICON) {
+                        let badge = egui::Rect::from_min_size(music.rect.right_bottom() - Vec2::splat(9.0), Vec2::splat(9.0));
+                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        ui.painter().image(icon.id(), badge, uv, p.danger);
+                    }
+                    music.on_hover_ui(|ui| {
+                        ui.set_max_width(300.0);
+                        ui.label(&music_tip);
+                        warning_line(ui, p, icons, text, 12.0);
+                    })
+                }
+                None => music.on_hover_text(&music_tip),
+            };
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
             }
-            let med = toggle(
+            // media: all media on / off on click, the nearby media panel on
+            // hover (no tooltip, as for the speaker: the panel shows there)
+            let med = slot_button(
                 ui,
+                p,
+                icons,
                 "brand-youtube-filled",
-                if !media.media_available {
-                    aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")
-                } else if media.media_playing {
-                    aurora_i18n::tr!("ui-audio-stop-parcel-media")
-                } else {
-                    aurora_i18n::tr!("ui-audio-play-parcel-media")
-                },
                 media.media_playing,
                 media.media_available,
+                slot,
             );
             if med.clicked() && media.media_available {
                 action = AudioAction::ToggleMedia;
             }
+            st.media_button = Some(med.rect);
+            st.media_button_hovered = med.contains_pointer();
             sp
         })
         .inner;
@@ -380,17 +483,23 @@ mod tests {
         use crate::media::filter::Verdict;
         use aurora_audio::StreamStatus;
         let mut audio = AudioSettings::default();
-        let playing = StreamStatus::Playing { title: None };
-        let failed = StreamStatus::Error("synthetic failure".into());
+        let playing = StreamStatus::Playing {
+            title: None,
+            certificate: None,
+        };
+        let failed = StreamStatus::Error(aurora_audio::StreamError::Connection);
         let read = |audio: &AudioSettings, verdict, stream| MusicStatus::read(true, true, audio, false, verdict, stream);
         assert_eq!(
             read(&audio, Verdict::Allow, Some(&StreamStatus::Connecting)),
             MusicStatus::Connecting
         );
-        assert_eq!(read(&audio, Verdict::Allow, Some(&failed)), MusicStatus::Error);
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&failed)),
+            MusicStatus::Error(aurora_audio::StreamError::Connection)
+        );
         assert_eq!(read(&audio, Verdict::Ask, Some(&playing)), MusicStatus::Waiting);
         assert_eq!(read(&audio, Verdict::Deny, Some(&playing)), MusicStatus::Blocked);
-        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Playing);
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Playing(None));
         audio.enabled[4] = false;
         assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Disabled);
         audio.enabled[4] = true;
@@ -410,6 +519,59 @@ mod tests {
             MusicStatus::read(true, true, &audio, true, Verdict::Allow, Some(&playing)),
             MusicStatus::Muted
         );
+    }
+
+    #[test]
+    fn a_station_under_a_failed_certificate_plays_with_its_warning() {
+        use crate::media::filter::Verdict;
+        use aurora_audio::{CertificateIssue, StreamStatus};
+        let audio = AudioSettings::default();
+        // 2026-11-18 12:00 UTC: the same year in every time zone
+        let expired = CertificateIssue::Expired {
+            not_after: Some(1_795_003_200),
+        };
+        let playing = StreamStatus::Playing {
+            title: Some("Song".into()),
+            certificate: Some(expired),
+        };
+        let status = MusicStatus::read(true, true, &audio, false, Verdict::Allow, Some(&playing));
+        assert_eq!(status, MusicStatus::Playing(Some(expired)));
+        assert_eq!(status.certificate(), Some(expired));
+        assert_eq!(status.text(), MusicStatus::Playing(None).text(), "it plays: the warning is beside");
+        assert_eq!(MusicStatus::Playing(None).certificate(), None);
+        assert_eq!(MusicStatus::Connecting.certificate(), None);
+        // the date of the expiry, once readable
+        assert!(certificate_warning(expired).contains("2026"), "{}", certificate_warning(expired));
+        let issues = [
+            CertificateIssue::Expired { not_after: None },
+            CertificateIssue::NotYetValid,
+            CertificateIssue::Untrusted,
+            CertificateIssue::WrongName,
+            CertificateIssue::Revoked,
+            CertificateIssue::Other,
+        ];
+        let texts: std::collections::HashSet<_> = issues.iter().map(|issue| certificate_warning(*issue)).collect();
+        assert_eq!(texts.len(), issues.len(), "each issue has its own words: {texts:?}");
+        assert!(!texts.contains(&certificate_warning(expired)));
+    }
+
+    #[test]
+    fn a_music_error_names_its_reason() {
+        use aurora_audio::StreamError;
+        let text = MusicStatus::Error(StreamError::HttpStatus(404)).text();
+        assert!(text.contains("404"), "{text}");
+        let reasons: Vec<_> = [
+            StreamError::WebPage,
+            StreamError::Playlist,
+            StreamError::Tls,
+            StreamError::Connection,
+        ]
+        .into_iter()
+        .map(|error| MusicStatus::Error(error).text())
+        .collect();
+        for (i, text) in reasons.iter().enumerate() {
+            assert!(reasons.iter().skip(i + 1).all(|other| other != text), "{reasons:?}");
+        }
     }
 
     #[test]

@@ -275,6 +275,12 @@ impl ClickWait {
         self.demo.spec().is_some()
     }
 
+    /// AURORA_DEMO_CLICKS=...,clickable: its left clicks act on every
+    /// scripted rigged mesh, ours included, whatever the preferences say.
+    fn demo_clickable(&self) -> bool {
+        self.demo.spec().is_some_and(|spec| spec.clickable)
+    }
+
     pub(super) fn hold(&mut self, input: Held) {
         if let (Held::Motion(dx, dy), Some(Held::Motion(x, y))) = (&input, self.held.back_mut()) {
             *x += dx;
@@ -286,10 +292,29 @@ impl ClickWait {
 }
 
 impl App {
+    /// The rigged meshes a left click and the hover cursor act on
+    /// (scene/drawn.rs): the three preferences, for the plain click only.
+    /// With Alt, Ctrl or Shift held the click reaches what it reached
+    /// before them; a demo script asks for every kind without touching the
+    /// saved settings.
+    pub(super) fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
+        use crate::scene::drawn::RiggedClicks;
+        if self.clicks.demo_clickable() {
+            RiggedClicks::ALL
+        } else if self.alt || self.ctrl || self.shift {
+            RiggedClicks::MODIFIER_CLICK
+        } else {
+            self.settings.rigged_clicks()
+        }
+    }
+
     pub(super) fn ui_takes_pointer(&self) -> bool {
         if self.cursor_hold.held() {
             // the hidden cursor is the camera's: the crosshair, never a window (#1343)
             return false;
+        }
+        if self.ik_editor.manipulator_owns_pointer() {
+            return true;
         }
         let ppp = self.egui_ctx.pixels_per_point();
         ui::widgets::pointer_over_ui(&self.egui_ctx, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp))
@@ -298,6 +323,9 @@ impl App {
     /// A mouse button of the window, pressed or released: handled now, or
     /// in its turn behind the click that waits for its depth.
     pub(super) fn mouse_input(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
+        if self.studio_mouse(button, pressed, over_ui) {
+            return;
+        }
         if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
@@ -308,6 +336,12 @@ impl App {
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
+            MouseButton::Left if pressed && self.mouse_mode == MouseMode::Steer && self.steer_by_right => {
+                // MMO-style buttons: while the right button steers, the left
+                // one walks forward (a double press runs) and clicks nothing
+                self.left_down = true;
+                self.walk_tap(0, true);
+            }
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && self.camera.mouselook() {
                     self.double_click.reset();
@@ -684,8 +718,19 @@ impl App {
             }
             let got = shown.and_then(|d| local(d.idx));
             let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
+            // a left click passes through the rigged mesh it was aimed at
+            // unless the preferences (or `clickable`) give it the click
+            let through = |expected: u32| {
+                gesture == crate::scene::drawn::Gesture::Touch
+                    && [picked.drawn.blend, picked.drawn.opaque]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| self.scene.record_object(f.record))
+                        .any(|(i, _)| local(i) == Some(expected) && self.scene.touch_passes_through(&self.world, i))
+            };
             let aimed = match self.clicks.demo.expected.take() {
                 Some(expected) if got == Some(expected) => format!("aimed at {expected}: OK"),
+                Some(expected) if through(expected) => format!("aimed at {expected}: PASSED THROUGH"),
                 Some(expected) => format!("aimed at {expected}: MISSED"),
                 None => "not aimed".to_string(),
             };
@@ -722,6 +767,7 @@ impl App {
             }
         }
         self.clicks.held.clear();
+        self.build.drop_press();
     }
 
     /// The build tools' release of a demo script, behind its press.
@@ -979,18 +1025,20 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,left|alt|menu|build|focus]": a
+/// AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]": a
 /// click on the world every `ms` milliseconds (250 if it is not a number)
 /// once the world shows, held 60 ms: at pixel (x, y) of the window (a
 /// quarter of the width, near the bottom, by default), or with `sweep` at a
 /// new place of the window each time, or with `rigged` at the rigged meshes
 /// on screen in turn (`demo drawn pick` in the log says what each click
-/// designated).
+/// designated). `clickable`: the left clicks act on scripted rigged meshes,
+/// as with the three "Left click on rigged objects" preferences on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DemoSpec {
     period: Duration,
     at: DemoAt,
     kind: DemoKind,
+    clickable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1038,6 +1086,7 @@ fn demo_spec(var: &str) -> DemoSpec {
         period: Duration::from_millis(ms.clamp(20, 60_000)),
         at,
         kind,
+        clickable: parts.contains(&"clickable"),
     }
 }
 
@@ -1360,7 +1409,9 @@ mod tests {
         );
         assert_eq!(demo_spec("250,focus").kind, DemoKind::Focus);
         let d = demo_spec("300,rigged,menu");
-        assert_eq!((d.at, d.kind), (DemoAt::Rigged, DemoKind::Menu));
+        assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Menu, false));
+        let d = demo_spec("300,rigged,clickable,left");
+        assert_eq!((d.at, d.kind, d.clickable), (DemoAt::Rigged, DemoKind::Left, true));
         // a sweep stays in the window and does not repeat itself soon
         let places: Vec<(f32, f32)> = (1..200).map(sweep_point).collect();
         assert!(places.iter().all(|(u, v)| (0.0..1.0).contains(u) && (0.0..1.0).contains(v)));
