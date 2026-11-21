@@ -7974,7 +7974,12 @@ failure. Grid validation and any paid upload are performed by the human.
   Focus another window, then click back into Aurora: with Preferences ›
   Graphics › "Leave gaming mode when Aurora comes back in front" on (the
   default), it ends at once (`gaming mode off`); off, only the button ends
-  it, and the notice says so. A capture run pauses too but keeps its frame
+  it, and the notice says so. A window of the interface outside the
+  viewer's (Conversations sent outside by its title bar's button) does not
+  end it: with the focus there, the world stays paused and the loop runs at
+  30 fps (the rate in the top bar), so that what is typed shows as it is
+  typed; back to the game, it falls to 5 fps again. A capture run pauses
+  too but keeps its frame
   rate: `AURORA_DEMO_GAMING_MODE=900` and `AURORA_CAPTURE_FRAMES=1000`.
   Memory: within a second the log says `texture memory: the window was
   in gaming mode for 1 s, freeing up video memory`, and 3 s in `gaming mode: memory

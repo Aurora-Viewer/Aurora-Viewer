@@ -7270,7 +7270,7 @@ impl App {
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
-            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on) {
+            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on, self.outside.focused()) {
                 break;
             }
         }
@@ -13920,7 +13920,7 @@ impl App {
         // gaming mode: the loop crawls, slower still out of sight; not
         // while a photo is drawn (app/gaming_mode.rs)
         let hidden = self.occluded || gfx.window.is_minimized().unwrap_or(false);
-        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden);
+        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden, self.outside.focused());
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
