@@ -307,6 +307,7 @@ impl App {
                     radius: 12.0,
                     falloff: 0.5,
                     projector: None,
+                    extent: 0.0,
                 })
                 .collect();
         }

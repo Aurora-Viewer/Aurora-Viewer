@@ -711,6 +711,35 @@ fn light(cx: &mut Cx) {
                     .changed()
                 },
             );
+            cx.experimental().toggle(
+                tr!("ui-options-point-shadows"),
+                tr!("ui-options-point-shadows-help"),
+                &field!(point_shadows),
+            );
+            let enabled = cx.s.point_shadows;
+            cx.row(
+                tr!("ui-options-point-shadow-limit"),
+                tr!("ui-options-point-shadow-limit-help"),
+                &field!(point_shadow_limit),
+                |ui, s| {
+                    ui.add_enabled(
+                        enabled,
+                        egui::Slider::new(
+                            &mut s.point_shadow_limit,
+                            1..=aurora_render::projector_shadows::MAX_POINT_SHADOWS as u8,
+                        )
+                        .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            let p = cx.p;
+            cx.row(
+                tr!("ui-options-point-shadow-avatar"),
+                tr!("ui-options-point-shadow-avatar-help"),
+                &field!(point_shadow_avatar),
+                |ui, s| ui.add_enabled_ui(enabled, |ui| toggle(ui, &p, &mut s.point_shadow_avatar)).inner,
+            );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
