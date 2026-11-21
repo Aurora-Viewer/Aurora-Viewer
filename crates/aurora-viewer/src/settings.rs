@@ -481,7 +481,7 @@ pub struct DebugView {
     /// (Developer › Render Metadata › Avatar Hitboxes): the avatar's own
     /// oriented box, half its scale in either direction. Visual parity only:
     /// picking still tests the fixed click box (see `scene::picking`).
-    pub avatar_pick_box: bool,
+    pub avatar_hitboxes: bool,
     /// Detail level of the objects around the pointer, with the distance
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
@@ -528,7 +528,7 @@ impl DebugView {
             || self.glow_objects
             || self.probes
             || self.skeletons
-            || self.avatar_pick_box
+            || self.avatar_hitboxes
             || self.lod_info
     }
 }

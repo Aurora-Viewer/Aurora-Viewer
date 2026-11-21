@@ -266,7 +266,7 @@ impl App {
             "O4" => d.freeze_culling,
             "O5" => d.skeletons,
             "O6" => d.complexity_tags,
-            "O10" => d.avatar_pick_box,
+            "O10" => d.avatar_hitboxes,
             "O9" => self.scene.sculpt_watch_target().is_some(),
             "P3" => self.scene.slow_sync().is_some(),
             "P4" => self.scene.still.is_some(),
@@ -306,7 +306,7 @@ impl App {
             "O4" => d.freeze_culling = on,
             "O5" => d.skeletons = on,
             "O6" => d.complexity_tags = on,
-            "O10" => d.avatar_pick_box = on,
+            "O10" => d.avatar_hitboxes = on,
             "O9" => {
                 let target = on.then(|| self.target_avatar()).flatten();
                 if on && target.is_none() {

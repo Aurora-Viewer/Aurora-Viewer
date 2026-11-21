@@ -36,40 +36,17 @@ fn avatar_hitbox_frame(pos: Vec3, rot: Quat, scale: Vec3) -> (Vec3, Quat, Vec3) 
     (pos, rot, scale * 0.5)
 }
 
-/// One stable colour per avatar for the hitbox overlay, in the spirit of
-/// the Legacy Viewer's per-avatar `LLNetMap::getAvatarColor`
-/// (indra/newview/llnetmap.cpp): a bright hue hashed from the id, so
-/// neighbouring boxes tell apart.
-fn avatar_hitbox_color(id: &uuid::Uuid) -> Color32 {
-    let mut h: u64 = 0;
-    for &b in id.as_bytes() {
-        h = h.wrapping_mul(31).wrapping_add(u64::from(b));
-    }
-    let hue = (h % 360) as f32;
-    let (s, v) = (0.7, 1.0);
-    let c = v * s;
-    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-    let (r, g, b) = match hue as u32 / 60 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    Color32::from_rgb(((r + m) * 255.0) as u8, ((g + m) * 255.0) as u8, ((b + m) * 255.0) as u8)
-}
-
 struct Lines<'a> {
     painter: egui::Painter,
     proj: &'a Projector,
+    /// Stroke width (points).
+    width: f32,
 }
 
 impl Lines<'_> {
     fn seg(&self, a: Vec3, b: Vec3, color: Color32) {
         if let (Some((pa, _)), Some((pb, _))) = (self.proj.project(a), self.proj.project(b)) {
-            self.painter.line_segment([pa, pb], Stroke::new(1.0, color));
+            self.painter.line_segment([pa, pb], Stroke::new(self.width, color));
         }
     }
 
@@ -91,21 +68,15 @@ impl Lines<'_> {
 
     /// Sphere as its three great circles.
     fn sphere(&self, c: Vec3, r: f32, color: Color32) {
-        self.ellipsoid(c, Quat::IDENTITY, Vec3::splat(r), color);
-    }
-
-    /// Ellipsoid as its three great circles, oriented by `rot`.
-    fn ellipsoid(&self, c: Vec3, rot: Quat, radii: Vec3, color: Color32) {
         const N: usize = 32;
         let pt = |axis: usize, i: usize| {
             let a = i as f32 / N as f32 * std::f32::consts::TAU;
             let (s, co) = a.sin_cos();
-            c + rot
-                * match axis {
-                    0 => Vec3::new(0.0, radii.y * co, radii.z * s),
-                    1 => Vec3::new(radii.x * co, 0.0, radii.z * s),
-                    _ => Vec3::new(radii.x * co, radii.y * s, 0.0),
-                }
+            c + r * match axis {
+                0 => Vec3::new(co, s, 0.0),
+                1 => Vec3::new(co, 0.0, s),
+                _ => Vec3::new(0.0, co, s),
+            }
         };
         for axis in 0..3 {
             for i in 0..N {
@@ -277,6 +248,7 @@ pub fn draw(
     let lines = Lines {
         painter: ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("debug_overlay"))),
         proj,
+        width: 1.0,
     };
     let now = Instant::now();
 
@@ -443,21 +415,28 @@ pub fn draw(
         }
     }
 
-    // O10 shows the Legacy Viewer hitbox: the avatar's own oriented box,
-    // half its scale in either direction. Visual parity only: picking still
-    // tests the fixed click box (scene::picking).
-    if dv.avatar_pick_box {
+    // O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
+    // control avatars), in the colour of their minimap dot and 2 points
+    // wide like the Legacy Viewer's. Visual parity only: picking still tests
+    // the fixed click box (scene::picking).
+    if dv.avatar_hitboxes {
+        let wide = Lines {
+            painter: lines.painter.clone(),
+            proj,
+            width: 2.0,
+        };
         for (idx, o) in world.objects.avatars() {
+            if scene.gpu.get(idx).is_none() {
+                continue;
+            }
             let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
             if pp.distance(eye) > SKELETON_RANGE {
                 continue;
             }
-            if dv.avatar_pick_box && scene.gpu.get(idx).is_some() {
-                let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
-                lines.obb(pos, rot, half, avatar_hitbox_color(&o.full_id));
-            }
+            let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
+            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id, o));
         }
     }
 }

@@ -5246,7 +5246,7 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_PROFILE=1`, `g_terrain_sky` is about 0.18 ms at 1600 × 900 on
   an RTX 5070 Ti.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
-  `culling`, `lights`, `probes`, `skeletons`, `pickbox`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
+  `culling`, `lights`, `probes`, `skeletons`, `hitboxes`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
   `check_probes`, `pass`: the toggles of the Dev Toolbox (formerly
   Preferences › Debug); `pass` is R3, every face tinted by its pass (green
@@ -5256,10 +5256,9 @@ both open states and the selection count. Capture at frame 620.
   off); `check_lights` and `check_probes` are the checks of
   `AURORA_LIGHT_TILES=check` and `AURORA_PROBE_WALK=check`, asked while the
   viewer runs. One view at a time replaces the image (glow, shadows or
-  ambient occlusion). `pickbox` draws the avatars' hitboxes with Legacy
-  Viewer Avatar Hitboxes parity, on the avatars within 32 m, drawn over
-  the scene with no depth test.
-  (the volumes sit inside the `skeletons` bones). `lod` (Preferences › Debug › Detail
+  ambient occlusion). `hitboxes` is O10, the avatars' hitboxes of the
+  Legacy Viewer's Avatar Hitboxes, on the avatars within 32 m, each in the
+  colour of its minimap dot, drawn over the scene with no depth test. `lod` (Preferences › Debug › Detail
   levels) labels the objects around the pointer with the level they are
   drawn at (0 to 3), the one their distance asks for when it is another,
   and the distance and radius it comes from, the numbers of Firestorm's

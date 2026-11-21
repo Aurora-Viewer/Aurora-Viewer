@@ -21934,7 +21934,7 @@ impl ApplicationHandler for App {
                         "probes" => d.probes = true,
                         "skeletons" => d.skeletons = true,
                         "lod" => d.lod_info = true,
-                        "pickbox" => d.avatar_pick_box = true,
+                        "hitboxes" => d.avatar_hitboxes = true,
                         "shadows" => d.shadow_view = true,
                         "ao" => d.ao_view = true,
                         "check_lights" => d.check_light_sets = true,
