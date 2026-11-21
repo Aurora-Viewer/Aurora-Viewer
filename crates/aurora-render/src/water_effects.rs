@@ -111,6 +111,18 @@ pub fn surface_level(xy: Vec2, time: f32, settings: WaterEffects, sea: &Sea, lev
     sea.surface(xy, time, (settings.quality.min(3) + 2).min(4) as usize, level, at)
 }
 
+/// What the water's particles may use of the particle limit `max` when
+/// the region's own take `used`: what is left, but never less than a share
+/// of their own (`WATER_PARTICLE_FLOOR`, within `max`). Without it, a
+/// region at the limit left them a few particles, a different few each
+/// frame: splashes and spray blinked in and out.
+pub fn water_particle_budget(max: u32, used: u32) -> u32 {
+    max.saturating_sub(used).max(WATER_PARTICLE_FLOOR.min(max))
+}
+
+/// The water particles' own share of the particle limit.
+pub const WATER_PARTICLE_FLOOR: u32 = 1024;
+
 /// Splash impact (0), sparse air release (1), obstacle footprint (2), or
 /// displacement without particles (3), an intersecting avatar's surface wake (4),
 /// a radial dive/cannonball sheet (5), a water-entry displacement ring (6),
@@ -978,7 +990,9 @@ impl WaterGpu {
             );
         }
         self.particles = if flags & 0xc0 != 0 {
-            (emitters as u32 * settings.particle_count()).min(settings.particle_budget)
+            // (whole events only: a cut through one drew part of a splash)
+            let per = settings.particle_count().max(1);
+            (emitters as u32 * per).min(settings.particle_budget / per * per)
         } else {
             0
         };
@@ -1362,6 +1376,16 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         drop(mapped);
         readback.unmap();
     }
+    #[test]
+    fn the_water_keeps_its_share_of_particles_in_a_region_full_of_them() {
+        assert_eq!(water_particle_budget(8192, 100), 8092);
+        // a region at the limit: the water still has its share, steady
+        assert_eq!(water_particle_budget(8192, 8192), WATER_PARTICLE_FLOOR);
+        assert_eq!(water_particle_budget(8192, 8180), WATER_PARTICLE_FLOOR);
+        // never past the limit itself
+        assert_eq!(water_particle_budget(500, 500), 500);
+    }
+
     #[test]
     fn entry_sheets_and_surface_fans_are_in_the_particle_prefix_but_rings_are_not() {
         let events: Vec<_> = [6.0, 5.0, 1.0, 0.0, 7.0]

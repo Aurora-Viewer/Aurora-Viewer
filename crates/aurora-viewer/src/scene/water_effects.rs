@@ -173,14 +173,20 @@ fn shelter_boxes(scene: &Scene, world: &World, origin: Vec2, extent: f32) -> Vec
             return None;
         }
         let (p, rotation, _) = Scene::object_transform(world, i, now, 0)?;
-        Some((
-            i,
-            super::water_shelter::ShelterBox {
-                center: p,
-                rotation,
-                half: o.scale.abs() * 0.5,
-            },
-        ))
+        // only what reaches the water: from a few metres under it to the
+        // highest underside that still holds the sea, and not standing on
+        // land (a house on the shore, a tree, a skybox shelter no water,
+        // and their least change baked the whole grid again)
+        let half = o.scale.abs() * 0.5;
+        let reach = (0..3).map(|k| (rotation * Vec3::AXES[k]).z.abs() * half[k]).sum::<f32>();
+        let level = water_at(world, p).unwrap_or(world.main_water_height());
+        if p.z - reach > level + aurora_render::water_effects::OPEN_CLEARANCE + 0.5 || p.z + reach < level - 3.0 {
+            return None;
+        }
+        if world.ground_height(p).is_some_and(|g| g > level + 2.0) {
+            return None;
+        }
+        Some((i, super::water_shelter::ShelterBox { center: p, rotation, half }))
     })
 }
 
@@ -428,15 +434,14 @@ impl Effects {
                         };
                         [
                             hash(&|h| {
+                                // (to 5 cm and about a degree: a prim's
+                                // jitter on the wire is no change)
                                 for b in &boxes {
-                                    for v in b
-                                        .center
-                                        .to_array()
-                                        .into_iter()
-                                        .chain(b.rotation.to_array())
-                                        .chain(b.half.to_array())
-                                    {
-                                        v.to_bits().hash(h);
+                                    for v in b.center.to_array().into_iter().chain(b.half.to_array()) {
+                                        ((v * 20.0).round() as i32).hash(h);
+                                    }
+                                    for v in b.rotation.to_array() {
+                                        ((v * 60.0).round() as i32).hash(h);
                                     }
                                 }
                             }),
@@ -802,6 +807,37 @@ impl Scene {
                     local.chop
                 );
             }
+            // and from here the way the swell goes, toward the shore, every
+            // 5 m: depth (real, sea grid), slope, shelter, cap, and the
+            // swell, swash and breaking the sea draws there
+            let toward = glam::Vec2::new(s.trains[0][0], s.trains[0][1]);
+            let mut row = String::new();
+            for step in 0..20 {
+                let q = here + toward * (step as f32 * 5.0);
+                let Some([g, w]) = effects.ground.sample(q) else {
+                    break;
+                };
+                let at = effects.ground.sea_point(q, s, w - g);
+                let (shadow, chop) = at.swell.map_or((1.0, 1.0), |p| (p.shadow, p.chop));
+                let l = s.local(&at, shadow, chop);
+                row.push_str(&format!(
+                    " | {}m d{:.1}/{:.1} sl{:.2} sh{:.2} cap{:.2} rch{:.0}% sw{:.2} swash{:.2} brk{:.2}",
+                    step * 5,
+                    w - g,
+                    at.depth,
+                    at.slope.length(),
+                    at.shelter,
+                    at.cap,
+                    shadow * 100.0,
+                    2.0 * l.main,
+                    l.swash,
+                    l.breaking
+                ));
+                if w - g < -1.5 {
+                    break;
+                }
+            }
+            log::info!("water sea toward the shore:{row}");
         }
         let (events, contacts, ground) = effects.update(self, world, eye, time, settings);
         self.water_effects = effects;

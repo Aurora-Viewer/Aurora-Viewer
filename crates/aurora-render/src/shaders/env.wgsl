@@ -2071,7 +2071,7 @@ fn water_crash_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, segmen
             let height=clamp(event.motion.z,0.2,6.0);
             let slope_back=clamp(length(event.motion.xy)-1.0,0.0,1.0);
             let up=corner.y*0.5+0.5;
-            let at=event.position.xy+away*0.06+along*corner.x*event.params.x-away*up*height*slope_back;
+            let at=event.position.xy+away*0.2+along*corner.x*event.params.x-away*up*height*slope_back;
             pos=vec3<f32>(at,mix(water-0.05,level+height,up));
             life=smoothstep(0.5,0.8,age)*(1.0-smoothstep(1.6,3.2,age));
             o.kind=10u;
@@ -2181,6 +2181,13 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         lit=0.8;up=0.8;
     }
     alpha*=in.life;
+    // (faded where it meets what is solid, over a few decimetres: lying on
+    // a rock's uneven face it went in and out of it, flickering)
+    let solid_depth=scene_depth_at(screen_uv(in.clip.xy));
+    if(solid_depth>0.0) {
+        let solid=world_from_depth(screen_uv(in.clip.xy),solid_depth);
+        alpha*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
+    }
     if(alpha<0.004){discard;}
     // lit as the foam on the water is (water_pixel's foam_light), in the
     // sun's shadow: brighter, it stood out as if fullbright
@@ -2239,7 +2246,7 @@ fn water_crash_sheet_color(in: WaterParticleOut) -> vec4<f32> {
     var a=alpha;
     if(depth>0.0) {
         let solid=world_from_depth(screen_uv(in.clip.xy),depth);
-        a*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.12,0.0,1.0);
+        a*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
     }
     return vec4<f32>(apply_fog(color,in.world)*a,a);
 }

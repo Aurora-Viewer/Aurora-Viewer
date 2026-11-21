@@ -10632,7 +10632,7 @@ impl Backend {
 
         let mut water_settings = self.settings.water_effects;
         water_settings.enabled &= !f.hide_water;
-        water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
+        water_settings.particle_budget = crate::water_effects::water_particle_budget(water_settings.particle_budget, n_particles);
         if self.water_effects.prepare(
             &self.device,
             &self.queue,
