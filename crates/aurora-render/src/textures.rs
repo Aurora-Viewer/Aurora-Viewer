@@ -569,6 +569,10 @@ struct PageStore {
     /// Location of each slot, uploaded by range in `TextureTable::maintain`.
     loc: Vec<u32>,
     loc_dirty: Option<(usize, usize)>,
+    /// Slots past the reserved ones that show the loading placeholder
+    /// (their location is [`PLACEHOLDER`]'s): faces the rez grid may cover
+    /// (`rez_still_grey`, object.wgsl), kept by `set_loc`.
+    loading: u32,
     /// Last revision handed out ([`Slot::revision`]).
     stamps: AtomicU64,
     /// Texel bytes of the live textures (the streamer's memory budget, as
@@ -615,6 +619,15 @@ pub struct PagesMade {
     pub unused: u32,
 }
 
+/// Slots past the reserved ones whose location is the loading
+/// placeholder's ([`PageStore::loading`]).
+fn count_loading(loc: &[u32]) -> u32 {
+    let Some(&grey) = loc.get(PLACEHOLDER as usize) else {
+        return 0;
+    };
+    loc.iter().skip(RESERVED as usize).filter(|&&l| l == grey).count() as u32
+}
+
 impl PageStore {
     #[cfg(test)]
     fn new(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32) -> Self {
@@ -637,6 +650,7 @@ impl PageStore {
             bc7: false,
             loc: vec![WHITE_LOC; capacity as usize],
             loc_dirty: None,
+            loading: 0,
             stamps: AtomicU64::new(0),
             bytes: 0,
             live: 0,
@@ -661,8 +675,21 @@ impl PageStore {
 
     fn set_loc(&mut self, slot: u32, loc: u32) {
         let i = slot as usize;
+        let grey = self.loc.get(PLACEHOLDER as usize).copied();
         if let Some(l) = self.loc.get_mut(i) {
+            let old = *l;
             *l = loc;
+            if slot == PLACEHOLDER {
+                if old != loc {
+                    self.loading = count_loading(&self.loc);
+                }
+            } else if slot >= RESERVED {
+                match (Some(old) == grey, Some(loc) == grey) {
+                    (false, true) => self.loading += 1,
+                    (true, false) => self.loading = self.loading.saturating_sub(1),
+                    _ => {}
+                }
+            }
             self.loc_dirty = Some(match self.loc_dirty {
                 Some((lo, hi)) => (lo.min(i), hi.max(i + 1)),
                 None => (i, i + 1),
@@ -1458,6 +1485,12 @@ impl TextureTable {
 
     pub fn live(&self) -> u32 {
         self.store.live
+    }
+
+    /// Textures still loading: their faces show the grey placeholder, which
+    /// the rez grid covers.
+    pub fn loading(&self) -> u32 {
+        self.store.loading
     }
 
     pub fn bytes(&self) -> u64 {

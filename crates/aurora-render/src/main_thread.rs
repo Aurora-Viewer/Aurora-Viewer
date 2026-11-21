@@ -1614,6 +1614,9 @@ impl Renderer {
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
+            rez_records: self.records.scene_needs()[0] > 0,
+            portal_records: self.records.scene_needs()[1] > 0,
+            textures_loading: self.textures.loading() > 0,
         };
         self.frames += 1;
         let built = t0.elapsed();

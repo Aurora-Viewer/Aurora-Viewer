@@ -1969,6 +1969,8 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// The scene pass's variant (scene_variant.rs): 0 full, 1 and 2 lean.
+    pub scene_variant: u32,
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,

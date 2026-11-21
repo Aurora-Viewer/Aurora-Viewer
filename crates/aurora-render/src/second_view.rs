@@ -184,6 +184,9 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         // its own packet)
         world_shift: main.world_shift,
         input_at: None,
+        rez_records: main.rez_records,
+        portal_records: main.portal_records,
+        textures_loading: main.textures_loading,
     }
 }
 

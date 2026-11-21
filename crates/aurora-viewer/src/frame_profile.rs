@@ -448,6 +448,9 @@ struct Period {
     /// are not (Apple GPUs time pass boundaries only).
     gpu_frame: f32,
     gpu_frame_n: u32,
+    /// Frames drawn with a lean scene variant (`RenderStats::scene_variant`).
+    lean_frames: u32,
+    frames_seen: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
     gpu_shadow_frames: u32,
@@ -718,6 +721,8 @@ impl FrameProfile {
             p.gpu_frame += ms;
             p.gpu_frame_n += 1;
         }
+        p.frames_seen += 1;
+        p.lean_frames += u32::from(render.scene_variant != 0);
         if let Some(d) = render.gpu_depth {
             add(&mut p.gpu_depth, &d);
         }
@@ -1036,6 +1041,9 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     if p.gpu_frame_n > 0 {
         let _ = write!(out, " gpu_frame={:.2}", p.gpu_frame / p.gpu_frame_n as f32);
+    }
+    if p.frames_seen > 0 {
+        let _ = write!(out, " scene_lean={:.0}%", 100.0 * p.lean_frames as f32 / p.frames_seen as f32);
     }
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);

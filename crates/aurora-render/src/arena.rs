@@ -605,12 +605,23 @@ pub struct RecordStore {
     free: Vec<u32>,
     dirty: DirtyChunks,
     live: u32,
+    /// Live records with a rez effect in progress, then with a portal clip
+    /// (`scene_needs`): the scene pass's variant keeps those paths while
+    /// any has one (scene_variant.rs).
+    scene_needs: [u32; 2],
     /// Set when the buffer was reallocated (bind group must be rebuilt).
     pub generation: u64,
     /// Bytes sent by the last `flush` (AURORA_PROFILE summary).
     pub uploaded: u64,
     /// The buffer could not grow (video memory full): when to try again.
     backoff: Backoff,
+}
+
+/// The scene shader's paths a record takes that a lean variant may leave
+/// out: a rez effect in progress (`rez[1]`'s mode, `rez_apply` in
+/// object.wgsl), a portal clip (`portal_clip`).
+pub(crate) fn scene_needs(r: &DrawRecord) -> [bool; 2] {
+    [r.rez[1] & 0xff != 0, r.flags[0] & crate::types::flags::PORTAL_CLIP != 0]
 }
 
 impl RecordStore {
@@ -625,6 +636,7 @@ impl RecordStore {
             free: Vec::new(),
             dirty: DirtyChunks::default(),
             live: 0,
+            scene_needs: [0; 2],
             generation: 0,
             uploaded: 0,
             backoff: Backoff::default(),
@@ -685,6 +697,22 @@ impl RecordStore {
         self.live
     }
 
+    /// Live records with a rez effect in progress, then with a portal clip.
+    pub fn scene_needs(&self) -> [u32; 2] {
+        self.scene_needs
+    }
+
+    /// Keeps `scene_needs` as a slot changes from `old` to `new`.
+    fn count_needs(&mut self, old: [bool; 2], new: [bool; 2]) {
+        for ((n, old), new) in self.scene_needs.iter_mut().zip(old).zip(new) {
+            match (old, new) {
+                (false, true) => *n += 1,
+                (true, false) => *n = n.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+
     /// Record ids in use or freed (ids are below this).
     pub fn slot_count(&self) -> usize {
         self.mirror.len()
@@ -699,6 +727,7 @@ impl RecordStore {
             return id;
         }
         let id = self.mirror.len() as u32;
+        self.count_needs([false; 2], scene_needs(&rec));
         self.mirror.push(rec);
         self.mark(id as usize);
         self.fresh.push(id);
@@ -711,7 +740,9 @@ impl RecordStore {
 
     pub fn set(&mut self, id: u32, rec: DrawRecord) {
         if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let old = scene_needs(slot);
             *slot = rec;
+            self.count_needs(old, scene_needs(&rec));
             self.mark(id as usize);
         }
     }
@@ -721,7 +752,9 @@ impl RecordStore {
         if let Some(slot) = self.mirror.get_mut(id as usize)
             && bytemuck::bytes_of(slot) != bytemuck::bytes_of(&rec)
         {
+            let old = scene_needs(slot);
             *slot = rec;
+            self.count_needs(old, scene_needs(&rec));
             self.mark(id as usize);
         }
     }
@@ -760,7 +793,10 @@ impl RecordStore {
         if let Some(slot) = self.mirror.get_mut(id as usize)
             && slot.rez != rez
         {
+            let old = scene_needs(slot);
             slot.rez = rez;
+            let new = scene_needs(slot);
+            self.count_needs(old, new);
             self.mark(id as usize);
         }
     }
@@ -772,8 +808,11 @@ impl RecordStore {
                 (slot.flags[0] & !crate::types::flags::PORTAL_CLIP) | if clip.is_some() { crate::types::flags::PORTAL_CLIP } else { 0 };
             let data = clip.map_or([0.0; 4], |clip| clip.data);
             if slot.portal_clip != data || slot.flags[0] != flags {
+                let old = scene_needs(slot);
                 slot.portal_clip = data;
                 slot.flags[0] = flags;
+                let new = scene_needs(slot);
+                self.count_needs(old, new);
                 self.mark(id as usize);
             }
         }
@@ -791,7 +830,13 @@ impl RecordStore {
     }
 
     pub fn free(&mut self, id: u32) {
-        if (id as usize) < self.mirror.len() {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            // a freed record no longer counts: its effects are cleared here,
+            // so that the slot's next owner counts afresh
+            let old = scene_needs(slot);
+            slot.rez = [0; 4];
+            slot.flags[0] &= !crate::types::flags::PORTAL_CLIP;
+            self.count_needs(old, [false; 2]);
             self.live = self.live.saturating_sub(1);
             self.free.push(id);
             self.faces.set(id as usize, CullFace::NONE);

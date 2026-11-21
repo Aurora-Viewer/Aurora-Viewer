@@ -1059,6 +1059,9 @@ struct Pipelines {
     opaque_2s: wgpu::RenderPipeline,
     mask: wgpu::RenderPipeline,
     mask_2s: wgpu::RenderPipeline,
+    /// The four above in their lean variants (`SCENE_VARIANT` 1 to 4,
+    /// scene_variant.rs): opaque, opaque 2s, mask, mask 2s in each.
+    lean: [[wgpu::RenderPipeline; 4]; 4],
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
     water_mask: wgpu::RenderPipeline,
@@ -5139,6 +5142,37 @@ impl Backend {
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
+        // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
+        let lean_opaque = [1.0, 2.0, 3.0, 4.0].map(|v| [("SCENE_VARIANT", v)]);
+        let lean_mask = [1.0, 2.0, 3.0, 4.0].map(|v| [a2c[0], ("SCENE_VARIANT", v)]);
+        let lean = [0, 1, 2, 3].map(|v| {
+            [
+                pipe(PipeDesc {
+                    gbuf: ssr,
+                    constants: &lean_opaque[v],
+                    ..base("opaque lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                }),
+                pipe(PipeDesc {
+                    cull: None,
+                    gbuf: ssr,
+                    constants: &lean_opaque[v],
+                    ..base("opaque 2s lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                }),
+                pipe(PipeDesc {
+                    a2c: samples > 1,
+                    gbuf: ssr,
+                    constants: &lean_mask[v],
+                    ..base("mask lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                }),
+                pipe(PipeDesc {
+                    a2c: samples > 1,
+                    cull: None,
+                    gbuf: ssr,
+                    constants: &lean_mask[v],
+                    ..base("mask 2s lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                }),
+            ]
+        });
         // pass B
         let hardware_water_depth = device.features().contains(wgpu::Features::DEPTH_CLIP_CONTROL);
         log::info!(
@@ -6134,6 +6168,7 @@ impl Backend {
             opaque_2s: opaque_2s.resolve(&mut done),
             mask: mask.resolve(&mut done),
             mask_2s: mask_2s.resolve(&mut done),
+            lean: lean.resolve(&mut done),
             water: water.resolve(&mut done),
             water_unclipped: water_unclipped.resolve(&mut done),
             water_mask: water_mask.resolve(&mut done),
@@ -8283,6 +8318,9 @@ impl Backend {
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
+            rez_records: packet.rez_records,
+            portal_records: packet.portal_records,
+            textures_loading: packet.textures_loading,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
         let grade = [
@@ -8632,6 +8670,9 @@ impl Backend {
             motion_cut,
             world_shift,
             input_at,
+            rez_records,
+            portal_records,
+            textures_loading,
         } = packet;
         let external_output = output.is_some();
         self.film_reads.begin(match wanted {
@@ -9414,6 +9455,8 @@ impl Backend {
             main.features[3] = 1;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        // what the scene pass's variant depends on, as the shaders read it
+        let (scene_light_mode, scene_classic) = (main.light_sets.mode[2], main.sky_ll[0] > 0.5);
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
         // (asked in window pixels: a photo frame answers none of them)
@@ -11336,11 +11379,33 @@ impl Backend {
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_pbr);
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
+            // the lean variant when no face can take a path it leaves out
+            // (scene_variant.rs)
+            let variant = crate::scene_variant::choose(crate::scene_variant::FrameState {
+                light_mode: scene_light_mode,
+                classic: scene_classic,
+                water_effects: self.water_effects.shown_flags,
+                rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
+                portal_records,
+            });
+            stats.scene_variant = variant;
+            let [opaque, opaque_2s, mask, mask_2s] = match variant {
+                0 => [
+                    &self.pipelines.opaque,
+                    &self.pipelines.opaque_2s,
+                    &self.pipelines.mask,
+                    &self.pipelines.mask_2s,
+                ],
+                v => {
+                    let l = &self.pipelines.lean[v as usize - 1];
+                    [&l[0], &l[1], &l[2], &l[3]]
+                }
+            };
             let scene_pipes = [
-                (&self.pipelines.opaque, rg.opaque),
-                (&self.pipelines.opaque_2s, rg.opaque_2s),
-                (&self.pipelines.mask, rg.mask),
-                (&self.pipelines.mask_2s, rg.mask_2s),
+                (opaque, rg.opaque),
+                (opaque_2s, rg.opaque_2s),
+                (mask, rg.mask),
+                (mask_2s, rg.mask_2s),
             ];
             for (b, (pipe, r)) in scene_pipes.into_iter().enumerate() {
                 draw(&mut pass, pipe, r);

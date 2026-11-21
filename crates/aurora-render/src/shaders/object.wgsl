@@ -1051,8 +1051,12 @@ fn eval_material(in: VsOut, front: bool) -> Material {
 }
 
 fn eval_material_base(in: VsOut, front: bool) -> Material {
-    portal_clip(records[in.record], in.world_pos);
-    rez_fw = fwidth(in.world_pos);
+    if (!scene_lean()) {
+        portal_clip(records[in.record], in.world_pos);
+    }
+    if (scene_rez()) {
+        rez_fw = fwidth(in.world_pos);
+    }
     let rec = records[in.record];
     var m: Material;
     let base_s = sample_tex(rec.tex.x, in.uv);
@@ -1685,7 +1689,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
     var caustic_light = vec3<f32>(0.0);
-    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+    if (!scene_lean() && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
         caustic_light = m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
     }
     var col: vec3<f32>;
@@ -1698,7 +1702,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = m.color.rgb + m.emissive;
         // opaque fullbright faces are not hazed on classic skies
         hazed = classic;
-    } else if (classic) {
+    } else if (scene_classic(classic)) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         // softenLightF: scol = max(shadow, emissive)
         let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
@@ -1746,15 +1750,19 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
         own *= 0.65;
     }
-    if(water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+    if(!scene_lean() && water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
         col = water_scene_lit(col, own, in.world_pos);
     }
-    col = rez_apply(rec, in, m.n, col);
+    if (scene_rez()) {
+        col = rez_apply(rec, in, m.n, col);
+    }
     if (!hazed || water_fogs_source(in.world_pos)) {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    if (!scene_lean()) {
+        col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    }
     // Studio isolation leaves the live avatar and attachments in this pass.
     // Blend the final radiance, preserving material alpha/cutouts and never
     // editing their records. HUDs use fs_hud and scenery carries its own bit.
@@ -1769,7 +1777,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
-    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+    if (!scene_lean() && (frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
         // magenta: a legacy term caught by legacy_finite; cyan: the colour
         // is still not a number, from a source the guard does not cover
         if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {

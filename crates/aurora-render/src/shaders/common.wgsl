@@ -262,6 +262,28 @@ const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+
+// The scene pass's opaque and masked pipelines, specialised to what a frame
+// uses (scene_variant.rs): 0 every path; 1 lean, classic sky; 2 lean, a sky
+// with a probe ambiance; 3 and 4 the same with the rez grid of faces still
+// loading. A lean variant leaves out the paths the frame provably does not
+// take: the portal clip, the debug views, the NaN check, the water effects'
+// light, the other sky's lighting, and the rez effect unless kept. Their
+// branches are uniform, yet compiled in they set the registers every pixel
+// pays for: on Apple GPUs the scene pass ran at 13 % fragment occupancy, and
+// the lean variant took 5 ms off the frame (M2 Pro, 2400 x 1300, #3218).
+override SCENE_VARIANT: u32 = 0u;
+fn scene_lean() -> bool { return SCENE_VARIANT != 0u; }
+// the rez effect is compiled in: the full variant and 3, 4
+fn scene_rez() -> bool { return SCENE_VARIANT == 0u || SCENE_VARIANT >= 3u; }
+// the classic sky's lighting: the frame's sky in the full variant, else the
+// variant's (odd: classic)
+fn scene_classic(classic: bool) -> bool {
+    if (SCENE_VARIANT == 0u) {
+        return classic;
+    }
+    return (SCENE_VARIANT & 1u) == 1u;
+}
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;

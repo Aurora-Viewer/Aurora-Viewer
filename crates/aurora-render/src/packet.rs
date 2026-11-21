@@ -154,6 +154,15 @@ pub(crate) struct FramePacket {
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,
+    /// Some live record has a rez effect in progress
+    /// (`RecordStore::scene_needs`): the scene pass keeps the rez effect.
+    pub rez_records: bool,
+    /// Some live record has a portal clip: the scene pass draws its full
+    /// variant.
+    pub portal_records: bool,
+    /// Some texture still loads (`TextureTable::loading`): its faces may
+    /// show the rez grid.
+    pub textures_loading: bool,
 }
 
 pub(crate) struct FrameResult {
