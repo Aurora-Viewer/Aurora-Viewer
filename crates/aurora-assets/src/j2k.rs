@@ -1,5 +1,11 @@
 //! JPEG2000 texture decoding.
 //!
+//! Textures are decoded by `aurora-j2k`, the Rust decoder of this workspace
+//! (a port of neo-j2k, with OpenJPEG's pixels). OpenJPEG stays behind it:
+//! whatever `aurora-j2k` refuses is handed to OpenJPEG as before, and
+//! `AURORA_J2K=openjpeg` decodes everything with OpenJPEG (docs/TESTING.md).
+//! Encoding (`encode.rs`) is OpenJPEG's.
+//!
 //! Ported from the Second Life / Firestorm viewer sources (originally LGPL 2.1):
 //! - `indra/llimage/llimagej2c.cpp` (`LLImageJ2C::calcDataSizeJ2C`, `calcHeaderSizeJ2C`)
 //! - `indra/llimagej2coj/llimagej2coj.cpp` (`JPEG2KDecode`, memory stream callbacks,
@@ -18,6 +24,7 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use openjpeg_sys as opj;
@@ -734,10 +741,52 @@ pub fn decode_j2k(data: &[u8], discard: u8) -> Result<DecodedImage, AssetError> 
 /// Where the time of one decode went ([`decode_j2k_timed`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DecodeTimings {
-    /// OpenJPEG: header, entropy decoding, inverse wavelet and colour transforms.
+    /// The decoder: header, entropy decoding, inverse wavelet and colour
+    /// transforms (`aurora-j2k` writes the 8-bit pixels in the same pass).
     pub codec: Duration,
-    /// Planar 32-bit samples to interleaved 8-bit pixels.
+    /// OpenJPEG only: planar 32-bit samples to interleaved 8-bit pixels.
     pub convert: Duration,
+}
+
+/// `AURORA_J2K=openjpeg`: every texture decoded by OpenJPEG, as before
+/// `aurora-j2k` (to compare the two on the grid).
+fn openjpeg_forced() -> bool {
+    static FORCED: OnceLock<bool> = OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var("AURORA_J2K").is_ok_and(|v| v.eq_ignore_ascii_case("openjpeg")))
+}
+
+/// What `aurora-j2k` may take of the machine for one texture. The headers
+/// it reads have passed [`check_decode_memory`] and the size checks of
+/// [`decode_j2k_timed`], which are tighter; these are its own bounds, checked
+/// from the headers before it allocates.
+const NATIVE_LIMITS: aurora_j2k::Limits = aurora_j2k::Limits {
+    max_tiles: MAX_TILES as u32,
+    max_components: MAX_HEADER_COMPONENTS as u32,
+    max_layers: 0,
+    max_decoded_side: MAX_DIMENSION,
+    max_memory: DECODE_BUDGET,
+};
+
+thread_local! {
+    /// The decoding thread's `aurora-j2k` decoder: its working memory serves
+    /// the next texture (it keeps a few MiB, and gives back the rest).
+    static NATIVE: std::cell::RefCell<aurora_j2k::Decoder> = std::cell::RefCell::new(aurora_j2k::Decoder::new());
+}
+
+/// Decode a codestream with `aurora-j2k`: the first four components, as
+/// [`convert_image`] keeps them of an OpenJPEG decode.
+fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Error> {
+    let options = aurora_j2k::Options { reduce, components: 4, limits: NATIVE_LIMITS };
+    let image = NATIVE.with_borrow_mut(|decoder| decoder.decode(cs, &options))?;
+    match image.samples {
+        // 8-bit components of one size: the pixels as the viewer wants them
+        aurora_j2k::Samples::Packed(data) => Ok(DecodedImage { width: image.width, height: image.height, components: image.components.min(4) as u8, data, discard: reduce }),
+        aurora_j2k::Samples::Planes(planes) => {
+            let views: Vec<PlaneView<'_>> =
+                planes.iter().take(4).map(|p| PlaneView { w: p.width, h: p.height, prec: u32::from(p.precision), signed: p.signed, data: &p.data }).collect();
+            planes_to_image(&views, reduce).map_err(|_| aurora_j2k::Error::Data("decoded components"))
+        }
+    }
 }
 
 /// [`decode_j2k`], with the time spent in each of its two stages
@@ -754,6 +803,13 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     }
     let reduce = discard.min(info.levels);
     let siz = check_decode_memory(cs, reduce)?;
+    if !openjpeg_forced() {
+        match decode_native(cs, reduce) {
+            Ok(out) => return Ok((out, DecodeTimings { codec: start.elapsed(), convert: Duration::ZERO })),
+            // what the Rust decoder does not take is OpenJPEG's, as everything was before it
+            Err(e) => log::debug!(target: "aurora_assets::j2k", "aurora-j2k: {e}; decoding with OpenJPEG"),
+        }
+    }
     // (a tile-part can never need more than about twice the raw pixels)
     let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
@@ -881,20 +937,52 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
     if width > MAX_DIMENSION || height > MAX_DIMENSION {
         return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
     }
-    let n = used.len();
+    let views: Vec<PlaneView<'_>> = used
+        .iter()
+        .map(|c| {
+            // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
+            // each decoded component (dimensions already reduced by the resolution
+            // factor); `w` and `h` were checked above against the SIZ, so the
+            // slice never spans more than the header's own component size.
+            let data = unsafe { std::slice::from_raw_parts(c.data as *const i32, c.w as usize * c.h as usize) };
+            PlaneView { w: c.w, h: c.h, prec: c.prec, signed: c.sgnd != 0, data }
+        })
+        .collect();
+    planes_to_image(&views, comps[0].factor.min(255) as u8)
+}
+
+/// One decoded component: `w * h` samples of `prec` bits, rows top to
+/// bottom.
+struct PlaneView<'a> {
+    w: u32,
+    h: u32,
+    prec: u32,
+    signed: bool,
+    data: &'a [i32],
+}
+
+/// Convert component planes (at most four) to interleaved 8-bit pixels of
+/// the largest component's size: precisions other than 8 bits and signed
+/// samples scaled to 8 bits, sub-sampled components stretched.
+fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage, AssetError> {
+    let width = planes.iter().map(|c| c.w).max().unwrap_or(0);
+    let height = planes.iter().map(|c| c.h).max().unwrap_or(0);
+    if planes.is_empty() || planes.iter().any(|c| c.w == 0 || c.h == 0 || c.data.len() < c.w as usize * c.h as usize) {
+        return Err(AssetError::J2k("decoded component has no data"));
+    }
+    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
+    }
+    let n = planes.len();
     let pixels = width as usize * height as usize;
     let mut out = vec![0u8; pixels * n];
 
-    for (ci, c) in used.iter().enumerate() {
+    for (ci, c) in planes.iter().enumerate() {
         let cw = c.w as usize;
         let ch = c.h as usize;
-        // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
-        // each decoded component (dimensions already reduced by the resolution
-        // factor); `w` and `h` were checked above against the SIZ, so the
-        // slice never spans more than the header's own component size.
-        let plane = unsafe { std::slice::from_raw_parts(c.data as *const i32, cw * ch) };
+        let plane = &c.data[..cw * ch];
         let prec = c.prec.clamp(1, 31);
-        let offset: i64 = if c.sgnd != 0 { 1i64 << (prec - 1) } else { 0 };
+        let offset: i64 = if c.signed { 1i64 << (prec - 1) } else { 0 };
         let max_in = (1i64 << prec) - 1;
         let to8 = |v: i32| -> u8 {
             let v = (v as i64 + offset).clamp(0, max_in);
@@ -923,13 +1011,7 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
         }
     }
 
-    Ok(DecodedImage {
-        width,
-        height,
-        components: n as u8,
-        data: out,
-        discard: comps[0].factor.min(255) as u8,
-    })
+    Ok(DecodedImage { width, height, components: n as u8, data: out, discard })
 }
 
 #[cfg(test)]

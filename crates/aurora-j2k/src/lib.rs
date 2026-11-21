@@ -207,15 +207,29 @@ pub(crate) struct Scratch {
 
 /// A decoder: the working memory of its decodes, which the next one uses
 /// again. One per thread; decodes on different decoders share nothing.
-#[derive(Default)]
 pub struct Decoder {
     tile: tile::Tile,
     scratch: Scratch,
+    retained: usize,
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        Decoder { tile: tile::Tile::default(), scratch: Scratch::default(), retained: 8 << 20 }
+    }
 }
 
 impl Decoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The bytes of decoded samples the decoder keeps between two decodes
+    /// (8 MiB unless set: a 512 x 512 texture of four components decodes
+    /// without a heap call but for its image). What a larger image took is
+    /// given back when its decode ends.
+    pub fn set_retained_bytes(&mut self, bytes: usize) {
+        self.retained = bytes;
     }
 
     /// Decodes a codestream (the bytes from its SOC marker on).
@@ -290,7 +304,16 @@ impl Decoder {
             tile: &mut self.tile,
             scratch: &mut self.scratch,
         };
-        let outcome = decode::decode_codestream(job, &mut comps, &mut samples, width as usize)?;
+        let outcome = decode::decode_codestream(job, &mut comps, &mut samples, width as usize);
+        // the tiles' samples beyond what the decoder keeps
+        let mut kept = 0usize;
+        for plane in &mut self.scratch.planes {
+            kept = kept.saturating_add(plane.capacity() * 4);
+            if kept > self.retained {
+                *plane = Vec::new();
+            }
+        }
+        let outcome = outcome?;
         Ok(Image {
             width,
             height,
