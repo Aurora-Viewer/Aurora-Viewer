@@ -9,8 +9,11 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
+use crossbeam_channel::{Receiver, TryRecvError};
 use glam::{DVec3, Vec3};
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
@@ -250,6 +253,8 @@ impl TeleportHistory {
 
 /// File of the saved history in the account folder.
 pub const TELEPORT_HISTORY_FILE: &str = "teleport_history.txt";
+const MAX_LEGACY_HISTORY_BYTES: u64 = 16 * 1024 * 1024;
+const LEGACY_IMPORT_FILE: &str = "teleport_history_import.json";
 /// Two places closer than this with the same title are one
 /// (MAX_GLOBAL_POS_OFFSET).
 const MAX_GLOBAL_POS_OFFSET: f64 = 5.0;
@@ -293,6 +298,80 @@ impl HistoryItem {
         m.insert("slurl", self.slurl.clone());
         m
     }
+
+    /// All four stored fields identify a visit. Treat signed zero alike,
+    /// as numeric equality does, while hashing the remaining values exactly.
+    fn key(&self) -> (&str, [u64; 4], &str) {
+        let numbers = [self.global.x, self.global.y, self.global.z, self.date];
+        let bits = numbers.map(|x| if x == 0.0 { 0 } else { x.to_bits() });
+        (&self.title, bits, &self.slurl)
+    }
+
+    /// Keep a stable fingerprint without storing the deleted destination.
+    fn fingerprint(&self) -> [u8; 32] {
+        let (title, numbers, slurl) = self.key();
+        let mut hash = Sha256::new();
+        hash.update((title.len() as u64).to_le_bytes());
+        hash.update(title);
+        for number in numbers {
+            hash.update(number.to_le_bytes());
+        }
+        hash.update(slurl);
+        hash.finalize().into()
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct ImportPolicy {
+    #[serde(default)]
+    initial_import_checked: bool,
+    cleared_through: Option<f64>,
+    removed: BTreeSet<[u8; 32]>,
+}
+
+impl ImportPolicy {
+    fn load(history: &Path) -> Option<Arc<Self>> {
+        match std::fs::read(history.with_file_name(LEGACY_IMPORT_FILE)) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(policy) => Some(Arc::new(policy)),
+                Err(e) => {
+                    log::warn!("teleport history: can't read import preferences ({e}); import disabled");
+                    None
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Arc::default()),
+            Err(e) => {
+                log::warn!("teleport history: can't open import preferences ({e}); import disabled");
+                None
+            }
+        }
+    }
+
+    fn permits(&self, visit: &HistoryItem) -> bool {
+        self.cleared_through.is_none_or(|date| visit.date > date)
+            && (self.removed.is_empty() || !self.removed.contains(&visit.fingerprint()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct SavedHistory {
+    bytes: Vec<u8>,
+    policy: Option<Arc<ImportPolicy>>,
+}
+
+#[derive(Debug, Default)]
+struct LegacyRead {
+    items: Vec<HistoryItem>,
+    found: bool,
+    failed: bool,
+}
+
+pub struct LegacyImportReport {
+    pub manual: bool,
+    pub changed: bool,
+    pub added: usize,
+    pub found: bool,
+    pub failed: bool,
 }
 
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
@@ -310,6 +389,10 @@ pub struct HistoryStorage {
     kept: Vec<Vec<u8>>,
     /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    /// Older Aurora builds saved an empty file when the user cleared Places.
+    had_saved_history: bool,
+    import_policy: Option<Arc<ImportPolicy>>,
+    legacy_history: Option<(Receiver<LegacyRead>, bool)>,
 }
 
 impl HistoryStorage {
@@ -320,18 +403,30 @@ impl HistoryStorage {
     pub fn load(path: PathBuf) -> HistoryStorage {
         // A previous session may still be publishing this account's latest
         // history. Reading its snapshot also avoids waiting for a slow disk.
-        let bytes = match writers().snapshot(&path) {
-            Some(bytes) => bytes,
+        let (saved, had_saved_history) = match writers().snapshot(&path) {
+            Some(saved) => (saved, true),
             None => match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(bytes),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Arc::default(),
+                Ok(bytes) => (
+                    Arc::new(SavedHistory {
+                        bytes,
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    true,
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+                    Arc::new(SavedHistory {
+                        bytes: Vec::new(),
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    false,
+                ),
                 Err(e) => {
                     log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
                     return HistoryStorage::default();
                 }
             },
         };
-        let (mut items, kept) = parse(&bytes);
+        let (mut items, kept) = parse(&saved.bytes);
         if !kept.is_empty() {
             log::info!(
                 "teleport history: {} line(s) could not be read; they are kept in the file",
@@ -343,7 +438,121 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
+            had_saved_history,
+            import_policy: saved.policy.clone(),
+            legacy_history: None,
         }
+    }
+
+    /// Discover and parse Legacy Viewer files off the frame. The result belongs
+    /// to this session's storage and is dropped with it on logout.
+    pub fn start_legacy_import(
+        &mut self,
+        account: crate::legacy_profile::Account,
+        apps: Vec<PathBuf>,
+        chosen: Option<PathBuf>,
+        manual: bool,
+    ) {
+        // The destination is keyed by account UUID, not grid. Aditi can
+        // share a UUID with Agni, and custom grid folder labels are ambiguous.
+        if account.grid != "agni" || !self.import_available() || self.import_busy() || (!manual && !self.check_initial_import()) {
+            return;
+        }
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        match std::thread::Builder::new().name("aurora-legacy-teleports".into()).spawn(move || {
+            let _ = sender.send(read_legacy_history(&account, &apps, chosen));
+        }) {
+            Ok(_) => self.legacy_history = Some((receiver, manual)),
+            Err(e) => log::warn!("teleport history: can't start the Legacy Viewer import ({e})"),
+        }
+    }
+
+    pub fn import_available(&self) -> bool {
+        self.path.is_some() && self.import_policy.is_some()
+    }
+
+    pub fn import_busy(&self) -> bool {
+        self.legacy_history.is_some()
+    }
+
+    fn check_initial_import(&mut self) -> bool {
+        let Some(policy) = &mut self.import_policy else {
+            return false;
+        };
+        if policy.initial_import_checked {
+            return false;
+        }
+        let eligible = !self.had_saved_history
+            && self.items.is_empty()
+            && self.kept.is_empty()
+            && policy.removed.is_empty()
+            && policy.cleared_through.is_none();
+        // Record the choice even when the history already exists or no
+        // source is found. Later logins never re-seed a history.
+        Arc::make_mut(policy).initial_import_checked = true;
+        self.save();
+        eligible
+    }
+
+    pub fn poll_legacy_import(&mut self) -> Option<LegacyImportReport> {
+        let (receiver, manual) = self.legacy_history.as_ref()?;
+        let manual = *manual;
+        let read = match receiver.try_recv() {
+            Ok(read) => read,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => LegacyRead {
+                failed: true,
+                ..Default::default()
+            },
+        };
+        self.legacy_history = None;
+        let added = self.merge_legacy(read.items);
+        if let Some(added) = added.filter(|&added| added > 0) {
+            log::info!("teleport history: imported {added} visit(s) from Legacy Viewers");
+        }
+        Some(LegacyImportReport {
+            manual,
+            changed: added.is_some(),
+            added: added.unwrap_or(0),
+            found: read.found,
+            failed: read.failed,
+        })
+    }
+
+    fn merge_legacy(&mut self, incoming: Vec<HistoryItem>) -> Option<usize> {
+        let policy = self.import_policy.as_ref()?;
+        if incoming.is_empty() || self.path.is_none() {
+            return None;
+        }
+        // Merge into the live history so a visit recorded while the worker
+        // was reading is included in the same queued snapshot.
+        let mut seen = HashSet::with_capacity(self.items.len() + incoming.len());
+        let duplicate_indices: Vec<_> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| (!seen.insert(item.key())).then_some(i))
+            .collect();
+        let additions: Vec<_> = incoming
+            .iter()
+            .filter(|&item| policy.permits(item) && seen.insert(item.key()))
+            .cloned()
+            .collect();
+        let added = additions.len();
+        if added == 0 && duplicate_indices.is_empty() {
+            return None;
+        }
+        let mut duplicates = duplicate_indices.into_iter().peekable();
+        let mut index = 0;
+        self.items.retain(|_| {
+            let keep = duplicates.next_if_eq(&index).is_none();
+            index += 1;
+            keep
+        });
+        self.items.extend(additions);
+        self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
+        self.save();
+        Some(added)
     }
 
     /// A history kept in memory only (the demo's).
@@ -399,7 +608,10 @@ impl HistoryStorage {
     /// "Remove from history" (removeItem + save).
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
-            self.items.remove(index);
+            let visit = self.items.remove(index);
+            if let Some(policy) = &mut self.import_policy {
+                Arc::make_mut(policy).removed.insert(visit.fingerprint());
+            }
             self.save();
         }
     }
@@ -407,6 +619,22 @@ impl HistoryStorage {
     /// onClearTeleportHistoryDialog: purgeItems + save. The lines kept
     /// unread go too: the user asked for an empty history.
     pub fn clear(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        self.clear_at(now);
+    }
+
+    fn clear_at(&mut self, now: f64) {
+        self.legacy_history = None;
+        if let Some(policy) = &mut self.import_policy {
+            let policy = Arc::make_mut(policy);
+            let cutoff = policy.cleared_through.map_or(now, |earlier| earlier.max(now));
+            policy.cleared_through = Some(cutoff);
+            policy
+                .removed
+                .extend(self.items.iter().filter(|visit| visit.date > cutoff).map(HistoryItem::fingerprint));
+        }
         self.items.clear();
         self.kept.clear();
         self.save();
@@ -429,7 +657,14 @@ impl HistoryStorage {
     /// Hand the latest complete file to this account's writer.
     fn save(&self) {
         if let Some(path) = &self.path {
-            writers().queue(path.clone(), self.file(), write_file);
+            writers().queue(
+                path.clone(),
+                SavedHistory {
+                    bytes: self.file(),
+                    policy: self.import_policy.clone(),
+                },
+                write_file,
+            );
         }
     }
 
@@ -441,15 +676,71 @@ impl HistoryStorage {
     }
 }
 
+fn read_legacy_history(account: &crate::legacy_profile::Account, apps: &[PathBuf], chosen: Option<PathBuf>) -> LegacyRead {
+    let folders = match chosen {
+        Some(dir)
+            if dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| account.owns(name)) =>
+        {
+            vec![dir]
+        }
+        Some(dir) => crate::legacy_profile::account_folders(&[dir], account),
+        None => crate::legacy_profile::account_folders(apps, account),
+    };
+    let mut read = LegacyRead::default();
+    for folder in folders {
+        let path = folder.join(TELEPORT_HISTORY_FILE);
+        let mut bytes = Vec::new();
+        match std::fs::File::open(path).and_then(|file| file.take(MAX_LEGACY_HISTORY_BYTES + 1).read_to_end(&mut bytes)) {
+            Ok(_) if bytes.len() as u64 <= MAX_LEGACY_HISTORY_BYTES => {
+                read.found = true;
+                read.items.extend(parse_legacy(&bytes));
+            }
+            Ok(_) => {
+                read.failed = true;
+                log::warn!("teleport history: a Legacy Viewer file exceeded the import limit");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                read.failed = true;
+                log::warn!("teleport history: can't read a Legacy Viewer file ({e})");
+            }
+        }
+    }
+    read
+}
+
+fn parse_legacy(bytes: &[u8]) -> Vec<HistoryItem> {
+    notation_rows(bytes)
+        .filter_map(|line| {
+            let data = aurora_llsd::from_notation(line).ok()?;
+            let position = data["global_pos"].as_array();
+            if !matches!(position, [x, y, z] if [x, y, z].into_iter().all(|n| matches!(n, Llsd::Real(_) | Llsd::Integer(_))))
+                || !matches!(data["date"], Llsd::Date(_))
+                || !matches!(data["slurl"], Llsd::String(_) | Llsd::Uri(_) | Llsd::Undef)
+            {
+                return None;
+            }
+            let item = HistoryItem::from_llsd(&data);
+            (!item.title.trim().is_empty() && item.global.is_finite() && item.date.is_finite()).then_some(item)
+        })
+        .collect()
+}
+
+fn notation_rows(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bytes
+        .split(|&b| b == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+}
+
 /// The places of a file, and its lines that are not one (kept as they are).
 fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
     let mut items = Vec::new();
     let mut kept = Vec::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
+    for line in notation_rows(bytes) {
         match aurora_llsd::from_notation(line) {
             Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
             _ => kept.push(line.to_vec()),
@@ -458,11 +749,25 @@ fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
     (items, kept)
 }
 
-fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
+fn write_file(path: &Path, saved: &SavedHistory) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    crate::atomic_file::write(path, file)
+    // Publish suppressions before deleting the corresponding history rows.
+    // If the policy cannot be saved, retry both with the latest snapshot.
+    if let Some(policy) = &saved.policy {
+        let policy_path = path.with_file_name(LEGACY_IMPORT_FILE);
+        let encoded = serde_json::to_vec(policy.as_ref())?;
+        let changed = match std::fs::read(&policy_path) {
+            Ok(on_disk) => on_disk != encoded,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => **policy != ImportPolicy::default(),
+            Err(e) => return Err(e),
+        };
+        if changed {
+            crate::atomic_file::write(&policy_path, &encoded)?;
+        }
+    }
+    crate::atomic_file::write(path, &saved.bytes)
 }
 
 /// One publisher per account file, shared across session and World resets.
@@ -473,7 +778,7 @@ fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
 /// LLTeleportHistoryStorage::save writes once and warns.
 #[derive(Default)]
 struct Writers {
-    pending: Mutex<HashMap<PathBuf, Arc<Vec<u8>>>>,
+    pending: Mutex<HashMap<PathBuf, Arc<SavedHistory>>>,
     finished: Condvar,
     /// Wakes a publisher waiting to try a refused write again.
     wake: Condvar,
@@ -483,11 +788,16 @@ struct Writers {
 }
 
 impl Writers {
-    fn snapshot(&self, path: &Path) -> Option<Arc<Vec<u8>>> {
+    fn snapshot(&self, path: &Path) -> Option<Arc<SavedHistory>> {
         self.pending.lock().unwrap_or_else(|p| p.into_inner()).get(path).cloned()
     }
 
-    fn queue(self: &Arc<Self>, path: PathBuf, bytes: Vec<u8>, publish: impl FnMut(&Path, &[u8]) -> std::io::Result<()> + Send + 'static) {
+    fn queue(
+        self: &Arc<Self>,
+        path: PathBuf,
+        bytes: SavedHistory,
+        publish: impl FnMut(&Path, &SavedHistory) -> std::io::Result<()> + Send + 'static,
+    ) {
         let bytes = Arc::new(bytes);
         // Inserting into a vacant slot reserves the only worker for this
         // path. Later requests replace its snapshot while the write runs.
@@ -511,13 +821,14 @@ impl Writers {
         }
     }
 
-    fn publish(&self, path: &Path, mut bytes: Arc<Vec<u8>>, mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>) {
+    fn publish(&self, path: &Path, mut bytes: Arc<SavedHistory>, mut write: impl FnMut(&Path, &SavedHistory) -> std::io::Result<()>) {
         use std::sync::atomic::Ordering;
         let mut backoff = crate::save_retry::Backoff::default();
         loop {
             let written = write(path, &bytes);
             let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
-            let newer = |pending: &HashMap<PathBuf, Arc<Vec<u8>>>| pending.get(path).is_some_and(|latest| !Arc::ptr_eq(latest, &bytes));
+            let newer =
+                |pending: &HashMap<PathBuf, Arc<SavedHistory>>| pending.get(path).is_some_and(|latest| !Arc::ptr_eq(latest, &bytes));
             if let Err(e) = written {
                 if self.closing.load(Ordering::Acquire) && !newer(&pending) {
                     log::warn!("can't save the teleport history at exit: {e}");
@@ -955,6 +1266,218 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn legacy_import_keeps_every_distinct_visit_across_restarts() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-import-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let source = b"{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"2024-03-01T10:00:00.123456Z\"}\n";
+        let base = parse_legacy(source).pop().unwrap();
+        let mut at_another_time = base.clone();
+        at_another_time.date += 0.000_002;
+        let mut at_another_position = base.clone();
+        at_another_position.global.z += 1.0;
+        let mut with_another_slurl = base.clone();
+        with_another_slurl.slurl = "hop://example.invalid/Plaza/1/2/3".into();
+        let mut with_another_title = base.clone();
+        with_another_title.title = "Plaza annex".into();
+
+        let mut history = HistoryStorage::load(path.clone());
+        history.items = vec![at_another_time.clone(), base.clone(), base.clone()];
+        history.kept = vec![b"an unreadable Aurora row".to_vec()];
+        let imported = vec![base.clone(), at_another_position, with_another_slurl, with_another_title, base];
+        assert_eq!(history.merge_legacy(imported.clone()), Some(3));
+        assert_eq!(history.items.len(), 5);
+        assert_eq!(history.items.last(), Some(&at_another_time));
+        history.flush();
+
+        let mut reloaded = HistoryStorage::load(path);
+        assert_eq!(reloaded.items, history.items);
+        assert_eq!(reloaded.kept, history.kept);
+        assert_eq!(reloaded.merge_legacy(imported), None);
+        assert_eq!(reloaded.items, history.items);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_import_reads_matching_profiles_only_and_seeds_an_empty_history() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-import-folders-{}", uuid::Uuid::new_v4()));
+        let apps = [dir.join("Firestorm_x64"), dir.join("SecondLife")];
+        let a = "{'title':'Plaza','global_pos':[r1,r2,r3],'date':d\"2024-03-01T10:00:00Z\"}";
+        let b = "{'title':'Sandbox','global_pos':[r1,r2,r3],'date':d\"2024-04-01T10:00:00Z\"}";
+        for (app, folder, rows) in [
+            (&apps[0], "jane_doe", format!("{a}\r\ninvalid row\r\n{a}\r\n")),
+            (&apps[1], "jane_doe", format!("{{}}\n{a}\n{b}\n")),
+            (&apps[0], "jane_doe.second_life_beta", b.replace("Sandbox", "Beta")),
+            (&apps[1], "jane_other", b.replace("Sandbox", "Other account")),
+        ] {
+            let profile = app.join(folder);
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(profile.join(TELEPORT_HISTORY_FILE), rows).unwrap();
+        }
+        let source_path = apps[0].join("jane_doe").join(TELEPORT_HISTORY_FILE);
+        let source_bytes = std::fs::read(&source_path).unwrap();
+        let path = dir.join("aurora").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        let account = crate::legacy_profile::Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        for grid in ["aditi", "custom_example", "demo"] {
+            let mut other = account.clone();
+            other.grid = grid.into();
+            history.start_legacy_import(other, apps.to_vec(), None, true);
+            assert!(history.legacy_history.is_none());
+        }
+
+        history.start_legacy_import(account.clone(), apps.to_vec(), None, false);
+        // Wait for the worker while retaining its result for the normal poll.
+        let visits = history
+            .legacy_history
+            .take()
+            .unwrap()
+            .0
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        sender.send(visits).unwrap();
+        history.legacy_history = Some((receiver, false));
+        let report = history.poll_legacy_import().unwrap();
+        assert!(report.changed && !report.manual);
+        history.flush();
+        let mut reloaded = HistoryStorage::load(path);
+        let titles: Vec<_> = reloaded.items.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, ["Plaza", "Sandbox"]);
+        reloaded.start_legacy_import(account.clone(), apps.to_vec(), None, false);
+        assert!(!reloaded.import_busy(), "later logins do not scan");
+        assert_eq!(std::fs::read(source_path).unwrap(), source_bytes);
+        let chosen = read_legacy_history(&account, &apps, Some(apps[1].clone()));
+        assert_eq!(chosen.items.len(), 2);
+        let chosen = read_legacy_history(&account, &apps, Some(apps[0].join("jane_doe")));
+        assert_eq!(chosen.items.len(), 2);
+        assert!(chosen.items.iter().all(|visit| visit.title == "Plaza"));
+        let wrong = read_legacy_history(&account, &apps, Some(apps[1].join("jane_other")));
+        assert!(!wrong.found && wrong.items.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_initial_import_check_is_remembered_without_an_import() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-first-login-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        assert!(history.check_initial_import(), "no history on first login");
+        history.flush();
+        assert!(
+            !HistoryStorage::load(path).check_initial_import(),
+            "a later login requires manual import"
+        );
+
+        let path = dir.join("existing").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        history.add("Plaza", DVec3::ONE, 1.0, String::new());
+        assert!(!history.check_initial_import(), "an existing history is skipped");
+        history.clear_at(2.0);
+        history.flush();
+        assert!(
+            !HistoryStorage::load(path).check_initial_import(),
+            "clearing never resets eligibility"
+        );
+
+        let path = dir.join("cleared").join(TELEPORT_HISTORY_FILE);
+        let mut history = HistoryStorage::load(path.clone());
+        history.clear_at(2.0);
+        history.flush();
+        let mut reloaded = HistoryStorage::load(path);
+        assert!(!reloaded.check_initial_import(), "a clear before upgrading prevents auto-import");
+        reloaded.flush();
+
+        let path = dir.join("older-clear").join(TELEPORT_HISTORY_FILE);
+        std::fs::create_dir(dir.join("older-clear")).unwrap();
+        std::fs::write(&path, []).unwrap();
+        let mut reloaded = HistoryStorage::load(path);
+        assert!(reloaded.items.is_empty());
+        assert!(
+            !reloaded.check_initial_import(),
+            "an empty file from an older Aurora also skips auto-import"
+        );
+        reloaded.flush();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_cache_clear_does_not_reset_the_accounts_import_check() {
+        let root = std::env::temp_dir().join(format!("aurora-tphist-cache-clear-{}", uuid::Uuid::new_v4()));
+        let path = root.join("config").join("accounts").join("account").join(TELEPORT_HISTORY_FILE);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("asset"), b"downloaded").unwrap();
+        let mut history = HistoryStorage::load(path.clone());
+        assert!(history.check_initial_import());
+        history.flush();
+
+        std::fs::remove_file(cache.join("asset")).unwrap();
+        std::fs::remove_dir(cache).unwrap();
+        assert!(path.with_file_name(LEGACY_IMPORT_FILE).is_file());
+        assert!(path.is_file());
+        assert!(!HistoryStorage::load(path).check_initial_import());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removing_and_clearing_history_persist_across_logins_and_imports() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-suppress-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let visit = |date| HistoryItem {
+            title: "Plaza".into(),
+            global: DVec3::ONE,
+            date,
+            slurl: String::new(),
+        };
+        let mut history = HistoryStorage::load(path.clone());
+        assert_eq!(history.merge_legacy(vec![visit(1.0), visit(2.0)]), Some(2));
+        history.remove(0);
+        history.flush();
+        let mut history = HistoryStorage::load(path.clone());
+        assert_eq!(history.items, vec![visit(2.0)]);
+        assert_eq!(history.merge_legacy(vec![visit(1.0), visit(3.0), visit(20.0)]), Some(2));
+        history.clear_at(5.0);
+        history.flush();
+        let mut history = HistoryStorage::load(path);
+        assert!(history.items.is_empty());
+        assert_eq!(
+            history.merge_legacy(vec![visit(1.0), visit(2.0), visit(4.0), visit(5.0), visit(6.0), visit(20.0)]),
+            Some(1)
+        );
+        assert_eq!(history.items, vec![visit(6.0)]);
+        history.flush();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_policy_save_leaves_the_history_file_in_place() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-policy-fail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let policy_path = dir.join(LEGACY_IMPORT_FILE);
+        std::fs::write(&path, b"old history").unwrap();
+        std::fs::create_dir(&policy_path).unwrap();
+        let saved = SavedHistory {
+            bytes: Vec::new(),
+            policy: Some(Arc::new(ImportPolicy {
+                cleared_through: Some(1.0),
+                ..Default::default()
+            })),
+        };
+        assert!(write_file(&path, &saved).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old history");
+        std::fs::remove_dir(policy_path).unwrap();
+        write_file(&path, &saved).unwrap();
+        assert_eq!(ImportPolicy::load(&path).unwrap().cleared_through, Some(1.0));
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// #2626: the lines this viewer can't read (not LLSD, not UTF-8) are
     /// written back at the next save instead of being lost.
     #[test]
@@ -1043,7 +1566,11 @@ mod tests {
         let (started, writing) = mpsc::channel();
         let (release, gate) = mpsc::channel();
         let mut first_write = true;
-        writers().queue(path.clone(), Vec::new(), move |path, bytes| {
+        let empty = SavedHistory {
+            bytes: Vec::new(),
+            policy: Some(Arc::default()),
+        };
+        writers().queue(path.clone(), empty, move |path, bytes| {
             if std::mem::take(&mut first_write) {
                 started.send(()).unwrap();
                 gate.recv().unwrap();
@@ -1096,7 +1623,11 @@ mod tests {
         let writers = Arc::new(Writers::default());
         let tries = Arc::new(AtomicUsize::new(0));
         let counted = tries.clone();
-        writers.queue(path.clone(), b"visits".to_vec(), move |path, bytes| {
+        let saved = SavedHistory {
+            bytes: b"visits".to_vec(),
+            ..Default::default()
+        };
+        writers.queue(path.clone(), saved, move |path, bytes| {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
             }
@@ -1106,7 +1637,11 @@ mod tests {
         while tries.load(Ordering::SeqCst) < 1 && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        assert_eq!(writers.snapshot(&path).as_deref().map(Vec::as_slice), Some(&b"visits"[..]), "kept");
+        assert_eq!(
+            writers.snapshot(&path).as_deref().map(|s| s.bytes.as_slice()),
+            Some(&b"visits"[..]),
+            "kept"
+        );
         writers.close();
         assert_eq!(tries.load(Ordering::SeqCst), 2);
         assert!(writers.snapshot(&path).is_none());

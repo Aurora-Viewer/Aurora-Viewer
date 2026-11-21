@@ -38,6 +38,7 @@ impl App {
                 self.folders.pick = Some((folder, rx));
                 let title = match folder {
                     Folder::LegacyLogs => aurora_i18n::tr!("ui-options-chat-logs-import-choose"),
+                    Folder::LegacyTeleports(_) => aurora_i18n::tr!("ui-places-legacy-history-folder"),
                     Folder::LanguageFile => aurora_i18n::tr!("language-file-choose"),
                     _ => aurora_i18n::tr!("ui-options-change-folder"),
                 };
@@ -78,7 +79,13 @@ impl App {
             Ok(picked) => {
                 self.folders.pick = None;
                 if let Some(path) = picked {
-                    self.set_folder(folder, path.to_string_lossy().into_owned());
+                    if let Folder::LegacyTeleports(agent) = folder {
+                        if self.world.agent_id == agent {
+                            self.world.start_legacy_history_import(Some(path), true);
+                        }
+                    } else {
+                        self.set_folder(folder, path.to_string_lossy().into_owned());
+                    }
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -95,6 +102,7 @@ impl App {
                 }
             }
             Folder::LegacyLogs => self.chat_import_chosen(PathBuf::from(location)),
+            Folder::LegacyTeleports(_) => {}
             Folder::LanguageFile => {
                 if self.settings.custom_language_file != location {
                     self.settings.custom_language_file = location;

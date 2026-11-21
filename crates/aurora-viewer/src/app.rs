@@ -10865,6 +10865,29 @@ impl App {
             }
         }
         self.world.poll_inventory_cache();
+        if let Some(report) = self.world.tp_storage.poll_legacy_import() {
+            if report.changed {
+                self.places_ui.history_reordered();
+            }
+            if report.manual {
+                let status = if !report.found && !report.failed {
+                    aurora_i18n::tr!("ui-places-legacy-history-not-found").to_owned()
+                } else if report.added == 0 {
+                    aurora_i18n::tr!("ui-places-legacy-history-no-new").to_owned()
+                } else {
+                    aurora_i18n::tr!("ui-places-legacy-history-imported", count = report.added)
+                };
+                if report.found || !report.failed {
+                    self.world.system_notice(status, crate::world::notice_topics::Topic::Info);
+                }
+                if report.failed {
+                    self.world.system_notice(
+                        aurora_i18n::tr!("ui-places-legacy-history-read-failed"),
+                        crate::world::notice_topics::Topic::Warning,
+                    );
+                }
+            }
+        }
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
         let deliveries = self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         // the demo's seeded inboxes are not news unless its scenario asks
@@ -20987,6 +21010,15 @@ impl App {
                             self.settings.tp_history_zone = zone;
                             self.settings.save();
                         }
+                        PlacesAction::ImportLegacyHistory => self.world.start_legacy_history_import(None, true),
+                        PlacesAction::ChooseLegacyHistoryFolder => {
+                            if self.world.legacy_history_available() {
+                                self.choose_folder(
+                                    ui::options::Folder::LegacyTeleports(self.world.agent_id),
+                                    ui::options::FolderChoice::Pick,
+                                );
+                            }
+                        }
                     }
                 }
                 // "Search"
@@ -22314,6 +22346,7 @@ impl ApplicationHandler for App {
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
+                self.places_ui.demo_import_menu = demo_tab == "history" && demo_how.split(',').any(|w| w == "import-menu");
                 self.places_ui.demo_zone = demo_how.split(',').find_map(|w| match w {
                     "utc" => Some(crate::settings::HistoryZone::Utc),
                     "local" => Some(crate::settings::HistoryZone::Local),
