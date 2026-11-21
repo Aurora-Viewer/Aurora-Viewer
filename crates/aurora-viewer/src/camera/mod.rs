@@ -582,6 +582,36 @@ impl Default for Camera {
 /// larger offset is a reference mismatch, and the camera must not fly off.
 const FOLLOW_JOINT_MAX_OFFSET: f32 = 2.0;
 
+/// The poser's framings (Aurora, #2477; the Legacy Viewer's poser never
+/// moves the camera). Only explicit actions ask for one: opening the poser,
+/// and a click that selects a joint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoserFraming {
+    /// The poser opened: the whole avatar in view.
+    Open,
+    /// A joint was click-selected: closer, to see what is edited.
+    Joint,
+}
+
+/// The farthest the opening framing leaves the camera from the avatar's
+/// pelvis: the whole body fits at the default field of view.
+const POSER_OPEN_FARTHEST: f32 = 4.2;
+/// The farthest a joint's framing leaves the camera from that joint.
+const POSER_JOINT_FARTHEST: f32 = 2.8;
+/// The poser's framing keeps the camera's distance within this range, so
+/// that a camera far off or inside the body comes to a working distance.
+const POSER_FRAME_MIN_DISTANCE: f32 = 1.8;
+const POSER_FRAME_MAX_DISTANCE: f32 = 5.0;
+
+impl PoserFraming {
+    fn farthest(self) -> f32 {
+        match self {
+            Self::Open => POSER_OPEN_FARTHEST,
+            Self::Joint => POSER_JOINT_FARTHEST,
+        }
+    }
+}
+
 fn follow_joint_intensity_scale(percent: u16) -> f32 {
     f32::from(percent.min(500)) / 100.0
 }
@@ -1055,6 +1085,28 @@ impl Camera {
     pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.unlock_view(agent, s);
         self.set_camera_pos_and_focus(camera, focus, None, s);
+    }
+
+    /// The poser's one-shot framing ("Frame the avatar while posing", an
+    /// Aurora option, #2477): `focus` from the camera's current side, no
+    /// nearer or farther than the framing allows. A free camera, a
+    /// joystick flycam or mouselook is the user's view: left alone (false).
+    pub fn frame_poser_joint(&mut self, focus: Vec3, framing: PoserFraming, agent: &mut AgentState, s: &CameraSettings) -> bool {
+        if self.free.is_some() || self.flycam.is_some() || self.mouselook() {
+            return false;
+        }
+        let direction = (self.position - self.target).normalize_or_zero();
+        let direction = if direction.length_squared() > 0.5 {
+            direction
+        } else {
+            Vec3::new(-1.0, 0.0, 0.25).normalize()
+        };
+        let distance = (self.position - self.target)
+            .length()
+            .clamp(POSER_FRAME_MIN_DISTANCE, POSER_FRAME_MAX_DISTANCE)
+            .min(framing.farthest());
+        self.set_view(focus + direction * distance, focus, agent, s);
+        true
     }
 
     /// Appearance framing, including a changed eye with an unchanged focus.
@@ -4476,6 +4528,35 @@ mod tests {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
         }
+    }
+
+    #[test]
+    fn the_poser_framing_keeps_a_free_camera_and_mouselook() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let joint = Vec3::new(128.0, 128.0, 25.4);
+        // third person: the joint centred, no farther than a joint's framing
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.frame_poser_joint(joint, PoserFraming::Joint, &mut w.agent, &s));
+        assert!(cam.focus_target.distance(joint) < 1e-4);
+        assert!(cam.focus_offset_target.length() <= POSER_JOINT_FARTHEST + 1e-4);
+        // a free camera flies on, and is still the free camera
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.start_free(&mut w.agent, &s);
+        let before = (cam.focus_target, cam.focus_offset_target);
+        assert!(!cam.frame_poser_joint(joint, PoserFraming::Open, &mut w.agent, &s));
+        assert!(cam.free().is_some());
+        assert_eq!((cam.focus_target, cam.focus_offset_target), before);
+        // mouselook stays mouselook
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        let before = (cam.focus_target, cam.focus_offset_target);
+        assert!(!cam.frame_poser_joint(joint, PoserFraming::Joint, &mut w.agent, &s));
+        assert!(cam.mouselook());
+        assert_eq!((cam.focus_target, cam.focus_offset_target), before);
     }
 
     #[test]

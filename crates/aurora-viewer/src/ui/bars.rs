@@ -1424,8 +1424,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if menu::item_if(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting"), free) {
                 panels.personal_lighting = true;
             }
-            // Aurora's own: the weather beside the lighting it rides on
-            if menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather")) {
+            // Aurora's own: the weather beside the lighting it rides on; it
+            // lights the scene, so @setenv holds it like the rest
+            if menu::item_if(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
                 *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
@@ -2297,10 +2298,11 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
         return None;
     };
     // the landmarks and places the typed text names: none for the SLURL
-    // the field opens with, nor with the location hidden
+    // the field opens with; @showloc keeps them, as
+    // LLLocationInputCtrl::rebuildLocationHistory has no RLVa test
     let (list_id, picker_key) = (id.with("suggestions"), id.with("picker"));
     let mut picker = location_suggest::Picker::load(ui.ctx(), picker_key);
-    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
+    picker.refresh(&st.landmarks, st.tp_session.items, text, *text != slurl);
     // the arrows and Enter go to the list before the field takes them
     let (mut take, moved) = if !panels.nav_edit_new && ui.memory(|m| m.has_focus(id)) {
         picker.keys(ui, id)
@@ -2333,7 +2335,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
         ui.ctx().request_repaint();
         return None;
     }
-    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
+    picker.refresh(&st.landmarks, st.tp_session.items, text, *text != slurl);
     if !picker.list().is_empty()
         && let Some(i) = location_suggest::list_area(ui, p, list_id, resp.rect, picker.list(), picker.chosen(), moved)
     {
@@ -2625,9 +2627,12 @@ pub fn top_bars(
                                 "{} ({:.0}, {:.0}, {:.0})",
                                 st.region, st.position.x, st.position.y, st.position.z
                             ));
+                            // LLAgentUI::buildLocationString (llagentui.cpp): "(Hidden
+                            // parcel), (Hidden region)" under @showloc; the field still
+                            // opens on the SLURL, hidden in its turn
+                            // (LLLocationInputCtrl::changeLocationPresentation)
                             if st.location_hidden {
                                 loc = format!("{}, {}", st.parcel, st.region);
-                                panels.nav_edit = None;
                             }
                             if !st.maturity.is_empty() {
                                 loc.push_str(&format!(" - {}", st.maturity));

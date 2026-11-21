@@ -157,6 +157,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | O7 | Inspect objects | window | Inspect Objects on the target |
 | O8 | Avatar health | window | Stop animations, undeform, rebake, refresh attachments, reset skeleton |
 | O9 | Follow sculpts | toggle | Logs the attachment and sculpt-map changes of the target avatar (`sculpt watch:`) |
+| O10 | Avatar hitboxes | toggle | The avatars' hitboxes with Legacy Viewer parity, on the avatars within 32 m |
 | N1 | Network graph | window | Performance › Network |
 | N2 | Region summary | copy | Simulator version, time dilation, frame rates, counts, connected simulators, ping, losses |
 | P1 | Performance | window | The compact Performance window |
@@ -191,8 +192,8 @@ What a run does:
   when the avatar has none) with six copies of a Library object and one
   link. It never renames, moves, trashes or deletes anything, its own items
   included: a later run finds them again by name, place and owner.
-- **Worn objects**: its controller on Hind Right Foot, a second object on
-  Hind Left Foot, the forced-wear cases on Tail Tip. What the avatar wears
+- **Worn objects**: its controller on Right Hind Foot, a second object on
+  Left Hind Foot, the forced-wear cases on Tail Tip. What the avatar wears
   on these three points may be taken off; a case that would replace
   someone else's object on Tail Tip is skipped instead. Two of the objects
   get a small relay script (`world/bridge/selftest_relay.lsl`): it listens

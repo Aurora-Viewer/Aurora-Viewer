@@ -214,7 +214,9 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
             .sim_at_global(global.x, global.y)
             .map_or_else(|| place.region_hint().to_owned(), |(_, s)| s.name.clone()),
     };
-    (!region.is_empty() && !world.rlva_private_region(&region)).then(|| crate::slurl::make(&region, place.region_pos))
+    // a connected region is "(Hidden region)" under @showloc (`slurl::make`,
+    // LLSLURL::getSLURLString), copied all the same
+    (!region.is_empty()).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
 /// RLVa leaves the place's Teleport allowed (LLPanelPlaces::updateVerbs,
@@ -222,8 +224,8 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
 /// any other place).
 pub fn teleport_allowed(place: &Place, world: &World) -> bool {
     match &place.source {
-        Source::Landmark { .. } => world.rlva_can_teleport_landmark(),
-        _ => place.global.is_none_or(|g| world.rlva_can_teleport_global(g)),
+        Source::Landmark { .. } => world.rlva_landmark_button_enabled(),
+        _ => world.rlva_can_teleport_location(),
     }
 }
 
@@ -915,6 +917,32 @@ mod tests {
         assert!(
             error_text(PlaceError::Remote(RemoteParcelError::Status(499)), true)
                 == aurora_i18n::tr!("ui-place-details-place-information-is-unavailable-because-access-is-restricted-check")
+        );
+    }
+
+    /// LLLandmarkActions::getSLURLfromPosGlobal then getSLURLString: under
+    /// RLVa @showloc a place of the region the agent is in copies as
+    /// "(Hidden region)", it is no longer refused.
+    #[test]
+    fn showloc_copies_a_place_here_as_the_hidden_slurl() {
+        use crate::world::landmarks::Landmarks;
+        use crate::world::place_details::PlaceDetails;
+        let world = crate::world::rlva_location_tests::showloc_world();
+        let here = world.region_name();
+        crate::slurl::set_hidden_regions(world.rlva_slurl_hidden_regions());
+        let mut details = PlaceDetails::default();
+        let link = Source::Link {
+            region: here,
+            pos: Vec3::new(10.0, 20.0, 30.0),
+        };
+        details.open_panel(link, &WorldMap::default(), &mut Landmarks::default(), std::time::Instant::now());
+        let mut place = details.panel.expect("the place's profile");
+        place.global = world.agent_global();
+        let slurl = slurl_of(&place, &world);
+        crate::slurl::set_hidden_regions(None);
+        assert_eq!(
+            slurl.as_deref(),
+            Some(format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region")).as_str())
         );
     }
 }
