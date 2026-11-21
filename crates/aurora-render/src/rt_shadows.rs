@@ -1358,6 +1358,7 @@ impl PoseTracker {
 /// `GpuTable::take_touched`), weighs the placed ones again when the eye
 /// moved ([`EYE_STEP`]), and looks at every face in turn over [`SWEEP`]
 /// frames. Looking at each face on each frame took 3 ms on a busy region.
+/// `ceiling`: [`posed_ceiling`] of the device.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gather(
     records: &mut RecordStore,
@@ -1367,6 +1368,7 @@ pub(crate) fn gather(
     camera: glam::Vec3,
     far: f32,
     shifted: bool,
+    ceiling: u64,
     tracker: &mut PoseTracker,
     out: &mut Faces,
 ) {
@@ -1503,7 +1505,7 @@ pub(crate) fn gather(
     }
     out.posed.clear();
     out.groups.clear();
-    choose_rebuilds(palettes, written, camera, &mut tracker.skeletons, out);
+    choose_rebuilds(palettes, written, camera, ceiling, &mut tracker.skeletons, out);
     written.clear();
     tracker.spent[0] += started.elapsed().as_micros() as u64;
     out.spent = tracker.spent;
@@ -1570,7 +1572,9 @@ struct Unit {
 /// nearest first within the budget, an avatar of more triangles than it
 /// that walked behind anything that moved too (the hat it wore, nearer the
 /// eye) was left out at every frame, and its shadow stayed where it had
-/// stood. Lists them all.
+/// stood. Lists them all. The nearest is built whole whatever a frame
+/// poses, up to `ceiling` vertices ([`posed_ceiling`]): one past it is never
+/// built, and counted as waiting, and the next nearest takes its place.
 /// `written` is the palettes' entries written since the last frame, in
 /// order and apart ([`merge`]): only those are read, the other joints are
 /// as they were last measured (a skeleton's are 261 matrices, a crowd's
@@ -1579,6 +1583,7 @@ fn choose_rebuilds(
     palettes: &[[[f32; 4]; 4]],
     written: &[std::ops::Range<usize>],
     camera: glam::Vec3,
+    ceiling: u64,
     skeletons: &mut BTreeMap<u32, Skeleton>,
     out: &mut Faces,
 ) {
@@ -1634,7 +1639,10 @@ fn choose_rebuilds(
     }
     units.sort_by(|a, b| a.distance.total_cmp(&b.distance));
     let mut slots: Vec<u32> = Vec::new();
-    if let Some((nearest, rest)) = units.split_first_mut() {
+    if let Some(at) = units.iter().position(|u| u.triangles * 3 <= ceiling) {
+        // (those nearer are past the ceiling, and past `room` below)
+        let nearest = units.remove(at);
+        let rest = &mut units[..];
         slots.push(nearest.slot);
         // (stable: the nearer of two as pressing)
         rest.sort_by(|a, b| pressing(b.distance, b.waited).total_cmp(&pressing(a.distance, a.waited)));
@@ -1785,8 +1793,15 @@ const REACH: f32 = 512.0;
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The most posed vertices (one per index) a frame traces: the faces past
-/// it are left out.
+/// it are left out. The nearest avatar alone may pass it
+/// ([`posed_ceiling`]).
 const POSED_VERTICES: u64 = 1 << 22;
+/// The most posed vertices of the nearest avatar when it alone passes
+/// [`POSED_VERTICES`]: 5.6 million triangles, a posed buffer of 256 MB.
+const NEAREST_VERTICES: u64 = 1 << 24;
+/// Frames the posed buffer keeps the room a heavy nearest avatar took
+/// after it was last posed (ten seconds at 60 frames a second).
+const HEAVY_KEPT: u64 = 600;
 /// Bytes of a posed vertex (a vec4 of f32).
 const POSED_BYTES: u64 = 16;
 
@@ -1807,6 +1822,49 @@ struct PoseFace {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PoseParams {
     counts: [u32; 4],
+}
+
+/// The most posed vertices the nearest avatar is built with. It is posed
+/// whole whatever a frame's budget: the traced shadows take the shadow
+/// maps' place, so an avatar left out casts no shadow at all, and the
+/// nearest one's is the shadow looked at. Up to [`NEAREST_VERTICES`] and to
+/// what the device holds in one buffer (a power of two, as the posed
+/// buffer's size is).
+pub(crate) fn posed_ceiling(limits: &wgpu::Limits) -> u64 {
+    let held = limits.max_buffer_size.min(limits.max_storage_buffer_binding_size) / POSED_BYTES;
+    held.checked_ilog2()
+        .map_or(0, |bits| 1 << bits)
+        .clamp(POSED_VERTICES, NEAREST_VERTICES)
+}
+
+/// Where each skeleton built again this frame starts in the posed vertices
+/// (`offsets`) and its faces (`table`): every one `choose_rebuilds` chose,
+/// which holds a frame's within [`POSED_VERTICES`] but for the nearest
+/// avatar, whole up to `ceiling`. Returns the vertices posed.
+fn place_groups(faces: &Faces, ceiling: u64, offsets: &mut Vec<(usize, u32)>, table: &mut Vec<PoseFace>) -> u64 {
+    let mut total = 0u64;
+    for (g, group) in faces.groups.iter().enumerate() {
+        if !group.rebuild || total + group.vertices as u64 > ceiling {
+            continue;
+        }
+        let run = faces
+            .posed
+            .get(group.first as usize..(group.first + group.count) as usize)
+            .unwrap_or(&[]);
+        offsets.push((g, total as u32));
+        for f in run {
+            table.push(PoseFace {
+                record: f.record,
+                base_vertex: f.base_vertex,
+                first_index: f.first_index,
+                index_count: f.index_count,
+                out_offset: total as u32,
+                _pad: [0; 3],
+            });
+            total += f.index_count as u64;
+        }
+    }
+    total
 }
 
 /// The pose pass and what it writes: the posed vertices of the skeletons
@@ -1838,6 +1896,10 @@ struct Poser {
     baked: Vec<u32>,
     table: Vec<PoseFace>,
     frame: u64,
+    /// [`posed_ceiling`] of the device, and the last frame that posed more
+    /// than [`POSED_VERTICES`] (a heavy nearest avatar).
+    ceiling: u64,
+    heavy: u64,
 }
 
 /// A skeleton's bottom level: a geometry per face, so a hit's geometry index
@@ -2719,13 +2781,15 @@ impl Poser {
             baked: Vec::new(),
             table: Vec::new(),
             frame: 0,
+            ceiling: posed_ceiling(&device.limits()),
+            heavy: 0,
         }
     }
 
     /// Poses the faces of the skeletons built again this frame into the
-    /// posed buffer, then those of `cells` in their order (`baked`: the
-    /// ones that fit), up to [`POSED_VERTICES`] in all: the skeletons'
-    /// faces and vertices posed.
+    /// posed buffer ([`place_groups`]), then those of `cells` in their
+    /// order (`baked`: the ones that fit), up to [`POSED_VERTICES`] in all:
+    /// the skeletons' faces and vertices posed.
     fn pose(
         &mut self,
         device: &wgpu::Device,
@@ -2739,27 +2803,9 @@ impl Poser {
         self.table.clear();
         self.offsets.clear();
         self.baked.clear();
-        let mut total = 0u64;
-        for (g, group) in faces.groups.iter().enumerate() {
-            if !group.rebuild || total + group.vertices as u64 > POSED_VERTICES {
-                continue;
-            }
-            let run = faces
-                .posed
-                .get(group.first as usize..(group.first + group.count) as usize)
-                .unwrap_or(&[]);
-            self.offsets.push((g, total as u32));
-            for f in run {
-                self.table.push(PoseFace {
-                    record: f.record,
-                    base_vertex: f.base_vertex,
-                    first_index: f.first_index,
-                    index_count: f.index_count,
-                    out_offset: total as u32,
-                    _pad: [0; 3],
-                });
-                total += f.index_count as u64;
-            }
+        let mut total = place_groups(faces, self.ceiling, &mut self.offsets, &mut self.table);
+        if total > POSED_VERTICES {
+            self.heavy = self.frame;
         }
         let skeletons = (self.table.len(), total as u32);
         for cell in cells {
@@ -2792,7 +2838,15 @@ impl Poser {
             }));
         }
         let bytes = total.next_power_of_two().max(3 << 10) * POSED_BYTES;
-        if self.vertices.as_ref().is_none_or(|b| b.size() < bytes) {
+        // (the room a heavy nearest avatar took is given back once it has
+        // not been posed for a while)
+        let kept = self.frame - self.heavy <= HEAVY_KEPT;
+        let roomy = (POSED_VERTICES * POSED_BYTES).max(bytes);
+        if !self
+            .vertices
+            .as_ref()
+            .is_some_and(|b| b.size() >= bytes && (kept || b.size() <= roomy))
+        {
             self.vertices = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rt shadows posed vertices"),
                 size: bytes,
@@ -5543,7 +5597,7 @@ mod tests {
 
     fn choose(t: &mut BTreeMap<u32, Skeleton>) -> Vec<(u32, bool)> {
         let mut out = Faces::default();
-        choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
+        choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, t, &mut out);
         out.groups.iter().map(|g| (g.key, g.rebuild)).collect()
     }
 
@@ -5622,7 +5676,7 @@ mod tests {
         let (large, larger) = ((POSED_VERTICES / 2) as u32, (POSED_VERTICES * 3 / 4) as u32);
         let choose_waiting = |t: &mut BTreeMap<u32, Skeleton>| {
             let mut out = Faces::default();
-            choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, t, &mut out);
             let posed: u64 = out.groups.iter().filter(|g| g.rebuild).map(|g| g.vertices as u64).sum();
             assert!(posed <= POSED_VERTICES, "{posed} vertices to pose");
             (out.groups.iter().map(|g| (g.key, g.rebuild)).collect::<Vec<_>>(), out.waiting)
@@ -5635,6 +5689,83 @@ mod tests {
         }
         read(&mut t, far, &[2], large, 11.0);
         assert_eq!(choose_waiting(&mut t), (vec![(near, false), (far, true)], 0));
+    }
+
+    /// The nearest avatar holds more vertices than a frame poses: it is
+    /// built all the same, with what it wears, and the pose pass places
+    /// every skeleton chosen. Left out there, it cast no shadow at all (the
+    /// traced shadows stand in for the shadow maps). The others wait.
+    #[test]
+    fn rt_shadows_the_nearest_avatar_is_posed_whatever_its_size() {
+        let mut t = BTreeMap::new();
+        let stride = crate::types::PALETTE_STRIDE;
+        let (body, hat, other) = (stride, stride + crate::types::SKELETON_ANCHOR + 2, 2 * stride);
+        let huge = (POSED_VERTICES * 3 / 2) as u32;
+        for step in 0..3 {
+            let walked = step as f32 * 0.5;
+            read(&mut t, body, &[1], huge, 3.0 + walked);
+            read(&mut t, hat, &[2], 300, 3.0 + walked);
+            read(&mut t, other, &[3], 300, 9.0 + walked);
+            let mut out = Faces::default();
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, &mut t, &mut out);
+            let chosen: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
+            assert_eq!(chosen, vec![(body, true), (hat, true), (other, false)], "frame {step}");
+            assert_eq!(out.waiting, 1, "frame {step}");
+            let (mut offsets, mut table) = (Vec::new(), Vec::new());
+            let posed = place_groups(&out, NEAREST_VERTICES, &mut offsets, &mut table);
+            assert_eq!(offsets, vec![(0, 0), (1, huge)], "frame {step}");
+            assert_eq!(posed, huge as u64 + 300);
+        }
+        // it stands: the other one's turn
+        read(&mut t, other, &[3], 300, 12.0);
+        assert_eq!(choose(&mut t), vec![(body, false), (hat, false), (other, true)]);
+    }
+
+    /// An avatar of more vertices than the device poses at once is never
+    /// built, and is counted as waiting: the next nearest is built in its
+    /// place at every frame, the others within what a frame poses.
+    #[test]
+    fn rt_shadows_an_avatar_past_the_ceiling_waits_and_the_next_is_the_nearest() {
+        let mut t = BTreeMap::new();
+        let stride = crate::types::PALETTE_STRIDE;
+        let (giant, next, far) = (stride, 2 * stride, 3 * stride);
+        let ceiling = POSED_VERTICES;
+        let (past, heavy) = ((ceiling + 2) as u32, (REBUILD_TRIANGLES * 4) as u32);
+        for step in 0..3 {
+            let walked = step as f32 * 0.5;
+            read(&mut t, giant, &[1], past, 3.0 + walked);
+            read(&mut t, next, &[2], heavy, 6.0 + walked);
+            read(&mut t, far, &[3], 300, 9.0 + walked);
+            let mut out = Faces::default();
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, ceiling, &mut t, &mut out);
+            let chosen: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
+            assert_eq!(chosen, vec![(giant, false), (next, true), (far, true)], "frame {step}");
+            assert_eq!(out.waiting, 1, "frame {step}");
+            let (mut offsets, mut table) = (Vec::new(), Vec::new());
+            let posed = place_groups(&out, ceiling, &mut offsets, &mut table);
+            assert_eq!(offsets, vec![(1, 0), (2, heavy)], "frame {step}");
+            assert!(posed <= ceiling, "{posed} vertices to pose");
+        }
+    }
+
+    #[test]
+    fn rt_shadows_the_nearest_avatars_ceiling_follows_the_device() {
+        let ceiling = |buffer: u64, binding: u64| {
+            let limits = wgpu::Limits {
+                max_buffer_size: buffer,
+                max_storage_buffer_binding_size: binding,
+                ..Default::default()
+            };
+            posed_ceiling(&limits)
+        };
+        // a card that holds gigabytes: the constant
+        assert_eq!(ceiling(4 << 30, 4 << 30), NEAREST_VERTICES);
+        // wgpu's default limits (256 MiB a buffer, 128 MiB bound): 8 million
+        assert_eq!(ceiling(256 << 20, 128 << 20), 1 << 23);
+        // a power of two within the device's: 200 MB hold 12.5 million
+        assert_eq!(ceiling(200_000_000, 200_000_000), 1 << 23);
+        // (the floor is what a frame poses, the 64 MiB the pass took before)
+        assert_eq!(ceiling(48 << 20, 48 << 20), POSED_VERTICES);
     }
 
     /// The nearest walks at every frame and fills the budget alone: the
@@ -5679,7 +5810,7 @@ mod tests {
         read(&mut t, stride as u32, &[2], 300, 5.0);
         let mut choose = |palettes: &[[[f32; 4]; 4]], written: &[std::ops::Range<usize>]| {
             let mut out = Faces::default();
-            choose_rebuilds(palettes, written, glam::Vec3::ZERO, &mut t, &mut out);
+            choose_rebuilds(palettes, written, glam::Vec3::ZERO, NEAREST_VERTICES, &mut t, &mut out);
             out.groups.iter().map(|g| g.rebuild).collect::<Vec<_>>()
         };
         assert_eq!(choose(&palettes, &[]), [true, true]);

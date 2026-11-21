@@ -2076,6 +2076,9 @@ pub(crate) struct Backend {
     rt: Option<crate::rt_shadows::RtShadows>,
     /// The ray tracer, or what an effect turned on needs, being made.
     rt_build: Option<RtBuild>,
+    /// The worker making it stopped (a panic) or could not start: nothing is
+    /// made again until ray tracing is turned off and on.
+    rt_failed: bool,
     rt_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -4587,6 +4590,7 @@ impl Backend {
             clouds_now: false,
             rt,
             rt_build: None,
+            rt_failed: false,
             rt_now: false,
             contact_now: false,
             gtao_normals_now: false,
@@ -7393,37 +7397,42 @@ impl Backend {
     /// tracing on, dropped with the levels it built when they turn it off
     /// (its targets go with the others, `make_targets`). It is made on a
     /// worker thread ([`RtBuild`]), as is what an effect turned on later
-    /// needs: called again at each frame until the worker is done.
+    /// needs: called again at each frame until the worker is done. A worker
+    /// that stops without its result (a panic) leaves ray tracing as it is,
+    /// the frames on the shadow maps: made again on the render thread, it
+    /// would hold the picture and likely stop there too.
     fn follow_ray_tracing(&mut self) {
         let options = crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing);
         if !options.shadows {
             // (one still being made is dropped as its worker ends)
             self.rt_build = None;
+            self.rt_failed = false;
             if self.rt.take().is_some() {
                 log::info!("ray tracing off");
             }
             return;
         }
-        let mut here = false;
         if let Some(build) = &self.rt_build {
             match build.done.try_recv() {
                 Ok(made) => {
                     let spent = build.started.elapsed().as_millis();
                     self.rt_build = None;
-                    self.take_ray_tracing(made, spent, "on a worker");
+                    self.take_ray_tracing(made, spent);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    log::error!("the ray tracer's worker stopped: made on the render thread");
+                    log::error!(
+                        "the ray tracer's worker stopped: nothing more is made for ray tracing until it is turned off and on again"
+                    );
                     self.rt_build = None;
-                    here = true;
+                    self.rt_failed = true;
                 }
             }
         }
         if let Some(rt) = &mut self.rt {
             rt.set_options(options);
         }
-        if self.rt_build.is_some() {
+        if self.rt_build.is_some() || self.rt_failed {
             return;
         }
         let make: Box<dyn FnOnce() -> RtMade + Send> = match &self.rt {
@@ -7437,11 +7446,6 @@ impl Backend {
             },
         };
         let started = std::time::Instant::now();
-        if here {
-            let made = make();
-            self.take_ray_tracing(made, started.elapsed().as_millis(), "on the render thread");
-            return;
-        }
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new().name("aurora-ray-tracer".into()).spawn(move || {
             // (refused when ray tracing was turned off meanwhile: dropped)
@@ -7451,22 +7455,24 @@ impl Backend {
             Ok(worker) => {
                 self.pipeline_workers.retain(|w| !w.is_finished());
                 self.pipeline_workers.push(worker);
+                self.rt_build = Some(RtBuild { started, done });
             }
-            // the receiver reports the worker gone: made on this thread
-            Err(e) => log::error!("cannot start the ray tracer's worker: {e}"),
+            Err(e) => {
+                log::error!("cannot start the ray tracer's worker: {e}");
+                self.rt_failed = true;
+            }
         }
-        self.rt_build = Some(RtBuild { started, done });
     }
 
     /// What was made for ray tracing, in `spent` ms, takes its place.
-    fn take_ray_tracing(&mut self, made: RtMade, spent: u128, how: &str) {
+    fn take_ray_tracing(&mut self, made: RtMade, spent: u128) {
         match made {
             RtMade::Tracer(rt) => {
-                log::info!("ray tracer made in {spent} ms {how}");
+                log::info!("ray tracer made in {spent} ms on a worker");
                 self.rt = Some(*rt);
             }
             RtMade::Parts(parts) => {
-                log::info!("ray tracer: the effects turned on made in {spent} ms {how}");
+                log::info!("ray tracer: the effects turned on made in {spent} ms on a worker");
                 if let Some(rt) = &mut self.rt {
                     rt.take(*parts);
                 }

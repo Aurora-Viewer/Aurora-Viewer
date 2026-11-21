@@ -1719,6 +1719,7 @@ impl Renderer {
                     rt_camera,
                     rt_far,
                     rt_shifted,
+                    crate::rt_shadows::posed_ceiling(&self.device.limits()),
                     &mut self.rt_poses,
                     &mut faces,
                 );
@@ -2247,7 +2248,9 @@ fn open_device(
         required_limits: alim.clone(),
         experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
             // SAFETY: wgpu's ray queries are experimental (its API may still
-            // change); only ray tracing, an experimental option, uses them.
+            // change). The device takes them on every card that has them, so
+            // that ray tracing turns on without a new device; a ray is only
+            // traced while that option, itself experimental, is on.
             unsafe { wgpu::ExperimentalFeatures::enabled() }
         } else {
             wgpu::ExperimentalFeatures::disabled()

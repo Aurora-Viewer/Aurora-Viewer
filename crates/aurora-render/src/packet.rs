@@ -148,11 +148,11 @@ pub(crate) struct FramePacket {
     /// border crossing made them relative to another region
     /// (`Renderer::shift_world`). The weather's memories move with them.
     pub world_shift: [f32; 2],
-    /// When the frame began reading its input (`Renderer::mark_input`):
-    /// the time to its presentation is the latency the frame pacing cuts.
     /// The faces the ray-traced shadows trace this frame (rt_shadows.rs;
     /// None when the device does not trace).
     pub rt: Option<std::sync::Arc<crate::rt_shadows::Faces>>,
+    /// When the frame began reading its input (`Renderer::mark_input`):
+    /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,
 }
 
