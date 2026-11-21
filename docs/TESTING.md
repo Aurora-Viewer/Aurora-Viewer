@@ -3415,7 +3415,7 @@ uses the selection when no grid reference exists; switching sections and
 clicking the active icon retain the mode.
 
 For material number entry, use `faces-ready,object:99620` with `texture:bp`,
-choose the default specular map, then type shininess/environment values one
+choose the default specular map, then type glossiness/environment values one
 digit at a time. Enter or leaving the field applies the whole number; Escape
 cancels it. The inspector must keep its size, controls and focus while the
 simulator's replacement material loads. The native inspector regressions also
