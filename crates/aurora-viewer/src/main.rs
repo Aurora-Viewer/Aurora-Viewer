@@ -97,6 +97,7 @@ mod net_adapters;
 mod net_profile;
 mod oiia;
 mod omnifilter;
+mod open_files;
 mod open_path;
 mod overlay_hooks;
 mod own_motion;
@@ -209,6 +210,8 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // #2970: a desktop's 1024 open files run out in a busy region
+    open_files::raise();
     // Preferences › Network › Proxy: before the first connection of the
     // viewer (LLStartUp::startLLProxy, at startup)
     proxy::install(&settings::Settings::load().proxy);
