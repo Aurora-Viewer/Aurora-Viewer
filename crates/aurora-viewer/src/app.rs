@@ -23559,6 +23559,9 @@ impl ApplicationHandler for App {
                         | "aurora-columns"
                         | "aurora-columns-hidden"
                         | "aurora-gallery"
+                        | "aurora-gallery-system-folders"
+                        | "aurora-system-folders"
+                        | "aurora-filtered"
                         | "aurora-gallery-medium"
                         | "aurora-gallery-large"
                         | "aurora-combination"
@@ -23687,6 +23690,19 @@ impl ApplicationHandler for App {
                             } else {
                                 ui::inventory::view::ExplorerView::Gallery
                             };
+                        }
+                        if view.ends_with("system-folders") {
+                            // every system folder's icon, at the root, and
+                            // the open icon of the sidebar's selected one
+                            crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.panels.camera_controls = false;
+                        }
+                        if view == "aurora-filtered" {
+                            // the type filters' symbols in the list and on
+                            // the chip naming them
+                            self.inventory_ui.demo_type_filters((1 << 0) | (1 << 6) | (1 << 19));
+                            self.panels.camera_controls = false;
                         }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own

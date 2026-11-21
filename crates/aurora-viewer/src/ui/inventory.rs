@@ -19,6 +19,7 @@ pub struct WearCopyGroup {
 }
 mod aurora;
 mod bulk_permissions;
+pub(crate) mod category;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
@@ -859,6 +860,28 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-system-folders`): Aurora's
+    /// explorer on the root, nothing selected.
+    pub fn demo_browse_root(&mut self, inv: &Inventory) {
+        self.browse = inv.root;
+        self.selected = None;
+        self.selection.clear();
+        // not the folder of an item revealed earlier
+        self.reveal = None;
+        self.reveal_path.clear();
+    }
+
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
+    /// filters on, their list open.
+    pub fn demo_type_filters(&mut self, types: u32) {
+        self.filters = view::Filters {
+            types,
+            ..view::Filters::default()
+        };
+        self.filters_initialized = true;
+        self.filters_open = true;
+    }
+
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
@@ -1144,9 +1167,21 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (24, _) => "Inv_LinkItem",
         (25, _) => "Inv_LinkFolder",
         (49, _) => "Inv_Mesh",
-        (56, _) => "Inv_Settings",
+        (56, _) => settings_icon(flags),
         (57, _) => "Inv_Material",
         _ => "Inv_Invalid",
+    }
+}
+
+/// LLSettingsType::fromInventoryFlags / getIconName (indra/llinventory/
+/// llinventorysettings.cpp): the low byte of a settings item's flags is its
+/// kind, 0 sky, 1 water, 2 day cycle; any other keeps the generic icon.
+fn settings_icon(flags: u32) -> &'static str {
+    match flags & 0xff {
+        0 => "Inv_SettingsSky",
+        1 => "Inv_SettingsWater",
+        2 => "Inv_SettingsDay",
+        _ => "Inv_Settings",
     }
 }
 
@@ -4130,6 +4165,59 @@ mod tests {
         assert_eq!(item_icon(0, 0, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_Texture");
         assert_eq!(item_icon(0, 15, 0), "Inv_Snapshot");
         assert_eq!(item_icon(24, 24, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_LinkItem");
+    }
+
+    #[test]
+    fn settings_icons_follow_the_settings_type_of_their_flags() {
+        assert_eq!(item_icon(56, 25, 0), "Inv_SettingsSky");
+        assert_eq!(item_icon(56, 25, 1), "Inv_SettingsWater");
+        assert_eq!(item_icon(56, 25, 2), "Inv_SettingsDay");
+        // ST_INVALID and unknown kinds keep the generic icon
+        assert_eq!(item_icon(56, 25, 255), "Inv_Settings");
+        assert_eq!(item_icon(56, 25, 7), "Inv_Settings");
+        // only the low byte is the kind
+        assert_eq!(item_icon(56, 25, 0x100 | 1), "Inv_SettingsWater");
+        // and each has its own embedded icon and link icon
+        for name in ["Inv_SettingsSky", "Inv_SettingsWater", "Inv_SettingsDay", "Inv_Settings"] {
+            assert!(super::super::icons::embedded(name), "{name}");
+            assert_ne!(super::super::icons::inventory_link_name(name), "Inv_LinkItem", "{name}");
+        }
+    }
+
+    #[test]
+    fn system_folder_icons_follow_their_type_and_keep_trash_and_suitcase() {
+        use tree::folder_icon;
+        assert_eq!(folder_icon(0, false), "Inv_TexturesClosed");
+        assert_eq!(folder_icon(0, true), "Inv_TexturesOpen");
+        assert_eq!(folder_icon(46, false), "Inv_CurrentOutfitClosed");
+        assert_eq!(folder_icon(48, true), "Inv_LookFolderOpen");
+        assert_eq!(folder_icon(53, false), "Inv_MarketplaceClosed");
+        assert_eq!(folder_icon(54, false), "Inv_StockFolderClosed");
+        assert_eq!(folder_icon(55, true), "Inv_VersionFolderOpen");
+        assert_eq!(folder_icon(14, true), "Inv_TrashClosed");
+        assert_eq!(folder_icon(100, false), "Inv_SuitcaseClosed");
+        assert_eq!(folder_icon(100, true), "Inv_SuitcaseOpen");
+        assert_eq!(folder_icon(-1, false), "Inv_FolderClosed");
+        assert_eq!(folder_icon(8, true), "Inv_FolderOpen");
+        for folder_type in -1..=100 {
+            for open in [false, true] {
+                let name = folder_icon(folder_type, open);
+                assert!(super::super::icons::embedded(name), "{folder_type}: {name}");
+                if folder_type != 14 {
+                    assert!(
+                        category::is_folder_icon(name) || name.starts_with("Inv_Suitcase"),
+                        "{name} is drawn as a folder"
+                    );
+                }
+            }
+            // a link to the folder keeps its symbol (My Suitcase has no link
+            // icon yet, as before)
+            if folder_type == 100 {
+                continue;
+            }
+            let link = super::super::icons::inventory_link_name(folder_icon(folder_type, false));
+            assert!(link.ends_with("_Link"), "{folder_type}: {link}");
+        }
     }
 
     #[test]
