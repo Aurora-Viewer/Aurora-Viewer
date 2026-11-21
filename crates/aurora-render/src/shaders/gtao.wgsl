@@ -55,7 +55,7 @@
 //    the accumulation (`AURORA_GTAO_TEMPORAL=0`) the noise stays the same
 //    every frame, so the result does not flicker, and the blur alone removes
 //    its pattern, leaving a fine grain in the penumbra;
-// 5. at half resolution (low quality, or a scene of 2560 x 1440 and more),
+// 5. at half resolution (low quality, or a scene of 1920 x 1009 and more),
 //    `upsample` (and `upsample_il` for the light) takes the result to the
 //    scene's size: the four nearest half-resolution texels, weighted
 //    bilinearly and by how close their depth is to the pixel's, so the

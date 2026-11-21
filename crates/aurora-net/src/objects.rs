@@ -490,6 +490,125 @@ pub fn parse_compressed(data: &[u8], update_flags: u32) -> Option<ObjectUpdate> 
     })
 }
 
+/// The inverse of [`parse_compressed`], for the viewer's own copies of an
+/// object (the worn-object cache): the layout of
+/// `LLViewerObjectList::processCompressedObjectUpdate`. The particle system
+/// is not written (it reads back as none), nor the velocity and
+/// acceleration, which the compressed form does not carry.
+pub fn encode_compressed(u: &ObjectUpdate) -> Vec<u8> {
+    fn f32s(out: &mut Vec<u8>, v: &[f32]) {
+        for f in v {
+            out.extend_from_slice(&f.to_le_bytes());
+        }
+    }
+    fn cstr(out: &mut Vec<u8>, s: &str) {
+        out.extend(s.bytes().filter(|&b| b != 0));
+        out.push(0);
+    }
+    fn binary(out: &mut Vec<u8>, d: &[u8]) {
+        out.extend_from_slice(&(d.len() as u32).to_le_bytes());
+        out.extend_from_slice(d);
+    }
+    let mut flags = 0u32;
+    if u.angular_velocity != Vec3::ZERO {
+        flags |= 0x80;
+    }
+    if u.parent_id != 0 {
+        flags |= 0x20;
+    }
+    if u.tree_species.is_some() {
+        flags |= 0x2;
+    }
+    if !u.text.is_empty() {
+        flags |= 0x4;
+    }
+    if !u.media_url.is_empty() {
+        flags |= 0x200;
+    }
+    if !u.sound.id.is_nil() {
+        flags |= 0x10;
+    }
+    if !u.name_values.is_empty() {
+        flags |= 0x100;
+    }
+    if u.texture_anim.is_some() {
+        flags |= 0x40;
+    }
+    let mut out = Vec::with_capacity(256);
+    out.extend_from_slice(u.full_id.as_bytes());
+    out.extend_from_slice(&u.local_id.to_le_bytes());
+    out.extend_from_slice(&[u.pcode, u.state]);
+    out.extend_from_slice(&u.crc.to_le_bytes());
+    out.extend_from_slice(&[u.material, u.click_action]);
+    f32s(&mut out, &u.scale.to_array());
+    f32s(&mut out, &u.position.to_array());
+    // the packed quaternion keeps x, y, z of the one with a positive w
+    let q = if u.rotation.w < 0.0 { -u.rotation } else { u.rotation };
+    f32s(&mut out, &[q.x, q.y, q.z]);
+    out.extend_from_slice(&flags.to_le_bytes());
+    out.extend_from_slice(u.owner_id.as_bytes());
+    if flags & 0x80 != 0 {
+        f32s(&mut out, &u.angular_velocity.to_array());
+    }
+    if flags & 0x20 != 0 {
+        out.extend_from_slice(&u.parent_id.to_le_bytes());
+    }
+    if let Some(species) = u.tree_species {
+        out.push(species);
+    }
+    if flags & 0x4 != 0 {
+        cstr(&mut out, &u.text);
+        let c = u.text_color;
+        out.extend_from_slice(&[c[0], c[1], c[2], 255 - c[3]]);
+    }
+    if flags & 0x200 != 0 {
+        cstr(&mut out, &u.media_url);
+    }
+    out.extend_from_slice(&aurora_prim::extra::pack_extra_params(&u.extra));
+    if flags & 0x10 != 0 {
+        out.extend_from_slice(u.sound.id.as_bytes());
+        out.extend_from_slice(&u.sound.gain.to_le_bytes());
+        out.push(u.sound.flags);
+        out.extend_from_slice(&u.sound.radius.to_le_bytes());
+    }
+    if flags & 0x100 != 0 {
+        cstr(&mut out, &u.name_values);
+    }
+    let r = u.volume.to_raw();
+    out.push(r.path_curve);
+    out.extend_from_slice(&r.path_begin.to_le_bytes());
+    out.extend_from_slice(&r.path_end.to_le_bytes());
+    out.extend_from_slice(&[
+        r.path_scale_x,
+        r.path_scale_y,
+        r.path_shear_x,
+        r.path_shear_y,
+        r.path_twist as u8,
+        r.path_twist_begin as u8,
+        r.path_radius_offset as u8,
+        r.path_taper_x as u8,
+        r.path_taper_y as u8,
+        r.path_revolutions,
+        r.path_skew as u8,
+        r.profile_curve,
+    ]);
+    out.extend_from_slice(&r.profile_begin.to_le_bytes());
+    out.extend_from_slice(&r.profile_end.to_le_bytes());
+    out.extend_from_slice(&r.profile_hollow.to_le_bytes());
+    let te = u
+        .texture_entry
+        .as_ref()
+        .map(|te| aurora_prim::te::pack_texture_entry(te, te.faces.len()))
+        .unwrap_or_default();
+    binary(&mut out, &te);
+    if let Some(a) = u.texture_anim {
+        let mut ta = vec![a.mode, a.face as u8, a.size_x, a.size_y];
+        f32s(&mut ta, &[a.start, a.length, a.rate]);
+        binary(&mut out, &ta);
+    }
+    out
+}
+
 /// Decode an `ImprovedTerseObjectUpdate` block.
 pub fn parse_terse(b: &msgs::improved_terse_object_update::ObjectData) -> Option<TerseUpdate> {
     let mut dp = Dp::new(&b.data);
@@ -578,9 +697,155 @@ pub fn parse_gltf_override(payload: &[u8]) -> Option<(u32, Vec<(u8, aurora_llsd:
     Some((local_id, sides))
 }
 
+/// The worn objects an AvatarAppearance lists, as
+/// LLVOAvatar::processAvatarAppearance keeps them in mSimAttachments
+/// (indra/newview/llvoavatar.cpp, originally LGPL 2.1): entries with a nil
+/// id ("pending") are left out, and an id listed twice counts once, with
+/// its last point.
+pub fn listed_attachments(blocks: impl IntoIterator<Item = (Uuid, u8)>) -> Vec<(Uuid, u8)> {
+    let mut out: Vec<(Uuid, u8)> = Vec::new();
+    for (id, point) in blocks {
+        if id.is_nil() {
+            continue;
+        }
+        match out.iter_mut().find(|(known, _)| *known == id) {
+            Some(entry) => entry.1 = point,
+            None => out.push((id, point)),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_encoded_object_reads_back_the_same() {
+        use aurora_prim::params::SculptParams;
+        let raw = RawShape {
+            path_curve: 16,
+            profile_curve: 1,
+            path_begin: 100,
+            path_end: 200,
+            path_scale_x: 100,
+            path_scale_y: 150,
+            path_shear_x: 3,
+            path_shear_y: 250,
+            path_twist: -5,
+            path_twist_begin: 7,
+            path_radius_offset: 2,
+            path_taper_x: -10,
+            path_taper_y: 20,
+            path_revolutions: 4,
+            path_skew: -3,
+            profile_begin: 500,
+            profile_end: 1000,
+            profile_hollow: 2000,
+        };
+        let extra = ExtraParams {
+            sculpt: Some(SculptParams {
+                texture: Uuid::from_u128(77),
+                sculpt_type: 5,
+            }),
+            render_materials: vec![(1, Uuid::from_u128(78))],
+            ..Default::default()
+        };
+        let mut volume = raw.to_params();
+        volume.sculpt = extra.sculpt;
+        let mut te = TextureEntry::default();
+        te.faces[0].texture = Uuid::from_u128(5);
+        te.faces[1].color = [1.0, 0.0, 0.0, 0.5];
+        te.faces[2].glow = 1.0;
+        // what the wire keeps of it
+        let te = parse_texture_entry(&aurora_prim::te::pack_texture_entry(&te, te.faces.len())).expect("te");
+        let u = ObjectUpdate {
+            local_id: 42,
+            full_id: Uuid::from_u128(9),
+            parent_id: 7,
+            pcode: aurora_prim::params::LL_PCODE_VOLUME,
+            state: 0x23,
+            crc: 1234,
+            material: 3,
+            click_action: 1,
+            scale: Vec3::new(0.5, 1.0, 2.0),
+            position: Vec3::new(0.1, -0.2, 0.3),
+            rotation: Quat::from_rotation_z(-2.5),
+            velocity: Vec3::ZERO,
+            acceleration: Vec3::ZERO,
+            angular_velocity: Vec3::new(0.0, 0.0, 1.0),
+            update_flags: 0x10,
+            owner_id: Uuid::from_u128(3),
+            volume,
+            texture_entry: Some(Arc::new(te)),
+            extra,
+            name_values: "AttachItemID STRING RW SV 00000000-0000-0000-0000-000000000011".into(),
+            text: "hello".into(),
+            text_color: [10, 20, 30, 200],
+            media_url: "https://example.invalid/".into(),
+            tree_species: None,
+            texture_anim: Some(TextureAnim {
+                mode: TextureAnim::ON | TextureAnim::LOOP,
+                face: -1,
+                size_x: 4,
+                size_y: 2,
+                start: 0.0,
+                length: 8.0,
+                rate: 2.0,
+            }),
+            foot_plane: None,
+            particles: ParticleUpdate::Clear,
+            sound: AttachedSound {
+                id: Uuid::from_u128(66),
+                gain: 0.5,
+                flags: 1,
+                radius: 10.0,
+            },
+        };
+        let back = parse_compressed(&encode_compressed(&u), u.update_flags).expect("decodes");
+        assert_eq!(
+            (back.local_id, back.full_id, back.parent_id, back.pcode),
+            (42, u.full_id, 7, u.pcode)
+        );
+        assert_eq!((back.state, back.crc, back.material, back.click_action), (0x23, 1234, 3, 1));
+        assert_eq!((back.scale, back.position), (u.scale, u.position));
+        assert!(back.rotation.angle_between(u.rotation) < 1e-5);
+        assert_eq!(back.angular_velocity, u.angular_velocity);
+        assert_eq!(back.owner_id, u.owner_id);
+        assert_eq!(back.volume, u.volume);
+        assert_eq!(back.texture_entry, u.texture_entry);
+        assert_eq!(back.extra, u.extra);
+        assert_eq!((back.name_values, back.text, back.media_url), (u.name_values, u.text, u.media_url));
+        assert_eq!(back.text_color, u.text_color);
+        assert_eq!(back.texture_anim, u.texture_anim);
+        assert_eq!(back.sound, u.sound);
+        assert_eq!(back.particles, ParticleUpdate::Clear);
+
+        // a root with nothing optional
+        let bare = ObjectUpdate {
+            parent_id: 0,
+            angular_velocity: Vec3::ZERO,
+            texture_entry: None,
+            name_values: String::new(),
+            text: String::new(),
+            media_url: String::new(),
+            texture_anim: None,
+            sound: AttachedSound::default(),
+            extra: ExtraParams::default(),
+            ..u
+        };
+        let back = parse_compressed(&encode_compressed(&bare), 0).expect("decodes");
+        assert_eq!((back.parent_id, back.texture_entry.is_none(), back.texture_anim), (0, true, None));
+        assert_eq!(back.extra, ExtraParams::default());
+    }
+
+    #[test]
+    fn listed_attachments_skip_pending_entries_and_repeats() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let listed = listed_attachments([(a, 2), (Uuid::nil(), 9), (b, 5), (a, 7)]);
+        assert_eq!(listed, vec![(a, 7), (b, 5)]);
+        assert!(listed_attachments([(Uuid::nil(), 1)]).is_empty());
+    }
 
     #[test]
     fn zero_subtype_sculpt_survives_full_and_compressed_updates() {
@@ -648,6 +913,42 @@ mod tests {
         }
         d.extend_from_slice(extended);
         d
+    }
+
+    #[test]
+    fn compressed_flexible_path_keeps_its_extra_params() {
+        use aurora_prim::params::*;
+
+        let flexible = aurora_prim::extra::FlexibleParams {
+            softness: 2,
+            tension: 0.7,
+            air_friction: 0.5,
+            gravity: -0.3,
+            wind_sensitivity: 0.8,
+            user_force: glam::Vec3::new(0.1, 0.2, 0.3),
+        };
+        let payload = aurora_prim::extra::pack_flexible(&flexible);
+        let mut data = vec![0; 84];
+        data[20] = LL_PCODE_VOLUME;
+        data.push(1); // one extra parameter
+        data.extend_from_slice(&aurora_prim::extra::PARAMS_FLEXIBLE.to_le_bytes());
+        data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        data.extend_from_slice(&payload);
+        let mut shape = [0; 23];
+        shape[0] = LL_PCODE_PATH_FLEXIBLE;
+        shape[16] = LL_PCODE_PROFILE_CIRCLE;
+        data.extend_from_slice(&shape);
+        data.extend_from_slice(&0u32.to_le_bytes()); // empty texture entry
+
+        let update = parse_compressed(&data, 0).expect("compressed flexible object");
+        assert_eq!(update.volume.path.curve_type, LL_PCODE_PATH_FLEXIBLE);
+        let decoded = update.extra.flexible.expect("flexible parameters");
+        assert_eq!(decoded.softness, flexible.softness);
+        assert!((decoded.tension - flexible.tension).abs() < 1e-6);
+        assert!((decoded.air_friction - flexible.air_friction).abs() < 1e-6);
+        assert!((decoded.gravity - flexible.gravity).abs() < 1e-5);
+        assert!((decoded.wind_sensitivity - flexible.wind_sensitivity).abs() < 1e-6);
+        assert!(decoded.user_force.abs_diff_eq(flexible.user_force, 1e-6));
     }
 
     #[test]

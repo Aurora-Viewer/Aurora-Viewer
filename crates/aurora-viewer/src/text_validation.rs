@@ -50,6 +50,39 @@ pub fn generated_name(name: &str, limit: usize) -> String {
         .collect()
 }
 
+/// A translated default that becomes an inventory name ("New folder", "New
+/// outfit", an unnamed object). Inventory names are plain ASCII
+/// (`Policy::Ascii`), so a translation that is not falls back to English,
+/// as the Legacy Viewer's untranslated "New Folder" and "New Outfit"
+/// (indra/newview/llviewerfoldertype.cpp): `generated_name` would turn
+/// Japanese into a row of '?'.
+pub fn default_name(key: &'static str) -> &'static str {
+    default_name_in(aurora_i18n::language(), key)
+}
+
+pub fn default_name_in(language: &str, key: &'static str) -> &'static str {
+    let local = aurora_i18n::text_in(language, key);
+    if Policy::PrintableNoPipe.accepts(local) && !local.trim().is_empty() {
+        local
+    } else {
+        aurora_i18n::text_in("en", key)
+    }
+}
+
+/// Suggests a name accepted by the Save as field. A stored outfit can have
+/// a name that the editor cannot use for a new outfit.
+pub fn new_variant_name_in(language: &str, base: &str) -> String {
+    if !Policy::PrintableNoPipe.accepts(base) || base.trim().is_empty() {
+        return default_name_in(language, "ui-appearance-new-outfit").into();
+    }
+    let suggested = aurora_i18n::tr_in!(language, "status-new", value0 = base.to_string());
+    if Policy::PrintableNoPipe.accepts(&suggested) && !suggested.trim().is_empty() {
+        suggested
+    } else {
+        aurora_i18n::tr_in!("en", "status-new", value0 = base.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::world::{
@@ -84,11 +117,11 @@ mod tests {
 
     #[test]
     fn restricted_text_generated_folder_labels_are_cleaned_without_rejecting_creation() {
-        for language in ["en", "fr", "ja"] {
-            let name = aurora_i18n::text_in(language, "common-new-folder");
+        for (language, _) in aurora_i18n::available_languages() {
+            let name = super::default_name_in(language, "common-new-folder");
             let change = actions::create_folder(Uuid::from_u128(1), name).expect("localized folder");
             assert!(
-                matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Folder { name, .. }] if !name.is_empty() && super::Policy::PrintableNoPipe.accepts(name))
+                matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Folder { name, .. }] if !name.is_empty() && !name.contains('?') && super::Policy::PrintableNoPipe.accepts(name))
             );
         }
         let object_name = crate::build::task_inventory::contents_folder_name("★ Gift box");
@@ -115,5 +148,54 @@ mod tests {
         assert!(crate::ao::inventory::valid_name("Set 桜").is_err());
         assert!(crate::ao::inventory::valid_name("Set|Group").is_err());
         assert!(aurora_net::groups::name::checked("A桜龙").is_none());
+    }
+    #[test]
+    fn default_names_stay_plain_ascii_in_every_language() {
+        for (language, _) in aurora_i18n::available_languages() {
+            for key in [
+                "common-new-folder",
+                "inventory-new-outfit",
+                "ui-appearance-new-outfit",
+                "common-object",
+                "wearable-favorites-new-folder-default",
+            ] {
+                let name = super::default_name_in(language, key);
+                assert!(
+                    name.is_ascii() && !name.is_empty() && !name.contains('?'),
+                    "{language} {key}: {name}"
+                );
+            }
+            let favorites_default = super::default_name_in(language, "wearable-favorites-new-folder-default");
+            assert_eq!(
+                crate::world::wearable_favorites::folder_name(favorites_default).unwrap(),
+                favorites_default
+            );
+            let variant = super::new_variant_name_in(language, "Party");
+            assert!(variant.is_ascii() && !variant.contains('?'), "{language}: {variant}");
+            assert!(variant.starts_with("Party") && variant != "Party", "{language}: {variant}");
+            for base in ["花見コーデ", "Outfit 星", "Зимний наряд", "Café", "Old|Name", " "] {
+                assert_eq!(
+                    super::new_variant_name_in(language, base),
+                    super::default_name_in(language, "ui-appearance-new-outfit"),
+                    "{language}: {base}"
+                );
+            }
+        }
+        assert_eq!(
+            super::default_name_in("ja", "inventory-new-outfit"),
+            aurora_i18n::text_in("en", "inventory-new-outfit")
+        );
+        assert_eq!(
+            super::default_name_in("fr", "common-new-folder"),
+            aurora_i18n::text_in("fr", "common-new-folder")
+        );
+        assert_eq!(
+            super::new_variant_name_in("ja", "Party"),
+            aurora_i18n::tr_in!("en", "status-new", value0 = "Party".to_string())
+        );
+        assert_eq!(
+            super::new_variant_name_in("fr", "Party"),
+            aurora_i18n::tr_in!("fr", "status-new", value0 = "Party".to_string())
+        );
     }
 }

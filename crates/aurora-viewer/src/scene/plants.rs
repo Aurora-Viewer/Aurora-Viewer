@@ -89,6 +89,44 @@ pub(super) fn plant_face(o: &Object) -> Option<TextureFace> {
     })
 }
 
+/// `@setcam_textures` covers trees (LLDrawPoolTree::renderDeferred binds
+/// sDefaultDiffuseImagep while textures are off), not grass: its faces are
+/// neither volumes nor particles, which LLFace::setDefaultTexture alone
+/// switches (indra/newview/llface.cpp).
+pub(super) fn takes_camera_texture(o: &Object) -> bool {
+    o.pcode != LL_PCODE_LEGACY_GRASS
+}
+
+/// The scene level of a plant that is not drawn (tree_detail.rs).
+pub(super) const NOT_DRAWN: u8 = u8::MAX;
+
+/// What tree object `o`'s detail level is judged on; None for what is not
+/// a tree.
+fn tree_size(o: &Object) -> Option<super::tree_detail::TreeSize> {
+    (o.pcode == LL_PCODE_LEGACY_TREE).then(|| super::tree_detail::TreeSize::of(tree::tree_species(o.tree_species), o.visual_scale()))
+}
+
+/// A plant's scene level (3 the finest), `NOT_DRAWN` for a tree past the
+/// finest four trunk levels or grass while trees are stopped; None for what
+/// is not a plant.
+pub(super) fn plant_lod(o: &Object, distance: f32, tree_factor: f32, lod_factor: f32) -> Option<u8> {
+    use super::tree_detail::{HIDDEN_TRUNK, stopped, trunk_level};
+    if o.pcode == LL_PCODE_LEGACY_GRASS {
+        return Some(if stopped(tree_factor) { NOT_DRAWN } else { 3 });
+    }
+    let trunk = trunk_level(tree_size(o)?, distance, tree_factor, lod_factor);
+    Some(if trunk >= HIDDEN_TRUNK { NOT_DRAWN } else { (3 - trunk) as u8 })
+}
+
+/// How far the camera can move before a plant's level may change (grass
+/// only changes with the factor, which checks everything again).
+pub(super) fn plant_slack(o: &Object, distance: f32, tree_factor: f32, lod_factor: f32) -> Option<f32> {
+    if o.pcode == LL_PCODE_LEGACY_GRASS {
+        return Some(f32::MAX);
+    }
+    Some(super::tree_detail::slack(tree_size(o)?, distance, tree_factor, lod_factor))
+}
+
 /// The tree detail level of a scene level (3 the finest here, 0 there).
 pub(super) fn tree_lod(lod: u8) -> usize {
     3 - lod.min(3) as usize
@@ -270,5 +308,18 @@ mod tests {
     #[test]
     fn tree_levels_run_the_other_way() {
         assert_eq!([tree_lod(3), tree_lod(2), tree_lod(1), tree_lod(0)], [0, 1, 2, 3]);
+    }
+
+    /// LLDrawPoolTree::renderDeferred and LLFace::setDefaultTexture: the
+    /// forced texture covers trees and ordinary prims, never grass.
+    #[test]
+    fn rlva_camera_textures_cover_trees_but_not_grass() {
+        let mut o = crate::demo::action_avatar(false);
+        o.pcode = LL_PCODE_LEGACY_TREE;
+        assert!(takes_camera_texture(&Object::from_update(1, o.clone())));
+        o.pcode = LL_PCODE_LEGACY_GRASS;
+        assert!(!takes_camera_texture(&Object::from_update(1, o.clone())));
+        o.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        assert!(takes_camera_texture(&Object::from_update(1, o)));
     }
 }

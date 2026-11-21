@@ -38,4 +38,40 @@ pub(super) fn prepare(ctx: &egui::Context, demo: bool, s: &mut crate::build::Bui
                 .min(work.size()),
         );
     }
+    if let Ok(tab) = std::env::var("AURORA_DEMO_BUILD_TAB") {
+        for extra in tab.split('+').skip(1) {
+            let column = match extra.trim() {
+                "notice" => {
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("build-demo-notice"), false));
+                    continue;
+                }
+                "drag-option" | "drag-actions" => {
+                    let item = if extra.trim() == "drag-actions" {
+                        crate::build::layout::Item::Actions
+                    } else {
+                        crate::build::layout::Item::RootAxis
+                    };
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("build-demo-layout-drag"), item));
+                    continue;
+                }
+                "default-layout" => {
+                    s.layout = Default::default();
+                    continue;
+                }
+                "expanded" => {
+                    s.transform_expanded = true;
+                    continue;
+                }
+                "snap-left" => crate::build::layout::FooterColumn::Left,
+                "snap-right" => crate::build::layout::FooterColumn::Right,
+                _ => continue,
+            };
+            s.layout.place_in_footer(
+                crate::build::layout::Item::Snap,
+                column,
+                Some(crate::build::layout::Item::Actions),
+                false,
+            );
+        }
+    }
 }

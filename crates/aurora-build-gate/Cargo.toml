@@ -1,0 +1,13 @@
+[package]
+name = "aurora-build-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# No dependency, on purpose: the scripts build src/main.rs with rustc alone,
+# before Cargo can run (Get-BuildGate in scripts/common.ps1).
+
+[lints]
+workspace = true

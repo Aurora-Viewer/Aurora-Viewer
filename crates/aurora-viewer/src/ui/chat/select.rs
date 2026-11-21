@@ -25,6 +25,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+mod document;
+pub(crate) use document::show as document;
+
 /// One end of a selection: a line (its number) and a character of its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
@@ -238,7 +241,7 @@ pub fn row<R>(ui: &mut egui::Ui, seq: u64, selected: Option<Range<usize>>, paint
 }
 
 /// The stable number of the message whose sender is being drawn.
-pub(super) fn current_seq() -> Option<u64> {
+pub(crate) fn current_seq() -> Option<u64> {
     CURRENT.with_borrow(|c| c.as_ref().map(|c| c.seq))
 }
 
@@ -261,14 +264,24 @@ pub fn colors(background: egui::Color32, text: egui::Color32) {
 /// A run of text: in a line of a conversation it is recorded and its
 /// selected part painted; elsewhere the usual selectable label.
 pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
+    label_with_sense(ui, text.into(), egui::Sense::hover())
+}
+
+/// A styled name-link paragraph can keep its click target while recording
+/// every character for a notice's selection.
+pub(crate) fn label_with_sense(ui: &mut egui::Ui, text: egui::WidgetText, sense: egui::Sense) -> egui::Response {
     if CURRENT.with_borrow(Option::is_none) {
-        return ui.add(egui::Label::new(text).wrap().selectable(true));
+        let label = egui::Label::new(text).wrap().selectable(true);
+        return ui.add(if sense == egui::Sense::hover() { label } else { label.sense(sense) });
     }
     let shown = text.text().to_owned();
-    let (pos, visual, resp) = if bidi::has_rtl(&shown) {
-        bidi_label(ui, text)
+    // A caller-supplied galley also defines its link hit boxes. Preserve
+    // those positions instead of reordering that paragraph a second time.
+    let laid_out = matches!(&text, egui::WidgetText::Galley(_));
+    let (pos, visual, resp) = if !laid_out && bidi::has_rtl(&shown) {
+        bidi_label(ui, text, sense)
     } else {
-        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).layout_in_ui(ui);
+        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).sense(sense).layout_in_ui(ui);
         (pos, Visual::plain(galley), resp)
     };
     let len = shown.chars().count();
@@ -322,10 +335,9 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
 /// `Label::layout_in_ui` for a text with right-to-left characters, in
 /// display order (`bidi`): in a wrapping row of widgets it starts after the
 /// previous one and goes on on the rows below, as a label does.
-fn bidi_label(ui: &mut egui::Ui, text: egui::RichText) -> (Pos2, Visual, egui::Response) {
-    let job = egui::WidgetText::from(text).into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
+fn bidi_label(ui: &mut egui::Ui, text: egui::WidgetText, sense: egui::Sense) -> (Pos2, Visual, egui::Response) {
+    let job = text.into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
     let mut job = Arc::unwrap_or_clone(job);
-    let sense = egui::Sense::hover();
     let available = ui.available_width();
     if ui.layout().main_dir() == egui::Direction::LeftToRight && ui.layout().main_wrap() && available.is_finite() {
         // (Label::layout_in_ui's own rules for a wrapping layout)
@@ -349,7 +361,7 @@ fn bidi_label(ui: &mut egui::Ui, text: egui::RichText) -> (Pos2, Visual, egui::R
     job.wrap.max_width = available;
     job.halign = ui.layout().horizontal_placement();
     let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
-    let (rect, response) = ui.allocate_exact_size(visual.galley.size(), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(visual.galley.size(), sense);
     let pos = match visual.galley.job.halign {
         egui::Align::LEFT => rect.left_top(),
         egui::Align::Center => rect.center_top(),

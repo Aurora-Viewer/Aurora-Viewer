@@ -19,6 +19,14 @@
 //! Legacy Viewer requests at once and loses objects the same way now and
 //! then (they have to be worn again by hand); the wait is the visible
 //! difference (the added objects appear a few seconds later).
+//!
+//! At the first login there is no outfit to restore: the account wears the
+//! outfit chosen at registration (the login response's `initial-outfit`),
+//! as LLStartUp::loadInitialOutfit (indra/newview/llstartup.cpp) does. The
+//! folder of that name in My Outfits is worn, else the Library's is copied
+//! then worn (findDescendentCategoryIDByName, wearInventoryCategory). The
+//! restore only picks the folder (`take_initial_outfit`): the app wears it
+//! like the Avatar Welcome Pack's `wear_folder` (`app/avatar_welcome.rs`).
 
 use super::inventory::{FetchState, Inventory};
 use aurora_net::inventory::InvItem;
@@ -81,6 +89,9 @@ pub struct OutfitInputs<'a> {
     /// In a region with its capabilities.
     pub ready: bool,
     pub first_login: bool,
+    /// The outfit folder chosen at registration (`initial-outfit`), on the
+    /// first login only, when the response names a folder and a gender.
+    pub initial_outfit: Option<String>,
     pub second_life: bool,
     /// Inventory items attached to our avatar now (AttachItemID).
     pub worn: HashSet<Uuid>,
@@ -118,7 +129,36 @@ pub struct OutfitRestore {
     /// and an IncrementCOFVersion request waiting for its answer.
     stepped_cof_version: i32,
     stepping: bool,
+    /// The first login's outfit, until the app takes it.
+    initial: Option<InitialOutfit>,
     pub commands: Vec<NetCommand>,
+}
+
+/// The outfit a new account wears at its first login.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialOutfit {
+    /// A folder of My Outfits, worn as it is.
+    Mine(Uuid),
+    /// A Library folder of that name, copied into Clothing then worn.
+    Library(String),
+}
+
+/// LLStartUp::loadInitialOutfit's folder: `name` under My Outfits, else
+/// under the Library. None when neither has it (the Legacy Viewer then
+/// creates the standard wearables).
+pub fn initial_outfit(inv: &Inventory, name: &str) -> Option<InitialOutfit> {
+    use super::appearance::{FT_MY_OUTFITS, descendant_named, system_folder};
+    if let Some(folder) = system_folder(inv, FT_MY_OUTFITS).and_then(|my| descendant_named(inv, my, name)) {
+        return Some(InitialOutfit::Mine(folder));
+    }
+    descendant_named(inv, inv.lib_root, name).map(|_| InitialOutfit::Library(name.to_owned()))
+}
+
+/// The registration's outfit in the login response (`initial-outfit`):
+/// its folder name, when both it and the gender are given
+/// (LLStartUp's sInitialOutfit and sInitialOutfitGender).
+pub fn registration_outfit(folder_name: &str, gender: &str) -> Option<String> {
+    (!folder_name.is_empty() && !gender.is_empty()).then(|| folder_name.to_owned())
 }
 
 impl Default for OutfitRestore {
@@ -140,6 +180,7 @@ impl Default for OutfitRestore {
             bake_retries: 0,
             stepped_cof_version: -1,
             stepping: false,
+            initial: None,
             commands: Vec::new(),
         }
     }
@@ -172,6 +213,13 @@ pub fn cof_objects(inv: &Inventory, cof: Uuid) -> Vec<Uuid> {
         }
     }
     out
+}
+
+/// The objects the Current Outfit folder links to ([`cof_objects`]), once
+/// the folder is fetched; none before (or while it is fetched again).
+pub fn current_outfit_objects(inv: &Inventory) -> Option<Vec<Uuid>> {
+    let cof = find_cof(inv)?;
+    (inv.folders.get(&cof)?.state == FetchState::Fetched).then(|| cof_objects(inv, cof))
 }
 
 /// The Current Outfit folder of the agent's inventory.
@@ -228,6 +276,11 @@ impl OutfitRestore {
         self.stage == Stage::Done
     }
 
+    /// The first login's outfit, once: the app wears it.
+    pub fn take_initial_outfit(&mut self) -> Option<InitialOutfit> {
+        self.initial.take()
+    }
+
     /// Nothing left to do: the login restore is over and no worn object
     /// waits for its item.
     pub fn is_idle(&self) -> bool {
@@ -251,16 +304,44 @@ impl OutfitRestore {
         }
     }
 
+    /// A restore that is already over, as after the login (tests of what
+    /// happens later in the session).
+    #[cfg(test)]
+    pub fn finished() -> Self {
+        OutfitRestore {
+            stage: Stage::Done,
+            ..Default::default()
+        }
+    }
+
     /// A detach was sent for these items: their coming off is wanted.
     pub fn on_detach_requested(&mut self, items: &[Uuid]) {
         self.user_removed.extend(items.iter().copied());
     }
 
-    /// Whether the COF link of `item` stays when it comes off: during the
-    /// login restore an outfit object nobody asked to take off came off
-    /// because the region replaced it, and is worn again.
+    /// Whether the COF link of `item` stays when the region takes it off
+    /// without the viewer asking for it (a detach the viewer sent, for the
+    /// resident or RLVa, always removes it).
+    ///
+    /// Until the login restore has read the Current Outfit folder, no
+    /// unrequested detach removes a link: LLAppearanceMgr::unregisterAttachment
+    /// (indra/newview/llappearancemgr.cpp) leaves the COF alone while
+    /// mAttachmentInvLinkEnabled is false, and only set_flags_and_update_appearance
+    /// (indra/newview/llstartup.cpp) turns it on, after the COF fetch at login.
+    /// A region that clears what it had kept from the last session (a relog
+    /// after a crash) would otherwise unlink those objects for good, and the
+    /// restore would not wear them again. Then, while the restore puts the
+    /// outfit on, an outfit object the region replaced keeps its link and
+    /// is worn again.
     pub fn keeps_cof_link(&self, item: Uuid) -> bool {
-        matches!(self.stage, Stage::Settle | Stage::Attaching { .. }) && self.objects.contains(&item) && !self.user_removed.contains(&item)
+        if self.user_removed.contains(&item) {
+            return false;
+        }
+        match self.stage {
+            Stage::Waiting | Stage::FetchCof { .. } | Stage::FetchItems { .. } => true,
+            Stage::Settle | Stage::Attaching { .. } => self.objects.contains(&item),
+            Stage::Done => false,
+        }
     }
 
     /// A COF change (Replace outfit, Add…) linked objects whose items the
@@ -288,8 +369,7 @@ impl OutfitRestore {
                     return;
                 }
                 if w.first_login {
-                    // the server dresses new residents (initial outfit)
-                    log::info!("outfit: first login, nothing to restore");
+                    self.start_initial(&w);
                     self.stage = Stage::Done;
                     return;
                 }
@@ -431,6 +511,27 @@ impl OutfitRestore {
                     self.stage = Stage::Attaching { since: now, retried: true };
                 }
             }
+        }
+    }
+
+    /// LLStartUp::loadInitialOutfit: nothing to restore, the outfit chosen
+    /// at registration is worn instead (by the app, `take_initial_outfit`).
+    fn start_initial(&mut self, w: &OutfitInputs) {
+        let Some(name) = w.initial_outfit.as_deref() else {
+            log::info!("outfit: first login, registration chose no outfit");
+            return;
+        };
+        self.initial = initial_outfit(w.inventory, name);
+        match &self.initial {
+            Some(outfit) => {
+                log::info!("outfit: first login, wearing the initial outfit {name:?} ({outfit:?})");
+                if w.second_life {
+                    self.commands.push(NetCommand::DummyWearablesUpdate);
+                }
+            }
+            // the Legacy Viewer creates the standard wearables
+            // (createStandardWearables); not done yet, see TASKS.md
+            None => log::warn!("outfit: first login, the initial outfit {name:?} is in neither My Outfits nor the Library"),
         }
     }
 
@@ -639,6 +740,7 @@ mod tests {
             agent: Uuid::from_u128(1),
             ready: true,
             first_login: false,
+            initial_outfit: None,
             second_life: true,
             worn: worn.iter().map(|w| Uuid::from_u128(*w)).collect(),
             received_cof_version: 3,
@@ -868,6 +970,48 @@ mod tests {
         assert!(!r.keeps_cof_link(Uuid::from_u128(201)), "the restore is over");
     }
 
+    /// Relog after a crash: the region clears what it kept of the last
+    /// session before the restore has read the COF. No link is removed then
+    /// (mAttachmentInvLinkEnabled), and the object is worn again; once the
+    /// restore is over, an unrequested detach removes the link as usual.
+    #[test]
+    fn no_link_is_removed_before_the_cof_is_read_and_the_object_is_worn_again() {
+        let mut inv = unfetched_cof();
+        let mut r = OutfitRestore::default();
+        let (body, ring, taken_off, unlinked) = (
+            Uuid::from_u128(200),
+            Uuid::from_u128(201),
+            Uuid::from_u128(203),
+            Uuid::from_u128(250),
+        );
+        assert!(r.keeps_cof_link(ring), "waiting for the region");
+        let t0 = Instant::now();
+        r.update(inputs(&mut inv, &[200, 201]), t0);
+        assert!(matches!(r.stage, Stage::FetchCof { .. }));
+        assert!(r.keeps_cof_link(ring), "the COF is not read yet");
+        assert!(r.keeps_cof_link(unlinked), "the COF is not read yet: its links are not known");
+        // a detach asked for (resident, script, RLVa) still removes its link
+        r.on_detach_requested(&[taken_off]);
+        assert!(!r.keeps_cof_link(taken_off));
+        // the ring came off meanwhile; the COF still links it
+        fetch_cof(&mut inv, &[200, 201, 202, 203]);
+        r.update(inputs(&mut inv, &[200]), t0);
+        assert!(matches!(r.stage, Stage::Settle));
+        assert!(r.keeps_cof_link(ring));
+        assert!(!r.keeps_cof_link(unlinked), "not in the outfit");
+        r.commands.clear();
+        r.update(inputs(&mut inv, &[200]), t0 + SETTLE);
+        assert_eq!(
+            requested(&r.commands),
+            vec![201, 202],
+            "the ring is worn again, not what was taken off"
+        );
+        r.update(inputs(&mut inv, &[200, 201, 202]), t0 + SETTLE + RETRY_AFTER);
+        assert!(r.is_done());
+        assert!(!r.keeps_cof_link(body), "after the login, a detach removes the link");
+        assert!(!r.keeps_cof_link(ring));
+    }
+
     /// Replace outfit with a cold inventory cache: the new COF links to
     /// objects the inventory has not fetched; they are looked up, then worn
     /// if the COF still links to them.
@@ -965,40 +1109,107 @@ mod tests {
         assert!(matches!(&r.commands[..], [NetCommand::RequestServerAppearance { cof_version: 10 }]));
     }
 
-    #[test]
-    fn first_login_does_nothing() {
-        let mut inv = Inventory::default();
+    fn add_folder(inv: &mut Inventory, n: u128, parent: u128, name: &str, kind: i32, library: bool) {
+        let (id, parent) = (Uuid::from_u128(n), Uuid::from_u128(parent));
         inv.folders.insert(
-            Uuid::from_u128(11),
+            id,
             super::super::inventory::Folder {
                 info: InvFolder {
-                    id: Uuid::from_u128(11),
-                    parent: Uuid::nil(),
-                    name: "COF".into(),
-                    type_default: FT_CURRENT_OUTFIT,
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: kind,
                     version: 1,
                     ..Default::default()
                 },
                 children: Vec::new(),
                 items: Vec::new(),
                 state: FetchState::Unknown,
-                library: false,
+                library,
             },
         );
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+    }
+
+    /// A new account: root (1) with its COF (11) and My Outfits (12)
+    /// holding "Female Avatar" (13), Library (20) › Avatars (21) ›
+    /// "Male Avatar" (22).
+    fn new_account() -> Inventory {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            lib_root: Uuid::from_u128(20),
+            ..Default::default()
+        };
+        add_folder(&mut inv, 1, 0, "My Inventory", 8, false);
+        add_folder(&mut inv, 11, 1, "Current Outfit", FT_CURRENT_OUTFIT, false);
+        add_folder(&mut inv, 12, 1, "My Outfits", super::super::appearance::FT_MY_OUTFITS, false);
+        add_folder(&mut inv, 13, 12, "Female Avatar", super::super::appearance::FT_OUTFIT, false);
+        add_folder(&mut inv, 20, 0, "Library", 8, true);
+        add_folder(&mut inv, 21, 20, "Avatars", -1, true);
+        add_folder(&mut inv, 22, 21, "Male Avatar", -1, true);
+        inv
+    }
+
+    fn first_login(r: &mut OutfitRestore, inv: &mut Inventory, initial: Option<&str>, second_life: bool) {
+        let mut w = inputs(inv, &[]);
+        w.first_login = true;
+        w.initial_outfit = initial.map(str::to_owned);
+        w.second_life = second_life;
+        r.update(w, Instant::now());
+    }
+
+    #[test]
+    fn a_new_account_wears_its_registration_outfit_from_my_outfits_first() {
+        let mut inv = new_account();
+        // the same name in the Library too: My Outfits wins
+        add_folder(&mut inv, 23, 21, "Female Avatar", -1, true);
         let mut r = OutfitRestore::default();
-        r.update(
-            OutfitInputs {
-                inventory: &mut inv,
-                agent: Uuid::from_u128(1),
-                ready: true,
-                first_login: true,
-                second_life: true,
-                worn: HashSet::new(),
-                received_cof_version: 0,
-            },
-            Instant::now(),
-        );
-        assert!(r.is_done());
+        first_login(&mut r, &mut inv, Some("female avatar"), true);
+        assert!(r.is_done(), "nothing to restore");
+        assert!(matches!(r.commands.as_slice(), [NetCommand::DummyWearablesUpdate]));
+        assert_eq!(r.take_initial_outfit(), Some(InitialOutfit::Mine(Uuid::from_u128(13))));
+        assert_eq!(r.take_initial_outfit(), None, "taken once");
+    }
+
+    #[test]
+    fn a_registration_outfit_only_in_the_library_is_copied() {
+        let mut inv = new_account();
+        let mut r = OutfitRestore::default();
+        // OpenSim: no DummyWearablesUpdate (Legacy Bake)
+        first_login(&mut r, &mut inv, Some("Male Avatar"), false);
         assert!(r.commands.is_empty());
+        assert_eq!(r.take_initial_outfit(), Some(InitialOutfit::Library("Male Avatar".into())));
+    }
+
+    #[test]
+    fn a_first_login_without_a_known_outfit_wears_nothing() {
+        for initial in [None, Some("Nowhere")] {
+            let mut inv = new_account();
+            let mut r = OutfitRestore::default();
+            first_login(&mut r, &mut inv, initial, true);
+            assert!(r.is_done());
+            assert!(r.commands.is_empty());
+            assert_eq!(r.take_initial_outfit(), None);
+        }
+    }
+
+    #[test]
+    fn a_returning_account_restores_its_outfit_and_ignores_the_registration_one() {
+        let mut inv = new_account();
+        let mut r = OutfitRestore::default();
+        let mut w = inputs(&mut inv, &[]);
+        w.initial_outfit = Some("Female Avatar".into());
+        r.update(w, Instant::now());
+        assert!(matches!(r.stage, Stage::FetchCof { .. }));
+        assert_eq!(r.take_initial_outfit(), None);
+    }
+
+    #[test]
+    fn the_registration_outfit_needs_a_folder_name_and_a_gender() {
+        assert_eq!(registration_outfit("Female Avatar", "female").as_deref(), Some("Female Avatar"));
+        assert_eq!(registration_outfit("", "female"), None);
+        assert_eq!(registration_outfit("Female Avatar", ""), None);
     }
 }

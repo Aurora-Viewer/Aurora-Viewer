@@ -20,13 +20,16 @@
 //! `indra/llwebrtc/llwebrtc.cpp`, Copyright (C) Linden Research, Inc. and
 //! The Phoenix Firestorm Project, licensed under the GNU originally LGPL 2.1.
 
+mod link_stats;
 pub mod protocol;
+mod receive_gain;
 mod session;
 mod state;
 mod transmit;
 
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use aurora_audio::{MicCapture, VoiceSink};
 use glam::{DVec3, Quat};
@@ -84,6 +87,62 @@ pub struct VoiceSession {
     shared: Arc<Shared>,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     agent_id: Uuid,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+/// A session left ([`VoiceSession::disconnect`]): its thread logs out in the
+/// background and ends on its own. Kept until [`Closing::is_finished`], so
+/// that a quit in the meantime waits for it too ([`ExitWait::with`]).
+#[must_use = "the viewer waits for a session still closing before it exits"]
+pub struct Closing {
+    shared: Arc<Shared>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Closing {
+    /// The session's thread has ended: nothing is left to wait for.
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(|thread| thread.is_finished())
+    }
+}
+
+/// The sessions closed for the viewer's exit, until their threads have ended
+/// ([`VoiceSession::close_for_exit`], [`ExitWait::with`]).
+#[derive(Default)]
+#[must_use = "the viewer waits for the sessions' threads before it exits"]
+pub struct ExitWait {
+    threads: Vec<thread::JoinHandle<()>>,
+}
+
+impl ExitWait {
+    /// Adds the sessions left earlier that are still closing: they give up
+    /// their logout as the current one does, and are waited for with it.
+    /// LLWebRTCVoiceClient::drainConnections shuts down and waits for every
+    /// session (`sessionState::for_each(predShutdownSession)`).
+    pub fn with(mut self, closing: impl IntoIterator<Item = Closing>) -> Self {
+        for mut session in closing {
+            session.shared.exiting.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.threads.extend(session.thread.take());
+        }
+        self
+    }
+
+    /// Waits up to `timeout`, for all of them together, for the sessions'
+    /// threads to end; false if one is still running. Polled every 10 ms,
+    /// like LLWebRTCVoiceClient::drainConnections.
+    pub fn wait(self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        for thread in self.threads {
+            while !thread.is_finished() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let _ = thread.join();
+        }
+        true
+    }
 }
 
 /// Largest accepted [`VoiceSession::set_mic_gain`] value.
@@ -132,10 +191,19 @@ impl VoiceSession {
             rt.block_on(session::run(http, params, sink, thread_shared, cmd_rx));
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
         });
-        if let Err(e) = spawned {
-            *shared.status.lock() = VoiceStatus::Error(format!("cannot start voice thread: {e}"));
+        let thread = match spawned {
+            Ok(thread) => Some(thread),
+            Err(e) => {
+                *shared.status.lock() = VoiceStatus::Error(format!("cannot start voice thread: {e}"));
+                None
+            }
+        };
+        VoiceSession {
+            shared,
+            cmd_tx,
+            agent_id,
+            thread,
         }
-        VoiceSession { shared, cmd_tx, agent_id }
     }
 
     /// Current connection status.
@@ -224,6 +292,16 @@ impl VoiceSession {
         let _ = self.cmd_tx.send(Cmd::Data(protocol::user_gain_message(id, volume)));
     }
 
+    /// The viewer's own volume on everything received (0..=1, 0.5 = as
+    /// sent, 1 = 200 %), for a private call's channel, where the server
+    /// ignores [`VoiceSession::set_user_volume`] and the received track
+    /// carries the other resident's voice alone (see `receive_gain`). Keep it
+    /// at 0.5 on a channel that mixes several voices. Kept across
+    /// reconnections; changes ramp over 20 ms.
+    pub fn set_receive_volume(&self, volume: f32) {
+        self.shared.rx_gain.set_volume(volume);
+    }
+
     /// Mutes / unmutes a participant for this viewer (mute list).
     pub fn set_user_mute(&self, id: Uuid, mute: bool) {
         {
@@ -237,14 +315,40 @@ impl VoiceSession {
         let _ = self.cmd_tx.send(Cmd::Data(protocol::user_mute_message(id, mute)));
     }
 
-    /// Leaves the channel (logout + close happen in the background).
-    pub fn disconnect(self) {
-        drop(self);
+    /// Leaves the channel (logout + close happen in the background). The
+    /// viewer keeps what is returned while the session closes, to wait for
+    /// it if it quits meanwhile.
+    pub fn disconnect(mut self) -> Closing {
+        Closing {
+            shared: self.shared.clone(),
+            thread: self.thread.take(),
+        }
+    }
+
+    /// Leaves the channel because the viewer is quitting: the connection is
+    /// closed without the logout request, and the viewer waits on the
+    /// returned [`ExitWait`] before it exits, as
+    /// LLWebRTCVoiceClient::terminate (indra/newview/llvoicewebrtc.cpp)
+    /// drains the connections. A thread still running when the process
+    /// exits can abort it on Linux: the exit frees the TLS library's random
+    /// generator, which a new connection then finds gone.
+    pub fn close_for_exit(mut self) -> ExitWait {
+        self.shared.exiting.store(true, std::sync::atomic::Ordering::Relaxed);
+        ExitWait {
+            threads: self.thread.take().into_iter().collect(),
+        }
     }
 }
 
 impl Drop for VoiceSession {
+    /// The microphone leaves the session at once: the logout that follows
+    /// can take up to its timeout, and the audio task sends until the peer
+    /// connection closes after it. From the next poll (10 ms) the channel
+    /// gets the muted track's silence, and the capture is free for the
+    /// session that replaces this one (it must have a single reader).
     fn drop(&mut self) {
+        self.shared.tx.set_transmit(false);
+        *self.shared.tx.mic.lock() = None;
         let _ = self.cmd_tx.send(Cmd::Shutdown);
     }
 }
@@ -281,7 +385,13 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(s.participants().is_empty());
-            s.disconnect();
+            // left, the session's thread ends on its own
+            let closing = s.disconnect();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !closing.is_finished() {
+                assert!(Instant::now() < deadline, "the session's thread did not end");
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 
@@ -331,5 +441,18 @@ mod tests {
         assert_eq!(p.agent_id, me);
         assert_eq!(p.level, 0.5);
         assert!(p.speaking);
+    }
+
+    /// Leaving a channel (a drop) stops the microphone before the logout.
+    #[test]
+    fn a_dropped_session_lets_go_of_the_microphone() {
+        let s = VoiceSession::connect(reqwest::Client::new(), params("vivox"), VoiceSink::null());
+        let (_feed, mic) = aurora_audio::MicCapture::virtual_input();
+        s.set_mic(Some(mic));
+        s.set_transmit(true);
+        let shared = s.shared.clone();
+        drop(s);
+        assert!(!shared.tx.transmit());
+        assert!(shared.tx.mic.lock().is_none());
     }
 }
