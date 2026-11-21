@@ -159,8 +159,12 @@ impl Here {
 
 impl World {
     /// Save the local environment for the parcel under the agent, once it
-    /// has loaded.
+    /// has loaded. Refused while RLVa holds the environment (@setenv): a
+    /// save left waiting would be made once the lock lifts, unasked.
     pub fn save_parcel_environment(&mut self) {
+        if self.eep.rlva_locked {
+            return;
+        }
         self.eep.arm_parcel_save();
         self.parcel_env.ask_again();
         self.parcel_env.saving = self.main_region.zip(self.parcel.as_ref()).map(|(handle, p)| (handle, p.local_id));
@@ -200,7 +204,11 @@ impl World {
             }
             Err(()) => gave_up = true,
         }
-        // RLVa holds the environment (@setenv): decided once it lets go
+        // RLVa holds the environment (@setenv): a save asked before the lock
+        // came is dropped, the rest decided once it lets go
+        if self.eep.rlva_locked && self.parcel_env.saving.take().is_some() {
+            return (Outcome::NotSaved, ask);
+        }
         let Some(here) = self.parcel_env.here.as_mut().filter(|_| !self.eep.rlva_locked) else {
             return (Outcome::Nothing, ask);
         };
@@ -514,5 +522,32 @@ mod tests {
         assert_eq!(saved, [entry_on("custom_grid_test", id, 2), entry(id, 4)]);
         forget(&mut saved, GRID, id);
         assert_eq!(saved, [entry_on("custom_grid_test", id, 2)]);
+    }
+
+    #[test]
+    fn no_save_is_asked_while_rlva_holds_the_environment() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        world.eep.rlva_locked = true;
+        world.save_parcel_environment();
+        assert_eq!(world.parcel_env.saving, None);
+        world.parcel_env.on_parcel_id(7, 3, Some(Uuid::from_u128(9)));
+        world.eep.rlva_locked = false;
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Nothing);
+        assert_eq!(world.parcel_env.saving, None, "nothing saved once the lock lifts");
+    }
+
+    #[test]
+    fn a_save_waiting_when_rlva_holds_the_environment_is_dropped() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        world.save_parcel_environment();
+        assert!(world.parcel_env.saving.is_some());
+        world.eep.rlva_locked = true;
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::NotSaved);
+        world.parcel_env.on_parcel_id(7, 3, Some(Uuid::from_u128(9)));
+        world.eep.rlva_locked = false;
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Nothing);
+        assert_eq!(world.parcel_env.saving, None);
     }
 }

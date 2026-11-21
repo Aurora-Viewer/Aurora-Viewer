@@ -330,9 +330,15 @@ impl EnvironmentUi {
                 out.push(EnvAction::Shared);
             }
             // the parcel pin beside it: it keeps or forgets this same
-            // sky, water and day cycle for the parcel
+            // sky, water and day cycle for the parcel; greyed while RLVa
+            // holds the environment, like the lists
             if self.parcel_choice == ParcelChoice::Saved {
-                if widgets::icon_toggle(ui, p, "map-pin-filled", aurora_i18n::tr!("parcel-environment-forget"), true) {
+                let forget = ui
+                    .add_enabled_ui(free, |ui| {
+                        widgets::icon_toggle(ui, p, "map-pin-filled", aurora_i18n::tr!("parcel-environment-forget"), true)
+                    })
+                    .inner;
+                if forget && free {
                     out.push(EnvAction::ForgetParcel);
                 }
             } else if widgets::icon_button(
@@ -340,7 +346,7 @@ impl EnvironmentUi {
                 p,
                 "map-pin-filled",
                 aurora_i18n::tr!("parcel-environment-save"),
-                self.parcel_choice == ParcelChoice::Save,
+                free && self.parcel_choice == ParcelChoice::Save,
             ) {
                 out.push(EnvAction::SaveParcel);
             }

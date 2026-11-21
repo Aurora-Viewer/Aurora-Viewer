@@ -617,7 +617,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         TEXT,
                         "map-pin-filled",
                         aurora_i18n::tr!("parcel-environment-apply-save"),
-                        single && !it.asset_id.is_nil(),
+                        single && !it.asset_id.is_nil() && !facts.environment_locked,
                         InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
                     );
                 }
@@ -1373,6 +1373,30 @@ mod tests {
         for key in ["play-sound", "play-sound-world"] {
             assert!(!c.entries.iter().find(|e| e.id == key).expect("sound action").enabled);
         }
+    }
+
+    #[test]
+    fn the_parcel_save_row_is_greyed_while_rlva_holds_the_environment() {
+        let mut inv = inventory();
+        let item = Uuid::from_u128(8103);
+        let settings = inv.items.get_mut(&item).expect("demo item");
+        settings.asset_type = 56;
+        settings.inv_type = 56;
+        settings.asset_id = Uuid::from_u128(4243);
+        let enabled = |facts: &Facts| {
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), facts);
+            c.entries
+                .iter()
+                .find(|e| e.id == "apply-save-parcel")
+                .expect("parcel save row")
+                .enabled
+        };
+        assert!(enabled(&facts()));
+        let locked = Facts {
+            environment_locked: true,
+            ..facts()
+        };
+        assert!(!enabled(&locked));
     }
 
     #[test]
