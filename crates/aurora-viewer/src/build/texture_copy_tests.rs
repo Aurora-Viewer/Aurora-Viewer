@@ -659,10 +659,7 @@ fn a_saved_materials_rights_are_the_ones_the_simulator_keeps() {
         }
     );
     // no right for the next owner stays none
-    let none = Permissions {
-        next_owner: 0,
-        ..all
-    };
+    let none = Permissions { next_owner: 0, ..all };
     assert_eq!(material_save_masks(none, defaults).next_owner, 0);
     // the source's rights narrow the defaults
     let narrow = Permissions {

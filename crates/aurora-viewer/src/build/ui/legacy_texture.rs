@@ -406,7 +406,10 @@ pub(super) fn pbr_surface(
     maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
-    (save_material, save): (&aurora_assets::material::PbrMaterial, Option<crate::build::texture_copy::MaterialSave>),
+    (save_material, save): (
+        &aurora_assets::material::PbrMaterial,
+        Option<crate::build::texture_copy::MaterialSave>,
+    ),
 ) {
     let scale = super::super::common::font_scale(ui);
     let map_step = 74.0 * scale;
