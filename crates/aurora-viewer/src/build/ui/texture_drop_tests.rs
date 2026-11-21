@@ -194,6 +194,30 @@ fn a_worn_object_refuses_a_texture_without_unrestricted_base_rights() {
     assert!(contents_drop::worn_image_filter(&base_limited, w.agent_id));
     assert!(contents_drop::worn_refused(&w, idx, &base_limited));
     assert_eq!(contents_drop::accepts(&w, idx, &no_modify), Err("rez-contents-denied"));
+    // the Texture tab's paste asks the same through the item it carries
+    let paste = |n: u128| contents_drop::worn_paste_refused(&w, idx, Some(Uuid::from_u128(n))).map(|it| it.id);
+    assert_eq!(paste(TEXTURE), None);
+    for refused in [NO_MODIFY_TEXTURE, NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
+        assert_eq!(paste(refused), Some(Uuid::from_u128(refused)), "{refused}");
+    }
+    assert_eq!(
+        contents_drop::worn_paste_refused(&w, idx, None).map(|it| it.id),
+        None,
+        "a free id: no item"
+    );
+    assert_eq!(paste(0xDEAD), None, "an item no longer in the inventory");
+}
+
+/// The Texture tab's paste on a prim that is not worn asks nothing more.
+#[test]
+fn a_paste_on_a_rezzed_object_asks_no_worn_rights() {
+    let (w, sel) = world();
+    for n in [TEXTURE, NO_MODIFY_TEXTURE, NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
+        assert!(
+            contents_drop::worn_paste_refused(&w, sel[0].idx, Some(Uuid::from_u128(n))).is_none(),
+            "{n}"
+        );
+    }
 }
 
 #[test]
@@ -289,6 +313,7 @@ fn rlva_restrict(w: &mut World, source: Uuid, message: &str) {
         owner_id: w.agent_id,
         source_type: aurora_net::ChatSourceType::Object,
         chat_type: aurora_net::ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: message.to_owned(),
     }));

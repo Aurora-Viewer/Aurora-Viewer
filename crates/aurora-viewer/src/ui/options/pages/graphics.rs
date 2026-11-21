@@ -4,82 +4,15 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
-    use aurora_i18n::tr;
     match tab {
         0 => quality(cx),
         1 => light(cx),
-        2 => cx.group(tr!("common-environment"), |cx| {
-            cx.row(
-                tr!("common-time-of-day"),
-                tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
-                &field!(time_of_day),
-                |ui, s| {
-                    let names = crate::ui::bars::time_of_day();
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
-                        .width(COMBO_W)
-                        .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
-                        .show_ui(ui, |ui| {
-                            for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
-                                changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
-                            }
-                        });
-                    changed
-                },
-            );
-            cx.row(
-                tr!("ui-options-environment-fade"),
-                tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
-                &field!(env_manual_transition),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .step_by(0.5)
-                            .suffix(" s")
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-            // the stars' sky (world/night_sky.rs)
-            {
-                use crate::world::night_sky::NightSky;
-                cx.unfolded().choice(
-                    tr!("ui-options-night-sky"),
-                    tr!("ui-options-night-sky-help"),
-                    &field!(night_sky),
-                    &[
-                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
-                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
-                    ],
-                );
-                let legacy = cx.s.night_sky != NightSky::Real;
-                cx.subs(legacy, night_sky_rows);
-            }
-            // an Aurora difference, also listed in Preferences › Aurora
-            cx.experimental().toggle(
-                tr!("ui-options-colored-sky-ambient"),
-                tr!("ui-options-colored-sky-ambient-help"),
-                &field!(colored_sky_ambient),
-            );
-            cx.toggle(
-                tr!("ui-options-keep-environment"),
-                tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
-                &field!(env_persist),
-            );
-            // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
-            // Preferences › Notifications › Alerts)
-            cx.toggle(
-                tr!("ui-options-confirm-no-transfer-settings"),
-                tr!("ui-options-confirm-no-transfer-settings-help"),
-                &field!(confirm_no_transfer_settings),
-            );
-        }),
+        // the weather's settings are all in the Aurora Weather window
+        2 => environment(cx),
         3 => reflections_and_water(cx),
         4 => image(cx),
         5 => {
@@ -90,6 +23,104 @@ pub fn page(cx: &mut Cx, tab: usize) {
         6 => parcels(cx),
         _ => {}
     }
+}
+
+/// Graphics › Sky and environment: the environment's own settings.
+fn environment(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("common-environment"), |cx| {
+        cx.row(
+            tr!("common-time-of-day"),
+            tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
+            &field!(time_of_day),
+            |ui, s| {
+                let names = crate::ui::bars::time_of_day();
+                let mut changed = false;
+                egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
+                    .width(COMBO_W)
+                    .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
+                    .show_ui(ui, |ui| {
+                        for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
+                            changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
+                        }
+                    });
+                changed
+            },
+        );
+        cx.row(
+            tr!("ui-options-environment-fade"),
+            tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
+            &field!(env_manual_transition),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(0.5)
+                        .suffix(" s")
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        // the stars' sky (world/night_sky.rs)
+        {
+            use crate::world::night_sky::NightSky;
+            cx.unfolded().choice(
+                tr!("ui-options-night-sky"),
+                tr!("ui-options-night-sky-help"),
+                &field!(night_sky),
+                &[
+                    (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                    (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                ],
+            );
+            let legacy = cx.s.night_sky != NightSky::Real;
+            cx.subs(legacy, night_sky_rows);
+        }
+        // an Aurora difference, also listed in Preferences › Aurora
+        cx.experimental().toggle(
+            tr!("ui-options-colored-sky-ambient"),
+            tr!("ui-options-colored-sky-ambient-help"),
+            &field!(colored_sky_ambient),
+        );
+        // an Aurora difference: the world drawn on a round planet
+        cx.experimental().toggle(
+            tr!("ui-options-planet-curvature"),
+            tr!("ui-options-planet-curvature-help"),
+            &field!(planet_curvature),
+        );
+        let flat = !cx.s.planet_curvature;
+        cx.subs(flat, |cx| {
+            cx.row(
+                tr!("ui-options-planet-radius"),
+                tr!("ui-options-planet-radius-help"),
+                &field!(planet_radius_km),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.planet_radius_km, crate::settings::PLANET_RADIUS_KM_RANGE)
+                            .logarithmic(true)
+                            .step_by(1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .suffix(" km")
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
+        cx.toggle(
+            tr!("ui-options-keep-environment"),
+            tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
+            &field!(env_persist),
+        );
+        // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
+        // Preferences › Notifications › Alerts)
+        cx.toggle(
+            tr!("ui-options-confirm-no-transfer-settings"),
+            tr!("ui-options-confirm-no-transfer-settings-help"),
+            &field!(confirm_no_transfer_settings),
+        );
+    });
 }
 
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one
@@ -288,6 +319,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-gpu-recovery-tip"),
             &field!(gpu_recovery),
         );
+        cx.unfolded().toggle(
+            tr!("ui-options-gaming-mode-leave-on-focus"),
+            tr!("ui-options-gaming-mode-leave-on-focus-tip"),
+            &field!(gaming_mode_leave_on_focus),
+        );
     });
 }
 
@@ -357,7 +393,7 @@ fn quality(cx: &mut Cx) {
             tr!("common-draw-distance"),
             tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
             &field!(draw_distance),
-            32.0..=512.0,
+            crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
             " m",
         );
         // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
@@ -561,6 +597,11 @@ fn quality(cx: &mut Cx) {
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
         );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
+        );
         cx.stepped(
             tr!("ui-options-limit-applied"),
             tr!("ui-options-always-fully-render-friends-or-fully-render-only-friends"),
@@ -610,6 +651,15 @@ fn quality(cx: &mut Cx) {
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-local-lights"), |cx| {
+        // the Legacy Viewer's "Max. nearby lights" (RenderLocalLightCount),
+        // up to the 64 the renderer holds (Settings::local_light_count)
+        cx.slider(
+            tr!("ui-options-max-nearby-lights"),
+            tr!("ui-options-max-nearby-lights-help"),
+            &field!(local_light_count),
+            0..=crate::scene::lights::MAX_LIGHTS as u32,
+            "",
+        );
         cx.toggle(
             tr!("ui-options-others-attached-lights"),
             tr!("ui-options-others-attached-lights-help"),
@@ -665,6 +715,49 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
                 &field!(contact_shadows),
+            );
+            cx.experimental().toggle(
+                tr!("ui-options-soft-shadows"),
+                tr!("ui-options-soft-shadows-help"),
+                &field!(soft_shadows),
+            );
+            // the size of the light acts with the soft shadows only
+            let soft = cx.s.soft_shadows;
+            cx.subs(!soft, |cx| {
+                cx.row(
+                    tr!("ui-options-shadow-softness"),
+                    tr!("ui-options-shadow-softness-help"),
+                    &field!(shadow_softness),
+                    |ui, s| {
+                        let slider = ui.add_enabled_ui(soft, |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut s.shadow_softness, 0.0..=crate::settings::SHADOW_SOFTNESS_MAX)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .fixed_decimals(2)
+                                    .step_by(0.05)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        });
+                        slider.response.on_disabled_hover_text(tr!("ui-options-shadow-softness-needs-soft"));
+                        slider.inner
+                    },
+                );
+            });
+            cx.row(
+                tr!("ui-options-shadow-intensity"),
+                tr!("ui-options-shadow-intensity-help"),
+                &field!(shadow_intensity),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.shadow_intensity, 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .fixed_decimals(2)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
         });
     });
@@ -825,11 +918,14 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_range),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
-                        .custom_parser(aurora_i18n::parse_number)
-                        .step_by(16.0)
-                        .suffix(" m")
-                        .trailing_fill(true),
+                    egui::Slider::new(
+                        &mut s.probe_range,
+                        crate::settings::PROBE_RANGE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
+                    )
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(16.0)
+                    .suffix(" m")
+                    .trailing_fill(true),
                 )
                 .changed()
             },
@@ -892,6 +988,25 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        let p = cx.p;
+        // the search finds the row by its methods and the exact order's
+        // precisions
+        let mut words = vec![
+            tr!("ui-options-blend-order-standard"),
+            tr!("ui-options-blend-order-exact"),
+            tr!("ui-options-blend-order-stochastic"),
+        ];
+        words.extend(blend_precisions().map(|(_, label)| label));
+        cx.wide().keywords(&words.join(" ")).row(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            |ui, s| blend_order_choice(ui, &p, &mut s.blend_order),
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
@@ -996,7 +1111,43 @@ fn image(cx: &mut Cx) {
             },
         );
     });
+    world_look(cx);
     depth_of_field(cx);
+}
+
+/// The world's own filters (`snapshot::looks::WorldLook`): switched on here,
+/// chosen in their window (`ui/world_look.rs`). Aurora's own.
+fn world_look(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-world-look"), |cx| {
+        cx.keywords("LUT look filter colour grading").toggle(
+            tr!("ui-options-world-look-on"),
+            tr!("ui-options-world-look-on-help"),
+            &field!(world_look.on),
+        );
+        let p = cx.p;
+        cx.row_with(
+            tr!("ui-options-world-look-choose"),
+            tr!("ui-options-world-look-choose-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                use crate::ui::widgets::{ActionKind, action_button};
+                if action_button(
+                    ui,
+                    &p,
+                    "color-filter",
+                    tr!("ui-options-world-look-open"),
+                    ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    r.open_world_look = true;
+                }
+                false
+            },
+        );
+    });
 }
 
 /// Depth of field (panel_preferences_graphics1.xml, "DOF panel":
@@ -1056,6 +1207,11 @@ fn depth_of_field(cx: &mut Cx) {
                     (FocusMode::Click, tr!("ui-options-dof-focus-click"), true),
                     (FocusMode::Locked, tr!("ui-options-dof-focus-locked"), true),
                 ],
+            );
+            cx.toggle(
+                tr!("ui-options-dof-show-focus-point"),
+                tr!("ui-options-dof-show-focus-point-help"),
+                &field!(dof.show_focus_point),
             );
             cx.row(
                 tr!("ui-options-dof-aperture"),

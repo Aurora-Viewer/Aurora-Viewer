@@ -7,6 +7,7 @@
 //! the human; Firestorm shows a progress bar over a snapshot.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Pos2, Rect, Shape, Vec2};
 
@@ -68,6 +69,12 @@ impl PlaceFacts {
         arrived: bool,
     ) -> PlaceFacts {
         let mut facts = PlaceFacts::default();
+        // @showloc: the classification, the arrival point, the head count and
+        // the map tile each tell the place apart; the Legacy Viewer's progress
+        // view (LLProgressView) shows none of them.
+        if world.rlva.has("showloc") {
+            return facts;
+        }
         if let Some(pos) = position {
             facts.position = format!("{:.0}, {:.0}, {:.0}", pos.x, pos.y, pos.z);
         }
@@ -79,15 +86,22 @@ impl PlaceFacts {
         let Some(key) = grid else {
             return facts;
         };
-        let sim = world.map.sims.get(&key);
+        // what the world map tells of the place (its tile, its classification
+        // and head count before the arrival) follows @showworldmap
+        // (RlvActions::canShowWorldMap, rlvactions.cpp), the residents around
+        // once there @shownearby (RlvActions::canShowNearbyAgents): the
+        // nearest Legacy pictures of them, the progress view naming none
+        let map_shown = !world.rlva.has("showworldmap");
+        let nearby_shown = !world.rlva.has("shownearby");
+        let sim = world.map.sims.get(&key).filter(|_| map_shown);
         let size = sim.map_or(256.0, |s| s.size_x.max(1) as f32);
         facts.maturity = match main.and_then(|h| world.regions.get(&h)).and_then(|r| r.info.as_ref()) {
             Some(info) => super::bars::maturity_name(info.sim_access),
             None => sim.map_or("", |s| super::bars::maturity_name(s.access)),
         };
         facts.residents = match main {
-            Some(handle) => world.coarse.get(&handle).map(Vec::len).filter(|n| *n > 0),
-            None => {
+            Some(handle) if nearby_shown => world.coarse.get(&handle).map(Vec::len).filter(|n| *n > 0),
+            None if map_shown => {
                 world.map.want_agents(key);
                 world
                     .map
@@ -95,9 +109,12 @@ impl PlaceFacts {
                     .get(&key)
                     .map(|spots| spots.iter().map(|(_, _, count)| (*count).max(0) as usize).sum())
             }
+            _ => None,
         };
-        facts.tile = tiles.get(1, key.0, key.1, true).ok();
-        facts.pin = position.map(|pos| (pos.x / size, pos.y / size));
+        if map_shown {
+            facts.tile = tiles.get(1, key.0, key.1, true).ok();
+            facts.pin = position.map(|pos| (pos.x / size, pos.y / size));
+        }
         facts
     }
 }
@@ -114,6 +131,24 @@ pub fn split_destination(dest: &str) -> (&str, Option<glam::Vec3>) {
         (Some(Ok(x)), Some(Ok(y)), Some(Ok(z)), None) => (name.trim(), Some(glam::Vec3::new(x, y, z))),
         _ => (dest.trim(), None),
     }
+}
+
+/// The region a teleport screen names, and the arrival point it may show,
+/// from the destination "Region (x, y, z)" (empty: the region we are in).
+/// Under @showloc neither is told: the screen says what the location bar
+/// says of the current region (RlvStrings::getString(RlvStringKeys::Hidden::
+/// Region)); the Legacy Viewer's own progress view never names the place.
+pub fn banner_place(world: &crate::world::World, dest: &str) -> (String, Option<glam::Vec3>) {
+    if world.rlva.has("showloc") {
+        return (world.rlva_region_label(), None);
+    }
+    let (region, point) = split_destination(dest);
+    let name = if region.is_empty() {
+        world.region_name()
+    } else {
+        region.to_owned()
+    };
+    (name, point)
 }
 
 /// Fade-out duration of the loading / teleport screens.
@@ -409,7 +444,7 @@ fn banner(
         let accent = p.violet_light.gamma_multiply(a);
         let mut job = egui::text::LayoutJob::default();
         job.append(
-            &label.to_uppercase(),
+            &label.ui_upper(),
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::proportional(11.5 * k),
@@ -570,6 +605,44 @@ mod tests {
         assert_eq!(split_destination(""), ("", None));
     }
 
+    /// @showloc: the screen tells neither the destination nor a fact of it.
+    #[test]
+    fn rlva_showloc_hides_the_destination_and_its_facts() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let here = world.region_name();
+        assert!(!here.is_empty());
+        let point = glam::Vec3::new(128.0, 64.0, 30.0);
+        assert_eq!(banner_place(&world, "Lagune (128, 64, 30)"), ("Lagune".to_owned(), Some(point)));
+        assert_eq!(banner_place(&world, ""), (here.clone(), None));
+        let mut tiles = crate::ui::map_tiles::MapTiles::new();
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert_eq!(facts.position, "128, 64, 30");
+        assert!(facts.pin.is_some());
+
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(99),
+            owner_id: uuid::Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@showloc=n".into(),
+        }));
+        for dest in ["Lagune (128, 64, 30)", "Lagune", ""] {
+            let (name, arrival) = banner_place(&world, dest);
+            assert!(!name.contains("Lagune") && name != here && !name.is_empty(), "{dest:?}: {name}");
+            assert_eq!(arrival, None);
+        }
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.position.is_empty() && facts.maturity.is_empty());
+        assert!(facts.residents.is_none() && facts.tile.is_none() && facts.pin.is_none());
+    }
+
     #[test]
     fn the_teleport_screen_paints_in_its_first_frame() {
         // the loading screen hands over to it at full opacity: a frame
@@ -666,5 +739,33 @@ mod tests {
         }
         let pressed = click(at).into_iter().any(|events| frame(events).0);
         assert!(pressed, "the click on Cancel reached the screen behind it");
+    }
+
+    /// The facts the world map tells (tile, arrival pin, a remote head
+    /// count) follow @showworldmap, the residents around the arrival
+    /// @shownearby; the name stays without @showloc.
+    #[test]
+    fn rlva_map_and_nearby_rules_hide_their_facts() {
+        let mut world = crate::world::rlva_location_tests::showloc_world();
+        world.rlva_console_input("@showloc=y");
+        let here = world.region_name();
+        let main = world.main_region.expect("arrived");
+        world
+            .coarse
+            .insert(main, vec![(uuid::Uuid::from_u128(77), glam::Vec3::new(10.0, 10.0, 20.0))]);
+        let point = glam::Vec3::new(128.0, 64.0, 30.0);
+        let mut tiles = crate::ui::map_tiles::MapTiles::new();
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.residents.is_some() && facts.pin.is_some());
+        world.rlva_console_input("@shownearby=n");
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.residents.is_none(), "@shownearby");
+        assert!(facts.pin.is_some() && facts.position == "128, 64, 30");
+        world.rlva_console_input("@shownearby=y");
+        world.rlva_console_input("@showworldmap=n");
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.tile.is_none() && facts.pin.is_none(), "@showworldmap");
+        assert!(facts.residents.is_some(), "the residents around are not the map's");
+        assert_eq!(banner_place(&world, ""), (here, None));
     }
 }

@@ -73,8 +73,8 @@ const fn t(id: &'static str, kind: Kind, icon: &'static str, group: Group) -> To
     Tool { id, kind, icon, group }
 }
 
-/// Every tool, in catalogue order.
-pub const TOOLS: &[Tool] = &[
+/// Every tool of a published build, in catalogue order.
+const TOOLS: &[Tool] = &[
     t("J1", K::Copy, "file-text-filled", G::Reports),
     t("J2", K::Copy, "clipboard-text-filled", G::Reports),
     t("J3", K::Copy, "alert-triangle-filled", G::Reports),
@@ -82,8 +82,8 @@ pub const TOOLS: &[Tool] = &[
     t("J5", K::Copy, "file-export", G::Reports),
     t("J6", K::Window, "folder-open-filled", G::Reports),
     t("J7", K::Window, "terminal-2", G::Reports),
-    t("J8", K::Copy, "bone-filled", G::Reports),
     t("J9", K::Copy, "bone-filled", G::Reports),
+    t("J10", K::Copy, "users", G::Reports),
     t("L1", K::Live, "crosshair", G::Live),
     t("L2", K::Live, "stack-2-filled", G::Live),
     t("L3", K::Live, "alert-triangle-filled", G::Live),
@@ -110,6 +110,7 @@ pub const TOOLS: &[Tool] = &[
     t("O7", K::Window, "search-filled", G::Objects),
     t("O8", K::Window, "medical-cross-filled", G::Objects),
     t("O9", K::Toggle, "shape", G::Objects),
+    t("O10", K::Toggle, "dimensions", G::Objects),
     t("N1", K::Window, "chart-line", G::Network),
     t("N2", K::Copy, "world-filled", G::Network),
     t("P1", K::Window, "gauge-filled", G::Network),
@@ -121,11 +122,25 @@ pub const TOOLS: &[Tool] = &[
     t("M1", K::Toggle, "movie", G::Network),
 ];
 
+/// The tools of development builds only (`dev`, `ci`, `debugging`): a
+/// published build neither lists them nor finds them, and drops them from a
+/// saved layout.
+const DEV_TOOLS: &[Tool] = &[t("T1", K::Window, "flask-filled", G::Reports)];
+
+/// Every tool of this build, in catalogue order.
+pub fn all() -> impl Iterator<Item = &'static Tool> {
+    all_in(crate::world::rlva_selftest::available())
+}
+
+fn all_in(development: bool) -> impl Iterator<Item = &'static Tool> {
+    TOOLS.iter().chain(DEV_TOOLS.iter().filter(move |_| development))
+}
+
 /// The favourites of a new layout.
 const DEFAULT_FAVORITES: &[&str] = &["J2", "L1", "R3", "P1"];
 
 pub fn find(id: &str) -> Option<&'static Tool> {
-    TOOLS.iter().find(|t| t.id == id)
+    all().find(|t| t.id == id)
 }
 
 /// The tool's label, in the interface language.
@@ -139,8 +154,8 @@ pub fn label(id: &str) -> &'static str {
         "J5" => tr!("dev-toolbox-j5"),
         "J6" => tr!("dev-toolbox-j6"),
         "J7" => tr!("dev-toolbox-j7"),
-        "J8" => tr!("dev-toolbox-j8"),
         "J9" => tr!("dev-toolbox-j9"),
+        "J10" => tr!("dev-toolbox-j10"),
         "L1" => tr!("dev-toolbox-l1"),
         "L2" => tr!("dev-toolbox-l2"),
         "L3" => tr!("dev-toolbox-l3"),
@@ -167,6 +182,7 @@ pub fn label(id: &str) -> &'static str {
         "O7" => tr!("dev-toolbox-o7"),
         "O8" => tr!("dev-toolbox-o8"),
         "O9" => tr!("dev-toolbox-o9"),
+        "O10" => tr!("dev-toolbox-o10"),
         "N1" => tr!("dev-toolbox-n1"),
         "N2" => tr!("dev-toolbox-n2"),
         "P1" => tr!("dev-toolbox-p1"),
@@ -176,6 +192,7 @@ pub fn label(id: &str) -> &'static str {
         "P5" => tr!("dev-toolbox-p5"),
         "P6" => tr!("dev-toolbox-p6"),
         "M1" => tr!("dev-toolbox-m1"),
+        "T1" => tr!("dev-toolbox-t1"),
         _ => "?",
     }
 }
@@ -210,6 +227,87 @@ pub fn matches(id: &str, label: &str, query: &str) -> bool {
     q.is_empty() || id.to_lowercase().contains(&q) || label.to_lowercase().contains(&q)
 }
 
+/// J10: the state of the Contacts tab of Conversations, for a report where
+/// the friends list does not show: each gate that hides it, on its own line.
+/// The app fills it from the settings and the window.
+#[derive(Debug, Clone, Copy)]
+pub struct ContactsReport<'a> {
+    /// Preferences › Chat › Show the Contacts tab.
+    pub shown: bool,
+    /// ContactsTornOff: its own window instead of the first tab.
+    pub torn_off: bool,
+    /// The window the pane belongs to is open.
+    pub window_open: bool,
+    /// The pane is the one shown (the Contacts tab or window selected).
+    pub pane: bool,
+    /// The conversations window's appearance and column.
+    pub workspace: bool,
+    pub column_collapsed: bool,
+    /// ContactsSettings::tab.
+    pub tab: u8,
+    /// The column's search, which hides the pinned entry when it does not
+    /// match.
+    pub filter: &'a str,
+    pub friends: usize,
+    pub friends_online: usize,
+    pub groups: usize,
+    pub sets: usize,
+}
+
+impl ContactsReport<'_> {
+    pub fn text(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "contacts tab: {}",
+            if self.shown {
+                "shown by Preferences"
+            } else {
+                "hidden by Preferences › Chat › Show the Contacts tab"
+            }
+        );
+        let (placement, window) = if self.torn_off {
+            ("torn off, its own window", "Contacts")
+        } else {
+            ("the first tab of Conversations", "Conversations")
+        };
+        let _ = writeln!(out, "placement: {placement}");
+        let _ = writeln!(out, "window: {window} {}", if self.window_open { "open" } else { "closed" });
+        let _ = writeln!(out, "contacts pane: {}", if self.pane { "shown" } else { "not shown" });
+        let _ = writeln!(
+            out,
+            "appearance: {}, column {}",
+            if self.workspace { "Aurora workspace" } else { "Legacy" },
+            if self.column_collapsed { "collapsed" } else { "expanded" }
+        );
+        let _ = writeln!(
+            out,
+            "tab: {}",
+            match self.tab {
+                1 => "Groups",
+                2 => "Contact sets",
+                _ => "Friends",
+            }
+        );
+        let _ = writeln!(
+            out,
+            "column search: {}",
+            if self.filter.is_empty() {
+                "none".to_string()
+            } else {
+                format!("\"{}\" (the entry shows only if it matches)", self.filter)
+            }
+        );
+        let _ = writeln!(
+            out,
+            "friends: {} ({} online) · groups: {} · contact sets: {}",
+            self.friends, self.friends_online, self.groups, self.sets
+        );
+        out
+    }
+}
+
 /// One group of the layout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupLayout {
@@ -242,13 +340,13 @@ impl Layout {
                 tools: if g == Group::Favorites {
                     DEFAULT_FAVORITES.iter().map(|s| s.to_string()).collect()
                 } else {
-                    TOOLS.iter().filter(|t| t.group == g).map(|t| t.id.to_string()).collect()
+                    all().filter(|t| t.group == g).map(|t| t.id.to_string()).collect()
                 },
             })
             .collect();
         Layout {
             groups,
-            known: TOOLS.iter().map(|t| t.id.to_string()).collect(),
+            known: all().map(|t| t.id.to_string()).collect(),
         }
     }
 
@@ -271,7 +369,7 @@ impl Layout {
             let favorites = layout.groups.remove(i);
             layout.groups.insert(0, favorites);
         }
-        for tool in TOOLS.iter().filter(|t| !saved.known.iter().any(|k| k == t.id)) {
+        for tool in all().filter(|t| !saved.known.iter().any(|k| k == t.id)) {
             if seen.contains(tool.id) {
                 continue;
             }
@@ -285,15 +383,14 @@ impl Layout {
                 }),
             }
         }
-        layout.known = TOOLS.iter().map(|t| t.id.to_string()).collect();
+        layout.known = all().map(|t| t.id.to_string()).collect();
         layout
     }
 
     /// The tools in no group outside the favourites (removed by the user):
     /// "Add a tool" offers them.
     pub fn removed(&self) -> Vec<&'static str> {
-        TOOLS
-            .iter()
+        all()
             .map(|t| t.id)
             .filter(|id| {
                 !self
@@ -416,10 +513,63 @@ mod tests {
     #[test]
     fn identifiers_are_unique_and_labelled() {
         let mut seen = std::collections::HashSet::new();
-        for t in TOOLS {
+        for t in all_in(true) {
             assert!(seen.insert(t.id), "{} twice", t.id);
             assert_ne!(label(t.id), "?", "{} has no label", t.id);
         }
+    }
+
+    #[test]
+    fn contacts_report_names_every_gate_that_hides_the_tab() {
+        let hidden = ContactsReport {
+            shown: false,
+            torn_off: true,
+            window_open: false,
+            pane: false,
+            workspace: true,
+            column_collapsed: true,
+            tab: 1,
+            filter: "bob",
+            friends: 12,
+            friends_online: 3,
+            groups: 5,
+            sets: 2,
+        };
+        let text = hidden.text();
+        for expected in [
+            "contacts tab: hidden by Preferences",
+            "placement: torn off, its own window",
+            "window: Contacts closed",
+            "contacts pane: not shown",
+            "appearance: Aurora workspace, column collapsed",
+            "tab: Groups",
+            "column search: \"bob\"",
+            "friends: 12 (3 online) · groups: 5 · contact sets: 2",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        let shown = ContactsReport {
+            shown: true,
+            torn_off: false,
+            window_open: true,
+            pane: true,
+            filter: "",
+            tab: 0,
+            ..hidden
+        };
+        let text = shown.text();
+        assert!(text.contains("contacts tab: shown by Preferences"), "{text}");
+        assert!(text.contains("placement: the first tab of Conversations"), "{text}");
+        assert!(text.contains("window: Conversations open"), "{text}");
+        assert!(text.contains("contacts pane: shown"), "{text}");
+        assert!(text.contains("column search: none"), "{text}");
+    }
+
+    #[test]
+    fn development_tools_are_absent_from_a_published_build() {
+        assert!(all_in(true).any(|t| t.id == "T1"));
+        assert!(all_in(false).all(|t| t.id != "T1"));
+        assert_eq!(all_in(false).count(), TOOLS.len());
     }
 
     #[test]

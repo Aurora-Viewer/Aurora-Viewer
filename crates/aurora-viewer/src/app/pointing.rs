@@ -3,6 +3,7 @@ use crate::world::{lookat, pointat};
 use aurora_net::NetCommand;
 use glam::DVec3;
 use std::time::Instant;
+use uuid::Uuid;
 
 impl App {
     /// LLSelectMgr::updatePointAt / LLAgentCamera::setPointAt. The remote
@@ -48,6 +49,30 @@ impl App {
                 self.settings.lookat.private_point_at = true;
             }
         }
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_BEAMS")
+        {
+            crate::demo::beams::tick(&mut self.world, &mut self.build, &mut self.settings.build, self.frame_count, &mode);
+            if self.frame_count == 600 {
+                if let Some(style) = crate::demo::beams::style(&mode) {
+                    self.settings.beams.style = style;
+                }
+                self.panels.people = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.panels.appearance = false;
+                if let Some((avatar, cube)) = crate::demo::beams::view(&self.world, &mode) {
+                    // from the side, both in view; in `self`, right of the
+                    // Build window
+                    let mid = (avatar + cube) * 0.5;
+                    let side = (cube - avatar).cross(glam::Vec3::Z).normalize_or_zero();
+                    let eye = mid - side * 4.0 + glam::Vec3::Z;
+                    let right = (mid - eye).cross(glam::Vec3::Z).normalize_or_zero();
+                    let look = if mode == "self" { mid - right * 1.2 } else { mid };
+                    self.camera.set_view(eye, look, &mut self.world.agent, &self.settings.camera);
+                }
+            }
+        }
         let now = Instant::now();
         let selected = self.build.pointing_target(&self.world, now);
         let previous = self.world.point_at.own.target;
@@ -63,7 +88,8 @@ impl App {
             points.set(None, now);
         }
         points.set(target, now);
-        let own = &mut points.own;
+        self.update_own_beam(target, now);
+        let own = &mut self.world.point_at.own;
         if own.needs_send {
             let cmd = NetCommand::PointAt {
                 effect: own.effect,
@@ -75,5 +101,51 @@ impl App {
             own.sent(now);
             self.send(cmd);
         }
+    }
+
+    /// The one-second beam at what we give to or drop into (LLGiveInventory::
+    /// doGiveInventoryItem, LLToolDragAndDrop::dropObject / dropInventory /
+    /// dropScript): to the `target` object, or to the global `position` when
+    /// it is nil. A give to an avatar not in view has no beam (its object is
+    /// not found).
+    pub(super) fn fire_beam(&mut self, target: Uuid, position: DVec3) {
+        if !target.is_nil() && self.world.objects.index_of_uuid(&target).is_none() {
+            return;
+        }
+        let me = self.world.agent_id;
+        let send = self
+            .world
+            .beams
+            .give(me, target, position, self.settings.beams.color, Instant::now());
+        self.send(NetCommand::Beam {
+            effect: send.effect,
+            target: send.target,
+            position: send.position.to_array(),
+            color: send.color,
+            duration: send.duration,
+        });
+    }
+
+    /// LLVOAvatarSelf::idleUpdateTractorBeam: while we edit or grab (and the
+    /// point-at is not private, PrivatePointAtTarget), our beam points where
+    /// the point-at does, as a global position, and is sent every 0.25 s.
+    fn update_own_beam(&mut self, target: Option<lookat::Target>, now: Instant) {
+        let me = self.world.agent_id;
+        let aim = target
+            .and_then(|t| self.scene.look_target_pos(&self.world, me, &t, now))
+            .zip(self.world.main_origin())
+            .map(|(p, (mx, my))| DVec3::new(f64::from(p.x) + mx as f64, f64::from(p.y) + my as f64, f64::from(p.z)));
+        let color = self.settings.beams.color;
+        if let Some(send) = self.world.beams.update_own(me, aim, color, now) {
+            self.send(NetCommand::Beam {
+                effect: send.effect,
+                target: send.target,
+                position: send.position.to_array(),
+                color: send.color,
+                duration: send.duration,
+            });
+        }
+        let objects = &self.world.objects;
+        self.world.beams.forget(now, |id| objects.index_of_uuid(id).is_some());
     }
 }

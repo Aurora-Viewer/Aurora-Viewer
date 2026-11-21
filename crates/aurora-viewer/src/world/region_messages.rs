@@ -36,7 +36,10 @@ impl World {
         if !im.from_name.is_empty() {
             self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
         }
-        let region = self.region_name();
+        // RLVa @showloc: "(Hidden region)", as the location bar names it
+        // (LLAgentUI::buildLocationString); the Legacy Viewer's GodMessage
+        // names no region
+        let region = self.rlva_region_label();
         self.notifications.push(
             Kind::Info,
             aurora_i18n::tr!("world-region-message-title", name = name.clone()),
@@ -118,5 +121,22 @@ mod tests {
         let before = world.notifications.list.len();
         world.apply(aurora_net::NetEvent::InstantMessage(im(Uuid::nil(), 0, "   ")));
         assert_eq!(world.notifications.list.len(), before);
+    }
+
+    /// RLVa @showloc: the region a message was sent to is "(Hidden
+    /// region)", as the location bar names it.
+    #[test]
+    fn showloc_hides_the_region_of_a_region_message() {
+        let mut world = super::super::rlva_location_tests::showloc_world();
+        let here = world.region_name();
+        assert!(!here.is_empty());
+        world.notifications.started = true;
+        world.apply(aurora_net::NetEvent::InstantMessage(im(Uuid::nil(), 0, "Restart in 5")));
+        let n = world.notifications.list.last().expect("a notification");
+        assert!(
+            matches!(&n.data, Data::RegionMessage { region, .. } if region == aurora_i18n::tr!("rlva-hidden-region")),
+            "{:?}",
+            n.data
+        );
     }
 }

@@ -15,6 +15,12 @@ spec = importlib.util.spec_from_file_location("aurora_client", Path(__file__).re
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
+# Every fake viewer below expects this secret; the real lookup is tested apart.
+TOKEN = b"0123456789abcdef" * 4
+read_token = module.read_token
+module.read_token = lambda port: TOKEN
+GREETING = module.MAGIC + TOKEN
+
 
 def receive(connection, size):
     value = b""
@@ -27,7 +33,7 @@ def receive(connection, size):
 
 
 def hello(connection):
-    if receive(connection, 8) != module.MAGIC:
+    if receive(connection, len(GREETING)) != GREETING:
         raise ValueError("Bad handshake")
     connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"max_bytes":67108864,"features":["pbr-materials"]}\n')
 
@@ -112,7 +118,7 @@ class ClientTests(unittest.TestCase):
         def server(listener):
             with listener.accept()[0] as connection:
                 connection.settimeout(5)
-                self.assertEqual(receive(connection, 8), module.MAGIC)
+                self.assertEqual(receive(connection, len(GREETING)), GREETING)
                 connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"max_bytes":1024,"max_decoded_bytes":4096,"features":["pbr-materials","compressed-snapshots"]}\n')
                 received.append(snapshot(connection))
                 connection.sendall(b'{"ok":true,"revision":1}\n')
@@ -143,7 +149,7 @@ class ClientTests(unittest.TestCase):
         def server(listener):
             with listener.accept()[0] as connection:
                 connection.settimeout(5)
-                self.assertEqual(receive(connection, 8), module.MAGIC)
+                self.assertEqual(receive(connection, len(GREETING)), GREETING)
                 connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer","import-lods"]}\n')
                 received.append(snapshot(connection))
                 connection.sendall(json.dumps({"ok": True, "prepare_import": identity}).encode() + b"\n")
@@ -219,7 +225,7 @@ class ClientTests(unittest.TestCase):
         def server(listener):
             with listener.accept()[0] as connection:
                 connection.settimeout(5)
-                self.assertEqual(receive(connection, 8), module.MAGIC)
+                self.assertEqual(receive(connection, len(GREETING)), GREETING)
                 connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer","shape-apply"]}\n')
                 received.append(snapshot(connection))
                 payload = {"id": identity, "test_data": "x" * 300000}
@@ -270,7 +276,7 @@ class ClientTests(unittest.TestCase):
         def server(listener):
             with listener.accept()[0] as connection:
                 connection.settimeout(3)
-                self.assertEqual(receive(connection, 8), module.MAGIC)
+                self.assertEqual(receive(connection, len(GREETING)), GREETING)
                 connection.sendall(b'{"protocol":1,"joints":["mPelvis"]}\n')
                 received.append(connection.recv(1))
         client, thread, failures = self.serve(server)
@@ -373,6 +379,31 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.Client._line(io.BytesIO(value))
 
+
+
+class TokenTests(unittest.TestCase):
+    def test_the_token_is_read_from_the_viewers_data_folder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "blender-live" / "17655.token"
+            with patch.object(module, "token_path", lambda port: str(path)):
+                with self.assertRaisesRegex(ValueError, "Enable preview"):
+                    read_token(17655)
+                path.parent.mkdir()
+                path.write_bytes(TOKEN)
+                self.assertEqual(read_token(17655), TOKEN)
+                path.write_bytes(TOKEN[:-1])
+                with self.assertRaisesRegex(ValueError, "Enable preview"):
+                    read_token(17655)
+
+    def test_token_path_follows_the_viewers_folders(self):
+        with patch.object(module.sys, "platform", "win32"), patch.dict(module.os.environ, {"LOCALAPPDATA": r"C:\Users\u\AppData\Local"}):
+            self.assertTrue(module.token_path(17655).replace("\\", "/").endswith("Local/Aurora/AuroraViewer/data/blender-live/17655.token"))
+        with patch.object(module.sys, "platform", "linux"), patch.dict(module.os.environ, {"XDG_DATA_HOME": "/home/u/.data"}):
+            self.assertEqual(module.token_path(17656).replace("\\", "/"), "/home/u/.data/auroraviewer/blender-live/17656.token")
+        with patch.object(module.sys, "platform", "darwin"):
+            self.assertTrue(module.token_path(17655).replace("\\", "/").endswith(
+                "Library/Application Support/org.Aurora.AuroraViewer/blender-live/17655.token"))
 
 if __name__ == "__main__":
     unittest.main()

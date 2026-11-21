@@ -13,6 +13,7 @@ use super::super::menu;
 use crate::slapp::{AgentVerb, AppLink, Blocked, unescape};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::TextScope;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 use uuid::Uuid;
@@ -74,19 +75,43 @@ pub(crate) fn group_name(world: &World, id: Uuid) -> String {
 }
 
 /// What a command shows in the text (getLabel of its LLUrlEntry; the
-/// generic LLUrlEntrySL shows the address, unescaped).
-pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, link: &AppLink) -> String {
-    let label = match link {
+/// generic LLUrlEntrySL shows the address, unescaped), under RLVa's
+/// `@shownames` and `@showloc` too. A label the viewer finds from the id of
+/// the command (`resolved`) is shown as found: LLUrlEntryAgent,
+/// LLUrlEntryGroup, LLUrlEntryParcel and LLUrlEntryExperienceProfile
+/// (indra/llui/llurlentry.cpp) have no RLVa test, the one RLVa entry being
+/// LLUrlEntryAgentRLVAnonymizedName for the `rlvanonym` links the viewer
+/// writes itself. A label made of the address (`written`) is rewritten as
+/// the text that holds it is (`wording`): RlvUtil::filterNames and
+/// filterLocation (indra/newview/rlvcommon.cpp) run over the raw text of a
+/// line no resident typed, its addresses included
+/// (LLFloaterIMNearbyChatHandler::processChat,
+/// indra/newview/llfloaterimnearbychathandler.cpp), and over nothing a
+/// resident typed.
+pub(super) fn label(world: &World, wording: TextScope, want_names: &mut HashSet<Uuid>, url: &str, link: &AppLink) -> String {
+    match resolved(world, want_names, link) {
+        Some(label) => label,
+        None => world.rlva_filter_text_in(wording, &written(url, link)).into_owned(),
+    }
+}
+
+/// The label the viewer makes for a command from what its id names (a
+/// resident, a group, a parcel, an experience) or from words of its own.
+/// None for a command that shows a part of its address (`written`).
+fn resolved(world: &World, want_names: &mut HashSet<Uuid>, link: &AppLink) -> Option<String> {
+    Some(match link {
         AppLink::Agent { id, .. } => {
             want_names.insert(*id);
-            world.social.name_of(id)
+            // the name of the avatar the link points at, whatever `@shownames`
+            // hides around us (LLUrlEntryAgent has no RLVa test)
+            world.social.name_in(crate::world::names::NameScope::Roster, id)
         }
         AppLink::Group(id) => group_name(world, *id),
-        // the address until ParcelInfoReply, then the parcel's name or
-        // "Region (x, y, z)" (LLUrlEntryParcel::processParcelInfo)
-        AppLink::Parcel(id) => match world.profiles.parcels.get(id) {
-            Some(d) if !d.name.is_empty() => d.name.clone(),
-            Some(d) if !d.sim_name.is_empty() => {
+        // once ParcelInfoReply came: the parcel's name or "Region (x, y, z)"
+        // (LLUrlEntryParcel::processParcelInfo)
+        AppLink::Parcel(id) => match world.profiles.parcels.get(id)? {
+            d if !d.name.is_empty() => d.name.clone(),
+            d if !d.sim_name.is_empty() => {
                 let (x, y) = world.map.local_xy(d.global.x.round(), d.global.y.round());
                 format!(
                     "{} ({}, {}, {})",
@@ -96,16 +121,8 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
                     d.global.z.round() as i64
                 )
             }
-            Some(_) => aurora_i18n::tr!("ui-chat-applink-parcel-error").to_owned(),
-            None => {
-                want(|w| {
-                    w.parcels.insert(*id);
-                });
-                unescape(url)
-            }
+            _ => aurora_i18n::tr!("ui-chat-applink-parcel-error").to_owned(),
         },
-        AppLink::ObjectIm(o) if !o.name.is_empty() => o.name.clone(),
-        AppLink::Inventory { name: Some(n), .. } => n.clone(),
         AppLink::Experience(id) if id.is_nil() => aurora_i18n::tr!("ui-chat-applink-experience-none").to_owned(),
         AppLink::Experience(id) => {
             let name = world
@@ -125,19 +142,36 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
                 }
             }
         }
-        // "Show Map for Region (x,y,z)"
-        AppLink::WorldMap { region, pos } => aurora_i18n::tr!(
-            "ui-chat-applink-show-map-for",
-            place = format!("{region} ({},{},{})", pos.x as i32, pos.y as i32, pos.z as i32)
-        ),
         AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-label").to_owned(),
         // Human-requested fallback: an unsupported URI has no destination
         // name to resolve. Keep the actual address in the copy-link menu.
         AppLink::AreaSearch(_) => aurora_i18n::tr!("toolbar-command-area-search").to_owned(),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
+        _ => return None,
+    })
+}
+
+/// The label of a command that shows a part of its address: the name an
+/// object's or an inventory link carries, the region of a map link, or the
+/// address itself.
+fn written(url: &str, link: &AppLink) -> String {
+    match link {
+        // the address until ParcelInfoReply (`resolved` afterwards)
+        AppLink::Parcel(id) => {
+            want(|w| {
+                w.parcels.insert(*id);
+            });
+            unescape(url)
+        }
+        AppLink::ObjectIm(o) if !o.name.is_empty() => o.name.clone(),
+        AppLink::Inventory { name: Some(n), .. } => n.clone(),
+        // "Show Map for Region (x,y,z)"
+        AppLink::WorldMap { region, pos } => aurora_i18n::tr!(
+            "ui-chat-applink-show-map-for",
+            place = format!("{region} ({},{},{})", pos.x as i32, pos.y as i32, pos.z as i32)
+        ),
         _ => unescape(url),
-    };
-    world.rlva_filter_text(&label).into_owned()
+    }
 }
 
 /// Describe the actual click action, as LLUrlEntryAgent::getTooltip does
@@ -182,7 +216,7 @@ fn object_place(slurl: &str) -> Option<crate::slurl::PlaceLink> {
 /// The right-click menu of a command, in the order of its menu_url_*.xml.
 pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, link: &AppLink, label: &str) {
     if let AppLink::Agent { id, .. } = link {
-        super::name_menu(r, p, world, *id);
+        super::name_menu(r, p, world, *id, crate::world::names::NameScope::Roster);
         return;
     }
     menu::context_menu(r, p, |ui| {
@@ -219,7 +253,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                 if menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-chat-applink-object-profile")) {
                     run();
                 }
-                let (icon, text) = if world.mutes.is_muted_id(&o.id) {
+                let (icon, text) = if world.object_block_entry(&o.id).is_some() {
                     ("circle-check-filled", aurora_i18n::tr!("common-unblock"))
                 } else {
                     ("ban", aurora_i18n::tr!("common-block"))
@@ -306,8 +340,9 @@ pub(super) fn link_emphasized(
     size: f32,
     emphasis: crate::ui::fonts::TextEmphasis,
 ) {
-    let filtered = world.rlva_filter_text(text);
-    let text = filtered.as_ref();
+    // `text` is drawn as given: the label of the command (`label`), or the
+    // text the link was written with (`[address text]`), which the line
+    // rewrote with its own wording when no resident typed it
     let k = super::super::colors::get();
     let color = if let AppLink::Agent { id, .. } = link {
         super::super::colors::resident_name(world, id, super::super::colors::text(k.chat_slurl))
@@ -380,9 +415,16 @@ mod tests {
                                 );
                             } else {
                                 let shown = ui.scope(|ui| match &target {
-                                    super::super::Link::Agent(id) => {
-                                        super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0, false.into())
-                                    }
+                                    super::super::Link::Agent(id) => super::super::agent_link(
+                                        ui,
+                                        &p,
+                                        &world,
+                                        crate::world::names::NameScope::World,
+                                        *id,
+                                        "Resident",
+                                        14.0,
+                                        false.into(),
+                                    ),
                                     super::super::Link::App(url, action) => link(ui, &p, &world, url, action, "Resident", 14.0),
                                     _ => unreachable!(),
                                 });
@@ -407,13 +449,72 @@ mod tests {
         }
     }
 
+    /// LLUrlEntryAgent and LLUrlEntryGroup have no RLVa test: the label
+    /// found from an id is shown as found under `@shownames` and `@showloc`;
+    /// what a label takes from its address is rewritten like the text
+    /// around it.
+    #[test]
+    fn rlva_leaves_the_labels_found_from_an_id_and_rewrites_those_of_the_address() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        let region = world.region_name();
+        assert!(region.len() > 2, "{region}");
+        let im = format!("secondlife:///app/agent/{near}/im");
+        let object = format!("secondlife:///app/objectim/{}?name=Near%20Tester&slurl=A/1/2/3", Uuid::from_u128(9));
+        let map = format!("secondlife:///app/worldmap/{}/1/2/3", crate::slurl::encode(&region));
+        let label = |world: &World, url: &str| {
+            let link = crate::slapp::parse(url).expect("app link");
+            label(world, crate::world::names::NameScope::World.into(), &mut HashSet::new(), url, &link)
+        };
+        assert!(label(&world, &im).contains("Near Tester"));
+        assert_eq!(label(&world, &object), "Near Tester");
+        assert!(label(&world, &map).contains(&region));
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Label fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n,showloc=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_can_name(near));
+        // the resident the link points at: named
+        let name = label(&world, &im);
+        assert!(name.contains("Near Tester"), "{name}");
+        // the name and the region an address carries: rewritten
+        let name = label(&world, &object);
+        assert!(!name.contains("Tester"), "{name}");
+        let place = label(&world, &map);
+        assert!(!place.contains(&region), "{place}");
+        // in what a resident typed, they are shown as written
+        let typed = TextScope::verbatim(crate::world::names::NameScope::World);
+        for (url, shown) in [(&object, "Near Tester"), (&map, region.as_str())] {
+            let link = crate::slapp::parse(url).expect("app link");
+            let label = super::label(&world, typed, &mut HashSet::new(), url, &link);
+            assert!(label.contains(shown), "{label}");
+        }
+    }
+
     #[test]
     fn labels_of_the_legacy_entries() {
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let mut names = HashSet::new();
         let label = |url: &str, names: &mut HashSet<Uuid>| {
             let link = crate::slapp::parse(url).expect("app link");
-            label(&world, names, url, &link)
+            label(&world, crate::world::names::NameScope::World.into(), names, url, &link)
         };
         let obj = "secondlife:///app/objectim/0e346d8b-4433-4d66-a6b0-fd37083abc4c?name=Old%20Sign&slurl=A/1/2/3";
         assert_eq!(label(obj, &mut names), "Old Sign");

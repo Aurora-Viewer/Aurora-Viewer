@@ -26,6 +26,9 @@ pub(super) const PARTS: [&str; 17] = [
     "HEAD",
 ];
 const HEAD: usize = 16;
+/// An object of the scan for worn rigged meshes (frame_par.rs): 20 ns on
+/// average on a busy region, nearly all of it in the meshes that are worn.
+const WORN_GRAIN: crate::frame_par::Grain = crate::frame_par::Grain { chunk: 512, per_helper: 8 };
 
 #[derive(Clone, Copy, Debug)]
 struct Section {
@@ -371,34 +374,33 @@ pub(super) fn visibility(scene: &super::Scene, world: &crate::world::World, cand
     let bones = bone_masks(&scene.avatar_lib.rig);
     // One bounded-cadence scan for all nearby avatars, not an attachment walk
     // per body part or per frame. Hidden/HUD geometry never supplies coverage.
-    for (idx, g) in scene.gpu.iter().enumerate() {
+    let worn = crate::frame_par::filter_map_indexed(&scene.gpu, WORN_GRAIN, |idx, g| {
         if !g.rigged || g.hud || !g.faces.iter().any(|f| f.pass != Pass::Hidden && !f.fully_transparent()) {
-            continue;
+            return None;
         }
-        let Some(owner) = g.skeleton_owner else { continue };
-        let Some(mask) = visible.get_mut(&owner) else { continue };
-        let Some(object) = world.objects.get(idx) else { continue };
+        let owner = g.skeleton_owner.filter(|owner| visible.contains_key(owner))?;
+        let object = world.objects.get(idx)?;
         if world.derender.contains(&object.full_id)
             || !world.parcel_object_visible(idx)
             || !crate::snapshot::isolate::object_visible(world, idx)
         {
-            continue;
+            return None;
         }
-        let Some(GeomKey::Mesh { id, .. }) = g.geom else { continue };
-        let Some(skin) = scene.meshes.meta(&id).and_then(|m| m.skin) else {
-            continue;
-        };
-        let Some(geom) = g.geom.as_ref().and_then(|key| scene.geom_ready(key)) else {
-            continue;
-        };
-        for bound in &geom.joint_bounds {
-            if let Some(joint) = skin
+        let Some(GeomKey::Mesh { id, .. }) = g.geom else { return None };
+        let skin = scene.meshes.meta(&id).and_then(|m| m.skin)?;
+        let geom = g.geom.as_ref().and_then(|key| scene.geom_ready(key))?;
+        let mask = geom.joint_bounds.iter().fold(0, |mask, bound| {
+            let joint = skin
                 .joint_names
                 .get(bound.joint as usize)
-                .and_then(|name| scene.avatar_lib.rig.names.get(name))
-            {
-                *mask |= bones.get(*joint).copied().unwrap_or(0);
-            }
+                .and_then(|name| scene.avatar_lib.rig.names.get(name));
+            mask | joint.and_then(|joint| bones.get(*joint)).copied().unwrap_or(0)
+        });
+        Some((owner, mask))
+    });
+    for (owner, mask) in worn {
+        if let Some(visible) = visible.get_mut(&owner) {
+            *visible |= mask;
         }
     }
     visible

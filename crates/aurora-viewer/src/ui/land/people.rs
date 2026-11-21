@@ -144,7 +144,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
             can && !list.is_empty(),
         ) {
             let file = if ban { "land_banned_list.csv" } else { "land_access_list.csv" };
-            let csv = super::access::export_csv(&list, |id| world.social.name_of(id));
+            let csv = super::access::export_csv(&list, |id| world.social.name_in(crate::world::names::NameScope::Roster, id));
             s.file_job = Some(super::files::save(file, csv));
         }
     });
@@ -531,7 +531,7 @@ fn owner_row(
                 if o.is_group {
                     crate::ui::group_profile::request_open(ui.ctx(), o.id);
                 } else {
-                    crate::ui::profile::request_open(ui.ctx(), o.id);
+                    crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, o.id);
                 }
             }
             let tag = if o.id == v.agent {
