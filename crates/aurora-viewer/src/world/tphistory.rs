@@ -389,6 +389,8 @@ pub struct HistoryStorage {
     kept: Vec<Vec<u8>>,
     /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    /// Older Aurora builds saved an empty file when the user cleared Places.
+    had_saved_history: bool,
     import_policy: Option<Arc<ImportPolicy>>,
     legacy_history: Option<(Receiver<LegacyRead>, bool)>,
 }
@@ -401,17 +403,23 @@ impl HistoryStorage {
     pub fn load(path: PathBuf) -> HistoryStorage {
         // A previous session may still be publishing this account's latest
         // history. Reading its snapshot also avoids waiting for a slow disk.
-        let saved = match writers().snapshot(&path) {
-            Some(saved) => saved,
+        let (saved, had_saved_history) = match writers().snapshot(&path) {
+            Some(saved) => (saved, true),
             None => match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(SavedHistory {
-                    bytes,
-                    policy: ImportPolicy::load(&path),
-                }),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Arc::new(SavedHistory {
-                    bytes: Vec::new(),
-                    policy: ImportPolicy::load(&path),
-                }),
+                Ok(bytes) => (
+                    Arc::new(SavedHistory {
+                        bytes,
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    true,
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+                    Arc::new(SavedHistory {
+                        bytes: Vec::new(),
+                        policy: ImportPolicy::load(&path),
+                    }),
+                    false,
+                ),
                 Err(e) => {
                     log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
                     return HistoryStorage::default();
@@ -430,6 +438,7 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
+            had_saved_history,
             import_policy: saved.policy.clone(),
             legacy_history: None,
         }
@@ -473,12 +482,16 @@ impl HistoryStorage {
         if policy.initial_import_checked {
             return false;
         }
-        let empty = self.items.is_empty() && self.kept.is_empty() && policy.removed.is_empty() && policy.cleared_through.is_none();
+        let eligible = !self.had_saved_history
+            && self.items.is_empty()
+            && self.kept.is_empty()
+            && policy.removed.is_empty()
+            && policy.cleared_through.is_none();
         // Record the choice even when the history already exists or no
         // source is found. Later logins never re-seed a history.
         Arc::make_mut(policy).initial_import_checked = true;
         self.save();
-        empty
+        eligible
     }
 
     pub fn poll_legacy_import(&mut self) -> Option<LegacyImportReport> {
@@ -1378,7 +1391,37 @@ mod tests {
         let mut reloaded = HistoryStorage::load(path);
         assert!(!reloaded.check_initial_import(), "a clear before upgrading prevents auto-import");
         reloaded.flush();
+
+        let path = dir.join("older-clear").join(TELEPORT_HISTORY_FILE);
+        std::fs::create_dir(dir.join("older-clear")).unwrap();
+        std::fs::write(&path, []).unwrap();
+        let mut reloaded = HistoryStorage::load(path);
+        assert!(reloaded.items.is_empty());
+        assert!(
+            !reloaded.check_initial_import(),
+            "an empty file from an older Aurora also skips auto-import"
+        );
+        reloaded.flush();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_cache_clear_does_not_reset_the_accounts_import_check() {
+        let root = std::env::temp_dir().join(format!("aurora-tphist-cache-clear-{}", uuid::Uuid::new_v4()));
+        let path = root.join("config").join("accounts").join("account").join(TELEPORT_HISTORY_FILE);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("asset"), b"downloaded").unwrap();
+        let mut history = HistoryStorage::load(path.clone());
+        assert!(history.check_initial_import());
+        history.flush();
+
+        std::fs::remove_file(cache.join("asset")).unwrap();
+        std::fs::remove_dir(cache).unwrap();
+        assert!(path.with_file_name(LEGACY_IMPORT_FILE).is_file());
+        assert!(path.is_file());
+        assert!(!HistoryStorage::load(path).check_initial_import());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
