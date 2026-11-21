@@ -3168,6 +3168,7 @@ ui-chat-applink-copy-object-name = オブジェクト名をコピー
 ui-chat-applink-show-item = インベントリのアイテムを表示
 ui-chat-applink-copy-name = 名前をコピー
 ui-chat-applink-run = このコマンドを実行
+ui-options-copy-setting-link = 設定へのリンクをコピー
 ui-chat-applink-blocked = このSLurlは他の人が書いたテキストからのものなので、安全のためブロックされました。
 ui-chat-applink-unsupported = クリックしたSLurlはサポートされていません。
 ui-chat-applink-unblock-confirm = リンクが{ $name }のブロック解除を求めています。このブロックを解除しますか？

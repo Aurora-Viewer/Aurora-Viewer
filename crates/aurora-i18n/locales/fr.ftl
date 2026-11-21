@@ -7530,6 +7530,7 @@ ui-options-modified-reset-text = Tous les réglages que vous avez changés revie
 ui-options-modified-reset = Modifié : cliquer pour remettre la valeur par défaut
 ui-options-open-page = Ouvrir la page
 ui-options-go-to-setting = Aller à ce réglage
+ui-options-copy-setting-link = Copier le lien vers ce réglage
 ui-options-show-related = Afficher les { $count } réglages liés
 ui-options-hide-related = Masquer les { $count } réglages liés
 ui-options-section-world = Monde et rendu

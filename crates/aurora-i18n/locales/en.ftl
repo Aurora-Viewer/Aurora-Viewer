@@ -7522,6 +7522,7 @@ ui-options-modified-reset-text = Every setting you changed goes back to its defa
 ui-options-modified-reset = Modified: click to go back to the default value
 ui-options-open-page = Open the page
 ui-options-go-to-setting = Go to this setting
+ui-options-copy-setting-link = Copy link to setting
 ui-options-show-related = Show the { $count } related settings
 ui-options-hide-related = Hide the { $count } related settings
 ui-options-section-world = World and rendering
