@@ -18076,6 +18076,14 @@ impl App {
             self.world
                 .system_message(aurora_i18n::tr!("app-section-settings-reset", section = page.name()));
         }
+        if res.setting_unavailable {
+            self.world.notifications.push(
+                crate::world::notifications::Kind::Info,
+                aurora_i18n::tr!("ui-options-setting-unavailable"),
+                "",
+                crate::world::notifications::Data::None,
+            );
+        }
         if res.open_dev_toolbox {
             self.panels.dev_toolbox = true;
         }
