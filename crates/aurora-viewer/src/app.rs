@@ -6500,6 +6500,9 @@ impl App {
     fn update_sounds(&mut self) {
         self.flush_object_sounds();
         let ui = &self.settings.audio.ui;
+        // (in front in any of the viewer's windows: Conversations may be
+        // in one outside)
+        let in_front = self.in_front();
         let w = &mut self.world;
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
@@ -6549,8 +6552,7 @@ impl App {
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
-            let front =
-                self.focused && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
+            let front = in_front && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
@@ -12974,7 +12976,7 @@ impl App {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         ui::fonts::preview::release_unused(&self.egui_ctx);
-        self.outside_frame_start(event_loop, &mut gfx.renderer);
+        self.outside_frame_start(event_loop, &gfx.window, &mut gfx.renderer);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
@@ -21708,11 +21710,17 @@ impl ApplicationHandler for App {
                 return;
             }
             // AURORA_DEMO_OUTSIDE=still|busy[,sync][,click]: a test window outside
-            // the viewer's (outside/demo.rs)
+            // the viewer's (outside/demo.rs); conversations: the Conversations
+            // window sent outside, as its title bar's button sends it
             if let Ok(v) = std::env::var("AURORA_DEMO_OUTSIDE") {
-                self.outside_demo = crate::outside::demo::parse(&v).map(crate::outside::demo::Demo::new);
-                if self.outside_demo.is_none() {
-                    log::warn!("AURORA_DEMO_OUTSIDE={v}: still or busy, then \",sync\" and \",click\"");
+                if v == "conversations" {
+                    self.panels.chat = true;
+                    crate::outside::want(&self.egui_ctx, egui::Id::unique("conversations"), true);
+                } else {
+                    self.outside_demo = crate::outside::demo::parse(&v).map(crate::outside::demo::Demo::new);
+                }
+                if self.outside_demo.is_none() && v != "conversations" {
+                    log::warn!("AURORA_DEMO_OUTSIDE={v}: conversations, or still or busy then \",sync\" and \",click\"");
                 }
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1

@@ -22,6 +22,15 @@
 //! [`Outside::focused`]: the viewer is in front while any of its windows
 //! has the focus (`App::in_front`).
 //!
+//! A window of the interface goes outside when its title bar's button asks
+//! for it (`widgets::Floater::may_go_outside`: one window at a time opts
+//! in, none goes by itself). The wish is kept with the interface's layout
+//! ([`wanted`]); the window draws its body in its window outside once
+//! there is one ([`native`]), asks for it otherwise ([`ask`]), and says at
+//! each pass that it drew there ([`seen`]). [`Outside::reconcile`], before
+//! the next pass, opens what was asked and lets go of the windows nothing
+//! drew in: closed, hidden with the interface, or back inside.
+//!
 //! The native windows are made and let go between passes
 //! ([`Outside::open`], [`Outside::close`]), with the event loop the frame
 //! has. A closed window stays until the render thread has destroyed its
@@ -68,6 +77,74 @@ pub(crate) fn in_front(own_window: bool, window_outside: bool) -> bool {
     own_window || window_outside
 }
 
+/// A window of the interface asks for its window outside.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Ask {
+    /// The window's id in the interface.
+    pub window: egui::Id,
+    pub title: String,
+    /// Where it is in the viewer's window, in points: its window outside
+    /// opens there, where the system lets a program place its windows.
+    pub rect: egui::Rect,
+    pub min_size: egui::Vec2,
+}
+
+/// The viewport of the window `window` of the interface.
+pub(crate) fn viewport(window: egui::Id) -> egui::ViewportId {
+    egui::ViewportId(window)
+}
+
+fn asks_id() -> egui::Id {
+    egui::Id::unique("aurora outside asks")
+}
+
+fn seen_id() -> egui::Id {
+    egui::Id::unique("aurora outside seen")
+}
+
+/// The user sent the window `window` outside: kept with the interface's
+/// layout, like its place inside.
+pub(crate) fn wanted(ctx: &egui::Context, window: egui::Id) -> bool {
+    ctx.data_mut(|d| d.get_persisted::<bool>(window.with("outside"))).unwrap_or(false)
+}
+
+pub(crate) fn want(ctx: &egui::Context, window: egui::Id, outside: bool) {
+    ctx.data_mut(|d| d.insert_persisted(window.with("outside"), outside));
+}
+
+/// The window `window` has its window outside: it draws there.
+pub(crate) fn native(ctx: &egui::Context, window: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(window.with("outside native"))).unwrap_or(false)
+}
+
+fn set_native(ctx: &egui::Context, window: egui::Id, native: bool) {
+    ctx.data_mut(|d| {
+        if native {
+            d.insert_temp(window.with("outside native"), true);
+        } else {
+            d.remove::<bool>(window.with("outside native"));
+        }
+    });
+}
+
+/// Asks for a window outside, opened before the next pass.
+pub(crate) fn ask(ctx: &egui::Context, ask: Ask) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Ask>>(asks_id()).push(ask));
+}
+
+/// The window `window` drew in its window outside at this pass.
+pub(crate) fn seen(ctx: &egui::Context, window: egui::Id) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Id>>(seen_id()).push(window));
+}
+
+/// The windows outside to let go of: those of the interface that none
+/// drew in at the last pass.
+fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id]) -> Vec<egui::ViewportId> {
+    open.filter(|(id, of_interface)| *of_interface && !seen.contains(&id.0))
+        .map(|(id, _)| id)
+        .collect()
+}
+
 pub(crate) struct Outside {
     /// Shared with egui's function for the passes of this thread.
     shared: Rc<RefCell<Shared>>,
@@ -92,6 +169,11 @@ struct Shared {
 struct Native {
     key: u64,
     window: Arc<Window>,
+    /// A window of the interface (`Ask`), let go of when nothing draws in
+    /// it; the others are closed by who opened them.
+    of_interface: bool,
+    /// The title the system shows.
+    title: Option<String>,
     /// The window's events of the system, as egui reads them.
     input: egui_winit::State,
     focused: bool,
@@ -107,6 +189,12 @@ struct Native {
     /// Draw it again whatever it shows (a new window, one the system
     /// uncovered or resized).
     redraw: bool,
+    /// The system asked for its first picture. Until then nothing is
+    /// drawn in it: where the program draws the title bar itself (Wayland),
+    /// the window library draws it just before it asks, and a picture
+    /// shown earlier has the system count the window without its title
+    /// bar, then shrink it by that height.
+    asked_for: bool,
 }
 
 struct Pass {
@@ -151,8 +239,10 @@ fn reads_keys(ctx: &egui::Context) -> bool {
     ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx)
 }
 
-/// Whether a window whose pass left `shapes` at `size` is drawn again.
+/// Whether a window whose pass left `shapes` at `size` is drawn again;
+/// never before the system asked for its first picture (`asked_for`).
 fn drawn_again(
+    asked_for: bool,
     redraw: bool,
     textures_changed: bool,
     size: (u32, u32),
@@ -160,18 +250,24 @@ fn drawn_again(
     shapes: &[ClippedShape],
     shown: &[ClippedShape],
 ) -> bool {
-    redraw || textures_changed || size != shown_size || shapes != shown
+    asked_for && (redraw || textures_changed || size != shown_size || shapes != shown)
 }
 
 /// egui's function for the passes outside: the pass of `viewport`, run at
 /// once inside the pass that asked for it.
 fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::ImmediateViewport<'_>) {
     let egui::ImmediateViewport {
-        ids, mut viewport_ui_cb, ..
+        ids,
+        builder,
+        mut viewport_ui_cb,
     } = viewport;
     let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
     let zoom = ctx.zoom_factor();
     let input = shared.borrow_mut().windows.get_mut(&ids.this).map(|native| {
+        if builder.title.is_some() && builder.title != native.title {
+            native.window.set_title(builder.title.as_deref().unwrap_or_default());
+            native.title = builder.title;
+        }
         let size = native.window.inner_size();
         pass_input(
             native.input.take_egui_input(&native.window),
@@ -187,11 +283,17 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     // only asks for a window that is open, so this is never the case)
     let input = input.unwrap_or_else(|| pass_input(egui::RawInput::default(), ids, (640, 480), 1.0, zoom, false, clock));
     let mut keys = false;
+    // One pass, where egui may run two to lay a new content out: the
+    // window's code is run once (a `Floater`'s body is `FnOnce`), and what
+    // asks for a second pass settles at the next frame instead.
+    let passes = ctx.options(|o| o.max_passes);
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
     // (nothing of `shared` is borrowed while the window's code runs)
     let mut out = ctx.run_ui(input, |ui| {
         viewport_ui_cb(ui);
         keys = reads_keys(ui.ctx());
     });
+    ctx.options_mut(|o| o.max_passes = passes);
     let mut shared = shared.borrow_mut();
     shared.textures.append(out.textures_delta);
     shared.commands.append(&mut out.platform_output.commands);
@@ -225,6 +327,51 @@ impl Outside {
         self.shared.borrow().windows.contains_key(&id)
     }
 
+    /// Before the interface's pass: opens the windows outside that the
+    /// interface's windows asked for at the last pass, with the attributes
+    /// `attributes` gives each, and lets go of those none drew in.
+    pub fn reconcile(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        renderer: &mut Renderer,
+        ctx: &egui::Context,
+        attributes: impl Fn(&Ask) -> WindowAttributes,
+    ) {
+        let (asks, seen) = ctx.data_mut(|d| {
+            (
+                d.remove_temp::<Vec<Ask>>(asks_id()).unwrap_or_default(),
+                d.remove_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
+            )
+        });
+        let gone = unseen(
+            self.shared.borrow().windows.iter().map(|(id, native)| (*id, native.of_interface)),
+            &seen,
+        );
+        for id in gone {
+            self.close(renderer, ctx, id);
+        }
+        for ask in asks {
+            let id = viewport(ask.window);
+            if self.is_open(id) {
+                continue;
+            }
+            match self.open(event_loop, renderer, ctx, id, attributes(&ask), false) {
+                Ok(()) => {
+                    if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
+                        native.of_interface = true;
+                        native.title = Some(ask.title);
+                    }
+                    set_native(ctx, ask.window, true);
+                }
+                // the window stays inside the viewer's
+                Err(e) => {
+                    log::warn!("window outside: \"{}\" could not be opened: {e}", ask.title);
+                    want(ctx, ask.window, false);
+                }
+            }
+        }
+    }
+
     /// A native window for `id`, drawn by `renderer` from the next frame
     /// on. `sync` synchronizes it with its screen: only to measure
     /// (`Renderer::open_outside`).
@@ -241,6 +388,8 @@ impl Outside {
             return Ok(());
         }
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+        // (its first picture waits for the system to ask for one)
+        window.request_redraw();
         let size = window.inner_size();
         self.keys += 1;
         let key = self.keys;
@@ -261,6 +410,8 @@ impl Outside {
             Native {
                 key,
                 window,
+                of_interface: false,
+                title: None,
                 input,
                 focused,
                 reads_keys: false,
@@ -269,6 +420,7 @@ impl Outside {
                 shown: Vec::new(),
                 shown_size: (0, 0),
                 redraw: true,
+                asked_for: false,
             },
         );
         Ok(())
@@ -276,18 +428,20 @@ impl Outside {
 
     /// The window of `id` goes: hidden at once, gone when the render
     /// thread has destroyed its surface.
-    pub fn close(&mut self, renderer: &mut Renderer, id: egui::ViewportId) {
+    pub fn close(&mut self, renderer: &mut Renderer, ctx: &egui::Context, id: egui::ViewportId) {
         let Some(native) = self.shared.borrow_mut().windows.remove(&id) else {
             return;
         };
+        set_native(ctx, id.0, false);
         native.window.set_visible(false);
         renderer.close_outside(native.key);
         self.closing.push((native.key, native.window));
     }
 
     /// What the render thread answered since the last frame; returns the
-    /// windows it cannot draw, which are closed.
-    pub fn answers(&mut self, renderer: &mut Renderer) -> Vec<egui::ViewportId> {
+    /// windows it cannot draw, which are closed: one of the interface goes
+    /// back inside the viewer's.
+    pub fn answers(&mut self, renderer: &mut Renderer, ctx: &egui::Context) -> Vec<egui::ViewportId> {
         let mut failed = Vec::new();
         for event in renderer.outside_events() {
             match event {
@@ -296,8 +450,13 @@ impl Outside {
                 OutsideEvent::Failed(key, _) => {
                     let mut shared = self.shared.borrow_mut();
                     let id = shared.windows.iter().find(|(_, native)| native.key == key).map(|(id, _)| *id);
-                    if let Some(id) = id {
-                        shared.windows.remove(&id);
+                    if let Some(id) = id
+                        && let Some(native) = shared.windows.remove(&id)
+                    {
+                        set_native(ctx, id.0, false);
+                        if native.of_interface {
+                            want(ctx, id.0, false);
+                        }
                         failed.push(id);
                     }
                 }
@@ -332,6 +491,9 @@ impl Outside {
         // (what egui answers is about the viewer's own window between two
         // frames: `reads_keys`, from the window's last pass, is its own)
         let _ = native.input.on_window_event(&native.window, event);
+        if matches!(event, WindowEvent::RedrawRequested) {
+            native.asked_for = true;
+        }
         Some(match event {
             WindowEvent::CloseRequested => Asked::Close(*viewport),
             WindowEvent::Resized(_)
@@ -414,6 +576,7 @@ impl Outside {
                 continue;
             }
             if !drawn_again(
+                native.asked_for,
                 native.redraw,
                 textures_changed,
                 size,
@@ -482,6 +645,40 @@ mod tests {
     }
 
     #[test]
+    fn a_window_outside_nothing_drew_in_is_let_go() {
+        let window = |name: &str| egui::Id::unique(name);
+        let open = [
+            (viewport(window("conversations")), true),
+            (viewport(window("people")), true),
+            // (opened by a scenario, which closes it itself)
+            (viewport(window("test picture")), false),
+        ];
+        // Conversations drew in its window; People was closed, hidden with
+        // the interface or brought back inside
+        let seen = [window("conversations")];
+        assert_eq!(unseen(open.into_iter(), &seen), [viewport(window("people"))]);
+        assert_eq!(unseen(open.into_iter(), &[]).len(), 2);
+    }
+
+    #[test]
+    fn a_window_asks_to_go_outside_and_the_wish_is_kept() {
+        let ctx = egui::Context::default();
+        let window = egui::Id::unique("conversations");
+        assert!(!wanted(&ctx, window));
+        assert!(!native(&ctx, window));
+        want(&ctx, window, true);
+        assert!(wanted(&ctx, window));
+        // (the wish alone opens nothing: the window asks, then draws)
+        assert!(!native(&ctx, window));
+        set_native(&ctx, window, true);
+        assert!(native(&ctx, window));
+        set_native(&ctx, window, false);
+        assert!(!native(&ctx, window));
+        want(&ctx, window, false);
+        assert!(!wanted(&ctx, window));
+    }
+
+    #[test]
     fn a_key_goes_on_to_the_viewer_unless_the_window_outside_reads_it() {
         // a list, a picture: the key is a shortcut or a movement, as under
         // a window inside
@@ -531,12 +728,24 @@ mod tests {
         };
         let (first, same, other) = (shapes("one"), shapes("one"), shapes("two"));
         let size = (640, 480);
-        assert!(!drawn_again(false, false, size, size, &same, &first));
-        assert!(drawn_again(false, false, size, size, &other, &first));
+        assert!(!drawn_again(true, false, false, size, size, &same, &first));
+        assert!(drawn_again(true, false, false, size, size, &other, &first));
         // resized, uncovered by the system, or a picture that arrived
-        assert!(drawn_again(false, false, (800, 480), size, &same, &first));
-        assert!(drawn_again(true, false, size, size, &same, &first));
-        assert!(drawn_again(false, true, size, size, &same, &first));
+        assert!(drawn_again(true, false, false, (800, 480), size, &same, &first));
+        assert!(drawn_again(true, true, false, size, size, &same, &first));
+        assert!(drawn_again(true, false, true, size, size, &same, &first));
+    }
+
+    /// A new window's first picture waits for the system to ask for one:
+    /// shown before its title bar is drawn, it made the system count the
+    /// window without the title bar and shrink it by that height at each
+    /// opening.
+    #[test]
+    fn nothing_is_drawn_in_a_window_outside_before_the_system_asks() {
+        let size = (640, 480);
+        // a new window: nothing shown yet, everything to draw
+        assert!(!drawn_again(false, true, true, size, (0, 0), &[], &[]));
+        assert!(drawn_again(true, true, true, size, (0, 0), &[], &[]));
     }
 
     /// The pass of a window outside, as egui runs it inside the viewer's:

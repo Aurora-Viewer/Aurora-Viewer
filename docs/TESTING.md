@@ -6407,7 +6407,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
-| `AURORA_DEMO_OUTSIDE=still\|busy[,sync][,click]` | A test window of the interface outside the viewer's window: its cost, its pointer and its keyboard |
+| `AURORA_DEMO_OUTSIDE=still\|busy[,sync][,click]\|conversations` | A test window of the interface outside the viewer's window (its cost, its pointer and its keyboard), or the Conversations window sent outside |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
@@ -8046,6 +8046,14 @@ failure. Grid validation and any paid upload are performed by the human.
   window (the rate shown in the top bar does not fall to the background
   limit), which it loses only to another program. Leave `AURORA_PROFILE`
   out for that check: a timed run has no background cap.
+  `conversations` opens the Conversations window in a window of its own,
+  as the button of its title bar sends it (the small window, next to the
+  minimize button). By hand: the window has the system's title bar and one
+  row of buttons; its menus and its emoji picker open in it; the windows it
+  opens (a profile) open in the viewer's; its first button brings it back
+  where it was; closed by the system's cross and opened again, it opens
+  outside, as large as it was (it must not come back shorter by the height
+  of its title bar); quitting the viewer with it outside leaves no crash.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

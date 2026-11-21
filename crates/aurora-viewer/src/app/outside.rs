@@ -25,14 +25,30 @@ impl App {
     }
 
     /// Before the interface's pass: what the render thread answered, the
-    /// windows to open (the pass only draws in windows that exist), and
-    /// the scenario's scripted pointer.
-    pub(super) fn outside_frame_start(&mut self, event_loop: &ActiveEventLoop, renderer: &mut Renderer) {
-        for id in self.outside.answers(renderer) {
+    /// windows to open (the pass only draws in windows that exist) and to
+    /// let go of, and the scenario's scripted pointer. `own`: the viewer's
+    /// own window.
+    pub(super) fn outside_frame_start(&mut self, event_loop: &ActiveEventLoop, own: &Window, renderer: &mut Renderer) {
+        for id in self.outside.answers(renderer, &self.egui_ctx) {
             if id == demo::id() {
                 self.outside_demo = None;
             }
         }
+        let zoom = self.egui_ctx.zoom_factor();
+        let icon = self.window_icon.clone();
+        // (where the system tells a program where its window is: not Wayland)
+        let origin = own.inner_position().ok().map(|at| (at, own.scale_factor()));
+        self.outside.reconcile(event_loop, renderer, &self.egui_ctx, |ask| {
+            let attributes = crate::cli::with_desktop_id(Window::default_attributes())
+                .with_title(ask.title.clone())
+                .with_inner_size(logical(ask.rect.size(), zoom))
+                .with_min_inner_size(logical(ask.min_size, zoom))
+                .with_window_icon(icon.clone());
+            match origin {
+                Some((at, scale)) => attributes.with_position(on_screen(at, scale, ask.rect.min, zoom)),
+                None => attributes,
+            }
+        });
         let Some(scenario) = self.outside_demo.as_ref().map(|demo| demo.scenario) else {
             return;
         };
@@ -121,15 +137,32 @@ impl App {
             Asked::Close(viewport) => {
                 if viewport == demo::id() {
                     self.outside_demo = None;
-                }
-                if let Some(g) = &mut self.gfx {
-                    self.outside.close(&mut g.renderer, viewport);
+                    if let Some(g) = &mut self.gfx {
+                        self.outside.close(&mut g.renderer, &self.egui_ctx, viewport);
+                    }
+                } else {
+                    // a window of the interface: closed as its cross inside
+                    // closes it; its window outside goes once nothing draws
+                    // in it (`Outside::reconcile`)
+                    crate::ui::widgets::close_window(&self.egui_ctx, viewport.0);
                 }
                 Went::Outside
             }
             Asked::Viewer => went_on(event, self.focused),
         }
     }
+}
+
+/// A size of the interface, in points, as the system counts a window's.
+fn logical(size: egui::Vec2, zoom: f32) -> winit::dpi::LogicalSize<f32> {
+    winit::dpi::LogicalSize::new(size.x * zoom, size.y * zoom)
+}
+
+/// Where the point `at` of the viewer's interface is on the screen, the
+/// viewer's own window being at `origin` at the scale `scale`.
+fn on_screen(origin: winit::dpi::PhysicalPosition<i32>, scale: f64, at: egui::Pos2, zoom: f32) -> winit::dpi::PhysicalPosition<i32> {
+    let pixels = |v: f32| (f64::from(v * zoom) * scale).round() as i32;
+    winit::dpi::PhysicalPosition::new(origin.x + pixels(at.x), origin.y + pixels(at.y))
 }
 
 /// An event a window outside hands on (`Asked::Viewer`). Its focus that
@@ -158,6 +191,21 @@ mod tests {
         // another program in front: the background cap
         assert_eq!(cap(false, false), settings.background_fps_limit as f32);
         assert_ne!(cap(false, false), cap(false, true));
+    }
+
+    #[test]
+    fn a_window_opens_outside_where_and_as_large_as_it_was_inside() {
+        // the interface at 125 % on a screen at 200 %: a point is 2.5 pixels
+        let (zoom, scale) = (1.25, 2.0);
+        // the viewer's window at (300, 100) on the screen, the window of
+        // the interface at (40, 80) points in it
+        let origin = winit::dpi::PhysicalPosition::new(300, 100);
+        assert_eq!(
+            on_screen(origin, scale, egui::pos2(40.0, 80.0), zoom),
+            winit::dpi::PhysicalPosition::new(400, 300)
+        );
+        // 480 x 320 points: 600 x 400 as the system counts at that scale
+        assert_eq!(logical(egui::vec2(480.0, 320.0), zoom), winit::dpi::LogicalSize::new(600.0, 400.0));
     }
 
     #[test]

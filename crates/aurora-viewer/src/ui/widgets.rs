@@ -637,6 +637,9 @@ pub struct Floater<'a> {
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
     chat: bool,
+    /// Its title bar has the button that sends it to a window of its own,
+    /// outside the viewer's (`may_go_outside`).
+    outside: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -673,6 +676,7 @@ impl<'a> Floater<'a> {
             cascade: None,
             partial_outside: false,
             chat: false,
+            outside: false,
         }
     }
 
@@ -732,6 +736,16 @@ impl<'a> Floater<'a> {
     /// A chat window: immersive mode keeps it (#859).
     pub fn chat(mut self) -> Self {
         self.chat = true;
+        self
+    }
+
+    /// The user may send this window to a window of the system, outside
+    /// the viewer's, and bring it back (outside.rs). Not in the Legacy
+    /// Viewer. A window opts in once its body is known to work there: what
+    /// it draws outside its body (a menu, a picker laid over the viewer)
+    /// stays in the viewer's window.
+    pub fn may_go_outside(mut self) -> Self {
+        self.outside = true;
         self
     }
 
@@ -829,6 +843,9 @@ impl<'a> Floater<'a> {
             }
             return None;
         }
+        if self.outside && crate::outside::wanted(ctx, egui::Id::unique(self.id)) {
+            return self.show_outside(ctx, p, open, body);
+        }
         let min_id = egui::Id::unique((self.id, "minimized"));
         // "Reset window positions and sizes" (`reset_windows`): back to its
         // default place and size, expanded, at this frame
@@ -897,6 +914,7 @@ impl<'a> Floater<'a> {
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
+        let mut go_outside = false;
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
         let expanded_id = window_id.with("expanded_size");
@@ -1115,6 +1133,13 @@ impl<'a> Floater<'a> {
                         };
                         if title_button(ui, p, icon).on_hover_text(tip).clicked() {
                             toggle_min = true;
+                        }
+                        if self.outside
+                            && title_button(ui, p, OUTSIDE_ICON)
+                                .on_hover_text(aurora_i18n::tr!("common-window-outside"))
+                                .clicked()
+                        {
+                            go_outside = true;
                         }
                         for (icon, tip, clicked) in &mut self.actions {
                             let response = title_button(ui, p, icon).on_hover_text(*tip);
@@ -1348,6 +1373,10 @@ impl<'a> Floater<'a> {
             if self.cascade.is_some() {
                 cascade::hidden(ctx, window_id);
             }
+        } else if go_outside {
+            // (it comes back expanded, where and as large as it was)
+            unminimize_quietly(ctx, self.id);
+            crate::outside::want(ctx, window_id, true);
         } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
             if self.cascade.is_some() {
@@ -1363,7 +1392,122 @@ impl<'a> Floater<'a> {
         }
         out
     }
+
+    /// The window in a window of the system, outside the viewer's
+    /// (outside.rs): the same body on the palette's solid panel, under one
+    /// row of the title bar's buttons. The system's title bar names it,
+    /// moves it and closes it; the first button brings it back inside.
+    fn show_outside<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+        let window_id = egui::Id::unique(self.id);
+        if !self.silent {
+            super::sound_cues::floater_shown(ctx, window_id);
+        }
+        if close_asked(ctx, self.id) {
+            *open = false;
+            return None;
+        }
+        if !crate::outside::native(ctx, window_id) {
+            // asked at this pass, opened before the next: as large as it
+            // was outside last, or as it is inside
+            let inside = egui::AreaState::load(ctx, window_id);
+            let size = ctx
+                .data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)))
+                .or_else(|| inside.and_then(|s| s.size))
+                .unwrap_or(self.default_size);
+            let min = inside.map_or(self.default_pos, |s| s.left_top_pos());
+            crate::outside::ask(
+                ctx,
+                crate::outside::Ask {
+                    window: window_id,
+                    title: self.title.clone(),
+                    rect: egui::Rect::from_min_size(min, size),
+                    min_size: self.min_size,
+                },
+            );
+            return None;
+        }
+        crate::outside::seen(ctx, window_id);
+        let flush = self.flush_body;
+        let mut body = Some(body);
+        let mut back = false;
+        let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
+        let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
+            let size = ui.max_rect().size();
+            ui.ctx().data_mut(|d| d.insert_persisted(window_id.with(OUTSIDE_SIZE), size));
+            let margin = if flush {
+                egui::Margin {
+                    left: 0,
+                    right: 0,
+                    top: 5,
+                    bottom: 0,
+                }
+            } else {
+                FLOATER_MARGIN
+            };
+            egui::Frame::new()
+                .inner_margin(margin)
+                .show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    let mut buttons = |ui: &mut egui::Ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(TITLE_ROW_MIN);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                if title_button(ui, p, INSIDE_ICON)
+                                    .on_hover_text(aurora_i18n::tr!("common-window-inside"))
+                                    .clicked()
+                                {
+                                    back = true;
+                                }
+                                for (icon, tip, clicked) in &mut self.actions {
+                                    if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
+                                        **clicked = true;
+                                    }
+                                }
+                                if let Some(h) = self.help {
+                                    title_button(ui, p, "help-circle-filled").on_hover_text(h);
+                                }
+                                if let Some((dot, text)) = &self.title_state {
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(text).size(12.0).color(p.muted));
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+                                    status_dot(ui, *dot);
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                }
+                                if let Some(note) = &self.title_note {
+                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    });
+                                }
+                            });
+                        });
+                    };
+                    if flush {
+                        // the row keeps the margins the body gives up
+                        egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, buttons);
+                        ui.add_space(5.0);
+                    } else {
+                        buttons(ui);
+                        divider(ui, p);
+                        ui.add_space(UNDER_DIVIDER);
+                    }
+                    body.take().map(|body| body(ui))
+                })
+                .inner
+        });
+        if back {
+            crate::outside::want(ctx, window_id, false);
+        }
+        out
+    }
 }
+
+/// The title bar's button that sends a window outside the viewer's, and
+/// the one that brings it back.
+const OUTSIDE_ICON: &str = "app-window-filled";
+const INSIDE_ICON: &str = "picture-in-picture-filled";
+/// The size a window had outside the viewer's, kept with the layout.
+const OUTSIDE_SIZE: &str = "outside_size";
 
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
@@ -1811,6 +1955,14 @@ pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool
 pub fn close_floater(ctx: &egui::Context, id: &str) {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(CLOSE), frame));
+}
+
+/// The window `window` (a floater's `egui::Id`) is asked to close, as
+/// [`close_floater`] asks by name: the cross of its window outside the
+/// viewer's.
+pub(crate) fn close_window(ctx: &egui::Context, window: egui::Id) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(window.with(CLOSE), frame));
 }
 
 /// The floater `id` was asked to close ([`close_floater`]), once.
