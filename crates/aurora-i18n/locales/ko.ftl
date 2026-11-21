@@ -1066,9 +1066,6 @@ import-lod-low = 낮음
 import-lod-lowest = 가장 낮음
 import-source-file = 파일
 import-lod-auto = 자동 생성
-import-lod-combine = 복합 발전
-import-lod-fast = 빠른 생성
-import-lod-legacy = 레거시 생성
 import-lod-reliable = 신뢰할 수 있는 발전
 import-lod-above = 위의 LOD
 import-mesh-info =
@@ -8065,7 +8062,6 @@ photo-light-time-current = 현재
 photo-light-exposure = 노출
 photo-light-exposure-reset = 환경설정의 노출로 돌아가기
 photo-light-pause-clouds = 구름 일시 정지
-photo-light-pause-clouds-hint = 하늘을 향해
 photo-light-attached = 착용된 조명
 photo-light-attached-hint = 아바타가 착용하는 조명 (얼굴 조명). 이 창이 닫히면 모든 것이 다시 돌아옵니다.
 photo-light-sky = 하늘
@@ -15860,3 +15856,13 @@ game-control-action-boom-down = 트럼프
 game-control-action-escape = ESC
 picker-local-newest = 최신순
 picker-local-name = 이름순(A–Z)
+
+### Phototools
+
+phototools-environment-settings = 환경 설정
+phototools-quick-environments = 환경 빠른 선택
+phototools-environment-presets = 환경 사전 설정
+phototools-general-render = 일반 렌더링 설정
+phototools-render-options = 렌더링 옵션
+ui-bars-clouds-paused = 구름 움직임 일시 정지됨
+photo-light-pause-clouds-hint = 하늘을 정지 상태로 유지합니다. 일시 정지는 세션을 종료하거나 이 기능을 끌 때까지 유지됩니다.
