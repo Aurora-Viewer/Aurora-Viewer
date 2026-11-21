@@ -4191,7 +4191,9 @@ mod tests {
         assert_eq!(folder_icon(0, true), "Inv_TexturesOpen");
         assert_eq!(folder_icon(46, false), "Inv_CurrentOutfitClosed");
         assert_eq!(folder_icon(48, true), "Inv_LookFolderOpen");
-        assert_eq!(folder_icon(54, false), "Inv_MarketplaceClosed");
+        assert_eq!(folder_icon(53, false), "Inv_MarketplaceClosed");
+        assert_eq!(folder_icon(54, false), "Inv_StockFolderClosed");
+        assert_eq!(folder_icon(55, true), "Inv_VersionFolderOpen");
         assert_eq!(folder_icon(14, true), "Inv_TrashClosed");
         assert_eq!(folder_icon(100, false), "Inv_SuitcaseClosed");
         assert_eq!(folder_icon(100, true), "Inv_SuitcaseOpen");

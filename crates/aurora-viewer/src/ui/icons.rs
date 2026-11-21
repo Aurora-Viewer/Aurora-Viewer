@@ -825,16 +825,9 @@ pub(crate) fn alias_target(name: &str) -> Option<&'static str> {
 /// A system folder's generated SVG and whether it carries the shortcut
 /// corner (a link to the folder), by icon name.
 fn generated_folder(name: &str) -> Option<(&'static [u8], bool)> {
-    category::ROWS.iter().find_map(|row| {
-        [
-            (row.closed, row.svgs[0], false),
-            (row.open, row.svgs[1], false),
-            (row.link, row.svgs[2], true),
-        ]
-        .into_iter()
+    category::drawn_folders()
         .find(|(n, _, _)| *n == name)
         .map(|(_, svg, shortcut)| (svg, shortcut))
-    })
 }
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
@@ -959,13 +952,7 @@ impl Icons {
                 None => log::warn!("icon {name}: invalid SVG"),
             }
         }
-        let folders = category::ROWS.iter().flat_map(|row| {
-            [
-                (row.closed, row.svgs[0], false),
-                (row.open, row.svgs[1], false),
-                (row.link, row.svgs[2], true),
-            ]
-        });
+        let folders = category::drawn_folders();
         for (name, bytes, shortcut) in INVENTORY_LINKS.iter().map(|(name, bytes)| (*name, *bytes, true)).chain(folders) {
             sources.insert(
                 name.to_owned(),
@@ -1012,6 +999,8 @@ impl Icons {
                 sources.insert(clothing.item.to_owned(), Source::Svg(Cow::Borrowed(bytes)));
             }
         }
+        // the names the skin gives an image of its own
+        let mut skinned = std::collections::HashSet::new();
         if let Some(dir) = override_dir
             && let Ok(rd) = std::fs::read_dir(dir)
         {
@@ -1030,6 +1019,7 @@ impl Icons {
                     _ => None,
                 };
                 if let Some(ci) = ci {
+                    skinned.insert(stem.to_owned());
                     map.insert(stem.to_owned(), ctx.load_texture(stem, ci, opts));
                     let source = if ext.as_deref() == Some("svg") {
                         Source::Svg(Cow::Owned(bytes))
@@ -1038,6 +1028,17 @@ impl Icons {
                     };
                     sources.insert(stem.to_owned(), source);
                 }
+            }
+        }
+        // a skin made for the Legacy Viewer: its images of a system folder's
+        // Legacy names (Inv_LookFolder*, Inv_Sys*, Inv_Folder*) win over
+        // Aurora's own icon for that folder (`category::skin_image`)
+        for (name, _, _) in category::drawn_folders() {
+            if let Some(image) = category::skin_image(name, |n| skinned.contains(n)).filter(|image| *image != name)
+                && let (Some(t), Some(source)) = (map.get(image).cloned(), sources.get(image).cloned())
+            {
+                map.insert(name.to_owned(), t);
+                sources.insert(name.to_owned(), source);
             }
         }
         if let Ok(mut g) = GLOBAL.write() {
@@ -1184,6 +1185,39 @@ mod tests {
             assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {}", row.link);
             assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {}", row.link);
         }
+    }
+
+    #[test]
+    fn a_skins_legacy_folder_images_reach_auroras_system_folders() {
+        let dir = std::env::temp_dir().join(format!("aurora-skin-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("skin dir");
+        let square = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24"/></svg>"#;
+        for name in ["Inv_LookFolderClosed", "Inv_StockFolderOpen", "Inv_SysClosed"] {
+            std::fs::write(dir.join(format!("{name}.svg")), square).expect("skin icon");
+        }
+        let ctx = egui::Context::default();
+        let skinned = Icons::load(&ctx, Some(&dir));
+        let plain = Icons::load(&ctx, None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let id = |icons: &Icons, name: &str| icons.get(name).map(|t| t.id());
+        // Current outfit takes the skin's look folder, Marketplace listings its
+        // system folder, the stock folder its own image
+        assert_eq!(id(&skinned, "Inv_CurrentOutfitClosed"), id(&skinned, "Inv_LookFolderClosed"));
+        assert_eq!(id(&skinned, "Inv_MarketplaceClosed"), id(&skinned, "Inv_SysClosed"));
+        assert!(id(&skinned, "Inv_StockFolderOpen").is_some());
+        // what the skin does not draw keeps Aurora's own icon
+        assert_ne!(id(&skinned, "Inv_CurrentOutfitOpen"), id(&skinned, "Inv_LookFolderClosed"));
+        assert_ne!(id(&skinned, "Inv_VersionFolderClosed"), id(&skinned, "Inv_SysClosed"));
+        // with no skin, the stock and version folders are the Marketplace's
+        for name in [
+            "Inv_StockFolderClosed",
+            "Inv_StockFolderOpen",
+            "Inv_VersionFolderClosed",
+            "Inv_VersionFolderOpen",
+        ] {
+            assert!(plain.get(name).is_some() && embedded(name), "{name}");
+        }
+        assert_eq!(inventory_link_name("Inv_StockFolderClosed"), "Inv_MarketplaceClosed_Link");
     }
 
     #[test]

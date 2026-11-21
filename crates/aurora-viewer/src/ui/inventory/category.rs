@@ -228,12 +228,84 @@ pub fn row_icon_size(name: &str, slot: f32) -> f32 {
 
 /// Whether `name` is the icon of a folder (drawn in the folders' tint).
 pub fn is_folder_icon(name: &str) -> bool {
-    name.starts_with("Inv_Folder") || ROWS.iter().any(|row| row.closed == name || row.open == name)
+    name.starts_with("Inv_Folder")
+        || ROWS.iter().any(|row| row.closed == name || row.open == name)
+        || MARKETPLACE_SUBFOLDERS
+            .iter()
+            .any(|(_, closed, open)| *closed == name || *open == name)
 }
 
 /// The link icon of a system folder's closed icon, if `name` is one.
 pub fn folder_link(name: &str) -> Option<&'static str> {
+    let name = MARKETPLACE_SUBFOLDERS
+        .iter()
+        .find(|(_, closed, _)| *closed == name)
+        .map_or(name, |_| Category::Marketplace.row().closed);
     ROWS.iter().find(|row| row.closed == name).map(|row| row.link)
+}
+
+/// The Marketplace's stock and version folders (FT_MARKETPLACE_STOCK,
+/// FT_MARKETPLACE_VERSION) keep the Legacy Viewer's own icon names
+/// (llviewerfoldertype.cpp: Inv_StockFolder*, Inv_VersionFolder*). Aurora
+/// draws them as the Marketplace folder; a skin can give each its own.
+pub const MARKETPLACE_SUBFOLDERS: [(i32, &str, &str); 2] = [
+    (54, "Inv_StockFolderClosed", "Inv_StockFolderOpen"),
+    (55, "Inv_VersionFolderClosed", "Inv_VersionFolderOpen"),
+];
+
+/// Every system folder icon Aurora draws itself, with its generated SVG and
+/// whether it is a link's (the shortcut corner).
+pub fn drawn_folders() -> impl Iterator<Item = (&'static str, &'static [u8], bool)> {
+    let market = Category::Marketplace.row();
+    ROWS.iter()
+        .flat_map(|row| {
+            [
+                (row.closed, row.svgs[0], false),
+                (row.open, row.svgs[1], false),
+                (row.link, row.svgs[2], true),
+            ]
+        })
+        .chain(
+            MARKETPLACE_SUBFOLDERS
+                .iter()
+                .flat_map(move |(_, closed, open)| [(*closed, market.svgs[0], false), (*open, market.svgs[1], false)]),
+        )
+}
+
+/// The skin images a system folder icon takes, in order, after the skin's
+/// image of its own name: the Legacy Viewer's names for the same folder
+/// (llviewerfoldertype.cpp), then the plain folder. A skin made for the
+/// Legacy Viewer then looks as its author meant; with none of them, Aurora's
+/// own icon stays. Empty for any other icon.
+pub fn legacy_skin_names(name: &str) -> &'static [&'static str] {
+    let current = Category::CurrentOutfit.row();
+    let market = Category::Marketplace.row();
+    if name == current.closed {
+        &["Inv_LookFolderClosed", "Inv_FolderClosed"]
+    } else if name == current.open {
+        &["Inv_LookFolderOpen", "Inv_FolderOpen"]
+    } else if name == market.closed {
+        &["Inv_SysClosed", "Inv_FolderClosed"]
+    } else if name == market.open {
+        &["Inv_SysOpen", "Inv_FolderOpen"]
+    } else if drawn_folders().any(|(n, _, link)| !link && n == name) {
+        if name.ends_with("Open") {
+            &["Inv_FolderOpen"]
+        } else {
+            &["Inv_FolderClosed"]
+        }
+    } else {
+        &[]
+    }
+}
+
+/// Which skin image a drawn icon takes, if any: the image of its own name,
+/// else the first of `legacy_skin_names` the skin has.
+pub fn skin_image(name: &str, skin_has: impl Fn(&str) -> bool) -> Option<&str> {
+    if skin_has(name) {
+        return Some(name);
+    }
+    legacy_skin_names(name).iter().copied().find(|legacy| skin_has(legacy))
 }
 
 /// A clothing icon Tabler has no symbol for, drawn by hand (Zakka, for
@@ -276,6 +348,41 @@ pub const CLOTHING_DRAWINGS: &[ClothingDrawing] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skins_legacy_named_folder_images_win_over_auroras_own() {
+        let skin = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
+        // nothing in the skin: Aurora's own icon
+        assert_eq!(skin_image("Inv_CurrentOutfitClosed", skin(&[])), None);
+        // its own name first, then the Legacy name, then the plain folder
+        let all = skin(&["Inv_CurrentOutfitClosed", "Inv_LookFolderClosed", "Inv_FolderClosed"]);
+        assert_eq!(skin_image("Inv_CurrentOutfitClosed", all), Some("Inv_CurrentOutfitClosed"));
+        let legacy = skin(&["Inv_LookFolderClosed", "Inv_FolderClosed"]);
+        assert_eq!(skin_image("Inv_CurrentOutfitClosed", legacy), Some("Inv_LookFolderClosed"));
+        assert_eq!(
+            skin_image("Inv_CurrentOutfitOpen", skin(&["Inv_FolderOpen"])),
+            Some("Inv_FolderOpen")
+        );
+        // Marketplace listings take Inv_Sys*, stock and version their own names
+        assert_eq!(skin_image("Inv_MarketplaceOpen", skin(&["Inv_SysOpen"])), Some("Inv_SysOpen"));
+        assert_eq!(
+            skin_image("Inv_StockFolderClosed", skin(&["Inv_StockFolderClosed", "Inv_SysClosed"])),
+            Some("Inv_StockFolderClosed")
+        );
+        assert_eq!(
+            skin_image("Inv_VersionFolderOpen", skin(&["Inv_FolderOpen"])),
+            Some("Inv_FolderOpen")
+        );
+        // every system folder takes a skin's plain folder; items and Trash do not
+        assert_eq!(
+            skin_image("Inv_TexturesClosed", skin(&["Inv_FolderClosed"])),
+            Some("Inv_FolderClosed")
+        );
+        assert_eq!(skin_image("Inv_Texture", skin(&["Inv_FolderClosed"])), None);
+        assert_eq!(skin_image("Inv_TrashClosed", skin(&["Inv_FolderClosed"])), None);
+        // a link keeps its own icon
+        assert_eq!(skin_image("Inv_TexturesClosed_Link", skin(&["Inv_FolderClosed"])), None);
+    }
 
     #[test]
     fn system_folders_follow_legacy_folder_types() {
