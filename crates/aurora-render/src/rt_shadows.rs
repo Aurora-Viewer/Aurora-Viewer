@@ -5549,31 +5549,99 @@ mod tests {
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
     }
 
-    #[test]
-    fn rt_shadows_shaders_are_valid() {
-        for (name, parts) in [
-            ("rt_shadows", &[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")][..]),
-            ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
+    /// Each ray-traced shader as the device compiles it: its name and its
+    /// whole source.
+    fn rt_sources() -> Vec<(&'static str, String)> {
+        vec![
+            ("rt_shadows", source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")])),
+            ("rt_pose", source(&[include_str!("shaders/rt_pose.wgsl")])),
             (
                 "rt_reflect",
-                &[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")][..],
+                source(&[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")]),
             ),
-            ("rt_gi", &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")][..]),
+            (
+                "rt_gi",
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")]),
+            ),
             // standalone: no scene, no ray queries
-            ("rt_denoise", &[include_str!("shaders/rt_denoise.wgsl")][..]),
+            ("rt_denoise", include_str!("shaders/rt_denoise.wgsl").to_owned()),
             (
                 "rt_lights",
-                &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")][..],
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")]),
             ),
-        ] {
-            let src = if name == "rt_denoise" { parts[0].to_owned() } else { source(parts) };
-            let module = match naga::front::wgsl::parse_str(&src) {
-                Ok(m) => m,
-                Err(e) => panic!("{name}: {}", e.emit_to_string(&src)),
-            };
+        ]
+    }
+
+    fn parsed(name: &str, src: &str) -> naga::Module {
+        match naga::front::wgsl::parse_str(src) {
+            Ok(m) => m,
+            Err(e) => panic!("{name}: {}", e.emit_to_string(src)),
+        }
+    }
+
+    #[test]
+    fn rt_shadows_shaders_are_valid() {
+        for (name, src) in rt_sources() {
+            let module = parsed(name, &src);
             let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
             if let Err(e) = v.validate(&module) {
                 panic!("{name}: {}", e.emit_to_string(&src));
+            }
+        }
+    }
+
+    /// The ray queries a block's statements store into, by their names.
+    fn ray_query_stores(module: &naga::Module, function: &naga::Function, block: &naga::Block, found: &mut Vec<String>) {
+        for statement in block.iter() {
+            match statement {
+                naga::Statement::Store { pointer, .. } => {
+                    if let naga::Expression::LocalVariable(local) = function.expressions[*pointer] {
+                        let local = &function.local_variables[local];
+                        if matches!(module.types[local.ty].inner, naga::TypeInner::RayQuery { .. }) {
+                            found.push(local.name.clone().unwrap_or_default());
+                        }
+                    }
+                }
+                naga::Statement::Block(inner) => ray_query_stores(module, function, inner, found),
+                naga::Statement::If { accept, reject, .. } => {
+                    ray_query_stores(module, function, accept, found);
+                    ray_query_stores(module, function, reject, found);
+                }
+                naga::Statement::Switch { cases, .. } => {
+                    for case in cases {
+                        ray_query_stores(module, function, &case.body, found);
+                    }
+                }
+                naga::Statement::Loop { body, continuing, .. } => {
+                    ray_query_stores(module, function, body, found);
+                    ray_query_stores(module, function, continuing, found);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // A `var` declared in a loop is set to zero again at each pass, and for a
+    // ray query that is an assignment, which Metal's compiler refuses
+    // (`intersection_query` has no `operator=`): the pipeline is not made and
+    // every frame that binds it is dropped. Vulkan and Direct3D take it.
+    #[test]
+    fn no_ray_query_is_declared_in_a_loop() {
+        for (name, src) in rt_sources() {
+            let module = parsed(name, &src);
+            let functions = module
+                .functions
+                .iter()
+                .map(|(_, f)| f)
+                .chain(module.entry_points.iter().map(|e| &e.function));
+            for function in functions {
+                let mut found = Vec::new();
+                ray_query_stores(&module, function, &function.body, &mut found);
+                assert!(
+                    found.is_empty(),
+                    "{name}: `{}` declares the ray queries {found:?} in a loop",
+                    function.name.as_deref().unwrap_or("?")
+                );
             }
         }
     }
