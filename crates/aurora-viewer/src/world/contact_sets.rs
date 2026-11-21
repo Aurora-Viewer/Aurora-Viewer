@@ -151,6 +151,7 @@ impl ContactSets {
             default_color: GREY,
             ..Default::default()
         };
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
         match std::fs::read(&path) {
             Ok(bytes) => match aurora_llsd::from_xml(&bytes) {
                 Ok(v) => cs.import(&v),
@@ -258,15 +259,22 @@ impl ContactSets {
         self.generation += 1;
         self.rebuild_appearances();
         self.rebuild_chat_sections();
-        let Some(path) = &self.path else {
+        self.queue_save();
+    }
+
+    /// The sets as they are now, written whole by a save thread (saves.rs),
+    /// after the saves of the file asked before (an import's included): the
+    /// frame does not wait for the disk.
+    fn queue_save(&self) {
+        let Some(path) = self.path.clone() else {
             return;
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&self.export())) {
-            log::warn!("contact sets not saved ({e}): {}", path.display());
-        }
+        let xml = aurora_llsd::to_xml(&self.export());
+        crate::saves::replace(path.clone(), move || {
+            if let Err(e) = importing::write_file(&path, &xml) {
+                log::warn!("contact sets not saved ({e}): {}", path.display());
+            }
+        });
     }
 
     /// getAllContactSets (sorted by name, like the std::map).

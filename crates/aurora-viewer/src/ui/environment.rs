@@ -19,7 +19,7 @@ use egui::{RichText, Vec2};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-use crate::weather::{PUDDLE_DISTANCE, Precipitation, WeatherQuality, WeatherSettings};
+use crate::weather::WeatherSettings;
 
 /// What the window asks the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,16 +40,65 @@ const SLIDER_SCALE_GLOW_B: f32 = -5.0;
 /// F_APPROXIMATELY_ZERO (llmath.h).
 const APPROXIMATELY_ZERO: f32 = 0.00001;
 
+/// The least width of the selector's label column; the real one comes from
+/// [`label_column_w`], so that "Sky environment" / "Water environment" are
+/// not painted over their lists (#3109).
 const LABEL_W: f32 = 74.0;
 const COMBO_W: f32 = 216.0;
 /// Height of a list's entries under its search field.
 const LIST_H: f32 = 420.0;
+const LABEL_FONT: f32 = 12.5;
+/// Width of the Environment window with a label column of [`LABEL_W`]; a
+/// wider column widens the window by as much.
+const SELECTOR_W: f32 = 440.0;
+
+/// The labels of the selector's rows: sky, water, day cycle and time of day.
+fn selector_labels() -> [&'static str; 4] {
+    [
+        aurora_i18n::tr!("ui-environment-sky-environment"),
+        aurora_i18n::tr!("ui-environment-water-environment"),
+        aurora_i18n::tr!("extra-day-night"),
+        aurora_i18n::tr!("ui-environment-time"),
+    ]
+}
+
+/// Widest of `labels` at the selector's label size, so the column fits the
+/// current language instead of a fixed English guess.
+fn label_column_w(ctx: &egui::Context, labels: &[&str]) -> f32 {
+    let font = egui::FontId::proportional(LABEL_FONT);
+    labels
+        .iter()
+        .map(|label| {
+            ctx.fonts_mut(|f| {
+                f.layout_no_wrap((*label).to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                    .size()
+                    .x
+            })
+        })
+        .fold(LABEL_W, f32::max)
+        .ceil()
+}
+
+/// Label in a fixed column, cut at the column's width so a long string
+/// cannot cover the list (on the width only: a large text size is taller
+/// than the row's 20 px and keeps its descenders).
+fn paint_selector_label(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, label_w: f32) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
+    let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range()).intersect(ui.clip_rect());
+    ui.painter().with_clip_rect(clip).text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(LABEL_FONT),
+        p.ink,
+    );
+    if !tip.is_empty() {
+        resp.on_hover_text(tip);
+    }
+}
 
 #[derive(Default)]
 pub struct EnvironmentUi {
-    /// Who sets the weather now (kept by the app): the Weather window
-    /// says so when it is not its own settings.
-    pub weather_source: crate::weather::WeatherSource,
     /// The Weather window's clean-up button was pressed (taken by the app:
     /// the snow lying, the wet ground and puddles, the footprints and the
     /// snow on avatars go at once).
@@ -58,8 +107,9 @@ pub struct EnvironmentUi {
     /// everywhere as deep as a long snowfall leaves it).
     pub weather_fill: bool,
     catalog: SettingsCatalog,
-    /// Inventory generation the lists were built from, and when.
-    built: Option<(u64, super::inventory::view::Sort)>,
+    /// Inventory generation, sort and A–Z choice the lists were built
+    /// from, and when.
+    built: Option<(u64, super::inventory::view::Sort, bool)>,
     built_at: Option<std::time::Instant>,
     /// Folders still to load for the lists (0: complete).
     pub scan_left: usize,
@@ -84,18 +134,20 @@ pub struct EnvironmentUi {
     /// (indra/newview/quickprefs.cpp). The Environment window has them
     /// greyed too, where the Legacy Viewer has no such window.
     pub rlva_locked: bool,
+    /// `AURORA_DEMO_WEATHER_WINDOW` was looked at (once, at the start).
+    demo_weather_done: bool,
 }
 
 impl EnvironmentUi {
     /// Rebuild the lists when the inventory changed (loadPresets), at most
     /// once a second while folders keep arriving.
     pub fn refresh(&mut self, ctx: &egui::Context, inv: &Inventory) {
-        let version = (inv.generation, super::inventory::view::picker_sort(ctx));
+        let version = (inv.generation, super::inventory::view::picker_sort(ctx), lists_by_name(ctx));
         let due = self.built_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) || self.scan_left == 0;
-        let sort_changed = self.built.is_some_and(|built| built.1 != version.1);
+        let sort_changed = self.built.is_some_and(|built| (built.1, built.2) != (version.1, version.2));
         if self.built != Some(version) && (due || sort_changed) {
-            let order = super::inventory::view::picker_order(ctx, inv);
-            self.catalog = SettingsCatalog::build(inv, |id| order.rank(id));
+            let ranks = list_ranks(ctx, inv);
+            self.catalog = SettingsCatalog::build(inv, |id| ranks.rank(id));
             self.built = Some(version);
             self.built_at = Some(std::time::Instant::now());
         }
@@ -121,11 +173,14 @@ impl EnvironmentUi {
         let screen = ctx.content_rect();
         // left of the notification toasts (top right)
         let pos = egui::pos2(screen.right() - 740.0, screen.top() + 90.0);
+        // as wide as its labels ask: English needs more than French or
+        // Japanese, whose labels fit the least column
+        let label_w = label_column_w(ctx, &selector_labels());
         Floater::new(
             "environment_selector",
             aurora_i18n::tr!("common-environment"),
             pos,
-            Vec2::new(440.0, 300.0),
+            Vec2::new(SELECTOR_W + label_w - LABEL_W, 300.0),
         )
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
@@ -139,13 +194,20 @@ impl EnvironmentUi {
                 Some(time_of_day),
                 LABEL_W,
                 lighting,
-                Some((&mut weather_open, &mut *weather)),
+                Some(&mut weather_open),
                 &mut out,
             );
             self.weather_open = weather_open;
         });
         // Aurora Weather, its own window (opened from the Environment window
         // or the Quick preferences, drawn here for both)
+        if !self.demo_weather_done {
+            self.demo_weather_done = true;
+            if let Some(mode) = crate::demo::env::weather_window() {
+                crate::demo::env::weather_scene(mode, weather);
+                self.weather_open = true;
+            }
+        }
         let mut weather_open = self.weather_open;
         self.show_weather(ctx, p, weather, &mut weather_open);
         self.weather_open = weather_open;
@@ -159,39 +221,22 @@ impl EnvironmentUi {
             return;
         }
         let screen = ctx.content_rect();
-        let pos = egui::pos2(screen.right() - 1150.0, screen.top() + 90.0);
-        Floater::new(
+        // left of the Environment window, which it opens beside
+        let left = screen.right() - 750.0 - super::weather_window::WINDOW_W;
+        let pos = egui::pos2(left.max(screen.left() + 10.0), screen.top() + 90.0);
+        let actions = Floater::new(
             "aurora_weather",
             aurora_i18n::tr!("ui-weather-aurora"),
             pos,
-            Vec2::new(400.0, 300.0),
+            Vec2::new(super::weather_window::WINDOW_W, 300.0),
         )
         .auto_height()
         .help(aurora_i18n::tr!("ui-weather-window-help"))
-        .show(ctx, p, open, |ui| {
-            // first: whether regions may set it, then who does now; the
-            // settings below are greyed out while something else does
-            let before = weather.clone();
-            ui.horizontal(|ui| {
-                widgets::checkbox(ui, p, &mut weather.region_weather, aurora_i18n::tr!("ui-weather-region"))
-                    .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
-                // on the right: clean up what the weather left (whoever
-                // sets it: the region's or a sky's snow is cleared too)
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(ui, p, "eraser", aurora_i18n::tr!("ui-weather-clean-up-tip"), true) {
-                        self.weather_clean = true;
-                    }
-                });
-            });
-            if weather.region_weather != before.region_weather {
-                weather.touched = true;
-            }
-            ui.add_space(4.0);
-            weather_source_note(ui, p, self.weather_source, weather);
-            let mine = self.weather_source == crate::weather::WeatherSource::Mine;
-            let fill = &mut self.weather_fill;
-            ui.add_enabled_ui(mine, |ui| weather_body(ui, p, weather, fill));
-        });
+        .show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather));
+        if let Some(actions) = actions {
+            self.weather_clean |= actions.clean;
+            self.weather_fill |= actions.fill;
+        }
     }
 
     /// The lists, "Personal lighting…", the reset button and (with
@@ -208,27 +253,26 @@ impl EnvironmentUi {
         time_of_day: Option<u8>,
         label_w: f32,
         lighting: &mut bool,
-        weather: Option<(&mut bool, &mut WeatherSettings)>,
+        weather_open: Option<&mut bool>,
         out: &mut Vec<EnvAction>,
     ) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+        let [sky, water, day, time] = selector_labels();
+        // Quick preferences passes a wide column; the Environment window's
+        // 74 px was too narrow for English "Water environment" (#3109).
+        let label_w = label_w.max(label_column_w(ui.ctx(), &[sky, water, day, time]));
         let free = !self.rlva_locked;
         let rows = [
-            (
-                SettingsKind::Sky,
-                aurora_i18n::tr!("ui-environment-sky-environment"),
-                aurora_i18n::tr!("ui-environment-sky-settings"),
-                view.sky,
-            ),
+            (SettingsKind::Sky, sky, aurora_i18n::tr!("ui-environment-sky-settings"), view.sky),
             (
                 SettingsKind::Water,
-                aurora_i18n::tr!("ui-environment-water-environment"),
+                water,
                 aurora_i18n::tr!("ui-environment-water-settings"),
                 view.water,
             ),
             (
                 SettingsKind::Day,
-                aurora_i18n::tr!("extra-day-night"),
+                day,
                 aurora_i18n::tr!("ui-environment-day-cycle-settings"),
                 view.day,
             ),
@@ -237,15 +281,7 @@ impl EnvironmentUi {
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        label,
-                        egui::FontId::proportional(12.5),
-                        p.ink,
-                    );
-                    resp.on_hover_text(tip);
+                    paint_selector_label(ui, p, label, tip, label_w);
                     ui.add_enabled_ui(free, |ui| {
                         if let Some(a) = self.list_row(ui, p, kind, shown) {
                             out.push(a);
@@ -256,8 +292,9 @@ impl EnvironmentUi {
         }
         ui.add_space(6.0);
         widgets::divider(ui, p);
-        ui.horizontal(|ui| {
-            ui.add_space(label_w + 4.0);
+        // Actions use the whole width, and wrap as the text grows (#3613).
+        // Indenting them by the labels' width clipped Aurora Weather.
+        ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(free, |ui| {
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
                     .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
@@ -277,13 +314,9 @@ impl EnvironmentUi {
             ) {
                 out.push(EnvAction::Shared);
             }
-            // Aurora Weather after them ("Aurora" in the aurora gradient),
-            // with its own way back to the region's: it turns "Let regions
-            // set the weather" on, still an opt in, by my own hand. One way,
-            // as the sky's: greyed once the region's is followed (turned off
-            // again in the Weather window). On the same row: a row of its
-            // own made the Quick preferences too tall at the largest text
-            let Some((open, weather)) = weather else {
+            // Aurora Weather after them ("Aurora" in the aurora gradient):
+            // this viewer's own weather, nothing for a region to set
+            let Some(open) = weather_open else {
                 return;
             };
             ui.add_space(12.0);
@@ -297,29 +330,12 @@ impl EnvironmentUi {
                 {
                     *open = !*open;
                 }
-                let following = weather.region_weather;
-                let tip = if following {
-                    aurora_i18n::tr!("ui-weather-follow-region-on-tip")
-                } else {
-                    aurora_i18n::tr!("ui-weather-follow-region-tip")
-                };
-                if widgets::icon_button(ui, p, "restore", tip, !following) {
-                    weather.region_weather = true;
-                    weather.touched = true;
-                }
             }
         });
         if let Some(time_of_day) = time_of_day {
             widgets::divider(ui, p);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
-                ui.painter().text(
-                    rect.left_center(),
-                    egui::Align2::LEFT_CENTER,
-                    aurora_i18n::tr!("ui-environment-time"),
-                    egui::FontId::proportional(12.5),
-                    p.ink,
-                );
+                paint_selector_label(ui, p, time, "", label_w);
                 for (i, name) in [
                     aurora_i18n::tr!("ui-environment-sunrise"),
                     aurora_i18n::tr!("common-midday"),
@@ -761,7 +777,6 @@ pub fn settings_list(
             .to_owned(),
         Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
     };
-    let selected_weather = item.is_some_and(|c| c.weather);
     let mut picked = None;
     // `width` at most: a long name is cut, never widening its window
     let size = Vec2::new(width, ui.spacing().interact_size.y);
@@ -784,14 +799,15 @@ pub fn settings_list(
             ui.data_mut(|d| d.remove_temp::<String>(query_id));
         }
         let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
-        // Give egui the measured height before it positions the popup, so an
-        // upward list stays on its button as filtering or inventory changes.
+        // Give egui the measured height and the button's width before it
+        // positions the popup. Filtering keeps an upward list anchored and
+        // never feeds a scrollbar's animated width into the next frame.
         if opening && demo.is_none() {
             ui.data_mut(|d| d.remove_temp::<f32>(height_id));
         } else if let Some(wanted) = ui.data(|d| d.get_temp::<f32>(height_id))
             && let Some(mut area) = egui::AreaState::load(ui.ctx(), popup_id)
         {
-            area.size = area.size.map(|s| Vec2::new(s.x, wanted));
+            area.size = area.size.map(|_| Vec2::new(width, wanted));
             let layer = egui::LayerId::new(egui::Order::Foreground, popup_id);
             ui.ctx().memory_mut(|m| m.areas_mut().set_state(layer, area));
         }
@@ -801,27 +817,41 @@ pub fn settings_list(
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(max_content_height)
-            .selected_text(tagged_name(p, &text, selected_weather, Some(p.ink)))
+            .selected_text(RichText::new(&text).size(12.0).color(p.ink))
             .truncate()
             // a click in the search field must not close the list
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
+                // The scroll area's divider and search field fill this width.
+                // Derive it from the button, never the previous popup width:
+                // a scrollbar otherwise feeds its extra width into each frame.
+                // ComboBox owns another scroll area around this content.
+                // Reserve its full gutter even while its bar is animating
+                // after a filter change, rather than briefly widening the menu.
+                let gutter = ui.spacing().scroll.allocated_width();
+                ui.set_width((width - egui::Frame::popup(ui.style()).total_margin().sum().x - gutter).max(1.0));
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 // Aurora addition: the Legacy Viewer's lists only jump to
                 // the first name starting with the letters typed
                 // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
-                // with ↑ ↓ left to the list, so ↓ reaches the names.
-                let search = {
-                    let width = ui.available_width();
-                    crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
-                        edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
-                            .desired_width(width)
-                            .event_filter(egui::EventFilter {
-                                horizontal_arrows: true,
-                                vertical_arrows: false,
-                                ..Default::default()
-                            })
+                // with ↑ ↓ left to the list, so ↓ reaches the names, and
+                // the A–Z switch at its end (also an Aurora addition).
+                let search = ui
+                    .horizontal(|ui| {
+                        let width = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
+                        let search = crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
+                            edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
+                                .desired_width(width)
+                                .event_filter(egui::EventFilter {
+                                    horizontal_arrows: true,
+                                    vertical_arrows: false,
+                                    ..Default::default()
+                                })
+                        });
+                        order_toggle(ui, p);
+                        search
                     })
-                };
+                    .inner;
                 if opening {
                     search.request_focus();
                 }
@@ -862,7 +892,10 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, None)).clicked() {
+                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0))
+                            .on_hover_text(&c.name)
+                            .clicked()
+                        {
                             if !on {
                                 picked = Some(c.asset);
                             }
@@ -889,36 +922,98 @@ pub fn settings_list(
     picked
 }
 
-/// A settings item's name as the lists show it (the catalog's, without its
-/// code): one carrying Aurora Weather tagged " [Aurora Weather]" as the
-/// inventory's rows are (testers looked for which of their skies set the
-/// weather); any other as it is. Without `color`, the name takes the row's
-/// own (hovered, selected), tagged or not.
-fn tagged_name(p: &Palette, name: &str, weather: bool, color: Option<egui::Color32>) -> egui::WidgetText {
-    if !weather {
-        let text = RichText::new(name).size(12.0);
-        return match color {
-            Some(c) => text.color(c),
-            None => text,
-        }
-        .into();
-    }
-    let font = egui::FontId::proportional(12.0);
-    let mut job = egui::text::LayoutJob::default();
-    // (PLACEHOLDER: painted in the row's text colour)
-    job.append(
-        name,
-        0.0,
-        egui::TextFormat::simple(font.clone(), color.unwrap_or(egui::Color32::PLACEHOLDER)),
-    );
-    super::inventory::weather_tag(p, &mut job, font);
-    job.into()
-}
-
 /// A list to open on its next frame, with this text in its search field
 /// (demo captures).
-fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
+pub(crate) fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
     egui::Id::unique("env_list_demo_open").with(salt)
+}
+
+/// Whether the sky, water and day cycle lists are A–Z (`env_lists_by_name`
+/// of the settings), published by the app once per frame like the
+/// inventory selectors' sort. Every list of settings items follows it: the
+/// selector and the photo's Light section, the editors' Load menus, the
+/// parcel and region pickers.
+pub fn set_lists_by_name(ctx: &egui::Context, by_name: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("env_lists_by_name"), by_name));
+}
+
+pub fn lists_by_name(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp(egui::Id::unique("env_lists_by_name"))).unwrap_or_default()
+}
+
+/// The choice a list's switch made since the app last saved it.
+pub fn take_lists_by_name_change(ctx: &egui::Context) -> Option<bool> {
+    ctx.data_mut(|d| d.remove_temp(egui::Id::unique("env_lists_by_name_changed")))
+}
+
+fn flip_lists_by_name(ctx: &egui::Context, by_name: bool) {
+    set_lists_by_name(ctx, by_name);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("env_lists_by_name_changed"), by_name));
+}
+
+/// The A–Z switch beside a list's search field.
+pub fn order_toggle(ui: &mut egui::Ui, p: &Palette) {
+    let mut by_name = lists_by_name(ui.ctx());
+    let tip = if by_name {
+        aurora_i18n::tr!("ui-environment-sorted-by-name")
+    } else {
+        aurora_i18n::tr!("ui-environment-in-inventory-order")
+    };
+    if widgets::sort_by_name_toggle(ui, p, &mut by_name, tip) {
+        flip_lists_by_name(ui.ctx(), by_name);
+    }
+}
+
+/// The same switch as the first row of a Load menu, which stays open.
+pub fn order_menu_row(ui: &mut egui::Ui, p: &Palette) {
+    let mut by_name = lists_by_name(ui.ctx());
+    if super::menu::toggle(
+        ui,
+        p,
+        "sort-ascending-letters",
+        aurora_i18n::tr!("ui-environment-sort-by-name"),
+        &mut by_name,
+    ) {
+        flip_lists_by_name(ui.ctx(), by_name);
+    }
+    super::menu::separator(ui, p);
+}
+
+/// The place of each settings item in the lists ([`env_select::ranks`]),
+/// kept until the inventory, its sort or the lists' order change.
+pub struct ListRanks {
+    version: (Uuid, Uuid, u64, super::inventory::view::Sort, &'static str, bool),
+    ranks: std::collections::HashMap<Uuid, usize>,
+}
+
+impl ListRanks {
+    pub fn rank(&self, id: Uuid) -> usize {
+        self.ranks.get(&id).copied().unwrap_or(usize::MAX)
+    }
+}
+
+pub fn list_ranks(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<ListRanks> {
+    let key = egui::Id::unique("env_list_ranks");
+    let version = (
+        inv.root,
+        inv.lib_root,
+        inv.generation,
+        super::inventory::view::picker_sort(ctx),
+        aurora_i18n::language(),
+        lists_by_name(ctx),
+    );
+    if let Some(ranks) = ctx.data(|d| d.get_temp::<std::sync::Arc<ListRanks>>(key))
+        && ranks.version == version
+    {
+        return ranks;
+    }
+    let order = super::inventory::view::picker_order(ctx, inv);
+    let ranks = std::sync::Arc::new(ListRanks {
+        version,
+        ranks: env_select::ranks(inv, version.5, |id| order.rank(id)),
+    });
+    ctx.data_mut(|d| d.insert_temp(key, ranks.clone()));
+    ranks
 }
 
 /// Azimuth and elevation (degrees) of a sun or moon rotation
@@ -948,60 +1043,6 @@ pub fn rotation_from(azimuth: f32, elevation: f32) -> Quat {
     Quat::from_rotation_z(-az) * Quat::from_rotation_y(-el)
 }
 
-/// A row's label in the label column, with its tip.
-fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
-    let width = ui.data(|d| d.get_temp::<f32>(label_width_id())).unwrap_or(LABEL_W);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
-        egui::FontId::proportional(12.5),
-        p.ink,
-    );
-    resp.on_hover_text(tip);
-}
-
-/// Where the Weather section keeps its label column's width this frame.
-fn label_width_id() -> egui::Id {
-    egui::Id::unique("environment_weather_label_width")
-}
-
-/// The Weather section's label column: as wide as its longest label in the
-/// language shown (at least the window's own), so that none runs under its
-/// control.
-fn weather_label_width(ui: &egui::Ui) -> f32 {
-    let font = egui::FontId::proportional(12.5);
-    let labels = [
-        aurora_i18n::tr!("ui-weather-precipitation"),
-        aurora_i18n::tr!("ui-weather-amount"),
-        aurora_i18n::tr!("ui-weather-wind"),
-        aurora_i18n::tr!("ui-weather-gusts"),
-        aurora_i18n::tr!("ui-weather-wind-from"),
-        aurora_i18n::tr!("ui-weather-flake-size"),
-        aurora_i18n::tr!("ui-weather-snow-settles"),
-        aurora_i18n::tr!("ui-weather-snow-distance"),
-        aurora_i18n::tr!("ui-weather-footprints"),
-        aurora_i18n::tr!("ui-weather-avatar-snow"),
-        aurora_i18n::tr!("ui-weather-ice"),
-        aurora_i18n::tr!("ui-weather-puddles"),
-        aurora_i18n::tr!("ui-weather-distance"),
-        aurora_i18n::tr!("ui-weather-thunder"),
-        aurora_i18n::tr!("ui-weather-strikes"),
-        aurora_i18n::tr!("ui-weather-quality"),
-        aurora_i18n::tr!("ui-weather-northern-lights"),
-        aurora_i18n::tr!("ui-weather-northern-lights-brightness"),
-        aurora_i18n::tr!("ui-weather-northern-lights-direction"),
-        aurora_i18n::tr!("ui-weather-northern-lights-height"),
-        aurora_i18n::tr!("ui-weather-northern-lights-colours"),
-    ];
-    let widest = labels
-        .iter()
-        .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), egui::Color32::PLACEHOLDER).size().x))
-        .fold(0.0f32, f32::max);
-    (widest + 10.0).max(LABEL_W).ceil()
-}
-
 /// The compass point nearest `degrees` (clockwise from north).
 pub(crate) fn compass_point(degrees: f32) -> String {
     let i = ((degrees.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8;
@@ -1018,318 +1059,6 @@ pub(crate) fn compass_point(degrees: f32) -> String {
     .to_string()
 }
 
-/// The Aurora Weather window's rows: the weather of this viewer only (what
-/// falls, rain or snow, and how hard, the wind, thunder, the northern
-/// lights).
-/// `fill`: set when the snow is to lie everywhere at once (its button).
-fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, fill: &mut bool) {
-    let before = w.clone();
-    {
-        ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
-        // the label column as wide as its longest label, the sliders the
-        // narrower by as much, so that they keep ending where they did
-        let label_w = weather_label_width(ui);
-        ui.data_mut(|d| d.insert_temp(label_width_id(), label_w));
-        let extra = label_w - LABEL_W;
-        ui.spacing_mut().slider_width = COMBO_W - 50.0 - extra;
-        // what falls
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-precipitation"),
-                aurora_i18n::tr!("ui-weather-precipitation-tip"),
-            );
-            let rain = aurora_i18n::tr!("ui-weather-rain");
-            let snow = aurora_i18n::tr!("ui-weather-snow");
-            // AURORA_SNOW shows as snow until the menu is used
-            let mut i = usize::from(w.snowing());
-            if widgets::segmented(ui, p, &mut i, &[(rain, true), (snow, true)]) {
-                w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
-            }
-        });
-        // what is shown below follows what falls: the flakes' size in snow;
-        // puddles, wet ground and thunder in rain
-        let snowing = w.snowing();
-        // how much
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-amount"),
-                aurora_i18n::tr!("ui-weather-amount-tip"),
-            );
-            let mut amount = w.rain_or_amount();
-            if ui.add(egui::Slider::new(&mut amount, 0.0..=1.0).show_value(false)).changed() {
-                w.amount = amount;
-            }
-        });
-        // the wind, wandering between its lulls and its gusts; dragging one
-        // past the other takes it along
-        ui.horizontal(|ui| {
-            row_label(ui, p, aurora_i18n::tr!("ui-weather-wind"), aurora_i18n::tr!("ui-weather-wind-tip"));
-            if ui.add(egui::Slider::new(&mut w.wind_min, 0.0..=1.0).show_value(false)).changed() {
-                w.wind_max = w.wind_max.max(w.wind_min);
-            }
-        });
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-gusts"),
-                aurora_i18n::tr!("ui-weather-gusts-tip"),
-            );
-            if ui.add(egui::Slider::new(&mut w.wind_max, 0.0..=1.0).show_value(false)).changed() {
-                w.wind_min = w.wind_min.min(w.wind_max);
-            }
-        });
-        // where it comes from: the region's way, or a compass direction
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-wind-from"),
-                aurora_i18n::tr!("ui-weather-wind-from-tip"),
-            );
-            widgets::checkbox(ui, p, &mut w.wind_follow_region, aurora_i18n::tr!("ui-weather-wind-region"));
-            ui.add_enabled_ui(!w.wind_follow_region, |ui| {
-                ui.spacing_mut().slider_width = (COMBO_W - 140.0 - extra).max(40.0);
-                ui.add(
-                    egui::Slider::new(&mut w.wind_from, 0.0..=355.0)
-                        .step_by(5.0)
-                        .custom_formatter(|v, _| format!("{v:.0}° {}", compass_point(v as f32)))
-                        .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()),
-                );
-            });
-        });
-        // the flakes' size
-        if snowing {
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-flake-size"),
-                    aurora_i18n::tr!("ui-weather-flake-size-tip"),
-                );
-                ui.add(egui::Slider::new(&mut w.snow_size, 0.0..=1.0).show_value(false));
-            });
-            // the snow lying on the ground, and how far it is drawn
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-snow-settles"),
-                    aurora_i18n::tr!("ui-weather-snow-settles-tip"),
-                );
-                widgets::checkbox(ui, p, &mut w.snow_settles, "");
-                // across from it: the snow lying everywhere at once, as deep
-                // as a long snowfall leaves it (a test, a snowy scene now)
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(
-                        ui,
-                        p,
-                        "mountain-filled",
-                        aurora_i18n::tr!("ui-weather-snow-fill-tip"),
-                        w.snow_settles,
-                    ) {
-                        *fill = true;
-                    }
-                });
-            });
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-snow-distance"),
-                    aurora_i18n::tr!("ui-weather-snow-distance-tip"),
-                );
-                ui.add_enabled(
-                    w.snow_settles,
-                    egui::Slider::new(&mut w.snow_distance, crate::weather::SNOW_DISTANCE)
-                        .step_by(1.0)
-                        .suffix(" m"),
-                );
-            });
-            // footprints where avatars walk
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-footprints"),
-                    aurora_i18n::tr!("ui-weather-footprints-tip"),
-                );
-                ui.add_enabled_ui(w.snow_settles, |ui| widgets::checkbox(ui, p, &mut w.snow_footprints, ""));
-            });
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-footprints-reach"),
-                    aurora_i18n::tr!("ui-weather-footprints-reach-tip"),
-                );
-                ui.add_enabled_ui(w.snow_settles && w.snow_footprints, |ui| {
-                    ui.add(
-                        egui::Slider::new(&mut w.snow_footprints_reach, 32.0..=64.0)
-                            .step_by(8.0)
-                            .suffix(" m"),
-                    );
-                });
-            });
-            // snow gathering on avatars (whether or not it settles on the ground)
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-avatar-snow"),
-                    aurora_i18n::tr!("ui-weather-avatar-snow-tip"),
-                );
-                widgets::checkbox(ui, p, &mut w.snow_on_avatars, "");
-            });
-            // the puddles left by rain, frozen
-            ui.horizontal(|ui| {
-                row_label(ui, p, aurora_i18n::tr!("ui-weather-ice"), aurora_i18n::tr!("ui-weather-ice-tip"));
-                widgets::checkbox(ui, p, &mut w.ice, "");
-            });
-        }
-        // the puddles and how far the wet ground goes
-        if !snowing {
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-puddles"),
-                    aurora_i18n::tr!("ui-weather-puddles-tip"),
-                );
-                widgets::checkbox(ui, p, &mut w.puddles, "");
-            });
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-distance"),
-                    aurora_i18n::tr!("ui-weather-distance-tip"),
-                );
-                ui.add(egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE).step_by(1.0).suffix(" m"));
-            });
-            // thunder and lightning, in heavy rain
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-thunder"),
-                    aurora_i18n::tr!("ui-weather-thunder-tip"),
-                );
-                widgets::checkbox(ui, p, &mut w.thunder, "");
-            });
-            // how often it strikes
-            ui.horizontal(|ui| {
-                row_label(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-weather-strikes"),
-                    aurora_i18n::tr!("ui-weather-strikes-tip"),
-                );
-                ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
-            });
-        }
-        // the northern lights, in the night sky
-        northern_lights_rows(ui, p, w);
-        // quality: how much of the weather is drawn (the graphics levels
-        // set it too)
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-quality"),
-                aurora_i18n::tr!("ui-weather-quality-tip"),
-            );
-            let low = aurora_i18n::tr!("ui-weather-quality-low");
-            let medium = aurora_i18n::tr!("ui-weather-quality-medium");
-            let high = aurora_i18n::tr!("ui-weather-quality-high");
-            let mut i = match w.quality {
-                WeatherQuality::Low => 0,
-                WeatherQuality::Medium => 1,
-                WeatherQuality::High => 2,
-            };
-            if widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]) {
-                w.quality = match i {
-                    0 => WeatherQuality::Low,
-                    1 => WeatherQuality::Medium,
-                    _ => WeatherQuality::High,
-                };
-            }
-        });
-    }
-    if *w != before {
-        w.take_over(&before);
-        w.touched = true;
-    }
-}
-
-/// The northern lights' rows of the Aurora Weather section: the switch,
-/// then how bright, where, how high and their colours.
-fn northern_lights_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    use crate::weather::AuroraColours;
-    ui.horizontal(|ui| {
-        row_label(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-weather-northern-lights"),
-            aurora_i18n::tr!("ui-weather-northern-lights-tip"),
-        );
-        widgets::checkbox(ui, p, &mut w.aurora, "");
-    });
-    let on = w.aurora;
-    ui.horizontal(|ui| {
-        row_label(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-weather-northern-lights-brightness"),
-            aurora_i18n::tr!("ui-weather-northern-lights-brightness-tip"),
-        );
-        ui.add_enabled(on, egui::Slider::new(&mut w.aurora_intensity, 0.0..=1.0).show_value(false));
-    });
-    ui.horizontal(|ui| {
-        row_label(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-weather-northern-lights-direction"),
-            aurora_i18n::tr!("ui-weather-northern-lights-direction-tip"),
-        );
-        ui.add_enabled(
-            on,
-            egui::Slider::new(&mut w.aurora_heading, 0.0..=355.0)
-                .step_by(5.0)
-                .custom_formatter(|v, _| format!("{v:.0}° {}", compass_point(v as f32)))
-                .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()),
-        );
-    });
-    ui.horizontal(|ui| {
-        row_label(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-weather-northern-lights-height"),
-            aurora_i18n::tr!("ui-weather-northern-lights-height-tip"),
-        );
-        ui.add_enabled(on, egui::Slider::new(&mut w.aurora_height, 0.0..=1.0).show_value(false));
-    });
-    ui.horizontal(|ui| {
-        row_label(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-weather-northern-lights-colours"),
-            aurora_i18n::tr!("ui-weather-northern-lights-colours-tip"),
-        );
-        ui.add_enabled_ui(on, |ui| {
-            let mut i = usize::from(w.aurora_colours.index());
-            let names = colour_names();
-            if widgets::segmented(ui, p, &mut i, &[(names[0], true), (names[1], true), (names[2], true)]) {
-                w.aurora_colours = AuroraColours::ALL[i.min(2)];
-            }
-        });
-    });
-}
-
 /// The names of the aurora's colours, in [`crate::weather::AuroraColours::ALL`] order.
 pub(crate) fn colour_names() -> [&'static str; 3] {
     [
@@ -1339,34 +1068,100 @@ pub(crate) fn colour_names() -> [&'static str; 3] {
     ]
 }
 
-/// The line on top of the Weather window when something else sets the
-/// weather now: its own settings are kept, and wait. Regions: a button to
-/// use my own weather again.
-fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::WeatherSource, w: &mut WeatherSettings) {
-    use crate::weather::WeatherSource;
-    let text = match source {
-        WeatherSource::Mine => return,
-        WeatherSource::Preview => aurora_i18n::tr!("ui-weather-source-preview"),
-        WeatherSource::MySky => aurora_i18n::tr!("ui-weather-source-my-sky"),
-        WeatherSource::Region => aurora_i18n::tr!("ui-weather-source-region"),
-        // the region decides, and sets none here: clear
-        WeatherSource::RegionClear => aurora_i18n::tr!("ui-weather-source-none"),
-    };
-    let regions = matches!(source, WeatherSource::Region | WeatherSource::RegionClear);
-    widgets::surface(ui, p, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.label(RichText::new(text).size(12.0).color(p.ink));
-        if regions && widgets::flat_button(ui, p, aurora_i18n::tr!("ui-weather-source-use-mine")).clicked() {
-            w.region_weather = false;
-            w.touched = true;
-        }
-    });
-    ui.add_space(4.0);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrolling_environment_popup_keeps_its_width_across_frames_and_filtering() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let catalog = SettingsCatalog {
+            sky: (0..60)
+                .map(|n| env_select::SettingsChoice {
+                    item: Uuid::from_u128(n + 1),
+                    asset: Uuid::from_u128(n + 101),
+                    name: format!("A very long environment name for the scrolling sky list {n}"),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for text_size in [1.0, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, text_size);
+            let salt = "stable_environment_popup";
+            let mut baseline = None::<f32>;
+            for frame in 0..80 {
+                if [0, 30, 40].contains(&frame) {
+                    let query = if frame == 30 { "not found" } else { "" };
+                    ctx.data_mut(|d| d.insert_temp(demo_open_id(&salt), query.to_owned()));
+                }
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 800.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        settings_list(ui, &p, &catalog, SettingsKind::Sky, Shown::Shared, salt, 240.0);
+                    },
+                );
+                output.textures_delta.clear();
+                let popup = ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground)).expect("popup open");
+                let rect = egui::AreaState::load(&ctx, popup.id).expect("popup area").rect();
+                if frame == 10 {
+                    baseline = Some(rect.width());
+                }
+                if frame >= 10 {
+                    assert!(
+                        (rect.width() - baseline.unwrap()).abs() < 2.0,
+                        "text size {text_size}, frame {frame}: {rect:?}, initial {baseline:?}"
+                    );
+                    assert!(rect.width() < 280.0, "the popup stays near its 240 px button: {rect:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selector_label_column_fits_water_environment() {
+        let ctx = egui::Context::default();
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                // English whatever the language of the PC running the test
+                // (`tr!` follows it: "Env. eau" fits the old column)
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    width = label_column_w(
+                        ui.ctx(),
+                        &[
+                            aurora_i18n::text_in("en", "ui-environment-sky-environment"),
+                            aurora_i18n::text_in("en", "ui-environment-water-environment"),
+                            aurora_i18n::text_in("en", "extra-day-night"),
+                            aurora_i18n::text_in("en", "ui-environment-time"),
+                        ],
+                    );
+                });
+            },
+        );
+        // the font atlas of the first frame: dropped uncleared, it panics
+        // under debug assertions (`--profile ci`, the merge queue)
+        output.textures_delta.clear();
+        assert!(
+            width > LABEL_W,
+            "English Water environment needs more than the old {LABEL_W} px column, got {width}"
+        );
+        let water = aurora_i18n::text_in("en", "ui-environment-water-environment");
+        let water_w = ctx.fonts_mut(|f| {
+            f.layout_no_wrap(water.to_owned(), egui::FontId::proportional(LABEL_FONT), egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        });
+        assert!(width + 0.5 >= water_w, "column {width} must cover {water} ({water_w})");
+    }
 
     #[test]
     fn an_open_list_grows_as_inventory_arrives_and_stays_anchored_after_filtering() {
@@ -1379,7 +1174,6 @@ mod tests {
                     item: Uuid::from_u128(n + 1),
                     asset: Uuid::from_u128(n + 101),
                     name: format!("Sky {n}"),
-                    weather: false,
                 })
                 .collect(),
             ..Default::default()
@@ -1416,42 +1210,6 @@ mod tests {
             let edge = |r: egui::Rect| if below { r.top() } else { r.bottom() };
             assert!((edge(initial) - edge(full)).abs() < 2.0 && (edge(filtered) - edge(restored)).abs() < 2.0);
         }
-    }
-
-    #[test]
-    fn a_tagged_list_row_takes_the_rows_own_colour_as_a_plain_one() {
-        // a selected row of the sky list: its name in the colour egui gives
-        // that state, whether it carries the Aurora Weather tag or not (it
-        // took the plain text colour, the same hovered, selected or not)
-        fn text_shape(shape: &egui::Shape, starts: &str) -> Option<egui::epaint::TextShape> {
-            match shape {
-                egui::Shape::Text(t) if t.galley.text().starts_with(starts) => Some(t.clone()),
-                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_shape(s, starts)),
-                _ => None,
-            }
-        }
-        let theme = crate::theme::Theme::default();
-        let p = theme.palette();
-        let ctx = egui::Context::default();
-        theme.apply(&ctx, 1.0);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widgets::search_list_item(ui, true, tagged_name(&p, "Plain sky", false, None));
-            widgets::search_list_item(ui, true, tagged_name(&p, "Stormy sky", true, None));
-        });
-        output.textures_delta.clear();
-        let shapes: Vec<egui::Shape> = output.shapes.into_iter().map(|s| s.shape).collect();
-        let find = |starts| shapes.iter().find_map(|s| text_shape(s, starts)).expect("row drawn");
-        let (plain, tagged) = (find("Plain sky"), find("Stormy sky"));
-        assert_eq!(tagged.fallback_color, plain.fallback_color);
-        let name = &tagged.galley.job.sections[0];
-        assert_eq!(name.format.color, egui::Color32::PLACEHOLDER, "the name takes the row's colour");
-        assert!(tagged.galley.text().ends_with(']'), "{}", tagged.galley.text());
-        // the box's own text keeps the colour it is given
-        let job = match tagged_name(&p, "Stormy sky", true, Some(p.ink)) {
-            egui::WidgetText::LayoutJob(job) => job,
-            _ => panic!("a layout job"),
-        };
-        assert_eq!(job.sections[0].format.color, p.ink);
     }
 
     #[test]

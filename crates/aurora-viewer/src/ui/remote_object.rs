@@ -29,7 +29,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     let name = if o.name.is_empty() {
         aurora_i18n::tr!("status-unknown").to_owned()
     } else {
-        world.rlva_filter_text(&o.name).into_owned()
+        // as its link gives it: what `@shownames` hid of it was rewritten
+        // when the object spoke (`World::rlva_object_name`), and
+        // LLInspectRemoteObject (indra/newview/llinspectremoteobject.cpp)
+        // shows the `name` of the link with no RLVa test
+        o.name.clone()
     };
     let mut floater = Floater::new(
         "remote_object",
@@ -111,7 +115,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 close = true;
             }
             // onClickBlock: disabled once the object is blocked
-            let blocked = world.mutes.is_muted_id(&o.id);
+            let blocked = world.object_block_entry(&o.id).is_some();
             if action_button_if(
                 ui,
                 p,
@@ -133,7 +137,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 close = true;
             }
             if !o.owner.is_nil() && o.owner != world.agent_id {
-                let enabled = world.object_owner_block(o.owner, o.group_owned).is_some();
+                // Aurora's own button: greyed for an owner whose name is
+                // hidden, as the avatar menu's Block is (enable_object_mute,
+                // llviewermenu.cpp)
+                let enabled = world.object_owner_block(o.owner, o.group_owned).is_some() && hidden_owner(world, &o).is_none();
                 if action_button_if(
                     ui,
                     p,
@@ -171,8 +178,9 @@ mod tests;
 /// The owner's name in its place under RLVa `@shownames`: a resident owner
 /// is shown anonymous, with no profile link (the Legacy Viewer's objectim
 /// link carries `rlv_shownames` and LLInspectRemoteObject shows
-/// `rlvanonym`). A group owner stays named, as there. Stricter than the
-/// Legacy Viewer, which hides only an owner who is nearby.
+/// `rlvanonym`). A group owner stays named, as there. Decided when the
+/// object spoke and kept with its line, whatever the restriction became
+/// since (`RemoteObject::owner_hidden`).
 pub(crate) fn hidden_owner(world: &World, o: &crate::slapp::RemoteObject) -> Option<String> {
-    (!o.owner.is_nil() && !o.group_owned && !world.rlva_can_name(o.owner)).then(|| world.rlva_anonymous(o.owner).display_name.clone())
+    (o.owner_hidden && !o.owner.is_nil() && !o.group_owned).then(|| world.rlva_anonymous(o.owner).display_name.clone())
 }

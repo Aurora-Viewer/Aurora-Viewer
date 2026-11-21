@@ -88,6 +88,12 @@ pub enum BarAction {
     PhotoToDisk,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
+    /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
+    /// 360capture): the photo window in its 360° format, or closed when it
+    /// is already open in it.
+    Photo360,
+    /// The toolbar's Gaming mode, on or off (app/gaming_mode.rs).
+    ToggleGamingMode,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -157,9 +163,14 @@ pub enum BarAction {
     TogglePoser,
     ToggleReportAbuse,
     ToggleMarketplaceListings,
+    /// Communicate › Contacts: the Contacts tab of Conversations, or its
+    /// torn-off window (menu_viewer.xml, Floater.Toggle imcontacts).
+    Contacts,
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// The top bar's "Clouds paused" chip: let the clouds move again.
+    ResumeClouds,
     /// World › Environment › New sky / water / day cycle (World.EnvPreset
     /// new_sky, new_water, new_day_cycle).
     NewEnvironment(crate::world::env_select::SettingsKind),
@@ -270,6 +281,9 @@ pub struct StatusInfo<'a> {
     pub fps: f32,
     pub flying: bool,
     pub seated: bool,
+    /// The clouds are paused (Pause clouds) while the photo window is
+    /// closed: a chip that resumes them.
+    pub clouds_paused: bool,
     pub ping_ms: u32,
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
@@ -329,9 +343,12 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
-    /// RLVa leaves Teleport Home allowed (enable_teleport_home,
-    /// LLFloaterWorldMap's Go Home button).
+    /// RLVa leaves Teleport Home allowed (the Home buttons of the
+    /// navigation bar and of LLFloaterWorldMap).
     pub can_go_home: bool,
+    /// The Teleport Home menu entry (LLWorldEnableTeleportHome): greyed
+    /// under either @tplm or @tploc.
+    pub home_entry: bool,
     /// The agent's region has a ServerReleaseNotes page (Help › Server
     /// release notes) and a SimConsoleAsync console (Advanced › Region
     /// console, estate managers).
@@ -897,19 +914,30 @@ fn status_menu_body(ui: &mut egui::Ui, p: &Palette, status: crate::world::status
     }
 }
 
+/// Me › Appearance is enabled: not while seated with RLVa refusing to stand
+/// (`sit_locked`, the app's `rlva_sit_locked_id`, which reads @unsit for a
+/// seated avatar). It is menu_viewer.xml's "Outfits", the checked entry
+/// that toggles the Appearance window, enabled like "Now wearing…" by
+/// Edit.EnableCustomizeAvatar: LLEditEnableCustomizeAvatar
+/// (indra/newview/llviewermenu.cpp) asks RlvActions::canStand
+/// (indra/newview/rlvactions.cpp). The toolbar button (commands.xml,
+/// Floater.Toggle with no enable function) and Edit Shape
+/// (Edit.EnableEditShape) do not ask it.
+fn customize_avatar_enabled(seated: bool, sit_locked: bool) -> bool {
+    !(seated && sit_locked)
+}
+
 /// Viewer menus: the submenus of the wolf menu button of the navigation bar
 /// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
-        flip_window(
-            ui,
-            p,
-            "shirt-filled",
-            aurora_i18n::tr!("ui-bars-appearance"),
-            "appearance",
-            &mut panels.appearance,
-        );
+        let sit_locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
+        let appearance = aurora_i18n::tr!("ui-bars-appearance");
+        let can_customize = customize_avatar_enabled(st.seated, sit_locked);
+        if menu::check(ui, p, "shirt-filled", appearance, panels.appearance, can_customize) {
+            super::widgets::toggle_floater(ui.ctx(), "appearance", &mut panels.appearance);
+        }
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
         }
@@ -934,6 +962,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
+        // menu_viewer.xml: Pose Stand... (Floater.Show fs_posestand, enabled
+        // by fs_when_not_sitting): it opens the window, or brings it forward
+        // when open; the toolbar button is the one that toggles it
+        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
+            super::widgets::open_floater(ui.ctx(), super::pose_stand::WINDOW, &mut panels.pose_stand);
+            super::widgets::bring_floater_front(ui.ctx(), super::pose_stand::WINDOW);
+        }
         // menu_viewer.xml: Me › Experiences (Picks, before it there, has
         // no entry in this menu)
         flip_window(
@@ -951,17 +986,22 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::widgets::toggle_floater(ui.ctx(), super::avatar_welcome::WINDOW, &mut panels.avatar_welcome);
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
+        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
         // enable_sitdown_self / enable_standup_self: greyed when RLVa would
         // refuse the one that applies (@sit standing, @unsit seated)
-        let locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
-        if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground"), st.seated || !locked) {
+        if menu::item_if(
+            ui,
+            p,
+            "armchair",
+            aurora_i18n::tr!("ui-bars-sit-on-ground"),
+            st.seated || !sit_locked,
+        ) {
             *action = BarAction::SitGround;
         }
-        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), !st.seated || !locked) {
+        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), !st.seated || !sit_locked) {
             *action = BarAction::StandUp;
         }
         let fly = if st.flying {
@@ -1084,6 +1124,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             true,
         ) {
             super::widgets::toggle_floater(ui.ctx(), super::conversation_log::WINDOW, &mut panels.conversation_log);
+        }
+        // menu_viewer.xml: Contacts (Floater.Toggle imcontacts), the first
+        // tab of Conversations or its torn-off window
+        // (FSFloaterContacts::onOpen), shortcut="control|alt|shift|F"
+        let contacts = crate::keybinds::chord_label("KeyF", true, true, true);
+        if menu::item_keys(ui, p, "users", aurora_i18n::tr!("common-contacts"), &contacts) {
+            *action = BarAction::Contacts;
         }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
@@ -1471,6 +1518,27 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         let photo = crate::keybinds::chord_label("KeyS", true, false, true);
         if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
             super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+        }
+        // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
+        let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
+        if menu::item_keys(ui, p, "camera-cog", aurora_i18n::tr!("toolbar-command-phototools"), &phototools) {
+            super::widgets::toggle_floater(ui.ctx(), super::phototools::WINDOW, &mut panels.phototools);
+        }
+        // the Director (camera tracks and films), Aurora's own, beside the
+        // photo: it was only on the toolbar
+        if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {
+            super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
+        }
+        // Aurora's own: our avatar seen by a camera of its own
+        if menu::check(
+            ui,
+            p,
+            "device-cctv-filled",
+            aurora_i18n::tr!("second-camera-title"),
+            panels.second_camera,
+            true,
+        ) {
+            super::widgets::toggle_floater(ui.ctx(), super::second_camera::WINDOW, &mut panels.second_camera);
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
@@ -2503,6 +2571,21 @@ pub fn top_bars(
                             state_chip(ui, p, text);
                         }
                     }
+                    // Pause clouds lasts the session: say so, and a click ends it
+                    if st.clouds_paused
+                        && super::widgets::action_button(
+                            ui,
+                            p,
+                            "cloud-filled",
+                            aurora_i18n::tr!("ui-bars-clouds-paused"),
+                            super::widgets::ActionKind::Flat,
+                            Vec2::new(0.0, CHIP_HEIGHT + 4.0),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-bars-clouds-paused-tip"))
+                        .clicked()
+                    {
+                        action = BarAction::ResumeClouds;
+                    }
                     ui.add_space(4.0);
                     egui::Frame::new()
                         .fill(p.field)
@@ -2620,6 +2703,11 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
             panels.people_tab = 1;
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
+        "inventory_dual" => {
+            panels.inventory = true;
+            panels.inventory_dual = !panels.inventory_dual;
+            super::inventory::resize_for_dual(ctx, panels.inventory_dual);
+        }
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
@@ -2645,6 +2733,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
+        // Floater.Toggle fs_posestand
+        "pose_stand" => toggle(super::pose_stand::WINDOW, &mut panels.pose_stand),
         // Floater.ToggleOrBringToFront omnifilter
         "omnifilter" => toggle(super::omnifilter::WINDOW, &mut panels.omnifilter),
         // Floater.Toggle conversation
@@ -2653,15 +2743,21 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.ToggleOrBringToFront 360capture
+        "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
         "photo_roll" => return BarAction::PhotoRoll,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
+        // Floater.Toggle phototools
+        "phototools" => toggle(super::phototools::WINDOW, &mut panels.phototools),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
         // Aurora's own: the Director's window and its timeline
         "director" => toggle(super::director::WINDOW, &mut panels.director),
+        // Aurora's own: the second camera's window
+        "second_camera" => toggle(super::second_camera::WINDOW, &mut panels.second_camera),
         // Floater.ToggleOrBringToFront settings_debug
         "settings_debug" => toggle(super::debug_settings::WINDOW, &mut panels.debug_settings),
         // Avatar.TogglePicks: our profile on its Picks tab
@@ -2727,6 +2823,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // Avatar.AlignToggle: the Compass in its saved layout
         "avatar_align" => toggle(super::avatar_align::window(panels.avatar_align_mini), &mut panels.avatar_align),
         "face_nearest_avatar" => return BarAction::FaceNearestAvatar,
+        "gaming_mode" => return BarAction::ToggleGamingMode,
         _ => {}
     }
     BarAction::None
@@ -2743,6 +2840,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "regioninfo" => panels.region_estate,
         "myenvironments" => panels.environment,
         "inventory" => panels.inventory,
+        "inventory_dual" => panels.inventory_dual,
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
@@ -2752,6 +2850,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
+        "360capture" => panels.snapshot && panels.snapshot_pano,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
@@ -2763,13 +2862,16 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "avatar" => panels.avatar_welcome,
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
+        "pose_stand" => panels.pose_stand,
         "omnifilter" => panels.omnifilter,
         "conversation_log" => panels.conversation_log,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
+        "phototools" => panels.phototools,
         "quickprefs" => panels.quick_prefs,
         "director" => panels.director,
+        "second_camera" => panels.second_camera,
         "settings_debug" => panels.debug_settings,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
@@ -3507,6 +3609,8 @@ pub(crate) fn toolbar_row(
             toolbar.picks_active
         } else if b.command == "photo_roll" {
             toolbar.photo_roll_active
+        } else if b.command == "gaming_mode" {
+            toolbar.gaming_mode_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
@@ -3533,10 +3637,13 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck)
+        // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck),
+        // and the pose stand's, dimmed while we sit (Agent.IsActionAllowed
+        // fs_when_not_sitting), its own ground lock included
         let no_pack = b.command == "avatar" && !toolbar.avatar_welcome;
         let no_guide = b.command == "destinations" && !toolbar.destinations;
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_pack && !no_guide;
+        let usable =
+            !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_pack && !no_guide && !(b.command == "pose_stand" && row.seated);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3954,6 +4061,21 @@ fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, act
 mod tests {
     use super::*;
 
+    /// LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp) through
+    /// RlvActions::canStand: Me › Appearance is greyed only for an avatar
+    /// that is seated and may not stand; the lock of a standing avatar is
+    /// @sit's, which does not count.
+    #[test]
+    fn me_appearance_is_greyed_only_while_seated_and_held_there() {
+        for (seated, sit_locked, enabled) in [(false, false, true), (false, true, true), (true, false, true), (true, true, false)] {
+            assert_eq!(
+                customize_avatar_enabled(seated, sit_locked),
+                enabled,
+                "seated {seated}, locked {sit_locked}"
+            );
+        }
+    }
+
     #[test]
     fn legacy_chat_bar_bounds_paragraphs_and_releases_space_when_cleared() {
         let ctx = egui::Context::default();
@@ -4367,8 +4489,10 @@ mod tests {
             ("avatar", super::super::avatar_welcome::WINDOW, |p| p.avatar_welcome),
             ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
+            ("phototools", super::super::phototools::WINDOW, |p| p.phototools),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("director", super::super::director::WINDOW, |p| p.director),
+            ("second_camera", super::super::second_camera::WINDOW, |p| p.second_camera),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
@@ -4400,6 +4524,21 @@ mod tests {
     }
 
     #[test]
+    fn dual_inventory_toolbar_button_opens_inventory_and_toggles_its_layout() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.inventory = false;
+        assert!(!command_active("inventory_dual", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "inventory_dual", &mut panels), BarAction::None));
+        assert!(panels.inventory);
+        assert!(panels.inventory_dual);
+        assert!(command_active("inventory_dual", &panels, false, false, false));
+        run_command(&ctx, "inventory_dual", &mut panels);
+        assert!(panels.inventory, "switching back to the single layout keeps the inventory open");
+        assert!(!panels.inventory_dual);
+    }
+
+    #[test]
     fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
         let ctx = egui::Context::default();
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
@@ -4425,6 +4564,26 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
+    }
+
+    /// The 360° button opens the photo window in its 360° format and is lit
+    /// while it is open in it; it does not toggle a window of its own.
+    #[test]
+    fn the_360_button_is_the_photo_window_in_360() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("360capture"));
+        assert!(matches!(run_command(&ctx, "360capture", &mut panels), BarAction::Photo360));
+        assert!(!command_active("360capture", &panels, false, false, false));
+        panels.snapshot = true;
+        assert!(
+            !command_active("360capture", &panels, false, false, false),
+            "open in the ordinary format"
+        );
+        panels.snapshot_pano = true;
+        assert!(command_active("360capture", &panels, false, false, false));
+        panels.snapshot = false;
+        assert!(!command_active("360capture", &panels, false, false, false));
     }
 
     #[test]
@@ -4542,6 +4701,21 @@ mod tests {
         assert!(command_active("quickprefs", &panels, false, false, false));
         run_command(&ctx, "quickprefs", &mut panels);
         assert!(!panels.quick_prefs);
+    }
+
+    /// The toolbar's Phototools button toggles its window and lights while
+    /// it is open.
+    #[test]
+    fn the_phototools_toolbar_command_toggles_its_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("phototools"));
+        assert!(!command_active("phototools", &panels, false, false, false));
+        run_command(&ctx, "phototools", &mut panels);
+        assert!(panels.phototools);
+        assert!(command_active("phototools", &panels, false, false, false));
+        run_command(&ctx, "phototools", &mut panels);
+        assert!(!panels.phototools);
     }
 
     #[test]

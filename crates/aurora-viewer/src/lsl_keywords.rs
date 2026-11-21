@@ -73,7 +73,7 @@ impl Catalog {
     /// (FILENAME_DEFAULT_LUA, indra/newview/llsyntaxid.cpp). No LSL extras.
     fn lua() -> Catalog {
         // Invariant: a bundled, tested build-time asset, not input.
-        let doc = aurora_llsd::from_xml(include_bytes!("../assets/slua/keywords_lua_default.xml")).expect("valid bundled SLua keywords");
+        let doc = aurora_llsd::from_xml(BUNDLED_LUA_XML).expect("valid bundled SLua keywords");
         let keywords = aurora_net::lsl_syntax::keywords(&doc).expect("bundled SLua keywords of the expected version");
         let (words, entries) = Self::collect(keywords);
         Catalog { id: None, words, entries }
@@ -216,6 +216,10 @@ fn lua_registry() -> &'static Registry {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     REGISTRY.get_or_init(Registry::default)
 }
+
+/// keywords_lua_default.xml as bundled: the catalog's source, and the file
+/// the editor sync serves when the region gives no SLua keywords.
+pub const BUNDLED_LUA_XML: &[u8] = include_bytes!("../assets/slua/keywords_lua_default.xml");
 
 /// The bundled SLua catalog, parsed on first use (about 700 KB of XML).
 fn bundled_lua() -> &'static Catalog {

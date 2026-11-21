@@ -15,6 +15,7 @@
 //! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
@@ -609,7 +610,10 @@ pub(crate) fn editable_row(
     } else {
         Sense::hover()
     };
-    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+    // a sub-menu heading stays lit while its sub-menu is open, as in
+    // [`submenu`]
+    let open = matches!(end, End::Caret) && sub_menu_open(ui);
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
 /// One absolute cell of an editable menu toolbar, including its empty cells.
@@ -803,11 +807,9 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     if filtering() {
         return;
     }
-    let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
-        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
-        p.muted_dim,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.ui_upper(), FontId::new(10.5, super::fonts::semibold(ui.ctx())), p.muted_dim);
     let w = if ui.is_sizing_pass() {
         (galley.size().x + PAD * 2.0).max(MIN_W)
     } else {
@@ -947,13 +949,23 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
         return hidden(ui);
     }
-    let id = ui.next_auto_id();
-    let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
+    let open = enabled && sub_menu_open(ui);
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
     resp
+}
+
+/// Whether the sub-menu of the row about to be allocated in `ui` is open:
+/// its row stays lit while it is, so the path taken through the menus shows
+/// (LLMenuItemBranchGL::draw, indra/llui/llmenugl.cpp, highlights a branch
+/// while its branch menu is visible). egui keeps that state in the menu's
+/// `MenuState::open_item`, not in the popup memory that `Popup::is_id_open`
+/// reads, which never saw a sub-menu open.
+fn sub_menu_open(ui: &Ui) -> bool {
+    let id = egui::containers::menu::SubMenu::id_from_widget_id(ui.next_auto_id());
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item == Some(id))
 }
 
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.
@@ -1178,7 +1190,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
 
 fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural
@@ -1556,6 +1568,64 @@ mod tests {
         // a top-level entry found first has nothing above it
         let (mut shown, mut headed) = (None, Vec::new());
         assert_eq!(above(&[], &mut shown, &mut headed), Above::Nothing);
+    }
+
+    /// The row that opened a sub-menu stays lit while the pointer is inside
+    /// that sub-menu, as LLMenuItemBranchGL::draw does: the path taken
+    /// through the menus shows (feedback board, post 648).
+    #[test]
+    fn a_sub_menu_heading_stays_lit_while_its_sub_menu_is_open() {
+        let p = crate::theme::Theme::default().palette();
+        let wash = p.violet.gamma_multiply(0.35);
+        let mut frames = Frames::new();
+        let mut open = true;
+        // (heading lit, the heading's row, the sub-menu's entry if shown)
+        let mut frame = |frames: &mut Frames, events: Vec<egui::Event>| {
+            let mut heading = egui::Rect::NOTHING;
+            let mut child = None;
+            let shapes = frames.shapes(events, |ui| {
+                popup_at(ui.ctx(), Id::unique("path_menu"), egui::pos2(100.0, 100.0), &mut open, &p, |ui| {
+                    item(ui, &p, "copy", "Before");
+                    heading = submenu_heading(ui, &p, "copy", "Pathfinding", true, |ui| {
+                        item(ui, &p, "copy", "Region Objects");
+                        child = Some(ui.min_rect());
+                    })
+                    .rect;
+                    item(ui, &p, "copy", "After");
+                });
+            });
+            let lit = shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Rect(r) if r.rect == heading && r.fill == wash));
+            (lit, heading, child)
+        };
+        for _ in 0..4 {
+            frame(&mut frames, vec![]);
+        }
+        let (lit, heading, shown) = frame(&mut frames, vec![]);
+        assert!(!lit && shown.is_none(), "nothing lit before the pointer comes");
+
+        frame(&mut frames, vec![egui::Event::PointerMoved(heading.center())]);
+        let mut shown = None;
+        for _ in 0..4 {
+            shown = frame(&mut frames, vec![]).2;
+        }
+        let sub = shown.expect("hovering the heading opens its sub-menu");
+
+        // across the heading, into the sub-menu's entry
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(heading.right_center() - egui::vec2(4.0, 0.0))],
+        );
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(sub.left_top() + egui::vec2(20.0, 10.0))],
+        );
+        for _ in 0..4 {
+            let (lit, _, shown) = frame(&mut frames, vec![]);
+            assert!(shown.is_some(), "the sub-menu stays open under the pointer");
+            assert!(lit, "the heading stays lit while its sub-menu is open");
+        }
     }
 
     struct Menus {

@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::keybinds::{Binding, Input};
+use aurora_i18n::UiUpper;
 use egui::{Pos2, Rect};
 use std::collections::BTreeSet;
 use winit::keyboard::KeyCode;
@@ -116,7 +117,7 @@ fn queue(world: &World) -> Vec<Uuid> {
         .contact_sets
         .members(contact_sets::NO_SETS, &friends, |id| world.social.is_friend(id));
     let online = |id: &Uuid| world.social.friends.iter().any(|f| f.id == *id && f.online);
-    ids.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&world.social.name_of(id))));
+    ids.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&world.social.name_in(NameScope::Roster, id))));
     ids
 }
 
@@ -260,7 +261,7 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
 /// how many sets they got.
 fn up_next(ui: &mut egui::Ui, p: &Palette, world: &World, qs: &QuickSort, pics: &HashMap<Uuid, egui::TextureHandle>) {
     ui.label(
-        RichText::new(aurora_i18n::tr!("quick-sort-up-next").to_uppercase())
+        RichText::new(aurora_i18n::tr!("quick-sort-up-next").ui_upper())
             .size(10.5)
             .color(p.muted)
             .family(crate::ui::fonts::semibold(ui.ctx())),
@@ -275,7 +276,7 @@ fn up_next(ui: &mut egui::Ui, p: &Palette, world: &World, qs: &QuickSort, pics: 
                     .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 resp.scroll_to_me(None);
             }
-            let name = world.social.name_of(id);
+            let name = world.social.name_in(NameScope::Roster, id);
             let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 13.0, rect.center().y), Vec2::splat(26.0));
             widgets::avatar_disc(ui, p, disc, pics.get(id), &name, i < qs.index);
             let sets = world.contact_sets.friend_sets(id).len();
@@ -306,7 +307,7 @@ fn current(
 ) -> Option<Uuid> {
     let id = qs.current()?;
     let mut new_set = None;
-    let name = world.social.name_of(&id);
+    let name = world.social.name_in(NameScope::Roster, &id);
     let online = world.social.friends.iter().any(|f| f.id == id && f.online);
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.horizontal(|ui| {

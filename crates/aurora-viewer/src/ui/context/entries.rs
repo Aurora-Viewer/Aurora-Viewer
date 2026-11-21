@@ -668,13 +668,29 @@ fn sound_block_items(ui: &mut Builder, f: &Facts, owner: Uuid) {
 /// Legacy menu_avatar_other.xml / menu_attachment_other.xml actions, grouped
 /// deliberately for Aurora (human request and #1135). Keep frequent social
 /// actions direct and technical/safety actions out of their click path.
+///
+/// `@shownames` (issue #3547): the Legacy Viewer greys View profile, Add
+/// friend, Add to set, IM, Give calling card, Call and Invite to group with
+/// `RLV.CanShowName` (menu_avatar_other.xml; the handlers LLAvatarSendIM,
+/// LLAvatarAddFriend, LLAvatarAddContact, LLAvatarInviteToGroup, ShowAgentProfile
+/// and enable_avatar_call, indra/newview/llviewermenu.cpp, test it again).
+/// Offer teleport is not an entry of those menus there: Aurora adds it, so it
+/// follows the same rule (stricter than the Legacy Viewer, which offers a
+/// teleport from an open IM, closed by the same restriction, or from the
+/// People menus, which Aurora keeps as they are).
 fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
-    ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    let named = !f.name_hidden;
+    ui.item_if(
+        "user-filled",
+        aurora_i18n::tr!("common-view-profile"),
+        named,
+        CtxAction::Profile(id),
+    );
     avatar_navigation(ui, f, id);
     ui.item_if(
         "user-plus",
         aurora_i18n::tr!("common-become-friends"),
-        !f.friend,
+        !f.friend && named,
         CtxAction::AddFriend(id),
     );
     contact_set_entries(ui, f, id);
@@ -683,30 +699,36 @@ fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.item_if(
         "message-circle-filled",
         aurora_i18n::tr!("ui-context-send-im"),
-        !f.im_blocked,
+        !f.im_blocked && named,
         CtxAction::Im(id),
     );
-    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
-    ui.item(
+    // Avatar.GiveCard (RLV.CanShowName). Its handler (LLAvatarGiveCard)
+    // does nothing while `@shownames` is set, for an exception too: greyed
+    // here, where the Legacy Viewer leaves an entry that does nothing.
+    ui.item_if(
         "id-filled",
         aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        named && !f.names_hidden,
         CtxAction::GiveCallingCard(id),
     );
+    // Avatar.EnableCall: enable_avatar_call tests canShowName first
     ui.item_if(
         "phone-filled",
         aurora_i18n::tr!("common-voice-call"),
-        f.voice && !f.im_blocked,
+        f.voice && !f.im_blocked && named,
         CtxAction::Call(id),
     );
-    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
-    ui.item(
+    // Avatar.InviteToGroup (RLV.CanShowName)
+    ui.item_if(
         "users-plus",
         aurora_i18n::tr!("ui-context-invite-to-group"),
+        named,
         CtxAction::InviteToGroup(id),
     );
-    ui.item(
+    ui.item_if(
         "send-filled",
         aurora_i18n::tr!("common-offer-teleport"),
+        named,
         CtxAction::OfferTeleport(id),
     );
 }
@@ -752,7 +774,11 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
                 aurora_i18n::tr!("ui-context-inspect-2"),
                 CtxAction::Inspect(object),
             );
-            ui.item("code", aurora_i18n::tr!("ui-context-script-info"), CtxAction::ScriptInfo(object));
+            ui.item(
+                "code",
+                aurora_i18n::tr!("ui-context-script-information"),
+                CtxAction::ScriptInfo(object),
+            );
             ui.item(
                 "box",
                 aurora_i18n::tr!("ui-context-object-information"),
@@ -803,7 +829,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         |ui| {
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-2"),
+                aurora_i18n::tr!("ui-context-inspect-all-attachments"),
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -825,20 +851,27 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
+        // Avatar.Mute: greyed while `@shownames` hides the resident, whose
+        // real name the block list would show (enable_object_mute, and
+        // LLObjectMute returns before blocking or unblocking,
+        // indra/newview/llviewermenu.cpp).
         ui.check(
             "ban",
             aurora_i18n::tr!("common-ignore"),
             f.blocked,
-            true,
+            !f.name_hidden,
             CtxAction::ToggleBlock(id),
         );
         // Local mute of their nearby/call voice only (flagVoiceChat), same as
         // People › Block voice and the menu volume row — not land moderation.
+        // An Aurora entry: it files the resident in the same block list, so
+        // it follows the same rule (stricter than the Legacy Viewer, whose
+        // menu has no such entry).
         ui.check(
             "microphone-off",
             aurora_i18n::tr!("ui-people-block-voice"),
             f.voice_blocked,
-            f.can_block_voice,
+            f.can_block_voice && !f.name_hidden,
             CtxAction::ToggleVoiceMute(id),
         );
         ui.separator();
@@ -1126,24 +1159,32 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
 /// FSFloaterAddToContactSet's list in a submenu, then its "+"
 /// (AddNewContactSet), as `contact_set_submenu` of the lists.
 fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
-    ui.submenu("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"), true, |ui| {
-        if f.contact_sets.is_empty() {
-            ui.disabled("users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"));
-        }
-        for set in &f.contact_sets {
-            let add = crate::ui::contacts::SetEdit::Add {
-                set: set.clone(),
-                ids: vec![id],
-            };
-            ui.item("users-group", set, CtxAction::ContactSet(add));
-        }
-        ui.separator();
-        ui.item(
-            "plus",
-            aurora_i18n::tr!("ui-context-new-contact-set"),
-            CtxAction::NewContactSet(vec![id]),
-        );
-    });
+    // Avatar.AddToContactSet: RLV.CanShowName. Its handler
+    // (FSAddToContactSet) opens nothing while `@shownames` is set, for an
+    // exception too: greyed here.
+    ui.submenu(
+        "users-group",
+        aurora_i18n::tr!("ui-context-add-to-contact-set"),
+        !f.name_hidden && !f.names_hidden,
+        |ui| {
+            if f.contact_sets.is_empty() {
+                ui.disabled("users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"));
+            }
+            for set in &f.contact_sets {
+                let add = crate::ui::contacts::SetEdit::Add {
+                    set: set.clone(),
+                    ids: vec![id],
+                };
+                ui.item("users-group", set, CtxAction::ContactSet(add));
+            }
+            ui.separator();
+            ui.item(
+                "plus",
+                aurora_i18n::tr!("ui-context-new-contact-set"),
+                CtxAction::NewContactSet(vec![id]),
+            );
+        },
+    );
 }
 
 /// "Reload avatar" (`app/avatar_reload.rs`), ours or another's: not in the
@@ -1234,6 +1275,27 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resident_pay_menu_entry_is_disabled_under_rlva_pay() {
+        let id = Uuid::from_u128(77);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        let mut facts = Facts {
+            pay_blocked: true,
+            ..Default::default()
+        };
+        facts.voice = false;
+        let entries = rows(world_menu(&target, &facts, Vec3::ZERO));
+        let pay = entries
+            .iter()
+            .find(|entry| entry.label == aurora_i18n::tr!("common-pay"))
+            .expect("Pay entry");
+        assert!(!pay.enabled);
+    }
 
     #[test]
     fn object_edit_entry_follows_edit_permission() {
@@ -1698,7 +1760,7 @@ mod tests {
             attachment: None,
         };
         // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
-        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-2", false);
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-all-attachments", false);
         assert!(!inspect(&Facts::default()).enabled);
         let wearing = Facts {
             worn: true,
@@ -2043,6 +2105,89 @@ mod tests {
         let entries = menu(&f);
         assert!(!labels(&entries).contains(&aurora_i18n::text("common-add-to-favorites").to_string()));
         row(entries, "common-remove-from-favorites");
+    }
+
+    /// `@shownames` (issue #3547): every entry that names or addresses the
+    /// resident is greyed, in the avatar's menu and in the menu of what they
+    /// wear (menu_avatar_other.xml, menu_attachment_other.xml:
+    /// `RLV.CanShowName`), and nothing else changes.
+    #[test]
+    fn a_hidden_name_greys_the_social_entries_of_the_residents_menus() {
+        let id = Uuid::from_u128(7);
+        let find = |entries: Vec<Entry>, key: &'static str| {
+            rows(entries)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::text(key))
+                .unwrap_or_else(|| panic!("{key} missing"))
+        };
+        let social = [
+            "common-view-profile",
+            "common-become-friends",
+            "ui-context-add-to-contact-set",
+            "ui-context-send-im",
+            "ui-context-give-my-calling-card",
+            "common-voice-call",
+            "ui-context-invite-to-group",
+            "common-offer-teleport",
+        ];
+        for attachment in [None, Some(Uuid::from_u128(8))] {
+            let target = Target::Avatar {
+                id,
+                own: false,
+                attachment,
+            };
+            let open = Facts {
+                voice: true,
+                contact_sets: vec!["Family".into()],
+                ..Facts::default()
+            };
+            let hidden = Facts {
+                name_hidden: true,
+                ..open.clone()
+            };
+            for key in social {
+                assert!(
+                    find(world_menu(&target, &open, Vec3::ZERO), key).enabled,
+                    "{key} is enabled while names are shown"
+                );
+                assert!(
+                    !find(world_menu(&target, &hidden, Vec3::ZERO), key).enabled,
+                    "{key} is greyed while the name is hidden"
+                );
+            }
+            // what does not name them stays: look at, zoom, report
+            for key in ["common-look-toward-avatar", "common-zoom-2", "common-report"] {
+                assert!(find(world_menu(&target, &hidden, Vec3::ZERO), key).enabled, "{key}");
+            }
+            // blocking would file their real name in the block list
+            // (enable_object_mute, LLObjectMute)
+            let voice = Facts {
+                can_block_voice: true,
+                ..open.clone()
+            };
+            let hidden_voice = Facts {
+                name_hidden: true,
+                ..voice.clone()
+            };
+            for key in ["common-ignore", "ui-people-block-voice"] {
+                assert!(find(world_menu(&target, &voice, Vec3::ZERO), key).enabled, "{key}");
+                assert!(!find(world_menu(&target, &hidden_voice, Vec3::ZERO), key).enabled, "{key}");
+            }
+            // @startim and @shownames each grey IM and Call on their own
+            let startim = Facts {
+                im_blocked: true,
+                ..open.clone()
+            };
+            for key in ["ui-context-send-im", "common-voice-call"] {
+                assert!(!find(world_menu(&target, &startim, Vec3::ZERO), key).enabled, "{key}");
+            }
+            // a friend is never offered "Become friends"
+            let friend = Facts {
+                friend: true,
+                ..open.clone()
+            };
+            assert!(!find(world_menu(&target, &friend, Vec3::ZERO), "common-become-friends").enabled);
+        }
     }
 
     #[test]

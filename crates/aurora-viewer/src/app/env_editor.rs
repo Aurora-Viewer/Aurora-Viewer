@@ -15,6 +15,15 @@ use uuid::Uuid;
 impl App {
     /// "new" editors start from what is shown (onOpen without an item),
     /// with the rights of the settings shown (`Rights::of_source`).
+    /// "New sky / water / day cycle…" (World.EnvPreset, Phototools): a day
+    /// cycle starts empty, the others from what is shown.
+    pub(super) fn open_new_environment(&mut self, kind: SettingsKind) {
+        match kind {
+            SettingsKind::Day => self.open_new_day_editor(),
+            kind => self.open_env_editor_snapshot(kind),
+        }
+    }
+
     pub(super) fn open_env_editor_snapshot(&mut self, kind: SettingsKind) {
         let (sky, water) = self.world.eep.current();
         // an open editor of the same kind shows its own settings
@@ -193,20 +202,11 @@ impl App {
                 EditorAction::ApplyLocal => {
                     // doApplyEnvironment(ACTION_APPLY_LOCAL): ENV_LOCAL, at once
                     // shown once the editor closes
-                    // its Aurora Weather with it, while it stays applied
-                    let weather = self
-                        .env_editor
-                        .doc
-                        .as_ref()
-                        .and_then(|d| crate::weather::region::SkyWeather::from_name(d.name()));
                     if let Some(doc) = &self.env_editor.doc {
                         let rights = self.env_editor_source_rights();
                         match env_editor::frames(doc) {
                             (Some(sky), _) => {
                                 self.world.eep.apply_local_sky(sky, rights);
-                                self.world
-                                    .eep
-                                    .set_local_weather(weather.map(crate::weather::region::RegionDay::fixed));
                             }
                             (_, Some(water)) => self.world.eep.apply_local_water(water, rights),
                             _ => {}

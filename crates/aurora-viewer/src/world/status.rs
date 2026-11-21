@@ -299,28 +299,29 @@ impl World {
     /// The automatic response `from` gets, if any: the text of their
     /// smallest contact set that has its own for the mode, else the global
     /// one (getAutoresponseTextForAvatar, getAutoresponseForFriend).
+    ///
+    /// RLVa @sendim changes none of it: LLIMProcessing::
+    /// getAutoresponseTextForAvatar (indra/newview/llimprocessing.cpp) and
+    /// LGGContactSets::getAutoresponseForFriend (indra/newview/
+    /// lggcontactsets.cpp) never test it, and the response leaves as an
+    /// IM_DO_NOT_DISTURB_AUTO_RESPONSE packed outside the IM path the
+    /// restriction filters. RlvBehaviourToggleHandler<RLV_BHVR_SENDIM>
+    /// (indra/newview/rlvhandler.cpp) only hides the global do not disturb
+    /// text from the settings editor, and Preferences greys its field.
     pub(super) fn response_to(&self, from: &Uuid) -> Option<String> {
         let (mode, text) = self.status.response_for(self.is_friend(from))?;
-        let own = mode.and_then(|m| self.set_response_to(from, m));
+        let own = mode.and_then(|m| self.contact_sets.response_for(from, m));
         Some(own.unwrap_or(text).to_owned())
     }
 
-    /// The do not disturb response `from` gets (send_do_not_disturb_message
-    /// asks getAutoresponseTextForAvatar in the BUSY mode only).
+    /// The do not disturb response `from` gets (send_do_not_disturb_message,
+    /// indra/newview/llviewermessage.cpp, asks getAutoresponseTextForAvatar
+    /// in the BUSY mode only): their set's own text under @sendim too.
     pub(super) fn dnd_response_to(&self, from: &Uuid) -> String {
-        self.set_response_to(from, ResponseMode::Busy)
+        self.contact_sets
+            .response_for(from, ResponseMode::Busy)
             .unwrap_or(&self.status.cfg.dnd_text)
             .to_owned()
-    }
-
-    /// A contact set's own text for `mode`. Under RLVa @sendim the do not
-    /// disturb one is not used, like the global text Preferences locks
-    /// then: stricter than the Legacy Viewer, whose set texts stay free.
-    fn set_response_to(&self, from: &Uuid, mode: ResponseMode) -> Option<&str> {
-        if mode == ResponseMode::Busy && self.rlva.has("sendim") {
-            return None;
-        }
-        self.contact_sets.response_for(from, mode)
     }
 
     pub(super) fn auto_im(&mut self, to: Uuid, session: Uuid, text: &str) {
@@ -494,6 +495,7 @@ impl World {
                         origin: Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     };
                     self.conversation_push(from, line, true);
                 }
@@ -537,6 +539,7 @@ impl World {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         self.conversation_push(im.from_agent_id, line, false);
     }
@@ -758,7 +761,8 @@ mod tests {
 
     /// getAutoresponseTextForAvatar: a member of a set with its own text for
     /// the mode gets it, anyone else the global text; the away response has
-    /// no set text; under RLVa @sendim the do not disturb one is global.
+    /// no set text. RLVa @sendim changes none of them: the Legacy Viewer
+    /// tests it neither there nor in send_do_not_disturb_message.
     #[test]
     fn a_contact_set_answers_its_members_with_its_own_text() {
         use crate::world::contact_sets::SetResponse;
@@ -804,7 +808,13 @@ mod tests {
             message: "@sendim=n".into(),
         }));
         assert!(world.rlva.has("sendim"));
-        assert_eq!(world.dnd_response_to(&member), world.status.cfg.dnd_text);
-        assert_eq!(world.response_to(&member), Some(world.status.cfg.dnd_text.clone()));
+        assert_eq!(world.dnd_response_to(&member), "Busy, close");
+        assert_eq!(world.dnd_response_to(&other), world.status.cfg.dnd_text);
+        assert_eq!(world.response_to(&member).as_deref(), Some("Busy, close"));
+        world.status.dnd = false;
+        assert_eq!(world.response_to(&member).as_deref(), Some("Hello, close"));
+        world.status.cfg.autorespond_nonfriends = false;
+        assert_eq!(world.response_to(&member).as_deref(), Some("Auto, close"));
+        assert_eq!(world.response_to(&other), Some(world.status.cfg.autorespond_text.clone()));
     }
 }

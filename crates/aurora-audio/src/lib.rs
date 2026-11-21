@@ -39,9 +39,11 @@ mod mixer;
 mod output;
 mod playlist;
 mod processing;
+mod record;
 mod resample;
 mod reverb;
 mod stream;
+mod tls;
 mod wind;
 
 use std::sync::Arc;
@@ -55,8 +57,10 @@ pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE, MAX_RATE, MIN_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use record::{Block as RecordBlock, RECORD_BLOCK, RecordTap};
 pub use reverb::ReverbParams;
 pub use stream::{StreamError, StreamStatus};
+pub use tls::CertificateIssue;
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -293,6 +297,22 @@ impl AudioEngine {
     /// one, bit for bit).
     pub fn set_reverb(&self, params: Option<ReverbParams>) {
         let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
+    }
+
+    /// The Director's film takes the viewer's own mix of `channels` from
+    /// now on (record.rs): what the user hears of them, at their volumes and
+    /// mutes. A second call replaces the first; `stop_recording` ends it.
+    pub fn start_recording(&self, channels: &[Channel]) -> RecordTap {
+        let (sink, tap) = record::pair(channels);
+        if self.inner.cmd_tx.try_send(Command::Record(Some(Box::new(sink)))).is_err() {
+            log::warn!("audio: the film's sound could not be started (command queue full)");
+        }
+        tap
+    }
+
+    /// The film no longer takes the mix.
+    pub fn stop_recording(&self) {
+        let _ = self.inner.cmd_tx.try_send(Command::Record(None));
     }
 
     /// Fades a world sound out and removes it.

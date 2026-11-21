@@ -53,7 +53,7 @@ English.
 
 | Report | Ask the human to | Tools | They paste | Read first |
 |---|---|---|---|---|
-| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass` |
+| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass`; `blended faces of prim` for layers at the same place (eyes, jewels) |
 | An avatar stays in its system body (nothing it wears shows, even after a relog) | Stand within 3 m of the avatar, press J2 | J2 | The `worn objects:` line and the `network this session:` line | listed against arrived, the missing ids, blocks not read, packets skipped |
 | An object in the world renders wrong | Select it (right-click › Edit) and press J2; for one face, point at it, then L1 and Copy | J2, L1 | The linkset's faces, or one prim | pass, material state, texture alpha class |
 | Textures stay grey or blurry | Point at a grey face, press L1 and Copy, then J3 | L1, J3, N3 | The face's state, the last warnings | texture state, memory pressure, failed downloads |
@@ -61,7 +61,6 @@ English.
 | Disconnects or rubber-banding | Open N1, reproduce, press N2 then J3 | N1, N2, J3 | The region summary, the warnings | losses, last packet, simulator version |
 | Media or sound does not play | Turn M1 on, retry, press J3 | M1, J3 | The media lines and warnings | plugin and media state |
 | Any report, first message | Press J4 once | J4 | Version, hardware, settings | build, GPU vendor and driver, settings |
-| Scripted IK has no effect | Trigger the affected profile, press J8, then Copy | J8 | Local relay, definitions, accepted activations and target states | last_failure, complete_ack, active_packets, suppress_scripts, resolved/waiting links |
 | A worn animesh, or a rigged attachment that should move, is bent, stretched, misplaced or stays still | Stand within 3 m of the wearer, or choose My avatar when you wear it (or select the item), press J9, then Copy | J9, J2 | The worn animesh's skin joints, overrides, control skeleton and animations | joints `unknown to the skeleton`, an override that wins over the expected mesh, `rest` vs `now` on keyed joints, position keys far from the rest, animations `signalled, not playing` |
 | The viewer crashed | In the crash window, press Copy trace | — | The crash trace | top frames, panic message |
 
@@ -130,8 +129,8 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | J5 | Copy a tool's output | copy | What P3, P4, P5, P6, O9 and M1 wrote in the last 60 s |
 | J6 | Open the logs folder | window | The folder of `aurora.log` |
 | J7 | Script errors | window | The script debug window |
-| J8 | IK state | copy | Local IK reception, activation, editor suppression and target resolution; no scene selection required |
 | J9 | Worn animesh skeleton | copy | Each animated object the target wears (nearest avatar within 3 m, my avatar, or the wearer of the selection): the joints its meshes are skinned to, every joint position override they ask and which one wins, the control skeleton's skeleton-file / rest / current local positions of the overridden and animated joints, the animations playing (priority, joints keyed in position with their first and current values) and its place on its attachment point; then each ordinary worn attachment with rigged meshes (point, temporary or not; identical meshes written once with `and N more alike`), the joints its meshes are skinned to, the overrides all worn rigged meshes ask of the wearer's skeleton, and the animations playing on the wearer with the keyed joints that are attachment points or unknown |
+| J10 | Contacts tab state | copy | Where the Contacts tab of Conversations is (its first tab, or torn off in its own window, open or closed), whether Preferences shows it, whether the Contacts pane is the one shown, the window's appearance and column state, the tab chosen, the column's search, and how many friends (online), groups and contact sets there are |
 | L1 | Under the cursor | live | The prim last pointed at, every face; its button shows the face's pass and alpha |
 | L2 | Worn items of the target | live | Each attachment of the target's avatar (nearest, mine, or the wearer of the selection): prims, faces drawn and left out |
 | L3 | Live problems | live | The last 20 warnings |
@@ -153,7 +152,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | O2 | Detail levels (LOD) | toggle | The level of the objects near the pointer, with distance and radius |
 | O3 | Culling | toggle | Tested spheres, green drawn, red culled |
 | O4 | Freeze culling | toggle | Keeps the culling view to move around it |
-| O5 | Skeletons | toggle | Bones of the avatars within 32 m |
+| O5 | Skeletons | toggle | Bones of the avatars and animated objects within 32 m, each from its joint to its end, in green, like the Legacy Viewer's Render Metadata › Joints |
 | O6 | Complexity in name tags | toggle | |
 | O7 | Inspect objects | window | Inspect Objects on the target |
 | O8 | Avatar health | window | Stop animations, undeform, rebake, refresh attachments, reset skeleton |
@@ -214,7 +213,8 @@ What a run does:
   `~AuroraSelfTest seat` within 3 m in front of the avatar, sits the avatar
   on one, takes off and lands once, then deletes its own prims (to the
   Trash). The avatar ends where the simulator stands it up, beside the
-  seat. It acts on these prims only. Its cases are skipped where the
+  seat: `@standtp` is held over the sit and released before the avatar
+  stands, so that no return teleport is sent. It acts on these prims only. Its cases are skipped where the
   parcel does not let the avatar build, or when the avatar sits or flies at
   the start.
 - **The end**, also after a failure, a timeout, **Stop**, RLVa switched

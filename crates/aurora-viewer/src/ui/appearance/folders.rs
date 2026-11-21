@@ -58,7 +58,7 @@ impl AppearanceUi {
     pub(super) fn begin_new_folder(&mut self, parent: Uuid, then_move: Vec<Uuid>) {
         self.folders.dialog = Some(Dialog::New {
             parent,
-            name: aurora_i18n::tr!("common-new-folder").into(),
+            name: crate::text_validation::default_name("common-new-folder").into(),
             then_move,
         });
         self.folders.focus = true;
