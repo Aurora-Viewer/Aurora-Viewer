@@ -289,7 +289,7 @@ fn picture_and_names(
             let title = RichText::new(&who.title).size(14.0).strong().color(color);
             let r = ui.add(crate::ui::widgets::elided_label(ui, title, names_w - pill_w).sense(egui::Sense::click()));
             if let Some(a) = who.avatar {
-                super::name_menu(&r, p, world, a);
+                super::name_menu(&r, p, world, a, crate::world::names::NameScope::Roster);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()

@@ -66,6 +66,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -832,6 +833,39 @@ fn the_message_menu_acts() {
         let text = h.text_rect("hello from Jane");
         h.right_click(text.center());
         assert!(h.painted(aurora_i18n::tr!("common-view-profile")), "{style:?}: the author's menu");
+    }
+}
+
+/// A full-size line of an object: its name, and in the workspace styles its
+/// message, offer to inspect and to ignore it, like Firestorm's object menu.
+#[test]
+fn an_objects_full_size_line_offers_to_ignore_it_in_every_style() {
+    const THING: Uuid = Uuid::from_u128(0x0b1ec7);
+    for style in ALL {
+        for on_name in [true, false] {
+            if !style.workspace() && !on_name {
+                continue;
+            }
+            let mut h = H::new(style);
+            h.world.chat.push_back(line(
+                "Worn Thing",
+                THING,
+                ChatKind::Object(aurora_net::ChatType::Normal),
+                "a word from an object",
+            ));
+            h.open(None);
+            let at = h.text_rect(if on_name { "Worn Thing" } else { "a word from an object" }).center();
+            h.right_click(at);
+            assert!(h.painted(aurora_i18n::tr!("ui-context-inspect-2")), "{style:?} {on_name}: inspect");
+            h.press_text(aurora_i18n::tr!("common-ignore"));
+            let asked = crate::ui::context::take_requests(&h.frames.ctx);
+            assert!(
+                asked.iter().any(
+                    |a| matches!(a, crate::ui::context::CtxAction::ToggleBlockObject { id, name } if *id == THING && name == "Worn Thing")
+                ),
+                "{style:?} {on_name}: ignore"
+            );
+        }
     }
 }
 
@@ -2230,6 +2264,53 @@ fn inventory_drops_give_to_the_resident_in_every_conversation_style() {
                 assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx));
                 assert_eq!(h.st.drafts[&Some(JANE)], draft);
             }
+        }
+    }
+}
+
+/// A landmark dragged from Places (or a favorite) is the inventory item of
+/// that landmark: dropped on a resident's conversation it is given, as in the
+/// Legacy Viewer (#4241). A place with no item (history, parcel) is not.
+#[test]
+fn a_landmark_dragged_from_places_gives_to_the_resident() {
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    const ITEM: Uuid = Uuid::from_u128(0x1A4);
+    let place = |target| PlaceDrag {
+        target,
+        favorite: None,
+        name: "A place".into(),
+        thumbnail: None,
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(Some(JANE));
+        let over = h.text_rect("hello from Jane").center();
+        let away = egui::pos2(4.0, 4.0);
+        for (target, gives) in [(Target::Landmark(ITEM), true), (Target::Parcel(ITEM), false)] {
+            h.take();
+            h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+            egui::DragAndDrop::set_payload(&h.frames.ctx, place(target));
+            assert_eq!(crate::ui::inventory::drag::give_count(&h.frames.ctx), gives.then_some(1));
+            assert_eq!(crate::ui::inventory::drag::carried_count(&h.frames.ctx), None);
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            h.frame(vec![button(over, false)]);
+            h.settle();
+            let actions = h.take();
+            assert_eq!(
+                has(
+                    &actions,
+                    |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && *items == [ITEM])
+                ),
+                gives,
+                "{style:?}: {target:?}"
+            );
+            egui::DragAndDrop::clear_payload(&h.frames.ctx);
         }
     }
 }

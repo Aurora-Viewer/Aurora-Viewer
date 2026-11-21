@@ -28,10 +28,12 @@ impl Version {
             // Settings are local input, but malformed/expensive patterns must
             // not stall a frame or an object's version handshake.
             if list.len() <= 65536 {
-                for entry in list.split(';').filter(|entry| !entry.is_empty()).take(128) {
+                for entry in list.split(';').filter(|entry| !entry.is_empty()) {
                     if let Some(id) = entry.strip_prefix("creator:") {
+                        // RlvSettings::initCompatibilityMode (rlvcommon.cpp):
+                        // 36 characters read by LLUUID::parseUUID.
                         if id.len() == 36
-                            && let Ok(id) = Uuid::parse_str(id)
+                            && let Some(id) = super::numeric::parse_uuid(id)
                         {
                             self.creators.insert(id);
                         }
@@ -49,9 +51,7 @@ impl Version {
             self.creators.contains(&item.creator) || self.names.iter().any(|regex| regex.is_match(&item.name).unwrap_or(false))
         });
         if compatible {
-            if self.compatible.len() < 1024 {
-                self.compatible.insert(source);
-            }
+            self.compatible.insert(source);
         } else {
             self.compatible.remove(&source);
         }
@@ -161,11 +161,18 @@ impl crate::world::World {
         {
             return;
         }
+        // RlvSettings::isCompatibilityModeObject (rlvcommon.cpp): the issuing
+        // prim itself must be an attachment (LLVOVolume::isAttachment, its
+        // own attachment state), and its own AttachItemID names the item: a
+        // child prim of a listed attachment is not in compatibility mode.
         let item = if self.rlva.preferences.compatibility_list.is_empty() {
             None
         } else {
-            self.rlva_own_attachment_root(source)
-                .and_then(|root| self.rlva_attachment_item(root))
+            self.objects
+                .index_of_uuid(&source)
+                .and_then(|index| self.objects.get(index))
+                .filter(|object| object.attachment_point() != 0)
+                .and_then(|object| object.attachment_item_id())
                 .and_then(|item| self.inventory.items.get(&item))
         };
         self.rlva.version.prepare(&self.rlva.preferences.compatibility_list, source, item);

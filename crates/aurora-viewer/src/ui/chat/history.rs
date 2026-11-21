@@ -8,12 +8,22 @@
 use super::view::{Source, View};
 use super::{LineEnv, Mark, find};
 use crate::theme::Palette;
-use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript};
+use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript, contains_ci};
 use crate::world::transcripts::LineClock;
 use crate::world::{ChatLine, World};
 use egui::RichText;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+
+/// The names a transcript read again shows under RLVa's `@shownames`: those
+/// it was written with. Neither LLLogChat::loadChatHistory
+/// (indra/newview/lllogchat.cpp) nor
+/// LLFloaterConversationPreview::showHistory
+/// (indra/newview/llfloaterconversationpreview.cpp) has an RLVa test. What
+/// the restriction hid when a line was said is hidden in the file already:
+/// the nearby chat's transcript is written as the chat showed it
+/// (`World::transcript_text`).
+const NAMES: crate::world::names::NameScope = crate::world::names::NameScope::Roster;
 
 #[derive(Default)]
 pub struct HistoryUi {
@@ -34,6 +44,18 @@ pub struct HistoryUi {
     search: Option<Search>,
     /// Counts the searches: answers to an older one are dropped.
     searches: u64,
+    /// A direct conversation under the Chat Service: its stitched history,
+    /// read once and paged in memory (LLFloaterConversationPreview with
+    /// loadStitchedHistory, LL viewer 26.5).
+    stitched: Option<Stitched>,
+}
+
+struct Stitched {
+    resident: uuid::Uuid,
+    /// None while the read runs.
+    entries: Option<Vec<crate::world::chat_log::Entry>>,
+    /// The transcripts' folder, for its button.
+    folder: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -79,6 +101,80 @@ impl HistoryUi {
         }
     }
 
+    /// Show the stitched history of a direct conversation, read by the
+    /// World (`World::open_direct_preview`); `path`: its transcript file.
+    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, path: Option<PathBuf>) {
+        *self = HistoryUi {
+            open: true,
+            title,
+            searches: self.searches,
+            stitched: Some(Stitched {
+                resident,
+                entries: None,
+                folder: path.and_then(|p| p.parent().map(PathBuf::from)),
+            }),
+            ..Default::default()
+        };
+    }
+
+    /// A delete invalidated the stitched history: the window closes.
+    pub fn close_stitched(&mut self) {
+        if self.stitched.is_some() {
+            self.open = false;
+        }
+    }
+
+    /// The resident whose stitched read the window waits for.
+    pub fn stitched_waiting(&self) -> Option<uuid::Uuid> {
+        self.stitched
+            .as_ref()
+            .filter(|s| self.open && s.entries.is_none())
+            .map(|s| s.resident)
+    }
+
+    /// The stitched read came, oldest first: the most recent page shows.
+    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>) {
+        let Some(s) = self.stitched.as_mut() else {
+            return;
+        };
+        let messages = entries.len();
+        s.entries = Some(entries);
+        if messages == 0 {
+            self.index = Some(None);
+            return;
+        }
+        let pages = messages.div_ceil(PAGE).max(1);
+        self.index = Some(Some(Index {
+            pages,
+            messages: messages as u64,
+            bytes: 0,
+        }));
+        self.loaded = None;
+        self.go_to(pages - 1);
+        if self.search.is_some() {
+            self.start_search();
+        }
+    }
+
+    /// The match after (or before) `from` in the stitched history; `None`
+    /// starts from the end.
+    fn stitched_step(&self, needle: &str, from: Option<Spot>, forward: bool) -> Option<Spot> {
+        let entries = self.stitched.as_ref()?.entries.as_ref()?;
+        let hit = |e: &crate::world::chat_log::Entry| contains_ci(&e.text, needle) || contains_ci(&e.from, needle);
+        let at = from.map(|s| s.page * PAGE + s.message);
+        let found = if forward {
+            let start = at.map_or(0, |i| i + 1);
+            (start..entries.len()).find(|&i| hit(&entries[i]))
+        } else {
+            let end = at.unwrap_or(entries.len());
+            (0..end).rev().find(|&i| hit(&entries[i]))
+        }?;
+        Some(Spot {
+            page: found / PAGE,
+            message: found % PAGE,
+        })
+    }
+
     /// An import merged these transcripts: a page's place in the file is no
     /// longer the same, so the one shown is read again from the start.
     pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
@@ -109,6 +205,17 @@ impl HistoryUi {
         s.id = self.searches;
         (s.total, s.counted, s.current, s.rank, s.at_end) = (0, false, None, None, false);
         s.walking = false;
+        if let Some(entries) = self.stitched.as_ref().and_then(|st| st.entries.as_ref()) {
+            let needle = s.text.to_lowercase();
+            s.total = entries
+                .iter()
+                .filter(|e| contains_ci(&e.text, &needle) || contains_ci(&e.from, &needle))
+                .count() as u64;
+            s.counted = true;
+            let found = self.stitched_step(&needle, None, false);
+            self.stitched_found(found);
+            return;
+        }
         if let Some(f) = self.file.as_ref().filter(|_| self.index.flatten().is_some()) {
             let needle = s.text.to_lowercase();
             f.search(s.id, needle.clone());
@@ -120,7 +227,35 @@ impl HistoryUi {
         }
     }
 
+    /// A match of the stitched history was found (or none): shown like a
+    /// file's `Reply::Found`.
+    fn stitched_found(&mut self, spot: Option<Spot>) {
+        let Some(s) = self.search.as_mut() else {
+            return;
+        };
+        s.walking = false;
+        s.at_end = spot.is_none();
+        let Some(spot) = spot else {
+            return;
+        };
+        s.current = Some(spot);
+        s.rank = None;
+        if self.loaded == Some(spot.page) && self.page == spot.page {
+            self.view.scroll_to(spot.message);
+        } else {
+            self.go_to(spot.page);
+        }
+    }
+
     fn step(&mut self, forward: bool) {
+        if self.stitched.is_some() {
+            let Some(s) = self.search.as_ref().filter(|s| !s.text.is_empty()) else {
+                return;
+            };
+            let found = self.stitched_step(&s.text.to_lowercase(), s.current, forward);
+            self.stitched_found(found);
+            return;
+        }
         let (Some(s), Some(f)) = (self.search.as_mut(), self.file.as_ref()) else {
             return;
         };
@@ -132,6 +267,18 @@ impl HistoryUi {
     }
 
     fn poll(&mut self, world: &World) {
+        if let Some(entries) = self.stitched.as_ref().and_then(|s| s.entries.as_ref())
+            && self.loaded != Some(self.page)
+        {
+            let page: Vec<_> = entries.iter().skip(self.page * PAGE).take(PAGE).cloned().collect();
+            self.lines = world.history_lines(page, false, true, None).into();
+            self.clock = LineClock::default();
+            self.loaded = Some(self.page);
+            self.selection.clear();
+            if let Some(spot) = self.search.as_ref().and_then(|s| s.current).filter(|s| s.page == self.page) {
+                self.view.scroll_to(spot.message);
+            }
+        }
         let Some(file) = &self.file else {
             return;
         };
@@ -198,7 +345,7 @@ impl HistoryUi {
     ) -> Option<HistoryAction> {
         if !self.open {
             // the thread and its file handle go with the window
-            if self.file.is_some() {
+            if self.file.is_some() || self.stitched.is_some() {
                 *self = HistoryUi {
                     searches: self.searches,
                     ..Default::default()
@@ -299,7 +446,11 @@ impl HistoryUi {
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(dir) = self.file.as_ref().and_then(|f| f.path.parent())
+                if let Some(dir) = self
+                    .file
+                    .as_ref()
+                    .and_then(|f| f.path.parent())
+                    .or_else(|| self.stitched.as_ref().and_then(|s| s.folder.as_deref()))
                     && icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("ui-options-chat-logs-open"), true)
                 {
                     *action = Some(HistoryAction::OpenFolder(dir.to_path_buf()));
@@ -416,9 +567,7 @@ impl HistoryUi {
             emoji,
             pics,
             world,
-            // a transcript read again: the names of those around stay
-            // hidden in its text, whichever conversation it was
-            names: crate::world::names::NameScope::World,
+            names: NAMES,
             want_names,
             wanted: &mut no_pictures,
             own_name: &own_name,
@@ -476,17 +625,95 @@ impl HistoryUi {
                 lines,
                 first: clock.first,
                 world,
-                names: crate::world::names::NameScope::World,
+                names: NAMES,
                 own_name: &own_name,
             };
             // (no field here: what is typed goes nowhere)
             super::select_lines(ui, &content, &drawn, selection, &copied);
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
-            if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+            if let Some(sender) = target.sender {
+                super::sender_menu(ui, p, world, sender, NAMES, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::names::NameScope;
+
+    /// LLFloaterConversationPreview has no RLVa test: a line read back from
+    /// a transcript keeps the name and the text it was written with under
+    /// `@shownames`, in this window and at the top of the nearby chat
+    /// (FSFloaterNearbyChat::loadHistory), where a line said now hides them.
+    #[test]
+    fn a_transcript_keeps_the_names_it_was_written_with_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Transcript fixture".into(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_shows_name(NameScope::World, near));
+        // as the file gives a line: a name, and no resident looked up
+        let line = ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Near Tester".into(),
+            text: "hello".into(),
+            kind: crate::world::ChatKind::Local(aurora_net::ChatType::Normal),
+            source: uuid::Uuid::nil(),
+            origin: crate::world::Origin::Log,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        assert_eq!(NAMES, NameScope::Roster);
+        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
+        // said now: the stand-in the line takes when it arrives
+        let mut said = line.clone();
+        said.origin = crate::world::Origin::Live;
+        said.source = near;
+        world.rlva_freeze_line(NameScope::World, &mut said);
+        let around = super::super::sender_name(&world, "Aurora Demo", &said);
+        assert!(!around.contains("Tester"), "{around}");
+        // the text: a notice of the viewer is rewritten when it comes, and
+        // read back as the file has it
+        let mut notice = line.clone();
+        notice.kind = crate::world::ChatKind::System;
+        notice.text = "Near Tester is online".into();
+        for scope in [NAMES, NameScope::World] {
+            let wording = notice.wording(scope);
+            assert_eq!(world.rlva_filter_text_in(wording, &notice.text), notice.text, "{scope:?}");
+            assert_eq!(
+                super::super::resolved_text_in(&world, wording, &notice.text),
+                notice.text,
+                "{scope:?}"
+            );
+        }
+        notice.origin = crate::world::Origin::Live;
+        world.rlva_freeze_line(NameScope::World, &mut notice);
+        assert!(!notice.text.contains("Tester"), "{}", notice.text);
+        // and nothing rewrites it again when it is drawn
+        assert!(!notice.wording(NameScope::World).rewritten);
     }
 }

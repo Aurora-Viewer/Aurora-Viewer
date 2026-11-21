@@ -20,7 +20,28 @@ fn random_below(n: u32) -> u32 {
     (r % u64::from(n.max(1))) as u32
 }
 
+/// FSCommon::send_message_to_script_channel (indra/newview/fscommon.cpp):
+/// the viewer's own report, whispered on a script channel, nothing on
+/// channel 0 or for an empty text.
+fn script_channel_chat(message: &str, channel: i32) -> Option<NetCommand> {
+    (channel != 0 && !message.is_empty()).then(|| NetCommand::Chat {
+        message: message.to_owned(),
+        channel,
+        chat_type: ChatType::Whisper,
+    })
+}
+
 impl App {
+    /// FSCommon::send_message_to_script_channel builds its ChatFromViewer
+    /// itself, past the chat path RLVa filters (send_chat_from_viewer):
+    /// @sendchannel, @redirchat and the chat volume rules never touch the
+    /// viewer's reports to the user's own scripts.
+    pub(super) fn send_to_script_channel(&mut self, message: &str, channel: i32) {
+        if let Some(command) = script_channel_chat(message, channel) {
+            self.net.send(command);
+        }
+    }
+
     /// Local chat typed in the chat bar or the conversations window: runs it
     /// as a command when it is one (cmd_line_chat). `true` = handled, the
     /// line must not be sent.
@@ -37,13 +58,9 @@ impl App {
     fn report_command(&mut self, text: impl Into<String>) {
         let text = text.into();
         let s = &self.settings.chat_commands;
-        if s.announce_to_channel && s.announce_channel != 0 && !text.is_empty() {
+        if s.announce_to_channel {
             let channel = s.announce_channel;
-            self.send(NetCommand::Chat {
-                message: text.clone(),
-                channel,
-                chat_type: ChatType::Whisper,
-            });
+            self.send_to_script_channel(&text, channel);
         }
         self.world.system_message(text);
     }
@@ -132,6 +149,8 @@ impl App {
                 self.key_to_name.push((id, Instant::now()));
             }
             Command::Touch(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
+                // RlvActions::canTouch refused: nothing is sent nor reported
+                Some(o) if !self.world.rlva_can_touch(o.key.region, o.key.local_id) => {}
                 Some(o) => {
                     let local_id = o.key.local_id;
                     self.send(NetCommand::Touch { local_id });
@@ -147,12 +166,21 @@ impl App {
             },
             Command::SitOn(id) => match self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) {
                 Some(o) => {
-                    let handle = o.key.region;
-                    self.send(NetCommand::RequestSit {
-                        handle,
+                    let sit = NetCommand::RequestSit {
+                        handle: o.key.region,
                         target: id,
                         offset: Vec3::ZERO,
-                    });
+                    };
+                    // cmd_line_chat asks RlvActions::canSit and, refused,
+                    // says nothing at all
+                    if !self.world.rlva_allows_command(&sit, Uuid::nil()) {
+                        return true;
+                    }
+                    // (no @standtp origin: cmd_line_chat sends AgentRequestSit
+                    // without RlvHandler::setSitSource)
+                    self.world.rlva.sitting.no_sit_source = true;
+                    self.send(sit);
+                    self.world.rlva.sitting.no_sit_source = false;
                     self.report_command(aurora_i18n::tr!(
                         "app-chat-commands-sitting-on-object-with-key",
                         id = format!("{}", id)
@@ -169,7 +197,9 @@ impl App {
             }
             Command::OfferTeleport(to) => {
                 // "Join me!" stays in English: it is what the other avatar reads.
-                self.send(NetCommand::OfferTeleport {
+                // cmd_line_chat sends its StartLure itself, past every RLVa
+                // check of the offer windows (canOfferTeleport, send_lures).
+                self.net.send(NetCommand::OfferTeleport {
                     to: vec![to],
                     message: aurora_i18n::tr!("extra-join-me").into(),
                 });
@@ -179,12 +209,12 @@ impl App {
             Command::Ground { offset } => {
                 let pos = self.world.agent.position;
                 if let Some(ground) = self.world.ground_height(pos) {
-                    self.teleport_in_region(Vec3::new(pos.x, pos.y, ground + offset));
+                    self.teleport_in_region_if_local(Vec3::new(pos.x, pos.y, ground + offset));
                 }
             }
             Command::Height(amount) => {
                 let pos = self.world.agent.position;
-                self.teleport_in_region(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
+                self.teleport_in_region_if_local(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
             }
             Command::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
@@ -236,7 +266,7 @@ impl App {
                 Some((id, pos)) => {
                     let (x, y) = crate::ui::minimap::to_global(&self.world, pos);
                     self.world.map.track_location(x, y, pos.z, false);
-                    let name = self.world.person_name(&id).unwrap_or(name);
+                    let name = cmdline_tracked_name(&self.world, id).unwrap_or(name);
                     self.report_command(aurora_i18n::tr!("app-chat-commands-tracking", name = name.to_string()));
                 }
                 None => self.report_command(aurora_i18n::tr!(
@@ -267,27 +297,25 @@ impl App {
     /// matched on their user name (cmdline_partial_name2key).
     fn find_nearby(&self, partial: &str) -> Option<(Uuid, Vec3)> {
         let nearby = crate::ui::people::nearby(&self.world);
-        let names: Vec<(Uuid, String)> = nearby.iter().map(|(id, ..)| (*id, self.user_name(id))).collect();
+        let names: Vec<(Uuid, String)> = nearby.iter().map(|(id, ..)| (*id, cmdline_user_name(&self.world, id))).collect();
         let id = cmdline::partial_name_match(partial, names.iter().map(|(id, n)| (*id, n.as_str())))?;
         nearby.iter().find(|e| e.0 == id).map(|e| (id, e.2))
     }
 
-    /// LLAvatarName::getUserName: "First Last", only "First" for a Resident.
-    fn user_name(&self, id: &Uuid) -> String {
-        if let Some(n) = self.world.social.avatar_names.get(id)
-            && !n.legacy_first.is_empty()
-        {
-            return if n.legacy_last.is_empty() || n.legacy_last == "Resident" {
-                n.legacy_first.clone()
-            } else {
-                format!("{} {}", n.legacy_first, n.legacy_last)
-            };
+    /// teleportViaLocation to a point of the current region.
+    /// `gtp` and `height`: cmd_line_chat asks RlvActions::canTeleportToLocal
+    /// first and, refused, does nothing and says nothing.
+    fn teleport_in_region_if_local(&mut self, pos: Vec3) {
+        let global = self
+            .world
+            .main_origin()
+            .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + pos.as_dvec3());
+        if global.is_some_and(|g| !self.world.rlva_can_teleport_local(g)) {
+            return;
         }
-        let legacy = self.world.legacy_name(id).unwrap_or_default();
-        legacy.strip_suffix(" Resident").map(str::to_owned).unwrap_or(legacy)
+        self.teleport_in_region(pos);
     }
 
-    /// teleportViaLocation to a point of the current region.
     fn teleport_in_region(&mut self, pos: Vec3) {
         let region = self.world.region_name();
         self.teleport_to_location(region, pos);
@@ -315,6 +343,10 @@ impl App {
     /// will be in a third of a second).
     fn rez_platform(&mut self, width: f32) {
         use crate::build::MIN_PRIM_SCALE;
+        // RlvActions::canRez: under @rez the command does nothing, silently
+        if self.world.rlva.enabled() && self.world.rlva.has("rez") {
+            return;
+        }
         let limits = self.world.prim_limits();
         let Some(handle) = self.world.main_region else {
             return;
@@ -371,5 +403,107 @@ impl App {
                 self.key_to_name.push((id, since));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The viewer's reports to a script channel are sent as they are, and
+    /// past RLVa: a channel @sendchannel closes still gets them.
+    #[test]
+    fn rlva_viewer_reports_to_a_script_channel_skip_the_chat_rules() {
+        assert!(script_channel_chat("hello", 0).is_none());
+        assert!(script_channel_chat("", 5).is_none());
+        let command = script_channel_chat("region_restart_in:60", -42).expect("a report");
+        assert!(matches!(
+            &command,
+            NetCommand::Chat { message, channel: -42, chat_type: ChatType::Whisper } if message == "region_restart_in:60"
+        ));
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.rlva.configure(true);
+        world.rlva_console_input("@sendchannel=n");
+        // the chat path RLVa filters would have dropped it
+        assert!(world.rlva.outgoing_chat("region_restart_in:60", -42, ChatType::Whisper).is_empty());
+    }
+}
+
+/// LLAvatarName::getUserName: "First Last", only "First" for a Resident.
+/// Under `@shownames` the radar's stand-in, for everyone: the
+/// FSRadarEntry::mUserName cmdline_partial_name2key
+/// (indra/newview/chatbar_as_cmdline.cpp) matches is
+/// FSRadarEntry::getRadarName there (indra/newview/fsradarentry.cpp), an
+/// `@shownames:<uuid>` exception's too.
+fn cmdline_user_name(world: &crate::world::World, id: &Uuid) -> String {
+    if world.rlva.has("shownames") {
+        return world.rlva_anonymous(*id).display_name.clone();
+    }
+    if let Some(n) = world.social.avatar_names.get(id)
+        && !n.legacy_first.is_empty()
+    {
+        return if n.legacy_last.is_empty() || n.legacy_last == "Resident" {
+            n.legacy_first.clone()
+        } else {
+            format!("{} {}", n.legacy_first, n.legacy_last)
+        };
+    }
+    let legacy = world.legacy_name(id).unwrap_or_default();
+    legacy.strip_suffix(" Resident").map(str::to_owned).unwrap_or(legacy)
+}
+
+/// The name `trkpos` reports for the avatar it tracks: FSRadarEntry::getName
+/// (indra/newview/chatbar_as_cmdline.cpp), the radar's stand-in for everyone
+/// under `@shownames`, an exception included.
+fn cmdline_tracked_name(world: &crate::world::World, id: Uuid) -> Option<String> {
+    if world.rlva.has("shownames") {
+        Some(world.rlva_anonymous(id).display_name.clone())
+    } else {
+        world.person_name(&id)
+    }
+}
+
+#[cfg(test)]
+mod rlva_tests {
+    use super::*;
+
+    /// cmdline_partial_name2key and cmdline_tp2name
+    /// (indra/newview/chatbar_as_cmdline.cpp) read the radar, whose names
+    /// are all stand-ins under `@shownames`: an `@shownames:<uuid>`
+    /// exception is matched and reported by their stand-in too.
+    #[test]
+    fn tp2_and_trkpos_name_everyone_by_the_radar_stand_in_under_shownames() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = Uuid::from_u128(0x7e57);
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Janey".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        world.rlva.configure(true);
+        assert_eq!(cmdline_user_name(&world, &id), "Jane Doe");
+        for command in ["@shownames=n".to_owned(), format!("@shownames:{id}=add")] {
+            world.rlva_console_input(&command);
+        }
+        world.refresh_rlva_privacy();
+        assert!(world.rlva_can_name(id), "the exception");
+        let anonym = world.rlva_anonymous(id).display_name.clone();
+        assert_ne!(anonym, "Jane Doe");
+        assert_eq!(cmdline_user_name(&world, &id), anonym);
+        assert_eq!(cmdline_tracked_name(&world, id), Some(anonym.clone()));
+        let found = cmdline::partial_name_match(&anonym, [(id, cmdline_user_name(&world, &id).as_str())]);
+        assert_eq!(found, Some(id));
+        assert_eq!(
+            cmdline::partial_name_match("jane", [(id, cmdline_user_name(&world, &id).as_str())]),
+            None
+        );
     }
 }

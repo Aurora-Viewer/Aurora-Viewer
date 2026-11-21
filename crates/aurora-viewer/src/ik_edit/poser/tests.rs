@@ -139,10 +139,7 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
             assert_eq!(editor.bone_visible(name), group(name) == tab && !inner_bone(name), "{name}");
         }
         for segment in editor.skeleton_segments(&world, &proj, &frame) {
-            let segments::Source::Bone(bone) = segment.source else {
-                panic!("unexpected virtual node");
-            };
-            assert_eq!(group(&rig.canonical_names[bone]), tab);
+            assert_eq!(group(&rig.canonical_names[segment.bone]), tab);
         }
         assert!(editor.poser.sessions[&world.agent_id].undo.is_empty());
         assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations, initial.rotations);
@@ -150,25 +147,13 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
     }
 }
 #[test]
-fn poser_ignores_ik_bindings_virtual_bones_and_prim_picking_even_with_stale_editor_state() {
+fn poser_ignores_stale_ik_edit_state() {
     use crate::ui::widgets::elide_tests::Frames;
     let (world, mut editor) = fixture();
     let rig = &world.avatar_lib.rig;
     let bone = rig.names["mHead"];
-    let node = Uuid::from_u128(0x727_cccc);
-    editor.graph.definition = serde_json::from_value(serde_json::json!({
-        "nodes": [{"id": node, "name": "Unrelated control", "parent": {"kind": "bone", "bone": "mPelvis"}}],
-        "bindings": [{"bone": "mHead", "target": {"kind": "prim", "id": Uuid::from_u128(0x727_dddd)},
-                      "contact": [0.1, 0.0, 0.0], "root": "mPelvis"}]
-    }))
-    .unwrap();
-    editor.graph.selected = Some(node);
-    editor.graph.error = true;
-    editor.links.bone_pick = true;
-    editor.picking = true;
-    editor.prims.object_handles = true;
+    editor.object_handles = true;
     editor.limb_controls = true;
-    let definition = editor.graph.definition.clone();
     let frame = editor.editor_frame(&world).unwrap();
     editor.select(bone, rig, &frame);
     assert_eq!(editor.root, bone);
@@ -180,29 +165,17 @@ fn poser_ignores_ik_bindings_virtual_bones_and_prim_picking_even_with_stale_edit
     for _ in 0..3 {
         frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
     }
-    assert!(editor.graph.error, "the poser must not evaluate or replace the unrelated graph");
-    assert_eq!(editor.graph.selected, Some(node));
-    assert_eq!(editor.graph.definition, definition);
-    assert!(
-        editor
-            .skeleton_segments(&world, &proj, &frame)
-            .iter()
-            .all(|s| matches!(s.source, segments::Source::Bone(_)))
-    );
     assert!(
         frames
             .ctx
             .memory(|m| m.area_rect(egui::Id::unique(("poser-joint", bone))))
             .is_some()
     );
-    assert!(frames.ctx.memory(|m| m.area_rect(egui::Id::unique(("ik-virtual", node)))).is_none());
-    assert!(editor.link_target_definition().is_none());
     assert!(!editor.request().active);
     // Losing a subject during a drag must never fall through to IK authoring.
     editor.poser.sessions.clear();
     editor.commit_manipulation(rig, &frame, true);
     assert!(editor.goals.is_empty());
-    assert_eq!(editor.graph.definition, definition);
 }
 #[test]
 fn poser_bone_marker_drag_rotates_the_pose_without_creating_a_binding_or_ik_goal() {
@@ -257,8 +230,6 @@ fn poser_bone_marker_drag_rotates_the_pose_without_creating_a_binding_or_ik_goal
         }
         assert_eq!(editor.poser.sessions[&world.agent_id].undo.len(), 1);
         assert!(editor.goals.is_empty());
-        assert!(editor.graph.definition.bindings.is_empty());
-        assert!(editor.bindings.is_empty());
         editor.poser.sessions.get_mut(&world.agent_id).unwrap().history(false);
         assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations[bone], initial);
     }
@@ -302,7 +273,6 @@ fn poser_pelvis_marker_drag_rotates_the_root_without_breaking_its_children() {
     assert_attached(&rig, &session.pose, &base, frame.model);
     assert_eq!(session.undo.len(), 1);
     assert!(editor.goals.is_empty());
-    assert!(editor.graph.definition.bindings.is_empty());
 }
 
 #[test]
@@ -485,7 +455,6 @@ fn poser_moving_wrists_fingers_and_ankles_preserves_the_complete_shaped_hierarch
     assert!(pose.matrices(rig, frame.model)[wrist].w_axis.truncate().distance(editor.position) > 10.0);
     assert_eq!(rig.parent, parents);
     assert!(editor.request().goals.is_empty());
-    assert!(editor.graph.definition.bindings.is_empty());
     editor.select(rig.pelvis, rig, &frame);
     editor.position += Vec3::new(0.2, 0.0, 0.0);
     editor.commit_manipulation(rig, &frame, false);
@@ -557,7 +526,6 @@ fn poser_selects_and_rotates_every_animation_joint_without_breaking_the_hierarch
     }
 
     assert!(editor.goals.is_empty());
-    assert!(editor.graph.definition.bindings.is_empty());
 }
 
 #[test]
@@ -783,6 +751,46 @@ fn poser_hand_tab_and_preset_apply_through_actual_pointer_events() {
     let session = &editor.poser.sessions[&world.agent_id];
     assert_eq!(session.undo.len(), steps + 1);
     assert!(session.edited(rig.names["mHandIndex1Left"]) && session.edited(rig.names["mHandIndex1Right"]));
+}
+#[test]
+fn the_poser_frames_only_on_an_explicit_click_select() {
+    use crate::camera::PoserFraming;
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let (head, neck) = (rig.names["mHead"], rig.names["mNeck"]);
+    let (left, right) = (rig.names["mElbowLeft"], rig.names["mElbowRight"]);
+    // a selection the code makes (the first pick, the Avatar position row)
+    editor.select_pose_bone(left, &rig, &frame);
+    assert_eq!(editor.take_poser_focus_request(), None);
+    // a click that selects another joint asks once
+    editor.click_pose_bone(head, &rig, &frame, false);
+    assert_eq!(editor.take_poser_focus_request(), Some((head, PoserFraming::Joint)));
+    editor.click_pose_bone(head, &rig, &frame, false);
+    assert_eq!(editor.take_poser_focus_request(), None, "the joint already selected");
+    // Shift + click adds a follower: the lead and the camera stay
+    editor.click_pose_bone(neck, &rig, &frame, true);
+    assert_eq!(editor.take_poser_focus_request(), None);
+    // a drag begun on another joint selects it, the camera stays
+    editor.grab_pose_bone(left, &rig, &frame);
+    assert_eq!(editor.selected, Some(left));
+    assert_eq!(editor.take_poser_focus_request(), None, "never under a drag");
+    // a side switch
+    editor.set_pose_side(Side::Right, &rig, &frame);
+    assert_eq!(editor.selected, Some(right));
+    assert_eq!(editor.take_poser_focus_request(), None, "never on a side switch");
+    editor.set_pose_side(Side::Mirror, &rig, &frame);
+    assert_eq!(editor.take_poser_focus_request(), None, "never on Mirror");
+    // a tab change that picks the tab's first joint
+    editor.select_pose_group(1, &rig, &frame);
+    assert_ne!(editor.selected, Some(right));
+    assert_eq!(editor.take_poser_focus_request(), None, "never on a tab change");
+    // in the photo viewfinder, the shot is the user's
+    editor.over_viewfinder = true;
+    let chest = rig.names["mChest"];
+    editor.click_pose_bone(chest, &rig, &frame, false);
+    assert_eq!(editor.selected, Some(chest));
+    assert_eq!(editor.take_poser_focus_request(), None, "never in the viewfinder");
 }
 #[test]
 fn poser_side_selector_chooses_the_edited_bone_and_mirror_is_the_symmetry() {

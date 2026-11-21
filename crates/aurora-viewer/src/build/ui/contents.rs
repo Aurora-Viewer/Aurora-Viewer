@@ -286,6 +286,9 @@ fn item_row(
     item: &TaskItem,
     editable: bool,
 ) {
+    // the seat held by RLVa takes nothing in and lets nothing out, but its
+    // items keep their names and their scripts their switch
+    let items_editable = editable || tool.contents_items_editable(world, idx);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
@@ -371,15 +374,17 @@ fn item_row(
                     tool.ui.open_notecard = Some((object_id, item.item_id));
                 }
             }
+            // Every selected item gets its own window (LLInventoryAction::doToSelected "task_properties";
+            // the Legacy Viewer tabs them in one window, see item_properties::show).
             if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties")) {
-                tool.open_task_item_properties(object_id, item);
+                tool.open_task_items_properties(object_id, &taken);
             }
             if menu::item_if(
                 ui,
                 p,
                 "pencil-filled",
                 aurora_i18n::tr!("common-rename"),
-                editable && item_modify && tool.ui.contents_selection.items.len() == 1,
+                items_editable && item_modify && tool.ui.contents_selection.items.len() == 1,
             ) {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
@@ -409,7 +414,7 @@ fn item_row(
                 } else {
                     ("player-play-filled", aurora_i18n::tr!("build-ui-contents-run"))
                 };
-                if menu::item_if(ui, p, icon, label, editable) {
+                if menu::item_if(ui, p, icon, label, items_editable) {
                     tool.set_script_running(world, idx, item.item_id, !on);
                 }
             }
@@ -422,7 +427,7 @@ fn item_row(
                 });
             } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
-            } else if editable && item_modify {
+            } else if items_editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
         }

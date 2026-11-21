@@ -323,6 +323,9 @@ pub struct Renderer {
     pub thumbnail_request: Option<u64>,
     /// The small pictures made, until the caller takes them.
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// The second camera's view to draw after the next frame
+    /// (second_view.rs); asked again every frame the window is open.
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Set by the device-lost callback (device_lost.rs).
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
@@ -823,6 +826,7 @@ impl Renderer {
             histogram: None,
             thumbnail_request: None,
             thumbnails: Vec::new(),
+            second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
             // counts its frames from 0 again)
@@ -1600,6 +1604,7 @@ impl Renderer {
             equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
             thumbnail: self.thumbnail_request.take(),
+            second_view: self.second_view.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
@@ -1680,6 +1685,7 @@ impl Renderer {
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_clouds: self.last_stats.gpu_clouds,
+                gpu_soft: self.last_stats.gpu_soft,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
                 gpu_weather: self.last_stats.gpu_weather,
@@ -1942,6 +1948,8 @@ impl Renderer {
 
     /// Project a world position to screen pixels (None if behind camera).
     pub fn project(&self, f: &FrameParams, p: Vec3) -> Option<(f32, f32, f32)> {
+        // where it is drawn, on the curved planet if any (curvature.rs)
+        let p = crate::curvature::Curvature::new(f.camera_pos, f.curvature).bend(p);
         let c = f.proj * f.view * p.extend(1.0);
         if c.w <= 0.01 {
             return None;

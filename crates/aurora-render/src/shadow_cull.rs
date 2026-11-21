@@ -270,6 +270,7 @@ pub fn cascade_caster_planes(
     near: [f32; 3],
     far: [f32; 3],
     texel: [f32; 3],
+    reach: f32,
 ) -> [[[f32; 4]; SHADOW_PLANES]; 3] {
     let (tan_x, tan_y) = (view.tan_x * 1.02, view.tan_y * 1.02);
     // a distance from the camera is the shortest depth along the view's
@@ -283,15 +284,17 @@ pub fn cascade_caster_planes(
             (near[k] * corner_cos * 0.98 - 0.05).max(view.near * 0.5),
             far[k] * 1.05 + 1.0,
         );
-        caster_planes(&corners, light, lookup_margin(k, texel[k]))
+        caster_planes(&corners, light, lookup_margin(k, texel[k], reach))
     })
 }
 
 /// What a lookup of cascade `k` reads around its point, in metres: the
 /// filter's taps and the normal offset (0.02 + 0.04 k) of `cascade_shadow`
-/// (common.wgsl), and a little more.
-pub fn lookup_margin(k: usize, texel: f32) -> f32 {
-    FILTER_TEXELS * texel + 0.02 + 0.04 * k as f32 + 0.05
+/// (common.wgsl), and a little more. `reach`: how far the soft shadows'
+/// blocker search and filter read from the point (soft_shadows.rs
+/// `search_radius`), 0 without them: the planes are then those of before.
+pub fn lookup_margin(k: usize, texel: f32, reach: f32) -> f32 {
+    FILTER_TEXELS * texel + 0.02 + 0.04 * k as f32 + 0.05 + reach
 }
 
 /// Depth a cascade keeps on each side of its square, along the light
@@ -508,7 +511,7 @@ mod tests {
         let light = Vec3::new(0.3, -0.2, -0.8).normalize();
         for pixel_splits in [false, true] {
             let (near, far) = cascade_reach(splits, pixel_splits);
-            let planes = cascade_caster_planes(&view, light, near, far, texel);
+            let planes = cascade_caster_planes(&view, light, near, far, texel, 0.0);
             for k in 0..3 {
                 for i in 0..2000 {
                     // a pixel: a direction of the view, a distance the cascade is read at
@@ -528,7 +531,7 @@ mod tests {
             // a caster 3 m ahead of the camera, light straight down: in the
             // first cascade, in the others only while they have no nearest
             // receiver
-            let planes = cascade_caster_planes(&view, -Vec3::Z, near, far, texel);
+            let planes = cascade_caster_planes(&view, -Vec3::Z, near, far, texel, 0.0);
             let caster = eye + Vec3::new(1.0, 0.2, -0.1).normalize() * 3.0;
             assert!(casts_into(&planes[0], caster, 0.2));
             assert_eq!(casts_into(&planes[1], caster, 0.2), !pixel_splits);
